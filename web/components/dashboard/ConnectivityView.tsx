@@ -461,7 +461,7 @@ export default function ConnectivityView({
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-surface-800 bg-surface-950/60 p-4 text-sm text-surface-500">
-                    No Cloudflare endpoint is being advertised by this machine yet. The agent can already manage these locally, but web does not yet own the full tunnel wizard.
+                    No Cloudflare endpoint configured for this device yet. Set one up on the machine with the agent, then it will appear here.
                   </div>
                 )}
               </div>

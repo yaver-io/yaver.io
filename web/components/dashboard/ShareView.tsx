@@ -9,6 +9,7 @@ import { useState } from "react";
 export default function ShareView() {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
+  const [copyMsg, setCopyMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
 
   const message = name
     ? `Just shipped ${name} — built on my own hardware with Yaver (free, open, your machine is your cloud). ${url}`
@@ -30,7 +31,13 @@ export default function ShareView() {
   const badgeHTMLLight = `<a href="https://yaver.io"><img src="https://yaver.io/badge?theme=light" alt="Built with Yaver" height="28"/></a>`;
 
   async function copy(text: string) {
-    try { await navigator.clipboard.writeText(text); alert("Copied"); } catch {}
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyMsg({ type: "ok", text: "Copied to clipboard." });
+    } catch {
+      setCopyMsg({ type: "error", text: "Couldn't copy automatically — select the text and copy manually." });
+    }
+    setTimeout(() => setCopyMsg(null), 3000);
   }
 
   return (
@@ -39,6 +46,12 @@ export default function ShareView() {
         <h2 className="text-xl font-semibold text-surface-100">Share what you built</h2>
         <p className="text-sm text-surface-500">Yaver is free and open. The way it grows is when you tell someone.</p>
       </div>
+
+      {copyMsg && (
+        <div className={`text-sm ${copyMsg.type === "ok" ? "text-emerald-400" : "text-amber-400"}`}>
+          {copyMsg.text}
+        </div>
+      )}
 
       <div className="space-y-2">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name (optional)"

@@ -128,7 +128,10 @@ export default function ManagedCloudCard({
       }
       await load();
     } catch (e: any) {
-      Alert.alert(action === "start" ? "Resume failed" : "Pause failed", e?.message || "Managed-cloud lifecycle route is not available yet.");
+      Alert.alert(
+        action === "start" ? "Couldn't Resume" : "Couldn't Pause",
+        e?.message || `Yaver couldn't ${action === "start" ? "resume" : "pause"} this managed-cloud machine right now. Update Yaver if a newer build is available, and check your connection — then try again.`,
+      );
     } finally {
       setBusy(null);
     }

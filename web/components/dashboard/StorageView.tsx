@@ -165,7 +165,7 @@ function FilesTab() {
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 md:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
         <ul className="min-h-0 overflow-auto rounded border border-surface-700 text-sm">
           {loading && <li className="px-3 py-1 text-surface-500">Loading…</li>}
-          {!loading && entries.length === 0 && <li className="px-3 py-1 text-surface-500">Empty.</li>}
+          {!loading && entries.length === 0 && <li className="px-3 py-1 text-surface-500">This folder is empty.</li>}
           {entries.map((e) => (
             <li key={e.path}>
               <button
@@ -330,7 +330,7 @@ function SharedTab() {
             </button>
           </div>
           <ul className="min-h-0 flex-1 overflow-auto rounded border border-surface-700 text-sm">
-            {entries.length === 0 && <li className="px-3 py-1 text-surface-500">Empty.</li>}
+            {entries.length === 0 && <li className="px-3 py-1 text-surface-500">No matching objects.</li>}
             {entries.map((e) => (
               <li key={e.path} className="flex items-center justify-between px-3 py-1 hover:bg-surface-800">
                 <span className="truncate font-mono">

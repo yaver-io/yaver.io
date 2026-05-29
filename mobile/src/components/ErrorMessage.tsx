@@ -152,9 +152,15 @@ export function ErrorMessage({
           <Text style={[styles.title, { color: c.error }]}>{title}</Text>
         </View>
         <Text
+          // Keep the raw agent error as clearly-secondary detail: muted +
+          // capped so a stack dump can't dominate the card above the
+          // smart-retry actions. The full text stays available via "Copy
+          // error" below.
+          numberOfLines={6}
+          ellipsizeMode="tail"
           style={[
             styles.body,
-            { color: c.textPrimary, fontFamily: monoFamily },
+            { color: c.textSecondary, fontFamily: monoFamily },
           ]}
         >
           {message}

@@ -12,6 +12,7 @@ export default function EnvironmentSwitcher({ directory, onSwitch }: { directory
   const [editing, setEditing] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => { refresh(); }, [directory]);
 
@@ -25,11 +26,21 @@ export default function EnvironmentSwitcher({ directory, onSwitch }: { directory
 
   async function switchTo(name: string) {
     setLoading(true);
-    const r = await agentClient.projectEnvSwitch(name, directory);
-    setLoading(false);
-    if (r.error) { alert(r.error); return; }
-    setActive(name);
-    onSwitch?.(name);
+    setMsg(null);
+    try {
+      const r = await agentClient.projectEnvSwitch(name, directory);
+      if (r.error) {
+        const e = String(r.error);
+        setMsg(e.trim() && e.length <= 160 ? e : `Couldn't switch to ${name}. Please try again.`);
+        return;
+      }
+      setActive(name);
+      onSwitch?.(name);
+    } catch {
+      setMsg(`Couldn't switch to ${name} — the agent may be unreachable.`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function openEdit(name: string) {
@@ -83,6 +94,7 @@ export default function EnvironmentSwitcher({ directory, onSwitch }: { directory
         Switching replaces <code>.env.local</code> with <code>.yaver/envs/{active}.env</code>.
         Double-click a chip to edit its contents.
       </div>
+      {msg && <div className="text-xs text-red-400">{msg}</div>}
 
       {editing && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">

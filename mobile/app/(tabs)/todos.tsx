@@ -177,7 +177,7 @@ export default function TodosScreen() {
       const result = await quicClient.sendTask(todo.title, "");
       await persist(todos.map(t => t.id === todo.id ? { ...t, done: true, taskId: result?.id } : t));
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed");
+      Alert.alert("Couldn't Send Todo", `Yaver couldn't send this todo to your agent. Check your connection and try again.\n\n${e?.message || "Failed"}`);
     }
   }, [isConnected, todos, persist]);
 
@@ -221,7 +221,7 @@ export default function TodosScreen() {
                 await quicClient.setAutopilot(true);
                 setAutopilot(true);
               } catch (e: any) {
-                Alert.alert("Error", e?.message || "Failed to enable auto-drive");
+                Alert.alert("Couldn't Start Auto-Drive", `Yaver couldn't enable auto-drive on your agent. Check your connection and try again.\n\n${e?.message || "Failed to enable auto-drive"}`);
               }
               setSending(false);
             },

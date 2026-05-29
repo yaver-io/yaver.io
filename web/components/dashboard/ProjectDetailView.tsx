@@ -14,6 +14,17 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
   const [domains, setDomains] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
   const [tables, setTables] = useState<any[]>([]);
+  const [actionMsg, setActionMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+
+  function showMsg(type: "ok" | "error", text: string) {
+    setActionMsg({ type, text });
+    setTimeout(() => setActionMsg(null), 5000);
+  }
+
+  function cleanErr(e: unknown, fallback: string): string {
+    const raw = typeof e === "string" ? e : (e as any)?.message;
+    return typeof raw === "string" && raw.trim() && raw.length <= 160 ? raw.trim() : fallback;
+  }
 
   useEffect(() => {
     (async () => {
@@ -44,14 +55,24 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
   const slug = directory.split("/").pop() || directory;
 
   async function deploy() {
-    const p = await agentClient.deployPreview(directory);
-    if (!confirm(`Deploy ${slug}?\n\nBranch: ${p.branch || "?"}\n${p.dirty ? "⚠️ " + p.dirtyFiles?.length + " uncommitted\n" : ""}Active env: ${p.activeEnv}\n${p.warnings?.join("\n") || ""}`)) return;
-    const r = await agentClient.deployRun(directory);
-    alert(r.status || r.error);
+    try {
+      const p = await agentClient.deployPreview(directory);
+      if (!confirm(`Deploy ${slug}?\n\nBranch: ${p.branch || "?"}\n${p.dirty ? "⚠️ " + p.dirtyFiles?.length + " uncommitted\n" : ""}Active env: ${p.activeEnv}\n${p.warnings?.join("\n") || ""}`)) return;
+      const r = await agentClient.deployRun(directory);
+      if (r.error) showMsg("error", cleanErr(r.error, "Deploy failed. Check the agent logs and try again."));
+      else showMsg("ok", r.status || "Deploy started.");
+    } catch (e) {
+      showMsg("error", cleanErr(e, "Couldn't deploy — the agent may be unreachable."));
+    }
   }
   async function snapshot() {
-    const r = await agentClient.backupCreate(directory);
-    alert(r.error || "Snapshot created");
+    try {
+      const r = await agentClient.backupCreate(directory);
+      if (r.error) showMsg("error", cleanErr(r.error, "Snapshot failed. Please try again."));
+      else showMsg("ok", "Snapshot created.");
+    } catch (e) {
+      showMsg("error", cleanErr(e, "Couldn't create snapshot — the agent may be unreachable."));
+    }
   }
 
   return (
@@ -79,8 +100,14 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
         <a href={`/dashboard/${encodeURIComponent(directory)}`} className="px-3 py-2 text-sm rounded-lg bg-surface-800 text-surface-200 hover:bg-surface-700">🗄️ Dashboard</a>
       </div>
 
+      {actionMsg && (
+        <div className={`text-sm rounded-lg border px-3 py-2 ${actionMsg.type === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-300"}`}>
+          {actionMsg.text}
+        </div>
+      )}
+
       <Section title="Services">
-        {services.length === 0 && <Empty />}
+        {services.length === 0 && <Empty text="No services" />}
         {services.map((s) => (
           <Row key={s.id}>
             <Tag tone={s.state === "running" ? "ok" : "muted"}>{s.state}</Tag>
@@ -91,7 +118,7 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
       </Section>
 
       <Section title="Recent deploys">
-        {deploys.length === 0 && <Empty />}
+        {deploys.length === 0 && <Empty text="No deployments" />}
         {deploys.slice(0, 5).map((d) => (
           <Row key={d.id}>
             <Tag tone={d.status === "success" ? "ok" : "fail"}>{d.status}</Tag>
@@ -103,13 +130,22 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
       </Section>
 
       <Section title="Backups">
-        {backups.length === 0 && <Empty />}
+        {backups.length === 0 && <Empty text="No backups" />}
         {backups.slice(0, 5).map((b) => (
           <Row key={b.id}>
             <span className="font-mono text-xs text-surface-400">{b.id}</span>
             <span className="text-xs text-surface-500">{b.backend}</span>
             <span className="text-xs flex-1 truncate font-mono text-surface-500">{b.path}</span>
-            <button onClick={async () => { if (confirm("Restore?")) { await agentClient.backupRestore(b.id, directory); alert("Restored"); } }} className="text-xs text-emerald-400 hover:text-emerald-300">Restore</button>
+            <button onClick={async () => {
+              if (!confirm("Restore this backup? This overwrites current backend data.")) return;
+              try {
+                const r = await agentClient.backupRestore(b.id, directory);
+                if ((r as any)?.error) showMsg("error", cleanErr((r as any).error, "Restore failed. Please try again."));
+                else showMsg("ok", "Backup restored.");
+              } catch (e) {
+                showMsg("error", cleanErr(e, "Couldn't restore — the agent may be unreachable."));
+              }
+            }} className="text-xs text-emerald-400 hover:text-emerald-300">Restore</button>
           </Row>
         ))}
       </Section>

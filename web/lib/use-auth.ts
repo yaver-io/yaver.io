@@ -18,6 +18,11 @@ interface AuthState {
   isLoading: boolean;
   isAuthenticated: boolean;
   surveyCompleted: boolean;
+  // True only when a stored token was rejected by the server (401/403) and
+  // wiped. Lets the dashboard explain "your session expired" instead of
+  // silently dumping the user back to a generic sign-in gate. NOT set on
+  // network errors — those keep the token so we can retry offline.
+  sessionExpired: boolean;
   logout: () => void;
 }
 
@@ -44,6 +49,7 @@ export function useAuth(): AuthState {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   const logout = useCallback(() => {
     localStorage.removeItem("yaver_auth_token");
@@ -71,9 +77,15 @@ export function useAuth(): AuthState {
         });
 
         if (!res.ok) {
-          // Token invalid -- clear it
+          // Token invalid -- clear it. 401/403 means the server actively
+          // rejected the token (rotated / expired / revoked); flag it so
+          // the dashboard can say "your session expired" rather than
+          // logging the user out with no explanation.
           localStorage.removeItem("yaver_auth_token");
-          if (!cancelled) setIsLoading(false);
+          if (!cancelled) {
+            if (res.status === 401 || res.status === 403) setSessionExpired(true);
+            setIsLoading(false);
+          }
           return;
         }
 
@@ -113,6 +125,7 @@ export function useAuth(): AuthState {
     isLoading,
     isAuthenticated: token !== null,
     surveyCompleted: user?.surveyCompleted ?? false,
+    sessionExpired,
     logout,
   };
 }

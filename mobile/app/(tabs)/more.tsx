@@ -141,7 +141,7 @@ function QualityGatesSection({ c }: { c: ReturnType<typeof useColors> }) {
         next.delete(type);
         return next;
       });
-      Alert.alert("Error", e instanceof Error ? e.message : "Failed to run check");
+      Alert.alert("Couldn't Run Check", `Yaver couldn't run this quality check. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Failed to run check"}`);
     }
   }, []);
 
@@ -152,7 +152,7 @@ function QualityGatesSection({ c }: { c: ReturnType<typeof useColors> }) {
       await quicClient.runAllQualityChecks();
     } catch (e) {
       setRunningTypes(new Set());
-      Alert.alert("Error", e instanceof Error ? e.message : "Failed to run checks");
+      Alert.alert("Couldn't Run Checks", `Yaver couldn't run the quality checks. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Failed to run checks"}`);
     }
   }, [checks]);
 
@@ -311,7 +311,7 @@ function HealthMonitorSection({ c }: { c: ReturnType<typeof useColors> }) {
       setAddingUrl(false);
       loadTargets();
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Failed to add target");
+      Alert.alert("Couldn't Add Target", `Yaver couldn't add this health target. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Failed to add target"}`);
     }
   }, [newUrl, newLabel, loadTargets]);
 
@@ -667,7 +667,7 @@ function GitSection({ c }: { c: ReturnType<typeof useColors> }) {
       await action();
       await loadGitData();
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : `Failed: ${label}`);
+      Alert.alert(`${label} Failed`, `Yaver couldn't ${label.toLowerCase()} on your dev machine. Check your connection and try again.\n\n${e instanceof Error ? e.message : `Failed: ${label}`}`);
     } finally {
       setActionLoading(null);
     }
@@ -1011,7 +1011,7 @@ function RepoSyncSection({ c }: { c: ReturnType<typeof useColors> }) {
       setShowAddCred(false);
       await loadData();
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Failed to save credential");
+      Alert.alert("Couldn't Save Credential", `Yaver couldn't save the credential to your dev machine. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Failed to save credential"}`);
     } finally {
       setActionLoading(null);
     }
@@ -1028,7 +1028,7 @@ function RepoSyncSection({ c }: { c: ReturnType<typeof useColors> }) {
             await quicClient.removeRepoCredential(host);
             await loadData();
           } catch (e) {
-            Alert.alert("Error", e instanceof Error ? e.message : "Failed to remove");
+            Alert.alert("Couldn't Remove Credential", `Yaver couldn't remove the credential. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Failed to remove"}`);
           }
         },
       },
@@ -1392,7 +1392,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
         );
       }
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Detection failed");
+      Alert.alert("Detection Failed", `Yaver couldn't detect Git credentials on ${targetLabel}. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Detection failed"}`);
     } finally {
       setDetecting(false);
     }
@@ -1415,10 +1415,10 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
         setShowManualSetup(null);
         await loadProviders();
       } else {
-        Alert.alert("Error", data.error || "Setup failed");
+        Alert.alert("Couldn't Connect", `Yaver couldn't sign in with that token. Double-check the token and try again.\n\n${data.error || "Setup failed"}`);
       }
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Setup failed");
+      Alert.alert("Couldn't Connect", `Yaver couldn't complete sign-in on ${targetLabel}. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Setup failed"}`);
     } finally {
       setDetecting(false);
     }
@@ -1455,7 +1455,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
       const data = await res.json();
       if (data.ok) setRepos(data.repos || []);
     } catch {
-      Alert.alert("Error", "Failed to load repos");
+      Alert.alert("Couldn't Load Repos", "Yaver couldn't load your repositories. Check your connection and try again.");
     } finally {
       setReposLoading(false);
     }
@@ -1500,7 +1500,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
         Alert.alert("Clone Failed", data.error || "Unknown error");
       }
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Clone failed");
+      Alert.alert("Clone Failed", `Yaver couldn't clone ${repo.fullName}. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Clone failed"}`);
     } finally {
       setCloning(null);
     }
@@ -1536,7 +1536,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
       const data = await res.json();
       if (!data.ok || !data.session_id || !data.user_code || !data.verification_uri) {
         Alert.alert(
-          "Could not start Device Flow",
+          "Couldn't Start Sign-In",
           data.error || "The agent rejected the request. If you haven't registered an OAuth App yet, set vault entry github-oauth-client-id (project=oauth) on the target machine first.",
         );
         return;
@@ -1552,7 +1552,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
         byoClient: !!data.byo_client,
       });
     } catch (e) {
-      Alert.alert("Device Flow error", e instanceof Error ? e.message : "Failed to start");
+      Alert.alert("Couldn't Start Sign-In", `Yaver couldn't start the sign-in flow. Check your connection and try again.\n\n${e instanceof Error ? e.message : "Failed to start"}`);
     } finally {
       setDeviceFlowStarting(null);
     }
@@ -1583,7 +1583,10 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
           await loadProviders();
           Alert.alert("Connected", `Linked ${deviceFlow.provider} as ${data.username || "user"} on ${targetLabel}.`);
         } else if (data.state === "error" || data.state === "expired" || data.state === "unknown") {
-          Alert.alert("Device Flow ended", data.error || `State: ${data.state}`);
+          Alert.alert(
+            "Sign-In Didn't Complete",
+            data.error || "Sign-in didn't complete — the code expired or was denied. Try again.",
+          );
         }
       } catch {
         // soft-fail; keep polling
@@ -1784,7 +1787,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
             </Text>
           ) : (
             <Text style={{ color: c.textPrimary, fontSize: 13 }}>
-              {deviceFlow.error || `Device Flow ended (${deviceFlow.state}). Tap Sign in again to retry.`}
+              {deviceFlow.error || `Sign-in didn't complete — the code expired or was denied. Tap Sign in again to retry.`}
             </Text>
           )}
         </View>

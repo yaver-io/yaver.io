@@ -474,7 +474,12 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
           </button>
         </div>
         {loading && <p className="p-3 text-sm text-surface-400">Loading…</p>}
-        {!loading && entries.length === 0 && (
+        {/* Only show the "empty" state when the list genuinely loaded empty.
+            On a locked/forbidden vault (token rotation re-locks it — vault.go
+            derives its key from the auth token) or any load error, the banner
+            above already explains + offers Reconnect/Retry, so suppress the
+            "No entries yet" copy to avoid implying the secrets are gone. */}
+        {!loading && !err && !needsAuth && entries.length === 0 && (
           <EmptyState
             compact
             icon={

@@ -59,6 +59,9 @@ export default function BuildsView({
   const [allowGitHubFallback, setAllowGitHubFallback] = useState(false);
   const [publishBusy, setPublishBusy] = useState<string | null>(null);
   const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
+
+  const noProjects = projects.length === 0;
 
   useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); void loadUnityRuns(); void loadCapabilities(); }, []);
   useEffect(() => {
@@ -117,7 +120,7 @@ export default function BuildsView({
 
   async function deploy(target: "testflight" | "playstore" | "web") {
     let proj = projects.find((p) => p.path === selectedPath) ?? projects[0];
-    if (!proj) { alert("No projects found"); return; }
+    if (!proj) return; // buttons are disabled in this state; nothing to do
 
     const prompts: Record<string, string> = {
       testflight: `cd ${proj.path} && Build ${proj.name} for iOS and deploy to TestFlight. Archive with xcodebuild, export, upload. Show build number when done.`,
@@ -136,6 +139,7 @@ export default function BuildsView({
   }
 
   function deployDisabledReason(target: "testflight" | "playstore" | "web") {
+    if (noProjects) return "No projects detected on the connected machine yet.";
     if (target === "web") return "";
     const readiness = targetReadiness(target);
     if (!readiness) return "";
@@ -156,12 +160,18 @@ export default function BuildsView({
   async function runPublish(targetId: string) {
     if (!selectedPath) return;
     setPublishBusy(targetId);
+    setPublishMessage(null);
     try {
       await agentClient.startPublish(selectedPath, targetId, allowGitHubFallback);
       await loadPublishes();
       await loadBuilds();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Publish failed");
+      const raw = error instanceof Error ? error.message : "";
+      setPublishMessage(
+        raw.trim() && raw.trim().length <= 160
+          ? raw.trim()
+          : "Publish failed. Check the target config and the agent logs, then try again.",
+      );
     } finally {
       setPublishBusy(null);
     }
@@ -231,6 +241,12 @@ export default function BuildsView({
         ) : (
           <div className="text-sm text-surface-500">No publish targets yet for this project. Run `yaver publish init` in the repo.</div>
         )}
+
+        {publishMessage ? (
+          <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+            {publishMessage}
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">
@@ -317,10 +333,21 @@ export default function BuildsView({
         >
           <span>&#x1F4E6;</span> Play Task
         </button>
-        <button onClick={() => deploy("web")} className={deployButtonClass(false)}>
+        <button
+          onClick={() => deploy("web")}
+          disabled={!!deployDisabledReason("web")}
+          title={deployDisabledReason("web")}
+          className={deployButtonClass(!!deployDisabledReason("web"))}
+        >
           <span>&#x1F310;</span> Web Task
         </button>
       </div>
+
+      {noProjects ? (
+        <div className="text-xs text-surface-500">
+          Deploy actions unlock once a project is detected on the connected machine.
+        </div>
+      ) : null}
 
       {(deployDisabledReason("testflight") || deployDisabledReason("playstore")) ? (
         <div className="rounded-xl border border-warning/30 bg-warning-soft/40 p-4 text-sm text-warning-softFg space-y-2">

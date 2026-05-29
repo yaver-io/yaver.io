@@ -630,7 +630,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                                               ? "git pull --rebase via the Vibing flow on the device's primary coding agent. Conflicts get resolved by the agent."
                                               : surface
                                                 ? `Open ${label}`
-                                                : "No dashboard surface for this action yet"
+                                                : "This action isn't available from the dashboard."
                                       }
                                       onClick={() => {
                                         if (isVibePrompt && onVibePrompt) {

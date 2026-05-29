@@ -36,6 +36,7 @@ function CIPanel({ dir }: { dir: string }) {
   const [cfg, setCfg] = useState<any>({ image: "node:20", steps: [{ name: "test", run: "npm test" }], onFail: "block-deploy" });
   const [cfgOpen, setCfgOpen] = useState(false);
   const [running, setRunning] = useState(false);
+  const [runMsg, setRunMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
 
   useEffect(() => { refresh(); loadCfg(); }, [dir]);
   async function refresh() { const r = await agentClient.ciList(dir || undefined); setRuns(r.runs || []); }
@@ -43,9 +44,19 @@ function CIPanel({ dir }: { dir: string }) {
   async function saveCfg() { await agentClient.ciConfigSet(cfg, dir || undefined); setCfgOpen(false); }
   async function run() {
     setRunning(true);
-    const r = await agentClient.ciRun(dir || undefined);
+    setRunMsg(null);
+    try {
+      const r = await agentClient.ciRun(dir || undefined);
+      if (r.error) {
+        const e = String(r.error);
+        setRunMsg({ type: "error", text: e.length <= 160 ? e : "CI run failed. Check ci.yaml and the agent logs." });
+      } else {
+        setRunMsg({ type: "ok", text: `CI ${r.status} (${r.steps?.length || 0} steps)` });
+      }
+    } catch {
+      setRunMsg({ type: "error", text: "Couldn't run CI — the agent may be unreachable." });
+    }
     setRunning(false);
-    alert(r.error || `CI ${r.status} (${r.steps?.length || 0} steps)`);
     refresh();
   }
 
@@ -56,6 +67,7 @@ function CIPanel({ dir }: { dir: string }) {
         <button onClick={() => setCfgOpen(true)} className="px-3 py-2 text-sm rounded bg-surface-800 text-surface-200 hover:bg-surface-700">Edit ci.yaml</button>
       </div>
       <div className="text-xs text-surface-500">CI runs before every deploy. On failure: {cfg.onFail || "block-deploy"}. Image: {cfg.image || "node:20"}</div>
+      {runMsg && <div className={`text-xs ${runMsg.type === "ok" ? "text-emerald-400" : "text-red-400"}`}>{runMsg.text}</div>}
       <div className="space-y-1">
         {runs.length === 0 && <div className="text-xs text-surface-500">No runs yet.</div>}
         {runs.map((r) => (

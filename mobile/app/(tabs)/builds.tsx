@@ -359,7 +359,10 @@ export default function BuildsScreen() {
       );
       router.navigate("/(tabs)/tasks");
     } catch (e) {
-      Alert.alert("Failed", String(e));
+      Alert.alert(
+        "Couldn't Start Project",
+        `Yaver couldn't start ${name} on your phone. Check your connection and try again.\n\n${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setStartingProject(null);
     }

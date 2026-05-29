@@ -13,9 +13,19 @@ type Summary = {
   recentActivity: { timestamp: string; icon: string; title: string; detail?: string }[];
 };
 
-export default function OverviewView({ user }: { user?: { name?: string; email?: string } }) {
+export default function OverviewView({
+  user,
+  onNavigate,
+}: {
+  user?: { name?: string; email?: string };
+  // Switch the dashboard's active tab. Wired by the parent so the Quick
+  // Action buttons actually move the user where they point instead of
+  // popping an alert telling them to navigate by hand.
+  onNavigate?: (tab: string) => void;
+}) {
   const [s, setS] = useState<Summary | null>(null);
   const [error, setError] = useState("");
+  const [pipelineMsg, setPipelineMsg] = useState<string | null>(null);
   const [notConnected, setNotConnected] = useState(false);
 
   useEffect(() => {
@@ -70,7 +80,12 @@ export default function OverviewView({ user }: { user?: { name?: string; email?:
     );
   }
 
-  if (error) return <div className="p-4 text-xs text-red-400 bg-red-900/20 border border-red-500/30 rounded">{error}</div>;
+  if (error) return (
+    <div className="p-4 text-sm text-red-300 bg-red-900/20 border border-red-500/30 rounded">
+      <div>Couldn&apos;t load your overview. Try again in a moment.</div>
+      <div className="mt-1 text-xs text-red-400/70 break-words">{error}</div>
+    </div>
+  );
   if (!s) return <div className="p-4 text-sm text-surface-500">Loading…</div>;
 
   return (
@@ -92,15 +107,29 @@ export default function OverviewView({ user }: { user?: { name?: string; email?:
       <section>
         <h2 className="text-xs uppercase text-surface-500 font-semibold mb-2">Quick Actions</h2>
         <div className="flex flex-wrap gap-2">
-          <QuickBtn label="🚀 Deploy" onClick={() => alert('Open the Ops → Deploy tab to trigger a deploy.')} />
-          <QuickBtn label="+ New Project" onClick={() => alert('Open the Projects tab → wizard.')} />
-          <QuickBtn label="📟 Terminal" onClick={() => alert('Open Console → Terminal.')} />
+          {onNavigate ? (
+            <>
+              <QuickBtn label="🚀 Deploy" onClick={() => onNavigate("ops")} />
+              <QuickBtn label="+ New Project" onClick={() => onNavigate("projects")} />
+              <QuickBtn label="📟 Terminal" onClick={() => onNavigate("exec")} />
+            </>
+          ) : null}
           <QuickBtn label="📊 Run Pipeline" onClick={async () => {
-            const r = await fetch(`${(agentClient as any).baseUrl}/ci/run`, { method: "POST", headers: (agentClient as any).authHeaders });
-            const j = await r.json();
-            alert(j.error || `CI ${j.status} (${j.steps?.length || 0} steps)`);
+            setPipelineMsg(null);
+            try {
+              const res = await fetch(`${(agentClient as any).baseUrl}/ci/run`, { method: "POST", headers: (agentClient as any).authHeaders });
+              if (!res.ok) {
+                setPipelineMsg("Couldn't start the pipeline. Connect to a machine with a CI config and try again.");
+                return;
+              }
+              const j = await res.json().catch(() => ({} as any));
+              setPipelineMsg(j.error || `CI ${j.status ?? "started"} (${j.steps?.length || 0} steps)`);
+            } catch {
+              setPipelineMsg("Couldn't reach the agent to start the pipeline.");
+            }
           }} />
         </div>
+        {pipelineMsg ? <div className="mt-2 text-xs text-surface-400">{pipelineMsg}</div> : null}
       </section>
 
       <section>

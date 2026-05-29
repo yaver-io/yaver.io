@@ -303,6 +303,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [machineType, setMachineType] = useState("cpu");
   const [region, setRegion] = useState("eu");
 
@@ -318,9 +319,18 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.url) {
-        // 403 = private preview (not owner-allowlisted); 500 =
-        // LemonSqueezy env not configured. Surface verbatim.
-        setError(data?.error || `checkout failed: ${res.status}`);
+        // 403 = not owner-allowlisted → map to a user-meaningful message
+        // rather than a bare "checkout failed: 403". Other errors get a
+        // clean fallback (don't leak LemonSqueezy/env internals).
+        if (res.status === 403) {
+          setError("Managed cloud is in private preview.");
+        } else {
+          setError(
+            typeof data?.error === "string" && data.error.length <= 120 && !/[<{]/.test(data.error)
+              ? data.error
+              : "Couldn't start checkout. Please try again.",
+          );
+        }
         return;
       }
       window.location.href = data.url; // → LemonSqueezy
@@ -337,11 +347,18 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
       const res = await fetch(`${CONVEX_URL}/subscription`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!res.ok) {
+        // A non-OK response means we couldn't load — distinct from a
+        // genuinely empty machine list (which is res.ok with []).
+        setLoadError(true);
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       setOwner(data?.cloudPreviewOwner === true);
       setMachines(Array.isArray(data?.machines) ? data.machines : []);
-    } catch (e: any) {
-      setError(e?.message || String(e));
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
     }
   }, [token]);
 
@@ -519,7 +536,19 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
           ) : null}
 
           <div className="space-y-2">
-            {liveMachines.length === 0 ? (
+            {loadError ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-slate-500 dark:text-surface-400">
+                  Couldn&apos;t load your managed machines.
+                </span>
+                <button
+                  onClick={() => void load()}
+                  className="rounded border border-slate-300 px-2 py-0.5 text-[11px] font-medium dark:border-surface-700"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : liveMachines.length === 0 ? (
               <p className="text-xs text-slate-400">No managed machines.</p>
             ) : (
               liveMachines.map((m) => (

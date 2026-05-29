@@ -336,6 +336,12 @@ export default function HealthMonitorScreen() {
           <Text style={{ color: c.textMuted, fontSize: 14, textAlign: "center" }}>
             Connect to a device to use Health Monitor.
           </Text>
+          <Pressable
+            onPress={() => router.navigate("/(tabs)/devices" as any)}
+            style={({ pressed }) => [{ marginTop: 16, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: c.accent + "1A" }, pressed && { opacity: 0.6 }]}
+          >
+            <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Go to Devices</Text>
+          </Pressable>
         </View>
       ) : loading ? (
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>

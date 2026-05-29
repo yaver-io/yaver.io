@@ -277,7 +277,7 @@ function FilesTab() {
               ) : null}
             </Pressable>
           )}
-          ListEmptyComponent={<Text style={{ color: c.textMuted, padding: 16 }}>Empty.</Text>}
+          ListEmptyComponent={<Text style={{ color: c.textMuted, padding: 16 }}>This folder is empty.</Text>}
         />
       )}
     </View>
@@ -429,7 +429,7 @@ function SharedTab() {
               </Text>
             </Pressable>
           )}
-          ListEmptyComponent={<Text style={{ color: c.textMuted, padding: 16 }}>Empty.</Text>}
+          ListEmptyComponent={<Text style={{ color: c.textMuted, padding: 16 }}>This folder is empty.</Text>}
         />
       )}
     </View>

@@ -5,6 +5,7 @@ import {
   Animated,
   Dimensions,
   Keyboard,
+  Linking,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -335,7 +336,23 @@ export function FeedbackOverlay() {
       if (speechProvider === "on-device") await initWhisper();
       const { Audio } = require("expo-av");
       const perm = await Audio.requestPermissionsAsync();
-      if (perm.status !== "granted") throw new Error("Microphone permission is required.");
+      if (perm.status !== "granted") {
+        // When the OS won't re-prompt (permanently denied), the only way
+        // forward is the system Settings app — offer it directly instead
+        // of dead-ending on "permission is required".
+        if (perm.canAskAgain === false) {
+          Alert.alert(
+            "Microphone Access Off",
+            "Yaver needs microphone access for voice input. Turn it on in Settings, then try again.",
+            [
+              { text: "Not Now", style: "cancel" },
+              { text: "Open Settings", onPress: () => { Linking.openSettings().catch(() => {}); } },
+            ],
+          );
+          return;
+        }
+        throw new Error("Microphone access is needed for voice input. Allow it when prompted and try again.");
+      }
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       voiceRecordingRef.current = recording;

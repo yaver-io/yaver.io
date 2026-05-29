@@ -231,10 +231,14 @@ export default function ExecScreen() {
         ListEmptyComponent={
           loading ? (
             <ActivityIndicator color={c.accent} style={{ paddingHorizontal: 12 }} />
+          ) : connected ? (
+            <Text style={{ color: c.textMuted, padding: 12 }}>No execs yet.</Text>
           ) : (
-            <Text style={{ color: c.textMuted, padding: 12 }}>
-              {connected ? "No execs yet." : "Connect to a device first."}
-            </Text>
+            <Pressable onPress={() => router.navigate("/(tabs)/devices" as any)} style={{ padding: 12 }}>
+              <Text style={{ color: c.textMuted }}>
+                Connect to a device first. <Text style={{ color: c.accent, fontWeight: "600" }}>Go to Devices</Text>
+              </Text>
+            </Pressable>
           )
         }
       />

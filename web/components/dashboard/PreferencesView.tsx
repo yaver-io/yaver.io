@@ -44,9 +44,11 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
 
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   const loadSettings = useCallback(async () => {
     if (!token) return;
+    setLoadError(false);
     try {
       const res = await fetch(`${CONVEX_URL}/settings`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -59,9 +61,14 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
         setTtsEnabled(s.ttsEnabled || false);
         setTtsProvider(s.ttsProvider || "device");
         setVerbosity(s.verbosity ?? 10);
+      } else {
+        // A non-OK response means we couldn't load real settings. Surface a
+        // distinct error rather than presenting defaults as if they were saved
+        // — the user could otherwise overwrite real config with placeholders.
+        setLoadError(true);
       }
     } catch {
-      // ignore
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -101,8 +108,12 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
         });
         setEditing(false);
       } else {
-        const text = await res.text();
-        setSaveMessage({ type: "error", text: text || "Failed to save." });
+        // Don't dump the raw response body verbatim. Only surface short, clean
+        // server text; otherwise fall back to a generic message.
+        let text = "";
+        try { text = (await res.text()).trim(); } catch { /* ignore */ }
+        const clean = text && text.length <= 120 && !/[<{]/.test(text) ? text : "";
+        setSaveMessage({ type: "error", text: clean || "Failed to save. Please try again." });
       }
     } catch {
       setSaveMessage({ type: "error", text: "Network error. Please try again." });
@@ -119,6 +130,24 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
         <div className="flex items-center justify-center py-4">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-surface-600 border-t-surface-50" />
         </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="card mb-6">
+        <h2 className="mb-2 text-lg font-semibold text-surface-50">Voice &amp; Preferences</h2>
+        <p className="mb-4 text-sm text-surface-400">
+          Couldn&apos;t load your preferences. To avoid overwriting your saved
+          settings with defaults, editing is disabled until they load.
+        </p>
+        <button
+          onClick={loadSettings}
+          className="rounded-lg border border-surface-700 px-4 py-2 text-sm text-surface-200 transition-colors hover:border-surface-500 hover:text-surface-50"
+        >
+          Retry
+        </button>
       </div>
     );
   }

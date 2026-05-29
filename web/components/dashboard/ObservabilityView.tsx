@@ -74,6 +74,7 @@ function Storage({ directory }: { directory: string }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<any[]>([]);
   const [guestConfigs, setGuestConfigs] = useState<any[]>([]);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [profileForm, setProfileForm] = useState<any>({ type: "local", name: "", path: "", mount_path: "", remote: "", endpoint: "", bucket: "", region: "", username: "", password: "", access_key: "", secret_key: "", notes: "", container_mount_mode: "none", container_path: "" });
 
   async function refreshProjectStorage() {
@@ -109,12 +110,18 @@ function Storage({ directory }: { directory: string }) {
   }, [selectedProfile, sharedPath]);
 
   async function saveProfile() {
-    const res = await agentClient.sharedStorageUpsert(profileForm);
-    if (!res.error) {
-      setProfileForm({ type: "local", name: "", path: "", mount_path: "", remote: "", endpoint: "", bucket: "", region: "", username: "", password: "", access_key: "", secret_key: "", notes: "", container_mount_mode: "none", container_path: "" });
-      await refreshProfiles();
-    } else {
-      alert(res.error);
+    setSaveMsg(null);
+    try {
+      const res = await agentClient.sharedStorageUpsert(profileForm);
+      if (!res.error) {
+        setProfileForm({ type: "local", name: "", path: "", mount_path: "", remote: "", endpoint: "", bucket: "", region: "", username: "", password: "", access_key: "", secret_key: "", notes: "", container_mount_mode: "none", container_path: "" });
+        await refreshProfiles();
+      } else {
+        const e = String(res.error);
+        setSaveMsg(e.length <= 160 ? e : "Couldn't save the profile. Check the fields and try again.");
+      }
+    } catch {
+      setSaveMsg("Couldn't save the profile — the agent may be unreachable.");
     }
   }
 
@@ -245,6 +252,7 @@ function Storage({ directory }: { directory: string }) {
             <input value={profileForm.container_path} onChange={(e) => setProfileForm((s: any) => ({ ...s, container_path: e.target.value }))} placeholder="Container path, e.g. /mnt/storagebox" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
             <textarea value={profileForm.notes} onChange={(e) => setProfileForm((s: any) => ({ ...s, notes: e.target.value }))} placeholder="Notes: mount command, users, relay path, etc." rows={3} className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />
             <button onClick={saveProfile} className="w-full px-3 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400">Save profile</button>
+            {saveMsg && <div className="text-xs text-red-400">{saveMsg}</div>}
           </div>
 
           <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-3 space-y-2">

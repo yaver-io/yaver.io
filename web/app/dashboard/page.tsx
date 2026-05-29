@@ -695,7 +695,7 @@ function DeviceConnectCard({
 
 export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
-  const { user, token, isLoading, isAuthenticated, logout } = useAuth();
+  const { user, token, isLoading, isAuthenticated, sessionExpired, logout } = useAuth();
   const { devices, refreshDevices, hiddenIds } = useDevices(token);
   // Bootstrap-pending claims — boxes that joined the user's relay but
   // don't have a Convex devices row yet. Surfaced to the user so a
@@ -1808,7 +1808,10 @@ export default function DashboardPage() {
   if (!isAuthenticated) return (
     <div className="flex min-h-[80vh] items-center justify-center">
       <div className="text-center">
-        <h2 className="text-lg font-semibold text-surface-100 mb-4">Sign in to continue</h2>
+        <h2 className="text-lg font-semibold text-surface-100 mb-2">Sign in to continue</h2>
+        {sessionExpired ? (
+          <p className="mb-4 text-sm text-amber-300/90">Your session expired — sign in again.</p>
+        ) : null}
         <a href="/auth?return=/dashboard" className="rounded-lg bg-surface-100 px-6 py-3 text-sm font-medium text-surface-900 hover:bg-surface-50">Sign In</a>
       </div>
     </div>
@@ -2409,7 +2412,7 @@ export default function DashboardPage() {
                             <p className="text-[11px] text-amber-300">
                               {authExpired
                                 ? "Agent accepted the probe but its Convex session is stale. Hand your current session down to the box:"
-                                : "Try handing your current session down to the box — works even if the agent&apos;s own token is dead, as long as one relay can reach it:"}
+                                : "Try handing your current session down to the box — works even if the agent's own token is dead, as long as one relay can reach it:"}
                             </p>
                             <div className="mt-2 flex items-center gap-2">
                               <button
@@ -2554,7 +2557,7 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : activeTab === "home" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OverviewView user={user ?? undefined} /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OverviewView user={user ?? undefined} onNavigate={(tab) => setActiveTab(tab as typeof activeTab)} /></div>
           ) : activeTab === "projects" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><ProjectsView onTaskCreated={onTaskCreated} mobileWorkers={mobileWorkers} selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={handleSelectPreviewTarget} onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined} onRepairRelay={token ? repairRelay : undefined} /></div>
           ) : activeTab === "vibe" ? (

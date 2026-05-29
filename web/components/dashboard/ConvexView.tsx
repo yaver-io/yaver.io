@@ -58,10 +58,24 @@ function StatusBar({
   directory: string;
   onChange: () => void;
 }) {
+  const [helperMsg, setHelperMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+
   async function installHelper() {
-    if (!directory) { alert("Enter a project directory first"); return; }
-    const r = await agentClient.convexInstallHelper(directory);
-    alert(r.error ? `Error: ${r.error}` : `Wrote ${r.wrote}\n\n${r.next}`);
+    if (!directory) {
+      setHelperMsg({ type: "error", text: "Enter a project directory first." });
+      return;
+    }
+    setHelperMsg(null);
+    try {
+      const r = await agentClient.convexInstallHelper(directory);
+      if (r.error) {
+        setHelperMsg({ type: "error", text: `Couldn't install helper: ${r.error}` });
+      } else {
+        setHelperMsg({ type: "ok", text: `Wrote ${r.wrote}. ${r.next || "Deploy it to your backend, then refresh."}` });
+      }
+    } catch (e) {
+      setHelperMsg({ type: "error", text: "Couldn't install helper. Check the agent is reachable and try again." });
+    }
     onChange();
   }
 
@@ -81,6 +95,11 @@ function StatusBar({
         Install yaver_admin.ts
       </button>
       {status.hint && <div className="w-full text-xs text-surface-500 mt-1">{status.hint}</div>}
+      {helperMsg && (
+        <div className={`w-full text-xs mt-1 ${helperMsg.type === "ok" ? "text-emerald-400" : "text-red-400"}`}>
+          {helperMsg.text}
+        </div>
+      )}
     </div>
   );
 }

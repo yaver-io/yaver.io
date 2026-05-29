@@ -75,6 +75,19 @@ export default function PhoneProjectsView() {
   const [templates, setTemplates] = useState<PhoneTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Non-blocking inline feedback for actions (insert/deploy/promote/etc),
+  // replacing native alert() so failures don't dump raw error text.
+  const [notice, setNotice] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+
+  const showNotice = useCallback((type: "ok" | "error", text: string) => {
+    setNotice({ type, text });
+    setTimeout(() => setNotice((n) => (n?.text === text ? null : n)), 6000);
+  }, []);
+
+  function cleanMessage(e: unknown, fallback: string): string {
+    const raw = e instanceof Error ? e.message : typeof e === "string" ? e : "";
+    return raw.trim() && raw.trim().length <= 180 ? raw.trim() : fallback;
+  }
 
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
@@ -218,7 +231,7 @@ export default function PhoneProjectsView() {
       if (!name.trim() && plan.suggestedName) setName(plan.suggestedName);
       setPrompt(plan.generatedPrompt);
     } catch (e) {
-      alert(`Analysis failed: ${e instanceof Error ? e.message : String(e)}`);
+      showNotice("error", cleanMessage(e, "Couldn't analyze the conversation. Try again or write the brief manually."));
     } finally {
       setAnalyzingImport(false);
     }
@@ -238,7 +251,7 @@ export default function PhoneProjectsView() {
   async function doExport(slug: string) {
     const blob = await agentClient.exportPhoneProjectBlob(slug);
     if (!blob) {
-      alert("Export failed — agent not reachable");
+      showNotice("error", "Export failed — the agent isn't reachable. Check your connection and try again.");
       return;
     }
     const url = URL.createObjectURL(blob);
@@ -260,7 +273,7 @@ export default function PhoneProjectsView() {
       setInsertJSON("{}");
       await switchTable(activeTable);
     } catch (e) {
-      alert(`Insert failed: ${e instanceof Error ? e.message : e}`);
+      showNotice("error", cleanMessage(e, "Insert failed. Check the JSON is a valid object and try again."));
     }
   }
 
@@ -276,10 +289,10 @@ export default function PhoneProjectsView() {
     setPromoting(targetID);
     try {
       const r = await agentClient.promotePhoneProject(selected.slug, targetID, { dryRun, run: true });
-      if (r.error) alert(`${label}: ${r.error}`);
-      else alert(`Plan ${r.state?.id} saved. Complexity: ${r.state?.complexity}. Check the Switch tab for details.`);
+      if (r.error) showNotice("error", `${label}: ${cleanMessage(r.error, "promotion failed")}`);
+      else showNotice("ok", `Plan ${r.state?.id} saved (complexity: ${r.state?.complexity}). See the Switch tab for details.`);
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
+      showNotice("error", cleanMessage(e, `Couldn't plan ${label} — the agent may be unreachable.`));
     } finally {
       setPromoting(null);
     }
@@ -295,7 +308,7 @@ export default function PhoneProjectsView() {
       const url = res.browseUrl?.startsWith("http") ? res.browseUrl : deriveTargetUrl(target, res);
       setLastDeploy({ kind, url, via });
     } catch (e) {
-      alert(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`);
+      showNotice("error", cleanMessage(e, `Deploy to ${via} failed. The target may be offline — try again.`));
     } finally {
       setDeploying(null);
     }
@@ -303,12 +316,12 @@ export default function PhoneProjectsView() {
 
   async function deployToDevMachine() {
     if (!selectedDevMachine) {
-      alert("No dev machine paired. Install Yaver on your Mac/Linux/Pi and sign in with the same account.");
+      showNotice("error", "No dev machine paired. Install Yaver on your Mac/Linux/Pi and sign in with the same account.");
       return;
     }
     const relayHttpUrl = agentClient.activeRelayHttpUrl;
     if (!relayHttpUrl) {
-      alert("Web dashboard is not relay-routed. Cannot deploy to a sibling device from here.");
+      showNotice("error", "This dashboard isn't relay-routed, so it can't reach your other devices. Reconnect and try again.");
       return;
     }
     await runPush(
@@ -320,12 +333,12 @@ export default function PhoneProjectsView() {
 
   async function deployToMobile() {
     if (!selectedMobileDevice) {
-      alert("No mobile device online. Open Yaver on the target phone and sign in with the same account.");
+      showNotice("error", "No mobile device online. Open Yaver on the target phone and sign in with the same account.");
       return;
     }
     const relayHttpUrl = agentClient.activeRelayHttpUrl;
     if (!relayHttpUrl) {
-      alert("Web dashboard is not relay-routed. Cannot export to a sibling mobile device from here.");
+      showNotice("error", "This dashboard isn't relay-routed, so it can't reach your other devices. Reconnect and try again.");
       return;
     }
     await runPush(
@@ -345,7 +358,7 @@ export default function PhoneProjectsView() {
 
   async function deployToSelfHosted() {
     if (!selected || !SELF_HOSTED_BASE) {
-      alert("Self-hosted runtime is not configured. Set NEXT_PUBLIC_YAVER_SELF_HOSTED_BASE_URL for the web dashboard.");
+      showNotice("error", "This dashboard build has no self-hosted runtime configured — use your paired dev machine instead.");
       return;
     }
     await runPush(
@@ -358,12 +371,12 @@ export default function PhoneProjectsView() {
   async function deployToBoth() {
     if (!selected) return;
     if (!selectedDevMachine) {
-      alert("No dev machine paired. Install Yaver on your Mac/Linux/Pi and sign in with the same account.");
+      showNotice("error", "No dev machine paired. Install Yaver on your Mac/Linux/Pi and sign in with the same account.");
       return;
     }
     const relayHttpUrl = agentClient.activeRelayHttpUrl;
     if (!relayHttpUrl) {
-      alert("Web dashboard is not relay-routed. Cannot deploy to a sibling device from here.");
+      showNotice("error", "This dashboard isn't relay-routed, so it can't reach your other devices. Reconnect and try again.");
       return;
     }
     setDeploying("both");
@@ -384,7 +397,7 @@ export default function PhoneProjectsView() {
         setLastDeploy({ kind: "dev-hw", via: "Dev Machine + Yaver Cloud", url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: selectedDevMachine.id, relayHttpUrl }, local.result) });
       }
     } catch (e) {
-      alert(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`);
+      showNotice("error", cleanMessage(e, "Deploy failed. One or more targets may be offline — try again."));
     } finally {
       setDeploying(null);
     }
@@ -392,7 +405,7 @@ export default function PhoneProjectsView() {
 
   async function deployToSelfHostedAndCloud() {
     if (!selected || !SELF_HOSTED_BASE) {
-      alert("Self-hosted runtime is not configured. Set NEXT_PUBLIC_YAVER_SELF_HOSTED_BASE_URL for the web dashboard.");
+      showNotice("error", "This dashboard build has no self-hosted runtime configured — use your paired dev machine instead.");
       return;
     }
     setDeploying("both");
@@ -421,7 +434,7 @@ export default function PhoneProjectsView() {
         });
       }
     } catch (e) {
-      alert(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`);
+      showNotice("error", cleanMessage(e, "Deploy failed. One or more targets may be offline — try again."));
     } finally {
       setDeploying(null);
     }
@@ -442,6 +455,18 @@ export default function PhoneProjectsView() {
       {err ? (
         <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
           {err}
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div
+          className={`rounded border p-3 text-sm ${
+            notice.type === "ok"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-red-500/30 bg-red-500/10 text-red-300"
+          }`}
+        >
+          {notice.text}
         </div>
       ) : null}
 

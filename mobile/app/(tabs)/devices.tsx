@@ -1131,7 +1131,19 @@ export default function DevicesScreen() {
       setGuestCode("");
       refreshDevices();
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Invalid code");
+      // Inline classifier (mirrors more.tsx's guest-invite error shape, kept
+      // local so we don't reach into another agent's file). Never surface the
+      // raw e.message as the primary line.
+      const raw = e instanceof Error ? e.message : String(e);
+      const lower = raw.toLowerCase();
+      const friendly = /expired|expire/.test(lower)
+        ? "Invite codes expire after 2 days — ask the host to resend."
+        : /network|fetch|timeout|econn|offline|unreach|connection/.test(lower)
+          ? "Couldn't reach the server — check your connection."
+          : /not found|invalid|no such|bad code|unknown/.test(lower)
+            ? "Double-check the 6-char code."
+            : "Couldn't join with that code. Double-check it and try again.";
+      Alert.alert("Couldn't join", friendly);
     }
     setGuestLoading(false);
   };

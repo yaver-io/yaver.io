@@ -8,6 +8,41 @@ import { CONVEX_URL } from "@/lib/constants";
 import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
 
+// Server error bodies for these endpoints are sometimes a short plain-text
+// message ("invalid challenge") and sometimes a full HTML 500 page or a JSON
+// blob. Only surface the raw text when it's short and clearly a human-readable
+// sentence; otherwise fall back to a friendly default so we never dump HTML or
+// stack traces at the user.
+function safeServerMessage(raw: string, fallback: string): string {
+  const text = (raw || "").trim();
+  if (!text) return fallback;
+  if (text.length > 160) return fallback;
+  if (/[<>{}]|<!doctype|<html/i.test(text)) return fallback;
+  if (/\n/.test(text)) return fallback;
+  return text;
+}
+
+// Map known OAuth/sign-in error codes (arriving as ?error=…) to friendly
+// copy. Unknown values fall back to a generic message rather than echoing a
+// raw code verbatim.
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  access_denied: "Sign-in was cancelled.",
+  oauth_failed: "Sign-in failed. Please try again.",
+  oauth_error: "Sign-in failed. Please try again.",
+  invalid_state: "Your sign-in session expired. Please try again.",
+  state_mismatch: "Your sign-in session expired. Please try again.",
+  email_in_use: "That email is already linked to another account.",
+  email_exists: "An account with that email already exists. Sign in with your existing method.",
+  no_email: "We couldn't read an email from that provider. Try a different sign-in method.",
+  server_error: "Something went wrong on our end. Please try again.",
+  link_failed: "We couldn't link that account. Please try again.",
+};
+
+function friendlyOAuthError(code: string | null): string | null {
+  if (!code) return null;
+  return OAUTH_ERROR_MESSAGES[code.toLowerCase()] || "Sign-in failed. Please try again.";
+}
+
 function AuthContent() {
   const params = useSearchParams();
   const error = params.get("error");
@@ -154,7 +189,7 @@ function AuthContent() {
       });
       if (!startRes.ok) {
         const text = await startRes.text();
-        setFormError(text || "Could not start passkey sign-in.");
+        setFormError(safeServerMessage(text, "Could not start passkey sign-in. Please try again."));
         setPasskeyLoading(false);
         return;
       }
@@ -196,7 +231,7 @@ function AuthContent() {
       });
       if (!finishRes.ok) {
         const text = await finishRes.text();
-        setFormError(text || "Passkey verification failed. Use email or OAuth instead.");
+        setFormError(safeServerMessage(text, "Passkey verification failed. Use email or OAuth instead."));
         setPasskeyLoading(false);
         return;
       }
@@ -234,7 +269,7 @@ function AuthContent() {
       });
       if (!startRes.ok) {
         const text = await startRes.text();
-        setFormError(text || "Could not start passkey sign-up.");
+        setFormError(safeServerMessage(text, "Could not start passkey sign-up. Please try again."));
         setPasskeyLoading(false);
         return;
       }
@@ -299,7 +334,7 @@ function AuthContent() {
       });
       if (!finishRes.ok) {
         const text = await finishRes.text();
-        setFormError(text || "Passkey sign-up failed.");
+        setFormError(safeServerMessage(text, "Passkey sign-up failed. Please try again."));
         setPasskeyLoading(false);
         return;
       }
@@ -433,7 +468,7 @@ function AuthContent() {
     }
   };
 
-  const displayError = formError || error;
+  const displayError = formError || friendlyOAuthError(error);
   const containerClass = isSdkPopup
     ? "w-full max-w-[380px] rounded-3xl border border-surface-800 bg-surface-950/95 px-6 py-6 shadow-2xl shadow-black/40"
     : "w-full max-w-sm";

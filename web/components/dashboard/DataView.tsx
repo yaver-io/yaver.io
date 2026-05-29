@@ -115,7 +115,10 @@ function TablesPanel({ directory, status }: { directory: string; status: { kind:
         {loading && <div className="text-sm text-surface-500">Loading…</div>}
         {error && <div className="text-xs text-red-400 p-2 rounded bg-red-900/20 border border-red-500/30">{error}</div>}
         {!loading && !error && tables.length === 0 && (
-          <div className="text-xs text-surface-500">No tables found. Backend may be stopped or empty.</div>
+          <div className="text-xs text-surface-500">
+            No tables found. If you expected data, make sure the backend is running
+            (check the Convex/Infra tab or start it from your dev machine), then Refresh.
+          </div>
         )}
         {tables.map((t) => (
           <button

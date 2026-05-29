@@ -758,10 +758,13 @@ export default function AppsScreen() {
           if (state) {
             setVibingState(state);
           } else {
-            Alert.alert("No data", "Vibing returned empty state");
+            Alert.alert("Nothing To Show Yet", "No suggestions available for this project yet.");
           }
         } catch (e) {
-          Alert.alert("Failed", String(e));
+          Alert.alert(
+            "Couldn't Load Suggestions",
+            `Yaver couldn't load suggestions for this project. Check your connection and try again.\n\n${e instanceof Error ? e.message : String(e)}`,
+          );
         }
       }, 400);
       return;
@@ -993,7 +996,10 @@ export default function AppsScreen() {
       }, 3000);
     } catch (e) {
       setBuildStatus("failed");
-      Alert.alert("Build Error", String(e));
+      Alert.alert(
+        "Couldn't Start Build",
+        `Yaver couldn't start the device build. Check your connection and try again.\n\n${e instanceof Error ? e.message : String(e)}`,
+      );
       setTimeout(() => setBuildStatus(null), 3000);
     }
   }, [devStatus?.workDir]);
@@ -1283,6 +1289,17 @@ export default function AppsScreen() {
       );
       return;
     }
+    // Loading a guest app inside the Yaver container needs the native
+    // YaverBundleLoader module, which only ships on iOS today. Stop here on
+    // Android with a clear explanation instead of building a bundle the phone
+    // can't load (which would surface as a confusing "native module" error).
+    if (Platform.OS === "android") {
+      Alert.alert(
+        "iOS-Only For Now",
+        "Loading apps inside Yaver is iOS-only today. Use an iPhone or iPad to open this app in Yaver — or run it directly on the dev machine. Android support is in progress.",
+      );
+      return;
+    }
     const baseUrl = (quicClient as any).baseUrl;
     if (!baseUrl) {
       Alert.alert(
@@ -1355,7 +1372,7 @@ export default function AppsScreen() {
 
       setLoadingStatus("Building Hermes bundle...");
       setBuildProgress(0.15);
-      const platform = Platform.OS === "android" ? "android" : "ios";
+      const platform = (Platform.OS as string) === "android" ? "android" : "ios";
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
@@ -1412,7 +1429,9 @@ export default function AppsScreen() {
       } else if (lower.includes("hbc") || lower.includes("bytecode") || lower.includes("hermes")) {
         hint = "\n\nHermes bytecode version mismatch between the guest app and the selected Yaver host family. Align the guest runtime to a supported family and retry.";
       } else if (lower.includes("yaverbundleloader") || lower.includes("native module")) {
-        hint = "\n\nYaver's native bundle loader is missing — reinstall Yaver from the App / Play Store.";
+        hint = (Platform.OS as string) === "android"
+          ? "\n\nLoading apps inside Yaver is iOS-only today — Android doesn't ship the native bundle loader yet. Use an iPhone or iPad, or run the app directly on the dev machine."
+          : "\n\nYaver's native bundle loader is missing — reinstall Yaver from the App Store.";
       } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("timeout")) {
         hint = `\n\nYaver ${describeConnectionStatus(connectionStatus)}.`;
       }

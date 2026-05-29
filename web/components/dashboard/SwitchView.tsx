@@ -50,6 +50,12 @@ export default function SwitchView() {
   const [history, setHistory] = useState<SwitchState[]>([]);
   const [current, setCurrent] = useState<SwitchState | null>(null);
   const [running, setRunning] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  function cleanErr(e: unknown, fallback: string): string {
+    const raw = typeof e === "string" ? e : e instanceof Error ? e.message : "";
+    return raw.trim() && raw.trim().length <= 180 ? raw.trim() : fallback;
+  }
 
   useEffect(() => { load(); }, [directory]);
 
@@ -79,10 +85,15 @@ export default function SwitchView() {
   }
 
   async function doPlan(target: string) {
-    const s = await agentClient.switchPlan(target, { dryRun: false, directory: directory || undefined });
-    if (s.error) { alert(s.error); return; }
-    setCurrent(s);
-    load();
+    setActionMsg(null);
+    try {
+      const s = await agentClient.switchPlan(target, { dryRun: false, directory: directory || undefined });
+      if (s.error) { setActionMsg(cleanErr(s.error, "Couldn't build a switch plan for that target.")); return; }
+      setCurrent(s);
+      load();
+    } catch (e) {
+      setActionMsg(cleanErr(e, "Couldn't build a switch plan — the agent may be unreachable."));
+    }
   }
 
   async function executeMigration() {
@@ -94,11 +105,14 @@ export default function SwitchView() {
 
   async function run(id: string) {
     setRunning(true);
+    setActionMsg(null);
     try {
       const s = await agentClient.switchRun(id, directory || undefined);
-      if (s.error) alert(s.error);
+      if (s.error) setActionMsg(cleanErr(s.error, "The switch run reported an error. Check the step details below."));
       setCurrent(s.state || s);
       load();
+    } catch (e) {
+      setActionMsg(cleanErr(e, "Couldn't run the switch — the agent may be unreachable."));
     } finally {
       setRunning(false);
     }
@@ -106,8 +120,13 @@ export default function SwitchView() {
 
   async function rollback(id: string) {
     if (!confirm("Roll back this switch? Git branch + env + data will be restored.")) return;
-    const s = await agentClient.switchRollback(id, directory || undefined);
-    if (s.error) alert(s.error);
+    setActionMsg(null);
+    try {
+      const s = await agentClient.switchRollback(id, directory || undefined);
+      if (s.error) setActionMsg(cleanErr(s.error, "Rollback reported an error. Please check the history below."));
+    } catch (e) {
+      setActionMsg(cleanErr(e, "Couldn't roll back — the agent may be unreachable."));
+    }
     load();
   }
 
@@ -127,6 +146,10 @@ export default function SwitchView() {
         />
         <button onClick={load} className="px-3 py-2 text-sm rounded-lg bg-surface-800 text-surface-200 hover:bg-surface-700">Refresh</button>
       </div>
+
+      {actionMsg && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{actionMsg}</div>
+      )}
 
       {current && <CurrentPlan current={current} running={running} onRun={run} onClose={() => setCurrent(null)} />}
 

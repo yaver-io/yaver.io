@@ -3195,7 +3195,11 @@ export default function TasksScreen() {
         setReconnectError(`Could not reach ${device.name}. Make sure yaver is running.`);
       }
     } catch (e: any) {
-      setReconnectError(e?.message || `Could not reach ${device.name}`);
+      // Friendly sentence first; raw reason only as trailing detail.
+      const detail = e instanceof Error ? e.message : "";
+      setReconnectError(
+        `Could not reach ${device.name}. Make sure yaver is running.${detail ? ` (${detail})` : ""}`,
+      );
     } finally {
       setRecoveringDeviceId((current) => (current === device.id ? null : current));
       setReconnectingDeviceId((current) => (current === device.id ? null : current));
@@ -3638,6 +3642,21 @@ export default function TasksScreen() {
                   ? "Tap the device below to connect."
                   : `Pick one of your ${devices.length} devices.`}
               </Text>
+              {/* Surface WHY the last attempt didn't land. reconnectError is the
+                  explicit "tap to reconnect" failure (set in handleReconnect);
+                  lastError is the raw connect-failure reason DeviceContext
+                  records (e.g. "Could not connect in 20s"). Friendly framing
+                  with the raw reason as secondary detail — previously both were
+                  set but never rendered, so a failed tap just stopped spinning
+                  with no explanation. */}
+              {(reconnectError || lastError) ? (
+                <View style={[s.reconnectErrorBox, { borderColor: "#ef444455", backgroundColor: "#ef44441a" }]}>
+                  <Text style={[s.reconnectError, { color: "#fca5a5", marginTop: 0 }]}>
+                    Couldn't connect.
+                    {reconnectError ? ` ${reconnectError}` : lastError ? ` ${lastError}` : ""}
+                  </Text>
+                </View>
+              ) : null}
             </View>
             <FlatList
               data={devices}
@@ -3900,6 +3919,18 @@ export default function TasksScreen() {
                     ? "Tap the device below to connect."
                     : `Pick one of your ${devices.length} devices.`}
                 </Text>
+                {/* When a tap actually failed, say so (friendly framing, raw
+                    reason as trailing detail). This is the "connect attempt
+                    failed" case (b) above: reconnectError / lastError were set
+                    but never rendered, so the row just stopped spinning. */}
+                {(reconnectError || lastError) ? (
+                  <View style={[s.reconnectErrorBox, { borderColor: "#ef444455", backgroundColor: "#ef44441a", marginTop: 0, marginBottom: 16 }]}>
+                    <Text style={[s.reconnectError, { color: "#fca5a5", marginTop: 0 }]}>
+                      Couldn't connect.
+                      {reconnectError ? ` ${reconnectError}` : lastError ? ` ${lastError}` : ""}
+                    </Text>
+                  </View>
+                ) : null}
                 {devices.map((d) => {
                   const unreachable = unreachableSet.has(d.id);
                   const probe = deviceProbeMap[d.id];
@@ -5675,6 +5706,7 @@ const s = StyleSheet.create({
   reconnectStatusDot: { width: 8, height: 8, borderRadius: 4 },
   reconnectStatusText: { fontSize: 11, fontWeight: "600", textTransform: "uppercase" },
   reconnectError: { fontSize: 13, textAlign: "center", marginTop: 12, lineHeight: 18 },
+  reconnectErrorBox: { marginTop: 12, borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 },
   reconnectBtn: { marginTop: 16, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 10 },
   reconnectBtnRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   reconnectBtnText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },

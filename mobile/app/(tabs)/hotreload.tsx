@@ -490,9 +490,23 @@ export default function HotReloadScreen() {
   }, []);
 
   const handleOpen = useCallback(async () => {
+    // Loading a guest app inside the Yaver container needs the native
+    // YaverBundleLoader module, which only ships on iOS today. Stop here on
+    // Android with a clear explanation rather than building a bundle the
+    // phone can't mount.
+    if (Platform.OS === "android") {
+      Alert.alert(
+        "iOS-Only For Now",
+        "Loading apps inside Yaver is iOS-only today. Use an iPhone or iPad to open this app in Yaver. Android support is in progress.",
+      );
+      return;
+    }
     const baseUrl = (quicClient as any).baseUrl as string;
     if (!baseUrl) {
-      Alert.alert("Error", "Not connected to agent");
+      Alert.alert(
+        "Dev Machine Not Connected",
+        "Yaver isn't connected to your dev machine. Check your connection on the Devices tab and try again.",
+      );
       return;
     }
 
@@ -522,7 +536,7 @@ export default function HotReloadScreen() {
       };
 
       // Step 1: Build production Hermes bytecode bundle (embedded hermesc BC96)
-      const platform = Platform.OS === "android" ? "android" : "ios";
+      const platform = (Platform.OS as string) === "android" ? "android" : "ios";
       // Pin the request to the dev server's active project so the agent
       // (≥ 1.99.187) doesn't reject with PROJECT_REQUIRED. devStatus.workDir
       // is the path of whatever Metro is serving — same project the user

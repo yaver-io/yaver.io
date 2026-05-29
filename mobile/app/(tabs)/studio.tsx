@@ -98,7 +98,10 @@ export default function StudioScreen() {
         if (NativeModules.ScreenRecorder) {
           await NativeModules.ScreenRecorder.startRecording();
         } else {
-          Alert.alert("Not available", "Screen recording is not available on this device.");
+          Alert.alert(
+            "On-Device Recording Unavailable",
+            "This build can't record this phone's screen (the native recorder isn't available on this platform/build). You can still record the agent's screen — pick \"agent\" as the recording target.",
+          );
           return;
         }
       } catch (e: any) {
@@ -120,7 +123,10 @@ export default function StudioScreen() {
       if (wantMobile && NativeModules.ScreenRecorder) {
         try { await NativeModules.ScreenRecorder.stopRecording(); } catch {}
       }
-      Alert.alert("Start failed", "Install ffmpeg on the agent (yaver doctor).");
+      Alert.alert(
+        "Couldn't Start Recording",
+        "Yaver couldn't start the recording on the agent. This usually means ffmpeg isn't installed there (run `yaver doctor` on the dev machine) — but it can also be a connection issue, so check your connection and try again.",
+      );
     }
   }, [clipTitle, recordTarget]);
 

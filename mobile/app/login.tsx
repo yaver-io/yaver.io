@@ -272,8 +272,13 @@ export default function LoginScreen() {
       await login(token);
       router.replace("/");
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "Sign-in failed";
-      Alert.alert("Sign In Failed", message);
+      // Keep the raw reason for logs/debugging, but lead with friendly copy —
+      // never surface a bare e.message as the primary line.
+      if (__DEV__) console.warn("OAuth sign-in failed:", e);
+      Alert.alert(
+        "Sign In Failed",
+        "Couldn't sign in — check your connection and try again.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -315,8 +320,11 @@ export default function LoginScreen() {
       });
 
       if (!res.ok) {
+        // Don't surface the raw HTTP body to the user. Log it for debugging
+        // and throw a plain message the catch below turns into friendly copy.
         const body = await res.text().catch(() => "");
-        throw new Error(body || "Auth failed");
+        if (__DEV__ && body) console.warn("apple-native auth failed:", body);
+        throw new Error(`Apple sign-in failed (HTTP ${res.status})`);
       }
 
       const { token } = await res.json();
@@ -326,8 +334,12 @@ export default function LoginScreen() {
       if ((e as { code?: string }).code === "ERR_REQUEST_CANCELED") {
         // User cancelled — do nothing
       } else {
-        const msg = e instanceof Error ? e.message : "Apple Sign In failed";
-        Alert.alert("Sign In Failed", msg);
+        // Friendly copy first; raw reason stays in the dev log only.
+        if (__DEV__) console.warn("Apple sign-in failed:", e);
+        Alert.alert(
+          "Sign In Failed",
+          "Couldn't sign in with Apple — check your connection and try again.",
+        );
       }
     } finally {
       setIsLoading(false);

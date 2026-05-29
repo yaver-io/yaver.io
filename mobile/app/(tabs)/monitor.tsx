@@ -27,6 +27,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -47,6 +48,7 @@ type Section = "errors" | "releases" | "machine" | "uptime" | "events" | "flags"
 
 export default function MonitorScreen() {
   const c = useColors();
+  const router = useRouter();
   const tabletContent = useTabletContentStyle("wide");
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
@@ -93,6 +95,12 @@ export default function MonitorScreen() {
             Connect to an agent first. The Monitor tab talks to your local
             agent over P2P — no central server, no SaaS account.
           </Text>
+          <Pressable
+            onPress={() => router.navigate("/(tabs)/devices" as any)}
+            style={({ pressed }) => [styles.emptyCta, { backgroundColor: c.accent + "1A" }, pressed && { opacity: 0.6 }]}
+          >
+            <Text style={[styles.emptyCtaText, { color: c.accent }]}>Go to Devices</Text>
+          </Pressable>
         </View>
       ) : section === "errors" ? (
         <ErrorsPane />
@@ -1162,6 +1170,8 @@ const styles = StyleSheet.create({
   empty: { padding: 24 },
   emptyTitle: { fontSize: 16, fontWeight: "700", marginBottom: 8 },
   emptyBody: { fontSize: 13, lineHeight: 20 },
+  emptyCta: { marginTop: 16, alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
+  emptyCtaText: { fontSize: 14, fontWeight: "600" },
   statsRow: {
     flexDirection: "row",
     paddingVertical: 10,

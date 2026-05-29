@@ -30,6 +30,7 @@ export default function AccountsView() {
   const [fields, setFields] = useState<Record<string, string>>({});
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [connectedMachine, setConnectedMachine] = useState<string>("");
   const [machineDeleteConfirm, setMachineDeleteConfirm] = useState("");
   const [removingMachine, setRemovingMachine] = useState(false);
@@ -66,16 +67,27 @@ export default function AccountsView() {
     setActive(p);
     setFields(Object.fromEntries(p.fields.map((f) => [f, ""])));
     setLabel("");
+    setConnectError(null);
   }
 
   async function save() {
     if (!active) return;
     setSaving(true);
-    const r = await agentClient.accountConnect(active.id, label, fields);
-    setSaving(false);
-    if (r.error) { alert(r.error); return; }
-    setActive(null);
-    refresh();
+    setConnectError(null);
+    try {
+      const r = await agentClient.accountConnect(active.id, label, fields);
+      if (r.error) {
+        const e = String(r.error);
+        setConnectError(e.trim() && e.length <= 160 ? e : "Couldn't connect this account. Check the values and try again.");
+        return;
+      }
+      setActive(null);
+      refresh();
+    } catch {
+      setConnectError("Couldn't connect this account — the agent may be unreachable.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function disconnect(id: string) {
@@ -270,6 +282,9 @@ export default function AccountsView() {
                 className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200 outline-none focus:border-indigo-500"
               />
             ))}
+            {connectError && (
+              <div className="text-sm text-red-400">{connectError}</div>
+            )}
             <div className="flex gap-2 pt-2">
               <button onClick={save} disabled={saving} className="px-4 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50">
                 {saving ? "Saving…" : "Save"}

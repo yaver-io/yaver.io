@@ -563,7 +563,7 @@ export default function SettingsScreen() {
   const handleAddRelay = async () => {
     const url = newRelayUrl.trim().replace(/\/+$/, "");
     if (!url) {
-      Alert.alert("Error", "URL is required.");
+      Alert.alert("Relay URL Required", "Enter the relay server's URL before adding it.");
       return;
     }
 
@@ -576,7 +576,7 @@ export default function SettingsScreen() {
 
     // Check duplicate
     if (customRelays.some((r) => r.httpUrl === url)) {
-      Alert.alert("Error", "This relay server is already configured.");
+      Alert.alert("Already Added", "This relay server is already configured.");
       return;
     }
 
@@ -640,7 +640,7 @@ export default function SettingsScreen() {
   const handleAddTunnel = async () => {
     const url = newTunnelUrl.trim().replace(/\/+$/, "");
     if (!url) {
-      Alert.alert("Error", "URL is required.");
+      Alert.alert("Tunnel URL Required", "Enter the tunnel's URL before adding it.");
       return;
     }
     let h = 0;
@@ -649,7 +649,7 @@ export default function SettingsScreen() {
     }
     const id = h.toString(16).slice(0, 8);
     if (customTunnels.some((t) => t.url === url)) {
-      Alert.alert("Error", "This tunnel is already configured.");
+      Alert.alert("Already Added", "This tunnel is already configured.");
       return;
     }
     const tunnel: TunnelServer = {
@@ -832,7 +832,7 @@ export default function SettingsScreen() {
               disconnect();
               Alert.alert("Done", "Agent has been shut down.");
             } else {
-              Alert.alert("Error", "Failed to shutdown agent.");
+              Alert.alert("Couldn't Shut Down Agent", "Yaver couldn't reach the agent to shut it down. Check your connection and try again.");
             }
           },
         },
@@ -888,7 +888,7 @@ export default function SettingsScreen() {
       }
       Alert.alert("Saved", "AI provider settings saved.");
     } catch {
-      Alert.alert("Error", "Failed to save AI provider settings.");
+      Alert.alert("Couldn't Save Settings", "Yaver couldn't save your AI provider settings on this device. Try again.");
     } finally {
       setIsSavingAiProviders(false);
     }
@@ -951,7 +951,7 @@ export default function SettingsScreen() {
       }
       Alert.alert("Vault synced", changed > 0 ? `Synced ${changed} provider key${changed === 1 ? "" : "s"} to the connected machine vault.` : "No non-empty provider keys to sync.");
     } catch {
-      Alert.alert("Error", "Failed to sync AI provider keys to the connected machine vault.");
+      Alert.alert("Vault Sync Failed", "Yaver couldn't sync your provider keys to the connected machine's vault. Check your connection and try again.");
     } finally {
       setIsSyncingAiVault(false);
     }
@@ -1066,7 +1066,7 @@ export default function SettingsScreen() {
       Alert.alert("Runner auth synced", `Updated ${savedRunners.join(", ")} on the connected machine.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to sync runner auth.";
-      Alert.alert("Error", message);
+      Alert.alert("Runner Auth Sync Failed", `Yaver couldn't sync runner auth to the connected machine. Check your connection and try again.\n\n${message}`);
     } finally {
       setIsSyncingRunnerAuth(false);
     }
@@ -1131,7 +1131,7 @@ export default function SettingsScreen() {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to apply machine onboarding.";
-      Alert.alert("Error", message);
+      Alert.alert("Onboarding Didn't Apply", `Yaver couldn't apply machine onboarding. Check your connection and try again.\n\n${message}`);
     } finally {
       setIsApplyingMachineOnboarding(false);
     }
@@ -1185,7 +1185,7 @@ export default function SettingsScreen() {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to remove machine onboarding.";
-      Alert.alert("Error", message);
+      Alert.alert("Couldn't Remove Onboarding", `Yaver couldn't remove machine onboarding. Check your connection and try again.\n\n${message}`);
     } finally {
       setRemovingOnboardingProvider(null);
     }
@@ -1373,7 +1373,7 @@ export default function SettingsScreen() {
       await refreshUser();
       setIsEditingName(false);
     } catch {
-      Alert.alert("Error", "Failed to update name.");
+      Alert.alert("Couldn't Update Name", "Yaver couldn't save your name. Check your connection and try again.");
     } finally {
       setIsSavingName(false);
     }
@@ -1400,7 +1400,7 @@ export default function SettingsScreen() {
               await clearCache();
               Alert.alert("Done", "Task cache has been cleared.");
             } catch {
-              Alert.alert("Error", "Failed to clear cache.");
+              Alert.alert("Couldn't Clear Cache", "Yaver couldn't clear the local task cache. Try again.");
             } finally {
               setIsClearing(false);
             }
@@ -1425,7 +1425,7 @@ export default function SettingsScreen() {
               const result = await quicClient.cleanAgent(30);
               Alert.alert("Done", `Removed ${result.tasksRemoved} tasks, freed ${(result.bytesFreed / 1024 / 1024).toFixed(1)} MB.`);
             } catch {
-              Alert.alert("Error", "Failed to clean up agent. Make sure you're connected.");
+              Alert.alert("Cleanup Failed", "Yaver couldn't clean up your dev machine. Check your connection and try again.");
             } finally {
               setIsCleaning(false);
             }
@@ -1444,7 +1444,7 @@ export default function SettingsScreen() {
       await logout();
       router.replace("/login");
     } else {
-      Alert.alert("Error", "Failed to delete account. Please try again.");
+      Alert.alert("Couldn't Delete Account", "Yaver couldn't delete your account. Check your connection and try again.");
       setDeletingAccount(false);
     }
   };
@@ -1598,7 +1598,7 @@ export default function SettingsScreen() {
         },
       );
     } catch (error) {
-      Alert.alert("Error", error instanceof Error ? error.message : "Failed to remove machine.");
+      Alert.alert("Couldn't Remove Machine", `Yaver couldn't remove the machine. Check your connection and try again.\n\n${error instanceof Error ? error.message : "Failed to remove machine."}`);
     } finally {
       setRemovingMachine(false);
     }
@@ -1933,7 +1933,10 @@ export default function SettingsScreen() {
                       await setSecondaryDevice(d.id);
                     }
                   } catch (e: any) {
-                    Alert.alert("Failed", e?.message || "Could not save");
+                    Alert.alert(
+                      "Couldn't Update Routing",
+                      `Yaver couldn't save the device choice. Check your connection and try again.${e?.message ? `\n\n${e.message}` : ""}`,
+                    );
                   }
                 },
               });
@@ -1982,7 +1985,7 @@ export default function SettingsScreen() {
                       <Pressable
                         onPress={async () => {
                           try { await setSecondaryDevice(null); }
-                          catch (e: any) { Alert.alert("Failed", e?.message || "Could not save"); }
+                          catch (e: any) { Alert.alert("Couldn't Update Routing", `Yaver couldn't clear the secondary device. Check your connection and try again.${e?.message ? `\n\n${e.message}` : ""}`); }
                         }}
                         style={({ pressed }) => [
                           { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: c.bgCardElevated },
@@ -5104,14 +5107,17 @@ export default function SettingsScreen() {
                               text: "Change",
                               onPress: async (newPw?: string) => {
                                 if (!newPw || newPw.length < 8) {
-                                  Alert.alert("Error", "Password must be at least 8 characters.");
+                                  Alert.alert("Password Too Short", "Your new password must be at least 8 characters.");
                                   return;
                                 }
                                 try {
                                   await changePasswordApi(token!, currentPw, newPw);
                                   Alert.alert("Success", "Password changed successfully.");
                                 } catch (e: any) {
-                                  Alert.alert("Error", e.message || "Failed to change password.");
+                                  Alert.alert(
+                                    "Couldn't Change Password",
+                                    `Yaver couldn't change your password. Make sure your current password is correct, then check your connection and try again.${e?.message ? `\n\n${e.message}` : ""}`,
+                                  );
                                 }
                               },
                             },
@@ -5192,7 +5198,7 @@ export default function SettingsScreen() {
                         // Sign out
                         handleSignOut();
                       } catch {
-                        Alert.alert("Error", "Failed to reset. Please try again.");
+                        Alert.alert("Reset Didn't Finish", "Yaver couldn't fully reset. Check your connection and try again.");
                       }
                     },
                   },

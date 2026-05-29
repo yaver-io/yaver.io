@@ -9,11 +9,17 @@ export default function QualityView() {
   const [checks, setChecks] = useState<QualityCheck[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => { loadChecks(); }, []);
 
   async function loadChecks() {
-    try { setChecks(await agentClient.listQualityGates()); } catch {}
+    try {
+      setChecks(await agentClient.listQualityGates());
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
     setLoading(false);
   }
 
@@ -44,6 +50,11 @@ export default function QualityView() {
 
       {loading ? (
         <div className="text-center py-8 text-surface-500 text-sm">Loading...</div>
+      ) : loadError ? (
+        <div className="text-center py-8 text-sm space-y-2">
+          <div className="text-surface-400">Couldn't load quality checks — the agent may be unreachable.</div>
+          <button onClick={loadChecks} className="text-xs px-3 py-1 rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Retry</button>
+        </div>
       ) : checks.length === 0 ? (
         <div className="text-center py-8 text-surface-500 text-sm">No quality checks detected for the current project.</div>
       ) : (

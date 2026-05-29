@@ -242,7 +242,7 @@ export default function GuestsScreen() {
               await revokeGuest(token, g.email ? { email: g.email } : { userId: g.userId });
               loadGuests();
             } catch (e: any) {
-              Alert.alert("Failed", e?.message || String(e));
+              Alert.alert("Couldn't Revoke Access", `Yaver couldn't revoke this guest's access. Check your connection and try again.\n\n${e?.message || String(e)}`);
             }
           },
         },
@@ -355,7 +355,7 @@ export default function GuestsScreen() {
       Alert.alert("Joined", "Host machine should now appear in your device list.");
       refreshDevices();
     } catch (e: any) {
-      Alert.alert("Failed", e?.message || String(e));
+      Alert.alert("Couldn't Join", `Yaver couldn't accept the invite. Double-check the code, then check your connection and try again.\n\n${e?.message || String(e)}`);
     }
     setJoining(false);
   }
@@ -427,7 +427,7 @@ export default function GuestsScreen() {
       setApproveCtx(null);
       refreshDevices();
     } catch (e: any) {
-      Alert.alert("Failed", e?.message || String(e));
+      Alert.alert("Couldn't Join", `Yaver couldn't complete joining this machine. Check your connection and try again.\n\n${e?.message || String(e)}`);
     }
   }
 

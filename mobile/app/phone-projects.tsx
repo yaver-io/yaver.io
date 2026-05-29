@@ -363,7 +363,12 @@ export default function PhoneProjectsScreen() {
       setProjects(rows);
       if (!templates.length) setTemplates(tpls);
     } catch (e: any) {
-      setErr(e?.message ?? "failed to load");
+      const raw = e instanceof Error ? e.message : String(e);
+      setErr(
+        /network|fetch|timeout|econn|offline|unreach/i.test(raw)
+          ? "Couldn't reach the server. Check your connection, then pull to retry."
+          : `Couldn't load your projects (${raw}).`,
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -398,7 +403,11 @@ export default function PhoneProjectsScreen() {
         setPrompt(plan.generatedPrompt);
         return;
       } catch (e: any) {
-        Alert.alert("Import analysis", e?.message ?? "Analysis failed. Falling back to local brief generation.");
+        const raw = e instanceof Error ? e.message : "";
+        Alert.alert(
+          "Import analysis",
+          `Analysis failed — falling back to local brief generation.${raw ? `\n\n${raw}` : ""}`,
+        );
       } finally {
         setAnalyzingImport(false);
       }
@@ -605,7 +614,11 @@ export default function PhoneProjectsScreen() {
         }
       }
     } catch (e: any) {
-      Alert.alert("Phone Backend", e?.message ?? "failed to create");
+      const raw = e instanceof Error ? e.message : "";
+      Alert.alert(
+        "Phone Backend",
+        `Couldn't create the project. Check your connection and try again.${raw ? `\n\n${raw}` : ""}`,
+      );
     } finally {
       setCreating(false);
     }
@@ -639,7 +652,11 @@ export default function PhoneProjectsScreen() {
             await deletePhoneProject(p.slug);
             await load();
           } catch (e: any) {
-            Alert.alert("Phone Backend", e?.message ?? "failed to delete");
+            const raw = e instanceof Error ? e.message : "";
+            Alert.alert(
+              "Phone Backend",
+              `Couldn't delete the project. Try again in a moment.${raw ? `\n\n${raw}` : ""}`,
+            );
           }
         },
       },
@@ -658,7 +675,11 @@ export default function PhoneProjectsScreen() {
         [{ text: "OK" }],
       );
     } catch (e: any) {
-      Alert.alert("Share", e?.message ?? "Could not create a share code.");
+      const raw = e instanceof Error ? e.message : "";
+      Alert.alert(
+        "Share",
+        `Couldn't create a share code. Check your connection and try again.${raw ? `\n\n${raw}` : ""}`,
+      );
     }
   }
 
@@ -692,7 +713,12 @@ export default function PhoneProjectsScreen() {
         );
         await load();
       } catch (e: any) {
-        Alert.alert("Join by code", e?.message ?? "Invalid or expired code.");
+        // Friendly fallback FIRST; raw reason only as trailing detail.
+        const raw = e instanceof Error ? e.message : "";
+        Alert.alert(
+          "Join by code",
+          `Couldn't join with that code — it may be invalid or expired. Ask the host to resend.${raw ? `\n\n${raw}` : ""}`,
+        );
       }
     };
     if (Platform.OS === "ios" && (Alert as any).prompt) {
@@ -1245,7 +1271,11 @@ export default function PhoneProjectsScreen() {
                           setLogoUrl(result.assets[0].uri);
                         }
                       } catch (err: any) {
-                        Alert.alert("Image picker", err?.message ?? "Could not open image picker.");
+                        const raw = err instanceof Error ? err.message : "";
+                        Alert.alert(
+                          "Image picker",
+                          `Couldn't open the image picker. Try again from the photo library.${raw ? `\n\n${raw}` : ""}`,
+                        );
                       }
                     }}
                     style={[
@@ -1322,7 +1352,11 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
                               setRefineQuestions(res.questions);
                             }
                           } catch (err: any) {
-                            Alert.alert("Refine failed", err?.message ?? "AI refinement call failed; you can still Create.");
+                            const raw = err instanceof Error ? err.message : "";
+                            Alert.alert(
+                              "Refine failed",
+                              `Couldn't reach the AI to refine your description — you can still Create.${raw ? `\n\n${raw}` : ""}`,
+                            );
                           } finally {
                             setRefineLoading(false);
                           }

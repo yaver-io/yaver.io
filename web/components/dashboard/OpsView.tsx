@@ -40,31 +40,61 @@ function Deploy({ directory }: { directory: string }) {
   const [running, setRunning] = useState(false);
   const [cfg, setCfg] = useState<any>({ branch: "main", autoDeploy: false });
   const [preview, setPreview] = useState<any>(null);
+  const [msg, setMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
 
-  useEffect(() => { refresh(); (async () => setCfg(await agentClient.deployConfigGet(directory || undefined)))(); }, [directory]);
+  useEffect(() => {
+    refresh();
+    (async () => {
+      try { setCfg(await agentClient.deployConfigGet(directory || undefined)); }
+      catch { /* keep defaults */ }
+    })();
+  }, [directory]);
   async function refresh() {
-    const r = await agentClient.deployList(directory || undefined);
-    setList(r.deploys || []);
+    try {
+      const r = await agentClient.deployList(directory || undefined);
+      setList(r.deploys || []);
+    } catch {
+      setMsg({ type: "error", text: "Couldn't load deploys — the agent may be unreachable." });
+    }
   }
   async function openPreview() {
-    const p = await agentClient.deployPreview(directory || undefined);
-    setPreview(p);
+    setMsg(null);
+    try {
+      const p = await agentClient.deployPreview(directory || undefined);
+      setPreview(p);
+    } catch {
+      setMsg({ type: "error", text: "Couldn't build the deploy preview — the agent may be unreachable." });
+    }
   }
   async function confirmRun() {
     setPreview(null);
     setRunning(true);
-    await agentClient.deployRun(directory || undefined);
+    setMsg(null);
+    try {
+      await agentClient.deployRun(directory || undefined);
+    } catch {
+      setMsg({ type: "error", text: "Deploy failed to start. Check the agent logs and try again." });
+    }
     setRunning(false);
     refresh();
   }
   async function rollback(id: string) {
     if (!confirm("Rollback to this deploy's commit?")) return;
-    await agentClient.deployRollback(id, directory || undefined);
+    try {
+      await agentClient.deployRollback(id, directory || undefined);
+    } catch {
+      setMsg({ type: "error", text: "Rollback failed. Please try again." });
+    }
     refresh();
   }
   async function saveCfg() {
-    await agentClient.deployConfigSet(cfg, directory || undefined);
-    alert("Saved");
+    setMsg(null);
+    try {
+      await agentClient.deployConfigSet(cfg, directory || undefined);
+      setMsg({ type: "ok", text: "Config saved." });
+    } catch {
+      setMsg({ type: "error", text: "Couldn't save config — the agent may be unreachable." });
+    }
   }
 
   return (
@@ -84,6 +114,7 @@ function Deploy({ directory }: { directory: string }) {
         <button onClick={openPreview} disabled={running} className="px-4 py-2 text-sm rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 disabled:opacity-50">{running ? "Deploying…" : "🚀 Deploy now"}</button>
         <button onClick={refresh} className="px-3 py-2 text-sm rounded-lg bg-surface-800 text-surface-200 hover:bg-surface-700">Refresh</button>
       </div>
+      {msg && <div className={`text-sm ${msg.type === "ok" ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</div>}
       {preview && <PreviewModal preview={preview} onConfirm={confirmRun} onClose={() => setPreview(null)} />}
       <div className="space-y-1">
         {list.map((d) => (
@@ -164,27 +195,53 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 function Backups({ directory }: { directory: string }) {
   const [list, setList] = useState<any[]>([]);
+  const [msg, setMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   useEffect(() => { refresh(); }, [directory]);
   async function refresh() {
-    const r = await agentClient.backupList(directory || undefined);
-    setList(r.backups || []);
+    try {
+      const r = await agentClient.backupList(directory || undefined);
+      setList(r.backups || []);
+    } catch {
+      setMsg({ type: "error", text: "Couldn't load backups — the agent may be unreachable." });
+    }
   }
   async function create() {
-    await agentClient.backupCreate(directory || undefined);
+    setMsg(null);
+    try {
+      await agentClient.backupCreate(directory || undefined);
+      setMsg({ type: "ok", text: "Snapshot created." });
+    } catch {
+      setMsg({ type: "error", text: "Snapshot failed. Please try again." });
+    }
     refresh();
   }
   async function restore(id: string) {
     if (!confirm("Restore this backup? Current data will be overwritten.")) return;
-    await agentClient.backupRestore(id, directory || undefined);
+    setMsg(null);
+    try {
+      await agentClient.backupRestore(id, directory || undefined);
+      setMsg({ type: "ok", text: "Backup restored." });
+    } catch {
+      setMsg({ type: "error", text: "Restore failed. Please try again." });
+    }
   }
   async function del(id: string) {
     if (!confirm("Delete this backup?")) return;
-    await agentClient.backupDelete(id, directory || undefined);
+    try {
+      await agentClient.backupDelete(id, directory || undefined);
+    } catch {
+      setMsg({ type: "error", text: "Couldn't delete the backup. Please try again." });
+    }
     refresh();
   }
   async function toggleAuto() {
-    await agentClient.backupAuto(true, 24, directory || undefined);
-    alert("Daily auto-backups enabled");
+    setMsg(null);
+    try {
+      await agentClient.backupAuto(true, 24, directory || undefined);
+      setMsg({ type: "ok", text: "Daily auto-backups enabled." });
+    } catch {
+      setMsg({ type: "error", text: "Couldn't enable auto-backups — the agent may be unreachable." });
+    }
   }
 
   return (
@@ -193,6 +250,7 @@ function Backups({ directory }: { directory: string }) {
         <button onClick={create} className="px-3 py-2 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400">Snapshot now</button>
         <button onClick={toggleAuto} className="px-3 py-2 text-sm rounded bg-surface-800 text-surface-200 hover:bg-surface-700">Enable daily auto-backup</button>
       </div>
+      {msg && <div className={`text-sm ${msg.type === "ok" ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</div>}
       <div className="space-y-1">
         {list.map((b) => (
           <div key={b.id} className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 text-sm flex items-center gap-3">
@@ -212,10 +270,30 @@ function Backups({ directory }: { directory: string }) {
 function Domains() {
   const [list, setList] = useState<any[]>([]);
   const [domain, setDomain] = useState(""); const [upstream, setUpstream] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { refresh(); }, []);
-  async function refresh() { const r = await agentClient.domainList(); setList(r.domains || []); }
-  async function add() { const r = await agentClient.domainAdd(domain, upstream); if (r.error) alert(r.error); else { setDomain(""); setUpstream(""); refresh(); } }
-  async function remove(d: string) { if (!confirm(`Remove ${d}?`)) return; await agentClient.domainRemove(d); refresh(); }
+  async function refresh() {
+    try { const r = await agentClient.domainList(); setList(r.domains || []); }
+    catch { setMsg("Couldn't load domains — the agent may be unreachable."); }
+  }
+  async function add() {
+    setMsg(null);
+    try {
+      const r = await agentClient.domainAdd(domain, upstream);
+      if (r.error) {
+        const e = String(r.error);
+        setMsg(e.trim() && e.length <= 160 ? e : "Couldn't add the domain. Check the values and try again.");
+      } else { setDomain(""); setUpstream(""); refresh(); }
+    } catch {
+      setMsg("Couldn't add the domain — the agent may be unreachable.");
+    }
+  }
+  async function remove(d: string) {
+    if (!confirm(`Remove ${d}?`)) return;
+    try { await agentClient.domainRemove(d); }
+    catch { setMsg("Couldn't remove the domain. Please try again."); }
+    refresh();
+  }
   return (
     <div className="space-y-3">
       <div className="flex gap-2">
@@ -223,6 +301,7 @@ function Domains() {
         <input value={upstream} onChange={(e) => setUpstream(e.target.value)} placeholder="localhost:3000" className="flex-1 rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm font-mono" />
         <button onClick={add} className="px-3 py-1 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400">Add</button>
       </div>
+      {msg && <div className="text-sm text-red-400">{msg}</div>}
       <div className="text-xs text-surface-500">Domains are served by Caddy with automatic Let's Encrypt certs. Point your DNS at this machine's IP.</div>
       <div className="space-y-1">
         {list.map((r) => (
@@ -241,8 +320,21 @@ function Domains() {
 
 function LogSearch() {
   const [q, setQ] = useState(""); const [hits, setHits] = useState<any[]>([]);
-  async function search() { const r = await agentClient.logSearch(q || "*"); setHits(r.hits || []); }
-  async function startIndex() { await agentClient.logIndexStart(); alert("Log indexer started — give it a minute to capture logs."); }
+  const [msg, setMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+  async function search() {
+    setMsg(null);
+    try { const r = await agentClient.logSearch(q || "*"); setHits(r.hits || []); }
+    catch { setMsg({ type: "error", text: "Search failed — the log indexer may not be running yet." }); }
+  }
+  async function startIndex() {
+    setMsg(null);
+    try {
+      await agentClient.logIndexStart();
+      setMsg({ type: "ok", text: "Log indexer started — give it a minute to capture logs." });
+    } catch {
+      setMsg({ type: "error", text: "Couldn't start the log indexer — the agent may be unreachable." });
+    }
+  }
   return (
     <div className="space-y-3">
       <div className="flex gap-2">
@@ -250,6 +342,7 @@ function LogSearch() {
         <button onClick={search} className="px-3 py-1 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400">Search</button>
         <button onClick={startIndex} className="px-3 py-1 text-sm rounded bg-surface-800 text-surface-200">Start indexer</button>
       </div>
+      {msg && <div className={`text-sm ${msg.type === "ok" ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</div>}
       <pre className="text-[10px] font-mono bg-surface-900/50 border border-surface-800 rounded-lg p-3 overflow-auto max-h-[500px]">
         {hits.map((h, i) => <div key={i}><span className="text-indigo-400">[{h.service}]</span> <span className="text-surface-500">{h.ts?.slice(11, 19)}</span> {h.line}</div>)}
       </pre>
@@ -259,16 +352,30 @@ function LogSearch() {
 
 function Errors() {
   const [groups, setGroups] = useState<any[]>([]);
-  useEffect(() => { (async () => setGroups((await agentClient.errorGroups()).groups || []))(); }, []);
-  async function resolve(fp: string, v: boolean) { await agentClient.errorResolve(fp, v); setGroups((await agentClient.errorGroups()).groups || []); }
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      try { setGroups((await agentClient.errorGroups()).groups || []); }
+      catch { setMsg("Couldn't load errors — the agent may be unreachable."); }
+    })();
+  }, []);
+  async function resolve(fp: string, v: boolean) {
+    try {
+      await agentClient.errorResolve(fp, v);
+      setGroups((await agentClient.errorGroups()).groups || []);
+    } catch {
+      setMsg("Couldn't update that error. Please try again.");
+    }
+  }
   return (
     <div className="space-y-3">
       <div className="text-xs text-surface-500">
         Ingest from your frontend app with:
         <pre className="mt-1 text-[10px] font-mono bg-surface-900 border border-surface-800 rounded p-2 overflow-auto">{`fetch('${window.location.origin}/errors/ingest', { method: 'POST', body: JSON.stringify({ message: err.message, stack: err.stack, url: location.href, userId: '...' }) })`}</pre>
       </div>
+      {msg && <div className="text-sm text-red-400">{msg}</div>}
       <div className="space-y-1">
-        {groups.length === 0 && <div className="text-xs text-surface-500">No errors yet 🎉</div>}
+        {groups.length === 0 && !msg && <div className="text-xs text-surface-500">No errors yet 🎉</div>}
         {groups.map((g) => (
           <div key={g.fingerprint} className={`bg-surface-900/50 border rounded-lg p-3 text-sm ${g.resolved ? "border-surface-800 opacity-50" : "border-surface-800"}`}>
             <div className="flex items-center gap-2">
@@ -288,12 +395,18 @@ function Errors() {
 function Clone() {
   const [source, setSource] = useState(""); const [target, setTarget] = useState("");
   const [result, setResult] = useState<any>(null);
-  async function run() { setResult(await agentClient.envClone(source, target)); }
+  const [msg, setMsg] = useState<string | null>(null);
+  async function run() {
+    setMsg(null);
+    try { setResult(await agentClient.envClone(source, target)); }
+    catch { setMsg("Clone failed — the agent may be unreachable. Check the paths and try again."); }
+  }
   return (
     <div className="space-y-3">
       <input value={source} onChange={(e) => setSource(e.target.value)} placeholder="source project dir (prod)" className="w-full rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm font-mono" />
       <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="target project dir (staging)" className="w-full rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm font-mono" />
       <button onClick={run} className="px-3 py-2 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400">Clone prod → staging</button>
+      {msg && <div className="text-sm text-red-400">{msg}</div>}
       {result && <pre className="text-[10px] font-mono bg-surface-900/50 border border-surface-800 rounded p-2 overflow-auto">{JSON.stringify(result, null, 2)}</pre>}
     </div>
   );
@@ -302,7 +415,12 @@ function Clone() {
 function Cron({ directory }: { directory: string }) {
   const [name, setName] = useState(""); const [schedule, setSchedule] = useState("0 * * * *"); const [target, setTarget] = useState("");
   const [result, setResult] = useState<any>(null);
-  async function add() { setResult(await agentClient.cronCreate(name, schedule, target, directory || undefined)); }
+  const [msg, setMsg] = useState<string | null>(null);
+  async function add() {
+    setMsg(null);
+    try { setResult(await agentClient.cronCreate(name, schedule, target, directory || undefined)); }
+    catch { setMsg("Couldn't create the cron job — the agent may be unreachable."); }
+  }
   return (
     <div className="space-y-3">
       <div className="text-xs text-surface-500">Writes to <code>pg_cron</code> on Postgres/Supabase. On Convex, returns a snippet to paste into <code>convex/crons.ts</code>.</div>
@@ -310,6 +428,7 @@ function Cron({ directory }: { directory: string }) {
       <input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="cron expression (0 * * * *)" className="w-full rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm font-mono" />
       <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder='SQL for pg_cron, or module.func for Convex' className="w-full rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm font-mono" />
       <button onClick={add} className="px-3 py-2 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400">Add cron</button>
+      {msg && <div className="text-sm text-red-400">{msg}</div>}
       {result && <pre className="text-[10px] font-mono bg-surface-900/50 border border-surface-800 rounded p-2 overflow-auto">{JSON.stringify(result, null, 2)}</pre>}
     </div>
   );
@@ -318,10 +437,23 @@ function Cron({ directory }: { directory: string }) {
 function Uptime() {
   const [list, setList] = useState<any[]>([]);
   const [url, setUrl] = useState(""); const [name, setName] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { refresh(); const i = setInterval(refresh, 5000); return () => clearInterval(i); }, []);
-  async function refresh() { setList((await agentClient.uptimeList()).monitors || []); }
-  async function add() { await agentClient.uptimeAdd({ url, name, intervalSeconds: 60, alertOnDown: true }); setUrl(""); setName(""); refresh(); }
-  async function remove(id: string) { if (!confirm("Remove?")) return; await agentClient.uptimeRemove(id); refresh(); }
+  async function refresh() {
+    try { setList((await agentClient.uptimeList()).monitors || []); }
+    catch { setMsg("Couldn't load monitors — the agent may be unreachable."); }
+  }
+  async function add() {
+    setMsg(null);
+    try { await agentClient.uptimeAdd({ url, name, intervalSeconds: 60, alertOnDown: true }); setUrl(""); setName(""); refresh(); }
+    catch { setMsg("Couldn't add the monitor. Check the URL and try again."); }
+  }
+  async function remove(id: string) {
+    if (!confirm("Remove?")) return;
+    try { await agentClient.uptimeRemove(id); }
+    catch { setMsg("Couldn't remove the monitor. Please try again."); }
+    refresh();
+  }
   return (
     <div className="space-y-3">
       <div className="flex gap-2">
@@ -329,6 +461,7 @@ function Uptime() {
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="label (optional)" className="rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm" />
         <button onClick={add} className="px-3 py-1 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400">Monitor</button>
       </div>
+      {msg && <div className="text-sm text-red-400">{msg}</div>}
       <div className="text-xs text-surface-500">Monitors ping every 60s. When a target flips up→down you get a phone push via the Yaver notification system.</div>
       <div className="space-y-1">
         {list.map((m) => (

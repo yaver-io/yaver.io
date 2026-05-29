@@ -32,6 +32,7 @@ export default function InfraView() {
   const [powerBusy, setPowerBusy] = useState<string | null>(null);
   const [sandboxBusy, setSandboxBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sandboxMsg, setSandboxMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
 
   async function refresh() {
     setError(null);
@@ -74,14 +75,18 @@ export default function InfraView() {
 
   async function sandboxQuickstart(mode: "guests" | "host") {
     setSandboxBusy(mode);
+    setSandboxMsg(null);
     try {
       const res = await agentClient.sandboxQuickstart(mode, true);
       if (!res.ok) {
-        alert(res.error || "Could not enable containerization");
+        const e = String(res.error || "");
+        setSandboxMsg({ type: "error", text: e.trim() && e.length <= 160 ? e : "Couldn't enable containerization. Check Docker is available and try again." });
         return;
       }
-      if (res.message) alert(res.message);
+      if (res.message) setSandboxMsg({ type: "ok", text: String(res.message).slice(0, 200) });
       await refresh();
+    } catch (e: any) {
+      setSandboxMsg({ type: "error", text: "Couldn't enable containerization — the agent may be unreachable." });
     } finally {
       setSandboxBusy(null);
     }
@@ -89,10 +94,13 @@ export default function InfraView() {
 
   async function buildSandbox() {
     setSandboxBusy("build");
+    setSandboxMsg(null);
     try {
       await agentClient.buildSandboxImage();
-      alert("Sandbox image build started.");
+      setSandboxMsg({ type: "ok", text: "Sandbox image build started." });
       await refresh();
+    } catch (e: any) {
+      setSandboxMsg({ type: "error", text: "Couldn't start the image build — the agent may be unreachable." });
     } finally {
       setSandboxBusy(null);
     }
@@ -189,6 +197,11 @@ export default function InfraView() {
               <button onClick={buildSandbox} disabled={sandboxBusy !== null} className="rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-300 disabled:opacity-50">Build image</button>
             )}
           </div>
+          {sandboxMsg && (
+            <div className={`mt-3 text-sm ${sandboxMsg.type === "ok" ? "text-emerald-300" : "text-red-300"}`}>
+              {sandboxMsg.text}
+            </div>
+          )}
         </Section>
 
         <Section title="Relay" subtitle="Configured and cached relay endpoints">

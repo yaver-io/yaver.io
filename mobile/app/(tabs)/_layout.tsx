@@ -1,6 +1,6 @@
 import { Tabs, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ExpoDevice from "expo-device";
 import { Ionicons } from "@expo/vector-icons";
@@ -164,6 +164,24 @@ export default function TabLayout() {
       if (!command) return;
 
       if (command === "reload_bundle" || command === "reload") {
+        // Loading a guest bundle into the container needs the native
+        // YaverBundleLoader module, which only ships on iOS today. On Android
+        // surface a brief message (and report it back) instead of silently
+        // swallowing the "native module not available" throw below.
+        if (Platform.OS === "android") {
+          Alert.alert(
+            "iOS-Only For Now",
+            "Loading apps inside Yaver is iOS-only today. This Android device can't mount the requested bundle. Open it on an iPhone or iPad instead.",
+          );
+          await quicClient.pushBlackBoxEvents(resolved.id, [{
+            type: "state",
+            level: "warn",
+            message: "preview_worker_bundle_load_unsupported_platform",
+            timestamp: Date.now(),
+            metadata: { platform },
+          }]);
+          return;
+        }
         const bundlePath = typeof data.bundleUrl === "string"
           ? data.bundleUrl
           : "/dev/native-bundle";

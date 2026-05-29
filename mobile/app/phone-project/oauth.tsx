@@ -138,7 +138,13 @@ export default function PhoneOAuthScreen() {
       if (!r) throw new Error("agent unreachable");
       hydrate(r);
     } catch (e: any) {
-      setErr(e?.message ?? "failed to load");
+      // Friendly framing; keep the terse reason only as trailing detail.
+      const raw = e instanceof Error ? e.message : String(e);
+      setErr(
+        /unreach|network|fetch|timeout|econn|offline/i.test(raw)
+          ? "Couldn't reach the dev machine. Check your connection, then pull to retry."
+          : `Couldn't load the OAuth config (${raw}).`,
+      );
     } finally {
       setLoading(false);
     }
@@ -169,7 +175,8 @@ export default function PhoneOAuthScreen() {
           : /invalid|schema|required|missing/.test(lower)
             ? "One of the fields failed validation — double-check the values you just entered."
             : "Your changes weren't saved. Retry or reopen this page.";
-      Alert.alert("Save Failed", `${raw}\n\n${hint}`);
+      // Friendly hint leads; the raw reason is secondary detail underneath.
+      Alert.alert("Save Failed", `${hint}\n\n${raw}`);
     } finally {
       setSaving(null);
     }

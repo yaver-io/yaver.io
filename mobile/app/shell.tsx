@@ -63,6 +63,9 @@ export default function ShellScreen() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "connecting" | "open" | "closed" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  // Bumping this re-runs the connect effect — the "Reconnect" affordance
+  // shown on error/close re-initiates the WS without leaving the screen.
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -113,12 +116,24 @@ export default function ShellScreen() {
     ws.onerror = () => {
       if (cancelled) return;
       setStatus("error");
-      setError("connection error");
+      setError(
+        `Couldn't reach the shell on ${activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name}. Make sure yaver is running on the device.`,
+      );
     };
-    ws.onclose = () => {
+    ws.onclose = (e: WebSocketCloseEvent) => {
       if (cancelled) return;
       setStatus("closed");
       append("\n— disconnected —\n");
+      // A non-1000 close code usually means the agent dropped us (PTY exited,
+      // session expired, transport reset) rather than a clean exit. Surface a
+      // reason so the footer line + Reconnect card aren't blank.
+      if (e?.code && e.code !== 1000) {
+        setError(
+          `Shell closed unexpectedly${e.reason ? ` (${e.reason})` : ` (code ${e.code})`}. The agent may have restarted — tap Reconnect.`,
+        );
+      } else {
+        setError(null);
+      }
     };
 
     return () => {
@@ -126,7 +141,13 @@ export default function ShellScreen() {
       try { ws.close(); } catch {}
       wsRef.current = null;
     };
-  }, [activeDevice, token, connectionStatus, append]);
+  }, [activeDevice, token, connectionStatus, append, reconnectNonce]);
+
+  const reconnect = useCallback(() => {
+    setError(null);
+    setStatus("connecting");
+    setReconnectNonce((n) => n + 1);
+  }, []);
 
   const send = useCallback(() => {
     const ws = wsRef.current;
@@ -228,12 +249,29 @@ export default function ShellScreen() {
             <Text style={{ color: "#e5e7eb", fontSize: 14, fontWeight: "700" }}>
               Shell · {activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name}
             </Text>
-            <Text style={{ color: "#6b7280", fontSize: 11 }}>
-              {status === "open" ? "PTY · connected" : status === "connecting" ? "connecting…" : status === "closed" ? "disconnected" : status === "error" ? (error || "error") : "idle"}
+            <Text
+              style={{ color: status === "error" ? "#fca5a5" : "#6b7280", fontSize: 11 }}
+              numberOfLines={2}
+            >
+              {status === "open"
+                ? "PTY · connected"
+                : status === "connecting"
+                  ? "connecting…"
+                  : status === "closed"
+                    ? (error ?? "disconnected")
+                    : status === "error"
+                      ? (error ?? "connection error")
+                      : "idle"}
             </Text>
           </View>
         </View>
-        {status === "connecting" ? <ActivityIndicator color="#6ee7b7" /> : null}
+        {status === "connecting" ? (
+          <ActivityIndicator color="#6ee7b7" />
+        ) : status === "error" || status === "closed" ? (
+          <Pressable onPress={reconnect} style={styles.reconnectBtn} accessibilityLabel="Reconnect shell">
+            <Text style={styles.reconnectText}>Reconnect</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <ScrollView
@@ -338,6 +376,19 @@ const styles = StyleSheet.create({
   },
   sendText: {
     color: "#a7f3d0",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  reconnectBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: "rgba(56,189,248,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(56,189,248,0.45)",
+  },
+  reconnectText: {
+    color: "#7dd3fc",
     fontSize: 12,
     fontWeight: "700",
   },

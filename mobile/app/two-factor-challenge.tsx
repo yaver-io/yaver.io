@@ -52,7 +52,10 @@ export default function TwoFactorChallengeScreen() {
       await login(result.token);
       router.replace("/");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Two-factor verification failed");
+      // The verify endpoint returns a clear "invalid code" message; surface
+      // it when present, otherwise a friendly fallback (never raw String(e)).
+      const detail = e instanceof Error ? e.message : "";
+      setError(detail || "Two-factor verification failed. Please try again.");
     } finally {
       setLoading(false);
     }

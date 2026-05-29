@@ -23,6 +23,19 @@ import {
 
 type Scope = "full" | "feedback-only" | "sdk-project";
 
+// guests.ts already surfaces clean, server-provided `data.error` strings via
+// parseError. The one gap is a transport failure (fetch rejects before any
+// response) which throws a raw "Failed to fetch" / "Load failed" TypeError —
+// meaningless to a user. Map those to a friendly sentence; pass clean
+// server messages through untouched.
+function friendlyGuestError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  if (!msg || /failed to fetch|load failed|networkerror|network request failed/i.test(msg)) {
+    return "Couldn't reach the server — check your connection.";
+  }
+  return msg;
+}
+
 function StatusBadge({ status }: { status: string }) {
   // Pending = informational ("waiting on guest"), not a warning. Accepted/
   // active = success. Revoked = danger. Expired = muted.
@@ -205,7 +218,7 @@ export default function GuestsStatusView() {
       setHostsPending(h.pending || []);
       setHostsActive(h.active || []);
     } catch (e: any) {
-      setErr(e?.message || String(e));
+      setErr(friendlyGuestError(e));
     } finally {
       setLoading(false);
     }
@@ -372,7 +385,7 @@ export default function GuestsStatusView() {
       setInviteProjectsSource(null);
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyGuestError(e));
     } finally {
       setBusy(null);
     }
@@ -409,7 +422,7 @@ export default function GuestsStatusView() {
       setJoinApprovedDeviceIds([]);
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyGuestError(e));
     } finally {
       setBusy(null);
     }
@@ -424,7 +437,7 @@ export default function GuestsStatusView() {
       await acceptGuestInvitation(token, invite.hostUserId, defaults);
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyGuestError(e));
     } finally {
       setBusy(null);
     }
@@ -438,7 +451,7 @@ export default function GuestsStatusView() {
       await revokeGuest(token, guest.email ? { email: guest.email } : { userId: guest.userId });
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyGuestError(e));
     } finally {
       setBusy(null);
     }
@@ -456,7 +469,7 @@ export default function GuestsStatusView() {
       const refreshed = await agentClient.getGuestConfigs();
       setGuestConfigs(refreshed);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setErr(friendlyGuestError(e));
     } finally {
       setBusy(null);
     }

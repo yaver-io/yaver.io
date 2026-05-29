@@ -494,7 +494,7 @@ function runnerChipDotClass(health: RunnerHealth): string {
 function runnerChipTitle(state: RunnerChipState): string {
   switch (state.health) {
     case "ready": return `${state.label}: installed and authenticated${state.hint ? ` (${state.hint})` : ""}`;
-    case "needs-auth": return `${state.label}: installed but needs auth — set ANTHROPIC_API_KEY / OPENAI_API_KEY / etc. on the host`;
+    case "needs-auth": return `${state.label}: installed but not signed in — click "Sign in" on this runner to authorize it with your Claude Max / ChatGPT Plus subscription`;
     case "down": return `${state.label}: detected but reporting an error: ${state.hint ?? "unknown"}`;
     case "not-installed": return `${state.label}: not installed on this machine`;
     default: return state.label;
@@ -844,7 +844,7 @@ function formatCapabilityList(items: string[] | undefined): string | null {
 }
 
 function useDevicePing(device: Device, token: string | null | undefined) {
-  const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean; error?: string }>({ pinging: false });
+  const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean; error?: string; authExpired?: boolean }>({ pinging: false });
 
   const ping = useCallback(async () => {
     if (!token) {
@@ -876,7 +876,7 @@ function useDevicePing(device: Device, token: string | null | undefined) {
       if (probe.ok) {
         setPingState({ pinging: false, ok: true, rttMs: Date.now() - started });
       } else {
-        setPingState({ pinging: false, ok: false, error: probe.error });
+        setPingState({ pinging: false, ok: false, error: probe.error, authExpired: probe.authExpired });
       }
     } catch (e: any) {
       setPingState({ pinging: false, ok: false, error: e?.message || "probe failed" });
@@ -884,6 +884,46 @@ function useDevicePing(device: Device, token: string | null | undefined) {
   }, [device.host, device.id, device.port, device.tunnelUrl, device.publicEndpoints, token]);
 
   return { pingState, ping };
+}
+
+/**
+ * Turn a failed ping into a short chip label + a fuller tooltip. The raw probe
+ * error (an auth-as-same-user mismatch, a 401/403, a timeout, a genuine
+ * offline box) all used to collapse to the single word "Unreachable" — which
+ * told the user nothing about which of those it was. We run the error through
+ * the shared connection-error classifier to get a clean, distinguishing label.
+ */
+function classifyPingFailure(pingState: { error?: string; authExpired?: boolean }): {
+  label: string;
+  title: string;
+} {
+  const raw = String(pingState.error || "").trim();
+  const lower = raw.toLowerCase();
+  // Auth-as-same-user mismatch: the agent answered but the identity differs.
+  // The classifier keys off status codes, so handle this textual case here.
+  if (/different user|same user|not the same|identity mismatch|wrong user|not authorized as/i.test(raw)) {
+    return { label: "Not your agent", title: raw || "The agent is reachable but authenticated as a different user." };
+  }
+  const status =
+    /\b401\b|unauthorized/.test(lower) ? 401 :
+    /\b403\b|forbidden/.test(lower) ? 403 :
+    undefined;
+  const classified = classifyFetchError({
+    error: raw ? new Error(raw) : undefined,
+    response: status ? { status } : null,
+    authExpired: pingState.authExpired,
+  });
+  // Keep the label tight enough to fit the chip; the tooltip carries the detail.
+  const label =
+    classified.reason === "auth-expired" ? "Auth expired" :
+    classified.reason === "unauthorized" ? "Not authorized" :
+    classified.reason === "forbidden" ? "Not authorized" :
+    classified.reason === "timeout" ? "Timed out" :
+    classified.reason === "browser-offline" ? "Offline" :
+    "Unreachable";
+  const title = [classified.detail, classified.suggestedAction].filter(Boolean).join(" ") ||
+    raw || "Could not reach this device.";
+  return { label, title };
 }
 
 /**
@@ -3724,19 +3764,20 @@ function DeviceProjectsRail({
 
 function InlinePingButton({ device, token }: { device: Device; token: string | null | undefined }) {
   const { pingState, ping } = useDevicePing(device, token);
+  const failure = pingState.ok === false ? classifyPingFailure(pingState) : null;
   return (
     <button
       onClick={() => void ping()}
       disabled={pingState.pinging}
       className="inline-flex items-center gap-1.5 rounded-md border border-surface-700 bg-surface-900/60 px-3 py-1.5 text-xs font-semibold text-surface-200 shadow-sm hover:border-surface-600 hover:bg-surface-800 disabled:opacity-50"
-      title="Probe /health via relay first, then direct host"
+      title={failure ? failure.title : "Probe /health via relay first, then direct host"}
     >
       {pingState.pinging
         ? "Pinging..."
         : pingState.ok === true
           ? `${pingState.rttMs}ms`
-          : pingState.ok === false
-            ? "Unreachable"
+          : failure
+            ? failure.label
             : "Ping"}
     </button>
   );
@@ -3979,6 +4020,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
     useAgentWirelessDevices(device, true, token);
   const effectiveInfo = (info || device.probeInfo || null) as DeviceRuntimeInfo | null;
   const { pingState, ping } = useDevicePing(device, token);
+  const pingFailure = pingState.ok === false ? classifyPingFailure(pingState) : null;
   // Guests list /projects under a host-shared-scope allowlist but we
   // never want to display raw owner workdir paths to a guest — cap it
   // to owner sessions for now.
@@ -4093,20 +4135,23 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           onClick={() => void ping()}
           disabled={pingState.pinging}
           className="rounded-md border border-surface-700 bg-surface-950 px-2.5 py-1 text-[11px] font-medium text-surface-300 hover:border-surface-600 hover:text-surface-100 disabled:opacity-50"
-          title="Probe /health over relay, tunnel, or direct host"
+          title={pingFailure ? pingFailure.title : "Probe /health over relay, tunnel, or direct host"}
         >
           {pingState.pinging
             ? "Pinging..."
             : pingState.ok === true
               ? `${pingState.rttMs}ms`
-              : pingState.ok === false
-                ? "Unreachable"
+              : pingFailure
+                ? pingFailure.label
                 : "Ping"}
         </button>
         {!device.isGuest ? (
           <FactoryResetAuthButton device={device} />
         ) : null}
       </div>
+      {pingFailure ? (
+        <div className="mb-3 text-right text-[11px] text-surface-500">{pingFailure.title}</div>
+      ) : null}
       <ConnectionSection device={device} />
       <div className="grid gap-6 md:grid-cols-2">
         <div>

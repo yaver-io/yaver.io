@@ -13,6 +13,7 @@ export default function HealthView() {
   const [loading, setLoading] = useState(true);
   const [machine, setMachine] = useState<Machine>(null);
   const [peers, setPeers] = useState<Peer[]>([]);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     loadTargets();
@@ -25,7 +26,12 @@ export default function HealthView() {
   }, []);
 
   async function loadTargets() {
-    try { setTargets(await agentClient.listHealthTargets()); } catch {}
+    try {
+      setTargets(await agentClient.listHealthTargets());
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
     setLoading(false);
   }
 
@@ -68,6 +74,11 @@ export default function HealthView() {
 
       {loading ? (
         <div className="text-center py-8 text-surface-500 text-sm">Loading...</div>
+      ) : loadError ? (
+        <div className="text-center py-8 text-sm space-y-2">
+          <div className="text-surface-400">Couldn't load health targets — the agent may be unreachable.</div>
+          <button onClick={loadTargets} className="text-xs px-3 py-1 rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Retry</button>
+        </div>
       ) : targets.length === 0 ? (
         <div className="text-center py-8 text-surface-500 text-sm">No health monitoring targets. Add a URL to start monitoring.</div>
       ) : (

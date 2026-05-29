@@ -9,12 +9,18 @@ export default function TodosView({ onTaskCreated }: { onTaskCreated?: (taskId: 
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => { loadTodos(); }, []);
 
   async function loadTodos() {
     setLoading(true);
-    try { setTodos(await agentClient.listTodos()); } catch {}
+    try {
+      setTodos(await agentClient.listTodos());
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
     setLoading(false);
   }
 
@@ -58,6 +64,11 @@ export default function TodosView({ onTaskCreated }: { onTaskCreated?: (taskId: 
 
       {loading ? (
         <div className="text-center py-8 text-surface-500 text-sm">Loading...</div>
+      ) : loadError ? (
+        <div className="text-center py-8 text-sm space-y-2">
+          <div className="text-surface-400">Couldn't load todos — the agent may be unreachable.</div>
+          <button onClick={loadTodos} className="text-xs px-3 py-1 rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Retry</button>
+        </div>
       ) : todos.length === 0 ? (
         <div className="text-center py-8 text-surface-500 text-sm">No todos yet</div>
       ) : (

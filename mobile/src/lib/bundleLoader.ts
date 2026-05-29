@@ -7,6 +7,15 @@ const emitter = YaverBundleLoader
   ? new NativeEventEmitter(YaverBundleLoader)
   : null;
 
+// The native bundle loader only ships on iOS today. When it's missing we want
+// callers (and any UI that surfaces the raw message) to explain the platform
+// limitation rather than imply a broken install / reinstall.
+function bundleLoaderUnavailableMessage(): string {
+  return Platform.OS === "android"
+    ? "Loading apps inside Yaver is iOS-only today — this Android build doesn't include the bundle loader yet. Use an iPhone or iPad."
+    : "Yaver's bundle loader isn't available. Reinstall Yaver from the App Store and try again.";
+}
+
 export interface BundleLoadResult {
   loaded: boolean;
   url?: string;
@@ -28,7 +37,7 @@ export async function loadApp(
   headers?: Record<string, string>
 ): Promise<BundleLoadResult> {
   if (!YaverBundleLoader) {
-    throw new Error("YaverBundleLoader native module not available");
+    throw new Error(bundleLoaderUnavailableMessage());
   }
   return YaverBundleLoader.loadBundle(bundleUrl, moduleName, headers || {});
 }
@@ -54,7 +63,7 @@ export async function loadAppIfChanged(
   headers?: Record<string, string>
 ): Promise<BundleLoadResult> {
   if (!YaverBundleLoader) {
-    throw new Error("YaverBundleLoader native module not available");
+    throw new Error(bundleLoaderUnavailableMessage());
   }
   if (expectedMd5 && YaverBundleLoader.getLoadedBundleMd5) {
     try {
@@ -77,7 +86,7 @@ export async function loadAppIfChanged(
  */
 export async function unloadApp(): Promise<{ unloaded: boolean }> {
   if (!YaverBundleLoader) {
-    throw new Error("YaverBundleLoader native module not available");
+    throw new Error(bundleLoaderUnavailableMessage());
   }
   return YaverBundleLoader.unloadBundle();
 }
