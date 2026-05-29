@@ -54,6 +54,7 @@ var voiceSTTProviders = map[string]bool{
 	"deepgram":   true,
 	"assemblyai": true,
 	"on-device":  true, // mobile whisper.rn / Apple SpeechAnalyzer
+	"local":      true, // agent-side whisper.cpp — free/offline, no key
 }
 
 var voiceTTSProviders = map[string]bool{
@@ -63,6 +64,7 @@ var voiceTTSProviders = map[string]bool{
 	"elevenlabs": true,
 	"deepgram":   true, // Aura-2; shares the Deepgram STT key (one signup)
 	"device":     true, // mobile AVSpeechSynthesizer / Android TextToSpeech
+	"local":      true, // agent-side say/espeak — free/offline, no key
 }
 
 func (s *HTTPServer) handleVoiceConfigSet(w http.ResponseWriter, r *http.Request) {

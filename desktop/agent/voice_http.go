@@ -96,6 +96,8 @@ func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 			sttReady = HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
 		case "assemblyai":
 			sttReady = HasVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey)
+		case "local":
+			sttReady = LocalWhisperAvailable() // free/offline whisper.cpp on the host
 		case "on-device":
 			sttReady = true // mobile owns capture; agent has no key to set
 		}
@@ -109,8 +111,8 @@ func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 		case "deepgram":
 			// Same key as Deepgram STT — one signup, one credential.
 			ttsReady = HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
-		case "device":
-			ttsReady = true // mobile owns playback via AVSpeech / TextToSpeech
+		case "device", "local":
+			ttsReady = true // device: mobile plays · local: agent say/espeak (terminal)
 		}
 	}
 
@@ -148,8 +150,8 @@ func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 		// availableProviders lets the mobile Settings UI render the
 		// picker even on first launch (no key set yet).
 		"availableProviders": map[string][]string{
-			"stt": {"openai", "deepgram", "assemblyai", "on-device"},
-			"tts": {"openai", "deepgram", "cartesia", "elevenlabs", "device"},
+			"stt": {"openai", "deepgram", "assemblyai", "local", "on-device"},
+			"tts": {"openai", "deepgram", "cartesia", "elevenlabs", "local", "device"},
 		},
 	})
 }
@@ -186,8 +188,15 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 		// posts the final transcript to /tasks directly.
 		jsonError(w, http.StatusBadRequest, "stt_provider=on-device — mobile must transcribe locally and POST /tasks; do not open /voice/stream for this provider")
 		return
+	case "local":
+		// Agent-side free/offline whisper.cpp. Needs a CLI + model on the
+		// host (no API key). Surface a clear install hint if missing.
+		if !LocalWhisperAvailable() {
+			jsonError(w, http.StatusServiceUnavailable, "local stt not ready — install whisper.cpp (brew install whisper-cpp) and a ggml model (YAVER_WHISPER_MODEL or ~/.yaver/models/)")
+			return
+		}
 	default:
-		jsonError(w, http.StatusBadRequest, "unknown stt_provider "+sttProvider+" — supported: openai, deepgram, assemblyai, on-device")
+		jsonError(w, http.StatusBadRequest, "unknown stt_provider "+sttProvider+" — supported: openai, deepgram, assemblyai, local, on-device")
 		return
 	}
 
@@ -263,6 +272,18 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 		sess, ev, err := OpenAssemblyAISession(ctx, key, v.AssemblyAILanguage)
 		if err != nil {
 			voiceWriteErr(conn, "assemblyai: "+err.Error())
+			return
+		}
+		dgEvents = ev
+		sttSendAudio = sess.SendAudio
+		sttFinalize = sess.Finalize
+		sttClose = sess.Close
+	case "local":
+		// Free/offline whisper.cpp on the agent host. Batch: buffers
+		// audio, transcribes one utterance on the client's "stop" frame.
+		sess, ev, err := OpenLocalWhisperSession(ctx)
+		if err != nil {
+			voiceWriteErr(conn, "local stt: "+err.Error())
 			return
 		}
 		dgEvents = ev
@@ -424,10 +445,13 @@ func streamTTS(ctx context.Context, conn *websocket.Conn, v *VoiceConfig, text s
 		}
 		sampleRate = DeepgramTTSSampleRate // Aura-2 with linear16 = 24kHz PCM
 		go SpeakDeepgram(ctx, key, v.DeepgramTTSModel, text, ttsCh)
-	case "device":
-		// Mobile owns playback via AVSpeechSynthesizer / TextToSpeech.
-		// Nothing to stream from the agent — caller infers from the
-		// task-result frame and synthesizes locally.
+	case "device", "local":
+		// "device": mobile owns playback via AVSpeech / TextToSpeech.
+		// "local": agent-host playback (say/espeak) is only useful for the
+		// terminal `yaver voice listen --tts` loop, which calls speakLocal
+		// directly — not over this WS (the host's speaker can't reach a
+		// remote client). Either way, nothing to stream here; the client
+		// synthesizes from the task-result frame.
 		return
 	default:
 		return

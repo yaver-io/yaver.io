@@ -78,8 +78,11 @@ func runVoiceListen(args []string) {
 		fmt.Println("  yaver voice listen --once     stop after the first end-of-turn final")
 		fmt.Println("  yaver voice listen --device <name|index>   pick a mic (default: system default)")
 		fmt.Println()
-		fmt.Println("Uses the configured STT provider (openai/deepgram/assemblyai) and its")
-		fmt.Println("vault key. Set one via `yaver voice setup` or the mobile Settings screen.")
+		fmt.Println("Uses the configured STT provider and its vault key:")
+		fmt.Println("  deepgram  — live streaming partials (best terminal experience)")
+		fmt.Println("  openai    — batch: records until Ctrl-C, then transcribes")
+		fmt.Println("  local     — FREE/offline whisper.cpp, no key (brew install whisper-cpp)")
+		fmt.Println("Set a key via `yaver voice setup` or the mobile Settings screen.")
 		fmt.Println("Press Ctrl-C to stop.")
 		return
 	}
@@ -112,23 +115,25 @@ func runVoiceListen(args []string) {
 			legacyKey = v.OpenAIAPIKey
 		}
 	case "assemblyai":
-		fmt.Fprintln(os.Stderr, "yaver voice listen: assemblyai terminal capture not wired yet — use openai or deepgram")
+		fmt.Fprintln(os.Stderr, "yaver voice listen: assemblyai terminal capture not wired yet — use openai, deepgram, or local")
 		os.Exit(2)
-	case "on-device":
-		fmt.Fprintln(os.Stderr, "yaver voice listen: stt provider is on-device.")
-		fmt.Fprintln(os.Stderr, "  Local whisper terminal capture lands in Phase 3. For now run:")
-		fmt.Fprintln(os.Stderr, "  `yaver voice setup deepgram --deepgram-api-key dg_...`  (or openai)")
-		os.Exit(2)
+	case "local", "on-device", "whisper":
+		// Free, offline whisper.cpp — no key needed. Handled below.
+		provider = "local"
 	default:
 		fmt.Fprintf(os.Stderr, "yaver voice listen: unsupported stt provider %q\n", provider)
 		os.Exit(2)
 	}
 
-	apiKey := LookupVoiceCredential(provider, "api-key", legacyKey)
-	if strings.TrimSpace(apiKey) == "" {
-		fmt.Fprintf(os.Stderr, "yaver voice listen: no %s key in vault/env/config.\n", provider)
-		fmt.Fprintf(os.Stderr, "  Set one: `yaver voice setup %s --%s-api-key <key>`\n", provider, provider)
-		os.Exit(1)
+	// Local whisper needs no key — it's free/offline. Cloud providers do.
+	var apiKey string
+	if provider != "local" {
+		apiKey = LookupVoiceCredential(provider, "api-key", legacyKey)
+		if strings.TrimSpace(apiKey) == "" {
+			fmt.Fprintf(os.Stderr, "yaver voice listen: no %s key in vault/env/config.\n", provider)
+			fmt.Fprintf(os.Stderr, "  Set one: `yaver voice setup %s --%s-api-key <key>`  (or use the free local engine)\n", provider, provider)
+			os.Exit(1)
+		}
 	}
 
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -162,6 +167,10 @@ func runVoiceListen(args []string) {
 		var os1 *OpenAIWhisperSession
 		os1, evCh, err = OpenOpenAIWhisperSession(ctx, apiKey, sttModel)
 		sess = os1
+	case "local":
+		var ls *LocalWhisperSession
+		ls, evCh, err = OpenLocalWhisperSession(ctx)
+		sess = ls
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yaver voice listen: open %s session: %v\n", provider, err)
@@ -169,10 +178,9 @@ func runVoiceListen(args []string) {
 	}
 	defer sess.Close()
 
-	// OpenAI Whisper is batch-only (no live partials): it buffers until
-	// Finalize, then emits one final. So for OpenAI we run a single
-	// utterance — record until Ctrl-C (or --once is implied) and then
-	// transcribe. Deepgram is true streaming and shows partials live.
+	// Only Deepgram streams live partials. OpenAI and local whisper are
+	// batch-only — they buffer until Finalize, then emit one final. For
+	// those we run a single utterance: record until Ctrl-C, then transcribe.
 	streaming := provider == "deepgram"
 
 	// Start mic capture via ffmpeg → 16kHz mono s16le PCM on stdout.
