@@ -10,6 +10,14 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "stt-tts-voice-local-byok",
+    title: "Voice in Yaver: local STT/TTS by default, bring-your-own cloud, keys in the vault",
+    date: "2026-05-30",
+    published: true,
+    description:
+      "How speech-to-text and text-to-speech work across the Go agent, the mobile app, and the web dashboard. Free on-device Whisper + OS voice out of the box, optional cloud engines (OpenAI, Deepgram Flux, Cartesia Sonic) configured per surface, and why API keys live in your encrypted `yaver vault` and flow P2P — never through Convex. Plus: the agent now knows whether the client has STT/TTS on, and shapes its replies for voice.",
+  },
+  {
     slug: "yaver-p2p-vault",
     title: "Yaver P2P Vault: secrets that follow your machines without touching our servers",
     date: "2026-05-29",

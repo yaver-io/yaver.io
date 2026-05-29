@@ -126,8 +126,8 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
   const providerInfo = SPEECH_PROVIDERS[settings.speechProvider || ""] || null;
   return (
     <div className="card mb-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-surface-50">Preferences</h2>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-surface-50">Voice &amp; Preferences</h2>
         {!editing && (
           <button
             onClick={() => setEditing(true)}
@@ -137,6 +137,24 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
           </button>
         )}
       </div>
+      <p className="mb-4 text-xs leading-relaxed text-surface-500">
+        <span className="text-surface-300">STT</span> (speech‑to‑text) turns your
+        voice into prompts; <span className="text-surface-300">TTS</span>
+        {" "}(text‑to‑speech) reads replies back. <span className="text-surface-300">Local</span>
+        {" "}engines (on‑device Whisper, OS voice) are free and run offline — no
+        API key. <span className="text-surface-300">Cloud</span> engines need a
+        key, which lives in your agent&apos;s encrypted{" "}
+        <span className="text-surface-300">vault</span> and flows{" "}
+        <span className="text-surface-300">P2P</span> between your devices —
+        never through Convex.{" "}
+        <a
+          href="/blog/stt-tts-voice-local-byok"
+          className="text-surface-300 underline decoration-surface-600 underline-offset-2 hover:decoration-surface-300"
+        >
+          Learn more
+        </a>
+        .
+      </p>
 
       {!editing ? (
         /* ── Read-only view ── */
@@ -170,7 +188,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
             <p className="mt-0.5 text-sm text-surface-200">
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-surface-500" />
-                Local only (device SecureStore / agent vault)
+                Encrypted vault · P2P between your devices · never Convex
               </span>
             </p>
           </div>
@@ -276,7 +294,13 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
             <div>
               <label className="mb-1.5 block text-xs font-medium text-surface-400">Provider Credentials</label>
               <p className="rounded-lg border border-surface-700 bg-surface-850 px-4 py-2.5 text-xs text-surface-400">
-                Set API keys on the connected agent with <code>yaver voice setup deepgram-cartesia</code> or from the mobile Voice screen. Keys are never stored in Convex.
+                Cloud STT/TTS needs an API key. Add it to your agent&apos;s
+                encrypted vault with{" "}
+                <code>yaver vault add DEEPGRAM_API_KEY --project voice</code>{" "}
+                (or <code>yaver voice setup deepgram-cartesia</code>), or from
+                the mobile Voice screen. The key stays on your devices and flows
+                P2P to whichever agent runs the transcription — it is{" "}
+                <span className="text-surface-300">never stored in Convex</span>.
               </p>
             </div>
           )}
