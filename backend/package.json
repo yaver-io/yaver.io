@@ -1,6 +1,6 @@
 {
   "name": "yaver-backend",
-  "version": "1.1.6",
+  "version": "1.1.9",
   "description": "Yaver.io Convex backend — auth + peer discovery",
   "private": true,
   "scripts": {
