@@ -724,8 +724,19 @@ type TaskViewport struct {
 	PaneCount int    `json:"paneCount,omitempty"` // parallel Claude sessions visible
 	PaneCols  int    `json:"paneCols,omitempty"`  // approx pane width in mono chars
 	PaneRows  int    `json:"paneRows,omitempty"`  // approx pane height in rows
-	Voice     bool   `json:"voice,omitempty"`     // task originated from voice; TTS will read this
+	Voice     bool   `json:"voice,omitempty"`     // task originated from voice (STT)
 	TTSBudget int    `json:"ttsBudget,omitempty"` // max chars in TTS readback (0 = 280 default)
+
+	// STT/TTS capability of the client that will consume this task's
+	// stream. Set from the request's speechContext body or the
+	// X-Yaver-Voice header (see mergeClientVoiceHints). These let the
+	// prompt wrapper tune output: spoken-friendly + budgeted when TTS is
+	// on, an explicit closing question when the user can reply by voice.
+	// CLI default is both-false → plain text, no voice shaping.
+	STTEnabled  bool   `json:"sttEnabled,omitempty"`
+	TTSEnabled  bool   `json:"ttsEnabled,omitempty"`
+	STTProvider string `json:"sttProvider,omitempty"` // e.g. "on-device" | "local" | "deepgram" (hint only; keys live in vault)
+	TTSProvider string `json:"ttsProvider,omitempty"` // e.g. "device" | "local" | "cartesia"
 }
 
 // ImageAttachment represents a base64-encoded image sent from mobile.

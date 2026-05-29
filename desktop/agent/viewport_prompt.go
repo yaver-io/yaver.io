@@ -14,8 +14,47 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 )
+
+// mergeClientVoiceHints augments a viewport with the request's
+// X-Yaver-Surface / X-Yaver-Voice headers and (as a last resort) the task
+// source, without overriding fields already set from the body. This is the
+// header fallback for clients that don't send a speechContext body (CLI,
+// web). X-Yaver-Voice is a CSV of "stt"/"tts" (or "none"). Returns vp
+// (allocating one if a hint is present); nil only when there were no hints.
+func mergeClientVoiceHints(r *http.Request, vp *TaskViewport, source string) *TaskViewport {
+	if r == nil {
+		return vp
+	}
+	surface := strings.TrimSpace(r.Header.Get("X-Yaver-Surface"))
+	voice := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Yaver-Voice")))
+	if surface == "" && voice == "" {
+		return vp
+	}
+	if vp == nil {
+		vp = &TaskViewport{}
+	}
+	if vp.Surface == "" {
+		if surface != "" {
+			vp.Surface = surface
+		} else if source != "" {
+			vp.Surface = source // best-effort: "cli" / "web" / "mobile"
+		}
+	}
+	if voice != "" && voice != "none" {
+		for _, tok := range strings.Split(voice, ",") {
+			switch strings.TrimSpace(tok) {
+			case "stt":
+				vp.STTEnabled = true
+			case "tts":
+				vp.TTSEnabled = true
+			}
+		}
+	}
+	return vp
+}
 
 // formatViewportHint returns a prompt-suffix string (leading \n) that
 // nudges Claude toward the right response shape for this user's
@@ -34,13 +73,20 @@ func formatViewportHint(vp *TaskViewport) string {
 	if vp.PaneCount >= 2 {
 		parts = append(parts, fmt.Sprintf("user has %d parallel Claude sessions visible — be specific about file paths so they stay legible across panes", vp.PaneCount))
 	}
-	// Voice readback budgeting.
-	if vp.Voice {
+	// Voice readback budgeting. TTSEnabled is the explicit signal from the
+	// client's speechContext / X-Yaver-Voice header; Voice (origin-was-STT)
+	// is kept as a back-compat trigger so older clients still get budgeted.
+	if vp.TTSEnabled || vp.Voice {
 		budget := vp.TTSBudget
 		if budget == 0 {
 			budget = 280 // Cartesia clip default
 		}
 		parts = append(parts, fmt.Sprintf("voice readback enabled — keep the spoken headline under %d chars; details may follow on screen", budget))
+	}
+	// User can reply by voice — nudge a clean spoken-friendly closing
+	// question instead of a wall of options when input is needed.
+	if vp.STTEnabled {
+		parts = append(parts, "user may reply by voice — if you need input, end with one short spoken-friendly question")
 	}
 
 	if len(parts) == 0 {
@@ -60,7 +106,7 @@ func surfaceShape(surface string, cols, rows int) string {
 			return fmt.Sprintf("pane %dx%d (cols x rows) — fit output to this size", cols, rows)
 		}
 		return ""
-	case "mobile-phone":
+	case "mobile", "mobile-phone":
 		return "phone-screen single column ~50 chars wide — short lines, minimal headers"
 	case "mobile-tablet":
 		return "tablet ~80 chars wide — section headers OK, keep paragraphs short"

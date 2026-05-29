@@ -3299,6 +3299,18 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		// context line so Claude tunes response shape (terse on HUD,
 		// markdown on desktop, voice-budgeted when TTS will read it).
 		Viewport *TaskViewport `json:"viewport,omitempty"`
+		// SpeechContext — the STT/TTS state of the client creating this
+		// task. Mobile already sends this; the agent folds it into the
+		// viewport so the prompt wrapper knows whether output will be
+		// spoken (TTS) and whether the user can reply by voice (STT).
+		// Provider names are hints only — API keys live in the vault and
+		// flow P2P, never in this payload.
+		SpeechContext *struct {
+			InputFromSpeech bool   `json:"inputFromSpeech,omitempty"`
+			STTProvider     string `json:"sttProvider,omitempty"`
+			TTSEnabled      bool   `json:"ttsEnabled,omitempty"`
+			TTSProvider     string `json:"ttsProvider,omitempty"`
+		} `json:"speechContext,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -3450,9 +3462,30 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		verbosityCtx = &TaskVerbosity{Verbosity: body.Verbosity}
 	}
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
-	if task != nil && body.Viewport != nil {
+	// Fold the client's surface + STT/TTS state into the viewport so the
+	// prompt wrapper can shape output (voice-friendly + budgeted when TTS
+	// is on, a spoken closing question when the user can reply by voice).
+	// Precedence: explicit body.Viewport fields, then speechContext body,
+	// then X-Yaver-* headers, then source. CLI/no-hint stays plain text.
+	vp := body.Viewport
+	if body.SpeechContext != nil {
+		if vp == nil {
+			vp = &TaskViewport{}
+		}
+		vp.Voice = vp.Voice || body.SpeechContext.InputFromSpeech
+		vp.STTEnabled = vp.STTEnabled || body.SpeechContext.InputFromSpeech || body.SpeechContext.STTProvider != ""
+		vp.TTSEnabled = vp.TTSEnabled || body.SpeechContext.TTSEnabled
+		if vp.STTProvider == "" {
+			vp.STTProvider = body.SpeechContext.STTProvider
+		}
+		if vp.TTSProvider == "" {
+			vp.TTSProvider = body.SpeechContext.TTSProvider
+		}
+	}
+	vp = mergeClientVoiceHints(r, vp, source)
+	if task != nil && vp != nil {
 		s.taskMgr.mu.Lock()
-		task.TaskViewport = body.Viewport
+		task.TaskViewport = vp
 		s.taskMgr.mu.Unlock()
 	}
 	if err != nil {

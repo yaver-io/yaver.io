@@ -154,9 +154,19 @@ async function runUnified(args) {
   process.env.YAVER_NPM_PACKAGE = PACKAGE.name;
   process.env.YAVER_NPM_VERSION = PACKAGE.version;
 
-  if (!command || command === '--help' || command === '-h' || command === 'help') {
+  if (command === '--help' || command === '-h' || command === 'help') {
     console.log(UNIFIED_HELP);
     process.exit(0);
+  }
+
+  if (!command) {
+    // Bare `yaver` (no args): hand off to the Go agent instead of printing
+    // JS help. The agent launches the psql-style interactive shell when
+    // stdin+stdout are a TTY (shell_repl.go::maybeRunYaverShell), and falls
+    // back to its own usage otherwise. Printing UNIFIED_HELP here used to
+    // shadow the shell entirely — the binary was never spawned.
+    await runAgentCommand([]);
+    return;
   }
 
   if (command === 'push') {
