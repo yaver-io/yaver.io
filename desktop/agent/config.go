@@ -266,28 +266,29 @@ type VoiceConfig struct {
 }
 
 // EffectiveSTTProvider returns the configured STT provider, defaulting
-// to "openai" when unset. Single source of truth so the HTTP handler
-// and status endpoint never drift.
+// to the free/offline local whisper engine when unset (no key, no cost).
+// Single source of truth so the HTTP handler and status endpoint never drift.
 func (v *VoiceConfig) EffectiveSTTProvider() string {
 	if v == nil {
-		return "openai"
+		return "local"
 	}
 	p := strings.ToLower(strings.TrimSpace(v.STTProvider))
 	if p == "" {
-		return "openai"
+		return "local"
 	}
 	return p
 }
 
 // EffectiveTTSProvider returns the configured TTS provider, defaulting
-// to "openai" when unset.
+// to the free/offline local engine (say/espeak on host; AVSpeech/
+// TextToSpeech on mobile) when unset.
 func (v *VoiceConfig) EffectiveTTSProvider() string {
 	if v == nil {
-		return "openai"
+		return "local"
 	}
 	p := strings.ToLower(strings.TrimSpace(v.TTSProvider))
 	if p == "" {
-		return "openai"
+		return "local"
 	}
 	return p
 }

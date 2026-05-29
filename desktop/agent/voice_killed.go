@@ -26,8 +26,10 @@ func runVoice(args []string) {
 		fmt.Fprintln(os.Stderr, "yaver voice — hands-free agent loop")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  yaver voice status                 show readiness + provider state")
-		fmt.Fprintln(os.Stderr, "  yaver voice listen                 live mic transcription in this terminal")
+		fmt.Fprintln(os.Stderr, "  yaver voice test                   Flux-style live transcription test (speak → text)")
+		fmt.Fprintln(os.Stderr, "  yaver voice listen                 live mic transcription → stdout")
 		fmt.Fprintln(os.Stderr, "  yaver voice listen --tts           also speak finals back (free local TTS)")
+		fmt.Fprintln(os.Stderr, "  yaver voice deps [--install]       check/install local deps (ffmpeg, whisper.cpp, model)")
 		fmt.Fprintln(os.Stderr, "  yaver voice setup                  print setup hints")
 		fmt.Fprintln(os.Stderr, "  yaver voice setup cartesia         set Cartesia as TTS provider")
 		fmt.Fprintln(os.Stderr, "  yaver voice setup deepgram         single-vendor: Flux STT + Aura-2 TTS, one key")
@@ -48,6 +50,10 @@ func runVoice(args []string) {
 		voiceCLIStatus()
 	case "listen":
 		runVoiceListen(args[1:])
+	case "test":
+		runVoiceTest(args[1:])
+	case "deps":
+		runVoiceDeps(args[1:])
 	case "setup":
 		voiceCLISetupWithArgs(args[1:])
 	case "-h", "--help", "help":
