@@ -110,6 +110,10 @@ update_pkg_version "$REPO_ROOT/web/package.json" "$WEB_VERSION" "web package.jso
 update_pkg_version "$REPO_ROOT/backend/package.json" "$BACKEND_VERSION" "backend package.json"
 update_pkg_version "$REPO_ROOT/desktop/installer/package.json" "$INSTALLER_VERSION" "installer package.json"
 update_pkg_version "$REPO_ROOT/cli/package.json" "$CLI_VERSION" "cli package.json"
+# mobile/package.json is the 2nd of the 6 mobile version sites (see CLAUDE.md
+# "Version bumping"). It was historically omitted here, which let it drift
+# (e.g. stuck at 1.18.126 while every other site was 1.18.131).
+update_pkg_version "$REPO_ROOT/mobile/package.json" "$MOBILE_VERSION" "mobile package.json"
 
 echo ""
 if [ "$changed" -eq 0 ]; then

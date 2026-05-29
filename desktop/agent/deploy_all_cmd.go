@@ -47,16 +47,44 @@ func runDeployAllCmd(args []string) {
 	skipConvex := fs.Bool("skip-convex", false, "Skip the Convex backend deploy")
 	skipCloudflare := fs.Bool("skip-cloudflare", false, "Skip the Cloudflare web deploy")
 	skipNpm := fs.Bool("skip-npm", false, "Skip the npm CLI release (no version bump, no tag push)")
+	skipBump := fs.Bool("skip-bump", false, "Skip the deterministic monorepo version bump (ship the versions.json that's already on disk)")
 	dryRun := fs.Bool("dry-run", false, "Print stages and the commands they'd run; don't execute")
 	keepGoing := fs.Bool("continue-on-error", false, "Don't abort the pipeline when a stage fails")
-	bump := fs.String("bump", "patch", "Version bump for npm CLI release: patch|minor|major")
+	bump := fs.String("bump", "patch", "Version bump applied to every shipped component: patch|minor|major")
 	fs.Parse(args)
+
+	switch *bump {
+	case "patch", "minor", "major":
+	default:
+		fmt.Fprintf(os.Stderr, "deploy all: --bump must be patch|minor|major (got %q)\n", *bump)
+		os.Exit(2)
+	}
 
 	repoRoot, err := findYaverRepoRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "deploy all: %v\n", err)
 		os.Exit(2)
 	}
+
+	// The npm stage commits + tags + pushes everything `deploy all` touched
+	// (marketing bumps + build numbers + cli release) in one sweep. For that
+	// to be safe we need a clean baseline up front — otherwise the sweep
+	// would scoop up unrelated WIP (the silent-bug scenario
+	// feedback_other_sessions_prune_untested.md warns about). Check it once,
+	// here, before any stage dirties the tree. Skipped in dry-run and when
+	// the npm stage isn't running (TestFlight-only runs don't commit).
+	if !*skipNpm && !*dryRun {
+		if err := requireCleanRepoForRelease(repoRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "deploy all: %v\n", err)
+			fmt.Fprintln(os.Stderr, "  (or pass --skip-npm to ship without the commit/tag/push release stage)")
+			os.Exit(1)
+		}
+	}
+
+	// Populated by the version-bump preflight (below) and consumed by the
+	// npm stage for its release commit message. Declared here so the npm
+	// stage closure captures it; the preflight runs before the stage loop.
+	deployAllBumped := map[string]string{}
 
 	stages := []deployAllStage{
 		{
@@ -106,7 +134,7 @@ func runDeployAllCmd(args []string) {
 			skip:    *skipNpm,
 			workDir: repoRoot,
 			run: func(ctx *deployAllCtx) error {
-				return runNpmCliRelease(repoRoot, *bump, *dryRun, ctx)
+				return runNpmCliRelease(repoRoot, *bump, *dryRun, ctx, true, deployAllBumped)
 			},
 		},
 	}
@@ -115,9 +143,50 @@ func runDeployAllCmd(args []string) {
 	fmt.Println("repo:", repoRoot)
 	fmt.Println()
 
-	results := make([]deployAllResult, 0, len(stages))
+	results := make([]deployAllResult, 0, len(stages)+1)
 	overallStart := time.Now()
 	failed := false
+
+	// Preflight: deterministically bump the marketing version of every
+	// component this run will ship, then propagate via sync-versions.sh. The
+	// cli/npm version is intentionally left to the npm stage (it owns the
+	// tag), so we bump only mobile/backend/web here. No LLM picks the number —
+	// it's a patch (or --bump) increment of whatever versions.json holds.
+	if !*skipBump {
+		var components []string
+		if !*skipTestflight || !*skipPlaystore {
+			components = append(components, "mobile")
+		}
+		if !*skipConvex {
+			components = append(components, "backend")
+		}
+		if !*skipCloudflare {
+			components = append(components, "web")
+		}
+
+		bumpStage := deployAllStage{name: "Version bump", id: "bump"}
+		if len(components) == 0 {
+			fmt.Printf("──[ %-22s ]── nothing to bump (only npm enabled — cli bumps in its own stage)\n\n", bumpStage.name)
+			results = append(results, deployAllResult{stage: bumpStage, skipped: true})
+		} else {
+			ctx := &deployAllCtx{dryRun: *dryRun, prefix: "[bump]"}
+			fmt.Printf("──[ %-22s ]── %s-bumping %v…\n", bumpStage.name, *bump, components)
+			stageStart := time.Now()
+			changes, bumpErr := bumpMonorepoVersions(repoRoot, components, *bump, *dryRun, ctx)
+			dur := time.Since(stageStart).Round(time.Second)
+			if bumpErr != nil {
+				fmt.Printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", bumpStage.name, dur, bumpErr)
+				results = append(results, deployAllResult{stage: bumpStage, err: bumpErr, duration: dur})
+				printDeployAllSummary(results, time.Since(overallStart))
+				os.Exit(1)
+			}
+			for comp, change := range changes {
+				deployAllBumped[comp] = change
+			}
+			fmt.Printf("\n──[ %-22s ]── ok (%s)\n\n", bumpStage.name, dur)
+			results = append(results, deployAllResult{stage: bumpStage, duration: dur})
+		}
+	}
 
 	for _, st := range stages {
 		if st.skip {
@@ -233,9 +302,20 @@ func streamLines(r io.Reader, prefix string, dst io.Writer) {
 //   - origin/main ahead of HEAD    → abort (would race the tag)
 //   - no `github` remote           → abort (CI is wired to that remote)
 //   - tag already exists locally   → abort (would re-publish same version)
-func runNpmCliRelease(repoRoot, bump string, dryRun bool, ctx *deployAllCtx) error {
-	if err := requireCleanRepoForRelease(repoRoot); err != nil {
-		return err
+// sweepAll selects how the release commit is staged:
+//   - false (standalone `yaver deploy npm`): require a clean tree and stage
+//     only the cli version files, so the release commit is exactly the bump.
+//   - true (`yaver deploy all`): the clean-tree check already ran at the start
+//     of the pipeline, so every dirty file now is something deploy all itself
+//     produced (marketing bumps, build-number bumps, the cli bump). Sweep them
+//     all into one release commit with `git add -A`.
+//
+// bumped (deploy-all only) is component → "old → new" for the commit message.
+func runNpmCliRelease(repoRoot, bump string, dryRun bool, ctx *deployAllCtx, sweepAll bool, bumped map[string]string) error {
+	if !sweepAll {
+		if err := requireCleanRepoForRelease(repoRoot); err != nil {
+			return err
+		}
 	}
 
 	currentVersion, err := readCliVersion(repoRoot)
@@ -271,24 +351,41 @@ func runNpmCliRelease(repoRoot, bump string, dryRun bool, ctx *deployAllCtx) err
 		return fmt.Errorf("write version files: %w", err)
 	}
 
-	stageFiles := []string{
-		"versions.json",
-		"cli/package.json",
-		"cli/package-lock.json",
-	}
-	// sdk-manifest.json doesn't always carry a version field — only
-	// stage it if the bump touched it.
-	manifestPath := filepath.Join(repoRoot, "cli", "sdk-manifest.json")
-	if hasVersionKey(manifestPath) {
-		stageFiles = append(stageFiles, "cli/sdk-manifest.json")
-	}
-
-	addArgs := append([]string{"add", "--"}, stageFiles...)
-	if err := ctx.runCmd(repoRoot, "git", addArgs...); err != nil {
-		return fmt.Errorf("git add: %w", err)
+	if sweepAll {
+		// Everything dirty is deploy-all's own output (clean baseline was
+		// verified at pipeline start). One commit captures the marketing
+		// bumps + build-number bumps + the cli release together.
+		if err := ctx.runCmd(repoRoot, "git", "add", "-A"); err != nil {
+			return fmt.Errorf("git add -A: %w", err)
+		}
+	} else {
+		stageFiles := []string{
+			"versions.json",
+			"cli/package.json",
+			"cli/package-lock.json",
+		}
+		// sdk-manifest.json doesn't always carry a version field — only
+		// stage it if the bump touched it.
+		manifestPath := filepath.Join(repoRoot, "cli", "sdk-manifest.json")
+		if hasVersionKey(manifestPath) {
+			stageFiles = append(stageFiles, "cli/sdk-manifest.json")
+		}
+		addArgs := append([]string{"add", "--"}, stageFiles...)
+		if err := ctx.runCmd(repoRoot, "git", addArgs...); err != nil {
+			return fmt.Errorf("git add: %w", err)
+		}
 	}
 
 	commitMsg := fmt.Sprintf("cli %s: release", nextVersion)
+	if sweepAll && len(bumped) > 0 {
+		parts := make([]string, 0, len(bumped)+1)
+		parts = append(parts, "cli "+nextVersion)
+		for _, comp := range sortedKeys(bumped) {
+			// bumped[comp] is "old → new"; take the new half for brevity.
+			parts = append(parts, comp+" "+newVersionOf(bumped[comp]))
+		}
+		commitMsg = "chore(release): " + strings.Join(parts, " + ")
+	}
 	if err := ctx.runCmd(repoRoot, "git", "commit", "-m", commitMsg); err != nil {
 		return fmt.Errorf("git commit: %w", err)
 	}

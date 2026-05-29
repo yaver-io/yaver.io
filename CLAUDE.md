@@ -101,9 +101,9 @@ yaver auth --headless
 
 ## Repository
 
-- **Source of truth**: `github.com/kivanccakmak/yaver.io` (open source). The
-  legacy GitLab mirror may still be wired as `origin`; use the `github` remote
-  or `git push github main` directly.
+- **Source of truth**: `github.com/kivanccakmak/yaver.io` (open source). Only
+  one remote here — `github` (HTTPS). `branch.main.remote=github`, so plain
+  `git push` works. No GitLab mirror.
 - **Tags trigger releases**: `cli/v*` → release-cli.yml, `mobile/v*` →
   release-mobile.yml, `web/v*` → release-web.yml. Tag protection rules limit
   pushes to the repo owner.

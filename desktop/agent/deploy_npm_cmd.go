@@ -40,7 +40,7 @@ func runDeployNpmCmd(args []string) {
 	fmt.Println()
 
 	ctx := &deployAllCtx{dryRun: *dryRun, prefix: "[npm]"}
-	if err := runNpmCliRelease(repoRoot, *bump, *dryRun, ctx); err != nil {
+	if err := runNpmCliRelease(repoRoot, *bump, *dryRun, ctx, false, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "\ndeploy npm: %v\n", err)
 		os.Exit(1)
 	}
