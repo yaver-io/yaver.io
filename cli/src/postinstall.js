@@ -518,6 +518,20 @@ async function main() {
       log(`Skipping vibe-preview bootstrap: ${error.message}`);
     }
   }
+
+  // Free/offline voice stack — provision ffmpeg + whisper.cpp + a ggml
+  // model so `yaver voice test` / `voice listen` (provider=local) work out
+  // of the box with no API key and no cost. Best-effort; cloud STT
+  // (Deepgram/OpenAI) needs none of this. Opt out with
+  // YAVER_SKIP_POSTINSTALL_VOICE=1.
+  if (!envEnabled("YAVER_SKIP_POSTINSTALL_VOICE")) {
+    try {
+      await runAgentCommand(["voice", "deps", "--install", "--quiet"], { quiet: true });
+      log("Provisioned free voice stack (ffmpeg + whisper.cpp + model).");
+    } catch (error) {
+      log(`Skipping voice deps bootstrap: ${error.message}`);
+    }
+  }
 }
 
 main()
