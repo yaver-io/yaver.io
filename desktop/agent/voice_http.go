@@ -117,19 +117,20 @@ func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 	// Per-provider key-set booleans so the mobile picker can show the
 	// "key set ✓" badge for every provider, not only the currently
 	// selected one. Each lookup hits the credential resolver, which is
-	// fast (vault map lookup); skip when there's no VoiceConfig yet.
-	openaiSet := false
-	deepgramSet := false
-	cartesiaSet := false
-	assemblyaiSet := false
-	elevenlabsSet := false
+	// fast (vault map lookup). Check the vault UNCONDITIONALLY (not gated
+	// on v != nil): keys may already be present from a peer P2P sync or
+	// `yaver voice setup` before voice is enabled on this device. The
+	// legacy config.json fallback only exists when v != nil.
+	var lOpenAI, lDeepgram, lCartesia, lAssembly, lEleven string
 	if v != nil {
-		openaiSet = HasVoiceCredential("openai", "api-key", v.OpenAIAPIKey)
-		deepgramSet = HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
-		cartesiaSet = HasVoiceCredential("cartesia", "api-key", v.CartesiaAPIKey)
-		assemblyaiSet = HasVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey)
-		elevenlabsSet = HasVoiceCredential("elevenlabs", "api-key", v.ElevenLabsAPIKey)
+		lOpenAI, lDeepgram, lCartesia, lAssembly, lEleven =
+			v.OpenAIAPIKey, v.DeepgramAPIKey, v.CartesiaAPIKey, v.AssemblyAIAPIKey, v.ElevenLabsAPIKey
 	}
+	openaiSet := HasVoiceCredential("openai", "api-key", lOpenAI)
+	deepgramSet := HasVoiceCredential("deepgram", "api-key", lDeepgram)
+	cartesiaSet := HasVoiceCredential("cartesia", "api-key", lCartesia)
+	assemblyaiSet := HasVoiceCredential("assemblyai", "api-key", lAssembly)
+	elevenlabsSet := HasVoiceCredential("elevenlabs", "api-key", lEleven)
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":             true,

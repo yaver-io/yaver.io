@@ -11,13 +11,16 @@
  *      Mix (one of each).
  *   3. Paste API keys. Already-set keys show as "•••••• (configured)" —
  *      the user replaces only if they want to rotate.
- *   4. Save → POST /voice/config → backend writes ~/.yaver/config.json
- *      and confirms via the sanitized status response.
+ *   4. Save → POST /voice/config → agent writes each key to the
+ *      encrypted vault (project="voice"), P2P-syncs it to your other
+ *      devices, and confirms via the sanitized status response.
  *   5. Skip → keyboard-only mode. No keys saved. Voice orb hides itself
  *      across all surfaces.
  *
- * Privacy: keys travel ONCE over the owner-auth HTTPS to the agent,
- * never touch Convex (convex_privacy_test forbidden-keys fence).
+ * Privacy: keys travel ONCE over the owner-auth transport to the agent,
+ * land in the local vault (NaCl secretbox at rest), sync only to your
+ * own devices, and NEVER touch Convex (convex_privacy_test forbidden-
+ * keys fence). The agent reads them at request time — no restart.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -147,7 +150,7 @@ export default function VoiceConfigScreen(): React.JSX.Element {
       setCartesiaKey("");
       setAssemblyaiKey("");
       setElevenlabsKey("");
-      Alert.alert("Saved", "Voice config updated. Mic orb will activate after the next agent restart.");
+      Alert.alert("Saved", "Voice config updated. Keys are in your agent's vault and take effect on the next voice turn — no restart needed.");
       router.back();
     } catch (e: any) {
       setErrorMsg(e?.message ?? String(e));
@@ -199,8 +202,8 @@ export default function VoiceConfigScreen(): React.JSX.Element {
             </Text>
             <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 17 }}>
               Pick STT + TTS providers. Yaver doesn't ship default keys — you own
-              the billing relationship. Keys live in <Text style={{ fontFamily: "Menlo" }}>~/.yaver/config.json</Text> on
-              your agent host, never on Convex.
+              the billing relationship. Keys are saved to the <Text style={{ fontFamily: "Menlo" }}>voice</Text> vault
+              on your agent — encrypted at rest, P2P-synced to your own devices, never on Convex.
             </Text>
           </View>
         </YaverGlass>
