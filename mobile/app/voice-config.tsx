@@ -196,6 +196,29 @@ export default function VoiceConfigScreen(): React.JSX.Element {
 
       <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 40 }}>
         <YaverGlass tint={c.bgCard} style={{ borderRadius: 12, overflow: "hidden" }}>
+          <View style={{ padding: 16, gap: 8 }}>
+            <Text style={{ color: c.textPrimary, fontWeight: 600, fontSize: 14 }}>
+              How voice works
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
+              <Text style={{ color: c.textPrimary }}>STT</Text> (speech‑to‑text) turns
+              your voice into prompts. <Text style={{ color: c.textPrimary }}>TTS</Text>{" "}
+              (text‑to‑speech) reads replies back. Use either, both, or neither.
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
+              <Text style={{ color: c.textPrimary }}>Local</Text> (on‑device Whisper +
+              the system voice) is free and works offline — no key needed, and it&apos;s
+              the default. <Text style={{ color: c.textPrimary }}>Cloud</Text> engines
+              below are optional and faster; they need your own key.
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
+              When voice is on, the agent keeps the spoken headline short and puts the
+              detail on screen — so answers read well out loud.
+            </Text>
+          </View>
+        </YaverGlass>
+
+        <YaverGlass tint={c.bgCard} style={{ borderRadius: 12, overflow: "hidden" }}>
           <View style={{ padding: 16, gap: 10 }}>
             <Text style={{ color: c.textPrimary, fontWeight: 600, fontSize: 14 }}>
               Subscription OAuth only · never API keys for the runners
