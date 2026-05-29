@@ -60,10 +60,29 @@ func runDeployAllCmd(args []string) {
 		os.Exit(2)
 	}
 
-	repoRoot, err := findYaverRepoRoot()
+	repoRoot, isYaverIo, err := findDeployRepoRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "deploy all: %v\n", err)
 		os.Exit(2)
+	}
+
+	// Any repo that isn't yaver.io (carrotbet, talos, …) runs the generic,
+	// detection-driven pipeline: resolve targets from the repo's own
+	// scripts/deploy-*.sh, bump its scattered version sites, run them. No
+	// versions.json, no cli/v* release, no commit/tag/push — the repo owner
+	// commits. See deploy_detect.go + docs/deploy-all-generic.md.
+	if !isYaverIo {
+		runGenericDeployAll(repoRoot, genericDeployOpts{
+			bump:           *bump,
+			dryRun:         *dryRun,
+			keepGoing:      *keepGoing,
+			skipBump:       *skipBump,
+			skipConvex:     *skipConvex,
+			skipCloudflare: *skipCloudflare,
+			skipTestflight: *skipTestflight,
+			skipPlaystore:  *skipPlaystore,
+		})
+		return
 	}
 
 	// The npm stage commits + tags + pushes everything `deploy all` touched

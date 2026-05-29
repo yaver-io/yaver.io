@@ -212,10 +212,15 @@ under project `mobile`. Deploy-time only *reads* vault; it never collects.
 
 - **P0 (already shipped, yaver.io-only):** deterministic `versions.json` bump
   preflight + `sync-versions.sh` `mobile/package.json` fix.
-- **P1 — unlock + detect:** drop the `deploy-web.sh` gate; add `deploy_detect.go`
-  + `.yaver/deploy-plan.json`; run each repo's own `scripts/deploy-*.sh`.
-  Generic per-app version-site bump (no `versions.json` required). Target:
-  carrotbet + talos ship via `yaver deploy all`.
+- **P1 — unlock + detect: SHIPPED 2026-05-30** (`deploy_detect.go`). The
+  `deploy-web.sh` gate is gone (`findDeployRepoRoot` → `isYaverIo`); non-yaver.io
+  repos run `runGenericDeployAll`: detect stages from `scripts/deploy-*.sh`,
+  cache `.yaver/deploy-plan.json` (skipped on `--dry-run`), generic per-app
+  version-site bump (no `versions.json`), run the repo's own scripts in order.
+  Generic repos are **not** committed/tagged/pushed — the owner commits.
+  Verified by dry-run on carrotbet: convex → cloudflare → testflight, mobile
+  1.0.1→1.0.2 (re-aligned iOS/Android drift), web 0.0.1→0.0.2. yaver.io path
+  unchanged (regression-checked).
 - **P2 — collect + templates:** `yaver deploy collect` (vault, easy Apple);
   built-in template fallback for repos with no scripts.
 - **P3 — autoinit enrichment:** teach `yaver autoinit` to write/refresh
