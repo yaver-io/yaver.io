@@ -44,6 +44,12 @@ Agent commands:
   yaver version                     Print agent version
   yaver <agent-command>             Forward any other command to the Go agent
 
+Coding runner commands (wrapped, with the yaver MCP attached):
+  yaver                             Open the interactive yaver shell (psql-style)
+  yaver wrap claude                 Launch Claude Code here (yolo + yaver MCP)
+  yaver wrap codex                  Launch OpenAI Codex here (yolo + yaver MCP)
+  yaver wrap opencode               Launch opencode here (yolo + yaver MCP)
+
 Push-to-device commands:
   yaver push                        Bundle + validate + push current RN/Expo project
   yaver push ios                    Discover iOS app in the repo, build IPA, upload to TestFlight
