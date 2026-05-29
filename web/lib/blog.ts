@@ -10,6 +10,14 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "yaver-p2p-vault",
+    title: "Yaver P2P Vault: secrets that follow your machines without touching our servers",
+    date: "2026-05-29",
+    published: true,
+    description:
+      "How to store API keys and deploy credentials in `yaver vault`, source them into builds, and sync them peer-to-peer across your own devices. The under-the-hood path: local encrypted vault.enc, owner-authenticated peer sync, digest/pull/push anti-entropy, tombstones, and why Convex never stores secret values.",
+  },
+  {
     slug: "yaver-cloud-image",
     title: "Yaver Cloud Image: a dev box on any provider, in 90 seconds",
     date: "2026-05-28",
