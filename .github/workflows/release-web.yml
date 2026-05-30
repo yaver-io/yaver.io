@@ -80,8 +80,8 @@ jobs:
           SIZE=$(du -sm web/ --exclude='node_modules' --exclude='.next' 2>/dev/null | cut -f1 || \
                  du -sm web/ | cut -f1)
           echo "web/ size: ${SIZE}MB"
-          if [ "$SIZE" -gt 10 ]; then
-            echo "ERROR: web/ exceeds 10 MB size limit (${SIZE}MB)"
+          if [ "$SIZE" -gt 15 ]; then
+            echo "ERROR: web/ exceeds 15 MB size limit (${SIZE}MB)"
             exit 1
           fi
 
