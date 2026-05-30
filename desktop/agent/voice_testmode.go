@@ -9,7 +9,8 @@ package main
 // supplies one. Works with every engine:
 //   - deepgram  → true streaming, live partials + EOT confidence (Flux)
 //   - openai    → batch: records until Ctrl-C, one final
-//   - local     → free/offline whisper.cpp, batch (auto-provisions deps)
+//   - local     → free/offline whisper.cpp; pseudo-streaming live partials
+//                 + auto end-of-turn via rolling-window VAD (auto-provisions)
 // With --tts, each final is spoken back via the free local engine.
 //
 // This is the terminal twin of the web + mobile test panels; they all
@@ -43,7 +44,7 @@ func runVoiceTest(args []string) {
 			fmt.Println("  yaver voice test --tts      speak each final back (free local TTS)")
 			fmt.Println("  yaver voice test --device <name|index>   pick a mic")
 			fmt.Println()
-			fmt.Println("Engine = configured STT provider (deepgram=live · openai/local=batch).")
+			fmt.Println("Engine = configured STT provider (deepgram & local=live · openai=batch).")
 			fmt.Println("Local/offline auto-installs its deps on first run. Ctrl-C to stop.")
 			return
 		}
@@ -203,8 +204,10 @@ func openVoiceSTTSession(ctx context.Context, provider string, v *VoiceConfig) (
 			fmt.Fprintln(os.Stderr, "  local voice engine not ready — provisioning (one-time)…")
 			ensureVoiceDeps(defaultWhisperModelURL, false)
 		}
-		ls, ev, err := OpenLocalWhisperSession(ctx)
-		return ls, ev, false, err
+		// Live partials + auto end-of-turn via rolling-window whisper.cpp,
+		// so the offline engine feels like the streaming Flux demo too.
+		ls, ev, err := OpenStreamingLocalWhisperSession(ctx)
+		return ls, ev, true, err
 	default:
 		return nil, nil, false, fmt.Errorf("unsupported stt provider %q (use deepgram, openai, or local)", provider)
 	}

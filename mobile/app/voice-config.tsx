@@ -191,7 +191,9 @@ export default function VoiceConfigScreen(): React.JSX.Element {
           <Ionicons name="chevron-back" size={24} color={c.textPrimary} />
         </Pressable>
         <Text style={{ color: c.textPrimary, fontSize: 17, fontWeight: "600" }}>Voice</Text>
-        <View style={{ width: 24 }} />
+        <Pressable onPress={() => router.push("/voice-test")} hitSlop={12}>
+          <Ionicons name="mic-circle-outline" size={26} color={c.textPrimary} />
+        </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 40 }}>

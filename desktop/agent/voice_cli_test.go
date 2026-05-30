@@ -117,11 +117,20 @@ func TestApplyVoiceSetupDeepgramSingleVendor(t *testing.T) {
 	}
 }
 
-func TestApplyVoiceSetupCartesiaRequiresSTTKey(t *testing.T) {
+func TestApplyVoiceSetupCartesiaUsesLocalSTT(t *testing.T) {
+	// Cartesia is TTS-only. With no STT key supplied, STT falls back to the
+	// free/offline local engine (no key) rather than erroring — so a
+	// Cartesia-only setup is valid: local STT in, Cartesia voice out.
 	stubVoiceCLICredentials(t)
 	cfg := &Config{}
 	opt := &voiceSetupOptions{Stack: "cartesia", CartesiaAPIKey: "ck-test"}
-	if err := applyVoiceSetup(cfg, opt, 0); err == nil {
-		t.Fatal("expected cartesia setup without an STT key to fail")
+	if err := applyVoiceSetup(cfg, opt, 0); err != nil {
+		t.Fatalf("cartesia setup should succeed with local STT fallback, got: %v", err)
+	}
+	if got := cfg.Voice.EffectiveSTTProvider(); got != "local" {
+		t.Fatalf("stt provider = %q, want local", got)
+	}
+	if got := cfg.Voice.EffectiveTTSProvider(); got != "cartesia" {
+		t.Fatalf("tts provider = %q, want cartesia", got)
 	}
 }

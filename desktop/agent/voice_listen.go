@@ -46,10 +46,11 @@ type sttSession interface {
 func runVoiceListen(args []string) {
 	// Lightweight flag parse (avoid pulling another FlagSet's exit paths).
 	var (
-		ttsEcho     bool
-		device      string
-		once        bool
-		showHelp    bool
+		ttsEcho  bool
+		device   string
+		once     bool
+		showHelp bool
+		batch    bool
 	)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -57,6 +58,8 @@ func runVoiceListen(args []string) {
 			ttsEcho = true
 		case "--once":
 			once = true
+		case "--batch":
+			batch = true
 		case "-h", "--help", "help":
 			showHelp = true
 		case "--device", "-d":
@@ -76,12 +79,14 @@ func runVoiceListen(args []string) {
 		fmt.Println("  yaver voice listen            stream mic → STT, print transcript live")
 		fmt.Println("  yaver voice listen --tts      also speak each final back (free local TTS)")
 		fmt.Println("  yaver voice listen --once     stop after the first end-of-turn final")
+		fmt.Println("  yaver voice listen --batch    local: one-shot (record→Ctrl-C) instead of live")
 		fmt.Println("  yaver voice listen --device <name|index>   pick a mic (default: system default)")
 		fmt.Println()
 		fmt.Println("Uses the configured STT provider and its vault key:")
-		fmt.Println("  deepgram  — live streaming partials (best terminal experience)")
+		fmt.Println("  deepgram  — live streaming partials (cloud, lowest latency)")
 		fmt.Println("  openai    — batch: records until Ctrl-C, then transcribes")
-		fmt.Println("  local     — FREE/offline whisper.cpp, no key (brew install whisper-cpp)")
+		fmt.Println("  local     — FREE/offline whisper.cpp, live partials + auto end-of-turn,")
+		fmt.Println("              no key (brew install whisper-cpp). --batch for one-shot.")
 		fmt.Println("Set a key via `yaver voice setup` or the mobile Settings screen.")
 		fmt.Println("Press Ctrl-C to stop.")
 		return
@@ -168,9 +173,15 @@ func runVoiceListen(args []string) {
 		os1, evCh, err = OpenOpenAIWhisperSession(ctx, apiKey, sttModel)
 		sess = os1
 	case "local":
-		var ls *LocalWhisperSession
-		ls, evCh, err = OpenLocalWhisperSession(ctx)
-		sess = ls
+		if batch {
+			var ls *LocalWhisperSession
+			ls, evCh, err = OpenLocalWhisperSession(ctx)
+			sess = ls
+		} else {
+			var ls *StreamingLocalWhisperSession
+			ls, evCh, err = OpenStreamingLocalWhisperSession(ctx)
+			sess = ls
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yaver voice listen: open %s session: %v\n", provider, err)
@@ -178,10 +189,10 @@ func runVoiceListen(args []string) {
 	}
 	defer sess.Close()
 
-	// Only Deepgram streams live partials. OpenAI and local whisper are
-	// batch-only — they buffer until Finalize, then emit one final. For
-	// those we run a single utterance: record until Ctrl-C, then transcribe.
-	streaming := provider == "deepgram"
+	// Deepgram streams live partials over the wire; local whisper streams
+	// pseudo-live via rolling-window re-transcription + VAD (unless --batch).
+	// OpenAI (and local --batch) are one-shot: buffer until Finalize.
+	streaming := provider == "deepgram" || (provider == "local" && !batch)
 
 	// Start mic capture via ffmpeg → 16kHz mono s16le PCM on stdout.
 	micCmd, micOut, err := startMicCapture(ctx, device)

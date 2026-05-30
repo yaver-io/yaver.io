@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"golang.org/x/term"
@@ -27,10 +29,12 @@ func runVoice(args []string) {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  yaver voice status                 show readiness + provider state")
 		fmt.Fprintln(os.Stderr, "  yaver voice test                   Flux-style live transcription test (speak → text)")
+		fmt.Fprintln(os.Stderr, "  yaver voice control                drive yaver hands-free (speak → run ops verb)")
 		fmt.Fprintln(os.Stderr, "  yaver voice listen                 live mic transcription → stdout")
 		fmt.Fprintln(os.Stderr, "  yaver voice listen --tts           also speak finals back (free local TTS)")
 		fmt.Fprintln(os.Stderr, "  yaver voice deps [--install]       check/install local deps (ffmpeg, whisper.cpp, model)")
 		fmt.Fprintln(os.Stderr, "  yaver voice setup                  print setup hints")
+		fmt.Fprintln(os.Stderr, "  yaver voice setup local            FREE/offline whisper.cpp + say/espeak, no key")
 		fmt.Fprintln(os.Stderr, "  yaver voice setup cartesia         set Cartesia as TTS provider")
 		fmt.Fprintln(os.Stderr, "  yaver voice setup deepgram         single-vendor: Flux STT + Aura-2 TTS, one key")
 		fmt.Fprintln(os.Stderr, "  yaver voice setup deepgram-cartesia --deepgram-api-key dg_... --cartesia-api-key ck_...")
@@ -50,6 +54,8 @@ func runVoice(args []string) {
 		voiceCLIStatus()
 	case "listen":
 		runVoiceListen(args[1:])
+	case "control", "do", "command":
+		runVoiceControl(args[1:])
 	case "test":
 		runVoiceTest(args[1:])
 	case "deps":
@@ -113,7 +119,7 @@ func voiceCLISetupWithArgs(args []string) {
 	fs.BoolVar(&opt.Disable, "disable", false, "Disable voice without removing saved keys")
 	fs.BoolVar(&opt.PrintOnly, "print", false, "Print setup examples without writing config")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: yaver voice setup [openai|cartesia|deepgram|deepgram-cartesia] [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: yaver voice setup [local|openai|cartesia|deepgram|deepgram-cartesia] [flags]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -156,6 +162,7 @@ func printVoiceSetupHints() {
 	fmt.Println()
 	fmt.Println("Fast path:")
 	fmt.Println()
+	fmt.Println("  yaver voice setup local                                    # FREE/offline, no key, no cloud")
 	fmt.Println("  yaver voice setup openai --openai-api-key sk-...")
 	fmt.Println("  yaver voice setup cartesia --cartesia-api-key ck_...")
 	fmt.Println("  yaver voice setup deepgram --deepgram-api-key dg_...        # STT+TTS, one key")
@@ -236,6 +243,10 @@ func applyVoiceSetup(cfg *Config, opt *voiceSetupOptions, stdin uintptr) error {
 	stack = strings.ReplaceAll(stack, "_", "-")
 	switch stack {
 	case "", "existing":
+	case "local", "on-device", "whisper", "offline", "free":
+		// Free/offline: whisper.cpp STT + say/espeak TTS. No keys.
+		v.STTProvider = "local"
+		v.TTSProvider = "local"
 	case "openai":
 		v.STTProvider = "openai"
 		v.TTSProvider = "openai"
@@ -248,7 +259,7 @@ func applyVoiceSetup(cfg *Config, opt *voiceSetupOptions, stdin uintptr) error {
 		v.STTProvider = "deepgram"
 		v.TTSProvider = "cartesia"
 	default:
-		return fmt.Errorf("unknown voice setup stack %q (use openai, cartesia, deepgram, or deepgram-cartesia)", opt.Stack)
+		return fmt.Errorf("unknown voice setup stack %q (use local, openai, cartesia, deepgram, or deepgram-cartesia)", opt.Stack)
 	}
 
 	wroteOpenAIKey := false
@@ -370,6 +381,10 @@ func voiceSTTReady(v *VoiceConfig) bool {
 		return hasVoiceCredentialForCLI("openai", "api-key", v.OpenAIAPIKey)
 	case "deepgram":
 		return hasVoiceCredentialForCLI("deepgram", "api-key", v.DeepgramAPIKey)
+	case "local", "whisper", "on-device":
+		// Free/offline whisper.cpp — ready when the CLI + a ggml model are
+		// present (no key). `yaver voice deps --install` provisions them.
+		return LocalWhisperAvailable()
 	default:
 		return false
 	}
@@ -389,6 +404,27 @@ func voiceTTSReady(v *VoiceConfig) bool {
 		return hasVoiceCredentialForCLI("deepgram", "api-key", v.DeepgramAPIKey)
 	case "elevenlabs":
 		return hasVoiceCredentialForCLI("elevenlabs", "api-key", v.ElevenLabsAPIKey)
+	case "local", "device", "on-device":
+		// Free/offline OS speech: `say` (macOS) / `espeak[-ng]` (Linux).
+		return localTTSAvailable()
+	default:
+		return false
+	}
+}
+
+// localTTSAvailable reports whether a free OS text-to-speech engine is on
+// PATH — `say` on macOS, `espeak`/`espeak-ng` on Linux. Mirrors speakLocal.
+func localTTSAvailable() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		_, err := exec.LookPath("say")
+		return err == nil
+	case "linux":
+		if _, err := exec.LookPath("espeak-ng"); err == nil {
+			return true
+		}
+		_, err := exec.LookPath("espeak")
+		return err == nil
 	default:
 		return false
 	}

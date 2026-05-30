@@ -78,17 +78,18 @@ func TestVoiceStatus_ConfigPresent(t *testing.T) {
 	}
 }
 
-func TestVoiceStatus_OpenAIDefault(t *testing.T) {
-	// OpenAI is the default when no provider is explicitly set. One
-	// API key covers both STT + TTS — easiest path for first-time
-	// users + the "Yaver trio" (phone+glasses+keyboard) crowd.
+func TestVoiceStatus_OpenAIExplicit(t *testing.T) {
+	// One OpenAI key covers both STT + TTS — the easiest cloud path for
+	// the "Yaver trio" (phone+glasses+keyboard) crowd. The provider is
+	// set explicitly here (the keyless default is now `local`; see
+	// TestVoiceStatus_LocalDefault).
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	cfgDir := filepath.Join(home, configDirName)
 	if err := os.MkdirAll(cfgDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := `{"voice":{"enabled":true,"openai_api_key":"sk-test"}}`
+	cfg := `{"voice":{"enabled":true,"stt_provider":"openai","tts_provider":"openai","openai_api_key":"sk-test"}}`
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(cfg), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +106,35 @@ func TestVoiceStatus_OpenAIDefault(t *testing.T) {
 	if body["sttReady"] != true || body["ttsReady"] != true {
 		t.Errorf("expected both ready with openai key set, got stt=%v tts=%v", body["sttReady"], body["ttsReady"])
 	}
+}
+
+func TestVoiceStatus_LocalDefault(t *testing.T) {
+	// No provider set → the free/offline local engine is the default
+	// (no key, no cost). Reported provider must be "local" for both legs
+	// so the mobile UI and CLI agree on the keyless path.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, configDirName)
+	if err := os.MkdirAll(cfgDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"voice":{"enabled":true}}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	(&HTTPServer{}).handleVoiceStatus(rec, httptest.NewRequest(http.MethodGet, "/voice/status", nil))
+	var body map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body["sttProvider"] != "local" {
+		t.Errorf("sttProvider = %v, want local", body["sttProvider"])
+	}
+	if body["ttsProvider"] != "local" {
+		t.Errorf("ttsProvider = %v, want local", body["ttsProvider"])
+	}
+	// ttsReady (say/espeak) is environment-dependent; sttReady depends on
+	// whisper.cpp being installed. We assert provider routing only here so
+	// the test stays hermetic across CI boxes.
 }
 
 func TestVoiceStatus_KeyboardOnlyMode(t *testing.T) {

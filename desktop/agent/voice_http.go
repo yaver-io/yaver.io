@@ -279,9 +279,11 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 		sttFinalize = sess.Finalize
 		sttClose = sess.Close
 	case "local":
-		// Free/offline whisper.cpp on the agent host. Batch: buffers
-		// audio, transcribes one utterance on the client's "stop" frame.
-		sess, ev, err := OpenLocalWhisperSession(ctx)
+		// Free/offline whisper.cpp on the agent host. Streaming with live
+		// partials (rolling-window re-transcription) but push-to-talk
+		// turn boundaries: the utterance is finalized on the client's
+		// "stop" frame, so a mid-sentence pause won't cut it short.
+		sess, ev, err := OpenStreamingLocalWhisperSessionOpts(ctx, false)
 		if err != nil {
 			voiceWriteErr(conn, "local stt: "+err.Error())
 			return
