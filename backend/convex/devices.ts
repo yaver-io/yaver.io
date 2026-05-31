@@ -8,6 +8,13 @@ import {
   listGrantedDeviceIdsForGrant,
 } from "./access";
 import { recommendPlacement } from "./edgePlacement";
+import {
+  smartDeviceLabel,
+  smartAliasSlug,
+  uniqueAliasSlug,
+  isRawHostname,
+  type LabelSignals,
+} from "./deviceLabels";
 
 const recoveryPostureValidator = v.object({
   status: v.string(),
@@ -457,10 +464,59 @@ export const registerDevice = mutation({
       }
     }
 
+    // Smart auto-label + auto-seeded alias slug (deviceLabels.ts). Friendly
+    // names ("Hetzner box", "MacBook", "Linux box") and a memorable alias
+    // ("hetzner", "mac", "linux") make device pickers readable and let the
+    // on-device voice helper resolve "my hetzner box" deterministically.
+    // If this box is a managed cloud machine, pull provider/region for the
+    // best label. Cloud row is linked by deviceId once the agent registers.
+    const cloudRow = await ctx.db
+      .query("cloudMachines")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .first();
+    // Read optional hardware fields through a loose view: the validator
+    // shape varies across agent versions, so we don't want a hard compile
+    // dependency on every field being present.
+    const hw = (args.hardwareProfile ?? {}) as Record<string, unknown>;
+    const labelSignals: LabelSignals = {
+      platform: args.platform,
+      hostname: args.name,
+      cloudProvider: cloudRow?.provider,
+      cloudRegion: cloudRow?.region,
+      // hardwareProfileValidator currently has cpu/gpu (no isWsl); read
+      // defensively so newer agents that add isWsl/model still work.
+      isWsl: typeof hw.isWsl === "boolean" ? hw.isWsl : undefined,
+      hardwareModel: String(hw.cpu || hw.gpu || hw.model || "").toLowerCase(),
+    };
+    // Only replace the agent-sent name when it's a raw/uninformative
+    // hostname — a user-meaningful hostname is left untouched.
+    const smartLabel = smartDeviceLabel(labelSignals);
+    const resolvedName =
+      smartLabel && isRawHostname(args.name, args.platform) ? smartLabel : args.name;
+
+    // Auto-seed a unique alias slug if the user hasn't got one for this box
+    // yet. Collect existing aliases to avoid collisions (alias is per-user
+    // unique). Best-effort: never block registration on aliasing.
+    let autoAlias: string | undefined;
+    try {
+      const ownDevices = await ctx.db
+        .query("devices")
+        .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+        .collect();
+      const taken = new Set(
+        ownDevices.map((d) => d.alias).filter((a): a is string => !!a),
+      );
+      const slug = uniqueAliasSlug(smartAliasSlug(labelSignals), taken);
+      if (slug) autoAlias = slug;
+    } catch {
+      // aliasing is a nicety, not a requirement — ignore failures
+    }
+
     return await ctx.db.insert("devices", {
       userId: session.user._id,
       deviceId: args.deviceId,
-      name: args.name,
+      name: resolvedName,
+      ...(autoAlias ? { alias: autoAlias } : {}),
       platform: args.platform,
       deviceClass: args.deviceClass,
       edgeProfile: args.edgeProfile,
