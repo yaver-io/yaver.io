@@ -53,7 +53,11 @@ interface BannerPalette {
 
 export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: RemoteBoxBannerProps) {
   const c = useColors();
-  const { activeDevice, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId } = useDevice();
+  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId } = useDevice();
+  // "Never added a remote device" is distinct from "have devices but none
+  // selected/reachable" — show a create/pair prompt rather than a misleading
+  // "Disconnected".
+  const noDevicesYet = devices.length === 0 && !activeDevice;
   const [pickerVisible, setPickerVisible] = useState(false);
 
   // Honest status: connectionStatus can be optimistically "connected"
@@ -66,7 +70,9 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // connecting. With no device selected, fall back to the presence
   // derivation used by the cold-start / pool-only cases.
   const activeLive = !!activeDevice && connectedDeviceIds.includes(activeDevice.id);
-  const effective = activeDevice
+  const effective = noDevicesYet
+    ? "disconnected"
+    : activeDevice
     ? (activeLive ? "connected" : connectionStatus === "error" ? "error" : "connecting")
     : deriveEffectiveConnectionState(connectionStatus, connectedDeviceIds);
   const palette: BannerPalette = {
@@ -81,8 +87,8 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // (cold start, after explicit disconnect, after deletion) the
   // banner reads "No device selected" and the Switch chip changes
   // to "Pick" so the action verb matches the empty state.
-  const deviceLabel = activeDevice?.name?.trim() || "No device selected";
-  const ctaLabel = activeDevice ? "Switch" : "Pick";
+  const deviceLabel = activeDevice?.name?.trim() || (noDevicesYet ? "No remote device added" : "No device selected");
+  const ctaLabel = activeDevice ? "Switch" : noDevicesYet ? "Add" : "Pick";
   const roleLabel =
     activeDevice?.id === primaryDeviceId
       ? "Primary"
@@ -111,7 +117,7 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
             <View style={styles.statusLine}>
               <View style={[styles.dot, { backgroundColor: palette.dot }]} />
               <Text style={[styles.label, { color: palette.text }]} numberOfLines={1}>
-                {palette.label}
+                {noDevicesYet ? "Not set up" : palette.label}
               </Text>
             </View>
             {roleLabel ? (

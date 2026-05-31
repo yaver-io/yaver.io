@@ -631,6 +631,9 @@ interface DeviceState {
   manualAuthRequiredDeviceIds: string[];
   /** Stop the active reconnect loop, clear the active device, mark it unreachable, and refresh from Convex. */
   stopReconnectAndBounce: () => Promise<void>;
+  /** Re-run the reachability sweep + auto-pick (primary→secondary→alphabetical
+   *  first reachable, else "Can't connect"). Wired to the Retry affordance. */
+  retryConnection: () => void;
   /** Pending guest invitations from other users */
   guestInvitations: GuestInvitation[];
   /** Accept a guest invitation by email match. Optional approvedDeviceIds narrows scope. */
@@ -824,6 +827,14 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // picker, end up on yaver-test-ephemeral" bounce reported via
   // 2026-05-10 screen recording.
   const userSelectedDeviceIdRef = useRef<string | null>(null);
+  // Reachability-driven auto-connect (see the effect below). `nonce` is the
+  // re-trigger: the effect runs ONE ping-sweep attempt per nonce value, so it
+  // never loops on a failing connect. Bump the nonce to re-run it — done on
+  // device-set changes and on an explicit retry. `inFlight` guards against
+  // overlapping sweeps; `attemptedNonce` records the last nonce we acted on.
+  const autoConnectInFlightRef = useRef(false);
+  const autoConnectAttemptedNonceRef = useRef(-1);
+  const [autoConnectNonce, setAutoConnectNonce] = useState(0);
 
   const setMultiTargetMode = useCallback(async (enabled: boolean) => {
     setMultiTargetModeState(enabled);
@@ -1665,6 +1676,21 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     secondaryDeviceId,
     userDisconnected,
   ]);
+
+  // Re-trigger auto-connect whenever the device set changes — a box that just
+  // came online (or a freshly-paired one) deserves a fresh sweep.
+  const deviceIdsKey = devices.map((d) => d.id).sort().join(",");
+  useEffect(() => {
+    setAutoConnectNonce((n) => n + 1);
+  }, [deviceIdsKey]);
+
+  // Manual retry: re-run the reachability sweep + auto-pick from scratch.
+  // Wired to the banner/Tasks "Retry" affordance so a stuck "Connecting" or a
+  // "Can't connect" can be re-attempted on demand.
+  const retryConnection = useCallback(() => {
+    setUserDisconnected(false);
+    setAutoConnectNonce((n) => n + 1);
+  }, []);
 
   // Fetch relay servers: local AsyncStorage > Convex user settings > Convex platform config
   // Extracted so it can be called on startup AND on reconnection (when relay list is empty).
@@ -2759,68 +2785,82 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, refreshDevices]);
 
-  // Auto-connect rule (applies once, after login / relaysReady):
-  //   1. Exactly one online device                       → auto-connect
-  //   2. Multiple online, primaryDeviceId is online      → auto-connect primary
-  //   3. Multiple online, primary offline, secondary on  → auto-connect secondary
-  //   4. Multiple online, no matching elevated device    → force user to pick
-  // The user-disconnect flag always wins so a manual "Stop" isn't overridden
-  // by the auto-connect effect firing again.
+  // Reachability-driven auto-connect (applies after login / relaysReady).
+  // PINGS every device once (yaver-level reachability) and connects to the
+  // best REACHABLE one in priority order — explicit sticky pick (if reachable)
+  // → primary → secondary → first reachable alphabetically. The old rule used
+  // the stale heartbeat `online` flag, which kept selecting a box that was
+  // "online" in Convex but unreachable from the phone, then hung on an
+  // optimistic "Connecting". If devices exist but NONE respond, land in a
+  // terminal "Can't connect" state instead of hanging. With no devices at all
+  // the picker/empty-state handles the "no remote device added" case. One
+  // attempt per nonce (bumped on device-set change + manual Retry) so a
+  // failing connect can't loop. The user-disconnect flag always wins.
   useEffect(() => {
-    if (!settingsReady) return;
-    if (!token || !relaysReady || activeDevice || connectionStatus === "connecting" || userDisconnected) return;
+    if (!settingsReady || !token || !relaysReady || userDisconnected) return;
+    // Already genuinely connected to the focused device → nothing to do.
+    if (activeDevice && connectedDeviceIds.includes(activeDevice.id)) return;
+    if (autoConnectInFlightRef.current) return;
+    if (autoConnectAttemptedNonceRef.current === autoConnectNonce) return;
+    const candidates = devices.filter((d) => !d.isGuest);
+    if (candidates.length === 0) return; // no devices → empty-state UI handles it
 
-    const recentDevices = devices.filter((d) => d.online);
-    if (recentDevices.length === 0) return;
+    autoConnectAttemptedNonceRef.current = autoConnectNonce;
+    autoConnectInFlightRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        setConnectionStatus("connecting");
+        const reachable = new Set<string>();
+        await Promise.all(
+          candidates.map(async (d) => {
+            const probe = await probeMobileDeviceStatus(d, token, 3000).catch(() => null);
+            if (probe?.reachable) reachable.add(d.id);
+          }),
+        );
+        if (cancelled) return;
+        const alpha = [...candidates]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((d) => d.id);
+        const pickId = [userSelectedDeviceIdRef.current, primaryDeviceId, secondaryDeviceId, ...alpha].find(
+          (id): id is string => !!id && reachable.has(id),
+        );
 
-    let target: Device | null = null;
-    let reason: "single" | "primary" | "secondary" = "single";
-    if (recentDevices.length === 1) {
-      target = recentDevices[0];
-    } else if (primaryDeviceId) {
-      const primary = recentDevices.find((d) => d.id === primaryDeviceId);
-      if (primary) {
-        target = primary;
-        reason = "primary";
-      } else if (secondaryDeviceId) {
-        // Primary is set but offline — try secondary before bailing.
-        const secondary = recentDevices.find((d) => d.id === secondaryDeviceId);
-        if (secondary) {
-          target = secondary;
-          reason = "secondary";
+        if (!pickId) {
+          setConnectionStatus("error");
+          setLastError(
+            "Can't connect — no device responded. Make sure one is running `yaver serve` and reachable on your network or relay.",
+          );
+          return;
         }
+        const target = devices.find((d) => d.id === pickId);
+        if (!target || cancelled) return;
+        const reason =
+          pickId === userSelectedDeviceIdRef.current ? "sticky" :
+          pickId === primaryDeviceId ? "primary" :
+          pickId === secondaryDeviceId ? "secondary" : "reachable";
+        console.log(`[DeviceContext] Auto-connecting (${reason}) to`, target.name);
+        sendTelemetry(token, "auto-connect", `${reason}: ${target.name}`, JSON.stringify({
+          reason,
+          relayCount: quicClient.relayServerCount,
+          deviceId: target.id.slice(0, 8),
+          reachableCount: reachable.size,
+        }));
+        await selectDevice(target);
+        // Seed primaryDeviceId on a multi-device account's first auto-connect.
+        if (devices.length > 1 && primaryDeviceId === null) {
+          setPrimaryDevice(target.id).catch((e) => {
+            appLog("warn", `[DeviceContext] Auto-set primaryDevice failed: ${e}`);
+          });
+        }
+      } finally {
+        autoConnectInFlightRef.current = false;
       }
-    } else if (secondaryDeviceId) {
-      // No primary configured but secondary is — honour it.
-      const secondary = recentDevices.find((d) => d.id === secondaryDeviceId);
-      if (secondary) {
-        target = secondary;
-        reason = "secondary";
-      }
-    }
-
-    if (target) {
-      console.log(`[DeviceContext] Auto-connecting (${reason}) to`, target.name);
-      sendTelemetry(token, "auto-connect", `${reason}: ${target.name}`, JSON.stringify({
-        reason,
-        relayCount: quicClient.relayServerCount,
-        deviceId: target.id.slice(0, 8),
-        onlineCount: recentDevices.length,
-      }));
-      selectDevice(target);
-
-      // Seed primaryDeviceId after the first successful auto-connect on a
-      // multi-device account. The single online device today becomes the
-      // default for tomorrow — next launch skips the picker even if both
-      // devices are online. User can always override in Settings.
-      if (reason === "single" && devices.length > 1 && primaryDeviceId === null) {
-        setPrimaryDevice(target.id).catch((e) => {
-          appLog("warn", `[DeviceContext] Auto-set primaryDevice failed: ${e}`);
-        });
-      }
-    }
-    // Multiple devices + neither primary nor secondary online → do nothing; UI asks the user to pick.
-  }, [devices, token, relaysReady, settingsReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, secondaryDeviceId, selectDevice, setPrimaryDevice]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoConnectNonce, devices, token, relaysReady, settingsReady, activeDevice?.id, connectedDeviceIds, userDisconnected, primaryDeviceId, secondaryDeviceId, selectDevice, setPrimaryDevice]);
 
   // Background "warm the pool" pass. After the focused auto-connect
   // above settles, this effect quietly opens additional connections
@@ -2987,6 +3027,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       markDeviceUnreachable,
       manualAuthRequiredDeviceIds: Array.from(manualAuthRequiredSet),
       stopReconnectAndBounce,
+      retryConnection,
       guestInvitations,
       acceptGuestInvitation,
       acceptGuestByCode,
@@ -3006,7 +3047,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

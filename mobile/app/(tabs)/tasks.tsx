@@ -1523,7 +1523,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, retryConnection, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -3466,7 +3466,9 @@ export default function TasksScreen() {
     const interval = setInterval(fetchInfo, 5000);
     return () => clearInterval(interval);
   }, [isEffectivelyConnected]);
-  const showRetryButton = connectionStatus === "disconnected" && activeDevice && !userDisconnected;
+  // Show Retry on a normal drop AND on the terminal "Can't connect" state
+  // the reachability auto-connect lands in when no device responds.
+  const showRetryButton = (connectionStatus === "disconnected" || connectionStatus === "error") && !userDisconnected;
   // Show the attempt counter while we're actively retrying (attempt > 0 and
   // not yet connected). Clamp to max so the display never exceeds N/max.
   const showReconnectProgress =
@@ -3574,9 +3576,14 @@ export default function TasksScreen() {
                   ) : null}
                   {!showReconnectProgress && showRetryButton ? (
                     <>
+                      {connectionStatus === "error" && lastError ? (
+                        <Text style={[s.bannerStatusCopy, { color: c.error, flexShrink: 1, marginRight: 8 }]} numberOfLines={2}>
+                          {lastError}
+                        </Text>
+                      ) : null}
                       <Pressable
                         style={[s.bannerInlineBtn, { backgroundColor: c.accentSoft }]}
-                        onPress={() => activeDevice && selectDevice(activeDevice)}
+                        onPress={() => retryConnection()}
                       >
                         <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>Retry</Text>
                       </Pressable>
