@@ -1623,6 +1623,12 @@ export default function TasksScreen() {
   // actual primary (Codex on yaver-test-ephemeral, etc.).
   const userPickedRunnerRef = useRef(false);
   const userPickedModelRef = useRef(false);
+  // When the Agent & Model picker is opened from a FAILED task's "Switch
+  // model & retry" CTA, closing it re-runs the original prompt with the
+  // chosen runner/model (recovery from e.g. "gpt-5.4 not supported"). The
+  // follow-up composer opens the same picker WITHOUT this flag, so its
+  // Done just closes. Holds the task to re-run.
+  const retryAfterPickRef = useRef<Task | null>(null);
   useEffect(() => {
     userPickedRunnerRef.current = false;
     userPickedModelRef.current = false;
@@ -2940,6 +2946,29 @@ export default function TasksScreen() {
     } catch {
       Alert.alert("Stop Failed", "Could not reach the agent. The task may still be running.");
     }
+  };
+
+  // Close the Agent & Model picker. If it was opened from a failed task's
+  // "Switch model & retry" CTA (retryAfterPickRef set), re-run the original
+  // prompt with the just-picked runner/model — the recovery path for model
+  // errors like "gpt-5.4 not supported with a ChatGPT account", which a
+  // plain same-model retry just reproduces.
+  const closeAgentPicker = () => {
+    setShowAgentPicker(false);
+    const task = retryAfterPickRef.current;
+    retryAfterPickRef.current = null;
+    if (!task) return;
+    const retryRunner = (selectedRunner || task.runnerId || "").trim() || undefined;
+    const retryModel = (selectedModel || "").trim() || undefined;
+    taskHaptics.retry();
+    void quicClient.sendTask(
+      task.title, "", retryModel, retryRunner, undefined, undefined, undefined, projectDir || undefined,
+    ).then((retried) => {
+      setTasks((prev) => [retried, ...prev]);
+      setSelectedTask(retried);
+    }).catch((err) => {
+      Alert.alert("Retry failed", err instanceof Error ? err.message : String(err));
+    });
   };
 
   const handleFollowUp = async () => {
@@ -4765,13 +4794,17 @@ export default function TasksScreen() {
 
 
         {/* ── Agent / Model Picker Modal ─────────────────────────────── */}
-        <Modal visible={showAgentPicker} animationType="slide" transparent onRequestClose={() => setShowAgentPicker(false)}>
-          <Pressable style={{ flex: 1 }} onPress={() => setShowAgentPicker(false)} />
+        <Modal visible={showAgentPicker} animationType="slide" transparent onRequestClose={closeAgentPicker}>
+          <Pressable style={{ flex: 1 }} onPress={closeAgentPicker} />
           <View style={[s.agentPickerSheet, { backgroundColor: c.bgCard }]}>
             <View style={[s.agentPickerHeader, { borderBottomColor: c.border }]}>
-              <Text style={[s.agentPickerTitle, { color: c.textPrimary }]}>Agent & Model</Text>
-              <Pressable onPress={() => setShowAgentPicker(false)}>
-                <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Done</Text>
+              <Text style={[s.agentPickerTitle, { color: c.textPrimary }]}>
+                {retryAfterPickRef.current ? "Switch Model & Retry" : "Agent & Model"}
+              </Text>
+              <Pressable onPress={closeAgentPicker}>
+                <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>
+                  {retryAfterPickRef.current ? "Retry" : "Done"}
+                </Text>
               </Pressable>
             </View>
             {availableRunners.length === 0 && availableModels.length === 0 && (
@@ -5175,6 +5208,33 @@ export default function TasksScreen() {
                     });
                   }}
                 />
+
+                {/* Failed-task recovery: a one-tap path to switch the
+                    runner/model and re-run. The header's plain "retry"
+                    re-sends with the SAME runner + default model, so a
+                    model error (e.g. "gpt-5.4 not supported with a ChatGPT
+                    account") just reproduces — this opens the Agent & Model
+                    picker seeded to the task's runner and re-runs on close. */}
+                {selectedTask.status === "failed" ? (
+                  <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+                    <Pressable
+                      onPress={() => {
+                        setSelectedRunner(selectedTask.runnerId || "");
+                        userPickedModelRef.current = false;
+                        retryAfterPickRef.current = selectedTask;
+                        setShowAgentPicker(true);
+                      }}
+                      style={({ pressed }) => [
+                        { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 11, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCardElevated },
+                        pressed && { opacity: 0.6 },
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Switch model or agent and retry this task"
+                    >
+                      <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>⚙  Switch model &amp; retry</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
 
                 {/* Video summary chip — kept out of the header so Row 1
                     stays clean (B1). Inline strip below the header. */}
