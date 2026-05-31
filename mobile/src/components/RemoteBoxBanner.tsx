@@ -56,10 +56,22 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   const { activeDevice, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId } = useDevice();
   const [pickerVisible, setPickerVisible] = useState(false);
 
-  const effective = deriveEffectiveConnectionState(connectionStatus, connectedDeviceIds);
+  // Honest status: connectionStatus can be optimistically "connected"
+  // (set the instant selectDevice's connect resolves — including when a
+  // relay tunnel comes up but the agent behind it is unreachable), which
+  // painted a green "Connected" for a box whose transport was still
+  // pending and whose ping failed. When a device IS selected, only call
+  // it connected if that exact device is in the LIVE connected pool
+  // (connectionManager's transport truth); otherwise it's still
+  // connecting. With no device selected, fall back to the presence
+  // derivation used by the cold-start / pool-only cases.
+  const activeLive = !!activeDevice && connectedDeviceIds.includes(activeDevice.id);
+  const effective = activeDevice
+    ? (activeLive ? "connected" : connectionStatus === "error" ? "error" : "connecting")
+    : deriveEffectiveConnectionState(connectionStatus, connectedDeviceIds);
   const palette: BannerPalette = {
     connected: { stripe: c.success, dot: c.success, text: c.textSecondary, label: "Connected" },
-    connecting: { stripe: c.warn, dot: c.warn, text: c.textSecondary, label: "Reconnecting" },
+    connecting: { stripe: c.warn, dot: c.warn, text: c.textSecondary, label: activeLive ? "Reconnecting" : "Connecting" },
     error: { stripe: c.error, dot: c.error, text: c.textPrimary, label: "Disconnected" },
     disconnected: { stripe: c.textMuted, dot: c.textMuted, text: c.textSecondary, label: "Disconnected" },
   }[effective];

@@ -3392,25 +3392,29 @@ export default function TasksScreen() {
   // any pool client reports live, so the banner mirrors the source of
   // truth the Devices tab is already reading from.
   const anyPoolConnected = connectedDeviceIds.length > 0;
+  // Honest connection state. `connectionStatus` goes "connected" the
+  // instant selectDevice's connect resolves — which is OPTIMISTIC: a
+  // relay tunnel can come up while the agent behind it is unreachable,
+  // leaving a green "Connected" for a box whose transport is pending and
+  // whose ping fails (and, worse, gating OFF the reachability probe sweep
+  // below so the dead box is never discovered). When a device is selected,
+  // only trust it if that exact device is in the LIVE connected pool
+  // (connectionManager's transport truth). The pool-any fallback is kept
+  // ONLY for the no-device-focused case so a cold start with a warm pool
+  // still reads connected.
+  const activeLiveInPool = !!activeDevice && connectedDeviceIds.includes(activeDevice.id);
   const effectiveState: ConnectionState =
-    // Trust `connectionStatus` directly when the focused device says
-    // connected — using `quicState` here was a leak from the
-    // pre-pool world; the listener now re-arms on focus change but
-    // we still don't want a momentary "connecting" transition during
-    // resume to flip the banner back to a not-connected look once
-    // selectDevice has confirmed the focused client is up.
-    connectionStatus === "connected" ? "connected" :
-    // Show yellow "Reconnecting" for error state (active retries)
+    activeLiveInPool ? "connected" :
     connectionStatus === "error" ? "connecting" :
-    // Pool fallback: any other live client is enough to call us
-    // "connected" overall. Without this, focus on a quiet box would
-    // make the banner lie.
-    anyPoolConnected ? "connected" :
+    (!activeDevice && anyPoolConnected) ? "connected" :
+    // Active device selected but not actually live (incl. an optimistic
+    // connectionStatus==="connected") → still connecting, not green.
+    connectionStatus === "connected" ? "connecting" :
     connectionStatus;
   const isEffectivelyConnected = effectiveState === "connected";
 
   useEffect(() => {
-    if (isEffectivelyConnected || devices.length === 0) return;
+    if (devices.length === 0) return;
     let cancelled = false;
     const targets = devices.filter((device) => !device.isGuest);
     if (targets.length === 0) return;
@@ -3432,11 +3436,16 @@ export default function TasksScreen() {
       });
     };
 
+    // Yaver-level reachability sweep: ping EVERY device once on open (and
+    // whenever the device set changes) so the banner/picker reflect which
+    // boxes are actually reachable rather than an optimistic "connected".
+    // Keep the 8s re-poll only while not effectively connected — once a
+    // focused device is genuinely live the churn isn't needed.
     void run();
-    const iv = setInterval(run, 8000);
+    const iv = isEffectivelyConnected ? null : setInterval(run, 8000);
     return () => {
       cancelled = true;
-      clearInterval(iv);
+      if (iv) clearInterval(iv);
     };
   }, [devices, isEffectivelyConnected, token]);
 
