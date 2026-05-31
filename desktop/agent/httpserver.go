@@ -676,7 +676,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/feedback/stream", s.authSDK(s.handleFeedbackStream))
 	mux.HandleFunc("/feedback/", s.authSDK(s.handleFeedbackByID))
 	// On-device App Store screenshot upload (Engine 2) — SDK-accessible.
-	mux.HandleFunc("/shots/upload", s.authSDK(s.handleShotsUpload))
 
 	// Design references (web UI captures from the browser extension) —
 	// distinct store, same auth tier as feedback so SDK tokens can list
