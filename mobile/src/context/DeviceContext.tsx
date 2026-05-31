@@ -148,7 +148,9 @@ AsyncStorage.getItem("@yaver/debug_logs_enabled").then((val) => {
 // inheriting Codex's gpt-5.4 or Claude's opus when switching to it.
 export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   claude: "claude-opus-4-7",
-  codex: "gpt-5.4",
+  // Codex-native model — general gpt-5.x error on a ChatGPT-account login
+  // ("not supported when using Codex with a ChatGPT account").
+  codex: "gpt-5.3-codex",
 };
 
 const APP_VERSION = Constants.expoConfig?.version ?? "unknown";

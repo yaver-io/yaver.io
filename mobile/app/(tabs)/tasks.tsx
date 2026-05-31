@@ -167,10 +167,10 @@ function preferredDefaultModelForRunner(
   if (!normalized) return null;
   if (isKivancAccount(signedInEmail)) {
     if (normalized === "claude" && isKivancMacBook(device)) return "claude-opus-4-7";
-    if (normalized === "codex" && !isKivancMacBook(device)) return "gpt-5.4";
+    if (normalized === "codex" && !isKivancMacBook(device)) return "gpt-5.3-codex";
   }
   if (normalized === "claude") return "claude-opus-4-7";
-  if (normalized === "codex") return "gpt-5.4";
+  if (normalized === "codex") return "gpt-5.3-codex";
   return null;
 }
 
