@@ -1182,6 +1182,24 @@ export const createSession = mutation({
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
+    // Session hygiene: a fresh login for a device that already has
+    // sessions means the old ones are dead weight — the agent now holds
+    // the new token. Without this, every `yaver auth` / bootstrap /
+    // re-login appended a row that lived for a year, accreting hundreds
+    // of stale sessions per heavy user (one power user hit 339). Retire
+    // this device's prior sessions before inserting the new one. Scoped
+    // to the SAME (userId, deviceId) so other live devices/surfaces are
+    // never touched; deviceId-less sessions (web/mobile) are left alone.
+    if (args.deviceId) {
+      const prior = await ctx.db
+        .query("sessions")
+        .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+        .filter((q) => q.eq(q.field("deviceId"), args.deviceId))
+        .collect();
+      for (const old of prior) {
+        await ctx.db.delete(old._id);
+      }
+    }
     return await ctx.db.insert("sessions", {
       tokenHash: args.tokenHash,
       userId: args.userId,

@@ -723,7 +723,7 @@ function sendTelemetry(token: string | null, step: string, message: string, deta
 }
 
 export function DeviceProvider({ children }: { children: React.ReactNode }) {
-  const { token, user } = useAuth();
+  const { token, user, notifyAuthFailure } = useAuth();
   const uid = user?.id;
 
   // User-scoped storage keys (different user = different settings)
@@ -1014,6 +1014,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         setDevices(finalDevices);
       } else {
         appLog("warn", `/devices/list failed: ${devicesRes.status} via ${convexSiteUrl}`);
+        // A 401/403 here means our bearer is stale/rotated/revoked — but
+        // the app still shows the cached account, so the user looks
+        // "signed in" while every device query returns nothing. That
+        // surfaces as an empty "No device connected / Disconnected"
+        // screen with no hint that re-auth is needed (this is exactly how
+        // a Mac that IS registered goes invisible on the phone). Route it
+        // through the auth recovery: it rotates the token if the server
+        // hands back a new one (next poll repopulates the list) or signs
+        // the user out to the auth screen if the session was revoked.
+        if (devicesRes.status === 401 || devicesRes.status === 403) {
+          void notifyAuthFailure();
+        }
       }
 
       // Fetch pending guest invitations
@@ -1029,7 +1041,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       hasLoadedOnce.current = true;
       setIsLoadingDevices(false);
     }
-  }, [token, user?.email, user?.id]);
+  }, [token, user?.email, user?.id, notifyAuthFailure]);
 
   const selectDevice = useCallback(
     async (device: Device) => {

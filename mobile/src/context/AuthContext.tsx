@@ -39,6 +39,13 @@ interface AuthState {
   logout: () => Promise<void>;
   markSurveyCompleted: () => void;
   refreshUser: () => Promise<void>;
+  // Call when an authenticated request to the backend returns 401/403.
+  // Routes through the single-flight token-refresh path: rotates the
+  // bearer if the server hands back a new one, or signs the user out
+  // (→ auth screen) if the session was genuinely revoked. Network errors
+  // keep the cached session. Lets non-auth surfaces (device list, etc.)
+  // recover instead of silently showing an empty / "Disconnected" state.
+  notifyAuthFailure: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -180,36 +187,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // keep the cached session so a transient Convex/WiFi hiccup between
   // background and foreground doesn't sign the user out. If the server
   // rotated our token we persist the new bearer immediately.
+  // Shared "refresh-or-logout" recovery. Coalesced via refreshToken's
+  // single-flight map so concurrent callers (resume + a 401 from the
+  // device list) collapse to one round-trip. Rotates the bearer when the
+  // server hands one back, signs out on a genuine revoke (401/403), and
+  // keeps the cached session on network errors.
+  const notifyAuthFailure = useCallback(async () => {
+    const snapshotToken = currentTokenRef.current;
+    if (!snapshotToken) return;
+    try {
+      const result = await refreshToken(snapshotToken);
+      // User logged out / token replaced while the refresh was in flight.
+      if (currentTokenRef.current !== snapshotToken) return;
+      if (result.newToken) {
+        await saveToken(result.newToken);
+        if (currentTokenRef.current !== snapshotToken) return;
+        setToken(result.newToken);
+        return;
+      }
+      if (!result.ok && !result.networkError) {
+        console.log("[auth] Token revoked by server — logging out");
+        await clearToken();
+        if (currentTokenRef.current !== snapshotToken) return;
+        setToken(null);
+        setUser(null);
+        setSurveyCompleted(false);
+      }
+    } catch {
+      // Recovery path must never throw.
+    }
+  }, []);
+
   const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
     const handleAppState = (nextState: AppStateStatus) => {
       const prevState = appStateRef.current;
       appStateRef.current = nextState;
       if (nextState === "active" && prevState.match(/inactive|background/) && token) {
-        const snapshotToken = token;
-        refreshToken(snapshotToken).then(async (result) => {
-          // User logged out (or was replaced) between the resume trigger
-          // and the refresh landing — drop the outcome silently.
-          if (currentTokenRef.current !== snapshotToken) return;
-          if (result.newToken) {
-            await saveToken(result.newToken);
-            if (currentTokenRef.current !== snapshotToken) return;
-            setToken(result.newToken);
-          }
-          if (!result.ok && !result.networkError) {
-            console.log("[auth] Token revoked by server — logging out");
-            await clearToken();
-            if (currentTokenRef.current !== snapshotToken) return;
-            setToken(null);
-            setUser(null);
-            setSurveyCompleted(false);
-          }
-        }).catch(() => {});
+        void notifyAuthFailure();
       }
     };
     const sub = AppState.addEventListener("change", handleAppState);
     return () => sub.remove();
-  }, [token]);
+  }, [token, notifyAuthFailure]);
 
   const login = useCallback(async (newToken: string) => {
     await hydrateBackendConfigFromCache();
@@ -296,8 +316,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout,
       markSurveyCompleted,
       refreshUser,
+      notifyAuthFailure,
     }),
-    [user, token, isLoading, surveyCompleted, login, logout, markSurveyCompleted, refreshUser]
+    [user, token, isLoading, surveyCompleted, login, logout, markSurveyCompleted, refreshUser, notifyAuthFailure]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

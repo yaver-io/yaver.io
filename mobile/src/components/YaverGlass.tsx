@@ -26,7 +26,7 @@
 import React, { useEffect, useState } from "react";
 import { AccessibilityInfo, Platform, StyleSheet, View, ViewStyle } from "react-native";
 import { BlurView } from "expo-blur";
-import { useColors } from "../context/ThemeContext";
+import { useColors, useTheme } from "../context/ThemeContext";
 
 export type GlassVariant = "regular" | "clear" | "tinted";
 export type GlassShape = "default" | "capsule" | "circle";
@@ -121,6 +121,7 @@ export function YaverGlass({
   children,
 }: YaverGlassProps): React.JSX.Element {
   const colors = useColors();
+  const { isDark } = useTheme();
   const reduceTransparency = useReduceTransparency();
 
   const baseRadius = shape === "circle" ? 999 : shape === "capsule" ? 999 : 12;
@@ -154,15 +155,22 @@ export function YaverGlass({
     );
   }
 
-  // 3. iOS 18-25 or non-iOS Apple builds → expo-blur frosted glass
+  // 3. iOS 18-25 or non-iOS Apple builds → expo-blur frosted glass.
+  //    The blur tint MUST follow the theme: "systemMaterial" is a
+  //    light-leaning material that renders as a washed-out gray bar
+  //    over a pure-black (dark-mode) app. iOS's own tab/nav bars use a
+  //    near-black chrome material in the dark, so mirror that. The
+  //    `tint` color overlay is also dropped in dark mode — layering a
+  //    surface color at 0.18 over the dark blur only muddied it.
   if (Platform.OS === "ios") {
+    const blurTint = isDark ? "systemChromeMaterialDark" : "systemChromeMaterialLight";
     return (
       <BlurView
         intensity={blurIntensity}
-        tint="systemMaterial"
+        tint={blurTint}
         style={wrap}
       >
-        {tint && (
+        {tint && !isDark && (
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: tint, opacity: 0.18 }]} />
         )}
         {children}

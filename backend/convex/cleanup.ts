@@ -67,6 +67,30 @@ export const pruneDeveloperLogs = internalMutation({
   },
 });
 
+/** Prune dead session rows. A session is refreshable until 1 year PAST
+ *  its expiry (refreshSession's grace window — auth.ts), so we only
+ *  delete rows whose expiresAt is older than now minus that grace: those
+ *  can never be revived and are pure bloat. Sessions accreted unbounded
+ *  because each login inserted a 1-year row and only logout/merge ever
+ *  deleted them (createSession now also retires a device's prior
+ *  sessions; this sweeps the historical backlog + any deviceId-less
+ *  web/mobile rows that path can't reach). Bounded take(500) per run. */
+export const pruneExpiredSessions = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - ONE_YEAR_MS;
+    const old = await ctx.db
+      .query("sessions")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", cutoff))
+      .take(500);
+    for (const row of old) {
+      await ctx.db.delete(row._id);
+    }
+    return old.length;
+  },
+});
+
 export const pruneDeviceEvents = internalMutation({
   args: {},
   handler: async (ctx) => {

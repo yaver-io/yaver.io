@@ -331,12 +331,14 @@ export default function TabLayout() {
       />
       <Tabs.Screen name="builds" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="publish" options={{ href: null, headerShown: false }} />
+      {/* Devices moved out of the bottom bar into More (more.tsx links to
+          it) — the 6-tab bar was crowded enough that "Shortcuts" wrapped
+          to two lines. Device *management* is occasional; the per-session
+          device target is already pickable from the header status strip on
+          Tasks. Reached from More, so it gets a back button like runs/monitor. */}
       <Tabs.Screen
         name="devices"
-        options={{
-          title: "Devices",
-          tabBarIcon: ({ focused }) => <TabIcon label="Devices" focused={focused} />,
-        }}
+        options={{ href: null, title: "Devices", headerShown: true, headerLeft: backToMore }}
       />
       <Tabs.Screen
         name="more"

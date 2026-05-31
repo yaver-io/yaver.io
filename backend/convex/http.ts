@@ -2144,9 +2144,23 @@ http.route({
     const token = authHeader.slice(7);
     const tokenHash = await sha256Hex(token);
 
-    const devices = await ctx.runQuery(api.devices.listMyDevices, {
-      tokenHash,
-    });
+    // listMyDevices THROWS "Unauthorized" when the session token is
+    // stale/rotated/revoked. An uncaught throw in an httpAction returns
+    // HTTP 500 — which clients (mobile, web) treat as a transient server
+    // error and silently swallow, leaving the user "signed in" but with
+    // an empty device list and no hint to re-auth (a registered Mac goes
+    // invisible on the phone). Map the auth throw to a real 401 so every
+    // client can route it through its token-refresh / sign-in recovery.
+    let devices;
+    try {
+      devices = await ctx.runQuery(api.devices.listMyDevices, { tokenHash });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("Unauthorized")) {
+        return errorResponse("Unauthorized", 401);
+      }
+      throw err;
+    }
 
     return jsonResponse({ devices });
   }),
@@ -5124,6 +5138,9 @@ const runCron = httpAction(async (ctx, req) => {
       break;
     case "pruneDeviceEvents":
       await ctx.scheduler.runAfter(0, internal.cleanup.pruneDeviceEvents, {});
+      break;
+    case "pruneExpiredSessions":
+      await ctx.scheduler.runAfter(0, internal.cleanup.pruneExpiredSessions, {});
       break;
     case "cloudMeter":
       // Managed-cloud prepaid meter (P2). Same external-Hetzner-timer

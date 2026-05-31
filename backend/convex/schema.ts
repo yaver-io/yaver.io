@@ -218,7 +218,10 @@ export default defineSchema({
     .index("by_tokenHash", ["tokenHash"])
     .index("by_userId", ["userId"])
     .index("by_deviceId", ["deviceId"])
-    .index("by_prevTokenHash", ["prevTokenHash"]),
+    .index("by_prevTokenHash", ["prevTokenHash"])
+    // Lets the daily cleanup cron prune long-expired sessions without
+    // scanning the whole table (see cleanup.pruneExpiredSessions).
+    .index("by_expiresAt", ["expiresAt"]),
 
   devices: defineTable({
     userId: v.id("users"),

@@ -2,6 +2,7 @@
 """Upload AAB to Google Play Internal Testing track."""
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -75,10 +76,17 @@ def main():
     service.edits().commit(packageName=PACKAGE, editId=edit_id).execute()
     print(f"Edit committed! Build {version_code} is live on {TRACK} track.")
 
-    subprocess.run(
-        ["mobile-cache-cleanup.sh", "mark-deployed", "yaver"],
-        check=False,
-    )
+    # Best-effort local-Mac cache bookkeeping. This script lives only in
+    # ~/.local/bin on the dev machine; on CI runners it isn't on PATH, and a
+    # bare subprocess.run() raises FileNotFoundError (check=False suppresses
+    # exit codes, not spawn failures) — which would fail the job *after* the
+    # upload already committed. Resolve it first and never let it be fatal.
+    cleanup = shutil.which("mobile-cache-cleanup.sh")
+    if cleanup:
+        try:
+            subprocess.run([cleanup, "mark-deployed", "yaver"], check=False)
+        except OSError as exc:
+            print(f"(skipped cache cleanup: {exc})")
 
 if __name__ == "__main__":
     main()
