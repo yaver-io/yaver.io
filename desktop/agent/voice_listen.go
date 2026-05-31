@@ -31,6 +31,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -94,10 +95,11 @@ func runVoiceListen(args []string) {
 
 	cfg, _ := LoadConfig()
 	v := voiceCfgOrNil(cfg)
-	provider := "openai"
-	if v != nil {
-		provider = v.EffectiveSTTProvider()
-	}
+	// Default to the free/offline local engine — same default as the config
+	// layer (EffectiveSTTProvider) and `voice control`. Only use a cloud
+	// provider when one is explicitly configured. (Previously hardcoded
+	// "openai", which forced a key prompt on a fresh install.)
+	provider := v.EffectiveSTTProvider()
 
 	// Resolve the model + key per provider through the shared resolver
 	// (vault → env → legacy config field).
@@ -208,12 +210,20 @@ func runVoiceListen(args []string) {
 		fmt.Printf("\n🎙  Recording (%s · %s, batch). Speak, then press Ctrl-C to transcribe.\n\n", provider, sttModel)
 	}
 
+	// Half-duplex gate: while we're speaking a TTS readback (--tts), the
+	// speaker output bleeds into the open mic, gets transcribed, and the
+	// listener "hears itself" — an endless self-talk loop. ttsSpeaking is
+	// raised around speakLocal() below; the mic pump keeps draining ffmpeg
+	// (so the pipe never backs up) but DROPS those frames instead of feeding
+	// STT, so the engine never sees its own voice.
+	var ttsSpeaking atomic.Bool
+
 	// Pump PCM from ffmpeg → STT in ~32KB frames (~1s @16k mono s16le).
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
 			n, rerr := micOut.Read(buf)
-			if n > 0 {
+			if n > 0 && !ttsSpeaking.Load() {
 				if werr := sess.SendAudio(buf[:n]); werr != nil {
 					return
 				}
@@ -268,7 +278,11 @@ func runVoiceListen(args []string) {
 				lastPartial = ""
 				fmt.Printf("\r\033[K\033[1m▸ %s\033[0m\n", text)
 				if ttsEcho && text != "" {
-					speakLocal(ctx, text)
+					// Mute mic→STT for the duration of the readback plus a
+					// short echo-hangover so the speaker tail / room reverb
+					// drains before we resume — otherwise the next utterance
+					// is our own voice. See ttsSpeaking above.
+					speakLocalGated(ctx, &ttsSpeaking, text)
 				}
 				if once {
 					cancel()
@@ -286,8 +300,9 @@ func runVoiceListen(args []string) {
 // startMicCapture launches ffmpeg reading the default microphone and
 // emitting 16kHz mono signed-16-bit-LE PCM on stdout — exactly what the
 // STT clients expect. Platform input format:
-//   macOS  → avfoundation ":<device>"  (audio-only; ":default" = system)
-//   linux  → pulse "default" (falls back to alsa if pulse missing)
+//
+//	macOS  → avfoundation ":<device>"  (audio-only; ":default" = system)
+//	linux  → pulse "default" (falls back to alsa if pulse missing)
 func startMicCapture(ctx context.Context, device string) (*exec.Cmd, io.ReadCloser, error) {
 	var inFmt, inSpec string
 	switch runtime.GOOS {
@@ -361,4 +376,16 @@ func speakLocal(ctx context.Context, text string) {
 		return
 	}
 	_ = cmd.Run()
+}
+
+// speakLocalGated speaks text while holding a half-duplex gate so an open mic
+// (continuous STT in `voice listen`/`voice control`) doesn't transcribe the
+// readback and trigger an endless self-talk loop. It raises *speaking for the
+// duration of the utterance plus a short echo-hangover (speaker tail + room
+// reverb) before lowering it; the mic pump drops frames while it's raised.
+func speakLocalGated(ctx context.Context, speaking *atomic.Bool, text string) {
+	speaking.Store(true)
+	speakLocal(ctx, text)
+	time.Sleep(350 * time.Millisecond)
+	speaking.Store(false)
 }

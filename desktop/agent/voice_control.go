@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -226,11 +227,18 @@ func runVoiceControl(args []string) {
 	}
 	fmt.Println()
 
+	// Half-duplex gate — see speakLocalGated. Without it the spoken
+	// confirmations/results ("done", "confirmed", verb names) bleed from the
+	// speaker into the open mic, get transcribed, and either fire stray
+	// commands or loop. Raised around every speakLocalGated below; the pump
+	// keeps draining ffmpeg but drops frames while it's up.
+	var ttsSpeaking atomic.Bool
+
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
 			n, rerr := micOut.Read(buf)
-			if n > 0 {
+			if n > 0 && !ttsSpeaking.Load() {
 				if werr := sess.SendAudio(buf[:n]); werr != nil {
 					return
 				}
@@ -287,13 +295,13 @@ func runVoiceControl(args []string) {
 					if voiceControlConfirmWords[normalizeVoiceCommand(text)] {
 						fmt.Printf("   \033[32m✓ confirmed\033[0m\n")
 						if speak {
-							speakLocal(ctx, "confirmed")
+							speakLocalGated(ctx, &ttsSpeaking, "confirmed")
 						}
-						runVoiceOpsVerb(ctx, token, *p, speak)
+						runVoiceOpsVerb(ctx, token, *p, speak, &ttsSpeaking)
 					} else {
 						fmt.Printf("   \033[33m✗ cancelled\033[0m\n")
 						if speak {
-							speakLocal(ctx, "cancelled")
+							speakLocalGated(ctx, &ttsSpeaking, "cancelled")
 						}
 					}
 					if once {
@@ -312,7 +320,7 @@ func runVoiceControl(args []string) {
 				case "none":
 					fmt.Printf("   \033[33m(no matching command)\033[0m\n")
 					if speak {
-						speakLocal(ctx, "sorry, I didn't catch a command")
+						speakLocalGated(ctx, &ttsSpeaking, "sorry, I didn't catch a command")
 					}
 				case "ops":
 					if act.Confirm && !autoYes {
@@ -324,7 +332,7 @@ func runVoiceControl(args []string) {
 						pending = &a
 						fmt.Printf("   \033[33m⚠ \"%s\" is destructive — say \"confirm\" to run, or anything else to cancel.\033[0m\n", label)
 						if speak {
-							speakLocal(ctx, "say confirm to "+act.Speak)
+							speakLocalGated(ctx, &ttsSpeaking, "say confirm to "+act.Speak)
 						}
 						if once {
 							// In --once mode there's no second turn to confirm
@@ -336,9 +344,9 @@ func runVoiceControl(args []string) {
 						continue
 					}
 					if speak && act.Speak != "" {
-						speakLocal(ctx, act.Speak)
+						speakLocalGated(ctx, &ttsSpeaking, act.Speak)
 					}
-					runVoiceOpsVerb(ctx, token, act, speak)
+					runVoiceOpsVerb(ctx, token, act, speak, &ttsSpeaking)
 				}
 				if once {
 					cancel()
@@ -355,7 +363,7 @@ func runVoiceControl(args []string) {
 
 // runVoiceOpsVerb executes one routed verb against the local agent and
 // prints the JSON result, speaking a terse ok/failed summary.
-func runVoiceOpsVerb(ctx context.Context, token string, act voiceAction, speak bool) {
+func runVoiceOpsVerb(ctx context.Context, token string, act voiceAction, speak bool, ttsSpeaking *atomic.Bool) {
 	req := opsCLIRequest{Verb: act.Verb}
 	if act.Verb == "run" {
 		req.RunCmd = act.Cmd
@@ -383,12 +391,12 @@ func runVoiceOpsVerb(ctx context.Context, token string, act voiceAction, speak b
 		}
 		fmt.Printf("   \033[31m✗ %s\033[0m\n", msg)
 		if speak {
-			speakLocal(ctx, act.Verb+" failed")
+			speakLocalGated(ctx, ttsSpeaking, act.Verb+" failed")
 		}
 		return
 	}
 	if speak {
-		speakLocal(ctx, "done")
+		speakLocalGated(ctx, ttsSpeaking, "done")
 	}
 }
 
