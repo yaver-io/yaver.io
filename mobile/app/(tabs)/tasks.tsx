@@ -2760,6 +2760,24 @@ export default function TasksScreen() {
         // having to read the agent logs.
         console.log(`[tasks] sendTask → ${pendingTarget.deviceName} via ${clientBaseUrl}`);
       }
+      // Transport guard. The "Connected" badge is presence-based (relay /
+      // heartbeat) and can show green while the QUIC client is still
+      // mid-handshake ("Transport pending") or dropped — sending then
+      // throws the raw "QuicClient is not connected. Call connect() first."
+      // alert (assertConnected in quic.ts). The wizard path already guards
+      // its pooled client above; this covers the MAIN composer (where
+      // sendClient is the focused quicClient). Try once to (re)establish
+      // via the active device, then fail with an actionable message.
+      if (!sendClient.isConnected) {
+        if (activeDevice) {
+          try { await selectDevice(activeDevice); } catch {}
+        }
+        if (!sendClient.isConnected) {
+          throw new Error(
+            `Still connecting to ${pendingTarget?.deviceName ?? activeDevice?.name ?? "the device"} — wait for the status dot to turn green, then send again (or tap Retry).`,
+          );
+        }
+      }
       const rawTask = await sendClient.sendTask(
         title, "",
         effectiveRunner === "custom" ? undefined : effectiveModel,
