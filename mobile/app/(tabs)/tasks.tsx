@@ -3661,8 +3661,19 @@ export default function TasksScreen() {
                         />
                       </Pressable>
                     ) : (
-                      <Pressable onPress={handlePing}>
-                        <Text style={[s.bannerStatusCopy, { color: c.textSecondary }]}>{isPinging ? "pinging..." : "ping"}</Text>
+                      // Un-pinged state: a proper tappable chip (icon + label)
+                      // instead of bare muted text, so it reads as an action
+                      // and matches the Retry / View Logs / latency-Badge pills.
+                      <Pressable
+                        onPress={handlePing}
+                        disabled={isPinging}
+                        hitSlop={6}
+                        style={[s.bannerInlineBtn, { backgroundColor: c.surfaceMuted, flexDirection: "row", alignItems: "center", gap: 5 }]}
+                      >
+                        <Ionicons name="pulse-outline" size={13} color={c.textSecondary} />
+                        <Text style={[s.bannerInlineBtnText, { color: c.textSecondary }]}>
+                          {isPinging ? "Pinging…" : "Ping"}
+                        </Text>
                       </Pressable>
                     )}
                     {runnerBannerState &&
