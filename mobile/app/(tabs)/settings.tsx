@@ -235,6 +235,7 @@ export default function SettingsScreen() {
   const [mobileCodingProvider, setMobileCodingProvider] = useState<"openai" | "glm">("openai");
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsProvider, setTtsProvider] = useState<TtsProvider>("device");
+  const [ttsTaskMode, setTtsTaskMode] = useState(false);
   const [verbosity, setVerbosity] = useState(10);
   const [showSpeechConfig, setShowSpeechConfig] = useState(false);
   const [isSavingSpeech, setIsSavingSpeech] = useState(false);
@@ -725,6 +726,7 @@ export default function SettingsScreen() {
         setSelectedRunner(s.runnerId === "claude" ? "claude-code" : s.runnerId);
       }
       if (s.ttsEnabled !== undefined) setTtsEnabled(s.ttsEnabled);
+      if (s.ttsTaskMode !== undefined) { setTtsTaskMode(s.ttsTaskMode); quicClient.setTtsTaskMode(s.ttsTaskMode); }
       if (s.verbosity !== undefined) setVerbosity(s.verbosity);
       // Speech config is LOCAL ONLY (provider / key / model / voice in
       // SecureStore, never Convex). loadLocalSpeechConfig is the single
@@ -2219,6 +2221,22 @@ export default function SettingsScreen() {
                 onValueChange={async (val) => {
                   setTtsEnabled(val);
                   if (token) saveUserSettings(token, { ttsEnabled: val }).catch(() => {});
+                }}
+                trackColor={{ false: c.border, true: c.accent }}
+              />
+            </View>
+
+            <View style={[styles.aboutRow, { justifyContent: "space-between" }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Run tasks in TTS mode</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>Agent leads each reply with a short spoken-style summary, then the usual details. Text only — nothing is read aloud unless you also enable “Read responses aloud”.</Text>
+              </View>
+              <Switch
+                value={ttsTaskMode}
+                onValueChange={async (val) => {
+                  setTtsTaskMode(val);
+                  quicClient.setTtsTaskMode(val); // apply to tasks immediately + persist locally
+                  if (token) saveUserSettings(token, { ttsTaskMode: val }).catch(() => {});
                 }}
                 trackColor={{ false: c.border, true: c.accent }}
               />

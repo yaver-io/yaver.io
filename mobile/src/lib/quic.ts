@@ -947,6 +947,22 @@ async function responseErrorMessage(res: Response, fallback?: string): Promise<s
   return base;
 }
 
+// Per-call speech state attached to a task. `ttsMode` is the user's
+// "run tasks in TTS mode" setting (agent leads replies with a spoken-style
+// summary); the rest describe live STT/TTS state for voice-initiated tasks.
+export type SpeechContextInput = {
+  inputFromSpeech?: boolean;
+  sttProvider?: string;
+  ttsEnabled?: boolean;
+  ttsProvider?: string;
+  ttsMode?: boolean;
+  verbosity?: number;
+};
+
+// AsyncStorage key mirroring the "run tasks in TTS mode" setting so the
+// QuicClient applies it before the Settings screen is ever opened.
+const TTS_TASK_MODE_KEY = "tts_task_mode";
+
 export class QuicClient {
   private host: string | null = null;
   private port: number | null = null;
@@ -960,6 +976,11 @@ export class QuicClient {
   private _tunnelUrl: string | null = null;
   private _tunnelHeaders: Record<string, string> = {};
   private _forceRelay = false; // default to direct-first — try LAN/local before relay
+  // "Run tasks in TTS mode" user setting. When on, every task this client
+  // creates carries speechContext.ttsMode so the agent leads its reply with
+  // a spoken-style summary (text only; prompt shaping lives agent-side).
+  // Mirrored to AsyncStorage so it applies even before Settings is opened.
+  private _ttsTaskMode = false;
   private _connectionState: ConnectionState = "disconnected";
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -1362,6 +1383,7 @@ export class QuicClient {
    * Tries direct connection first, then relay servers in priority order.
    */
   async connect(host: string, port: number, token: string, deviceId: string, lanIps?: string[], sessionTunnels?: TunnelServer[]): Promise<void> {
+    void this.hydrateTtsTaskMode(); // apply the persisted "TTS mode" flag to tasks created this session
     this.primeTarget(host, port, token, deviceId, lanIps, sessionTunnels);
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
@@ -1493,13 +1515,14 @@ export class QuicClient {
    * HTTP, the runner pool, and the same Task type. The toggle only
    * changes which prompt-prefix the agent injects.
    */
-  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }, codeMode?: boolean): Promise<Task> {
+  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: SpeechContextInput, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }, codeMode?: boolean): Promise<Task> {
     this.assertConnected();
     // Hard 30s timeout — without it, a stale relay tunnel (e.g. after a
     // failed device-switch attempt) makes this POST hang forever and
     // the FAB Submit button gets stuck on "Sending…". 30s is generous
     // even for image-heavy tasks; the relay caps non-SSE proxies at
     // ~25s, so anything longer is the connection itself, not the work.
+    const sc = this.withTtsMode(speechContext);
     const res = await this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -1513,7 +1536,7 @@ export class QuicClient {
         ...(runner ? { runner } : {}),
         ...(mode ? { mode } : {}),
         ...(customCommand ? { customCommand } : {}),
-        ...(speechContext ? { speechContext } : {}),
+        ...(sc ? { speechContext: sc } : {}),
         ...(images?.length ? { images } : {}),
         ...(workDir ? { workDir } : {}),
         ...(video?.enabled ? { videoEnabled: true } : {}),
@@ -1948,6 +1971,7 @@ export class QuicClient {
         ...(options?.model ? { model: options.model } : {}),
         ...(options?.runner ? { runner: options.runner } : {}),
         ...(options?.autoRetry ? { autoRetry: true } : {}),
+        ...(this._ttsTaskMode ? { speechContext: { ttsMode: true } } : {}),
       }),
     });
     if (!res.ok) {
@@ -4776,6 +4800,32 @@ export class QuicClient {
    *  the class. */
   publicAuthHeaders(): Record<string, string> {
     return this.authHeaders;
+  }
+
+  // ── TTS task mode ──────────────────────────────────────────────────
+
+  /** Set the "run tasks in TTS mode" preference and mirror it to storage. */
+  setTtsTaskMode(on: boolean): void {
+    this._ttsTaskMode = !!on;
+    AsyncStorage.setItem(TTS_TASK_MODE_KEY, on ? "1" : "0").catch(() => {});
+  }
+
+  /** Load the persisted TTS-task-mode flag (called on connect so it applies
+   *  even before the Settings screen is ever opened). */
+  async hydrateTtsTaskMode(): Promise<void> {
+    try {
+      const v = await AsyncStorage.getItem(TTS_TASK_MODE_KEY);
+      if (v !== null) this._ttsTaskMode = v === "1";
+    } catch {
+      // best-effort; default stays false
+    }
+  }
+
+  /** Merge the client-level ttsMode flag into a per-call speechContext.
+   *  Returns undefined only when there's nothing to send. */
+  private withTtsMode(sc?: SpeechContextInput): SpeechContextInput | undefined {
+    if (!this._ttsTaskMode) return sc;
+    return { ...(sc || {}), ttsMode: true };
   }
 
   // ── Private helpers ────────────────────────────────────────────────

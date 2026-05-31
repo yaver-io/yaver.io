@@ -738,6 +738,13 @@ type TaskViewport struct {
 	TTSEnabled  bool   `json:"ttsEnabled,omitempty"`
 	STTProvider string `json:"sttProvider,omitempty"` // e.g. "on-device" | "local" | "deepgram" (hint only; keys live in vault)
 	TTSProvider string `json:"ttsProvider,omitempty"` // e.g. "device" | "local" | "cartesia"
+
+	// TTSMode is the user-level "run tasks in TTS mode" setting (distinct
+	// from TTSEnabled's voice-readback budget). When set, the agent asks
+	// the runner to LEAD its reply with a `TTS:`-prefixed spoken-friendly
+	// summary line, then continue with the normal formatted body for the
+	// screen. No audio is synthesized — this only shapes text.
+	TTSMode bool `json:"ttsMode,omitempty"`
 }
 
 // ImageAttachment represents a base64-encoded image sent from mobile.
@@ -766,6 +773,12 @@ type TaskCreateOptions struct {
 	WorkDir           string
 	InitialUserPrompt string
 	SliceContract     *TaskSliceContract
+
+	// Viewport (surface + STT/TTS shaping) is applied before startProcess
+	// runs so the prompt wrapper sees it during prompt assembly. Setting
+	// task.TaskViewport after CreateTaskWithOptions returns is a race —
+	// startProcess builds the prompt synchronously inside this call.
+	Viewport *TaskViewport
 	// Runner-specific mode selector. Currently only honored by
 	// opencode where it maps to `--agent <mode>` (build / plan /
 	// any custom agent the user defines in opencode.json). Empty =
@@ -1458,6 +1471,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		doneCh:                      make(chan struct{}),
 		WorkDir:                     strings.TrimSpace(opts.WorkDir),
 		SliceContract:               opts.SliceContract,
+		TaskViewport:                opts.Viewport,
 		GuestUserID:                 opts.GuestUserID,
 		GuestUseHostAPIKeys:         opts.GuestUseHostAPIKeys,
 		GuestAllowGuestProvidedKeys: opts.GuestAllowGuestProvidedKeys,
@@ -3662,7 +3676,7 @@ func (tm *TaskManager) BroadcastControlSignal(signal string) {
 // CreateChainedTasks creates multiple tasks linked by a chain ID.
 // Tasks execute sequentially: the next starts when the previous completes successfully.
 // Only the first task starts immediately; the rest stay queued.
-func (tm *TaskManager) CreateChainedTasks(tasks []ChainedTaskInput, model, source, runnerID string, autoRetry bool) ([]*Task, error) {
+func (tm *TaskManager) CreateChainedTasks(tasks []ChainedTaskInput, model, source, runnerID string, autoRetry bool, viewport *TaskViewport) ([]*Task, error) {
 	if len(tasks) == 0 {
 		return nil, fmt.Errorf("no tasks provided")
 	}
@@ -3715,6 +3729,7 @@ func (tm *TaskManager) CreateChainedTasks(tasks []ChainedTaskInput, model, sourc
 			ChainOrder:   i,
 			AutoRetry:    autoRetry,
 			AutoRetryMax: retryMax,
+			TaskViewport: viewport, // set before startProcess so task 0 gets the hint
 			Turns: []ConversationTurn{
 				{Role: "user", Content: input.Title, Timestamp: now},
 			},

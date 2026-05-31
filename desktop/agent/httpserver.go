@@ -675,6 +675,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))
 	mux.HandleFunc("/feedback/stream", s.authSDK(s.handleFeedbackStream))
 	mux.HandleFunc("/feedback/", s.authSDK(s.handleFeedbackByID))
+	// On-device App Store screenshot upload (Engine 2) — SDK-accessible.
+	mux.HandleFunc("/shots/upload", s.authSDK(s.handleShotsUpload))
 
 	// Design references (web UI captures from the browser extension) —
 	// distinct store, same auth tier as feedback so SDK tokens can list
@@ -3340,6 +3342,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			STTProvider     string `json:"sttProvider,omitempty"`
 			TTSEnabled      bool   `json:"ttsEnabled,omitempty"`
 			TTSProvider     string `json:"ttsProvider,omitempty"`
+			TTSMode         bool   `json:"ttsMode,omitempty"` // user "run tasks in TTS mode" setting
 		} `json:"speechContext,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -3506,10 +3509,13 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	if body.Verbosity != nil {
 		verbosityCtx = &TaskVerbosity{Verbosity: body.Verbosity}
 	}
-	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
 	// Fold the client's surface + STT/TTS state into the viewport so the
 	// prompt wrapper can shape output (voice-friendly + budgeted when TTS
-	// is on, a spoken closing question when the user can reply by voice).
+	// is on, the whole reply led by a spoken summary in TTS mode, a spoken
+	// closing question when the user can reply by voice). Computed BEFORE
+	// CreateTaskWithOptions and passed via taskOpts.Viewport so startProcess
+	// — which assembles the prompt synchronously inside that call — sees it
+	// (setting task.TaskViewport afterward is a race).
 	// Precedence: explicit body.Viewport fields, then speechContext body,
 	// then X-Yaver-* headers, then source. CLI/no-hint stays plain text.
 	vp := body.Viewport
@@ -3520,6 +3526,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		vp.Voice = vp.Voice || body.SpeechContext.InputFromSpeech
 		vp.STTEnabled = vp.STTEnabled || body.SpeechContext.InputFromSpeech || body.SpeechContext.STTProvider != ""
 		vp.TTSEnabled = vp.TTSEnabled || body.SpeechContext.TTSEnabled
+		vp.TTSMode = vp.TTSMode || body.SpeechContext.TTSMode
 		if vp.STTProvider == "" {
 			vp.STTProvider = body.SpeechContext.STTProvider
 		}
@@ -3528,11 +3535,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	vp = mergeClientVoiceHints(r, vp, source)
-	if task != nil && vp != nil {
-		s.taskMgr.mu.Lock()
-		task.TaskViewport = vp
-		s.taskMgr.mu.Unlock()
-	}
+	taskOpts.Viewport = vp
+
+	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
 	if err != nil {
 		// Preflight failures (workDir not writable, runner not authed,
 		// Linux sandbox kernel prereqs missing, …) come back here with

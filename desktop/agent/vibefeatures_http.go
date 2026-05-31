@@ -22,11 +22,18 @@ func (s *HTTPServer) handleChainCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Tasks     []ChainedTaskInput `json:"tasks"`
-		Model     string             `json:"model,omitempty"`
-		Runner    string             `json:"runner,omitempty"`
-		Source    string             `json:"source,omitempty"`
-		AutoRetry bool               `json:"autoRetry,omitempty"`
+		Tasks         []ChainedTaskInput `json:"tasks"`
+		Model         string             `json:"model,omitempty"`
+		Runner        string             `json:"runner,omitempty"`
+		Source        string             `json:"source,omitempty"`
+		AutoRetry     bool               `json:"autoRetry,omitempty"`
+		SpeechContext *struct {
+			InputFromSpeech bool   `json:"inputFromSpeech,omitempty"`
+			STTProvider     string `json:"sttProvider,omitempty"`
+			TTSEnabled      bool   `json:"ttsEnabled,omitempty"`
+			TTSProvider     string `json:"ttsProvider,omitempty"`
+			TTSMode         bool   `json:"ttsMode,omitempty"`
+		} `json:"speechContext,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -51,7 +58,23 @@ func (s *HTTPServer) handleChainCreate(w http.ResponseWriter, r *http.Request) {
 		source = "mobile"
 	}
 
-	created, err := s.taskMgr.CreateChainedTasks(body.Tasks, body.Model, source, body.Runner, body.AutoRetry)
+	// Fold the client's speech context / TTS-mode setting into a viewport
+	// passed INTO chain creation, so even task 0 (started synchronously)
+	// gets the prompt hint. Text-only shaping; see formatViewportHint.
+	var vp *TaskViewport
+	if body.SpeechContext != nil {
+		vp = &TaskViewport{
+			Voice:       body.SpeechContext.InputFromSpeech,
+			STTEnabled:  body.SpeechContext.InputFromSpeech || body.SpeechContext.STTProvider != "",
+			TTSEnabled:  body.SpeechContext.TTSEnabled,
+			TTSMode:     body.SpeechContext.TTSMode,
+			STTProvider: body.SpeechContext.STTProvider,
+			TTSProvider: body.SpeechContext.TTSProvider,
+		}
+	}
+	vp = mergeClientVoiceHints(r, vp, source)
+
+	created, err := s.taskMgr.CreateChainedTasks(body.Tasks, body.Model, source, body.Runner, body.AutoRetry, vp)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create chain: %v", err))
 		return

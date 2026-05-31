@@ -591,6 +591,7 @@ export interface UserSettings {
   anthropicApiKey?: string;
   mobileCodingProvider?: "openai" | "glm";
   ttsEnabled?: boolean;
+  ttsTaskMode?: boolean; // run tasks in TTS mode: agent leads replies with a spoken-style summary (text only)
   verbosity?: number; // 0-10: response detail level
   keyStorage?: KeyStorage; // "local" = device Keychain only, "cloud" = sync to Convex
   /** When true, the mobile tasks `+` button opens a device + agent

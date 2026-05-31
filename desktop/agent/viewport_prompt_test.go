@@ -40,6 +40,35 @@ func TestFormatViewportHint_VoiceReadback(t *testing.T) {
 	}
 }
 
+func TestFormatViewportHint_TTSMode(t *testing.T) {
+	vp := &TaskViewport{Surface: "mobile-phone", TTSMode: true}
+	hint := formatViewportHint(vp)
+	if !strings.Contains(hint, "TTS:") {
+		t.Errorf("TTS mode should ask for a TTS:-prefixed summary line: %q", hint)
+	}
+	if !strings.Contains(hint, "TTS mode is on") {
+		t.Errorf("TTS mode hint missing: %q", hint)
+	}
+	// TTS mode shapes the whole reply, not a headline budget — it must NOT
+	// fall through to the readback-budget wording.
+	if strings.Contains(hint, "voice readback") {
+		t.Errorf("TTS mode must not emit the readback-budget hint: %q", hint)
+	}
+}
+
+// TTSMode takes precedence over the readback budget even when both flags
+// are set: whole-reply shaping wins over the headline budget.
+func TestFormatViewportHint_TTSModeBeatsReadback(t *testing.T) {
+	vp := &TaskViewport{TTSMode: true, TTSEnabled: true, Voice: true, TTSBudget: 120}
+	hint := formatViewportHint(vp)
+	if strings.Contains(hint, "voice readback") {
+		t.Errorf("TTSMode should suppress readback budget: %q", hint)
+	}
+	if !strings.Contains(hint, "TTS mode is on") {
+		t.Errorf("TTSMode hint missing: %q", hint)
+	}
+}
+
 func TestFormatViewportHint_VoiceDefaultBudget(t *testing.T) {
 	vp := &TaskViewport{Voice: true}
 	hint := formatViewportHint(vp)

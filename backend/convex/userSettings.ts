@@ -111,6 +111,7 @@ export const set = mutation({
     speechApiKey: v.optional(v.string()),
     ttsEnabled: v.optional(v.boolean()),
     ttsProvider: v.optional(v.string()),
+    ttsTaskMode: v.optional(v.boolean()),
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
     // Mobile per-task device + agent picker. Stored on the user record
@@ -175,6 +176,7 @@ export const set = mutation({
     // Intentionally ignored. See speechApiKey validator comment above.
     if (args.ttsEnabled !== undefined) patch.ttsEnabled = args.ttsEnabled;
     if (args.ttsProvider !== undefined) patch.ttsProvider = args.ttsProvider;
+    if (args.ttsTaskMode !== undefined) patch.ttsTaskMode = args.ttsTaskMode;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.multiTargetMode !== undefined) patch.multiTargetMode = args.multiTargetMode;
@@ -261,6 +263,7 @@ export const setByToken = mutation({
     speechApiKey: v.optional(v.string()),
     ttsEnabled: v.optional(v.boolean()),
     ttsProvider: v.optional(v.string()),
+    ttsTaskMode: v.optional(v.boolean()),
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
     multiTargetMode: v.optional(v.boolean()),
@@ -312,6 +315,7 @@ export const setByToken = mutation({
     // Intentionally ignored. Provider keys must not be written to Convex.
     if (args.ttsEnabled !== undefined) patch.ttsEnabled = args.ttsEnabled;
     if (args.ttsProvider !== undefined) patch.ttsProvider = args.ttsProvider;
+    if (args.ttsTaskMode !== undefined) patch.ttsTaskMode = args.ttsTaskMode;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.multiTargetMode !== undefined) patch.multiTargetMode = args.multiTargetMode;
@@ -391,6 +395,7 @@ export const setByEmail = mutation({
     speechApiKey: v.optional(v.string()),
     ttsEnabled: v.optional(v.boolean()),
     ttsProvider: v.optional(v.string()),
+    ttsTaskMode: v.optional(v.boolean()),
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
     forceRelay: v.optional(v.boolean()),

@@ -596,6 +596,7 @@ export default defineSchema({
     speechApiKey: v.optional(v.string()),         // legacy only; never returned/updated by /settings
     ttsEnabled: v.optional(v.boolean()),          // read responses aloud
     ttsProvider: v.optional(v.string()),          // "device" | "openai" | "cartesia" preference only
+    ttsTaskMode: v.optional(v.boolean()),         // run tasks in TTS mode: agent leads replies with a spoken-style summary (text only; no audio synthesized)
     verbosity: v.optional(v.number()),            // 0-10: response detail level (0=summary, 10=full detail)
     keyStorage: v.optional(v.string()),            // legacy preference; provider keys stay local/vault-only
     // When true, the mobile + (eventually) web tasks `+` button opens a

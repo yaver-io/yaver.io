@@ -30,11 +30,16 @@ func mergeClientVoiceHints(r *http.Request, vp *TaskViewport, source string) *Ta
 	}
 	surface := strings.TrimSpace(r.Header.Get("X-Yaver-Surface"))
 	voice := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Yaver-Voice")))
-	if surface == "" && voice == "" {
+	ttsMode := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Yaver-TTS-Mode")), "1") ||
+		strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Yaver-TTS-Mode")), "true")
+	if surface == "" && voice == "" && !ttsMode {
 		return vp
 	}
 	if vp == nil {
 		vp = &TaskViewport{}
+	}
+	if ttsMode {
+		vp.TTSMode = true
 	}
 	if vp.Surface == "" {
 		if surface != "" {
@@ -73,10 +78,18 @@ func formatViewportHint(vp *TaskViewport) string {
 	if vp.PaneCount >= 2 {
 		parts = append(parts, fmt.Sprintf("user has %d parallel Claude sessions visible — be specific about file paths so they stay legible across panes", vp.PaneCount))
 	}
-	// Voice readback budgeting. TTSEnabled is the explicit signal from the
-	// client's speechContext / X-Yaver-Voice header; Voice (origin-was-STT)
-	// is kept as a back-compat trigger so older clients still get budgeted.
-	if vp.TTSEnabled || vp.Voice {
+	// TTS mode (user setting): lead with a spoken summary, normal body
+	// after. Takes precedence over the readback budget below because it
+	// shapes the whole reply, not just a headline. Text-only — no audio.
+	if vp.TTSMode {
+		parts = append(parts, "TTS mode is on — begin your reply with a single line that starts with `TTS: ` "+
+			"holding a 1-2 sentence spoken-friendly summary of the outcome (plain text, no markdown, no code, "+
+			"expand symbols and paths into words, short sentences). After that line, continue with your normal "+
+			"formatted response for on-screen reading")
+	} else if vp.TTSEnabled || vp.Voice {
+		// Voice readback budgeting. TTSEnabled is the explicit signal from the
+		// client's speechContext / X-Yaver-Voice header; Voice (origin-was-STT)
+		// is kept as a back-compat trigger so older clients still get budgeted.
 		budget := vp.TTSBudget
 		if budget == 0 {
 			budget = 280 // Cartesia clip default
