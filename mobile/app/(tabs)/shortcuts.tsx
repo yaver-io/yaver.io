@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "../../src/context/ThemeContext";
@@ -47,6 +47,7 @@ type RunState = { id: string; steps: Record<number, StepPhase>; error?: string }
 
 export default function ShortcutsScreen() {
   const c = useColors();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { token } = useAuth();
   const { devices, activeDevice, selectDevice, connectionStatus } = useDevice();
@@ -344,8 +345,8 @@ export default function ShortcutsScreen() {
 
       {/* Editor */}
       <Modal visible={editorOpen} animationType="slide" onRequestClose={() => setEditorOpen(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }} edges={["top", "bottom"]}>
-          <View style={[styles.editorHeader, { borderBottomColor: c.border }]}>
+        <View style={{ flex: 1, backgroundColor: c.bg }}>
+          <View style={[styles.editorHeader, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
             <Pressable onPress={() => setEditorOpen(false)} hitSlop={10}>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>Cancel</Text>
             </Pressable>
@@ -356,7 +357,7 @@ export default function ShortcutsScreen() {
               {saving ? <ActivityIndicator color={c.accent} /> : <Text style={{ color: c.accent, fontSize: 16, fontWeight: "700" }}>Save</Text>}
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 + insets.bottom }}>
             <Text style={[styles.fieldLabel, { color: c.textMuted }]}>NAME</Text>
             <TextInput
               value={draftName}
@@ -412,7 +413,7 @@ export default function ShortcutsScreen() {
               </Pressable>
             )}
           </ScrollView>
-        </SafeAreaView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
