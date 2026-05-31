@@ -10,6 +10,7 @@ const { status } = require('./commands/status');
 const { feedback } = require('./commands/feedback');
 const { deploy, isLocalDeployToken } = require('./commands/deploy');
 const { run, isLocalRunToken } = require('./commands/run');
+const { maybePromptUpdate } = require('./update-check');
 
 const PUSH_HELP = `
 yaver push — Push existing React Native projects to the Yaver mobile host
@@ -159,6 +160,14 @@ async function runUnified(args) {
   process.env.YAVER_INSTALL_SOURCE = 'npm';
   process.env.YAVER_NPM_PACKAGE = PACKAGE.name;
   process.env.YAVER_NPM_VERSION = PACKAGE.version;
+
+  // Codex-style update onboarder. Only on the interactive launches — the
+  // bare `yaver` shell and `yaver wrap`/`code` — so scripted commands
+  // (status/push/serve/mcp/CI) are never interrupted. maybePromptUpdate
+  // self-gates on TTY + an 8h throttle and fails open on any error.
+  if (!command || command === 'wrap' || command === 'code') {
+    await maybePromptUpdate(PACKAGE.name, PACKAGE.version);
+  }
 
   if (command === '--help' || command === '-h' || command === 'help') {
     console.log(UNIFIED_HELP);
