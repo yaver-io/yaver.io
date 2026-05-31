@@ -25,6 +25,10 @@ export interface RunShortcutHooks {
   /** Bring the Projects tab forward so its openAppBus subscriber is
    *  mounted to receive the open request. Wired to expo-router. */
   openProjectsTab: () => void;
+  /** Preset the target device's agent runner + model when a step carries
+   *  one. Wired to DeviceContext.setPrimaryRunnerForDevice; optional since
+   *  runner can be "off". */
+  setAgent?: (deviceId: string, runner: string, model?: string) => Promise<void> | void;
   /** Per-step progress for the running UI. */
   onProgress?: (stepIndex: number, phase: StepPhase, message: string) => void;
 }
@@ -49,6 +53,12 @@ async function runStep(step: ShortcutStep, hooks: RunShortcutHooks): Promise<voi
       await clientFor(step.deviceId).switchProject(step.projectSlug, true);
       return;
     case "hermes-reload": {
+      // Preset the device's agent + model first (when the shortcut carries
+      // one and it isn't "off") so a task launched after the reload uses
+      // the shortcut's chosen runner. Hermes mode is always the full bundle.
+      if (step.runner && step.deviceId && hooks.setAgent) {
+        await hooks.setAgent(step.deviceId, step.runner, step.model);
+      }
       const ok = await clientFor(step.deviceId).reloadDevServer({ mode: step.mode || "bundle" });
       if (!ok) throw new Error("dev server unreachable — start one first");
       return;

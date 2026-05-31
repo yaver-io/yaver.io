@@ -24,10 +24,19 @@ export interface ShortcutStep {
   deviceName?: string;
   /** Project filesystem basename — never a path. */
   projectSlug?: string;
-  /** hermes-reload mode. */
+  /** hermes-reload mode. Always "bundle" (full) now — the Metro/dev
+   *  fast-path was dropped from the editor; kept optional for old rows. */
   mode?: "dev" | "bundle";
   /** start-dev framework hint (expo | vite | nextjs | flutter | …). */
   framework?: string;
+  /** Agent runner id (claude / codex / opencode) to preset on the target
+   *  device when the chain runs. Empty/undefined = off (leave the device's
+   *  current agent alone). Flags only — privacy-safe, no prompt text. */
+  runner?: string;
+  /** Model id for the chosen runner (e.g. gpt-5.5, sonnet). */
+  model?: string;
+  /** Display label for the chosen agent+model, e.g. "Codex · GPT-5.5". */
+  runnerLabel?: string;
   /** Optional human label shown in the step list. */
   label?: string;
 }
@@ -100,8 +109,10 @@ export function describeStep(step: ShortcutStep): string {
       return `Open ${step.projectSlug || "project"} on phone`;
     case "start-dev":
       return `Start dev server for ${step.projectSlug || "project"}`;
-    case "hermes-reload":
-      return step.mode === "dev" ? "Hot reload (Metro)" : "Hermes bundle reload";
+    case "hermes-reload": {
+      const base = step.projectSlug ? `Reload ${step.projectSlug}` : "Hermes bundle reload";
+      return step.runnerLabel ? `${base} · ${step.runnerLabel}` : base;
+    }
     default:
       return step.label || (step as ShortcutStep).kind;
   }

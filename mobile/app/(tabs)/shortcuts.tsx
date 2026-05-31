@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -38,7 +38,7 @@ const STEP_KINDS: { kind: ShortcutStepKind; label: string; icon: keyof typeof Io
   { kind: "select-device", label: "Connect to device", icon: "desktop-outline", needsDevice: true, needsProject: false },
   { kind: "open-project", label: "Open project on phone", icon: "play-circle-outline", needsDevice: true, needsProject: true },
   { kind: "start-dev", label: "Start dev server", icon: "rocket-outline", needsDevice: true, needsProject: true },
-  { kind: "hermes-reload", label: "Hermes reload", icon: "flash-outline", needsDevice: false, needsProject: false },
+  { kind: "hermes-reload", label: "Hermes reload", icon: "flash-outline", needsDevice: true, needsProject: true },
 ];
 
 const CARD_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7"];
@@ -50,7 +50,7 @@ export default function ShortcutsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { token } = useAuth();
-  const { devices, activeDevice, selectDevice, connectionStatus } = useDevice();
+  const { devices, activeDevice, selectDevice, connectionStatus, setPrimaryRunnerForDevice } = useDevice();
   const connected = connectionStatus === "connected";
 
   const [shortcuts, setShortcuts] = useState<Shortcut[]>([]);
@@ -66,7 +66,29 @@ export default function ShortcutsScreen() {
   const [draftSteps, setDraftSteps] = useState<ShortcutStep[]>([]);
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
+  const [runners, setRunners] = useState<{ id: string; name: string; models: { id: string; name: string }[] }[]>([]);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+
+  // Flattened agent·model options for the runner picker. "Off" (value "")
+  // leaves the device's current agent alone. Each combo carries the runner
+  // id + model id we persist on the step (flags only — privacy-safe).
+  const runnerOptions = useMemo(() => {
+    const opts: { value: string; label: string; runner: string; model: string }[] = [
+      { value: "", label: "Off", runner: "", model: "" },
+    ];
+    for (const r of runners) {
+      const models = r.models?.length ? r.models : [{ id: "", name: "" }];
+      for (const m of models) {
+        opts.push({
+          value: `${r.id}:${m.id}`,
+          label: m.name ? `${r.name} · ${m.name}` : r.name,
+          runner: r.id,
+          model: m.id,
+        });
+      }
+    }
+    return opts;
+  }, [runners]);
 
   const load = useCallback(async () => {
     if (!token) { setShortcuts([]); setLoading(false); return; }
@@ -94,6 +116,22 @@ export default function ShortcutsScreen() {
     } catch { /* leave manual entry */ }
   }, [connected]);
 
+  // Pull the connected box's installed agents + their models for the
+  // runner picker. Best-effort; empty → only "Off" is offered.
+  const loadRunners = useCallback(async () => {
+    if (!connected) return;
+    try {
+      const list = await quicClient.getRunners();
+      setRunners(
+        list.map((r) => ({
+          id: r.id,
+          name: r.name,
+          models: (r.models || []).map((m: any) => ({ id: m.id, name: m.name })),
+        })),
+      );
+    } catch { /* leave empty → Off only */ }
+  }, [connected]);
+
   // ── Run a shortcut ─────────────────────────────────────────────────
   const handleRun = useCallback(async (sc: Shortcut) => {
     if (run) return; // one at a time
@@ -106,6 +144,9 @@ export default function ShortcutsScreen() {
           await selectDevice(d);
         },
         openProjectsTab: () => router.push("/(tabs)/apps"),
+        setAgent: async (deviceId, runner, model) => {
+          try { await setPrimaryRunnerForDevice(deviceId, runner, model || ""); } catch { /* best-effort preset */ }
+        },
         onProgress: (i, phase) => {
           setRun((cur) => (cur && cur.id === sc._id ? { ...cur, steps: { ...cur.steps, [i]: phase } } : cur));
         },
@@ -118,7 +159,7 @@ export default function ShortcutsScreen() {
       Alert.alert(sc.name, msg);
       setTimeout(() => setRun((cur) => (cur && cur.id === sc._id ? null : cur)), 200);
     }
-  }, [run, devices, selectDevice, router]);
+  }, [run, devices, selectDevice, router, setPrimaryRunnerForDevice]);
 
   // ── Editor ─────────────────────────────────────────────────────────
   const openEditor = useCallback((sc?: Shortcut) => {
@@ -128,7 +169,8 @@ export default function ShortcutsScreen() {
     setDraftSteps(sc?.steps ? JSON.parse(JSON.stringify(sc.steps)) : []);
     setEditorOpen(true);
     loadProjects();
-  }, [shortcuts.length, loadProjects]);
+    loadRunners();
+  }, [shortcuts.length, loadProjects, loadRunners]);
 
   const applyTemplate = useCallback((tpl: "reload" | "open" | "startReload" | "full") => {
     const dId = activeDevice?.id;
@@ -154,7 +196,8 @@ export default function ShortcutsScreen() {
     setTemplatePickerOpen(false);
     setEditorOpen(true);
     loadProjects();
-  }, [activeDevice, projects, shortcuts.length, loadProjects]);
+    loadRunners();
+  }, [activeDevice, projects, shortcuts.length, loadProjects, loadRunners]);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -383,6 +426,22 @@ export default function ShortcutsScreen() {
                 total={draftSteps.length}
                 devices={devices.map((d) => ({ id: d.id, name: d.name }))}
                 projects={projects}
+                runnerOptions={runnerOptions}
+                connected={connected}
+                onConnect={async () => {
+                  // One-tap connect-guide: connect this phone to the step's
+                  // device (or the active one) so the project + runner lists
+                  // populate, then reload them.
+                  const target = devices.find((d) => d.id === st.deviceId) || activeDevice;
+                  if (!target) { Alert.alert("No device", "Add a device to this step first."); return; }
+                  try {
+                    await selectDevice(target as any);
+                    await loadProjects();
+                    await loadRunners();
+                  } catch (e) {
+                    Alert.alert("Couldn't connect", e instanceof Error ? e.message : String(e));
+                  }
+                }}
                 onChange={(patch) => updateStep(i, patch)}
                 onRemove={() => removeStep(i)}
                 onMove={(dir) => moveStep(i, dir)}
@@ -421,13 +480,16 @@ export default function ShortcutsScreen() {
 
 // One step's editor card: kind label + device/project/mode pickers.
 function StepEditor({
-  step, index, total, devices, projects, onChange, onRemove, onMove,
+  step, index, total, devices, projects, runnerOptions, connected, onConnect, onChange, onRemove, onMove,
 }: {
   step: ShortcutStep;
   index: number;
   total: number;
   devices: { id: string; name: string }[];
   projects: string[];
+  runnerOptions: { value: string; label: string; runner: string; model: string }[];
+  connected: boolean;
+  onConnect: () => void;
   onChange: (patch: Partial<ShortcutStep>) => void;
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
@@ -466,6 +528,30 @@ function StepEditor({
             selected={step.projectSlug}
             onSelect={(value) => onChange({ projectSlug: value })}
           />
+        ) : !connected ? (
+          // Project list comes from the connected dev machine. Guide the
+          // user to connect with one tap instead of leaving an empty picker.
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 6 }}>PROJECT</Text>
+            <Pressable
+              onPress={onConnect}
+              style={({ pressed }) => [
+                { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: c.accent, backgroundColor: c.accent + "14" },
+                pressed && { opacity: 0.6 },
+              ]}
+            >
+              <Ionicons name="link-outline" size={16} color={c.accent} />
+              <Text style={{ color: c.accent, fontSize: 13, fontWeight: "600" }}>Connect device to load projects</Text>
+            </Pressable>
+            <TextInput
+              value={step.projectSlug || ""}
+              onChangeText={(t) => onChange({ projectSlug: t })}
+              placeholder="…or type a project slug (e.g. sfmg)"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              style={[stepStyles.smallInput, { backgroundColor: c.bg, color: c.textPrimary, borderColor: c.border, marginTop: 8 }]}
+            />
+          </View>
         ) : (
           <TextInput
             value={step.projectSlug || ""}
@@ -478,11 +564,21 @@ function StepEditor({
         )
       )}
       {step.kind === "hermes-reload" && (
+        // Agent + model to preset on the device when the chain runs. "Off"
+        // leaves the device's current agent alone. Hermes mode is always the
+        // full bundle now — no Metro/dev fast-path toggle.
         <Chips
-          label="Mode"
-          items={[{ value: "bundle", label: "Bundle (full)" }, { value: "dev", label: "Metro (fast)" }]}
-          selected={step.mode || "bundle"}
-          onSelect={(value) => onChange({ mode: value as "dev" | "bundle" })}
+          label="Runner"
+          items={runnerOptions.map((o) => ({ value: o.value, label: o.label }))}
+          selected={`${step.runner || ""}:${step.model || ""}` === ":" ? "" : `${step.runner || ""}:${step.model || ""}`}
+          onSelect={(value, label) => {
+            const opt = runnerOptions.find((o) => o.value === value);
+            onChange({
+              runner: opt?.runner || "",
+              model: opt?.model || "",
+              runnerLabel: opt && opt.value ? label : undefined,
+            });
+          }}
         />
       )}
     </View>

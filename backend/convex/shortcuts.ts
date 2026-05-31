@@ -18,6 +18,12 @@ const stepValidator = v.object({
   projectSlug: v.optional(v.string()),
   mode: v.optional(v.string()),
   framework: v.optional(v.string()),
+  // Agent runner + model to preset on the target device. Flags only —
+  // a runner id ("codex") + a model id ("gpt-5.5") + a UI label; never a
+  // prompt or path, so the privacy contract holds.
+  runner: v.optional(v.string()),
+  model: v.optional(v.string()),
+  runnerLabel: v.optional(v.string()),
   label: v.optional(v.string()),
 });
 
