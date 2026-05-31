@@ -1250,6 +1250,11 @@ export class AgentClient {
     /** Override the auto-detected source: browser | sim-ios | sim-android
      *  | phone. Empty = let the agent infer from workDir. */
     videoSource?: "browser" | "sim-ios" | "sim-android" | "phone" | "";
+    /** Run as a grounded deep question-answer (repo analysis + file:line
+     *  cites, escalate-on-breadth, explain-first with a confirm gate)
+     *  instead of a work run. The console sets this when the typed input is
+     *  a natural-language question rather than a build instruction. */
+    askMode?: boolean;
   }): Promise<Task> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tasks`, {
@@ -1267,6 +1272,7 @@ export class AgentClient {
         workDir: params.workDir ?? "",
         videoEnabled: params.videoEnabled ?? false,
         videoSource: params.videoSource ?? "",
+        askMode: params.askMode ?? false,
         source: "web",
       }),
     });

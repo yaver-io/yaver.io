@@ -798,6 +798,17 @@ type TaskCreateOptions struct {
 	// decisions in prose. Guests can never set this — it's stripped in
 	// the createTask handler.
 	AskFreely bool
+
+	// AskMode reframes the task as a deep question-answer run instead of a
+	// work run: the runner deeply analyzes THIS repo, grounds the answer in
+	// file:line cites, escalates from a shallow scan to a wider read for
+	// broad questions, and explains first — only acting (working-tree /
+	// deploy / git changes) after confirming via yaver_ask_user. Set by
+	// `yaver ask`, the yaver_ask MCP tool, and the Ask toggle on the
+	// web/mobile console. Mutually exclusive with AskFreely's framing:
+	// ask mode swaps in askModePreamble() in place of noQuestionsPreamble().
+	// Guests can never set this.
+	AskMode bool
 }
 
 type TaskResumeOptions struct {
@@ -886,6 +897,11 @@ type Task struct {
 	// soft-question fallback detector). See TaskCreateOptions.AskFreely
 	// for the full rule.
 	AskFreely bool `json:"askFreely,omitempty"`
+
+	// AskMode runs the task as a grounded question-answer (deep repo
+	// analysis, file:line cites, explain-first with a confirm gate before
+	// acting). See TaskCreateOptions.AskMode and askModePreamble().
+	AskMode bool `json:"askMode,omitempty"`
 
 	PendingFollowUps []PendingFollowUp `json:"pendingFollowUps,omitempty"`
 
@@ -1451,6 +1467,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		VideoEnabled:                opts.VideoEnabled,
 		VideoSource:                 opts.VideoSource,
 		AskFreely:                   opts.AskFreely,
+		AskMode:                     opts.AskMode,
 		Turns: []ConversationTurn{
 			{Role: "user", Content: initialTurnContent, Timestamp: now},
 		},
@@ -2029,7 +2046,12 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// per task via Task.AskFreely (audit / risky-change reviews). Inserted
 	// AFTER taskSourcePromptSuffix so the source-specific framing is read
 	// first, then the policy clarifies "and don't ask in prose."
-	if !task.AskFreely {
+	if task.AskMode {
+		// Ask mode reframes the run as explain-first deep analysis with a
+		// confirm gate before acting — the opposite stance from the
+		// no-questions preamble, so it replaces (not augments) it.
+		prompt += askModePreamble()
+	} else if !task.AskFreely {
 		project := DetectProjectInfo(contextDir).Name
 		hints := renderVaultHintsForTask(currentRuntimeVaultStore(), project)
 		prompt += noQuestionsPreamble(hints)
@@ -2041,7 +2063,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// no canned bullet framing) instead of the mobile dev-server
 	// hot-reload prefix. See mobile/src/lib/quic.ts::sendTask for the
 	// caller-side documentation.
-	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" {
+	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" || task.Source == "ask" {
 		prompt += yaverWrapperCapabilityContext(contextDir, task.Source)
 	}
 
@@ -3285,7 +3307,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	if task.WorkDir != "" {
 		contextDir = task.WorkDir
 	}
-	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" {
+	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" || task.Source == "ask" {
 		prompt += yaverWrapperCapabilityContext(contextDir, task.Source)
 	}
 

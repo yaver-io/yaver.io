@@ -3294,6 +3294,12 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		// preamble + soft-question fallback so the runner may emit
 		// clarifying questions in prose. Default false.
 		AskFreely bool `json:"askFreely,omitempty"`
+		// AskMode runs the task as a grounded deep question-answer (repo
+		// analysis + file:line cites, escalate-on-breadth, explain-first
+		// with a confirm gate before acting) instead of a work run. Set by
+		// `yaver ask`, the yaver_ask MCP tool, and the Ask toggle on the
+		// web/mobile console. Default false.
+		AskMode bool `json:"askMode,omitempty"`
 		// Viewport — surface + pane geometry hints. Optional. When
 		// present, the prompt wrapper appends a one-line display
 		// context line so Claude tunes response shape (terse on HUD,
@@ -3455,6 +3461,21 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// in force).
 	if guestUID == "" {
 		taskOpts.AskFreely = body.AskFreely
+		// Ask mode is owner-only too: a guest shouldn't be able to flip a
+		// scoped work task into a free-roaming repo-analysis run.
+		taskOpts.AskMode = body.AskMode
+		// Console auto-detect: when a console surface (the attach terminal,
+		// web console, mobile code-mode) sends a plain natural-language
+		// QUESTION with no yaver verb/command in it, treat it as an ask
+		// case — deep grounded analysis, explain-first — even though the
+		// caller didn't set askMode. The user types "how do I test STT/TTS"
+		// and gets a real answer instead of a work run. High-precision
+		// classifier (detectAskIntent) so genuine work instructions are
+		// left alone. Explicit askFreely opts out.
+		if !taskOpts.AskMode && !taskOpts.AskFreely && isConsoleAskSource(source) && detectAskIntent(body.Title) {
+			taskOpts.AskMode = true
+			log.Printf("[ask] auto-detected question intent on %s console task; routing to ask mode", source)
+		}
 	}
 
 	var verbosityCtx *TaskVerbosity
@@ -4777,6 +4798,64 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		log.Printf("[MCP] Task created: %s (video=%v)", task.ID, args.VideoEnabled)
 		return mcpToolJSON(map[string]interface{}{
 			"ok":   true,
+			"task": s.taskInfoFromTask(task, nil),
+		})
+
+	case "yaver_ask":
+		var args struct {
+			Question string `json:"question"`
+			Runner   string `json:"runner"`
+			Model    string `json:"model"`
+			WorkDir  string `json:"work_dir"`
+			Depth    string `json:"depth"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		question := strings.TrimSpace(args.Question)
+		if question == "" {
+			return mcpToolError("question is required")
+		}
+		// Depth resolution: explicit deep/single wins; auto/empty escalates to
+		// the multi-agent graph only when the question reads as broad.
+		depth := strings.ToLower(strings.TrimSpace(args.Depth))
+		goDeep := depth == "deep"
+		if depth == "" || depth == "auto" {
+			goDeep = detectAskBreadth(question)
+		}
+		if goDeep && s.agentGraphMgr != nil {
+			workDir := strings.TrimSpace(args.WorkDir)
+			if workDir == "" {
+				workDir = s.taskMgr.workDir
+			}
+			run, err := s.agentGraphMgr.CreateRun(AgentGraphCreateRequest{
+				Name:     "ask",
+				WorkDir:  workDir,
+				Prompt:   question,
+				Template: "ask",
+				Runner:   strings.TrimSpace(args.Runner),
+				Model:    strings.TrimSpace(args.Model),
+			})
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("failed to start ask graph: %v", err))
+			}
+			log.Printf("[MCP] Ask graph started: %s (broad question, %d nodes)", run.ID, len(run.Nodes))
+			return mcpToolJSON(map[string]interface{}{
+				"ok":    true,
+				"mode":  "deep",
+				"graph": run,
+			})
+		}
+		taskOpts := TaskCreateOptions{
+			AskMode: true,
+			WorkDir: strings.TrimSpace(args.WorkDir),
+		}
+		task, err := s.taskMgr.CreateTaskWithOptions(question, "", strings.TrimSpace(args.Model), "ask", strings.TrimSpace(args.Runner), "", nil, taskOpts)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("failed to create ask task: %v", err))
+		}
+		log.Printf("[MCP] Ask task created: %s", task.ID)
+		return mcpToolJSON(map[string]interface{}{
+			"ok":   true,
+			"mode": "single",
 			"task": s.taskInfoFromTask(task, nil),
 		})
 

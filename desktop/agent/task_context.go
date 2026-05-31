@@ -273,6 +273,43 @@ func noQuestionsPreamble(vaultHints string) string {
 	return sb.String()
 }
 
+// askModePreamble is spliced into a task prompt when the task is created in
+// "ask mode" (yaver ask / yaver_ask MCP / an Ask toggle on the web/mobile
+// console). It reframes the run from "do work" to "deeply answer the user's
+// question against THIS repo", with three properties the user asked for:
+//
+//  1. Grounded — read the actual code, never guess from training data. Every
+//     non-trivial claim cites a file:line so the answer is checkable.
+//  2. Auto-escalating — a cheap shallow scan first; if the question turns out
+//     to be broad / architectural / cross-cutting, the agent widens the read
+//     and cross-checks its own answer before responding, instead of stopping
+//     at the first file it finds.
+//  3. Explain-first, may act — the default deliverable is an explanation, not
+//     a mutation. The agent MAY offer to do the thing (run the test, write the
+//     snippet), but must confirm via yaver_ask_user BEFORE any change to the
+//     working tree, deploys, or git. Read-only investigation needs no
+//     confirmation.
+//
+// Ask mode deliberately replaces noQuestionsPreamble: that preamble tells the
+// runner "never ask, just act on defaults", which is exactly wrong for a
+// question — here we WANT explain-first with a confirmation gate before acting.
+func askModePreamble() string {
+	var sb strings.Builder
+	sb.WriteString("\n\n[Yaver — ask mode]\n")
+	sb.WriteString("The user asked a QUESTION. Your job is to ANSWER it deeply and correctly against THIS repository — not to change anything by default.\n\n")
+	sb.WriteString("Grounding (required):\n")
+	sb.WriteString("- Read the actual code before answering. Grep, open files, follow the wiring. Never answer from memory or generic knowledge when the repo can tell you.\n")
+	sb.WriteString("- Cite your evidence as file:line for every concrete claim, so the user can verify it. If a doc/comment disagrees with the code, the code wins — say so.\n\n")
+	sb.WriteString("Depth — shallow first, then escalate automatically:\n")
+	sb.WriteString("1. Do a quick scan to locate the relevant files and form a first answer.\n")
+	sb.WriteString("2. Judge the question's breadth. If it is narrow (one file / one command), answer now.\n")
+	sb.WriteString("3. If it is broad, architectural, or cross-cutting (touches multiple subsystems, has subtle edge cases, or your first answer feels thin), ESCALATE: read the adjacent code, trace the full path end to end, and adversarially re-check your own answer for what you missed — THEN respond. Do not stop at the first plausible file.\n\n")
+	sb.WriteString("Deliverable:\n")
+	sb.WriteString("- Lead with the direct answer in plain language, then the grounded detail (steps, the exact command, the file:line map). Be concrete enough to act on.\n")
+	sb.WriteString("- If there is a clear next action (run the test, scaffold the snippet, fix the bug you found), OFFER it — but you MUST get a yes via the yaver_ask_user MCP tool BEFORE you modify the working tree, run a deploy, or touch git. Pure read-only investigation needs no permission. If the user declines or the ask times out, return the explanation alone — that is a complete, successful result.\n")
+	return sb.String()
+}
+
 // renderVaultHintsForTask returns a multi-line list of vault entry names
 // (global + project-scoped) the running task should know it can read. Values
 // are NEVER included. Returns "" when the vault is unavailable, empty, or

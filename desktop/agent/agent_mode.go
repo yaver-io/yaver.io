@@ -77,6 +77,11 @@ type AgentGraphNodeSpec struct {
 	DesignPoints       float64       `json:"designPoints,omitempty"`
 	BuildPoints        float64       `json:"buildPoints,omitempty"`
 	VerifyPoints       float64       `json:"verifyPoints,omitempty"`
+	// AskMode runs this node as a grounded read-only question-answer (deep
+	// repo analysis, file:line cites, explain-first with a confirm gate)
+	// instead of a work run. Set by the "ask" template for the graph-based
+	// deep-question escalation. See askModePreamble().
+	AskMode bool `json:"askMode,omitempty"`
 }
 
 type AgentGraphNodeState struct {
@@ -310,6 +315,49 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 		template = "full"
 	}
 	switch template {
+	case "ask", "ask-deep", "question":
+		// Graph-based escalation for a broad / architectural QUESTION: a
+		// read-only investigate → answer → verify chain. Every node is
+		// AskMode (grounded, file:line cites, explain-first, no mutations
+		// without a yaver_ask_user confirm). Used when detectAskBreadth says
+		// the question is too wide for a single pass. See askModePreamble().
+		return []AgentGraphNodeSpec{
+			{
+				ID:           "investigate",
+				Title:        "Investigate",
+				Kind:         AgentNodeChat,
+				Prompt:       "Deeply investigate THIS repository to answer the question below. Trace the relevant code end to end — grep, open files, follow the wiring across subsystems. Produce a thorough map of every file:line that matters, the data/control flow, and the edge cases. Do NOT answer yet and do NOT modify anything; just gather grounded evidence.\n\nQuestion:\n" + prompt,
+				WorkDir:      workDir,
+				Project:      project,
+				AskMode:      true,
+				Toughness:    0.9,
+				DesignPoints: 1.0,
+			},
+			{
+				ID:          "answer",
+				Title:       "Answer",
+				Kind:        AgentNodeChat,
+				Prompt:      "Using the investigation, write the deep, grounded answer to the question. Lead with the direct answer in plain language, then the concrete detail (exact steps/commands, the file:line map). Cite evidence for every claim. Do not modify the repo.\n\nQuestion:\n" + prompt,
+				WorkDir:     workDir,
+				Project:     project,
+				DependsOn:   []string{"investigate"},
+				AskMode:     true,
+				Toughness:   0.8,
+				BuildPoints: 1.0,
+			},
+			{
+				ID:           "verify",
+				Title:        "Verify Answer",
+				Kind:         AgentNodeChat,
+				Prompt:       "Adversarially check the answer against the actual code: re-open the cited files, confirm every file:line claim is real and current, and hunt for what the answer missed or got wrong (untraced path, stale doc trusted over code, edge case). Output the corrected, final answer — and if it was already correct, say so and restate it.",
+				WorkDir:      workDir,
+				Project:      project,
+				DependsOn:    []string{"answer"},
+				AskMode:      true,
+				Toughness:    0.8,
+				VerifyPoints: 1.0,
+			},
+		}
 	case "full", "agent", "default":
 		return []AgentGraphNodeSpec{
 			{
@@ -844,6 +892,7 @@ func (gm *AgentGraphManager) executeChatNode(ctx context.Context, runID string, 
 		SliceContract: contract,
 		VideoEnabled:  graphNodeWantsAnyResource(node.Spec, "video-summary", "proof-video", "test-video"),
 		VideoSource:   graphNodeVideoSource(node.Spec),
+		AskMode:       node.Spec.AskMode,
 	}, nil)
 	if err != nil {
 		return "", err

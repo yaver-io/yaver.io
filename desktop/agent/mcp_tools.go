@@ -51,6 +51,38 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "yaver_ask",
+			"description": "Ask a natural-language QUESTION about this repository / machine and get a deep, grounded answer instead of just running work. Use this for 'how do I test STT/TTS?', 'where does auth get wired?', 'why does the relay fall back?' — anything where the user wants understanding, not a change. It spawns a coding agent that reads the actual code (greps, opens files, follows the wiring), answers with file:line citations, automatically escalates from a shallow scan to a wider cross-checked read when the question is broad or architectural, and explains FIRST — it only modifies the working tree / deploys / touches git after confirming with the user via yaver_ask_user. Returns a task object; stream it with the task's /output SSE or poll get_task for the answer. Prefer this over create_task whenever the intent is to explain rather than to build.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"question"},
+				"properties": map[string]interface{}{
+					"question": map[string]interface{}{
+						"type":        "string",
+						"description": "The natural-language question to answer against this repo / machine.",
+					},
+					"runner": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "claude", "codex", "opencode"},
+						"description": "Runner ID — claude / codex / opencode. Empty = agent default.",
+					},
+					"model": map[string]interface{}{
+						"type":        "string",
+						"description": "Model id forwarded to the runner. Empty = runner default.",
+					},
+					"work_dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional project directory to scope the analysis to. Empty = the agent's default workdir / auto-detected from the question.",
+					},
+					"depth": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "auto", "single", "deep"},
+						"description": "How hard to analyze. 'single' = one read-only agent (fast). 'deep' = a multi-agent graph (investigate → answer → verify) for broad/architectural questions. 'auto' (default, same as empty) = single agent for narrow lookups, auto-escalate to the graph when the question is broad. The response includes the resulting task (single) or graph (deep) so you can stream it.",
+					},
+				},
+			},
+		},
+		{
 			"name":        "list_tasks",
 			"description": "List all tasks and their current status (queued, running, completed, failed, stopped). Each task may also expose remote demo video artifacts via videoClipId/videoStatus/videoClipUrl/videoPosterUrl.",
 			"inputSchema": map[string]interface{}{

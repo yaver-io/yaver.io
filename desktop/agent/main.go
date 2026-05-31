@@ -517,6 +517,8 @@ func main() {
 		runOps(os.Args[2:])
 	case "workspace":
 		runWorkspace(os.Args[2:])
+	case "ask":
+		runAsk(os.Args[2:])
 	case "diagnose":
 		runDiagnoseCLI(os.Args[2:])
 	case "managed":

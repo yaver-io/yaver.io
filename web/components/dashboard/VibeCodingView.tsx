@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
+import { detectAskIntent } from "@/lib/ask-intent";
 import PreviewPane from "./PreviewPane";
 import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "./DevicesView";
 
@@ -608,6 +609,11 @@ export default function VibeCodingView({
       projectName: selectedProject.name,
       workDir: selectedProject.path,
       videoEnabled: videoSummaryEnabled,
+      // Console auto-detect: a natural-language question ("how do I test
+      // STT/TTS?") routes to ask mode — deep grounded analysis, explain-first
+      // — instead of a work run. High-precision; imperative build prompts are
+      // left as normal tasks. See lib/ask-intent.ts.
+      askMode: detectAskIntent(composer.trim()),
     });
     setComposer("");
     setDraftTitle("");
