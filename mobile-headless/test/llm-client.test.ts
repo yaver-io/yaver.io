@@ -170,12 +170,15 @@ interface MockFetchCall {
 
 function newMockFetch(handler: (call: MockFetchCall) => Response | Promise<Response>) {
   const calls: MockFetchCall[] = [];
-  const f: typeof fetch = async (input, init) => {
+  // Cast through unknown: Bun's `typeof fetch` carries a `preconnect`
+  // static the mock doesn't implement, and the call sites only ever
+  // invoke it as a plain function.
+  const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : (input as URL).toString();
     const call: MockFetchCall = { url, init };
     calls.push(call);
     return handler(call);
-  };
+  }) as unknown as typeof fetch;
   return { fetch: f, calls };
 }
 

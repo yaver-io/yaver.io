@@ -64,7 +64,9 @@ class UdpSocket {
   }
 }
 
-export function createSocket(typeOrOpts: string | { type: "udp4" | "udp6" }) {
+export function createSocket(
+  typeOrOpts: string | { type: "udp4" | "udp6"; reusePort?: boolean; reuseAddr?: boolean },
+) {
   const type = typeof typeOrOpts === "string"
     ? (typeOrOpts as "udp4" | "udp6")
     : typeOrOpts.type;

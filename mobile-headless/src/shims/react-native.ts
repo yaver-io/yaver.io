@@ -80,6 +80,16 @@ export const NetInfo = {
   async fetch() { return { isConnected: true, type: "wifi" as const }; },
 };
 
+// Linking — used by mobile/src/lib/builds.ts to open URLs. In headless
+// there's no OS browser to hand off to; openURL is a no-op that resolves
+// so call sites don't crash.
+export const Linking = {
+  async openURL(_url: string): Promise<void> {},
+  async canOpenURL(_url: string): Promise<boolean> { return false; },
+  async getInitialURL(): Promise<string | null> { return null; },
+  addEventListener(_type: string, _cb: (...args: any[]) => void) { return { remove() {} }; },
+};
+
 export default {
   Platform,
   Alert,
@@ -88,4 +98,5 @@ export default {
   NativeEventEmitter,
   DeviceEventEmitter,
   NetInfo,
+  Linking,
 };

@@ -159,6 +159,41 @@ export async function copyAsync(opts: { from: string; to: string }): Promise<voi
   await fsp.copyFile(from, to);
 }
 
+export interface DownloadProgressData {
+  totalBytesWritten: number;
+  totalBytesExpectedToWrite: number;
+}
+export interface DownloadResult {
+  uri: string;
+  status: number;
+  headers?: Record<string, string>;
+}
+
+/** Node-backed createDownloadResumable — fetches the URL and writes it to
+ *  the local path. Used by mobile/src/lib/builds.ts to pull build
+ *  artifacts; works for real in headless (no mock). */
+export function createDownloadResumable(
+  url: string,
+  fileUri: string,
+  options?: { headers?: Record<string, string> },
+  onProgress?: (data: DownloadProgressData) => void,
+) {
+  return {
+    async downloadAsync(): Promise<DownloadResult | undefined> {
+      const res = await fetch(url, { headers: options?.headers });
+      const total = Number(res.headers.get("content-length") || 0);
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (onProgress) onProgress({ totalBytesWritten: buf.length, totalBytesExpectedToWrite: total || buf.length });
+      const dest = uriToPath(fileUri);
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      await fsp.writeFile(dest, buf);
+      const headers: Record<string, string> = {};
+      res.headers.forEach((v, k) => { headers[k] = v; });
+      return { uri: fileUri, status: res.status, headers };
+    },
+  };
+}
+
 // Default export — some callers do `import FS from "expo-file-system"`
 // even though the real package exports named only.
 export default {
@@ -173,4 +208,5 @@ export default {
   readDirectoryAsync,
   moveAsync,
   copyAsync,
+  createDownloadResumable,
 };
