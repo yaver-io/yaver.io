@@ -30,6 +30,7 @@ func runVoice(args []string) {
 		fmt.Fprintln(os.Stderr, "  yaver voice status                 show readiness + provider state")
 		fmt.Fprintln(os.Stderr, "  yaver voice test                   Flux-style live transcription test (speak → text)")
 		fmt.Fprintln(os.Stderr, "  yaver voice control                drive yaver hands-free (speak → run ops verb)")
+		fmt.Fprintln(os.Stderr, "  yaver voice agent                  speak → the AI agent acts (full MCP toolset) → spoken answer")
 		fmt.Fprintln(os.Stderr, "  yaver voice listen                 live mic transcription → stdout")
 		fmt.Fprintln(os.Stderr, "  yaver voice listen --tts           also speak finals back (free local TTS)")
 		fmt.Fprintln(os.Stderr, "  yaver voice deps [--install]       check/install local deps (ffmpeg, whisper.cpp, model)")
@@ -41,7 +42,8 @@ func runVoice(args []string) {
 		fmt.Fprintln(os.Stderr, "  yaver voice setup openai --openai-api-key sk-...")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Voice surface lives at /voice/status + /voice/stream on the running agent.")
-		fmt.Fprintln(os.Stderr, "Mobile + Feedback-SDK clients drive it; this CLI is for inspection only.")
+		fmt.Fprintln(os.Stderr, "`voice agent` drives a real AI agent task from the terminal; mobile + Feedback-SDK")
+		fmt.Fprintln(os.Stderr, "clients use the same STT/TTS plumbing. STT defaults to the free local engine.")
 	}
 
 	if len(args) == 0 {
@@ -56,6 +58,8 @@ func runVoice(args []string) {
 		runVoiceListen(args[1:])
 	case "control", "do", "command":
 		runVoiceControl(args[1:])
+	case "agent":
+		runVoiceAgent(args[1:])
 	case "test":
 		runVoiceTest(args[1:])
 	case "deps":

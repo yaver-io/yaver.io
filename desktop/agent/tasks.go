@@ -713,10 +713,11 @@ type TaskVerbosity struct {
 // columns-aware output for a tmux-style split.
 //
 // Surfaces in use 2026-05:
-//   "mobile-phone" | "mobile-tablet" | "web-desktop"
-//   "web-spatial-hud" | "web-spatial-vr"
-//   "glasses-mentra-live" | "glasses-mentra-display" | "glasses-ray-ban"
-//   "cli" | "" (no hint)
+//
+//	"mobile-phone" | "mobile-tablet" | "web-desktop"
+//	"web-spatial-hud" | "web-spatial-vr"
+//	"glasses-mentra-live" | "glasses-mentra-display" | "glasses-ray-ban"
+//	"cli" | "" (no hint)
 //
 // All fields optional. nil = no viewport hint, default behavior.
 type TaskViewport struct {
@@ -1003,8 +1004,8 @@ type TaskInfo struct {
 	// leaked into every label and a task that ran on a sibling box
 	// looked like it ran on whichever device the phone was focused
 	// on at view time.
-	DeviceName string             `json:"deviceName,omitempty"`
-	SessionID  string             `json:"sessionId,omitempty"`
+	DeviceName     string             `json:"deviceName,omitempty"`
+	SessionID      string             `json:"sessionId,omitempty"`
 	Output         string             `json:"output,omitempty"`
 	ResultText     string             `json:"resultText,omitempty"`
 	CostUSD        float64            `json:"costUsd,omitempty"`
@@ -2063,7 +2064,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// no canned bullet framing) instead of the mobile dev-server
 	// hot-reload prefix. See mobile/src/lib/quic.ts::sendTask for the
 	// caller-side documentation.
-	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" || task.Source == "ask" {
+	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" || task.Source == "ask" || task.Source == "voice" {
 		prompt += yaverWrapperCapabilityContext(contextDir, task.Source)
 	}
 
@@ -3307,7 +3308,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	if task.WorkDir != "" {
 		contextDir = task.WorkDir
 	}
-	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" || task.Source == "ask" {
+	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" || task.Source == "mobile-code" || task.Source == "ask" || task.Source == "voice" {
 		prompt += yaverWrapperCapabilityContext(contextDir, task.Source)
 	}
 
