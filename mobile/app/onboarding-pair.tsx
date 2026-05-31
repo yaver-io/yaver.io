@@ -36,6 +36,7 @@ import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { beaconListener, type DiscoveredDevice } from "../src/lib/beacon";
 import { adoptBootstrapDevice } from "../src/lib/pairDevice";
+import AirDropMacSetupButton from "../src/components/AirDropMacSetupButton";
 
 const INSTALL_CMD = "npm install -g yaver-cli && yaver auth";
 
@@ -222,6 +223,13 @@ export default function OnboardingPairScreen() {
             Keeps running after sign-in (it auto-starts on login). Prefer the foreground? Run{" "}
             <Text style={{ color: c.textSecondary }}>yaver serve</Text>.
           </Text>
+        </View>
+
+        {/* On a Mac? AirDrop a double-click setup file instead of typing.
+            Falls back to copy when AirDrop isn't available. Once it runs,
+            this phone pairs the machine automatically over the beacon. */}
+        <View style={{ marginBottom: 24 }}>
+          <AirDropMacSetupButton />
         </View>
 
         {/* Live discovery */}

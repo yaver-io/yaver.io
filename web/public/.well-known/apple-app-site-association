@@ -1,0 +1,24 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["5SJZ4KA39A.io.yaver.mobile"],
+        "components": [
+          {
+            "/": "/pair*",
+            "comment": "Pairing deep links only",
+            "rel": "app"
+          },
+          {
+            "/": "/auth/device*",
+            "comment": "Remote-box device-code approve — opens the in-app one-tap approver instead of the web sign-in page when the phone has the app. Desktop browsers and phones without the app still get the web page (universal links only redirect on iOS devices with the app installed).",
+            "rel": "app"
+          }
+        ]
+      }
+    ],
+    "webcredentials": {
+      "apps": ["5SJZ4KA39A.io.yaver.mobile"]
+    }
+  }
+}

@@ -19,7 +19,35 @@ import * as Linking from "expo-linking";
 import { router } from "expo-router";
 import { parsePairUrl } from "./pairDevice";
 
+// A remote/off-LAN box that can't be silently adopted over the LAN
+// beacon prints a device-code URL after `yaver auth`:
+//   https://yaver.io/auth/device?code=ABCD-1234   (universal link / system-camera scan)
+//   yaver://auth/device?code=ABCD-1234            (custom scheme)
+// Scanning that QR used to open the browser and force a second sign-in.
+// Route it into the in-app one-tap approver instead — the phone is
+// already signed in (see app/approve-device.tsx).
+function isApproveUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    const path = (u.pathname || "").replace(/\/+$/, "");
+    if (path === "/auth/device") return true;
+    // yaver://auth/device?code=… parses host="auth", pathname="/device".
+    if ((u.protocol === "yaver:" || u.protocol === "yaver://") && u.host === "auth" && path === "/device") return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function routePairUrl(raw: string) {
+  // Device-code approve takes precedence — it's a distinct path from
+  // the /pair token-submit flow and parsePairUrl wouldn't recognise it.
+  if (isApproveUrl(raw)) {
+    // Forward the whole URL; approve-device extracts ?code= itself so we
+    // stay compatible with extra params (convex=, etc.).
+    router.navigate({ pathname: "/approve-device", params: { url: raw } } as any);
+    return true;
+  }
   const payload = parsePairUrl(raw);
   if (!payload) return false;
   // Encode the full URL — the receiver will re-parse it and
