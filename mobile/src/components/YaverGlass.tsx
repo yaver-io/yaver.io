@@ -64,12 +64,33 @@ try {
   GlassEffectModule = null;
 }
 
-// Apple's Liquid Glass only ships on iOS 26+. We probe Platform.Version.
+// Apple's Liquid Glass only ships on iOS 26+ AND requires the
+// expo-glass-effect NATIVE module to be linked into the binary. The JS
+// package can be present (require succeeds, `GlassView` is exported) while
+// the native view manager is absent — e.g. the pod was never installed
+// (current state: expo-glass-effect is in package.json but not in
+// Podfile.lock). Rendering <GlassView> then throws RN's "Unimplemented
+// component: ViewManagerAdapter_ExpoGlassEffect_GlassView".
+//
+// expo-glass-effect exposes `isGlassEffectAPIAvailable()` precisely for
+// this — it returns false from the JS stub when native isn't linked, and
+// true (from the native override) once it is. Gate on it so we fall back
+// to BlurView until the native side actually ships. Wrapped in try/catch
+// because calling into a missing native module can throw.
 function supportsLiquidGlass(): boolean {
   if (Platform.OS !== "ios") return false;
   if (!GlassEffectModule?.GlassView) return false;
   const ver = typeof Platform.Version === "string" ? parseInt(Platform.Version, 10) : Platform.Version;
-  return typeof ver === "number" && ver >= 26;
+  if (typeof ver !== "number" || ver < 26) return false;
+  try {
+    const apiOk = GlassEffectModule.isGlassEffectAPIAvailable?.();
+    const glassOk = GlassEffectModule.isLiquidGlassAvailable?.();
+    // Require an explicit true from the runtime probe. undefined/false
+    // (native not linked) → fall back. Either probe being true is enough.
+    return apiOk === true || glassOk === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Hook to track the system "Reduce Transparency" accessibility flag.

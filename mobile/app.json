@@ -7,6 +7,9 @@
     "scheme": "yaver",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "assets/**"
+    ],
     "splash": {
       "backgroundColor": "#0a0a0a"
     },

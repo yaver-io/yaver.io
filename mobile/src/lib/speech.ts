@@ -73,8 +73,6 @@ let whisperContext: any = null;
 let isModelReady = false;
 let isInitializing = false;
 
-const MODEL_FILENAME = "ggml-whisper-tiny.bin";
-
 /** Model is bundled in app — always available. */
 export async function isWhisperModelDownloaded(): Promise<boolean> {
   return true;
@@ -98,9 +96,15 @@ export async function initWhisper(
   try {
     const { initWhisper: rnInitWhisper } = require("whisper.rn");
 
+    // Load the bundled ggml model via require() — metro.config.js registers
+    // `.bin` as an asset, so Expo embeds it in the binary and whisper.rn +
+    // expo-asset resolve the on-device path on both iOS and Android. This
+    // replaces the old `isBundleAsset: true` + bare-filename lookup, which
+    // depended on a Copy-Bundle-Resources entry that prebuild never created
+    // (→ "Failed to load the model" on TestFlight/Play builds).
     whisperContext = await rnInitWhisper({
-      filePath: MODEL_FILENAME,
-      isBundleAsset: true,
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      filePath: require("../../assets/models/ggml-whisper-tiny.bin"),
     });
     isModelReady = true;
   } catch (err) {
