@@ -972,6 +972,32 @@ const ChatBubble = React.memo(ChatBubbleImpl, (prev, next) => {
   );
 });
 
+// When a runner (claude-code / codex) surfaces a structured payload it
+// prints the WHOLE response as JSON — most visibly API failures, e.g.
+// `ERROR: {"type":"error","error":{"message":"…"}}`. Rendering that raw
+// through Markdown looks broken. If the entire content parses as JSON
+// (tolerating one leading `LABEL:` prefix like ERROR:), surface a clean
+// view: the human-readable message when the shape is a known error, plus
+// the pretty-printed JSON. Anything that isn't fully JSON returns null →
+// the caller falls back to the normal markdown/raw render.
+function detectJsonResponse(raw: string | undefined): { message: string; pretty: string } | null {
+  if (!raw) return null;
+  const text = raw.trim();
+  if (!text) return null;
+  const labelStripped = text.replace(/^[A-Za-z][\w-]*:\s*/, "");
+  let parsed: unknown;
+  for (const candidate of text === labelStripped ? [text] : [text, labelStripped]) {
+    const head = candidate[0];
+    if (head !== "{" && head !== "[") continue;
+    try { parsed = JSON.parse(candidate); break; } catch { /* not pure JSON */ }
+  }
+  if (parsed === undefined || parsed === null || typeof parsed !== "object") return null;
+  const p = parsed as Record<string, any>;
+  const rawMsg = p?.error?.message ?? p?.message ?? p?.error ?? null;
+  const message = typeof rawMsg === "string" && rawMsg.trim() ? rawMsg.trim() : "";
+  return { message, pretty: JSON.stringify(parsed, null, 2) };
+}
+
 function ChatBubbleImpl({
   turn,
   c,
@@ -998,6 +1024,11 @@ function ChatBubbleImpl({
   // and bordered code blocks). The previous "Update / Show details" gate
   // hid the polished frame behind a tap; users want to see it inline.
   const preview = useMemo(() => buildAssistantPreview(turn.content), [turn.content]);
+  // Whole-response-is-JSON detection (errors, structured payloads) — when
+  // matched we render a clean message + pretty block instead of feeding
+  // raw JSON to Markdown. Null → normal markdown/raw path. Long-press
+  // (showRaw) still reveals the verbatim content.
+  const jsonResponse = useMemo(() => detectJsonResponse(turn.content), [turn.content]);
   // Long-press anywhere on the assistant frame to toggle the raw
   // stream view. Hidden by default — the cleaned MD render is the
   // canonical surface and the prior "Show raw stream" link gave the
@@ -1028,9 +1059,27 @@ function ChatBubbleImpl({
             tokens used {totalTokens.toLocaleString()}
           </Text>
         ) : null}
-        <Markdown style={markdownStyles(c)}>
-          {renderedMarkdown || " "}
-        </Markdown>
+        {jsonResponse && !showRaw ? (
+          <View>
+            {jsonResponse.message ? (
+              <Text selectable style={{ color: c.textPrimary, fontSize: 15, lineHeight: 21, marginBottom: jsonResponse.pretty ? 10 : 0 }}>
+                {jsonResponse.message}
+              </Text>
+            ) : null}
+            <View style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, backgroundColor: c.bg }}>
+              <Text
+                selectable
+                style={{ color: c.textMuted, fontSize: 12, lineHeight: 17, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}
+              >
+                {jsonResponse.pretty}
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <Markdown style={markdownStyles(c)}>
+            {renderedMarkdown || " "}
+          </Markdown>
+        )}
         {!showRaw && preview.shouldCollapse ? (
           <Pressable onPress={() => setExpanded((value) => !value)} style={{ marginTop: 6 }}>
             <Text style={[s.assistantToggle, { color: c.accent }]}>
@@ -1848,7 +1897,17 @@ export default function TasksScreen() {
       // path validates and surfaces a clear error if it's actually
       // invalid. Reverting silently to the default makes Sonnet-vs-Opus
       // chips look broken when they're tapped.
-      if (current) return current;
+      // Keep `current` only if it's actually valid for THIS runner, or the
+      // user explicitly tapped it this session (a staged model the latest
+      // /agent/runners response may have dropped — the send path validates
+      // and surfaces a clear error). Without the validity check the initial
+      // default "sonnet" (a Claude model) survived a switch to Codex →
+      // nonsensical "Codex · Sonnet" badge, then the agent fell back to its
+      // own default and the task failed ("gpt-5.4 not supported with a
+      // ChatGPT account"). A stale cross-runner default is NOT a user pick.
+      if (current && (runner.models!.some((m) => m.id === current) || userPickedModelRef.current)) {
+        return current;
+      }
       if (explicitModel && runner.models!.some((m) => m.id === explicitModel)) return explicitModel;
       const seededModel = activeDevice
         ? preferredDefaultModelForRunner(runner.id, activeDevice, user?.email)
@@ -3916,45 +3975,36 @@ export default function TasksScreen() {
                 <Text style={[s.discoverIcon, { color: c.textMuted }]}>{"\u2318"}</Text>
                 <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Start Coding</Text>
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8, marginBottom: 20 }]}>
-                  Build from this phone, or pair a dev machine.
+                  Pair your computer to run your AI agent, or build from this phone.
                 </Text>
 
                 <Pressable
                   style={[s.discoverPrimaryBtn, { backgroundColor: c.accent }]}
-                  onPress={() => taskRouter.navigate("/phone-projects" as any)}
+                  onPress={() => taskRouter.navigate("/onboarding-pair" as any)}
                 >
-                  <Text style={s.discoverBtnText}>Open Mobile Sandbox</Text>
+                  <Text style={s.discoverBtnText}>Pair your computer</Text>
                 </Pressable>
                 <Text style={[s.discoverHelper, { color: c.textMuted }]}>
-                  Local SQLite-backed project. No machine required. Git is optional; if used, Yaver expects a monorepo workspace.
+                  Run{" "}
+                  <Text style={{ color: c.textSecondary }}>npm install -g yaver-cli &amp;&amp; yaver auth</Text>
+                  {" "}on your machine — it'll show up here automatically.
                 </Text>
 
                 <View style={[s.discoverDivider, { backgroundColor: c.border }]} />
-                <Text style={[s.discoverSectionLabel, { color: c.textMuted }]}>Or pair your computer</Text>
-
-                <View style={s.discoverSteps}>
-                  <View style={s.discoverStep}>
-                    <View style={[s.discoverStepDot, { backgroundColor: c.accent }]}>
-                      <Text style={s.discoverStepNum}>1</Text>
-                    </View>
-                    <View style={s.discoverStepContent}>
-                      <Text style={[s.discoverStepTitle, { color: c.textPrimary }]}>Install</Text>
-                      <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>npm install -g yaver-cli</Text>
-                    </View>
-                  </View>
-                  <View style={s.discoverStep}>
-                    <View style={[s.discoverStepDot, { backgroundColor: c.accent }]}>
-                      <Text style={s.discoverStepNum}>2</Text>
-                    </View>
-                    <View style={s.discoverStepContent}>
-                      <Text style={[s.discoverStepTitle, { color: c.textPrimary }]}>Sign in &amp; start</Text>
-                      <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>yaver auth</Text>
-                    </View>
-                  </View>
-                </View>
+                <Text style={[s.discoverSectionLabel, { color: c.textMuted }]}>Or build on this phone</Text>
 
                 <Pressable
-                  style={[s.discoverSecondaryBtn, { borderColor: c.border, opacity: isRefreshingDevices ? 0.6 : 1 }]}
+                  style={[s.discoverSecondaryBtn, { borderColor: c.border }]}
+                  onPress={() => taskRouter.navigate("/phone-projects" as any)}
+                >
+                  <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Open Mobile Sandbox</Text>
+                </Pressable>
+                <Text style={[s.discoverHelper, { color: c.textMuted }]}>
+                  Local SQLite-backed project. No machine required.
+                </Text>
+
+                <Pressable
+                  style={[s.discoverRefreshLink, { opacity: isRefreshingDevices ? 0.6 : 1 }]}
                   onPress={async () => {
                     if (isRefreshingDevices) return;
                     setIsRefreshingDevices(true);
@@ -3963,9 +4013,9 @@ export default function TasksScreen() {
                   disabled={isRefreshingDevices}
                 >
                   {isRefreshingDevices ? (
-                    <ActivityIndicator size="small" color={c.textPrimary} />
+                    <ActivityIndicator size="small" color={c.textMuted} />
                   ) : (
-                    <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Refresh Devices</Text>
+                    <Text style={[s.discoverRefreshText, { color: c.textMuted }]}>Refresh devices</Text>
                   )}
                 </Pressable>
               </View>
@@ -5805,6 +5855,8 @@ const s = StyleSheet.create({
   discoverIcon: { fontSize: 40, marginBottom: 12 },
   discoverPrimaryBtn: { width: "100%", paddingVertical: 14, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   discoverSecondaryBtn: { width: "100%", marginTop: 20, paddingVertical: 12, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center", minHeight: 44 },
+  discoverRefreshLink: { marginTop: 20, paddingVertical: 8, alignItems: "center" },
+  discoverRefreshText: { fontSize: 13, fontWeight: "500" },
   discoverHelper: { fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: "center", paddingHorizontal: 8 },
   discoverDivider: { height: 1, width: "100%", marginTop: 28, marginBottom: 14, opacity: 0.5 },
   discoverSectionLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 },

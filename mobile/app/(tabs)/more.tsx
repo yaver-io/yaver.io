@@ -2967,6 +2967,20 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
             </Pressable>
+
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={() => router.navigate("/voice-test" as any)}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\u25CF"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Voice &amp; Speech Test</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  Test STT + TTS \u2014 on-device or your API key
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+            </Pressable>
           </>
         ) : (
           <>

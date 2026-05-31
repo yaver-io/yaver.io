@@ -5314,13 +5314,16 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 120 },
 
-  section: { marginBottom: 32 },
+  // Tightened from 32/12 → 18/8: with ~18 stacked sections the old
+  // spacing made Settings an endless scroll even though every heavy
+  // section already collapses by default. Pure-spacing compaction.
+  section: { marginBottom: 18 },
   sectionLabel: {
     fontSize: 12,
     fontWeight: "600",
     textTransform: "uppercase",
     letterSpacing: 0.5,
-    marginBottom: 12,
+    marginBottom: 8,
   },
 
   profileCard: {
@@ -5360,9 +5363,9 @@ const styles = StyleSheet.create({
 
   card: {
     borderRadius: 12,
-    padding: 16,
+    padding: 13,
     borderWidth: 1,
-    marginBottom: 8,
+    marginBottom: 6,
   },
 
   // Device
