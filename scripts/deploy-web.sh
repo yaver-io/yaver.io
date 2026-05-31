@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Deploy yaver.io web to Cloudflare Workers.
 # Builds with @opennextjs/cloudflare and deploys via wrangler.
-# Enforces a 10 MB cap on the web/ source tree (excluding
-# node_modules, .next, .open-next).
+# Enforces a 15 MB cap on the web/ source tree (excluding
+# node_modules, .next, .open-next). Matches the CI guard in
+# release-web.yml (raised 10→15 MB in ddd5868d — demo videos push it over).
 #
 # Credentials (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID) can come from
 # the existing environment OR from the Yaver vault (project="web" plus
@@ -37,7 +38,7 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY_DIR="$REPO_ROOT/web"
-MAX_SIZE_MB=10
+MAX_SIZE_MB=15
 
 # Append the production Play app-signing SHA-256 to assetlinks.json
 # right before the build when ANDROID_RELEASE_SHA256 is in the vault.

@@ -32,8 +32,10 @@ mobile discovery, and remote-recovery — read it before changing those.
      from a variable, or any path transcribed from a user message.
   4. Treat `rm -rf` on anything you didn't create this session like
      `git push --force` to main.
-- **Cloudflare deploy size guard**: `web/` must stay under 10 MB. If you add
-  video, compress first (`ffmpeg -crf 32 -vf scale=720 -an`) or host external.
+- **Cloudflare deploy size guard**: `web/` must stay under 15 MB (raised from
+  10 MB in ddd5868d — demo videos push it over; enforced identically in
+  `scripts/deploy-web.sh` and `release-web.yml`). If you add video, compress
+  first (`ffmpeg -crf 32 -vf scale=720 -an`) or host external.
 - **Never WebView for third-party RN apps.** Use the Hermes-bundle native load
   path (`/dev/build-native` → ExpoReactNativeFactory). WebView is OK for plain
   web content (landing pages, docs).
@@ -107,7 +109,7 @@ yaver auth --headless
 - **Tags trigger releases**: `cli/v*` → release-cli.yml, `mobile/v*` →
   release-mobile.yml, `web/v*` → release-web.yml. Tag protection rules limit
   pushes to the repo owner.
-- **Cloudflare web deploy**: `./scripts/deploy-web.sh` (size-guarded at 10 MB,
+- **Cloudflare web deploy**: `./scripts/deploy-web.sh` (size-guarded at 15 MB,
   uses `@opennextjs/cloudflare` + `wrangler deploy`).
 - **Convex backend deploy**: `cd backend && npx convex deploy --yes`. Not
   triggered by CI — deploy explicitly when schema or HTTP routes change.
