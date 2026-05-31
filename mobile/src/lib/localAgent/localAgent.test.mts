@@ -92,6 +92,20 @@ test("catalog: unknown action id", () => {
   assert.equal(getAction("nope"), undefined);
 });
 
+test("catalog: recovery-provider calls are LLM-drivable (auto), via mcp", () => {
+  // Start/recover actions auto-run; status/wait are read-only — all auto.
+  for (const id of [
+    "recovery.reauthStart", "recovery.reauthStatus", "recovery.reauthWait",
+    "recovery.targetStart", "recovery.targetStatus", "recovery.targetWait",
+    "recovery.transportStatus",
+  ]) {
+    assert.equal(dispositionFor(id), "auto", `${id} should auto-run`);
+    const a = getAction(id);
+    assert.equal(a?.via, "mcp", `${id} dispatches via mcp`);
+    assert.ok(a?.mcpTool, `${id} has an mcpTool`);
+  }
+});
+
 test("catalog: voiceInvokableActions excludes BLOCKED", () => {
   const ids = voiceInvokableActions().map((a) => a.id);
   assert.ok(!ids.includes("cloud.destroy"));

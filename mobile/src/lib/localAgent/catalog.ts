@@ -31,10 +31,13 @@ export interface ActionSpec {
   tier: SafetyTier;
   /** Whether the action targets a specific device (needs resolution). */
   needsDevice: boolean;
-  /** How the adapter executes it: an in-app DeviceContext fn, or an /ops verb. */
-  via: "context" | "ops";
+  /** How the adapter executes it: an in-app DeviceContext fn, an /ops verb,
+   *  or a direct MCP tool call (recovery-provider calls of the Go agent). */
+  via: "context" | "ops" | "mcp";
   /** For ops actions, the verb name (machine routed separately). */
   opsVerb?: string;
+  /** For mcp actions, the MCP tool name (e.g. recovery_target_start). */
+  mcpTool?: string;
 }
 
 export const ACTION_CATALOG: ActionSpec[] = [
@@ -54,6 +57,17 @@ export const ACTION_CATALOG: ActionSpec[] = [
   { id: "device.claimPending", description: "Claim a freshly-bootstrapped box into the account.", tier: "SAFE_WRITE", needsDevice: true, via: "context" },
   { id: "runner.switch", description: "Switch the coding agent (claude/codex/opencode) on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "context" },
   { id: "reload", description: "Hot-reload the dev server / Hermes bundle on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "reload" },
+
+  // ── Recovery-provider calls (yaver Go agent, mcp_recovery_tools.go) ──
+  // Read-or-recover only, hardware-id-gated server-side — safe for the local
+  // LLM to drive autonomously so it can fix a wedged box without SSH.
+  { id: "recovery.reauthStart", description: "Start re-auth/re-pair for a device that lost its token.", tier: "SAFE_WRITE", needsDevice: true, via: "mcp", mcpTool: "device_reauth_start" },
+  { id: "recovery.reauthStatus", description: "Check progress of a device re-auth.", tier: "READ_ONLY", needsDevice: true, via: "mcp", mcpTool: "device_reauth_status" },
+  { id: "recovery.reauthWait", description: "Wait for a device re-auth to complete.", tier: "READ_ONLY", needsDevice: true, via: "mcp", mcpTool: "device_reauth_wait" },
+  { id: "recovery.targetStart", description: "Start a full recovery session against a wedged box.", tier: "SAFE_WRITE", needsDevice: true, via: "mcp", mcpTool: "recovery_target_start" },
+  { id: "recovery.targetStatus", description: "Check a recovery session's status.", tier: "READ_ONLY", needsDevice: true, via: "mcp", mcpTool: "recovery_target_status" },
+  { id: "recovery.targetWait", description: "Wait for a recovery session / box to come back.", tier: "READ_ONLY", needsDevice: true, via: "mcp", mcpTool: "recovery_target_wait" },
+  { id: "recovery.transportStatus", description: "Inspect which transports (direct/relay/tunnel) can reach a box.", tier: "READ_ONLY", needsDevice: true, via: "mcp", mcpTool: "recovery_transport_status" },
 
   // ── CONFIRM (runs code / deploys; speak-back + 'yes') ─────────────
   { id: "run", description: "Run a shell command on a device.", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "run" },
