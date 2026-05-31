@@ -1,8 +1,12 @@
 name: Publish SDKs
 
 on:
-  release:
-    types: [published]
+  # NOTE: `release: published` was removed — it auto-fired on EVERY GitHub
+  # release (cli/v*, mobile/v*, …), then blanket-republished all SDK
+  # packages at unchanged versions and ran the yaver-mobile-headless
+  # typecheck, so it failed on every release (v1.99.245, v1.99.246, …).
+  # SDK publishing is now intentional-only via workflow_dispatch, with
+  # per-package booleans — which is the path that actually works.
   workflow_dispatch:
     inputs:
       publish_js:
