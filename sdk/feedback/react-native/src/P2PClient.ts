@@ -156,6 +156,25 @@ export class P2PClient {
     this.relayPassword = password;
   }
 
+  /** Read-only base URL — used by the voice vibe-coding path to probe
+   *  GET /voice/status before opening the stream. */
+  get agentBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  /** WebSocket URL for the agent's voice stream (WS /voice/stream). The
+   *  voice vibe-coding loop streams mic audio here and receives the
+   *  transcript + agent task + TTS frames back. */
+  voiceStreamUrl(): string {
+    return this.baseUrl.replace(/^http/, 'ws') + '/voice/stream';
+  }
+
+  /** Auth headers for the voice WS + status probe — same bearer (and
+   *  relay password) as every other agent request. */
+  voiceAuthHeaders(): Record<string, string> {
+    return this.authHeaders();
+  }
+
   /** Merge in Authorization + (optional) X-Relay-Password on top of a header block. */
   private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const h: Record<string, string> = { ...extra };

@@ -603,7 +603,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// WebSocket; authSDK gates it so paired mobile + Feedback-SDK
 	// clients can drive voice without round-tripping the auth broker.
 	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
-	mux.HandleFunc("/voice/stream", s.authSDK(s.handleVoiceStream))
+	// Browser WebSocket clients (the web feedback SDK) can't set request
+	// headers, so wsQueryToken promotes ?access_token=<bearer> into the
+	// Authorization header before authSDK validates it. RN/CLI clients
+	// keep sending the header and are unaffected.
+	mux.HandleFunc("/voice/stream", s.wsQueryToken(s.authSDK(s.handleVoiceStream)))
 	// /voice/config — POST to set provider + API keys from mobile
 	// Settings. Owner-auth gated (NOT authSDK) because the body
 	// carries plaintext API keys.
@@ -1939,6 +1943,26 @@ func withPairedUser(r *http.Request, userID string) *http.Request {
 
 // authSDK is for SDK-accessible endpoints (feedback, blackbox, voice, builds).
 // Accepts all token types: agent's own, CLI session, and SDK tokens (with scope check).
+// wsQueryToken lets browser WebSocket clients authenticate via a query
+// param, since the browser WebSocket constructor cannot set request
+// headers. If no Authorization header is present, it promotes
+// ?access_token=<bearer> (or ?token=) into the header so the downstream
+// auth middleware validates it unchanged. A real header always wins.
+func (s *HTTPServer) wsQueryToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			tok := r.URL.Query().Get("access_token")
+			if tok == "" {
+				tok = r.URL.Query().Get("token")
+			}
+			if tok != "" {
+				r.Header.Set("Authorization", "Bearer "+tok)
+			}
+		}
+		next(w, r)
+	}
+}
+
 func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")

@@ -1287,6 +1287,34 @@ export default defineSchema({
     .index("by_device", ["deviceId"])
     .index("by_user_slug", ["userId", "slug"]),
 
+  // User-defined one-tap shortcuts (mobile Shortcuts tab). Each shortcut
+  // is an ordered chain of deterministic actions — connect to a device,
+  // open a project, push a Hermes reload, start a dev server — run
+  // client-side on the phone. Privacy contract: steps carry ONLY a
+  // deviceId (uuid), a project slug, and flags/labels. They MUST NOT
+  // carry absolute paths or task-prompt text (a "speak/type a task" step
+  // collects its prompt at run time and never persists it) — same
+  // reasoning as userProjects above. Enforced by convex_privacy_test.go.
+  userShortcuts: defineTable({
+    userId: v.id("users"),
+    name: v.string(),
+    icon: v.optional(v.string()),   // key into the app's inline-SVG icon set
+    color: v.optional(v.string()),  // accent hex for the card
+    order: v.number(),              // sort position in the grid
+    steps: v.array(
+      v.object({
+        kind: v.string(),                     // select-device | open-project | hermes-reload | start-dev | create-task
+        deviceId: v.optional(v.string()),     // uuid, matches devices.deviceId
+        deviceName: v.optional(v.string()),   // display label only (resolved deviceId can roam)
+        projectSlug: v.optional(v.string()),  // filesystem basename only — never a path
+        mode: v.optional(v.string()),         // hermes-reload: "dev" | "bundle"
+        framework: v.optional(v.string()),    // start-dev: expo | vite | nextjs | flutter | ...
+        label: v.optional(v.string()),        // UI label ONLY — never a task prompt
+      }),
+    ),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId", "order"]),
+
   // Services running on each device — synced from /services/status.
   userServices: defineTable({
     userId: v.id("users"),

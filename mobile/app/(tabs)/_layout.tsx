@@ -27,6 +27,7 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
     Tasks: { on: "checkmark-circle", off: "checkmark-circle-outline" },
     Todos: { on: "checkbox", off: "square-outline" },
     Projects: { on: "play-circle", off: "play-circle-outline" },
+    Shortcuts: { on: "flash", off: "flash-outline" },
     Repos: { on: "folder", off: "folder-outline" },
     Builds: { on: "hammer", off: "hammer-outline" },
     Devices: { on: "desktop", off: "desktop-outline" },
@@ -316,6 +317,15 @@ export default function TabLayout() {
           title: "Projects",
           tabBarIcon: ({ focused }) => (
             <TabIcon label="Projects" focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="shortcuts"
+        options={{
+          title: "Shortcuts",
+          tabBarIcon: ({ focused }) => (
+            <TabIcon label="Shortcuts" focused={focused} />
           ),
         }}
       />

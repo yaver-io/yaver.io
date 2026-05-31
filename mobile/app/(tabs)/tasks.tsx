@@ -604,6 +604,22 @@ function normalizeTaskTitle(title: string): string {
   return trimmed;
 }
 
+// A bare reload *command* typed (or dictated) into the composer —
+// "reload", "hot reload", "hermes [reload]", "rebuild [bundle]",
+// "push bundle" — optionally followed by a single project token
+// ("reload sfmg"). These map straight to a dev-server reload on the
+// connected machine rather than spinning up a whole agent task.
+//
+// Kept deliberately tight: the trailing capture allows at most one
+// path-safe token (no spaces), so a genuine task phrased as a sentence —
+// "reload the user list after delete" — falls through to a normal task
+// because "the user list…" contains spaces and fails the `\s*$` anchor.
+const RELOAD_INTENT =
+  /^\s*(hot\s*reload|reload|hermes(\s+reload)?|rebuild(\s+bundle)?|push\s+bundle)(\s+[a-z0-9._-]{1,40})?\s*$/i;
+function isReloadIntent(text: string): boolean {
+  return RELOAD_INTENT.test(text.trim());
+}
+
 type TaskPhaseTone = "neutral" | "active" | "warm" | "success";
 
 function deriveTaskPhases(task: Task): Array<{ label: string; tone: TaskPhaseTone }> {
@@ -1590,6 +1606,8 @@ export default function TasksScreen() {
   const { token, user, logout } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  // Transient inline status for the composer's ⚡ Hermes-reload action.
+  const [reloadFlash, setReloadFlash] = useState<string | null>(null);
   const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
   const [speechApiKey, setSpeechApiKey] = useState<string | undefined>();
   const [sttModel, setSttModel] = useState<string | undefined>();
@@ -2482,8 +2500,61 @@ export default function TasksScreen() {
     });
   };
 
+  // Push a fresh Hermes bundle to THIS phone from the connected dev
+  // machine. Reuses quic.ts `reloadDevServer` (dev → bundle fallback) and
+  // the pool's per-device client so a multi-target pick reloads from the
+  // box the user actually selected. Hermes bundle-loading is iOS-only
+  // today (no Android YaverBundleLoader), so we degrade visibly rather
+  // than firing a reload this phone can't consume.
+  const triggerHermesReload = async () => {
+    if (Platform.OS === "android") {
+      Alert.alert(
+        "Reload unavailable",
+        "Live Hermes bundle reload is currently iOS-only. On Android, use the Reload tab's dev-server controls.",
+      );
+      return;
+    }
+    const client = pendingTarget?.deviceId
+      ? connectionManager.clientFor(pendingTarget.deviceId)
+      : quicClient;
+    const targetName = pendingTarget?.deviceName || activeDevice?.name || "the connected machine";
+    setIsSubmitting(true);
+    setReloadFlash(`Reloading on ${targetName}…`);
+    try {
+      const ok = await client.reloadDevServer({ mode: "bundle" });
+      if (ok) {
+        taskHaptics.send();
+        setNewTaskText("");
+        setInputFromSpeech(false);
+        setReloadFlash(`Hermes reload pushed to ${targetName}`);
+        setTimeout(() => setReloadFlash((cur) => (cur?.startsWith("Hermes reload pushed") ? null : cur)), 3500);
+      } else {
+        setReloadFlash(null);
+        Alert.alert(
+          "Reload failed",
+          `Couldn't reach a dev server on ${targetName}. Start one from the Reload tab (or have the agent run a dev server for the project), then try again.`,
+        );
+      }
+    } catch (e) {
+      setReloadFlash(null);
+      Alert.alert("Reload failed", e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleCreateTask = async () => {
     if (!newTaskText.trim() && attachedImages.length === 0) return;
+
+    // Hermes-reload fast-path: a bare "reload"/"hot reload"/"hermes"
+    // command — typed or dictated into the composer — shouldn't spin up a
+    // full agent task. Push a fresh bundle to this phone directly. Skipped
+    // when images are attached (clearly a real task) or with no live host.
+    if (attachedImages.length === 0 && isEffectivelyConnected && isReloadIntent(newTaskText)) {
+      if (isRecording) { try { await stopRecordingAndTranscribe(); } catch {} }
+      await triggerHermesReload();
+      return;
+    }
 
     // Yaver-Agent fallback: when no host runner is connected, route the
     // prompt through the embedded control-plane LLM instead of failing
@@ -4509,6 +4580,12 @@ export default function TasksScreen() {
                     <Text style={{ color: c.textMuted, fontSize: 12, marginLeft: 8 }}>Transcribing...</Text>
                   </View>
                 )}
+                {reloadFlash && (
+                  <View style={s.transcribingRow}>
+                    <Ionicons name="flash" size={14} color={c.accent} />
+                    <Text style={{ color: c.textMuted, fontSize: 12, marginLeft: 8 }}>{reloadFlash}</Text>
+                  </View>
+                )}
                 {attachedImages.length > 0 && (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.attachmentStrip}>
                     {attachedImages.map((img, i) => (
@@ -4534,12 +4611,40 @@ export default function TasksScreen() {
                     <Ionicons name="add" size={26} color={c.textPrimary} />
                   </Pressable>
                   <View style={s.composerFooterRight}>
-                    {/* Mic button removed: voice path was retired
-                        2026-04-28; the visual feedback loop now flows
-                        through screenshots/screen-recording, not
-                        speech-to-text. Keeping speechProvider /
-                        isRecording state in place so other surfaces
-                        (and a possible voice revival) don't regress. */}
+                    {/* Mic — dictate the command (writes into the composer).
+                        Saying "reload" / "reload <project>" trips the
+                        Hermes-reload fast-path in handleCreateTask. The
+                        composer mic was retired in the 2026-04-28 voice
+                        cut and revived here now that the voice agent is
+                        back; it reuses the same startRecording("task")
+                        dictation path the follow-up composer already uses. */}
+                    <Pressable
+                      style={({ pressed }) => [
+                        s.composerActionButton,
+                        { backgroundColor: isRecording ? c.error : c.bgCard },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                      onPress={() => { if (isRecording) { stopRecordingAndTranscribe(); } else { startRecording("task"); } }}
+                      disabled={isSubmitting || isTranscribing}
+                    >
+                      <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
+                    </Pressable>
+                    {/* ⚡ Reload — one-tap Hermes bundle push to this phone
+                        from the selected machine. iOS-only (Android can't
+                        load the bundle), so hidden off-iOS. */}
+                    {isEffectivelyConnected && Platform.OS !== "android" && (
+                      <Pressable
+                        style={({ pressed }) => [
+                          s.composerActionButton,
+                          { backgroundColor: c.bgCard },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                        onPress={() => { taskHaptics.send(); triggerHermesReload(); }}
+                        disabled={isSubmitting || isTranscribing}
+                      >
+                        <Ionicons name="flash-outline" size={22} color={c.textPrimary} />
+                      </Pressable>
+                    )}
                     {(() => {
                       const isDisabled =
                         (!newTaskText.trim() && attachedImages.length === 0) ||

@@ -396,6 +396,7 @@ for (const path of [
   "/auth/passkey/list", "/auth/passkey/remove", "/auth/passkey/check",
   "/auth/email-providers", "/auth/verify-email/request", "/auth/verify-email/confirm",
   "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
+  "/shortcuts", "/shortcuts/delete",
   "/subscription",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
@@ -2639,6 +2640,60 @@ http.route({
       // preserved. null on any key clears that subsystem.
       managed: body.managed,
     });
+    return jsonResponse({ ok: true });
+  }),
+});
+
+// ── User Shortcuts (mobile Shortcuts tab) ────────────────────────────
+// One-tap action chains. See backend/convex/shortcuts.ts for the privacy
+// contract: deviceId + slug + flags + labels only, never paths/prompts.
+
+http.route({
+  path: "/shortcuts",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const shortcuts = await ctx.runQuery(api.shortcuts.listByToken, { tokenHash });
+    return jsonResponse({ ok: true, shortcuts });
+  }),
+});
+
+http.route({
+  path: "/shortcuts",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    if (!body?.name || !Array.isArray(body?.steps)) {
+      return errorResponse("name and steps[] are required", 400);
+    }
+    const id = await ctx.runMutation(api.shortcuts.upsertByToken, {
+      tokenHash,
+      id: body.id,
+      name: body.name,
+      icon: body.icon,
+      color: body.color,
+      order: body.order,
+      steps: body.steps,
+    });
+    return jsonResponse({ ok: true, id });
+  }),
+});
+
+http.route({
+  path: "/shortcuts/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    if (!body?.id) return errorResponse("id is required", 400);
+    await ctx.runMutation(api.shortcuts.deleteByToken, { tokenHash, id: body.id });
     return jsonResponse({ ok: true });
   }),
 });

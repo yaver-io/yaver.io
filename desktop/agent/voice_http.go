@@ -8,7 +8,11 @@ package main
 // /voice/stream client protocol:
 //
 //   client → server (first message, JSON text frame):
-//     {"type":"start", "project":"yaver", "model":"sonnet", "runner":""}
+//     {"type":"start", "project":"yaver", "model":"sonnet", "runner":"",
+//      "sttProvider":"local|deepgram|openai|assemblyai",  // optional override
+//      "ttsProvider":"local|deepgram|openai|cartesia|elevenlabs"}
+//     sttProvider/ttsProvider empty → agent's configured default. "local"
+//     STT = free whisper.cpp on the host; "deepgram" = Flux nova-3.
 //
 //   client → server (PCM 16-bit LE, 16kHz mono, ~20-40ms chunks, binary):
 //     <raw bytes>
@@ -17,6 +21,7 @@ package main
 //     {"type":"stop"}
 //
 //   server → client (JSON text frames, all):
+//     {"type":"providers",          "stt":"local", "tts":"local"}  // active engines (sent once, right after start)
 //     {"type":"transcript-partial", "text":"..."}
 //     {"type":"transcript-final",   "text":"..."}
 //     {"type":"task-created",       "taskId":"..."}
@@ -35,6 +40,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -58,6 +64,14 @@ type voiceStartFrame struct {
 	Surface   string `json:"surface,omitempty"`
 	PaneCount int    `json:"paneCount,omitempty"`
 	TTSBudget int    `json:"ttsBudget,omitempty"`
+	// Per-session provider overrides. Empty = fall back to the agent's
+	// configured default (VoiceConfig.EffectiveSTT/TTSProvider). This lets
+	// a standalone SDK client pick "local" (free whisper.cpp on the host)
+	// vs "deepgram" (Flux nova-3 streaming) per session, and surface which
+	// engine is active. STTProvider "on-device" is rejected — that path
+	// transcribes on the client and POSTs /tasks, never opening this WS.
+	STTProvider string `json:"sttProvider,omitempty"`
+	TTSProvider string `json:"ttsProvider,omitempty"`
 }
 
 // voiceCtrlFrame covers all other client-side control frames.
@@ -164,41 +178,10 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusServiceUnavailable, "voice not enabled in config — set voice.enabled=true and supply an api key (openai by default). Keyboard-on-glasses users without voice keys can ignore this and use the agent normally.")
 		return
 	}
-	sttProvider := v.EffectiveSTTProvider()
-	switch sttProvider {
-	case "openai":
-		if !HasVoiceCredential("openai", "api-key", v.OpenAIAPIKey) {
-			jsonError(w, http.StatusServiceUnavailable, "openai api key not configured (stt_provider=openai)")
-			return
-		}
-	case "deepgram":
-		if !HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey) {
-			jsonError(w, http.StatusServiceUnavailable, "deepgram api key not configured (stt_provider=deepgram)")
-			return
-		}
-	case "assemblyai":
-		if !HasVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey) {
-			jsonError(w, http.StatusServiceUnavailable, "assemblyai api key not configured (stt_provider=assemblyai)")
-			return
-		}
-	case "on-device":
-		// Mobile owns capture; the agent never opens a session for this
-		// path. Reject voice-stream attempts so the caller knows it's
-		// the wrong endpoint — the mobile transcribes locally and
-		// posts the final transcript to /tasks directly.
-		jsonError(w, http.StatusBadRequest, "stt_provider=on-device — mobile must transcribe locally and POST /tasks; do not open /voice/stream for this provider")
-		return
-	case "local":
-		// Agent-side free/offline whisper.cpp. Needs a CLI + model on the
-		// host (no API key). Surface a clear install hint if missing.
-		if !LocalWhisperAvailable() {
-			jsonError(w, http.StatusServiceUnavailable, "local stt not ready — install whisper.cpp (brew install whisper-cpp) and a ggml model (YAVER_WHISPER_MODEL or ~/.yaver/models/)")
-			return
-		}
-	default:
-		jsonError(w, http.StatusBadRequest, "unknown stt_provider "+sttProvider+" — supported: openai, deepgram, assemblyai, local, on-device")
-		return
-	}
+	// Provider is resolved AFTER the start frame (below) so a client can
+	// override it per-session. We only gate on "voice enabled" pre-upgrade;
+	// provider-specific readiness is validated once we know the choice and
+	// reported over the WS (we've already upgraded by then).
 
 	conn, err := voiceUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -226,6 +209,28 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 		voiceWriteErr(conn, "invalid start frame")
 		return
 	}
+
+	// Resolve providers: per-session override wins, else the configured
+	// default. "local" = free whisper.cpp on the host; "deepgram" = Flux
+	// nova-3 streaming. Validate readiness and report it over the WS, then
+	// echo the resolved engines so the client can show "Local" vs "Flux".
+	sttProvider := strings.ToLower(strings.TrimSpace(start.STTProvider))
+	if sttProvider == "" {
+		sttProvider = v.EffectiveSTTProvider()
+	}
+	ttsProvider := strings.ToLower(strings.TrimSpace(start.TTSProvider))
+	if ttsProvider == "" {
+		ttsProvider = v.EffectiveTTSProvider()
+	}
+	if errMsg := validateVoiceSTTProvider(sttProvider, v); errMsg != "" {
+		voiceWriteErr(conn, errMsg)
+		return
+	}
+	voiceWriteJSON(conn, map[string]interface{}{
+		"type": "providers",
+		"stt":  sttProvider,
+		"tts":  ttsProvider,
+	})
 
 	// Resolve project keyterms for STT bias.
 	project := start.Project
@@ -368,7 +373,7 @@ loop:
 			"status": launchOKStatus(launchRes.OK),
 		})
 		if launchRes.SpokenResponse != "" {
-			streamTTS(ctx, conn, v, launchRes.SpokenResponse)
+			streamTTS(ctx, conn, v, ttsProvider, launchRes.SpokenResponse)
 		}
 		voiceWriteJSON(conn, map[string]interface{}{"type": "done"})
 		return
@@ -400,8 +405,10 @@ loop:
 	})
 
 	// TTS readback — skip silently if no TTS provider is configured.
+	// For "local"/"device" providers streamTTS sends nothing; the client
+	// synthesizes from the task-result text with its own engine.
 	if result.ResultText != "" {
-		streamTTS(ctx, conn, v, voiceTrimForTTS(result.ResultText))
+		streamTTS(ctx, conn, v, ttsProvider, voiceTrimForTTS(result.ResultText))
 	}
 
 	voiceWriteJSON(conn, map[string]interface{}{"type": "done"})
@@ -412,11 +419,13 @@ loop:
 // tts-frame messages. Skips silently when no provider key is set —
 // so a keyboard-on-glasses user without voice keys gets clean text
 // results without errors.
-func streamTTS(ctx context.Context, conn *websocket.Conn, v *VoiceConfig, text string) {
+func streamTTS(ctx context.Context, conn *websocket.Conn, v *VoiceConfig, provider, text string) {
 	if v == nil || text == "" {
 		return
 	}
-	provider := v.EffectiveTTSProvider()
+	if provider == "" {
+		provider = v.EffectiveTTSProvider()
+	}
 	ttsCh := make(chan CartesiaFrame, 8)
 	sampleRate := 22050
 	switch provider {
@@ -474,6 +483,37 @@ func streamTTS(ctx context.Context, conn *websocket.Conn, v *VoiceConfig, text s
 			break
 		}
 	}
+}
+
+// validateVoiceSTTProvider returns "" when the chosen STT provider is
+// usable, else a client-facing error message. Mirrors the readiness gate
+// that used to run pre-upgrade, but now runs per-session so an SDK client
+// can pick local vs a cloud engine and get a precise reason on failure.
+func validateVoiceSTTProvider(provider string, v *VoiceConfig) string {
+	switch provider {
+	case "openai":
+		if !HasVoiceCredential("openai", "api-key", v.OpenAIAPIKey) {
+			return "openai api key not configured (sttProvider=openai)"
+		}
+	case "deepgram":
+		if !HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey) {
+			return "deepgram api key not configured (sttProvider=deepgram) — Flux needs a Deepgram key"
+		}
+	case "assemblyai":
+		if !HasVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey) {
+			return "assemblyai api key not configured (sttProvider=assemblyai)"
+		}
+	case "on-device":
+		// Client-side capture path; never opens this WS.
+		return "sttProvider=on-device transcribes on the client and POSTs /tasks — do not open /voice/stream for it"
+	case "local":
+		if !LocalWhisperAvailable() {
+			return "local stt not ready — install whisper.cpp (brew install whisper-cpp) and a ggml model (YAVER_WHISPER_MODEL or ~/.yaver/models/)"
+		}
+	default:
+		return "unknown sttProvider " + provider + " — supported: local, deepgram, openai, assemblyai"
+	}
+	return ""
 }
 
 // voiceTrimForTTS keeps the audio short. Long agent monologues are

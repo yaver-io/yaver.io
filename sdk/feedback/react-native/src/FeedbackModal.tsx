@@ -741,6 +741,9 @@ export const FeedbackModal: React.FC = () => {
   const [activeVibe, setActiveVibe] = useState<{
     taskId: string;
     initialPrompt: string;
+    project?: string;
+    runner?: string;
+    model?: string;
   } | null>(null);
   const [includeScreenshot, setIncludeScreenshot] = useState<boolean>(true);
 
@@ -803,7 +806,13 @@ export const FeedbackModal: React.FC = () => {
       setLastVibeTaskId(result.taskId);
       // Hand off to VibeChatScreen — it streams the SSE transcript,
       // accepts follow-ups, and surfaces a Reload button.
-      setActiveVibe({ taskId: result.taskId, initialPrompt: promptText });
+      setActiveVibe({
+        taskId: result.taskId,
+        initialPrompt: promptText,
+        project: identity.projectName,
+        runner: preferredRunner ?? undefined,
+        model: preferredModel ?? undefined,
+      });
       setVibePrompt('');
       setShowVibeInput(false);
     } catch (err: unknown) {
@@ -847,6 +856,9 @@ export const FeedbackModal: React.FC = () => {
               client={client}
               initialTaskId={activeVibe.taskId}
               initialUserPrompt={activeVibe.initialPrompt}
+              project={activeVibe.project}
+              runner={activeVibe.runner}
+              model={activeVibe.model}
               onClose={() => setActiveVibe(null)}
               onReload={async () => {
                 const c = YaverFeedback.getP2PClient();

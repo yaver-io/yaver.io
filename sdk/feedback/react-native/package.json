@@ -1,7 +1,7 @@
 {
   "name": "yaver-feedback-react-native",
-  "version": "0.8.13",
-  "description": "Visual feedback SDK for Yaver \u2014 bug reports, screen recording, voice annotations, and local-first developer workflows",
+  "version": "0.9.0",
+  "description": "Visual feedback SDK for Yaver \u2014 bug reports, screen recording, voice vibe coding, and local-first developer workflows",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -26,9 +26,20 @@
     "expo-document-picker": ">=13.0.0",
     "react-native-view-shot": ">=3.0.0",
     "react-native-record-screen": ">=0.0.10",
-    "expo-av": ">=14.0.0"
+    "expo-av": ">=14.0.0",
+    "expo-file-system": ">=16.0.0",
+    "expo-speech": ">=12.0.0"
+  },
+  "dependencies": {
+    "buffer": "^6.0.3"
   },
   "peerDependenciesMeta": {
+    "expo-file-system": {
+      "optional": true
+    },
+    "expo-speech": {
+      "optional": true
+    },
     "@expo/config-plugins": {
       "optional": true
     },

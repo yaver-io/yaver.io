@@ -336,3 +336,54 @@ export async function stopAudioRecording(): Promise<{ path: string; duration: nu
 export function isAudioRecording(): boolean {
   return audioRecorderActive;
 }
+
+// ── Voice-stream recording (raw LPCM WAV) ──────────────────────────────
+// The voice vibe-coding path streams audio to the agent's STT WS, which
+// expects raw 16-bit / 16 kHz mono PCM (we strip the WAV header on the
+// way out). That's a different format from the HIGH_QUALITY m4a recorder
+// above — a compressed .m4a can't be streamed to Deepgram/whisper — so
+// this uses its own recording options, mirroring the Yaver app's
+// AgentVoiceButton.
+
+let pcmRecorderRef: any = null;
+let pcmRecorderActive = false;
+
+// Raw LPCM 16-bit LE, 16 kHz mono. iOS uses lpcm; Android records WAV.
+const PCM_RECORDING_OPTIONS: any = {
+  android: { extension: '.wav', outputFormat: 2, audioEncoder: 3, sampleRate: 16000, numberOfChannels: 1, bitRate: 256000 },
+  ios: {
+    extension: '.wav', outputFormat: 'lpcm', audioQuality: 0x40, sampleRate: 16000,
+    numberOfChannels: 1, bitRate: 256000, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false,
+  },
+  web: { mimeType: 'audio/wav', bitsPerSecond: 256000 },
+};
+
+/** Begin a raw-PCM recording for the voice stream. */
+export async function startPcmRecording(): Promise<void> {
+  if (pcmRecorderActive) throw new Error('[YaverFeedback] A voice recording is already in progress.');
+  const ExpoAv = loadExpoAvOrThrow();
+  const { Audio } = ExpoAv;
+  const perm = await Audio.requestPermissionsAsync();
+  if (!perm.granted) {
+    throw new Error('[YaverFeedback] Microphone permission denied. Enable it in Settings ▸ Your App ▸ Microphone.');
+  }
+  await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true, staysActiveInBackground: false });
+  const { recording } = await Audio.Recording.createAsync(PCM_RECORDING_OPTIONS);
+  pcmRecorderRef = recording;
+  pcmRecorderActive = true;
+}
+
+/** Stop the voice recording; returns the WAV file:// URI (or null). */
+export async function stopPcmRecording(): Promise<string | null> {
+  if (!pcmRecorderActive || !pcmRecorderRef) return null;
+  const recording = pcmRecorderRef;
+  pcmRecorderRef = null;
+  pcmRecorderActive = false;
+  try { await recording.stopAndUnloadAsync(); } catch { /* already stopped */ }
+  return typeof recording.getURI === 'function' ? recording.getURI() : null;
+}
+
+/** Whether a voice-stream recording is currently active. */
+export function isPcmRecording(): boolean {
+  return pcmRecorderActive;
+}

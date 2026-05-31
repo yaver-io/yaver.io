@@ -45,6 +45,7 @@ import type * as provisionRelay from "../provisionRelay.js";
 import type * as publishJobs from "../publishJobs.js";
 import type * as runnerUsage from "../runnerUsage.js";
 import type * as seed from "../seed.js";
+import type * as shortcuts from "../shortcuts.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as survey from "../survey.js";
 import type * as teams from "../teams.js";
@@ -96,6 +97,7 @@ declare const fullApi: ApiFromModules<{
   publishJobs: typeof publishJobs;
   runnerUsage: typeof runnerUsage;
   seed: typeof seed;
+  shortcuts: typeof shortcuts;
   subscriptions: typeof subscriptions;
   survey: typeof survey;
   teams: typeof teams;

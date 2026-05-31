@@ -13,6 +13,13 @@ import type {
 } from './types';
 import { YaverDiscovery } from './discovery';
 import {
+  WebVoiceSession,
+  WebAudioPCMRecorder,
+  playPcm16,
+  speakViaSynthesis,
+  isWebVoiceSupported,
+} from './voice';
+import {
   configureAuthEndpoints,
   DEFAULT_CONVEX_SITE_URL,
   getSelectedDeviceId,
@@ -1692,6 +1699,8 @@ export class YaverFeedback {
             <div class="yvr-fb-chat-composer">
               <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Vibe with the agent — describe a change, ask a question, request a deploy…"></textarea>
               <div class="yvr-fb-chat-actions">
+                <button id="yaver-fb-vibe-engine" class="yvr-fb-action yvr-fb-action-secondary" type="button" style="display:none;" title="Switch STT/TTS engine">🔒 Local</button>
+                <button id="yaver-fb-vibe-mic" class="yvr-fb-action yvr-fb-action-secondary" type="button" style="display:none;" title="Vibe code by voice">🎙 Speak</button>
                 <button id="yaver-fb-vibe-reset" class="yvr-fb-action yvr-fb-action-secondary" type="button" style="display:none;">New session</button>
                 <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Send</button>
               </div>
@@ -2168,6 +2177,109 @@ export class YaverFeedback {
       resetBtn.onclick = () => {
         if (busy) return;
         resetChat();
+      };
+
+      // ── Voice vibe coding (STT/TTS via the agent's /voice/stream) ──
+      // LOCAL = whisper.cpp on the user's machine (private) + browser
+      // SpeechSynthesis readback. FLUX = Deepgram nova-3 STT + Aura TTS
+      // streamed back as PCM. The active engine is always shown.
+      const micBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe-mic')!;
+      const engineBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe-engine')!;
+      let voiceMode: 'local' | 'flux' = 'local';
+      let fluxAvailable = false;
+      let voicePhase: 'idle' | 'recording' | 'thinking' = 'idle';
+      let recorder: WebAudioPCMRecorder | null = null;
+      let voiceSession: WebVoiceSession | null = null;
+
+      const renderEngineBtn = () => { engineBtn.textContent = voiceMode === 'flux' ? '⚡ Flux' : '🔒 Local'; };
+      const setMicPhase = (p: typeof voicePhase) => {
+        voicePhase = p;
+        micBtn.textContent = p === 'recording' ? '■ Stop' : p === 'thinking' ? '…' : '🎙 Speak';
+      };
+      const cleanupVoice = () => {
+        try { recorder?.stop(); } catch { /* ignore */ }
+        recorder = null;
+        try { voiceSession?.close(); } catch { /* ignore */ }
+        voiceSession = null;
+      };
+
+      // Probe: show the mic only when the browser supports capture AND the
+      // agent has voice enabled. Flux toggle shows only with a Deepgram key.
+      void (async () => {
+        if (!isWebVoiceSupported()) return;
+        try {
+          const h: Record<string, string> = {};
+          if (YaverFeedback.config?.authToken) h['Authorization'] = `Bearer ${YaverFeedback.config.authToken}`;
+          if (YaverFeedback.config?.relayPassword) h['X-Relay-Password'] = YaverFeedback.config.relayPassword;
+          const res = await fetch(`${YaverFeedback.config!.agentUrl}/voice/status`, { headers: h });
+          if (!res.ok) return;
+          const body = await res.json();
+          if (!body?.enabled) return;
+          micBtn.style.display = '';
+          fluxAvailable = !!body.deepgramSet;
+          if (fluxAvailable) engineBtn.style.display = '';
+          else voiceMode = 'local';
+          renderEngineBtn();
+        } catch { /* leave hidden */ }
+      })();
+
+      engineBtn.onclick = () => {
+        if (voicePhase !== 'idle') return;
+        voiceMode = voiceMode === 'local' ? 'flux' : 'local';
+        renderEngineBtn();
+      };
+
+      const startVoice = async () => {
+        const cfg = YaverFeedback.config;
+        if (!cfg?.agentUrl || !cfg.authToken) { setChatStatus('Connect a machine first.'); return; }
+        const useFlux = voiceMode === 'flux' && fluxAvailable;
+        voiceSession = new WebVoiceSession({
+          onProviders: (stt) => setChatStatus(`listening · ${stt === 'deepgram' ? 'Flux (Deepgram)' : 'Local (whisper)'}`),
+          onTranscriptPartial: (t) => setChatStatus(`🎙 ${t}`),
+          onTranscriptFinal: (t) => { appendUserBubble(t); setMicPhase('thinking'); setChatStatus('agent working…'); },
+          onTaskCreated: (id) => { currentTaskId = id; },
+          onTaskResult: (_id, text) => {
+            const bubble = appendAgentBubble();
+            bubble.textContent = text;
+            if (!useFlux) speakViaSynthesis(text);
+          },
+          onTTSReady: (pcm, sr) => { void playPcm16(pcm, sr); },
+          onDone: () => { setMicPhase('idle'); setChatStatus('Agent finished. Speak again or type to continue.'); },
+          onError: (msg) => { setMicPhase('idle'); setChatStatus(`voice: ${msg}`); cleanupVoice(); },
+        });
+        try {
+          await voiceSession.start({
+            agentUrl: cfg.agentUrl,
+            accessToken: cfg.authToken,
+            relayPassword: cfg.relayPassword,
+            surface: 'feedback-web',
+            ttsBudget: 280,
+            sttProvider: useFlux ? 'deepgram' : 'local',
+            ttsProvider: useFlux ? 'deepgram' : 'local',
+          });
+          recorder = new WebAudioPCMRecorder((pcm) => voiceSession?.sendAudio(pcm));
+          await recorder.start();
+          setMicPhase('recording');
+          setChatStatus(`listening · ${useFlux ? 'Flux (Deepgram)' : 'Local (whisper)'}`);
+        } catch (e) {
+          setMicPhase('idle');
+          setChatStatus(`voice: ${e instanceof Error ? e.message : String(e)}`);
+          cleanupVoice();
+        }
+      };
+
+      const stopVoice = () => {
+        try { recorder?.stop(); } catch { /* ignore */ }
+        recorder = null;
+        voiceSession?.finalize(); // flush STT → agent creates the task
+        setMicPhase('thinking');
+        setChatStatus('transcribing…');
+      };
+
+      micBtn.onclick = () => {
+        if (busy) return;
+        if (voicePhase === 'recording') stopVoice();
+        else if (voicePhase === 'idle') void startVoice();
       };
 
       // Chat-style submit: Enter sends, Shift+Enter inserts a
