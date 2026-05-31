@@ -695,6 +695,7 @@ export interface AgentGraphNode {
     workDir?: string;
   };
   status: "pending" | "running" | "completed" | "failed" | "blocked" | "stopped";
+  taskId?: string;
   summary?: string;
   error?: string;
   placement?: AgentNodePlacement;
@@ -2073,7 +2074,7 @@ export class AgentClient {
     prompt: string;
     runner?: string;
     model?: string;
-    template?: "full" | "ship";
+    template?: "full" | "ship" | "ask";
     maxParallel?: number;
     preferredDevice?: string;
     allowedDevices?: string[];
@@ -2108,6 +2109,19 @@ export class AgentClient {
       headers: this.authHeaders,
     });
     return res.ok;
+  }
+
+  /** Fetch a single agent-graph run's current state (nodes + statuses +
+   *  summaries). Used to poll a deep ask graph's investigate → answer →
+   *  verify progress in the web console. Returns null if not found. */
+  async getAgentGraph(id: string): Promise<AgentGraphRun | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/graphs/${encodeURIComponent(id)}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    return (data?.run as AgentGraphRun) ?? null;
   }
 
   // ── Voice ────────────────────────────────────────────────────────

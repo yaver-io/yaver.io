@@ -3,10 +3,10 @@
 import type { ReactNode } from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
+import { agentClient, type AgentGraphRun, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
-import { detectAskIntent } from "@/lib/ask-intent";
+import { detectAskBreadth, detectAskIntent } from "@/lib/ask-intent";
 import PreviewPane from "./PreviewPane";
 import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "./DevicesView";
 
@@ -246,6 +246,12 @@ export default function VibeCodingView({
   const [selectedMode, setSelectedMode] = useState("");
   const [taskList, setTaskList] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState("");
+  // Deep ask graph (investigate → answer → verify) — set when a broad
+  // architectural question auto-escalates from a single agent to a graph.
+  // While active, the main panel shows graph progress instead of a task.
+  const [activeGraphRunId, setActiveGraphRunId] = useState<string | null>(null);
+  const [graphRun, setGraphRun] = useState<AgentGraphRun | null>(null);
+  const [graphNodeOutput, setGraphNodeOutput] = useState("");
   const [composer, setComposer] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   // Video summary toggle — when on, the agent records a short MP4 demo
@@ -558,6 +564,46 @@ export default function VibeCodingView({
     return stop;
   }, [activeTask?.id]);
 
+  // Poll the active deep-ask graph until it reaches a terminal status.
+  useEffect(() => {
+    if (!activeGraphRunId) {
+      setGraphRun(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const run = await agentClient.getAgentGraph(activeGraphRunId).catch(() => null);
+      if (cancelled) return;
+      if (run) setGraphRun(run);
+      const terminal = run && ["completed", "failed", "stopped"].includes(run.status);
+      if (!terminal) timer = setTimeout(() => void poll(), 1500);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeGraphRunId]);
+
+  // Stream the currently-running graph node's live output so the user sees
+  // the agent working, not just a status pill.
+  const runningGraphNode = useMemo(
+    () => graphRun?.nodes.find((n) => n.status === "running" && n.taskId) ?? null,
+    [graphRun],
+  );
+  useEffect(() => {
+    if (!runningGraphNode?.taskId) {
+      setGraphNodeOutput("");
+      return;
+    }
+    setGraphNodeOutput("");
+    const stop = agentClient.streamTaskOutput(runningGraphNode.taskId, (chunk) => {
+      setGraphNodeOutput((prev) => prev + extractOutputText(chunk));
+    });
+    return stop;
+  }, [runningGraphNode?.taskId]);
+
   useEffect(() => {
     if (!selectedProject) {
       setProjectSecrets({});
@@ -591,7 +637,39 @@ export default function VibeCodingView({
       setBusy(selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`);
       return;
     }
+    const promptText = composer.trim();
+
+    // Deep ask escalation: a broad / architectural QUESTION ("how does auth
+    // work end to end?") runs a multi-agent graph (investigate → answer →
+    // verify) instead of a single agent. Narrow questions stay single-agent
+    // ask mode (askMode below); build instructions stay normal tasks.
+    if (detectAskIntent(promptText) && detectAskBreadth(promptText)) {
+      setBusy("Deep ask — investigate → answer → verify…");
+      const res = await agentClient.createAgentGraph({
+        name: "ask",
+        workDir: selectedProject.path,
+        prompt: promptText,
+        runner: selectedRunner || undefined,
+        model: selectedModel || undefined,
+        template: "ask",
+      });
+      if (!res.ok || !res.run) {
+        setBusy(res.error || "Failed to start deep ask.");
+        return;
+      }
+      setComposer("");
+      setDraftTitle("");
+      setActiveTaskId("");
+      setActiveGraphRunId(res.run.id);
+      setGraphRun(res.run);
+      setBusy(`Deep ask started (${res.run.nodes?.length ?? 3} steps).`);
+      setRefreshNonce((value) => value + 1);
+      return;
+    }
+
     setBusy("Starting coding task…");
+    // Leaving any prior deep-ask graph view when starting a normal task.
+    setActiveGraphRunId(null);
     const title = draftTitle.trim() || summarizeTitle(composer, selectedProject.name);
     const task = await agentClient.createTask({
       title,
@@ -749,6 +827,7 @@ export default function VibeCodingView({
       workDir: selectedProject.path,
       videoEnabled: videoSummaryEnabled,
     });
+    setActiveGraphRunId(null);
     setActiveTaskId(task.id);
     setBusy(plan.startedLabel);
     setRefreshNonce((value) => value + 1);
@@ -1756,7 +1835,10 @@ export default function VibeCodingView({
                 {taskList.map((task) => (
                   <button
                     key={task.id}
-                    onClick={() => setActiveTaskId(task.id)}
+                    onClick={() => {
+                      setActiveGraphRunId(null);
+                      setActiveTaskId(task.id);
+                    }}
                     className={`rounded-2xl border p-3 text-left ${
                       activeTask?.id === task.id
                         ? "border-amber-500/40 bg-amber-500/10"
@@ -1777,12 +1859,25 @@ export default function VibeCodingView({
             <div className="border-b border-surface-800 px-4 py-3">
               <div className="flex items-center gap-2">
                 <div className="text-sm font-semibold text-surface-100 flex-1">
-                  {activeTask?.title || "New coding session"}
+                  {activeGraphRunId
+                    ? "Deep ask · investigate → answer → verify"
+                    : activeTask?.title || "New coding session"}
                 </div>
+                {activeGraphRunId ? (
+                  <button
+                    onClick={() => {
+                      void agentClient.stopAgentGraph(activeGraphRunId);
+                      setActiveGraphRunId(null);
+                    }}
+                    className="rounded-md border border-surface-700 bg-surface-950 px-2 py-0.5 text-[11px] font-semibold text-surface-300 hover:border-surface-500"
+                  >
+                    ✕ Close
+                  </button>
+                ) : null}
                 {/* Video summary chip — same shape as the mobile chip,
                     just rendered as a button next to the title. Opens
                     a fullscreen <video> when clicked. */}
-                {activeTask?.videoStatus === "ready" && activeTask?.videoClipId ? (
+                {!activeGraphRunId && activeTask?.videoStatus === "ready" && activeTask?.videoClipId ? (
                   <button
                     onClick={() => setActiveClipId(activeTask.videoClipId!)}
                     className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/20"
@@ -1796,14 +1891,18 @@ export default function VibeCodingView({
                 ) : null}
               </div>
               <div className="text-xs text-surface-500">
-                {activeTask
-                  ? `${activeTask.status} · ${selectedProject?.path || ""}`
-                  : "Project-scoped remote coding through the connected machine"}
+                {activeGraphRunId
+                  ? `${graphRun?.status ?? "queued"} · grounded answer with file:line cites · ${selectedProject?.path || ""}`
+                  : activeTask
+                    ? `${activeTask.status} · ${selectedProject?.path || ""}`
+                    : "Project-scoped remote coding through the connected machine"}
               </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
-              {conversationTurns.length > 0 || showLiveOutput ? (
+              {activeGraphRunId ? (
+                <DeepAskGraphPanel run={graphRun} liveOutput={graphNodeOutput} />
+              ) : conversationTurns.length > 0 || showLiveOutput ? (
                 <div className="space-y-4">
                   {conversationTurns.map((turn, index) => (
                     <ChatBubble
@@ -2155,5 +2254,70 @@ function MiniPill({ children }: { children: ReactNode }) {
     <span className="rounded-full border border-surface-700 bg-surface-900 px-2 py-1 text-[10px] text-surface-300">
       {children}
     </span>
+  );
+}
+
+const GRAPH_NODE_VISUAL: Record<string, { icon: string; color: string }> = {
+  pending: { icon: "○", color: "text-surface-500" },
+  running: { icon: "◐", color: "text-amber-300" },
+  completed: { icon: "✓", color: "text-emerald-300" },
+  failed: { icon: "✕", color: "text-red-400" },
+  blocked: { icon: "⊘", color: "text-surface-500" },
+  stopped: { icon: "■", color: "text-surface-400" },
+};
+
+// DeepAskGraphPanel renders a deep-ask graph run (investigate → answer →
+// verify) as a vertical step list: each node shows its status, the running
+// node streams live output, and completed nodes show their grounded result.
+// The verify node's output is the final, cross-checked answer.
+function DeepAskGraphPanel({ run, liveOutput }: { run: AgentGraphRun | null; liveOutput: string }) {
+  if (!run) {
+    return (
+      <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-surface-500">
+        Starting deep ask…
+      </div>
+    );
+  }
+  const finalAnswer =
+    run.nodes.find((n) => n.spec.id === "verify" && n.status === "completed")?.summary?.trim() ||
+    (run.status === "completed" ? run.summary?.trim() : "") ||
+    "";
+  return (
+    <div className="space-y-3">
+      <div className="text-[11px] text-surface-500">
+        A broad question — answered by a read-only investigate → answer → verify chain. Every step cites file:line; nothing is changed without your OK.
+      </div>
+      {run.nodes.map((node) => {
+        const v = GRAPH_NODE_VISUAL[node.status] ?? GRAPH_NODE_VISUAL.pending;
+        const isRunning = node.status === "running";
+        const body = isRunning ? stripAnsi(liveOutput) : (node.summary?.trim() || node.error?.trim() || "");
+        return (
+          <div key={node.spec.id} className="rounded-2xl border border-surface-800 bg-surface-950/60 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className={`text-sm ${v.color} ${isRunning ? "animate-pulse" : ""}`}>{v.icon}</span>
+              <span className="text-sm font-semibold text-surface-100 flex-1">{node.spec.title}</span>
+              <StatusPill>{node.status}</StatusPill>
+            </div>
+            {body ? (
+              <div className="mt-2 text-[13px] leading-6 text-surface-200 break-words [&_pre]:whitespace-pre-wrap">
+                <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>{body}</ReactMarkdown>
+              </div>
+            ) : node.status === "pending" || node.status === "blocked" ? (
+              <div className="mt-1 text-[11px] text-surface-600">waiting…</div>
+            ) : null}
+          </div>
+        );
+      })}
+      {finalAnswer ? (
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300">
+            Final answer (cross-checked)
+          </div>
+          <div className="text-[13px] leading-6 text-surface-100 break-words [&_pre]:whitespace-pre-wrap">
+            <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>{finalAnswer}</ReactMarkdown>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
