@@ -13,6 +13,7 @@
 // on purpose while a pairing session is open.
 
 import { getConvexSiteUrl } from "./auth";
+import type { DiscoveredDevice } from "./beacon";
 
 export interface PairSubmitArgs {
   code: string;
@@ -229,4 +230,55 @@ export async function submitPair(args: PairSubmitArgs): Promise<PairSubmitResult
   } catch (e: any) {
     return { ok: false, error: e?.message ?? "Network error" };
   }
+}
+
+export interface AdoptResult {
+  ok: boolean;
+  host?: string;
+  /** Set when the box advertised no passkey, so the caller can route the
+   *  user to the manual passkey flow instead of showing a generic error. */
+  needsManualPasskey?: boolean;
+  error?: string;
+}
+
+/**
+ * Adopt a fresh (bootstrap-mode) box discovered over the LAN beacon by
+ * pushing this phone's token to it. This is the same fetchPairInfo +
+ * submitPair sequence the Devices tab's handleAdoptBootstrap runs
+ * (mobile/app/(tabs)/devices.tsx) — factored out here so the post-survey
+ * onboarding screen reuses the identical, security-reviewed path instead
+ * of duplicating the token-submit call.
+ *
+ * Sends the user's bearer token to a LAN device; the box's broadcast
+ * passkey is the secret that authorizes it while its pairing window is open.
+ */
+export async function adoptBootstrapDevice(
+  dev: DiscoveredDevice,
+  token: string,
+  userId?: string,
+): Promise<AdoptResult> {
+  if (!token) return { ok: false, error: "Not signed in on this phone" };
+  if (!dev.bootstrapPasskey) {
+    return {
+      ok: false,
+      needsManualPasskey: true,
+      error:
+        "This box hid its passkey from the beacon. Type the 6-character passkey shown on the machine.",
+    };
+  }
+  const targetUrl = `http://${dev.ip}:${dev.port}`;
+  const info = await fetchPairInfo(targetUrl);
+  if (!info.ok) {
+    return { ok: false, error: info.error ?? "Target is not in pairing mode." };
+  }
+  const res = await submitPair({
+    code: dev.bootstrapPasskey,
+    targetUrl,
+    token,
+    userId,
+  });
+  if (!res.ok) {
+    return { ok: false, error: res.error ?? "Target rejected the token." };
+  }
+  return { ok: true, host: res.host ?? dev.name };
 }

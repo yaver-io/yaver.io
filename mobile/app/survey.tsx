@@ -154,7 +154,10 @@ export default function SurveyScreen() {
       }
       markSurveyCompleted();
       await refreshUser();
-      router.replace("/(tabs)/tasks");
+      // Brand-new users have zero devices, so steer them straight into the
+      // device-pairing step (the activation point) instead of the Tasks
+      // tab. onboarding-pair has its own prominent "Skip for now" escape.
+      router.replace("/onboarding-pair");
     } catch {
       Alert.alert("Error", "Failed to submit survey. Please try again.");
     } finally {
