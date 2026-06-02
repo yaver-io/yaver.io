@@ -304,10 +304,15 @@ func localAgentRequest(method, path string, body map[string]interface{}) (map[st
 	if err := ensureDaemonAlive(); err != nil {
 		return nil, fmt.Errorf("agent not reachable and auto-start failed: %v", err)
 	}
-	if result, err, _ := doOnce(); err == nil {
+	if result, err, retriable := doOnce(); err == nil {
 		return result, nil
-	} else {
+	} else if retriable {
+		// Still a transport-level failure — the daemon really is unreachable.
 		return nil, fmt.Errorf("agent not reachable: %v", err)
+	} else {
+		// The daemon answered with an HTTP error (e.g. 403 "invalid token").
+		// Surface it verbatim instead of mislabeling it as unreachable.
+		return nil, err
 	}
 }
 

@@ -1888,6 +1888,19 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 
+		// Owner's own current token — recognize it WITHOUT a Convex
+		// round-trip, including when the in-memory fast path (s.token)
+		// above has drifted from the on-disk token across a restart /
+		// self-upgrade / rotation window. tokenIsOwner re-reads disk, so
+		// the owner's local operations (builds, exec/build-log streaming,
+		// tasks) work online OR offline rather than bouncing off a Convex
+		// validation. Sits after the cache check so guest tokens still
+		// resolve through their cached entry / host-share path first.
+		if s.tokenIsOwner(token) {
+			next(w, r)
+			return
+		}
+
 		// Validate session token via Convex
 		log.Printf("[AUTH] %s %s — validating token against Convex...", r.Method, r.URL.Path)
 		uid, err := ValidateTokenUser(s.convexURL, token)
@@ -1964,6 +1977,27 @@ func (s *HTTPServer) wsQueryToken(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// tokenIsOwner reports whether token is the agent owner's own session token.
+// It checks the in-memory copy (s.token) first, then re-reads config from
+// disk. The disk fallback is load-bearing: on a freshly (re)started or
+// self-upgraded daemon the in-memory s.token can lag the on-disk token (boot
+// before the heartbeat settles, a rotation, or an out-of-process `yaver auth`
+// write), while the CLI on this same machine sends the current on-disk token.
+// Recognizing the owner here — with no network — is what keeps local
+// operations (native builds, exec/log streaming) working online OR offline
+// instead of bouncing the owner's own token off a Convex round-trip that the
+// in-memory fast path just missed. Empty tokens never match (secretEqual
+// guards it), so an unauthenticated daemon grants nothing.
+func (s *HTTPServer) tokenIsOwner(token string) bool {
+	if secretEqual(token, s.token) {
+		return true
+	}
+	if cfg, err := LoadConfig(); err == nil && secretEqual(token, cfg.AuthToken) {
+		return true
+	}
+	return false
+}
+
 func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -2024,6 +2058,21 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 					return
 				}
 			}
+			next(w, r)
+			return
+		}
+
+		// Owner's own current token — recognize it WITHOUT a Convex
+		// round-trip. The in-memory fast path (s.token) above can miss
+		// when s.token has drifted from the on-disk token across a
+		// restart / self-upgrade / rotation window, while the CLI on
+		// this same machine sends the current on-disk token. Bouncing
+		// the owner's own token off Convex in that window is exactly
+		// what made offline-and-even-online local builds fail with
+		// "invalid token". tokenIsOwner re-reads the on-disk token, so
+		// this holds with no network at all. Sits after the cache check
+		// so guests still hit their cached entry first.
+		if s.tokenIsOwner(token) {
 			next(w, r)
 			return
 		}
