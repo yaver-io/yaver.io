@@ -32,6 +32,10 @@ export type {
   TranscriptionResult,
   ExecSession,
   ExecOptions,
+  RunnerInfo,
+  RunnerAuthSession,
+  RunnerSetupOptions,
+  YaverCapability,
 } from './types';
 
 // Phone-backend runtime — what a third-party RN/web app uses to hit the

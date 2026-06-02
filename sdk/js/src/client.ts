@@ -1,4 +1,7 @@
-import type { Task, CreateTaskOptions, AgentInfo, ImageAttachment, ExecSession, ExecOptions } from './types';
+import type {
+  Task, CreateTaskOptions, AgentInfo, ImageAttachment, ExecSession, ExecOptions,
+  RunnerInfo, RunnerAuthSession, RunnerSetupOptions, YaverCapability,
+} from './types';
 
 /**
  * Yaver client — connects to a Yaver agent's HTTP API.
@@ -178,6 +181,89 @@ export class YaverClient {
     }
   }
 
+  // ── Runners + OAuth (both levels) ────────────────────────────────
+  // The heavy lifting (browser OAuth, device-code, install, MCP setup) is
+  // done by the Go agent — these just drive it over HTTP.
+
+  /** List installed runners (claude / codex / opencode …) with auth + models. */
+  async listRunners(): Promise<{ runners: RunnerInfo[]; default: string | null }> {
+    const r = await this.get<{ ok: boolean; runners?: RunnerInfo[]; default?: string }>('/agent/runners');
+    return { runners: r.runners ?? [], default: r.default ?? null };
+  }
+
+  /** Per-runner auth truth (authoritative for "is this runner logged in"). */
+  async runnerAuthStatuses(): Promise<RunnerInfo[]> {
+    const r = await this.get<{ ok: boolean; runners?: RunnerInfo[] }>('/runner-auth/status');
+    return r.runners ?? [];
+  }
+
+  /** Start a runner OAuth (browser/device-code) flow. */
+  async runnerAuthStart(runner: string): Promise<RunnerAuthSession> {
+    return this.post<RunnerAuthSession>('/runner-auth/browser/start', { runner });
+  }
+
+  /** Poll a runner OAuth session. */
+  async runnerAuthStatus(sessionId: string): Promise<RunnerAuthSession> {
+    return this.get<RunnerAuthSession>(`/runner-auth/browser/status?id=${encodeURIComponent(sessionId)}`);
+  }
+
+  /** Submit the pasted OAuth code/token for a runner. */
+  async runnerAuthSubmitCode(sessionId: string, code: string): Promise<RunnerAuthSession> {
+    return this.post<RunnerAuthSession>(`/runner-auth/browser/submit-code?id=${encodeURIComponent(sessionId)}`, { code });
+  }
+
+  /** Cancel an in-flight runner OAuth session. */
+  async runnerAuthCancel(sessionId: string): Promise<void> {
+    await this.post(`/runner-auth/browser/cancel?id=${encodeURIComponent(sessionId)}`);
+  }
+
+  /** Headless/API-key runner setup. setupMCP wires MCP servers into the runner. */
+  async runnerAuthSetup(runner: string, opts?: RunnerSetupOptions): Promise<{ ok: boolean; error?: string }> {
+    return this.post<{ ok: boolean; error?: string }>('/runner-auth/setup', {
+      runner,
+      setupMCP: opts?.setupMCP !== false,
+      installIfMissing: opts?.installIfMissing === true,
+      ...opts,
+    });
+  }
+
+  /** Yaver account level — is the agent linked to a Yaver account? */
+  async accountStatus(): Promise<Record<string, unknown>> {
+    return this.get<Record<string, unknown>>('/auth/status');
+  }
+
+  /**
+   * Aggregate readiness snapshot for gating UIs (both OAuth levels + runtime).
+   * Best-effort: any failed sub-call degrades gracefully.
+   */
+  async getCapability(): Promise<YaverCapability> {
+    const [health, account, runnersResp, authStatuses] = await Promise.all([
+      this.health().then(() => true).catch(() => false),
+      this.accountStatus().catch(() => null),
+      this.listRunners().catch(() => ({ runners: [] as RunnerInfo[], default: null })),
+      this.runnerAuthStatuses().catch(() => [] as RunnerInfo[]),
+    ]);
+    const authById = new Map(authStatuses.filter((r) => r.id).map((r) => [r.id, r] as const));
+    const runners = runnersResp.runners.map((r) => {
+      const a = authById.get(r.id);
+      return a ? { ...r, authConfigured: a.authConfigured ?? r.authConfigured, ready: a.ready ?? r.ready } : r;
+    });
+    if (runners.length === 0 && authStatuses.length > 0) runners.push(...authStatuses);
+    const accountAuthed = readAccountAuthed(account);
+    const anyAuthed = runners.some((r) => r.authConfigured);
+    return {
+      agentReachable: health,
+      account: { authed: accountAuthed, raw: account },
+      runners,
+      defaultRunner: runnersResp.default || runners.find((r) => r.isDefault)?.id || runners[0]?.id || null,
+      ready: health && anyAuthed,
+      needs: {
+        yaverAccountAuth: health && !accountAuthed,
+        runnerAuth: runners.filter((r) => r.installed !== false && !r.authConfigured).map((r) => r.id),
+      },
+    };
+  }
+
   // ── HTTP helpers ─────────────────────────────────────────────────
 
   private async get<T>(path: string): Promise<T> {
@@ -212,6 +298,20 @@ export class YaverClient {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Tolerant read of the agent's /auth/status across versions. */
+function readAccountAuthed(account: Record<string, unknown> | null): boolean {
+  if (!account) return false;
+  if (typeof account.authed === 'boolean') return account.authed;
+  if (typeof account.authenticated === 'boolean') return account.authenticated as boolean;
+  if (typeof account.loggedIn === 'boolean') return account.loggedIn as boolean;
+  if (account.user && typeof account.user === 'object') return true;
+  if (typeof account.email === 'string' && account.email) return true;
+  if (typeof account.status === 'string') {
+    return ['authenticated', 'ok', 'linked', 'ready'].includes((account.status as string).toLowerCase());
+  }
+  return false;
 }
 
 async function fetchWithTimeout(
