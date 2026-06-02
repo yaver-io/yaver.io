@@ -28,6 +28,43 @@ for await (const chunk of client.streamOutput(task.id)) {
 const tasks = await client.listTasks();
 ```
 
+## Remote agents — the developer-API boundary
+
+When the agent isn't on `localhost` (on-prem box / VPS), use the high-level
+boundary instead of wiring transports yourself. Your app holds one secret (an
+org Yaver account token) and never touches Yaver internals (Convex, relay
+passwords, the transport ladder). The agent stays **private** — it dials out to
+the relay; the client reaches it over the best path: direct-LAN → tailscale →
+HTTPS tunnel → relay (P2P fallback).
+
+**Server (`@yaver/server`)** — runs where the account secret is safe:
+
+```typescript
+import { YaverApp } from 'yaver-sdk';
+
+const app = new YaverApp({ accountToken: process.env.YAVER_ACCOUNT_TOKEN! });
+
+const devices = await app.listDevices();                 // reachable agents + presence
+const status  = await app.status(deviceId, clientToken); // online / linked / runners / ready
+const handle  = await app.sessionHandle(deviceId, clientToken); // opaque bundle for the client
+// send `handle` to your client over your own authenticated endpoint
+```
+
+**Client (`@yaver/client`)** — browser / React Native:
+
+```typescript
+import { connectHandle } from 'yaver-sdk';
+
+const handle  = await fetch('/your/yaver-session').then((r) => r.json());
+const session = await connectHandle(handle);             // picks the best transport
+const task    = await session.createTask('Fix the login bug', { runner: 'claude' });
+for await (const chunk of session.streamOutput(task.id)) process.stdout.write(chunk);
+```
+
+Use a scoped, least-privilege `clientToken` (per-device / short-lived) — the
+account token stays on the server. The agent runs the runner with whatever MCP
+servers you've configured on the box, so your AI uses your own tools on-prem.
+
 ## Features
 
 - **Task management**: create, list, get, stop, delete, continue tasks

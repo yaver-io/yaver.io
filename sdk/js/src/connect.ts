@@ -25,6 +25,24 @@ export interface Transport {
   headers: Record<string, string>;
 }
 
+export interface AgentRunnerState {
+  id: string;
+  name?: string;
+  installed?: boolean;
+  authConfigured?: boolean;
+  isDefault?: boolean;
+}
+
+export interface AgentStatus {
+  transport: TransportKind;
+  reachable: boolean;
+  accountLinked: boolean;
+  runners: AgentRunnerState[];
+  defaultRunner: string | null;
+  /** Reachable AND at least one runner is authed → ready to trigger work. */
+  ready: boolean;
+}
+
 export interface ConnectOptions {
   deviceId: string;
   /** Yaver bearer the agent accepts (scoped session / per-device token). */
@@ -135,6 +153,33 @@ export class AgentSession {
     catch { return false; }
   }
 
+  /**
+   * High-level state: is the agent reachable, is its account linked, and which
+   * runners are ready. Consumers use this to gate UI without knowing internals.
+   */
+  async status(): Promise<AgentStatus> {
+    const get = async <T>(p: string, auth = true): Promise<T | null> => {
+      try {
+        const res = await fetch(`${this.transport.baseURL}${p}`, { headers: auth ? this.headers() : this.transport.headers });
+        return res.ok ? (await res.json() as T) : null;
+      } catch { return null; }
+    };
+    const [health, account, runnersResp] = await Promise.all([
+      get<{ status?: string }>('/health', false),
+      get<Record<string, unknown>>('/auth/status', false),
+      get<{ runners?: AgentStatus['runners']; default?: string }>('/agent/runners'),
+    ]);
+    const runners = runnersResp?.runners ?? [];
+    return {
+      transport: this.transport.kind,
+      reachable: Boolean(health),
+      accountLinked: readAuthed(account),
+      runners,
+      defaultRunner: runnersResp?.default ?? runners.find((r) => r.isDefault)?.id ?? null,
+      ready: Boolean(health) && runners.some((r) => r.authConfigured),
+    };
+  }
+
   async createTask(prompt: string, opts?: CreateTaskOptions & { source?: string }): Promise<Task> {
     const body: Record<string, unknown> = { title: prompt, source: opts?.source ?? 'sdk' };
     if (opts?.model) body.model = opts.model;
@@ -177,4 +222,49 @@ export class AgentSession {
 export async function connect(opts: ConnectOptions): Promise<AgentSession> {
   const transport = await pickTransport(opts);
   return new AgentSession(transport, opts.token);
+}
+
+/**
+ * Connect using an opaque handle from the server broker (YaverApp.sessionHandle).
+ * The consumer passes the handle straight through — it never has to know about
+ * relays, tunnels, or Convex. `token` may be on the handle or passed explicitly.
+ */
+export function connectHandle(
+  handle: {
+    deviceId: string;
+    token?: string;
+    device?: DeviceCoords | null;
+    relay?: { url: string; password: string } | null;
+    relayServers?: RelayServer[];
+    tunnelUrl?: string;
+    forceRelay?: boolean;
+  },
+  opts?: { token?: string; directPort?: number; probeTimeoutMs?: number; cached?: Transport | null },
+): Promise<AgentSession> {
+  const token = opts?.token ?? handle.token;
+  if (!token) throw new Error('connectHandle: a token is required (on the handle or in opts)');
+  return connect({
+    deviceId: handle.deviceId,
+    token,
+    device: handle.device ?? undefined,
+    relay: handle.relay ?? null,
+    relayServers: handle.relayServers,
+    tunnelUrl: handle.tunnelUrl,
+    forceRelay: handle.forceRelay,
+    directPort: opts?.directPort,
+    probeTimeoutMs: opts?.probeTimeoutMs,
+    cached: opts?.cached ?? null,
+  });
+}
+
+/** Tolerant read of the agent's /auth/status across versions. */
+function readAuthed(account: Record<string, unknown> | null): boolean {
+  if (!account) return false;
+  if (typeof account.authenticated === 'boolean') return account.authenticated as boolean;
+  if (typeof account.authed === 'boolean') return account.authed as boolean;
+  if (typeof account.loggedIn === 'boolean') return account.loggedIn as boolean;
+  if (account.user && typeof account.user === 'object') return true;
+  if (typeof account.email === 'string' && account.email) return true;
+  if (typeof account.status === 'string') return ['authenticated', 'ok', 'linked', 'ready'].includes((account.status as string).toLowerCase());
+  return false;
 }
