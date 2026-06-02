@@ -131,13 +131,22 @@ bumper. Each plan app carries a `version` block listing its sites:
   directly:
   - mobile: `app.json` `expo.version`, `ios/**/Info.plist`
     `CFBundleShortVersionString`, `*.xcodeproj/project.pbxproj`
-    `MARKETING_VERSION` (×N), `android/app/build.gradle` `versionName`,
-    `package.json` `version`.
+    `MARKETING_VERSION` (×N), `android/app/build.gradle` `versionName`
+    + `versionCode`, `package.json` `version`.
   - web/node: `package.json` `version`.
   - flutter: `pubspec.yaml` `version`.
   - rust: `Cargo.toml` `[package].version`.
-  - build numbers (`CFBundleVersion`/`versionCode`) stay owned by the deploy
-    scripts (monotonic, remote-max aware) — unchanged.
+  - iOS build number (`CFBundleVersion`) stays owned by the deploy scripts
+    (monotonic, remote-max aware) — unchanged.
+  - **Android `versionCode`** is bumped here (+1 from the highest the file
+    reports), NOT left to the script. Many repos' `deploy-playstore.sh` (e.g.
+    talos) build from a hardcoded `versionCode` and never increment it, so the
+    second Play upload dies with "Version code N has already been used". The
+    integer bump is written in place and persists across runs (337 → 338 →
+    339), so re-running keeps climbing. It's a +1 from the *file*, not a
+    Play-remote-max query (the generic path has no service-account creds); if
+    Play already holds a higher code from an out-of-band upload, commit the
+    bump or set the file past it.
 
 Bump rule: read current → `+patch` (or `--bump`) → write **all** sites for
 that app atomically; abort if sites disagree before the bump (drift guard —

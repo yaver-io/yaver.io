@@ -34,7 +34,46 @@ var (
 	rePlistShortVersion = regexp.MustCompile(`(<key>CFBundleShortVersionString</key>\s*<string>)(\d+\.\d+\.\d+)(</string>)`)
 	rePbxMarketing      = regexp.MustCompile(`(MARKETING_VERSION = )(\d+\.\d+\.\d+)(;)`)
 	reGradleVersionName = regexp.MustCompile(`(versionName\s+")(\d+\.\d+\.\d+)(")`)
+	// Android versionCode is a plain integer build number, not semver. It's
+	// handled outside the siteRegex/semver machinery (readGradleVersionCode /
+	// writeGradleVersionCode) because it increments by 1, not by patch/minor/
+	// major. Play rejects re-uploading a code it has already seen, so a stale
+	// versionCode is the single most common generic-deploy failure (it broke
+	// talos: "Version code 337 has already been used").
+	reGradleVersionCode = regexp.MustCompile(`(versionCode\s+)(\d+)`)
 )
+
+// readGradleVersionCode returns the first `versionCode N` integer in a
+// build.gradle, or 0 if absent.
+func readGradleVersionCode(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	m := reGradleVersionCode.FindSubmatch(data)
+	if m == nil {
+		return 0, nil
+	}
+	return strconv.Atoi(strings.TrimSpace(string(m[2])))
+}
+
+// writeGradleVersionCode rewrites only the first `versionCode N` occurrence
+// (the defaultConfig one) and leaves any flavor overrides untouched.
+func writeGradleVersionCode(path string, code int) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	done := false
+	out := reGradleVersionCode.ReplaceAllFunc(data, func(b []byte) []byte {
+		if done {
+			return b
+		}
+		done = true
+		return reGradleVersionCode.ReplaceAll(b, []byte("${1}"+strconv.Itoa(code)))
+	})
+	return os.WriteFile(path, out, 0o644)
+}
 
 // siteRegex maps a version-site kind to its regex and whether to rewrite all
 // occurrences (pbxproj has MARKETING_VERSION twice) or only the first (JSON
@@ -229,9 +268,10 @@ func detectVersionSites(root string) []DetectedVersionSite {
 		for _, p := range globRel(root, filepath.Join("mobile", "ios", "*.xcodeproj", "project.pbxproj")) {
 			sites = append(sites, DetectedVersionSite{App: "mobile", File: p, Kind: "pbxproj-marketing-version"})
 		}
-		// Android versionName.
+		// Android versionName (marketing) + versionCode (integer build number).
 		if bg := filepath.Join("mobile", "android", "app", "build.gradle"); fileExists(filepath.Join(root, bg)) {
 			sites = append(sites, DetectedVersionSite{App: "mobile", File: bg, Kind: "gradle-version-name"})
+			sites = append(sites, DetectedVersionSite{App: "mobile", File: bg, Kind: "gradle-version-code"})
 		}
 		// mobile/package.json (the 2nd of the canonical mobile version sites).
 		if mp := filepath.Join("mobile", "package.json"); fileExists(filepath.Join(root, mp)) {
@@ -312,13 +352,19 @@ func runGenericDeployAll(repoRoot string, opts genericDeployOpts) {
 		"playstore":  opts.skipPlaystore,
 	}
 
-	fmt.Println("yaver deploy all")
-	fmt.Println("repo:", repoRoot, "(generic — detected from scripts/ + yaver.workspace.yaml)")
-	fmt.Println("plan: .yaver/deploy-plan.json")
+	lg := newDeployAllLogger(filepath.Base(repoRoot))
+	defer lg.close()
+
+	lg.println("yaver deploy all")
+	lg.println("repo:", repoRoot, "(generic — detected from scripts/ + yaver.workspace.yaml)")
+	lg.println("plan: .yaver/deploy-plan.json")
+	if lg.path != "" {
+		lg.println("log:", lg.path)
+	}
 	if len(plan.Stages) == 0 {
-		fmt.Println("\nNo deploy targets detected (no scripts/deploy-*.sh). Nothing to do.")
+		lg.println("\nNo deploy targets detected (no scripts/deploy-*.sh). Nothing to do.")
 		for _, n := range plan.Notes {
-			fmt.Println("  note:", n)
+			lg.println("  note:", n)
 		}
 		os.Exit(0)
 	}
@@ -326,11 +372,11 @@ func runGenericDeployAll(repoRoot string, opts genericDeployOpts) {
 	for _, st := range plan.Stages {
 		stageIDs = append(stageIDs, st.ID)
 	}
-	fmt.Println("targets:", strings.Join(stageIDs, " → "))
+	lg.println("targets:", strings.Join(stageIDs, " → "))
 	for _, n := range plan.Notes {
-		fmt.Println("  note:", n)
+		lg.println("  note:", n)
 	}
-	fmt.Println()
+	lg.println()
 
 	results := make([]deployAllResult, 0, len(plan.Stages)+1)
 	overallStart := time.Now()
@@ -340,52 +386,58 @@ func runGenericDeployAll(repoRoot string, opts genericDeployOpts) {
 	// the scripts). Skipped with --skip-bump or when no sites were found.
 	if !opts.skipBump && len(plan.VersionSites) > 0 {
 		bumpStage := deployAllStage{name: "Version bump", id: "bump"}
-		ctx := &deployAllCtx{dryRun: opts.dryRun, prefix: "[bump]"}
-		fmt.Printf("──[ %-22s ]── %s-bumping detected version sites…\n", bumpStage.name, opts.bump)
+		ctx := &deployAllCtx{dryRun: opts.dryRun, prefix: "[bump]", out: lg.out, errW: lg.errW}
+		lg.printf("──[ %-22s ]── %s-bumping detected version sites…\n", bumpStage.name, opts.bump)
 		start := time.Now()
 		changes, err := bumpDetectedVersions(repoRoot, plan.VersionSites, opts.bump, opts.dryRun, ctx)
 		dur := time.Since(start).Round(time.Second)
 		if err != nil {
-			fmt.Printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", bumpStage.name, dur, err)
+			lg.printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", bumpStage.name, dur, err)
 			results = append(results, deployAllResult{stage: bumpStage, err: err, duration: dur})
-			printDeployAllSummary(results, time.Since(overallStart).Round(time.Second))
+			printDeployAllSummary(lg.out, results, time.Since(overallStart).Round(time.Second))
 			os.Exit(1)
 		}
 		_ = changes
-		fmt.Printf("\n──[ %-22s ]── ok (%s)\n\n", bumpStage.name, dur)
+		lg.printf("\n──[ %-22s ]── ok (%s)\n\n", bumpStage.name, dur)
 		results = append(results, deployAllResult{stage: bumpStage, duration: dur})
 	}
 
 	for _, st := range plan.Stages {
 		stage := deployAllStage{name: st.Name, id: st.ID}
 		if skipByID[st.ID] {
-			fmt.Printf("──[ %-22s ]── SKIPPED (--skip-%s)\n\n", st.Name, st.ID)
+			lg.printf("──[ %-22s ]── SKIPPED (--skip-%s)\n\n", st.Name, st.ID)
 			results = append(results, deployAllResult{stage: stage, skipped: true})
 			continue
 		}
-		ctx := &deployAllCtx{dryRun: opts.dryRun, prefix: "[" + st.ID + "]"}
-		fmt.Printf("──[ %-22s ]── starting… (%s)\n", st.Name, st.Script)
+		ctx := &deployAllCtx{dryRun: opts.dryRun, prefix: "[" + st.ID + "]", out: lg.out, errW: lg.errW}
+		lg.printf("──[ %-22s ]── starting… (%s)\n", st.Name, st.Script)
 		start := time.Now()
 		runErr := ctx.runScript(filepath.Join(repoRoot, st.Script))
 		dur := time.Since(start).Round(time.Second)
 		if runErr != nil {
-			fmt.Printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", st.Name, dur, runErr)
+			lg.printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", st.Name, dur, runErr)
 			results = append(results, deployAllResult{stage: stage, err: runErr, duration: dur})
 			failed = true
 			if !opts.keepGoing {
-				printDeployAllSummary(results, time.Since(overallStart).Round(time.Second))
+				printDeployAllSummary(lg.out, results, time.Since(overallStart).Round(time.Second))
+				if lg.path != "" {
+					lg.println("full log:", lg.path)
+				}
 				os.Exit(1)
 			}
 			continue
 		}
-		fmt.Printf("\n──[ %-22s ]── ok (%s)\n\n", st.Name, dur)
+		lg.printf("\n──[ %-22s ]── ok (%s)\n\n", st.Name, dur)
 		results = append(results, deployAllResult{stage: stage, duration: dur})
 	}
 
-	printDeployAllSummary(results, time.Since(overallStart).Round(time.Second))
+	printDeployAllSummary(lg.out, results, time.Since(overallStart).Round(time.Second))
+	if lg.path != "" {
+		lg.println("full log:", lg.path)
+	}
 	if !opts.dryRun {
-		fmt.Println("\nVersion bumps are in your working tree (uncommitted). Review with `git diff`,")
-		fmt.Println("then commit when ready — generic `deploy all` never commits/tags/pushes for you.")
+		lg.println("\nVersion bumps are in your working tree (uncommitted). Review with `git diff`,")
+		lg.println("then commit when ready — generic `deploy all` never commits/tags/pushes for you.")
 	}
 	if failed {
 		os.Exit(1)
@@ -414,12 +466,24 @@ func bumpDetectedVersions(root string, sites []DetectedVersionSite, kind string,
 
 	changes := map[string]string{}
 	for _, app := range apps {
-		appSites := byApp[app]
+		// Split semver (versionName / Info.plist / pbxproj / package.json)
+		// sites from the integer Android versionCode — they bump differently
+		// (patch/minor/major vs +1) and must not contaminate each other.
+		var semverSites, codeSites []DetectedVersionSite
+		for _, s := range byApp[app] {
+			if s.Kind == "gradle-version-code" {
+				codeSites = append(codeSites, s)
+			} else {
+				semverSites = append(semverSites, s)
+			}
+		}
+
+		// --- semver marketing version ---
 		// Current version = the highest version any site reports (so we never
 		// bump backwards when sites have drifted).
 		cur := ""
 		drift := false
-		for _, s := range appSites {
+		for _, s := range semverSites {
 			v, err := readVersionSite(filepath.Join(root, s.File), s.Kind)
 			if err != nil || v == "" {
 				continue
@@ -434,25 +498,54 @@ func bumpDetectedVersions(root string, sites []DetectedVersionSite, kind string,
 			}
 		}
 		if cur == "" {
-			fmt.Printf("  %s %-6s no readable version site — skipped\n", ctx.prefix, app)
-			continue
+			fmt.Fprintf(ctx.stdout(), "  %s %-6s no readable version site — skipped\n", ctx.prefix, app)
+		} else {
+			next, err := bumpSemver(cur, kind)
+			if err != nil {
+				return nil, fmt.Errorf("bump %s (%s): %w", app, cur, err)
+			}
+			changes[app] = fmt.Sprintf("%s → %s", cur, next)
+			note := ""
+			if drift {
+				note = " (re-aligned drifted sites)"
+			}
+			fmt.Fprintf(ctx.stdout(), "  %s %-6s %s → %s%s\n", ctx.prefix, app, cur, next, note)
+			if !dryRun {
+				for _, s := range semverSites {
+					if err := writeVersionSite(filepath.Join(root, s.File), s.Kind, next); err != nil {
+						return nil, fmt.Errorf("write %s: %w", s.File, err)
+					}
+				}
+			}
 		}
-		next, err := bumpSemver(cur, kind)
-		if err != nil {
-			return nil, fmt.Errorf("bump %s (%s): %w", app, cur, err)
-		}
-		changes[app] = fmt.Sprintf("%s → %s", cur, next)
-		note := ""
-		if drift {
-			note = " (re-aligned drifted sites)"
-		}
-		fmt.Printf("  %s %-6s %s → %s%s\n", ctx.prefix, app, cur, next, note)
-		if dryRun {
-			continue
-		}
-		for _, s := range appSites {
-			if err := writeVersionSite(filepath.Join(root, s.File), s.Kind, next); err != nil {
-				return nil, fmt.Errorf("write %s: %w", s.File, err)
+
+		// --- Android versionCode (integer +1) ---
+		// Always increment, even when the semver bump was a no-op: a stale
+		// versionCode is what makes Play reject the upload ("Version code N
+		// has already been used"). +1 from the highest code any site reports.
+		// The bump is written in place and persists across `deploy all` runs
+		// until reverted, so re-running keeps climbing (337 → 338 → 339).
+		if len(codeSites) > 0 {
+			maxCode := 0
+			for _, s := range codeSites {
+				c, err := readGradleVersionCode(filepath.Join(root, s.File))
+				if err != nil {
+					return nil, fmt.Errorf("read versionCode %s: %w", s.File, err)
+				}
+				if c > maxCode {
+					maxCode = c
+				}
+			}
+			if maxCode > 0 {
+				nextCode := maxCode + 1
+				fmt.Fprintf(ctx.stdout(), "  %s %-6s versionCode %d → %d\n", ctx.prefix, app, maxCode, nextCode)
+				if !dryRun {
+					for _, s := range codeSites {
+						if err := writeGradleVersionCode(filepath.Join(root, s.File), nextCode); err != nil {
+							return nil, fmt.Errorf("write versionCode %s: %w", s.File, err)
+						}
+					}
+				}
 			}
 		}
 	}

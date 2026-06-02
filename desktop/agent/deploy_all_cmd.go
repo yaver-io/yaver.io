@@ -158,9 +158,15 @@ func runDeployAllCmd(args []string) {
 		},
 	}
 
-	fmt.Println("yaver deploy all")
-	fmt.Println("repo:", repoRoot)
-	fmt.Println()
+	lg := newDeployAllLogger(filepath.Base(repoRoot))
+	defer lg.close()
+
+	lg.println("yaver deploy all")
+	lg.println("repo:", repoRoot)
+	if lg.path != "" {
+		lg.println("log:", lg.path)
+	}
+	lg.println()
 
 	results := make([]deployAllResult, 0, len(stages)+1)
 	overallStart := time.Now()
@@ -185,58 +191,64 @@ func runDeployAllCmd(args []string) {
 
 		bumpStage := deployAllStage{name: "Version bump", id: "bump"}
 		if len(components) == 0 {
-			fmt.Printf("──[ %-22s ]── nothing to bump (only npm enabled — cli bumps in its own stage)\n\n", bumpStage.name)
+			lg.printf("──[ %-22s ]── nothing to bump (only npm enabled — cli bumps in its own stage)\n\n", bumpStage.name)
 			results = append(results, deployAllResult{stage: bumpStage, skipped: true})
 		} else {
-			ctx := &deployAllCtx{dryRun: *dryRun, prefix: "[bump]"}
-			fmt.Printf("──[ %-22s ]── %s-bumping %v…\n", bumpStage.name, *bump, components)
+			ctx := &deployAllCtx{dryRun: *dryRun, prefix: "[bump]", out: lg.out, errW: lg.errW}
+			lg.printf("──[ %-22s ]── %s-bumping %v…\n", bumpStage.name, *bump, components)
 			stageStart := time.Now()
 			changes, bumpErr := bumpMonorepoVersions(repoRoot, components, *bump, *dryRun, ctx)
 			dur := time.Since(stageStart).Round(time.Second)
 			if bumpErr != nil {
-				fmt.Printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", bumpStage.name, dur, bumpErr)
+				lg.printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", bumpStage.name, dur, bumpErr)
 				results = append(results, deployAllResult{stage: bumpStage, err: bumpErr, duration: dur})
-				printDeployAllSummary(results, time.Since(overallStart))
+				printDeployAllSummary(lg.out, results, time.Since(overallStart))
 				os.Exit(1)
 			}
 			for comp, change := range changes {
 				deployAllBumped[comp] = change
 			}
-			fmt.Printf("\n──[ %-22s ]── ok (%s)\n\n", bumpStage.name, dur)
+			lg.printf("\n──[ %-22s ]── ok (%s)\n\n", bumpStage.name, dur)
 			results = append(results, deployAllResult{stage: bumpStage, duration: dur})
 		}
 	}
 
 	for _, st := range stages {
 		if st.skip {
-			fmt.Printf("──[ %-22s ]── SKIPPED (--skip-%s)\n\n", st.name, st.id)
+			lg.printf("──[ %-22s ]── SKIPPED (--skip-%s)\n\n", st.name, st.id)
 			results = append(results, deployAllResult{stage: st, skipped: true})
 			continue
 		}
 
-		ctx := &deployAllCtx{dryRun: *dryRun, prefix: fmt.Sprintf("[%s]", st.id)}
-		fmt.Printf("──[ %-22s ]── starting…\n", st.name)
+		ctx := &deployAllCtx{dryRun: *dryRun, prefix: fmt.Sprintf("[%s]", st.id), out: lg.out, errW: lg.errW}
+		lg.printf("──[ %-22s ]── starting…\n", st.name)
 		stageStart := time.Now()
 
 		runErr := st.run(ctx)
 		dur := time.Since(stageStart).Round(time.Second)
 
 		if runErr != nil {
-			fmt.Printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", st.name, dur, runErr)
+			lg.printf("\n──[ %-22s ]── FAILED in %s: %v\n\n", st.name, dur, runErr)
 			results = append(results, deployAllResult{stage: st, err: runErr, duration: dur})
 			failed = true
 			if !*keepGoing {
-				printDeployAllSummary(results, time.Since(overallStart))
+				printDeployAllSummary(lg.out, results, time.Since(overallStart))
+				if lg.path != "" {
+					lg.println("full log:", lg.path)
+				}
 				os.Exit(1)
 			}
 			continue
 		}
 
-		fmt.Printf("\n──[ %-22s ]── ok (%s)\n\n", st.name, dur)
+		lg.printf("\n──[ %-22s ]── ok (%s)\n\n", st.name, dur)
 		results = append(results, deployAllResult{stage: st, duration: dur})
 	}
 
-	printDeployAllSummary(results, time.Since(overallStart))
+	printDeployAllSummary(lg.out, results, time.Since(overallStart))
+	if lg.path != "" {
+		lg.println("full log:", lg.path)
+	}
 	if failed {
 		os.Exit(1)
 	}
@@ -260,6 +272,25 @@ type deployAllResult struct {
 type deployAllCtx struct {
 	dryRun bool
 	prefix string
+	// out/errW tee stage output to the terminal + the on-disk deploy log.
+	// nil means bare os.Stdout/os.Stderr (the path before deploy logs, and
+	// the fallback when the log file can't be opened).
+	out  io.Writer
+	errW io.Writer
+}
+
+func (c *deployAllCtx) stdout() io.Writer {
+	if c.out != nil {
+		return c.out
+	}
+	return os.Stdout
+}
+
+func (c *deployAllCtx) stderr() io.Writer {
+	if c.errW != nil {
+		return c.errW
+	}
+	return os.Stderr
 }
 
 // runScript runs a bash script with stdout/stderr streamed to the
@@ -272,7 +303,7 @@ func (c *deployAllCtx) runScript(path string) error {
 
 func (c *deployAllCtx) runCmd(workDir, name string, args ...string) error {
 	if c.dryRun {
-		fmt.Printf("  %s [dry-run] cd %s && %s %s\n", c.prefix, workDir, name, strings.Join(args, " "))
+		fmt.Fprintf(c.stdout(), "  %s [dry-run] cd %s && %s %s\n", c.prefix, workDir, name, strings.Join(args, " "))
 		return nil
 	}
 	cmd := exec.Command(name, args...)
@@ -292,8 +323,14 @@ func (c *deployAllCtx) runCmd(workDir, name string, args ...string) error {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
 
-	go streamLines(stdout, c.prefix, os.Stdout)
-	go streamLines(stderr, c.prefix, os.Stderr)
+	// Drain both pipes to completion before Wait returns so no tail of
+	// stage output is lost from the log. cmd.Wait closes the pipes, which
+	// can race a still-scanning goroutine otherwise.
+	done := make(chan struct{}, 2)
+	go func() { streamLines(stdout, c.prefix, c.stdout()); done <- struct{}{} }()
+	go func() { streamLines(stderr, c.prefix, c.stderr()); done <- struct{}{} }()
+	<-done
+	<-done
 
 	if err := cmd.Wait(); err != nil {
 		return err
@@ -611,18 +648,21 @@ func findYaverRepoRoot() (string, error) {
 	return root, nil
 }
 
-func printDeployAllSummary(results []deployAllResult, total time.Duration) {
-	fmt.Println()
-	fmt.Println("── deploy all summary ──")
+func printDeployAllSummary(w io.Writer, results []deployAllResult, total time.Duration) {
+	if w == nil {
+		w = os.Stdout
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "── deploy all summary ──")
 	for _, r := range results {
 		switch {
 		case r.skipped:
-			fmt.Printf("  [skip] %-22s\n", r.stage.name)
+			fmt.Fprintf(w, "  [skip] %-22s\n", r.stage.name)
 		case r.err != nil:
-			fmt.Printf("  [FAIL] %-22s %s — %v\n", r.stage.name, r.duration, r.err)
+			fmt.Fprintf(w, "  [FAIL] %-22s %s — %v\n", r.stage.name, r.duration, r.err)
 		default:
-			fmt.Printf("  [ ok ] %-22s %s\n", r.stage.name, r.duration)
+			fmt.Fprintf(w, "  [ ok ] %-22s %s\n", r.stage.name, r.duration)
 		}
 	}
-	fmt.Printf("  total: %s\n", total.Round(time.Second))
+	fmt.Fprintf(w, "  total: %s\n", total.Round(time.Second))
 }
