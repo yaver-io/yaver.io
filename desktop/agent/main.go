@@ -9135,7 +9135,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	runners := taskMgr.GetRunnerInfos()
 	installedRunnerIDs := collectInstalledRunnerIDs()
 	initialRecoveryPosture := computeRecoveryTransportPosture(cfgAtStart)
-	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, lastIP, lastIPs, lastPublicEndpoints, &initialRecoveryPosture); err != nil {
+	initialConnectionPreferences := connectionPreferencesForHeartbeat(cfgAtStart, lastIPs, lastPublicEndpoints)
+	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, lastIP, lastIPs, lastPublicEndpoints, &initialRecoveryPosture, initialConnectionPreferences); err != nil {
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
@@ -9176,7 +9177,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		}
 
 		currentRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
-		if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &currentRecoveryPosture); err != nil {
+		currentConnectionPreferences := connectionPreferencesForHeartbeat(cfgNow, currentIPs, currentPublicEndpoints)
+		if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &currentRecoveryPosture, currentConnectionPreferences); err != nil {
 			if errors.Is(err, ErrAuthExpired) {
 				// Try to refresh token first — backend may rotate.
 				if !refreshAndPersist("on-401") {
@@ -9199,7 +9201,8 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 					clearAuthExpiredNotify()
 					// Retry heartbeat
 					retryRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
-					if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &retryRecoveryPosture); retryErr != nil {
+					retryConnectionPreferences := connectionPreferencesForHeartbeat(cfgNow, currentIPs, currentPublicEndpoints)
+					if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &retryRecoveryPosture, retryConnectionPreferences); retryErr != nil {
 						log.Printf("heartbeat retry failed: %v", retryErr)
 					}
 				}

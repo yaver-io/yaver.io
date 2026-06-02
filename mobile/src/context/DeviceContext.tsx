@@ -194,6 +194,22 @@ export interface RunnerInfo {
   ready?: boolean;
 }
 
+export type DeviceConnectionPreferenceKind =
+  | "direct-lan"
+  | "tailscale"
+  | "headscale"
+  | "own-vpn"
+  | "https-tunnel"
+  | "free-relay"
+  | "private-relay";
+
+export interface DeviceConnectionPreference {
+  kind: DeviceConnectionPreferenceKind;
+  active: boolean;
+  preferred: boolean;
+  source: "agent-detected" | "user-config" | "platform-config" | "relay-presence";
+}
+
 export interface Device {
   id: string;
   name: string;
@@ -278,6 +294,11 @@ export interface Device {
   tunnelUrl?: string;
   /** agent-advertised Cloudflare / public tunnel URLs (from /devices/heartbeat publicEndpoints). Used as a connect fallback between direct LAN and relay. */
   publicEndpoints?: string[];
+  /** Convex-backed privacy-safe transport summary seeded by heartbeat:
+   * free/private relay, own VPN, headscale/tailscale, LAN, HTTPS tunnel.
+   * Concrete IPs/URLs remain in lanIps/publicEndpoints/relay config.
+   */
+  connectionPreferences?: DeviceConnectionPreference[];
   /** guest may use host-managed credentials without seeing raw secret */
   useHostApiKeys?: boolean;
   /** guest may bring their own credentials on top of host infra */
@@ -1011,6 +1032,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             accessScope: d.accessScope,
             tunnelUrl: d.tunnelUrl,
             publicEndpoints: Array.isArray(d.publicEndpoints) ? d.publicEndpoints : undefined,
+            connectionPreferences: Array.isArray(d.connectionPreferences) ? d.connectionPreferences : undefined,
             priorityMode: d.priorityMode,
             useHostApiKeys: d.useHostApiKeys,
             allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,

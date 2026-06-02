@@ -1470,6 +1470,11 @@ http.route({
       hardwareId: body.hardwareId || undefined,
       hardwareProfile: body.hardwareProfile || undefined,
       recoveryPosture: body.recoveryPosture || undefined,
+      connectionPreferences: Array.isArray(body.connectionPreferences)
+        ? body.connectionPreferences
+        : body.connectionPreferences === null
+          ? []
+          : undefined,
       agentVersion: typeof body.agentVersion === "string" ? body.agentVersion : undefined,
     });
 

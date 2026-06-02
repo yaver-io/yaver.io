@@ -26,6 +26,26 @@ const recoveryPostureValidator = v.object({
   summary: v.string(),
 });
 
+const connectionPreferenceValidator = v.object({
+  kind: v.union(
+    v.literal("direct-lan"),
+    v.literal("tailscale"),
+    v.literal("headscale"),
+    v.literal("own-vpn"),
+    v.literal("https-tunnel"),
+    v.literal("free-relay"),
+    v.literal("private-relay")
+  ),
+  active: v.boolean(),
+  preferred: v.boolean(),
+  source: v.union(
+    v.literal("agent-detected"),
+    v.literal("user-config"),
+    v.literal("platform-config"),
+    v.literal("relay-presence")
+  ),
+});
+
 const hardwareProfileValidator = v.object({
   os: v.optional(v.string()),
   osVersion: v.optional(v.string()),
@@ -116,6 +136,7 @@ type ListedDevice = {
   publishCapabilities?: string[];
   edgeProfile?: Doc<"devices">["edgeProfile"];
   recoveryPosture?: Doc<"devices">["recoveryPosture"];
+  connectionPreferences?: Doc<"devices">["connectionPreferences"];
   hardwareProfile?: Doc<"devices">["hardwareProfile"];
   agentVersion?: string;
   agentVersionReportedAt?: number;
@@ -298,6 +319,32 @@ function normalizeScopedList(items: string[] | undefined): string[] {
     : [];
 }
 
+function mergeConnectionPreferences(
+  existing: Doc<"devices">["connectionPreferences"] | undefined,
+  incoming: Doc<"devices">["connectionPreferences"] | undefined,
+): Doc<"devices">["connectionPreferences"] | undefined {
+  if (incoming === undefined) return existing;
+  const byKind = new Map<string, NonNullable<Doc<"devices">["connectionPreferences"]>[number]>();
+  for (const pref of incoming || []) {
+    byKind.set(pref.kind, pref);
+  }
+  for (const pref of existing || []) {
+    if (pref.source !== "user-config") continue;
+    const runtime = byKind.get(pref.kind);
+    if (runtime) {
+      byKind.set(pref.kind, {
+        ...runtime,
+        active: runtime.active || pref.active,
+        preferred: runtime.preferred || pref.preferred,
+        source: "user-config",
+      });
+    } else {
+      byKind.set(pref.kind, pref);
+    }
+  }
+  return [...byKind.values()];
+}
+
 function summarizeShareRules(rules: ShareRule[]): Pick<ListedDevice, "sharedWithGuests" | "sharedGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners"> {
   const projects = new Set<string>();
   const runners = new Set<string>();
@@ -393,6 +440,7 @@ export const registerDevice = mutation({
     hardwareId: v.optional(v.string()),
     hardwareProfile: v.optional(hardwareProfileValidator),
     recoveryPosture: v.optional(recoveryPostureValidator),
+    connectionPreferences: v.optional(v.array(connectionPreferenceValidator)),
     agentVersion: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -432,6 +480,9 @@ export const registerDevice = mutation({
         ...(args.hardwareId ? { hardwareId: args.hardwareId } : {}),
         ...(args.hardwareProfile ? { hardwareProfile: args.hardwareProfile } : {}),
         ...(args.recoveryPosture ? { recoveryPosture: args.recoveryPosture } : {}),
+        ...(args.connectionPreferences
+          ? { connectionPreferences: mergeConnectionPreferences(existing.connectionPreferences, args.connectionPreferences) }
+          : {}),
         // register is always an authoritative refresh — stamp version
         // if the agent reported one (older agents omit the field).
         ...(args.agentVersion
@@ -530,6 +581,7 @@ export const registerDevice = mutation({
       hardwareId: args.hardwareId,
       hardwareProfile: args.hardwareProfile,
       recoveryPosture: args.recoveryPosture,
+      connectionPreferences: args.connectionPreferences,
       agentVersion: args.agentVersion,
       agentVersionReportedAt: args.agentVersion ? Date.now() : undefined,
     });
@@ -694,6 +746,7 @@ export const heartbeat = mutation({
       thermalState: v.optional(v.union(v.literal("nominal"), v.literal("warm"), v.literal("hot"))),
     })),
     recoveryPosture: v.optional(recoveryPostureValidator),
+    connectionPreferences: v.optional(v.array(connectionPreferenceValidator)),
     agentVersion: v.optional(v.string()),
     publishCapabilities: v.optional(v.array(v.string())),
   },
@@ -766,10 +819,47 @@ export const heartbeat = mutation({
     if (args.recoveryPosture) {
       patch.recoveryPosture = args.recoveryPosture;
     }
+    if (args.connectionPreferences !== undefined) {
+      patch.connectionPreferences = mergeConnectionPreferences(device.connectionPreferences, args.connectionPreferences);
+    }
     if (args.publishCapabilities !== undefined) {
       patch.publishCapabilities = args.publishCapabilities;
     }
     await ctx.db.patch(device._id, patch);
+  },
+});
+
+/**
+ * Store a user's explicit per-machine transport preferences in Convex.
+ * Heartbeat preserves these rows while refreshing agent-detected active
+ * state, so a user can mark "headscale preferred" once and keep that
+ * product-level intent across agent restarts.
+ */
+export const setConnectionPreferences = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    preferences: v.array(connectionPreferenceValidator),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const userPrefs = args.preferences.map((pref) => ({
+      ...pref,
+      source: "user-config" as const,
+    }));
+    const runtimePrefs = (device.connectionPreferences || []).filter((pref) => pref.source !== "user-config");
+    await ctx.db.patch(device._id, {
+      connectionPreferences: mergeConnectionPreferences(runtimePrefs, userPrefs),
+    });
   },
 });
 
@@ -938,6 +1028,7 @@ export const listMyDevices = query({
       quicHost: d.quicHost,
       localIps: d.localIps ?? [],
       publicEndpoints: d.publicEndpoints ?? [],
+      connectionPreferences: d.connectionPreferences,
       quicPort: d.quicPort,
       isOnline: deriveIsOnline(d),
       needsAuth: d.needsAuth ?? false,
@@ -1032,6 +1123,8 @@ export const listMyDevices = query({
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
           deviceClass: d.deviceClass,
           edgeProfile: d.edgeProfile,
+          recoveryPosture: d.recoveryPosture,
+          connectionPreferences: d.connectionPreferences,
         });
       }
     }
@@ -1095,6 +1188,8 @@ export const listMyDevices = query({
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
           deviceClass: d.deviceClass,
           edgeProfile: d.edgeProfile,
+          recoveryPosture: d.recoveryPosture,
+          connectionPreferences: d.connectionPreferences,
         });
       }
     }

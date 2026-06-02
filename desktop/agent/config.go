@@ -46,6 +46,12 @@ type Config struct {
 	CachedRelayPassword string                   `json:"cached_relay_password,omitempty"`
 	CachedRelayServers  []RelayServerConfig      `json:"cached_relay_servers,omitempty"`
 	CloudflareTunnels   []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
+	// ConnectionPreferences is a privacy-safe control-plane summary for
+	// Convex/mobile. It lets a user say "this machine should prefer
+	// headscale" or "disable relay preference" without publishing extra
+	// VPN control-plane details. Concrete IPs/URLs still come from
+	// localIps/publicEndpoints/relay_servers.
+	ConnectionPreferences []ConnectionPreference `json:"connection_preferences,omitempty"`
 	// PublicEndpoints is a manual list of hostnames or URLs that the
 	// agent advertises to Convex on top of Cloudflare-tunnel and
 	// relay-assigned URLs. Useful for headless boxes with a stable
@@ -365,6 +371,13 @@ type RelayServerConfig struct {
 	Region   string `json:"region,omitempty"`
 	Priority int    `json:"priority,omitempty"`
 	Label    string `json:"label,omitempty"`
+}
+
+type ConnectionPreference struct {
+	Kind      string `json:"kind"`
+	Active    bool   `json:"active"`
+	Preferred bool   `json:"preferred"`
+	Source    string `json:"source"`
 }
 
 // CloudflareTunnelConfig describes a Cloudflare Tunnel endpoint in config.json.

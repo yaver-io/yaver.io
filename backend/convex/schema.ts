@@ -11,6 +11,26 @@ const recoveryPosture = v.object({
   summary: v.string(),
 });
 
+const connectionPreference = v.object({
+  kind: v.union(
+    v.literal("direct-lan"),
+    v.literal("tailscale"),
+    v.literal("headscale"),
+    v.literal("own-vpn"),
+    v.literal("https-tunnel"),
+    v.literal("free-relay"),
+    v.literal("private-relay")
+  ),
+  active: v.boolean(),
+  preferred: v.boolean(),
+  source: v.union(
+    v.literal("agent-detected"),
+    v.literal("user-config"),
+    v.literal("platform-config"),
+    v.literal("relay-presence")
+  ),
+});
+
 const hardwareProfile = v.object({
   os: v.optional(v.string()),
   osVersion: v.optional(v.string()),
@@ -337,6 +357,12 @@ export default defineSchema({
     hardwareId: v.optional(v.string()),
     hardwareProfile: v.optional(hardwareProfile),
     recoveryPosture: v.optional(recoveryPosture),
+    // First-class connection policy/state for this machine. This is a
+    // privacy-safe control-plane summary: transport kind + active/preferred,
+    // never relay hostnames, VPN IPs, or secrets. Heartbeat seeds it from
+    // current config/detection so clients do not have to infer whether
+    // "100.x" means Tailscale, Headscale, or an arbitrary CGNAT address.
+    connectionPreferences: v.optional(v.array(connectionPreference)),
     // Version string of the Go agent binary currently running on this
     // device (e.g. "1.99.36"). Reported on register and refreshed at
     // most once every 24 hours via heartbeat — the mutation side is

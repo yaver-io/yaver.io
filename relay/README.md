@@ -60,12 +60,20 @@ endpoint, then relay. Each transport just needs to publish a working
 HTTPS URL into the device's `publicEndpoints` list or a direct-routable
 IP into `localIps`.
 
+Convex also stores a privacy-safe `devices.connectionPreferences[]`
+summary for each machine. The agent seeds it on heartbeat from current
+config and interfaces, and users can persist explicit machine intent
+there too. Supported kinds are `direct-lan`, `tailscale`, `headscale`,
+`own-vpn`, `https-tunnel`, `free-relay`, and `private-relay`; entries
+only contain `kind`, `active`, `preferred`, and `source`, never VPN IPs,
+relay hostnames, or secrets.
+
 | Transport | How the URL gets published | Use when |
 |---|---|---|
 | **LAN direct** | Agent enumerates RFC1918 interface IPs into `localIps[]` on every heartbeat. Mobile races over plain HTTP `:18080`. | Phone + box on the same Wi-Fi/Ethernet. Lowest latency. |
-| **Tailscale / Headscale** | Agent enumerates 100.64.0.0/10 tailnet IPs into `localIps[]` on every heartbeat. Mobile probes them even when the underlay is cellular. | Both ends on the same tailnet. Direct, end-to-end encrypted by the overlay, NAT-pierced. |
+| **Tailscale / Headscale** | Agent enumerates 100.64.0.0/10 tailnet IPs into `localIps[]` on every heartbeat. Mobile probes them even when the underlay is cellular. `connectionPreferences[]` records whether the machine is intended to be `tailscale` or `headscale`; set `connection_preferences` in `~/.yaver/config.json` or via Convex to force the label/preference. | Both ends on the same tailnet. Direct, end-to-end encrypted by the overlay, NAT-pierced. |
 | **Cloudflare Tunnel** | Configure a `cloudflare_tunnels` entry in `~/.yaver/config.json` (or a manual `public_endpoints` URL). Agent publishes the hostname on every heartbeat. | Any-network, no port-forwarding. Costs nothing on Cloudflare's free plan. |
-| **Custom VPN / WireGuard** | RFC1918 VPN IPs are picked up in `localIps[]`; HTTPS VPN hostnames can be added to `public_endpoints`. | Self-hosted overlay where you already own the routing. |
+| **Custom VPN / WireGuard** | RFC1918 VPN IPs are picked up in `localIps[]`; HTTPS VPN hostnames can be added to `public_endpoints`. VPN-like interfaces seed an `own-vpn` connection preference. | Self-hosted overlay where you already own the routing. |
 | **Auto-detected public IP** | Agent probes `api.ipify.org` / `icanhazip.com` / `ifconfig.me` on heartbeat (cached 5 min) and appends `http://<ip>:<port>` to `publicEndpoints`. Default ON; opt out via `disable_auto_public_ip: true`. | CLI/manual diagnostics for public-IP boxes. Mobile skips cleartext public HTTP and falls back to HTTPS tunnel/relay unless you publish an HTTPS endpoint. |
 | **Yaver-hosted relay (free)** | Agent registers with the public relay (`relay.yaver.io:4433`) on startup and is auto-assigned `https://<deviceId>.dev.yaver.io`. Published as `publicUrl` in the heartbeat. | No public IP, no Tailscale, no setup. Pass-through QUIC tunnel. Bandwidth shared. |
 | **Yaver-hosted managed relay (paid)** | Same as the free relay but provisioned per-team via `yaver-cli managed-relay provision`. Reserved bandwidth, custom subdomain. | Teams who want isolation from the shared free pool. |

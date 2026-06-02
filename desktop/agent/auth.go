@@ -1566,7 +1566,7 @@ var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 // LAN/Tailscale/Ethernet address the agent has (localIps) so mobile clients
 // can race them in parallel during connect. Returns ErrAuthExpired if the
 // server returns 401.
-func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, installedRunnerIDs []string, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture) error {
+func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, installedRunnerIDs []string, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture, connectionPreferences []ConnectionPreference) error {
 	payload := map[string]interface{}{
 		"deviceId":           deviceID,
 		"runners":            runners,
@@ -1599,6 +1599,10 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	}
 	payload["localIps"] = localIps
 	payload["publicEndpoints"] = publicEndpoints
+	if connectionPreferences == nil {
+		connectionPreferences = []ConnectionPreference{}
+	}
+	payload["connectionPreferences"] = connectionPreferences
 	// Publish-farm capability: which app stores this box can build for.
 	// A non-empty list makes this device a publish-farm node the UI can
 	// target. macOS does both (Xcode + Gradle); Linux does Android only;
