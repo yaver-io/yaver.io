@@ -443,6 +443,8 @@ func main() {
 		runNativeFlutter(os.Args[2:])
 	case "publish":
 		runPublish(os.Args[2:])
+	case "shots":
+		runShots(os.Args[2:])
 	case "release":
 		runRelease(os.Args[2:])
 	case "monitor":

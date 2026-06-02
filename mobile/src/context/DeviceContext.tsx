@@ -173,6 +173,7 @@ export interface RunnerInfo {
   pid: number;
   status: string;
   title: string;
+  ready?: boolean;
 }
 
 export interface Device {
@@ -588,7 +589,7 @@ export interface PendingDeviceClaim {
   relayLabel?: string;
 }
 
-interface DeviceState {
+export interface DeviceState {
   devices: Device[];
   activeDevice: Device | null;
   connectionStatus: ConnectionStatus;

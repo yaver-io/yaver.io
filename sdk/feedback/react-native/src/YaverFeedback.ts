@@ -5,6 +5,11 @@ import { BlackBox } from './BlackBox';
 import { P2PClient } from './P2PClient';
 import { ShakeDetector } from './ShakeDetector';
 import {
+  captureStoreScreenshots,
+  CaptureStoreScreenshotsOptions,
+  CaptureStoreScreenshotsResult,
+} from './storeShots';
+import {
   configureAuthEndpoints,
   setStrictNativeAuth,
   getToken,
@@ -569,6 +574,59 @@ export class YaverFeedback {
   /** Returns true once the SDK has a session token it can use. */
   static isAuthed(): boolean {
     return Boolean(config?.authToken);
+  }
+
+  /**
+   * On-device App Store screenshot capture (Engine 2). Walks the routes
+   * the host hands us, screenshots each, and uploads to the agent which
+   * runs the App Store Connect backend. agentUrl / authToken / relay
+   * password default to the SDK's resolved session; the host only has to
+   * supply a navigation ref + the ordered route list.
+   *
+   *   YaverFeedback.captureStoreScreenshots({
+   *     app: 'sfmg',
+   *     navigationRef,
+   *     routes: ['/(tabs)/dashboard', '/(tabs)/messages', '/(tabs)/clients'],
+   *     submit: true,
+   *   })
+   */
+  static async captureStoreScreenshots(
+    opts: Omit<CaptureStoreScreenshotsOptions, 'agentUrl' | 'authToken' | 'relayPassword'> &
+      Partial<Pick<CaptureStoreScreenshotsOptions, 'agentUrl' | 'authToken' | 'relayPassword'>>,
+  ): Promise<CaptureStoreScreenshotsResult> {
+    const agentUrl = opts.agentUrl ?? config?.agentUrl ?? '';
+    const authToken = opts.authToken ?? config?.authToken ?? p2pAuthToken ?? '';
+    const relayPassword = opts.relayPassword ?? p2pRelayPassword;
+    if (!agentUrl || !authToken) {
+      return {
+        ok: false,
+        captured: 0,
+        uploaded: 0,
+        message: 'YaverFeedback not connected to an agent — init() with agentUrl + authToken first.',
+      };
+    }
+    return captureStoreScreenshots({ ...opts, agentUrl, authToken, relayPassword });
+  }
+
+  /**
+   * Let the mobile app / CLI kick THIS device into self-capturing. Registers
+   * a BlackBox command listener that fires captureStoreScreenshots when the
+   * agent pushes a `capture_store_shots` command (its `data` may override
+   * `submit` / `locale`). Returns an unsubscribe fn. Call once after init,
+   * passing the app's navigation ref + the routes to walk.
+   */
+  static enableStoreShotsOnCommand(
+    opts: Omit<CaptureStoreScreenshotsOptions, 'agentUrl' | 'authToken' | 'relayPassword'>,
+  ): () => void {
+    return BlackBox.onCommand((cmd) => {
+      if (cmd?.command !== 'capture_store_shots') return;
+      const data = (cmd as any).data ?? {};
+      void YaverFeedback.captureStoreScreenshots({
+        ...opts,
+        submit: typeof data.submit === 'boolean' ? data.submit : opts.submit,
+        locale: typeof data.locale === 'string' ? data.locale : opts.locale,
+      });
+    });
   }
 
   /**

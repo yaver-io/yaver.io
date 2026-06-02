@@ -6,9 +6,12 @@
 import * as FileSystem from "expo-file-system";
 import type { SandboxFsAdapter, SandboxFsInfo } from "./phoneSandboxFs";
 
+const FS = FileSystem as any;
+const UTF8 = FS.EncodingType?.UTF8 ?? "utf8";
+
 export const expoFsAdapter: SandboxFsAdapter = {
   get documentDirectory(): string {
-    const dir = FileSystem.documentDirectory;
+    const dir = FS.documentDirectory;
     if (!dir) {
       throw new Error("expoFsAdapter: FileSystem.documentDirectory unavailable on this platform");
     }
@@ -31,13 +34,13 @@ export const expoFsAdapter: SandboxFsAdapter = {
 
   async readText(uri: string): Promise<string> {
     return FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.UTF8,
+      encoding: UTF8,
     });
   },
 
   async writeText(uri: string, content: string): Promise<void> {
     await FileSystem.writeAsStringAsync(uri, content, {
-      encoding: FileSystem.EncodingType.UTF8,
+      encoding: UTF8,
     });
   },
 
@@ -58,16 +61,16 @@ export const expoFsAdapter: SandboxFsAdapter = {
   },
 
   async move(opts: { from: string; to: string }): Promise<void> {
-    const renameFn = (FileSystem as unknown as { moveAsync?: (o: { from: string; to: string }) => Promise<void> }).moveAsync;
+    const renameFn = FS.moveAsync as undefined | ((o: { from: string; to: string }) => Promise<void>);
     if (typeof renameFn === "function") {
       await renameFn.call(FileSystem, opts);
       return;
     }
     const buf = await FileSystem.readAsStringAsync(opts.from, {
-      encoding: FileSystem.EncodingType.UTF8,
+      encoding: UTF8,
     });
     await FileSystem.writeAsStringAsync(opts.to, buf, {
-      encoding: FileSystem.EncodingType.UTF8,
+      encoding: UTF8,
     });
     await FileSystem.deleteAsync(opts.from, { idempotent: true });
   },

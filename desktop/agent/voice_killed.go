@@ -106,6 +106,7 @@ type voiceSetupOptions struct {
 	CartesiaAPIKey  string
 	CartesiaVoiceID string
 	DefaultProject  string
+	AssistantName   string
 	Disable         bool
 	PrintOnly       bool
 }
@@ -120,6 +121,7 @@ func voiceCLISetupWithArgs(args []string) {
 	fs.StringVar(&opt.CartesiaAPIKey, "cartesia-api-key", "", "Cartesia API key")
 	fs.StringVar(&opt.CartesiaVoiceID, "cartesia-voice-id", "", "Cartesia voice ID")
 	fs.StringVar(&opt.DefaultProject, "default-project", "", "Default voice project slug")
+	fs.StringVar(&opt.AssistantName, "assistant-name", "", "What to call the assistant out loud (default \"yaver\"; e.g. sam, feyi, kole)")
 	fs.BoolVar(&opt.Disable, "disable", false, "Disable voice without removing saved keys")
 	fs.BoolVar(&opt.PrintOnly, "print", false, "Print setup examples without writing config")
 	fs.Usage = func() {
@@ -171,6 +173,10 @@ func printVoiceSetupHints() {
 	fmt.Println("  yaver voice setup cartesia --cartesia-api-key ck_...")
 	fmt.Println("  yaver voice setup deepgram --deepgram-api-key dg_...        # STT+TTS, one key")
 	fmt.Println("  yaver voice setup deepgram-cartesia --deepgram-api-key dg_... --cartesia-api-key ck_...")
+	fmt.Println()
+	fmt.Println("Rename the assistant (what you call it out loud — default \"yaver\"):")
+	fmt.Println()
+	fmt.Println("  yaver voice setup --assistant-name sam        # then say \"hey sam, deploy web\"")
 	fmt.Println()
 	fmt.Println("OPTION 1 (default, simplest — one signup, one key):")
 	fmt.Println()
@@ -230,7 +236,8 @@ func voiceSetupHasWriteIntent(opt voiceSetupOptions) bool {
 		strings.TrimSpace(opt.DeepgramAPIKey) != "" ||
 		strings.TrimSpace(opt.CartesiaAPIKey) != "" ||
 		strings.TrimSpace(opt.CartesiaVoiceID) != "" ||
-		strings.TrimSpace(opt.DefaultProject) != ""
+		strings.TrimSpace(opt.DefaultProject) != "" ||
+		strings.TrimSpace(opt.AssistantName) != ""
 }
 
 func applyVoiceSetup(cfg *Config, opt *voiceSetupOptions, stdin uintptr) error {
@@ -305,6 +312,12 @@ func applyVoiceSetup(cfg *Config, opt *voiceSetupOptions, stdin uintptr) error {
 	}
 	if project := strings.TrimSpace(opt.DefaultProject); project != "" {
 		v.DefaultProject = project
+	}
+	if name := strings.ToLower(strings.TrimSpace(opt.AssistantName)); name != "" {
+		v.AssistantName = name
+		if warn := assistantNameWarning(name); warn != "" {
+			fmt.Fprintf(os.Stderr, "  ⚠ %s\n", warn)
+		}
 	}
 
 	if term.IsTerminal(int(stdin)) {

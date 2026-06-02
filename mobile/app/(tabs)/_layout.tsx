@@ -331,6 +331,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen name="builds" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="publish" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="shots" options={{ href: null, headerShown: false }} />
       {/* Devices moved out of the bottom bar into More (more.tsx links to
           it) — the 6-tab bar was crowded enough that "Shortcuts" wrapped
           to two lines. Device *management* is occasional; the per-session

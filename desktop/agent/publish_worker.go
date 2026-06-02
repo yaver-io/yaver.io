@@ -154,15 +154,90 @@ func executePublishBuild(convexBase, token string, claim *publishJobClaim) ([]pu
 	return results, overallOK, phase.Get()
 }
 
-// runLocalShipForJob POSTs the job to the local /deploy/ship composite
-// path and parses its SSE stream into per-target results. We do NOT
-// pass a path — the server resolves it locally from the app name,
-// keeping filesystem paths off the wire and out of Convex.
+// shotsJobTargets are pseudo-targets handled locally by Engine 1 (sim +
+// Maestro screenshot capture) rather than by /deploy/ship.
+//   shots        → capture + upload screenshots only
+//   shots-submit → capture + upload + metadata + attempt submit-for-review
+var shotsJobTargets = map[string]bool{"shots": true, "shots-submit": true}
+
+// runLocalShipForJob dispatches the claim's targets: store binaries go
+// through the existing /deploy/ship spine; `shots*` pseudo-targets run the
+// local screenshot pipeline (ShotsPlan). Results are merged.
 func runLocalShipForJob(claim *publishJobClaim, phase *atomicString, token string) ([]publishTargetResult, bool) {
+	var shipTargets, shotsTargets []string
+	for _, t := range claim.Targets {
+		if shotsJobTargets[t] {
+			shotsTargets = append(shotsTargets, t)
+		} else {
+			shipTargets = append(shipTargets, t)
+		}
+	}
+
+	var results []publishTargetResult
+	overall := true
+	if len(shipTargets) > 0 {
+		r, ok := runShipTargetsForJob(claim, shipTargets, phase, token)
+		results = append(results, r...)
+		overall = overall && ok
+	}
+	for _, t := range shotsTargets {
+		r := runShotsTargetForJob(claim, t, phase)
+		results = append(results, r)
+		if !r.OK {
+			overall = false
+		}
+	}
+	return results, overall
+}
+
+// runShotsTargetForJob runs Engine 1 locally for a shots* pseudo-target.
+// Resolves the project path from the app name (privacy: path never on the
+// wire), then drives the ShotsPlan. Submit only for shots-submit.
+func runShotsTargetForJob(claim *publishJobClaim, target string, phase *atomicString) publishTargetResult {
+	phase.Set("capturing screenshots")
+	start := time.Now()
+	fail := func(class string) publishTargetResult {
+		return publishTargetResult{Target: target, OK: false, ExitCode: -1,
+			ErrorClass: class, DurationMs: time.Since(start).Milliseconds()}
+	}
+
+	_, path, err := resolveDeployStackPath(claim.App, claim.Stack, "")
+	if err != nil {
+		log.Printf("[publish-worker] shots: resolve path for %s: %v", claim.App, err)
+		return fail("resolve_path")
+	}
+	bundleID := readBundleIDFromAppJSON(path)
+	if bundleID == "" {
+		log.Printf("[publish-worker] shots: no bundle id at %s", path)
+		return fail("no_bundle_id")
+	}
+
+	plan := ShotsPlan{
+		App:      claim.App,
+		Path:     path,
+		Stack:    claim.Stack,
+		BundleID: bundleID,
+		Locale:   "en-US",
+		Submit:   target == "shots-submit",
+	}
+	code := plan.Run()
+	return publishTargetResult{
+		Target:     target,
+		OK:         code == 0,
+		ExitCode:   code,
+		DurationMs: time.Since(start).Milliseconds(),
+	}
+}
+
+// runShipTargetsForJob POSTs the given store targets to the local
+// /deploy/ship composite path and parses its SSE stream into per-target
+// results. We do NOT pass a path — the server resolves it locally from the
+// app name, keeping filesystem paths off the wire and out of Convex.
+func runShipTargetsForJob(claim *publishJobClaim, targets []string, phase *atomicString, token string) ([]publishTargetResult, bool) {
 	body := map[string]interface{}{
 		"app":     claim.App,
 		"stack":   claim.Stack,
-		"targets": claim.Targets,
+		"targets": targets,
 	}
 	raw, _ := json.Marshal(body)
 
@@ -178,12 +253,12 @@ func runLocalShipForJob(claim *publishJobClaim, phase *atomicString, token strin
 
 	resp, err := (&http.Client{Timeout: 0}).Do(req)
 	if err != nil {
-		return shipFailAll(claim.Targets, "ship request: "+err.Error()), false
+		return shipFailAll(targets, "ship request: "+err.Error()), false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return shipFailAll(claim.Targets, fmt.Sprintf("ship HTTP %d: %s",
+		return shipFailAll(targets, fmt.Sprintf("ship HTTP %d: %s",
 			resp.StatusCode, capSnippet(b, 256))), false
 	}
 
@@ -219,8 +294,8 @@ func runLocalShipForJob(claim *publishJobClaim, phase *atomicString, token strin
 				}
 			case "exit":
 				tgt, _ := p["target"].(string)
-				if tgt == "" && len(claim.Targets) == 1 {
-					tgt = claim.Targets[0]
+				if tgt == "" && len(targets) == 1 {
+					tgt = targets[0]
 				}
 				code, _ := p["code"].(float64)
 				ok, _ := p["ok"].(bool)
@@ -266,9 +341,9 @@ func runLocalShipForJob(claim *publishJobClaim, phase *atomicString, token strin
 	}
 
 	// Single-target / no composite event: fall back to exit events.
-	out := make([]publishTargetResult, 0, len(claim.Targets))
-	all := len(claim.Targets) > 0
-	for _, t := range claim.Targets {
+	out := make([]publishTargetResult, 0, len(targets))
+	all := len(targets) > 0
+	for _, t := range targets {
 		r, seen := perTarget[t]
 		if !seen {
 			r = publishTargetResult{Target: t, OK: false, ExitCode: -1,

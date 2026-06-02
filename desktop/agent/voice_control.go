@@ -72,9 +72,55 @@ func isDestructiveRun(cmd string) bool {
 	return false
 }
 
+// defaultAssistantName is the spoken wake name used when the user hasn't
+// renamed their assistant (VoiceConfig.AssistantName).
+const defaultAssistantName = "yaver"
+
+// assistantWakeWords builds the strip-from-front wake phrases for a given
+// assistant name. The name is user-configurable so "Hey Sam, deploy web"
+// routes exactly like "Hey Yaver, deploy web" — the leading wake phrase is
+// removed before the remainder is matched against the verb catalogue.
+// "please" is kept as a universal politeness filler regardless of name.
+func assistantWakeWords(name string) []string {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		n = defaultAssistantName
+	}
+	return []string{"hey " + n, "ok " + n, "okay " + n, n, "please"}
+}
+
+// assistantNameCommonWords are everyday words that a streaming STT engine
+// will frequently emit, so using one as the wake name causes stray triggers
+// (the mic "hears" the name in ordinary speech). Advisory only — we still
+// honour the user's choice.
+var assistantNameCommonWords = map[string]bool{
+	"yes": true, "no": true, "ok": true, "okay": true, "stop": true,
+	"go": true, "run": true, "the": true, "and": true, "hey": true,
+	"please": true, "do": true, "it": true, "now": true, "up": true,
+}
+
+// assistantNameWarning returns a non-empty advisory when the chosen wake
+// name is prone to false triggers — too short for a streaming STT to anchor
+// on, or a common word that shows up in ordinary speech. Empty = looks fine.
+func assistantNameWarning(name string) string {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" || n == defaultAssistantName {
+		return ""
+	}
+	if len([]rune(n)) < 3 {
+		return fmt.Sprintf("%q is very short — speech-to-text may mis-hear it and fire stray commands. Prefer the \"hey %s, …\" form, or a 3+ syllable name.", n, n)
+	}
+	if assistantNameCommonWords[n] {
+		return fmt.Sprintf("%q is a common word — it'll trigger during normal speech. Pick a more distinctive name.", n)
+	}
+	return ""
+}
+
 // voiceControlWakeWords are stripped from the front of an utterance so
-// "hey yaver, status" and "status" route identically.
-var voiceControlWakeWords = []string{"hey yaver", "ok yaver", "okay yaver", "yaver", "please"}
+// "hey yaver, status" and "status" route identically. Reassigned at the
+// start of a `voice control` session from VoiceConfig.AssistantName so a
+// renamed assistant ("sam", "feyi", …) is recognised.
+var voiceControlWakeWords = assistantWakeWords(defaultAssistantName)
 
 // voiceControlQuit phrases end the session.
 var voiceControlQuit = map[string]bool{
@@ -127,11 +173,19 @@ func routeVoiceCommand(transcript string, knownVerbs map[string]bool) voiceActio
 
 // normalizeVoiceCommand lowercases, strips trailing punctuation, and removes
 // a leading wake word so routing is forgiving of how the phrase is spoken.
+// It uses the session's configured wake words (voiceControlWakeWords).
 func normalizeVoiceCommand(s string) string {
+	return normalizeVoiceCommandWith(s, voiceControlWakeWords)
+}
+
+// normalizeVoiceCommandWith is the pure form: it strips any of the supplied
+// wake phrases from the front of the utterance. Kept separate from the
+// global so it is unit-testable with a custom assistant name.
+func normalizeVoiceCommandWith(s string, wakeWords []string) string {
 	t := strings.ToLower(strings.TrimSpace(s))
 	t = strings.TrimRight(t, ".!?,")
 	t = strings.TrimSpace(t)
-	for _, w := range voiceControlWakeWords {
+	for _, w := range wakeWords {
 		if t == w {
 			return ""
 		}
@@ -196,6 +250,11 @@ func runVoiceControl(args []string) {
 		provider = "local"
 	}
 
+	// Recognise the user's chosen wake name ("sam", "feyi", …) for this
+	// session. Falls back to "yaver" when unset.
+	assistantName := v.EffectiveAssistantName()
+	voiceControlWakeWords = assistantWakeWords(assistantName)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigCh := make(chan os.Signal, 1)
@@ -218,8 +277,8 @@ func runVoiceControl(args []string) {
 	}
 	defer func() { _ = micCmd.Process.Kill() }()
 
-	fmt.Printf("\n🎙  voice control · provider=%s · %d verbs reachable\n", provider, len(knownVerbs))
-	fmt.Println("   Say a command (\"status\", \"run git status\", \"cloud status\"). \"stop\" or Ctrl-C to quit.")
+	fmt.Printf("\n🎙  voice control · provider=%s · wake=\"%s\" · %d verbs reachable\n", provider, assistantName, len(knownVerbs))
+	fmt.Printf("   Say a command (\"status\", \"run git status\", \"cloud status\") — optionally prefixed \"hey %s, …\". \"stop\" or Ctrl-C to quit.\n", assistantName)
 	if streaming {
 		fmt.Println("   \033[2mLive — speak naturally; commands fire on each pause.\033[0m")
 	} else {

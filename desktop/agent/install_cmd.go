@@ -584,7 +584,14 @@ func checkInstalled(name string) string {
 		return "—"
 	case "mobile":
 		if v := nodeRuntimeExisting(runtimeNodeBinDir()); v != "" {
-			if _, err := embeddedHermescSummary(); err == nil {
+			// Mirror the capability snapshot's resolver: embedded
+			// prebuilt → system-prewarmed (/usr/local/libexec/yaver).
+			// embeddedHermescSummary() alone would mark a perfectly
+			// reload-ready linux/arm64 box (no embedded binary, but a
+			// prewarmed system hermesc) as not-installed — the same
+			// false-negative the Remote Box picker's "Fix this machine"
+			// flow must not hit.
+			if _, _, err := resolveHermescForCapability(); err == nil {
 				return "✓"
 			}
 		}
@@ -1202,12 +1209,23 @@ func metaInstallPlan(name string) (installPlan, bool) {
 				if _, err := installNodeRuntime(ctx, progress); err != nil {
 					return err
 				}
-				summary, err := embeddedHermescSummary()
+				// embedded prebuilt → system-prewarmed, matching the
+				// capability snapshot's resolver so a box the picker
+				// flags "prerequisites missing" and a box this install
+				// verifies never disagree. On a platform with neither
+				// (e.g. a stripped linux/arm64 box with no prewarm) the
+				// error is surfaced to the phone so the user sees a real
+				// failure instead of a silent half-fix.
+				summary, source, err := resolveHermescForCapability()
 				if err != nil {
 					return err
 				}
 				if progress != nil {
-					progress("Embedded hermesc ready: " + summary)
+					label := "Embedded hermesc"
+					if source == "system" {
+						label = "System hermesc"
+					}
+					progress(label + " ready: " + summary)
 					progress("Hermes reload stack ready for Open in Yaver on Linux, WSL, or macOS.")
 				}
 				return nil

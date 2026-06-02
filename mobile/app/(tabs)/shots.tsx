@@ -1,14 +1,13 @@
-// Publish screen — the end-user "tap Publish, walk away" UI.
+// App Store screenshots screen — first-class "tap, walk away" surface for
+// `yaver shots`. Auto-generates App Store screenshots on a simulator on
+// the user's Mac (Engine 1) and optionally sets metadata + submits for
+// review. Mirrors publish.tsx's queue-and-poll idiom (publishJobs), but
+// shots-focused: locale, a submit toggle, an explainer, and shots-aware
+// status labels.
 //
-// Pairs with backend/convex/publishJobs.ts + the /publish-jobs/*
-// httpActions + desktop/agent/publish_worker.go. It only ever talks
-// to Convex (queue + poll) — never holds a build connection. The
-// build runs on the chosen Mac-farm node on its own time; this screen
-// just enqueues and watches status. Privacy: no path, no logs ever
-// cross this wire (the Convex side enforces it).
-//
-// Idiom mirrors devices.tsx: useAuth() for the bearer token,
-// CONVEX_SITE_URL for the backend, useColors/useTheme for styling.
+// Pairs with backend/convex/publishJobs.ts (targets ["shots"] /
+// ["shots-submit"], no schema change) + desktop/agent/publish_worker.go
+// (runShotsTargetForJob). Privacy: only app NAME + targets cross the wire.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -17,6 +16,7 @@ import {
   Pressable,
   RefreshControl,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -35,7 +35,7 @@ type FarmDevice = {
   publishCapabilities?: string[];
 };
 
-type PublishJob = {
+type ShotsJob = {
   jobId: string;
   app: string;
   targets: string[];
@@ -45,24 +45,19 @@ type PublishJob = {
   createdAt: number;
 };
 
-type StoreChoice = "ios" | "android" | "both";
+// A small, friendly locale set — the App Store localizations most solo
+// devs ship first. Free text covers the rest.
+const LOCALES = ["en-US", "en-GB", "tr", "de-DE", "es-ES", "fr-FR"];
 
-// Friendly store word → canonical /deploy/ship target IDs. Same map
-// as the CLI façade (publish_ship.go) so both surfaces agree.
-const STORE_TARGETS: Record<StoreChoice, string[]> = {
-  ios: ["testflight"],
-  android: ["playstore"],
-  both: ["testflight", "playstore"],
-};
-
-export default function PublishScreen() {
+export default function ShotsScreen() {
   const { token } = useAuth();
   const c = useColors();
   const [devices, setDevices] = useState<FarmDevice[]>([]);
   const [selected, setSelected] = useState<string>("");
-  const [store, setStore] = useState<StoreChoice>("both");
   const [app, setApp] = useState("");
-  const [jobs, setJobs] = useState<PublishJob[]>([]);
+  const [locale, setLocale] = useState("en-US");
+  const [submit, setSubmit] = useState(false);
+  const [jobs, setJobs] = useState<ShotsJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [queuing, setQueuing] = useState(false);
   const [note, setNote] = useState("");
@@ -72,7 +67,7 @@ export default function PublishScreen() {
     [token],
   );
 
-  // Only devices that advertised a publish capability are farm nodes.
+  // iOS-capable farm nodes only — screenshots are an iOS simulator flow.
   const loadDevices = useCallback(async () => {
     if (!authHeaders) return;
     try {
@@ -81,31 +76,29 @@ export default function PublishScreen() {
       });
       const j = await r.json();
       const all: FarmDevice[] = j?.devices ?? j ?? [];
-      const farm = all.filter((d) => (d.publishCapabilities?.length ?? 0) > 0);
+      const farm = all.filter((d) => (d.publishCapabilities ?? []).includes("ios"));
       setDevices(farm);
       setSelected((prev) =>
-        prev && farm.some((d) => d.deviceId === prev)
-          ? prev
-          : farm[0]?.deviceId ?? "",
+        prev && farm.some((d) => d.deviceId === prev) ? prev : farm[0]?.deviceId ?? "",
       );
     } catch {
-      setNote("Couldn't load devices — check your connection.");
+      setNote("Couldn't load machines — check your connection.");
     } finally {
       setLoading(false);
     }
   }, [authHeaders]);
 
+  // Only shots jobs belong on this screen.
   const loadJobs = useCallback(async () => {
     if (!authHeaders || !selected) return;
     try {
       const r = await fetch(
-        `${CONVEX_SITE_URL}/publish-jobs/list?deviceId=${encodeURIComponent(
-          selected,
-        )}&limit=20`,
+        `${CONVEX_SITE_URL}/publish-jobs/list?deviceId=${encodeURIComponent(selected)}&limit=20`,
         { headers: authHeaders },
       );
       const j = await r.json();
-      setJobs(j?.jobs ?? []);
+      const all: ShotsJob[] = j?.jobs ?? [];
+      setJobs(all.filter((job) => job.targets.some((t) => t.startsWith("shots"))));
     } catch {
       /* transient — next poll retries */
     }
@@ -115,8 +108,6 @@ export default function PublishScreen() {
     loadDevices();
   }, [loadDevices]);
 
-  // Poll job status while the screen is open — the "come back to a
-  // green check" half. Cheap (one indexed query) so 8 s is fine.
   useEffect(() => {
     loadJobs();
     const t = setInterval(loadJobs, 8000);
@@ -140,7 +131,7 @@ export default function PublishScreen() {
           deviceId: selected,
           app: appName,
           stack: "react-native-expo",
-          targets: STORE_TARGETS[store],
+          targets: [submit ? "shots-submit" : "shots"],
           sourceSurface: "mobile",
         }),
       });
@@ -150,8 +141,8 @@ export default function PublishScreen() {
       } else {
         setNote(
           j.deduped
-            ? "Already in flight — joined the existing build."
-            : "Queued. You can close the app; it builds on your Mac.",
+            ? "Already running — joined the existing job."
+            : "Queued. Close the app — it captures on your Mac.",
         );
         loadJobs();
       }
@@ -160,16 +151,30 @@ export default function PublishScreen() {
     } finally {
       setQueuing(false);
     }
-  }, [authHeaders, selected, app, store, loadJobs]);
+  }, [authHeaders, selected, app, submit, loadJobs]);
 
   const styles = makeStyles(c);
 
-  const statusTone = (s: string) =>
-    s === "done"
-      ? c.success ?? "#3fb950"
-      : s === "failed" || s === "expired"
-        ? c.error ?? "#f85149"
-        : c.accent ?? "#58a6ff";
+  // Map raw publishJobs status → a shots-friendly label.
+  const shotsStatus = (job: ShotsJob): { label: string; tone: string } => {
+    const ok = (job.result ?? []).every((r) => r.ok) && (job.result?.length ?? 0) > 0;
+    switch (job.status) {
+      case "queued":
+        return { label: "queued", tone: c.textMuted };
+      case "claimed":
+      case "running":
+        return { label: "capturing…", tone: c.accent ?? "#58a6ff" };
+      case "done":
+        return job.targets.includes("shots-submit")
+          ? { label: ok ? "submitted / staged" : "needs attention", tone: ok ? (c.success ?? "#3fb950") : (c.error ?? "#f85149") }
+          : { label: ok ? "uploaded" : "failed", tone: ok ? (c.success ?? "#3fb950") : (c.error ?? "#f85149") };
+      case "failed":
+      case "expired":
+        return { label: job.status, tone: c.error ?? "#f85149" };
+      default:
+        return { label: job.status, tone: c.textMuted };
+    }
+  };
 
   if (loading) {
     return (
@@ -196,16 +201,18 @@ export default function PublishScreen() {
         }
         ListHeaderComponent={
           <View>
-            <Text style={styles.h1}>Publish</Text>
+            <Text style={styles.h1}>App Store Screenshots</Text>
             <Text style={styles.sub}>
-              Build & ship to the App Store / Google Play on your own Mac.
-              Tap publish and close the app — it runs on the Mac.
+              Yaver boots a simulator on your Mac, walks your app, captures
+              every screen, and uploads them to App Store Connect. Turn on
+              "Submit for review" to also set metadata and send it in. Tap and
+              close the app — it runs on the Mac.
             </Text>
 
             {devices.length === 0 ? (
               <Text style={styles.empty}>
-                No publish-capable machine yet. Run `yaver serve` on a Mac
-                (signed in as you) — it appears here automatically.
+                No iOS-capable Mac yet. Run `yaver serve` on a Mac (signed in
+                as you) — it appears here automatically.
               </Text>
             ) : (
               <>
@@ -229,30 +236,6 @@ export default function PublishScreen() {
                   );
                 })}
 
-                <Text style={styles.label}>Store</Text>
-                <View style={styles.segment}>
-                  {(["ios", "android", "both"] as StoreChoice[]).map((s) => (
-                    <Pressable
-                      key={s}
-                      onPress={() => setStore(s)}
-                      style={[styles.seg, store === s && styles.segOn]}
-                    >
-                      <Text
-                        style={[
-                          styles.segTxt,
-                          store === s && styles.segTxtOn,
-                        ]}
-                      >
-                        {s === "ios"
-                          ? "App Store"
-                          : s === "android"
-                            ? "Google Play"
-                            : "Both"}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-
                 <Text style={styles.label}>App name</Text>
                 <TextInput
                   value={app}
@@ -264,24 +247,48 @@ export default function PublishScreen() {
                   style={styles.input}
                 />
 
+                <Text style={styles.label}>Locale</Text>
+                <View style={styles.chips}>
+                  {LOCALES.map((l) => (
+                    <Pressable
+                      key={l}
+                      onPress={() => setLocale(l)}
+                      style={[styles.chip, locale === l && styles.chipOn]}
+                    >
+                      <Text style={[styles.chipTxt, locale === l && styles.chipTxtOn]}>
+                        {l}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <View style={styles.toggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.toggleLabel}>Submit for review</Text>
+                    <Text style={styles.toggleSub}>
+                      Also set metadata + attempt submit. If Apple gates on
+                      compliance/pricing, it's left staged for one tap.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={submit}
+                    onValueChange={setSubmit}
+                    trackColor={{ true: c.accent }}
+                  />
+                </View>
+
                 <Pressable
                   onPress={queue}
                   disabled={queuing || !selected}
-                  style={[
-                    styles.cta,
-                    (queuing || !selected) && styles.ctaOff,
-                  ]}
+                  style={[styles.cta, (queuing || !selected) && styles.ctaOff]}
                 >
                   {queuing ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.ctaTxt}>
-                      Publish to{" "}
-                      {store === "both"
-                        ? "both stores"
-                        : store === "ios"
-                          ? "the App Store"
-                          : "Google Play"}
+                      {submit
+                        ? "Generate screenshots + submit"
+                        : "Generate App Store screenshots"}
                     </Text>
                   )}
                 </Pressable>
@@ -292,26 +299,26 @@ export default function PublishScreen() {
             )}
           </View>
         }
-        renderItem={({ item }) => (
-          <View style={styles.job}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.jobApp}>
-                {item.app} → {item.targets.join(" + ")}
-              </Text>
-              {item.message ? (
-                <Text style={styles.jobMsg}>{item.message}</Text>
-              ) : null}
+        renderItem={({ item }) => {
+          const st = shotsStatus(item);
+          return (
+            <View style={styles.job}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.jobApp}>
+                  {item.app}
+                  {item.targets.includes("shots-submit") ? "  · submit" : ""}
+                </Text>
+                {item.message ? (
+                  <Text style={styles.jobMsg}>{item.message}</Text>
+                ) : null}
+              </View>
+              <Text style={[styles.jobStatus, { color: st.tone }]}>{st.label}</Text>
             </View>
-            <Text
-              style={[styles.jobStatus, { color: statusTone(item.status) }]}
-            >
-              {item.status}
-            </Text>
-          </View>
-        )}
+          );
+        }}
         ListEmptyComponent={
           devices.length > 0 ? (
-            <Text style={styles.empty}>No publishes yet.</Text>
+            <Text style={styles.empty}>No screenshot runs yet.</Text>
           ) : null
         }
         contentContainerStyle={styles.content}
@@ -323,12 +330,7 @@ export default function PublishScreen() {
 function makeStyles(c: any) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: c.bg },
-    center: {
-      flex: 1,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: c.bg,
-    },
+    center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: c.bg },
     content: { padding: 16, paddingBottom: 48 },
     h1: { fontSize: 24, fontWeight: "700", color: c.text },
     sub: { color: c.textMuted, marginTop: 6, marginBottom: 18, lineHeight: 19 },
@@ -351,19 +353,6 @@ function makeStyles(c: any) {
     rowOn: { borderColor: c.accent },
     rowName: { color: c.text, fontWeight: "600", fontSize: 15 },
     rowMeta: { color: c.textMuted, fontSize: 12, marginTop: 3 },
-    segment: { flexDirection: "row", gap: 8 },
-    seg: {
-      flex: 1,
-      paddingVertical: 12,
-      borderRadius: 10,
-      backgroundColor: c.card,
-      borderWidth: 1,
-      borderColor: c.border,
-      alignItems: "center",
-    },
-    segOn: { backgroundColor: c.accent, borderColor: c.accent },
-    segTxt: { color: c.text, fontWeight: "600", fontSize: 13 },
-    segTxtOn: { color: "#fff" },
     input: {
       backgroundColor: c.card,
       borderRadius: 10,
@@ -373,6 +362,31 @@ function makeStyles(c: any) {
       padding: 14,
       fontSize: 15,
     },
+    chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    chip: {
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 999,
+      backgroundColor: c.card,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    chipOn: { backgroundColor: c.accent, borderColor: c.accent },
+    chipTxt: { color: c.text, fontWeight: "600", fontSize: 13 },
+    chipTxtOn: { color: "#fff" },
+    toggleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginTop: 20,
+      backgroundColor: c.card,
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: 10,
+      padding: 14,
+    },
+    toggleLabel: { color: c.text, fontWeight: "600", fontSize: 15 },
+    toggleSub: { color: c.textMuted, fontSize: 12, marginTop: 3, lineHeight: 17 },
     cta: {
       backgroundColor: c.accent,
       borderRadius: 12,
@@ -395,12 +409,7 @@ function makeStyles(c: any) {
     },
     jobApp: { color: c.text, fontWeight: "600", fontSize: 14 },
     jobMsg: { color: c.textMuted, fontSize: 12, marginTop: 3 },
-    jobStatus: { fontWeight: "700", fontSize: 13, textTransform: "uppercase" },
-    empty: {
-      color: c.textMuted,
-      textAlign: "center",
-      marginTop: 28,
-      lineHeight: 19,
-    },
+    jobStatus: { fontWeight: "700", fontSize: 13 },
+    empty: { color: c.textMuted, textAlign: "center", marginTop: 28, lineHeight: 19 },
   });
 }

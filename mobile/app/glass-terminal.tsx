@@ -74,6 +74,8 @@ import {
   invalidateProjectKindCache,
   type ProjectKindResult,
 } from "../src/lib/projectKind";
+import XtermView, { type XtermHandle } from "../src/components/XtermView";
+import { resizeFrame, isTerminalMetaFrame } from "../src/lib/xtermBridge";
 
 type Mode = "agent" | "shell";
 
@@ -101,6 +103,11 @@ const PAL = {
 
 const FONT_SIZE = 14;
 const LINE_HEIGHT = 20;
+// Render shell mode with a true xterm.js VT grid so full-screen TUIs
+// (Claude Code, tmux, vim) display faithfully in the glasses, instead of
+// the stripAnsi → <Text> scrollback (which flattens cursor-addressed
+// redraws). See XtermView.tsx + BEAM_PRO_DEV.md Path A/C.
+const USE_XTERM_SHELL: boolean = true;
 const SAVED_PROMPTS_KEY = "@yaver/glass_terminal/saved_prompts/v1";
 const RELOAD_TARGET_KEY = "@yaver/glass_terminal/reload_target/v1";
 const MAX_SAVED_PROMPTS = 30;
@@ -145,6 +152,7 @@ export default function GlassTerminalScreen() {
   const triggerReloadDirectRef = useRef<(() => Promise<void>) | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
+  const xtermRef = useRef<XtermHandle | null>(null);
 
   const historyRef = useRef<YaverAgentHistoryTurn[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -350,9 +358,24 @@ export default function GlassTerminalScreen() {
       appendLine("sys", "— shell connected —");
     };
     ws.onmessage = (e) => {
-      const raw = typeof e.data === "string"
-        ? e.data
-        : new TextDecoder().decode(new Uint8Array(e.data as ArrayBuffer));
+      const isBinary = typeof e.data !== "string";
+      if (USE_XTERM_SHELL) {
+        // Binary = pty stdout → paint into the VT grid verbatim (no strip).
+        if (isBinary) {
+          xtermRef.current?.write(new Uint8Array(e.data as ArrayBuffer));
+          return;
+        }
+        // Text = control/meta (terminal_session id, sudo_prompt, errors).
+        // Drop the structured meta; pass any plain text straight through.
+        const text = e.data as string;
+        if (!isTerminalMetaFrame(text)) {
+          xtermRef.current?.write(new TextEncoder().encode(text));
+        }
+        return;
+      }
+      const raw = isBinary
+        ? new TextDecoder().decode(new Uint8Array(e.data as ArrayBuffer))
+        : (e.data as string);
       pendingShell.current += stripAnsi(raw);
       if (!flushTimer.current) {
         flushTimer.current = setTimeout(() => {
@@ -725,32 +748,52 @@ export default function GlassTerminalScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <ScrollView
-          ref={scrollRef}
-          style={styles.body}
-          contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
-        >
-          {lines.map((line, i) => (
-            <Text
-              key={i}
-              selectable
-              style={{
-                color: colorFor(line.kind),
-                fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }),
-                fontSize: FONT_SIZE,
-                lineHeight: LINE_HEIGHT,
-                marginBottom: 2,
-              }}
-            >
-              {line.text}
-            </Text>
-          ))}
-          {busy ? (
-            <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: FONT_SIZE, marginTop: 4 }}>
-              …
-            </Text>
-          ) : null}
-        </ScrollView>
+        {mode === "shell" && USE_XTERM_SHELL ? (
+          // True VT grid: full-screen TUIs (Claude Code, tmux, vim) render
+          // faithfully. Keystrokes → PTY (binary); fit → resize frame.
+          <XtermView
+            ref={xtermRef}
+            style={styles.body}
+            background={PAL.bg}
+            foreground={PAL.fg}
+            fontSize={FONT_SIZE}
+            onData={(bytes) => {
+              const ws = wsRef.current;
+              if (ws && ws.readyState === WebSocket.OPEN) ws.send(bytes);
+            }}
+            onResize={(cols, rows) => {
+              const ws = wsRef.current;
+              if (ws && ws.readyState === WebSocket.OPEN) ws.send(resizeFrame(cols, rows));
+            }}
+          />
+        ) : (
+          <ScrollView
+            ref={scrollRef}
+            style={styles.body}
+            contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
+          >
+            {lines.map((line, i) => (
+              <Text
+                key={i}
+                selectable
+                style={{
+                  color: colorFor(line.kind),
+                  fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }),
+                  fontSize: FONT_SIZE,
+                  lineHeight: LINE_HEIGHT,
+                  marginBottom: 2,
+                }}
+              >
+                {line.text}
+              </Text>
+            ))}
+            {busy ? (
+              <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: FONT_SIZE, marginTop: 4 }}>
+                …
+              </Text>
+            ) : null}
+          </ScrollView>
+        )}
 
         {/* Vibe-coding action bar (visible in both modes — see Path C in
          *  BEAM_PRO_DEV.md). Each chip dispatches an independent on-phone

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -184,6 +185,47 @@ export const DeployPanel: React.FC<DeployPanelProps> = ({ onClose }) => {
     );
   };
 
+  // First-class App Store screenshots: walk the app's routes on THIS
+  // device, screenshot each, upload to the agent (which runs the ASC
+  // backend). Closes the overlay first so the captures are clean (no
+  // modal in frame), then reports via an alert.
+  const runStoreShots = () => {
+    const cfg = YaverFeedback.getConfig() as { storeShots?: any } | null;
+    const ss = cfg?.storeShots;
+    if (!ss?.routes?.length) {
+      setStatus('Set config.storeShots.routes (and a navigationRef) to enable.');
+      setStatusTone('error');
+      return;
+    }
+    const app = resolveAppSlug();
+    onClose();
+    // Defer so the overlay is fully dismissed before the first capture.
+    setTimeout(async () => {
+      try {
+        const res = await YaverFeedback.captureStoreScreenshots({
+          app,
+          routes: ss.routes,
+          navigationRef: ss.navigationRef,
+          screens: ss.screens,
+          submit: ss.submit,
+        });
+        const msg = res.ok
+          ? res.submitted
+            ? 'Submitted for App Store review 🎉'
+            : res.staged
+              ? `Uploaded ${res.uploaded} screenshots — staged. One tap left in App Store Connect.`
+              : `Uploaded ${res.uploaded} App Store screenshots.`
+          : res.message || 'Capture failed.';
+        Alert.alert('App Store screenshots', msg);
+      } catch (e: any) {
+        Alert.alert('App Store screenshots', e?.message ?? 'Capture failed.');
+      }
+    }, 500);
+  };
+
+  const storeShotsEnabled =
+    ((YaverFeedback.getConfig() as { storeShots?: any } | null)?.storeShots?.routes?.length ?? 0) > 0;
+
   const triggerDeploy = async (machine: string) => {
     if (!options) return;
     setShipping(true);
@@ -276,6 +318,19 @@ export const DeployPanel: React.FC<DeployPanelProps> = ({ onClose }) => {
       ) : options ? (
         <ScrollView style={styles.list}>{options.devices.map(machineRow)}</ScrollView>
       ) : null}
+
+      {storeShotsEnabled && (
+        <Pressable
+          onPress={runStoreShots}
+          disabled={shipping}
+          style={({ pressed }) => [styles.shotsBtn, pressed && styles.rowPressed]}
+        >
+          <Text style={styles.shotsBtnText}>📸 App Store screenshots</Text>
+          <Text style={styles.shotsBtnSub}>
+            capture this app on-device + upload to App Store Connect
+          </Text>
+        </Pressable>
+      )}
 
       {status && (
         <Text
@@ -387,6 +442,25 @@ const styles = StyleSheet.create({
   },
   rowMetaWarning: {
     color: 'rgb(255,178,115)',
+  },
+  shotsBtn: {
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: 'rgba(124,109,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(124,109,255,0.4)',
+  },
+  shotsBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  shotsBtnSub: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 12,
+    marginTop: 2,
   },
   status: {
     color: 'rgba(255,255,255,0.55)',

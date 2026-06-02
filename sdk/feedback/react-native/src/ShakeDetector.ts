@@ -83,6 +83,7 @@ export class ShakeDetector {
    * the `ShakeEvent` name a handful of third-party shake libraries emit.
    */
   private subscribeDevMenu(onShake: () => void): void {
+    if (typeof DeviceEventEmitter?.addListener !== 'function') return;
     const eventName = Platform.OS === 'ios' ? 'shakeEvent' : 'ShakeEvent';
     this.devMenuSub = DeviceEventEmitter.addListener(eventName, () => {
       this.fire(onShake);

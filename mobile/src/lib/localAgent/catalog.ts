@@ -46,6 +46,7 @@ export const ACTION_CATALOG: ActionSpec[] = [
   { id: "device.audit", description: "Diagnose one device: lifecycle + runner auth + recommendations.", tier: "READ_ONLY", needsDevice: true, via: "context" },
   { id: "status", description: "Rollup of the agent's state on a device (tasks, dev server, tunnels).", tier: "READ_ONLY", needsDevice: true, via: "ops", opsVerb: "status" },
   { id: "info", description: "Hardware/OS snapshot of a device.", tier: "READ_ONLY", needsDevice: true, via: "ops", opsVerb: "info" },
+  { id: "project.list", description: "List the projects/workspace apps available on a device.", tier: "READ_ONLY", needsDevice: true, via: "ops", opsVerb: "workspace" },
 
   // ── SAFE_WRITE (reversible control-plane; auto-exec) ──────────────
   { id: "device.refresh", description: "Re-fetch the device list from the backend.", tier: "SAFE_WRITE", needsDevice: false, via: "context" },
@@ -57,6 +58,14 @@ export const ACTION_CATALOG: ActionSpec[] = [
   { id: "device.claimPending", description: "Claim a freshly-bootstrapped box into the account.", tier: "SAFE_WRITE", needsDevice: true, via: "context" },
   { id: "runner.switch", description: "Switch the coding agent (claude/codex/opencode) on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "context" },
   { id: "reload", description: "Hot-reload the dev server / Hermes bundle on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "reload" },
+  // Git OAuth (device flow) + project setup. Starting the OAuth is SAFE — the
+  // browser approval on the box is its own consent gate; the returned
+  // {user_code, verification_uri} is read aloud. Creds land in
+  // git-credentials.json on the box, P2P, never Convex.
+  { id: "git.connect", description: "Start GitHub/GitLab sign-in (device-flow OAuth) on a device so it can clone/push.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "git_connect" },
+  { id: "project.prepare", description: "Discover a project's state on a device and return a plan to make it serve-able.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "prepare" },
+  { id: "project.select", description: "Select/prepare the active project (work dir) on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "prepare" },
+  { id: "project.new", description: "Scaffold a fresh project / workspace on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "workspace" },
 
   // ── Recovery-provider calls (yaver Go agent, mcp_recovery_tools.go) ──
   // Read-or-recover only, hardware-id-gated server-side — safe for the local
@@ -76,6 +85,11 @@ export const ACTION_CATALOG: ActionSpec[] = [
   { id: "deploy", description: "Deploy the project to a hosting target.", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "deploy" },
   { id: "runner.install", description: "Install a coding runner on a device.", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "runner" },
   { id: "recycle", description: "Restart the agent daemon on a device.", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "recycle" },
+  // Pushing CODE publishes to an external service → CONFIRM. Copying a git
+  // CREDENTIAL to another owned box is sensitive even though it's owned-only
+  // and never touches Convex → CONFIRM.
+  { id: "git.push", description: "Push committed code to its git remote (publishes).", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "run" },
+  { id: "git.pushCreds", description: "Copy this machine's git credentials to one owned remote box so it can clone/pull.", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "git_push" },
 
   // ── BLOCKED (never from voice; irreversible / costly) ─────────────
   { id: "device.remove", description: "Permanently remove a device from the account.", tier: "BLOCKED", needsDevice: true, via: "context" },

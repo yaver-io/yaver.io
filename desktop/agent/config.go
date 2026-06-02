@@ -63,7 +63,7 @@ type Config struct {
 	ACLPeers                      []ACLPeerConfig  `json:"acl_peers,omitempty"`
 	// Speech is the legacy voice config field. Kept parsable so older
 	// config.json files don't error out; new installs should use Voice.
-	Speech              *SpeechConfig       `json:"speech,omitempty"`
+	Speech *SpeechConfig `json:"speech,omitempty"`
 	// Voice is the hands-free agent-loop config (revived 2026-05-27).
 	// Wake/PTT → Deepgram Flux STT → CreateTaskWithOptions(source="voice-input")
 	// → Cartesia Sonic-3 TTS back to caller.
@@ -189,8 +189,9 @@ type SpeechConfig struct {
 // terms for the hands-free agent loop.
 //
 // Phase 1 picks (project_voice_glasses_revival_2026_05_27.md):
-//   STT = Deepgram Flux (Nova-3), model-integrated end-of-turn detection
-//   TTS = Cartesia Sonic-3, 40ms model latency
+//
+//	STT = Deepgram Flux (Nova-3), model-integrated end-of-turn detection
+//	TTS = Cartesia Sonic-3, 40ms model latency
 //
 // Mobile/SDK clients hit GET /voice/status to discover readiness,
 // then open a WebSocket to /voice/stream to push 16kHz mono PCM and
@@ -225,7 +226,7 @@ type VoiceConfig struct {
 	// chars, ~half Cartesia). One signup + one key covers both legs of
 	// the loop — the lowest-friction alt to OpenAI when the user wants
 	// snappier latency without juggling two vendors.
-	DeepgramAPIKey  string `json:"deepgram_api_key,omitempty"`
+	DeepgramAPIKey   string `json:"deepgram_api_key,omitempty"`
 	DeepgramTTSModel string `json:"deepgram_tts_model,omitempty"` // "" = aura-2-thalia-en
 
 	// Cartesia (alternate TTS) — Sonic-3 streaming with 40ms TTFA.
@@ -263,6 +264,31 @@ type VoiceConfig struct {
 	// Hermes-push to paired phones instead of creating a Claude task.
 	// Example: {"sfmg": "/Users/me/Workspace/sfmg", "yaver": "/Users/me/Workspace/yaver.io/mobile"}
 	LaunchProjects map[string]string `json:"launch_projects,omitempty"`
+
+	// AssistantName is what the user calls Yaver out loud. Empty = "yaver"
+	// (the default). Setting it to "sam" / "feyi" / "kole" makes
+	// "Hey Sam, deploy web" route exactly like "Hey Yaver, deploy web" —
+	// the spoken name is stripped from the front of an utterance before
+	// the remainder is matched against the verb catalogue. This is free
+	// today because the wake phrase is transcript *filtering* (any name
+	// works with zero training); a future low-power hotword engine would
+	// need a trained keyword model, so this stays the source of truth for
+	// the spoken name. See assistantWakeWords in voice_control.go.
+	AssistantName string `json:"assistant_name,omitempty"`
+}
+
+// EffectiveAssistantName returns the spoken wake name, defaulting to
+// "yaver" when unset. Lowercased + trimmed so the wake-word match is
+// case-insensitive and forgiving of stray whitespace.
+func (v *VoiceConfig) EffectiveAssistantName() string {
+	if v == nil {
+		return defaultAssistantName
+	}
+	n := strings.ToLower(strings.TrimSpace(v.AssistantName))
+	if n == "" {
+		return defaultAssistantName
+	}
+	return n
 }
 
 // EffectiveSTTProvider returns the configured STT provider, defaulting

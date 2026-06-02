@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,7 +74,7 @@ func TestRenderPhoneStatus_AgentTier(t *testing.T) {
 		Slug:     "agt",
 		Name:     "Agent Project",
 		Template: "blank",
-		Schema:   &PhoneSchema{Tables: []PhoneTable{{Name: "X"}}},
+			Schema:   &PhoneSchema{Tables: []PhoneTable{{Name: "X", Columns: []PhoneColumn{{Name: "id", Type: "string"}}}}},
 	}, WriteOptions{}); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
@@ -82,6 +83,9 @@ func TestRenderPhoneStatus_AgentTier(t *testing.T) {
 		t.Fatalf("PhoneProjectsRoot: %v", err)
 	}
 	workDir := filepath.Join(root, "agt")
+	if err := os.Remove(filepath.Join(workDir, ".yaver", "project.yaml")); err != nil {
+		t.Fatalf("remove repo marker: %v", err)
+	}
 
 	out, err := renderPhoneStatus(context.Background(), workDir)
 	if err != nil {

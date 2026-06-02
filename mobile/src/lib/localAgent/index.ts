@@ -13,8 +13,13 @@
 // one place. See SPIKE-local-voice-helper-and-nicknames-2026-06-01.md.
 
 export * from "./resolver";
+export * from "./assistantName";
 export * from "./catalog";
 export * from "./tiers";
 export * from "./brain";
 export * from "./connectivity";
 export * from "./interpreter";
+export * from "./models";
+export * from "./capabilityLadder";
+export * from "./adapter";
+export * from "./voiceSession";

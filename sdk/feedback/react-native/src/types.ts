@@ -122,9 +122,33 @@ export interface CapabilitySnapshot {
   targets: Record<string, CapabilityTargetReadiness>;
 }
 
+/**
+ * Opt-in config for the overlay's "App Store screenshots" action and the
+ * `capture_store_shots` remote command. When set, the SDK can walk the
+ * app's routes on-device, screenshot each, and upload them to the agent
+ * (which runs the App Store Connect backend).
+ */
+export interface StoreShotsConfig {
+  /** Ordered routes to visit + screenshot (e.g. ['/(tabs)/home', ...]). */
+  routes: string[];
+  /** Navigation handle: a react-navigation ref or expo-router `router`. */
+  navigationRef?: any;
+  /** Also set metadata + attempt submit-for-review after upload. */
+  submit?: boolean;
+  /** Optional per-route screenshot names (defaults to NN_<route>). */
+  screens?: string[];
+}
+
 export interface FeedbackConfig {
   /** URL of the Yaver agent (e.g. "http://192.168.1.10:18080"). If omitted, auto-discovery is used. */
   agentUrl?: string;
+  /**
+   * Enables the overlay's "App Store screenshots" action + the
+   * `capture_store_shots` remote command. The host supplies the route
+   * list (and a navigation ref) once; the SDK captures the real running
+   * app — no simulator needed.
+   */
+  storeShots?: StoreShotsConfig;
   /**
    * Auth token for the Yaver agent. Optional in 0.5+: if omitted, the SDK
    * will hydrate one from AsyncStorage or show its in-app login screen

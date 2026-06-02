@@ -3042,6 +3042,36 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        {/* Publish — build + ship binaries to the App Store / Play */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/publish" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F680}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Publish</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Ship to App Store / Play</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+          </Pressable>
+        )}
+
+        {/* App Store screenshots — auto-capture + submit for review */}
+        {connected && (
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={() => router.navigate("/(tabs)/shots" as any)}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F4F8}"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>App Store Screenshots</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Auto-capture + submit for review</Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+          </Pressable>
+        )}
+
         {/* Monitor — errors + releases + uptime + events + flags */}
         {connected && (
           <Pressable

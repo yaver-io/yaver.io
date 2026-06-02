@@ -40,7 +40,6 @@
     "expo-background-fetch": "~14.0.9",
     "expo-battery": "~10.0.8",
     "expo-blur": "~15.0.8",
-    "expo-glass-effect": "~55.0.11",
     "expo-brightness": "~14.0.8",
     "expo-build-properties": "~1.0.9",
     "expo-calendar": "~15.0.8",
@@ -53,6 +52,7 @@
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.21",
     "expo-font": "~14.0.11",
+    "expo-glass-effect": "~55.0.11",
     "expo-haptics": "~15.0.8",
     "expo-image": "~3.0.11",
     "expo-image-manipulator": "~14.0.8",
@@ -135,6 +135,8 @@
   "devDependencies": {
     "@babel/core": "^7.25.0",
     "@types/react": "~19.1.10",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   }

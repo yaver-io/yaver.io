@@ -29,6 +29,12 @@
  */
 
 export { YaverFeedback } from './YaverFeedback';
+export { captureStoreScreenshots } from './storeShots';
+export type {
+  CaptureStoreScreenshotsOptions,
+  CaptureStoreScreenshotsResult,
+  StoreShotFrame,
+} from './storeShots';
 export { BlackBox } from './BlackBox';
 export { YaverUpdates } from './YaverUpdates';
 export type { YaverUpdatesConfig, PendingUpdate } from './YaverUpdates';

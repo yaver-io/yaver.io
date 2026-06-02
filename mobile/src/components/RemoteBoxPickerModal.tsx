@@ -61,6 +61,26 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   const [hermesReadyByDevice, setHermesReadyByDevice] = React.useState<
     Record<string, { enabled: boolean; reason?: string; notes?: string[] } | null>
   >({});
+  // Per-device "Fix this machine" remediation state. Drives the
+  // /install/mobile flow (Node LTS + hermesc) on the box the user
+  // tapped, streaming live progress so a stalled apt/npm is never an
+  // invisible spinner. Keyed by deviceId so fixing one box never
+  // blocks inspecting another.
+  const [fixByDevice, setFixByDevice] = React.useState<
+    Record<string, { running: boolean; lastLine?: string; error?: string; done?: boolean }>
+  >({});
+  const fixUnsubsRef = React.useRef<Record<string, () => void>>({});
+
+  React.useEffect(() => {
+    if (visible) return;
+    // Modal closed — tear down any in-flight log subscriptions so we
+    // don't leak SSE readers. The install itself keeps running on the
+    // agent; reopening re-subscribes from history.
+    for (const unsub of Object.values(fixUnsubsRef.current)) {
+      try { unsub(); } catch { /* ignore */ }
+    }
+    fixUnsubsRef.current = {};
+  }, [visible]);
 
   React.useEffect(() => {
     if (!visible) {
@@ -178,6 +198,81 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     }
   }, [pickedDevice, selectDevice, activeDevice?.id, lastError, onSelected, onClose]);
 
+  // "Fix this machine" — provision the Hermes reload stack (Node LTS +
+  // hermesc) on the tapped box via the agent's POST /install/mobile,
+  // streaming live progress over /streams/install:mobile. Streaming
+  // only works over a direct connection (streamLog hits ${baseUrl}
+  // without the /peer prefix), so we connect to the box first if it
+  // isn't already the focused client. On a terminal success we drop
+  // the cached hermes-readiness so the row re-checks and flips green.
+  const runFix = React.useCallback(async (device: Device) => {
+    const id = device.id;
+    if (fixByDevice[id]?.running) return;
+    setFixByDevice((prev) => ({ ...prev, [id]: { running: true, lastLine: "Connecting…" } }));
+    try {
+      // Bring the box up directly so its install log can stream back.
+      if (!connectionManager.clientFor(id).isConnected) {
+        await selectDevice(device);
+      }
+      const client = connectionManager.clientFor(id);
+      if (!client.isConnected) {
+        throw new Error((lastError || "").trim() || `Couldn't reach ${device.name}.`);
+      }
+      const started = await client.installTool("mobile");
+      if (!started.ok) {
+        throw new Error(started.error || "Couldn't start the fix on this machine.");
+      }
+      // Subscribe to live progress. The terminal frame is
+      // {type:"result", status:"ok"|"error"} (see install_http.go).
+      let settled = false;
+      const finish = (patch: { error?: string; done?: boolean }) => {
+        if (settled) return;
+        settled = true;
+        try { fixUnsubsRef.current[id]?.(); } catch { /* ignore */ }
+        delete fixUnsubsRef.current[id];
+        setFixByDevice((prev) => ({ ...prev, [id]: { running: false, ...patch } }));
+        if (patch.done && !patch.error) {
+          // Force a fresh capability re-check for this device — clearing
+          // the entry makes the loader effect re-run and flip the row.
+          setHermesReadyByDevice((prev) => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+        }
+      };
+      const unsub = client.streamLog(
+        started.stream,
+        (ev: any) => {
+          if (ev?.type === "result") {
+            if (ev.status === "ok") finish({ done: true });
+            else finish({ error: ev.error || "Fix failed on this machine.", done: true });
+            return;
+          }
+          const line = typeof ev?.text === "string" ? ev.text : "";
+          if (line) {
+            setFixByDevice((prev) => ({
+              ...prev,
+              [id]: { ...(prev[id] || { running: true }), running: true, lastLine: line },
+            }));
+          }
+        },
+        () => {
+          // Stream ended without a terminal result frame — treat as
+          // done so the spinner doesn't hang forever; the row re-check
+          // is the source of truth for whether it actually worked.
+          finish({ done: true });
+        },
+      );
+      fixUnsubsRef.current[id] = unsub;
+    } catch (err: any) {
+      setFixByDevice((prev) => ({
+        ...prev,
+        [id]: { running: false, error: err?.message || "Fix failed." },
+      }));
+    }
+  }, [fixByDevice, selectDevice, lastError]);
+
   const pickedDeviceIsCurrent = !!pickedDevice && activeDevice?.id === pickedDevice.id;
   const pickedDeviceIsConnected = !!pickedDevice && connectedSet.has(pickedDevice.id);
 
@@ -261,7 +356,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               Switch remote box
             </Text>
             <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 20 }}>
-              Pick which machine should own Hermes builds, reloads, and project discovery on this tab.
+              Pick which machine should own Hermes builds, reloads, and project discovery. This choice applies across the whole app.
             </Text>
             {eligibleDevices.length === 0 ? (
               <View style={{ padding: 16, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard }}>
@@ -276,6 +371,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               eligibleDevices.map((device) => {
                 const ping = pingByDevice[device.id];
                 const hermesReady = hermesReadyByDevice[device.id];
+                const fix = fixByDevice[device.id];
                 const selected = pickedDeviceId === device.id;
                 const agentVer = (device.agentVersion || "").trim();
                 const distance = agentVer && latestCliVersion
@@ -371,6 +467,51 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                           <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={2}>
                             {hermesReady.notes[0]}
                           </Text>
+                        ) : null}
+                        {hermesReady && !hermesReady.enabled ? (
+                          fix?.running ? (
+                            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}>
+                              <ActivityIndicator color={c.accent} size="small" />
+                              <Text
+                                style={{ color: c.textMuted, fontSize: 10, marginLeft: 8, flex: 1 }}
+                                numberOfLines={1}
+                              >
+                                {fix.lastLine || "Fixing…"}
+                              </Text>
+                            </View>
+                          ) : (
+                            <>
+                              <Pressable
+                                onPress={(e) => {
+                                  // Don't let the row's onPress (switch
+                                  // device) also fire — fixing is a
+                                  // distinct intent from switching to it.
+                                  (e as any)?.stopPropagation?.();
+                                  void runFix(device);
+                                }}
+                                style={({ pressed }) => ({
+                                  alignSelf: "flex-start",
+                                  marginTop: 8,
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 7,
+                                  borderRadius: 8,
+                                  borderWidth: 1,
+                                  borderColor: c.accent,
+                                  backgroundColor: pressed ? c.accent + "22" : "transparent",
+                                  opacity: pressed ? 0.85 : 1,
+                                })}
+                              >
+                                <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>
+                                  {fix?.error ? "Retry fix" : "Fix this machine"}
+                                </Text>
+                              </Pressable>
+                              {fix?.error ? (
+                                <Text style={{ color: c.warn, fontSize: 10, marginTop: 4 }} numberOfLines={2}>
+                                  {fix.error}
+                                </Text>
+                              ) : null}
+                            </>
+                          )
                         ) : null}
                         {outdated ? (
                           <Text style={{ color: c.warn, fontSize: 11, marginTop: 2, fontWeight: "600" }}>

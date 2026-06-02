@@ -174,7 +174,7 @@ export default function PhoneProjectCodeScreen() {
           { text: "Cancel", style: "cancel" },
           {
             text: "Create",
-            onPress: async (input) => {
+            onPress: async (input?: string) => {
               const relPath = (input ?? "").trim();
               if (!relPath) return;
               try {

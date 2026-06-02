@@ -842,6 +842,7 @@ export interface AgentStatus {
     name: string;
     command: string;
     installed: boolean;
+    ready?: boolean;
     authConfigured?: boolean;
     authSource?: string;
     warning?: string;
