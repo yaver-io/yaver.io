@@ -1667,7 +1667,7 @@ http.route({
     await ctx.runMutation(api.auth.refreshSession, { tokenHash }).catch(() => {});
 
     const body = await request.json();
-    await ctx.runMutation(api.devices.heartbeat, {
+    const heartbeatResult = await ctx.runMutation(api.devices.heartbeat, {
       tokenHash,
       deviceId: body.deviceId,
       runners: body.runners,
@@ -1714,7 +1714,10 @@ http.route({
           : undefined,
     });
 
-    return jsonResponse({ ok: true });
+    return jsonResponse({
+      ok: true,
+      connectionPreferences: heartbeatResult?.connectionPreferences ?? [],
+    });
   }),
 });
 

@@ -1167,6 +1167,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           token,
           lanIps: device.lanIps,
           sessionTunnels: tunnelServersForDevice(device),
+          connectionPreferences: device.connectionPreferences,
         });
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Could not connect in 20s")), 20000)
@@ -2944,6 +2945,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             token,
             lanIps: device.lanIps,
             sessionTunnels: tunnelServersForDevice(device),
+            connectionPreferences: device.connectionPreferences,
           });
         } catch {
           // Silent. The sibling stays unpooled; user can tap it

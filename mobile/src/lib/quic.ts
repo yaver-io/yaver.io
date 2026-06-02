@@ -885,6 +885,13 @@ export type ConnectionState = "disconnected" | "connecting" | "connected" | "err
 export type ConnectionMode = "direct" | "relay" | "tunnel" | null;
 /** How the connection was established — tracked for diagnostics and faster reconnection. */
 export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "lan-heartbeat" | "lan-tailscale" | "lan-cached" | "relay" | "cloudflare-tunnel" | null;
+export type ConnectionPreferenceKind = "direct-lan" | "tailscale" | "headscale" | "own-vpn" | "https-tunnel" | "free-relay" | "private-relay";
+export interface ConnectionPreference {
+  kind: ConnectionPreferenceKind;
+  active: boolean;
+  preferred: boolean;
+  source?: string;
+}
 
 export type OutputCallback = (taskId: string, line: string) => void;
 export type ConnectionStateCallback = (state: ConnectionState) => void;
@@ -1022,6 +1029,7 @@ export class QuicClient {
   // session attaches via whichever address the phone can actually route to
   // (e.g. Tailscale 100.x when on cellular, plain Wi-Fi when same LAN).
   private _lanIps: string[] = [];
+  private _connectionPreferences: ConnectionPreference[] = [];
   agentAuthExpired = false; // true when agent's session with Convex has expired
 
   // Relay health tracking
@@ -1085,6 +1093,7 @@ export class QuicClient {
     deviceId: string,
     lanIps?: string[],
     sessionTunnels?: TunnelServer[],
+    connectionPreferences?: ConnectionPreference[],
   ): void {
     const isReattach = this.deviceId === deviceId;
     this.host = host;
@@ -1093,6 +1102,9 @@ export class QuicClient {
     this.deviceId = deviceId;
     this._lanIps = Array.isArray(lanIps)
       ? lanIps.filter((s) => typeof s === "string" && s.length > 0)
+      : [];
+    this._connectionPreferences = Array.isArray(connectionPreferences)
+      ? connectionPreferences.filter((pref) => pref && typeof pref.kind === "string")
       : [];
     this.setSessionTunnelServers(sessionTunnels);
     // Hydrate the "had successful connect" flag from the persisted cache
@@ -1383,9 +1395,9 @@ export class QuicClient {
    * Establish a connection to the desktop agent.
    * Tries direct connection first, then relay servers in priority order.
    */
-  async connect(host: string, port: number, token: string, deviceId: string, lanIps?: string[], sessionTunnels?: TunnelServer[]): Promise<void> {
+  async connect(host: string, port: number, token: string, deviceId: string, lanIps?: string[], sessionTunnels?: TunnelServer[], connectionPreferences?: ConnectionPreference[]): Promise<void> {
     void this.hydrateTtsTaskMode(); // apply the persisted "TTS mode" flag to tasks created this session
-    this.primeTarget(host, port, token, deviceId, lanIps, sessionTunnels);
+    this.primeTarget(host, port, token, deviceId, lanIps, sessionTunnels, connectionPreferences);
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
     this._reconnectStopped = false;
@@ -5003,6 +5015,43 @@ export class QuicClient {
     return second >= 64 && second <= 127;
   }
 
+  private transportPolicy(): {
+    hasPrefs: boolean;
+    allowLanDirect: boolean;
+    allowTailnet: boolean;
+    allowPrivateDirect: boolean;
+    allowTunnel: boolean;
+    allowRelay: boolean;
+  } {
+    const prefs = this._connectionPreferences || [];
+    if (prefs.length === 0) {
+      return {
+        hasPrefs: false,
+        allowLanDirect: true,
+        allowTailnet: true,
+        allowPrivateDirect: true,
+        allowTunnel: true,
+        allowRelay: true,
+      };
+    }
+    const enabled = new Set(
+      prefs
+        .filter((pref) => pref.active || pref.preferred)
+        .map((pref) => pref.kind)
+    );
+    const allowLanDirect = enabled.has("direct-lan");
+    const allowTailnet = enabled.has("tailscale") || enabled.has("headscale");
+    const allowPrivateDirect = allowLanDirect || allowTailnet || enabled.has("own-vpn");
+    return {
+      hasPrefs: true,
+      allowLanDirect,
+      allowTailnet,
+      allowPrivateDirect,
+      allowTunnel: enabled.has("https-tunnel"),
+      allowRelay: enabled.has("free-relay") || enabled.has("private-relay"),
+    };
+  }
+
   /** Race every direct-connection candidate in parallel. Resolves with the
    *  first /health 200 within the per-probe budget, null if none answer.
    *  Cancels losers via AbortController so we never leak sockets.
@@ -5018,6 +5067,7 @@ export class QuicClient {
     authExpired: boolean;
   } | null> {
     type Candidate = { ip: string; port: number; path: ConnectionPath };
+    const policy = this.transportPolicy();
     const seen = new Set<string>();
     const candidates: Candidate[] = [];
     const push = (ip: string, port: number, path: ConnectionPath) => {
@@ -5030,7 +5080,7 @@ export class QuicClient {
 
     // Beacon first — freshest signal, tells us the agent is on this LAN now.
     const lanInfo = this.deviceId ? beaconListener.getLocalIP(this.deviceId) : null;
-    if (lanInfo) push(lanInfo.ip, lanInfo.port, "lan-beacon");
+    if (lanInfo && policy.allowLanDirect) push(lanInfo.ip, lanInfo.port, "lan-beacon");
 
     // Heartbeat-advertised IPs from Convex. Port is whatever the agent is
     // listening on (same port for every interface — single HTTP server).
@@ -5038,12 +5088,14 @@ export class QuicClient {
     for (const ip of this._lanIps) {
       // Tag Tailscale IPs distinctly so the log shows which path actually won.
       const path: ConnectionPath = this.isTailscaleIP(ip) ? "lan-tailscale" : "lan-heartbeat";
+      if (path === "lan-tailscale" && !policy.allowTailnet) continue;
+      if (path !== "lan-tailscale" && !policy.allowPrivateDirect) continue;
       push(ip, port, path);
     }
 
     // Convex-stored primary IP last — kept for backwards-compat with agents
     // that haven't upgraded to localIps yet. May be stale.
-    if (opts.includeStoredHost !== false && this.host && this.isPrivateIP(this.host) && this.port) {
+    if (opts.includeStoredHost !== false && policy.allowLanDirect && this.host && this.isPrivateIP(this.host) && this.port) {
       push(this.host, this.port, "lan-convex-ip");
     }
 
@@ -5120,6 +5172,7 @@ export class QuicClient {
       const netState = await NetInfo.fetch();
       const isWifi = netState.type === "wifi" || netState.type === "ethernet";
       this._networkType = netState.type;
+      const policy = this.transportPolicy();
 
       // Strategy: direct-first on WiFi (lowest latency), relay-fallback.
       // On cellular, still probe heartbeat-advertised localIps: VPN
@@ -5156,7 +5209,7 @@ export class QuicClient {
       //    others are abandoned. This collapses the old serial 2s+2s
       //    waterfall into a single ~2s window and survives stale Convex IPs
       //    because the freshest signal wins, not the first-tried one.
-      if (!connected && !this._forceRelay && (isWifi || this._lanIps.length > 0)) {
+      if (!connected && !this._forceRelay && (policy.allowPrivateDirect || policy.allowLanDirect) && (isWifi || this._lanIps.length > 0)) {
         const winner = await this.raceDirectCandidates({ includeStoredHost: isWifi });
         if (winner) {
           this.host = winner.ip;
@@ -5172,7 +5225,7 @@ export class QuicClient {
 
       // 2. Try Cloudflare Tunnels (works through any firewall)
       const tunnels = this.effectiveTunnelServers;
-      if (!connected && tunnels.length > 0) {
+      if (!connected && policy.allowTunnel && tunnels.length > 0) {
         console.log("[QUIC] Trying", tunnels.length, "Cloudflare Tunnel(s)");
         for (const tunnel of tunnels) {
           try {
@@ -5212,7 +5265,7 @@ export class QuicClient {
       }
 
       // 3. Try relay servers (fallback for cellular, or when direct failed)
-      if (!connected && this.deviceId && this.relayServers.length > 0) {
+      if (!connected && policy.allowRelay && this.deviceId && this.relayServers.length > 0) {
         console.log("[QUIC] Trying", this.relayServers.length, "relay server(s)");
         for (const relay of this.relayServers) {
           try {

@@ -27,7 +27,7 @@
 // eviction, opt-out per device).
 
 import { QuicClient, createQuicClient, setQuicClientResolver } from "./quic";
-import type { TunnelServer, RelayServer } from "./quic";
+import type { ConnectionPreference, TunnelServer, RelayServer } from "./quic";
 
 type ManagerListener = () => void;
 
@@ -151,6 +151,7 @@ class ConnectionManager {
       token: string;
       lanIps?: string[];
       sessionTunnels?: TunnelServer[];
+      connectionPreferences?: ConnectionPreference[];
     },
   ): Promise<void> {
     const id = deviceId.trim();
@@ -160,7 +161,7 @@ class ConnectionManager {
     const existing = this.inflightConnects.get(id);
     if (existing) return existing;
     const promise = client
-      .connect(params.host, params.port, params.token, id, params.lanIps, params.sessionTunnels)
+      .connect(params.host, params.port, params.token, id, params.lanIps, params.sessionTunnels, params.connectionPreferences)
       .finally(() => {
         // Drop the entry whether the connect resolved or rejected so
         // the next attempt starts fresh — leaving a rejected Promise

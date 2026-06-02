@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net"
 	"net/url"
 	"sort"
@@ -179,4 +180,55 @@ func connectionPreferenceRank(kind string) int {
 	default:
 		return 100
 	}
+}
+
+func syncConnectionPreferencesFromConvex(prefs []ConnectionPreference) error {
+	userPrefs := make([]ConnectionPreference, 0, len(prefs))
+	for _, pref := range prefs {
+		if strings.EqualFold(strings.TrimSpace(pref.Source), "user-config") {
+			userPrefs = append(userPrefs, normalizeConnectionPreference(pref))
+		}
+	}
+	sortConnectionPreferences(userPrefs)
+
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return err
+	}
+	current := make([]ConnectionPreference, 0, len(cfg.ConnectionPreferences))
+	for _, pref := range cfg.ConnectionPreferences {
+		current = append(current, normalizeConnectionPreference(pref))
+	}
+	sortConnectionPreferences(current)
+	if sameConnectionPreferenceList(current, userPrefs) {
+		return nil
+	}
+	cfg.ConnectionPreferences = userPrefs
+	return SaveConfig(cfg)
+}
+
+func normalizeConnectionPreference(pref ConnectionPreference) ConnectionPreference {
+	pref.Kind = strings.TrimSpace(strings.ToLower(pref.Kind))
+	pref.Source = strings.TrimSpace(strings.ToLower(pref.Source))
+	if pref.Source == "" {
+		pref.Source = "user-config"
+	}
+	return pref
+}
+
+func sortConnectionPreferences(prefs []ConnectionPreference) {
+	sort.SliceStable(prefs, func(i, j int) bool {
+		ri := connectionPreferenceRank(prefs[i].Kind)
+		rj := connectionPreferenceRank(prefs[j].Kind)
+		if ri != rj {
+			return ri < rj
+		}
+		return prefs[i].Kind < prefs[j].Kind
+	})
+}
+
+func sameConnectionPreferenceList(a, b []ConnectionPreference) bool {
+	aj, _ := json.Marshal(a)
+	bj, _ := json.Marshal(b)
+	return string(aj) == string(bj)
 }

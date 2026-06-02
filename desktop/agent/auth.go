@@ -1566,7 +1566,7 @@ var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 // LAN/Tailscale/Ethernet address the agent has (localIps) so mobile clients
 // can race them in parallel during connect. Returns ErrAuthExpired if the
 // server returns 401.
-func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, installedRunnerIDs []string, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture, connectionPreferences []ConnectionPreference) error {
+func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, installedRunnerIDs []string, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture, connectionPreferences []ConnectionPreference) ([]ConnectionPreference, error) {
 	payload := map[string]interface{}{
 		"deviceId":           deviceID,
 		"runners":            runners,
@@ -1613,31 +1613,37 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal heartbeat: %w", err)
+		return nil, fmt.Errorf("marshal heartbeat: %w", err)
 	}
 
 	req, err := newBearerRequest("POST", baseURL+"/devices/heartbeat", token, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create heartbeat request: %w", err)
+		return nil, fmt.Errorf("create heartbeat request: %w", err)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("heartbeat request: %w", err)
+		return nil, fmt.Errorf("heartbeat request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return ErrAuthExpired
+		return nil, ErrAuthExpired
 	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("heartbeat failed (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("heartbeat failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
 	if _, ok := payload["hardwareProfile"]; ok {
 		markHardwareProfileSent()
 	}
-	return nil
+	var heartbeatResp struct {
+		ConnectionPreferences []ConnectionPreference `json:"connectionPreferences"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&heartbeatResp); err != nil {
+		return nil, nil
+	}
+	return heartbeatResp.ConnectionPreferences, nil
 }
 
 // ReportMetrics sends CPU/RAM metrics to Convex.

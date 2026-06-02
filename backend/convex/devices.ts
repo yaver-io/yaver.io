@@ -345,6 +345,47 @@ function mergeConnectionPreferences(
   return [...byKind.values()];
 }
 
+function ipKindForConnectionPreference(raw: string): "direct-lan" | "tailscale" | null {
+  const parts = String(raw || "").trim().split(".").map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return null;
+  const [a, b] = parts;
+  if (a === 100 && b >= 64 && b <= 127) return "tailscale";
+  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return "direct-lan";
+  return null;
+}
+
+function inferConnectionPreferencesForDevice(
+  device: Pick<Doc<"devices">, "localIps" | "publicEndpoints" | "lastTunnelEvent" | "connectionPreferences">,
+): Doc<"devices">["connectionPreferences"] {
+  const out: NonNullable<Doc<"devices">["connectionPreferences"]> = [];
+  const push = (kind: NonNullable<Doc<"devices">["connectionPreferences"]>[number]["kind"], preferred = false, source: NonNullable<Doc<"devices">["connectionPreferences"]>[number]["source"] = "agent-detected") => {
+    if (out.some((pref) => pref.kind === kind)) return;
+    out.push({ kind, active: true, preferred, source });
+  };
+
+  const existingUserPrefs = (device.connectionPreferences || []).filter((pref) => pref.source === "user-config");
+  const forceHeadscale = existingUserPrefs.some((pref) => pref.kind === "headscale" && (pref.active || pref.preferred));
+  for (const ip of device.localIps || []) {
+    const kind = ipKindForConnectionPreference(ip);
+    if (kind === "direct-lan") push("direct-lan", true);
+    if (kind === "tailscale") push(forceHeadscale ? "headscale" : "tailscale", true);
+  }
+
+  for (const endpoint of device.publicEndpoints || []) {
+    const value = String(endpoint || "").trim().toLowerCase();
+    if (!value.startsWith("https://")) continue;
+    if (value.includes(".yaver.io/") || value.endsWith(".yaver.io")) {
+      push("free-relay", false, "relay-presence");
+    } else {
+      push("https-tunnel", false);
+    }
+  }
+  if (device.lastTunnelEvent?.online) {
+    push("free-relay", false, "relay-presence");
+  }
+  return mergeConnectionPreferences(device.connectionPreferences, out) || out;
+}
+
 function summarizeShareRules(rules: ShareRule[]): Pick<ListedDevice, "sharedWithGuests" | "sharedGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners"> {
   const projects = new Set<string>();
   const runners = new Set<string>();
@@ -826,6 +867,11 @@ export const heartbeat = mutation({
       patch.publishCapabilities = args.publishCapabilities;
     }
     await ctx.db.patch(device._id, patch);
+    return {
+      connectionPreferences: (patch.connectionPreferences as Doc<"devices">["connectionPreferences"] | undefined)
+        ?? device.connectionPreferences
+        ?? [],
+    };
   },
 });
 
@@ -860,6 +906,57 @@ export const setConnectionPreferences = mutation({
     await ctx.db.patch(device._id, {
       connectionPreferences: mergeConnectionPreferences(runtimePrefs, userPrefs),
     });
+  },
+});
+
+/**
+ * Fleet/user backfill for existing device rows. New agents seed
+ * connectionPreferences on heartbeat, but existing offline machines may
+ * not heartbeat for days. This infers a privacy-safe best effort from
+ * already-stored localIps/publicEndpoints/relay presence. It is
+ * idempotent and preserves user-config rows.
+ */
+export const backfillConnectionPreferences = mutation({
+  args: {
+    tokenHash: v.optional(v.string()),
+    dryRun: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    let scopedSession: Awaited<ReturnType<typeof validateSessionInternal>> = null;
+    if (args.tokenHash) {
+      scopedSession = await validateSessionInternal(ctx, args.tokenHash);
+      if (!scopedSession) throw new Error("Unauthorized");
+    }
+
+    const allDevices = scopedSession
+      ? await ctx.db
+          .query("devices")
+          .withIndex("by_userId", (q) => q.eq("userId", scopedSession!.user._id))
+          .collect()
+      : await ctx.db.query("devices").collect();
+    const devices = typeof args.limit === "number" && args.limit > 0
+      ? allDevices.slice(0, Math.floor(args.limit))
+      : allDevices;
+
+    let updated = 0;
+    let unchanged = 0;
+    let inferred = 0;
+    for (const device of devices) {
+      const next = inferConnectionPreferencesForDevice(device);
+      if (next && next.length > 0) inferred++;
+      const before = JSON.stringify(device.connectionPreferences || []);
+      const after = JSON.stringify(next || []);
+      if (before === after) {
+        unchanged++;
+        continue;
+      }
+      if (!args.dryRun) {
+        await ctx.db.patch(device._id, { connectionPreferences: next });
+      }
+      updated++;
+    }
+    return { ok: true, dryRun: !!args.dryRun, total: devices.length, inferred, updated, unchanged };
   },
 });
 
