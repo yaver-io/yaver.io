@@ -66,6 +66,23 @@ export class YaverConvexClient {
     return inner ?? {};
   }
 
+  /**
+   * Mint a scoped SDK token from the account session (POST /sdk/token).
+   * Use this to hand a client a least-privilege credential instead of the
+   * account token. NOTE: SDK-token acceptance on the agent's /tasks endpoint
+   * should be verified against a bootstrapped agent; for strict multi-user
+   * isolation prefer the guest flow (allowed runners/projects + containerize).
+   */
+  async mintSdkToken(opts?: { label?: string; scopes?: string[]; allowedCIDRs?: string[]; expiresInMs?: number }): Promise<{ token: string; expiresAt?: number }> {
+    const res = await fetch(`${this.convexUrl}/sdk/token`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts ?? {}),
+    });
+    if (!res.ok) throw new Error(`/sdk/token -> HTTP ${res.status}`);
+    return res.json();
+  }
+
   private async get<T>(path: string): Promise<T> {
     const res = await fetch(`${this.convexUrl}${path}`, {
       headers: { Authorization: `Bearer ${this.token}` },

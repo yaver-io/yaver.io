@@ -53,6 +53,14 @@ export class YaverApp {
     return this.convex.listDevices();
   }
 
+  /**
+   * Mint a scoped, short-lived client token from the account — so clients never
+   * receive the account secret. Hand the result to `sessionHandle`/the client.
+   */
+  mintClientToken(opts?: { label?: string; scopes?: string[]; ttlMs?: number }): Promise<{ token: string; expiresAt?: number }> {
+    return this.convex.mintSdkToken({ label: opts?.label, scopes: opts?.scopes, expiresInMs: opts?.ttlMs });
+  }
+
   /** Build the opaque handle a client needs to connect. Attach `token` before sending. */
   async sessionHandle(deviceId: string, token?: string): Promise<SessionHandle> {
     const bundle = await this.broker.prepareSession(deviceId);
