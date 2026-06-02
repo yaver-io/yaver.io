@@ -24,6 +24,7 @@ import type * as crons from "../crons.js";
 import type * as developerLogs from "../developerLogs.js";
 import type * as deviceCode from "../deviceCode.js";
 import type * as deviceEvents from "../deviceEvents.js";
+import type * as deviceLabels from "../deviceLabels.js";
 import type * as deviceMetrics from "../deviceMetrics.js";
 import type * as devices from "../devices.js";
 import type * as downloads from "../downloads.js";
@@ -76,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   developerLogs: typeof developerLogs;
   deviceCode: typeof deviceCode;
   deviceEvents: typeof deviceEvents;
+  deviceLabels: typeof deviceLabels;
   deviceMetrics: typeof deviceMetrics;
   devices: typeof devices;
   downloads: typeof downloads;

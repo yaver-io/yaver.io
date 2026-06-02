@@ -961,7 +961,8 @@ export default defineSchema({
     // /machine/pending-tls on Convex. We never store the plaintext.
     machineTokenHash: v.optional(v.string()),
   }).index("by_user", ["userId"])
-    .index("by_team", ["teamId"]),
+    .index("by_team", ["teamId"])
+    .index("by_deviceId", ["deviceId"]),
 
   // User-bound custom domains. Independent of the auto-generated
   // <shortId>.cloud.yaver.io / <shortId>.relay.yaver.io hostnames, so a user
