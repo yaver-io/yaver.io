@@ -54,18 +54,19 @@ That means the current relay is already suitable for the fallback transport used
 
 ## Reachability Layers — How Mobile Finds the Agent
 
-The mobile app races every available transport in parallel and keeps
-the first one to answer `/health`. Each transport just needs to
-publish a working URL into the device's `publicEndpoints` list (or
-private IP into `localIps`); mobile is transport-agnostic.
+The mobile app tries the fastest safe transport first and falls back
+through the rest: cached winner, direct `localIps`, HTTPS tunnel/public
+endpoint, then relay. Each transport just needs to publish a working
+HTTPS URL into the device's `publicEndpoints` list or a direct-routable
+IP into `localIps`.
 
 | Transport | How the URL gets published | Use when |
 |---|---|---|
 | **LAN direct** | Agent enumerates RFC1918 interface IPs into `localIps[]` on every heartbeat. Mobile races over plain HTTP `:18080`. | Phone + box on the same Wi-Fi/Ethernet. Lowest latency. |
-| **Tailscale / Headscale** | Add the 100.x address to `public_endpoints` in `~/.yaver/config.json` (auto-detection from the Tailscale interface is on the roadmap). Use `https://100.x.y.z:18443` so iOS App Transport Security accepts it. | Both ends on the same tailnet. Direct, end-to-end encrypted, NAT-pierced. |
+| **Tailscale / Headscale** | Agent enumerates 100.64.0.0/10 tailnet IPs into `localIps[]` on every heartbeat. Mobile probes them even when the underlay is cellular. | Both ends on the same tailnet. Direct, end-to-end encrypted by the overlay, NAT-pierced. |
 | **Cloudflare Tunnel** | Configure a `cloudflare_tunnels` entry in `~/.yaver/config.json` (or a manual `public_endpoints` URL). Agent publishes the hostname on every heartbeat. | Any-network, no port-forwarding. Costs nothing on Cloudflare's free plan. |
-| **Custom VPN / WireGuard** | Add the VPN-side hostname/IP to `public_endpoints`. Same shape as Tailscale. | Self-hosted overlay where you already own the routing. |
-| **Auto-detected public IP** | Agent probes `api.ipify.org` / `icanhazip.com` / `ifconfig.me` on heartbeat (cached 5 min) and appends `http://<ip>:<port>` to `publicEndpoints`. Default ON; opt out via `disable_auto_public_ip: true`. | Box has a routable public IPv4 and you didn't want to set up Cloudflare/Tailscale. Works through Hetzner, DigitalOcean, EC2 etc. |
+| **Custom VPN / WireGuard** | RFC1918 VPN IPs are picked up in `localIps[]`; HTTPS VPN hostnames can be added to `public_endpoints`. | Self-hosted overlay where you already own the routing. |
+| **Auto-detected public IP** | Agent probes `api.ipify.org` / `icanhazip.com` / `ifconfig.me` on heartbeat (cached 5 min) and appends `http://<ip>:<port>` to `publicEndpoints`. Default ON; opt out via `disable_auto_public_ip: true`. | CLI/manual diagnostics for public-IP boxes. Mobile skips cleartext public HTTP and falls back to HTTPS tunnel/relay unless you publish an HTTPS endpoint. |
 | **Yaver-hosted relay (free)** | Agent registers with the public relay (`relay.yaver.io:4433`) on startup and is auto-assigned `https://<deviceId>.dev.yaver.io`. Published as `publicUrl` in the heartbeat. | No public IP, no Tailscale, no setup. Pass-through QUIC tunnel. Bandwidth shared. |
 | **Yaver-hosted managed relay (paid)** | Same as the free relay but provisioned per-team via `yaver-cli managed-relay provision`. Reserved bandwidth, custom subdomain. | Teams who want isolation from the shared free pool. |
 | **Self-hosted Yaver relay** | Run `yaver-relay serve --expose-domain dev.your-zone.com` on your own VPS, point `*.dev.your-zone.com` DNS at it, terminate TLS via wildcard cert. Agent connects per the `relay_servers` Convex entry. | Fleet operators who want everything under their own DNS + TLS. |
