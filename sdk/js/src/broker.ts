@@ -1,13 +1,14 @@
 /**
  * broker — the SERVER side (@yaver/server). Runs where the org's Yaver account
- * secret can live safely (e.g. Talos's server). It NEVER ships the account token
+ * secret can live safely (your app's backend). It NEVER ships the account token
  * to a browser/app; instead it assembles the connection bundle a client needs
  * (device coordinates + relay endpoint/password + tunnel) and lets the caller
- * attach a scoped client token.
+ * attach a scoped client token. This is the generic embedding pattern for any
+ * on-prem AI tool that wants its users to reach a Yaver agent.
  *
- *   Talos client  --ask-->  Talos server (YaverBroker)  --discover-->  Yaver Convex
- *                 <--bundle + scoped token--                (account secret stays here)
- *   Talos client  --connect()-->  agent  (direct / tunnel / relay P2P)
+ *   app client  --ask-->  app server (YaverBroker)  --discover-->  Yaver Convex
+ *               <--bundle + scoped token--             (account secret stays here)
+ *   app client  --connect()-->  agent  (direct / tunnel / relay P2P)
  */
 import { YaverConvexClient, type DeviceCoords, type RelayServer, type YaverSettings, DEFAULT_CONVEX_URL } from './discovery';
 
