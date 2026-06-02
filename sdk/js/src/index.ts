@@ -46,3 +46,11 @@ export type {
   YaverBackendClientOptions,
   YaverCollection,
 } from './backend';
+
+// Client connection ladder (@yaver/client) + server broker (@yaver/server)
+export { YaverConvexClient, DEFAULT_CONVEX_URL } from './discovery';
+export type { DeviceCoords, RelayServer, YaverSettings } from './discovery';
+export { connect, pickTransport, buildCandidates, AgentSession } from './connect';
+export type { Transport, TransportKind, ConnectOptions } from './connect';
+export { YaverBroker } from './broker';
+export type { ConnectBundle, YaverBrokerOptions } from './broker';
