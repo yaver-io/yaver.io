@@ -8774,9 +8774,12 @@ func getLocalIP() string {
 		return ""
 	}
 	// Only advertise IPs the mobile can talk to over plain HTTP.
-	// IsPrivate covers RFC1918 (10/8, 172.16/12, 192.168/16) plus
-	// RFC4193 (IPv6 ULA). Loopback and link-local are also excluded.
-	if !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+	// net.IP.IsPrivate covers RFC1918 (10/8, 172.16/12, 192.168/16)
+	// plus RFC4193 (IPv6 ULA), but NOT the CGNAT 100.64/10 block used
+	// by Tailscale/headscale. Treat 100.64/10 as direct-reachable too:
+	// phones on the same tailnet can route it even when NetInfo says the
+	// underlying network is cellular.
+	if !isPrivateOrTailnetIPv4(ip) && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
 		// Public IP — fall through to scanning interfaces in case
 		// there's a private NIC alongside (e.g. tailscale interface
 		// that wasn't picked as the default route).
@@ -8837,7 +8840,7 @@ func firstPrivateIPv4() string {
 			if ip == nil || ip.To4() == nil {
 				continue
 			}
-			if !ip.IsPrivate() {
+			if !isPrivateOrTailnetIPv4(ip) {
 				continue
 			}
 			// Defense-in-depth: even an interface whose name slipped
@@ -8887,7 +8890,7 @@ func isContainerBridgeInterfaceName(name string) bool {
 }
 
 // getLocalIPs enumerates every reachable IPv4 address this host has —
-// Wi-Fi LAN (192.168.x / 10.x / 172.16-31.x), Tailscale (100.x in CGNAT
+// Wi-Fi LAN (192.168.x / 10.x / 172.16-31.x), Tailscale/headscale (100.x in CGNAT
 // range), Ethernet, anything else on an UP, non-loopback interface.
 // Mobile clients race all of these in parallel during connect so the
 // session attaches via whichever path actually has a route from the
@@ -8938,7 +8941,7 @@ func getLocalIPs() []string {
 			// relay path (https://public.yaver.io/d/<id>) is the only
 			// off-LAN path that works. Keep RFC1918 (and other private
 			// ranges) — those are real LAN addresses for home agents.
-			if !ip4.IsPrivate() {
+			if !isPrivateOrTailnetIPv4(ip4) {
 				continue
 			}
 			s := ip4.String()
@@ -8961,6 +8964,21 @@ func getLocalIPs() []string {
 		}
 	}
 	return ips
+}
+
+func isTailnetIPv4(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+}
+
+func isPrivateOrTailnetIPv4(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() || isTailnetIPv4(ip)
 }
 
 // sameStringSet returns true when both slices contain the same elements
@@ -9338,11 +9356,11 @@ type RelayHealthStatus struct {
 	// proves "HTTP works" — these fields separately measure DNS and
 	// raw TCP so a half-stopped VPN that hijacks DNS but blackholes
 	// TCP can be distinguished from a relay that is actually down.
-	DNSLatencyMs     int64    `json:"dnsLatencyMs,omitempty"`
-	TCPLatencyMs     int64    `json:"tcpLatencyMs,omitempty"`
-	FailureKind      string   `json:"failureKind,omitempty"`
-	SplitBrainStreak int      `json:"splitBrainStreak,omitempty"`
-	VPNInterfaces    []string `json:"vpnInterfaces,omitempty"`
+	DNSLatencyMs     int64     `json:"dnsLatencyMs,omitempty"`
+	TCPLatencyMs     int64     `json:"tcpLatencyMs,omitempty"`
+	FailureKind      string    `json:"failureKind,omitempty"`
+	SplitBrainStreak int       `json:"splitBrainStreak,omitempty"`
+	VPNInterfaces    []string  `json:"vpnInterfaces,omitempty"`
 	HealedAt         time.Time `json:"healedAt,omitempty"`
 }
 

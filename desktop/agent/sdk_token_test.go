@@ -604,6 +604,33 @@ func TestCollectLocalIPs(t *testing.T) {
 	}
 }
 
+func TestTailnetIPv4Classification(t *testing.T) {
+	tests := []struct {
+		ip      string
+		tailnet bool
+		direct  bool
+	}{
+		{"100.64.0.1", true, true},
+		{"100.100.100.100", true, true},
+		{"100.127.255.254", true, true},
+		{"100.128.0.1", false, false},
+		{"100.63.255.255", false, false},
+		{"10.0.0.8", false, true},
+		{"192.168.1.20", false, true},
+		{"172.20.0.5", false, true},
+		{"8.8.8.8", false, false},
+	}
+	for _, tt := range tests {
+		ip := net.ParseIP(tt.ip)
+		if got := isTailnetIPv4(ip); got != tt.tailnet {
+			t.Fatalf("isTailnetIPv4(%s) = %v, want %v", tt.ip, got, tt.tailnet)
+		}
+		if got := isPrivateOrTailnetIPv4(ip); got != tt.direct {
+			t.Fatalf("isPrivateOrTailnetIPv4(%s) = %v, want %v", tt.ip, got, tt.direct)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Cross-token isolation (SDK vs agent tokens)
 // ---------------------------------------------------------------------------

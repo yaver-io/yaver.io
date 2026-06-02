@@ -4988,9 +4988,10 @@ export class QuicClient {
     return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
   }
 
-  /** Check if an IP address is private (192.168.x.x, 10.x.x.x, 172.16-31.x.x). */
+  /** Check if an IP address is direct-routable without the relay:
+   * RFC1918 private LAN/VPN ranges plus Tailscale/headscale CGNAT. */
   private isPrivateIP(host: string): boolean {
-    return /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+    return /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || this.isTailscaleIP(host);
   }
 
   /** Tailscale CGNAT range (100.64.0.0/10). Only relevant when both ends are
@@ -5010,7 +5011,7 @@ export class QuicClient {
    *  surface the matched path label (lan-beacon / lan-tailscale / lan-convex-ip)
    *  in the connection log so the user sees how the session attached.
    */
-  private async raceDirectCandidates(): Promise<{
+  private async raceDirectCandidates(opts: { includeStoredHost?: boolean } = {}): Promise<{
     ip: string;
     port: number;
     path: ConnectionPath;
@@ -5042,7 +5043,7 @@ export class QuicClient {
 
     // Convex-stored primary IP last — kept for backwards-compat with agents
     // that haven't upgraded to localIps yet. May be stale.
-    if (this.host && this.isPrivateIP(this.host) && this.port) {
+    if (opts.includeStoredHost !== false && this.host && this.isPrivateIP(this.host) && this.port) {
       push(this.host, this.port, "lan-convex-ip");
     }
 
@@ -5121,7 +5122,9 @@ export class QuicClient {
       this._networkType = netState.type;
 
       // Strategy: direct-first on WiFi (lowest latency), relay-fallback.
-      // On cellular: skip direct, go straight to relay.
+      // On cellular, still probe heartbeat-advertised localIps: VPN
+      // routes (Tailscale/headscale/WireGuard) can be reachable even
+      // though NetInfo reports the underlying carrier network.
 
       // 0. Cached fast-path — if a previous session for this device
       //    finished a successful connect, we have its exact transport
@@ -5130,9 +5133,10 @@ export class QuicClient {
       //    2s timeout. If it answers /health, we're done in one round-
       //    trip without waiting for the candidate race. If it doesn't,
       //    fall through to the normal flow — the cached path may have
-      //    rotated. Direct-mode entries are skipped on cellular since
-      //    a cached LAN IP can't possibly route from outside that LAN
-      //    and would just burn the timeout window.
+      //    rotated. Direct-mode entries are still probed with a tight
+      //    timeout on cellular because VPN/tailnet addresses often look
+      //    like plain private IPs but route perfectly over the cellular
+      //    underlay.
       if (this.deviceId) {
         const cached = await loadConnectionCache(this.deviceId);
         if (cached && this.cachedPathStillUsable(cached, isWifi)) {
@@ -5152,8 +5156,8 @@ export class QuicClient {
       //    others are abandoned. This collapses the old serial 2s+2s
       //    waterfall into a single ~2s window and survives stale Convex IPs
       //    because the freshest signal wins, not the first-tried one.
-      if (!connected && isWifi && !this._forceRelay) {
-        const winner = await this.raceDirectCandidates();
+      if (!connected && !this._forceRelay && (isWifi || this._lanIps.length > 0)) {
+        const winner = await this.raceDirectCandidates({ includeStoredHost: isWifi });
         if (winner) {
           this.host = winner.ip;
           this.port = winner.port;
@@ -5261,9 +5265,15 @@ export class QuicClient {
   }
 
   /** True when the cached path could plausibly route from our current
-   *  network. Direct-mode (LAN IP) entries are pointless on cellular. */
+   *  network. */
   private cachedPathStillUsable(cached: ConnectionCacheEntry, isWifi: boolean): boolean {
-    if (cached.mode === "direct") return isWifi;
+    if (cached.mode === "direct") {
+      // Direct does not mean "same Wi-Fi" anymore. A successful direct
+      // cache entry may be a Tailscale/headscale/WireGuard address that
+      // routes over cellular. Keep the probe budget tight instead of
+      // suppressing the only working VPN path.
+      return isWifi || !!cached.host;
+    }
     return true;
   }
 
