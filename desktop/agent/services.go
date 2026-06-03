@@ -27,6 +27,8 @@ type DevServiceConfig struct {
 	Volume      string            `yaml:"volume,omitempty" json:"volume,omitempty"`
 	Engine      string            `yaml:"engine,omitempty" json:"engine,omitempty"` // e.g. better-auth, umami
 	Command     string            `yaml:"command,omitempty" json:"command,omitempty"`
+	Args        []string          `yaml:"args,omitempty" json:"args,omitempty"` // explicit argv for binary services (companion workers)
+	WorkDir     string            `yaml:"workdir,omitempty" json:"workDir,omitempty"`
 	HealthCheck string            `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
 }
 
@@ -796,9 +798,15 @@ func (sm *ServicesManager) writeComposeFile(cfg *DevServicesConfig, filter []str
 // startBinaryService launches a non-Docker binary service and captures its output
 // to .yaver/logs/<name>.log.
 func (sm *ServicesManager) startBinaryService(name string, svc *DevServiceConfig) (string, error) {
-	binPath, err := exec.LookPath(svc.Binary)
+	// Companion workers set Command (the executable) explicitly; classic dev
+	// presets (mailpit, …) set Binary. Command wins when present.
+	binName := svc.Binary
+	if strings.TrimSpace(svc.Command) != "" {
+		binName = svc.Command
+	}
+	binPath, err := exec.LookPath(binName)
 	if err != nil {
-		return "", fmt.Errorf("binary %q not found in PATH: %w", svc.Binary, err)
+		return "", fmt.Errorf("binary %q not found in PATH: %w", binName, err)
 	}
 
 	// Check if already running
@@ -817,8 +825,11 @@ func (sm *ServicesManager) startBinaryService(name string, svc *DevServiceConfig
 	}
 
 	var args []string
-	switch name {
-	case "mailpit":
+	switch {
+	case len(svc.Args) > 0:
+		// Explicit argv (companion workers).
+		args = append(args, svc.Args...)
+	case name == "mailpit":
 		args = []string{
 			"--smtp", fmt.Sprintf("0.0.0.0:%d", svc.SMTPPort),
 			"--listen", fmt.Sprintf("0.0.0.0:%d", svc.WebPort),
@@ -828,6 +839,15 @@ func (sm *ServicesManager) startBinaryService(name string, svc *DevServiceConfig
 	cmd := exec.Command(binPath, args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	if strings.TrimSpace(svc.WorkDir) != "" {
+		cmd.Dir = svc.WorkDir
+	}
+	if len(svc.Env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range svc.Env {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		}
+	}
 
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()

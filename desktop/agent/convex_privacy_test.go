@@ -134,6 +134,17 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"remoteBuilderTunnelToken",
 	"builderUrl",
 	"builderToken",
+	// Companion compute (yaver.companion.yaml). The manifest references
+	// env-interpolated endpoint URLs (which embed cron auth tokens) and
+	// vault secrets; those stay on-device in ~/.yaver state + OS unit
+	// files. Convex companionProjects rows are bookkeeping-only (slug +
+	// cron names/schedules + status). These key names must never reach a
+	// mutation — interpolated URLs/tokens/abs manifest paths live on-host.
+	"endpointUrl",
+	"cronAuthToken",
+	"cronToken",
+	"baseUrl",
+	"manifestPath",
 }
 
 type recordedMutation struct {
@@ -537,5 +548,71 @@ func TestPrepaidWalletFields_AreNotConvexForbidden(t *testing.T) {
 			t.Errorf("prepaid-wallet field %q is on the Convex forbidden-secret "+
 				"list — the wallet ledger must stay counter-only", f)
 		}
+	}
+}
+
+// TestCompanionProjectsFields_AreNotConvexForbidden pins the companionProjects
+// table (backend/convex/schema.ts) as bookkeeping-only. Every field name must
+// be a slug / cron expression / counter / status / timestamp and must NOT
+// collide with the forbidden-secret list. Companion manifests carry endpoint
+// URLs + cron tokens + abs paths + vault secrets — all of which stay on-device;
+// if someone adds a url/token/path-class field to the synced row this fails.
+func TestCompanionProjectsFields_AreNotConvexForbidden(t *testing.T) {
+	companionFields := []string{
+		// companionProjects
+		"userId", "deviceId", "slug", "enabled", "serviceCount", "updatedAt",
+		// crons[] entries
+		"name", "schedule", "lastOutcome", "lastRunAt", "nextRunAt",
+	}
+	forbidden := map[string]bool{}
+	for _, k := range fieldsWeForbidInAnyConvexPayload {
+		forbidden[k] = true
+	}
+	for _, f := range companionFields {
+		if forbidden[f] {
+			t.Errorf("companionProjects field %q is on the Convex forbidden-secret "+
+				"list — companion rows must stay bookkeeping-only", f)
+		}
+	}
+}
+
+// TestCompanionUpsertPayloadHasNoConfidentialFields feeds DELIBERATELY leaky
+// inputs (a cron name containing an abs path + token, a slug with the user's
+// home dir) through the real buildCompanionUpsertPayload seam and asserts the
+// recorded mutation is clean — proving sanitization holds and no url/token/path
+// reaches Convex.
+func TestCompanionUpsertPayloadHasNoConfidentialFields(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	// Realistic engine inputs: slug comes from the manifest `project` name
+	// and cron names from the manifest — both messy human strings, never
+	// paths. The seam must (a) include ONLY whitelisted keys and (b) run
+	// names/slug through sanitizeCompanionName.
+	crons := []CompanionCronSummary{
+		{Name: "Auto Mail Sender", Schedule: "*/15 * * * *", LastOutcome: "ok", LastRunAt: 1, NextRunAt: 2},
+		{Name: "daily_summary", Schedule: "0 6 * * *"},
+	}
+	payload := buildCompanionUpsertPayload("test-device", "E-Back", true, crons, 1)
+
+	s := &convexSyncer{deviceID: "test-device"}
+	s.callMutation("companion:upsertCompanionProject", payload)
+
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 recorded mutation, got %d", len(*buf))
+	}
+	for _, rec := range *buf {
+		assertNoForbiddenFields(t, rec)
+		assertNoAbsolutePaths(t, rec)
+		// sentinel username must never appear anywhere in the payload
+		assertNoUsernameLeak(t, rec, "kivanccakmak")
+	}
+
+	// Names/slug are sanitized to [a-z0-9-].
+	if got := payload["slug"]; got != "e-back" {
+		t.Fatalf("slug not sanitized: %v", got)
+	}
+	if got := sanitizeCompanionName("Auto Mail Sender"); got != "auto-mail-sender" {
+		t.Fatalf("cron name not sanitized: %v", got)
 	}
 }

@@ -200,6 +200,52 @@ export interface TeamSummary {
   maxMembers?: number;
 }
 
+// ── Companion compute (yaver.companion.yaml) ─────────────────────────
+export interface CompanionDetectItem {
+  kind: string; // "cron" | "service" | "note"
+  name: string;
+  reason: string;
+  status: string; // "detected" | "proposed-missing-endpoint" | "note"
+  endpoint?: string;
+  schedule?: string;
+  confidence: number;
+}
+export interface CompanionDetectResult {
+  items: CompanionDetectItem[];
+  manifestYaml: string;
+}
+export interface CompanionCronStatus {
+  name: string;
+  schedule: string;
+  scheduleId?: string;
+  status: string;
+  lastOutcome?: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  proposed?: boolean;
+}
+export interface CompanionSvcStatus {
+  name: string;
+  durable: boolean;
+  unit?: string;
+  running: boolean;
+}
+export interface CompanionStatus {
+  project: string;
+  enabled: boolean;
+  crons: CompanionCronStatus[];
+  services: CompanionSvcStatus[];
+  warnings?: string[];
+}
+export interface CompanionProjectSummary {
+  project: string;
+  repoDir: string;
+  enabled: boolean;
+  cronCount: number;
+  svcCount: number;
+  updatedAt: string;
+}
+
 export type CompanyAIWorkKind =
   | "app-code"
   | "erp-flow"
@@ -4567,6 +4613,65 @@ export class AgentClient {
       throw new Error(data?.error || `teams ${res.status}`);
     }
     return Array.isArray(data?.teams) ? data.teams as TeamSummary[] : [];
+  }
+
+  // ── Companion compute (yaver.companion.yaml) ───────────────────────
+  // P2P against the connected agent — never Convex. Status/detection flow
+  // straight from the box that runs the crons/services.
+
+  async companionListProjects(): Promise<CompanionProjectSummary[]> {
+    const res = await this.agentFetch("/companion/list");
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.projects) ? (data.projects as CompanionProjectSummary[]) : [];
+  }
+
+  async companionDetect(repo: string): Promise<CompanionDetectResult> {
+    const res = await this.agentFetch(`/companion/detect?repo=${encodeURIComponent(repo)}`);
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
+    return { items: data?.items ?? [], manifestYaml: data?.manifestYaml ?? "" };
+  }
+
+  async companionGetManifest(repo: string): Promise<{ exists: boolean; manifestYaml?: string }> {
+    const res = await this.agentFetch(`/companion/manifest?repo=${encodeURIComponent(repo)}`);
+    return (await res.json().catch(() => ({ exists: false }))) as { exists: boolean; manifestYaml?: string };
+  }
+
+  async companionWriteManifest(repo: string, manifestYaml: string): Promise<{ ok?: boolean; error?: string; path?: string }> {
+    const res = await this.agentFetch("/companion/manifest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo, manifestYaml }),
+    });
+    return (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; path?: string };
+  }
+
+  async companionUp(repo: string): Promise<CompanionStatus> {
+    const res = await this.agentFetch("/companion/up", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
+    return data.status as CompanionStatus;
+  }
+
+  async companionDown(project: string): Promise<void> {
+    const res = await this.agentFetch("/companion/down", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
+  }
+
+  async companionStatus(project: string): Promise<CompanionStatus> {
+    const res = await this.agentFetch(`/companion/status?project=${encodeURIComponent(project)}`);
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
+    return data.status as CompanionStatus;
   }
 
   /** Get auth headers for direct fetch calls (non-SSE). */

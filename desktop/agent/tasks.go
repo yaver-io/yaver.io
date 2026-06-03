@@ -823,6 +823,14 @@ type TaskCreateOptions struct {
 	// ask mode swaps in askModePreamble() in place of noQuestionsPreamble().
 	// Guests can never set this.
 	AskMode bool
+
+	// RedactPII enforces the company dataPolicy.redactPII control on this
+	// runtime: the assembled prompt is scrubbed of high-confidence PII/secrets
+	// (RedactPII()) before any runner sees it. Set ONLY from the server-stamped
+	// X-Yaver-RedactPII header (which is derived from the validated SDK token's
+	// `policy:redactPII` scope) — never from a client body, so a caller cannot
+	// turn the privacy control off.
+	RedactPII bool
 }
 
 type TaskResumeOptions struct {
@@ -916,6 +924,12 @@ type Task struct {
 	// analysis, file:line cites, explain-first with a confirm gate before
 	// acting). See TaskCreateOptions.AskMode and askModePreamble().
 	AskMode bool `json:"askMode,omitempty"`
+
+	// RedactPII — company dataPolicy.redactPII enforcement for this task.
+	// When true, the assembled prompt is scrubbed of PII/secrets before the
+	// runner sees it. Set only from the server-stamped header (token scope),
+	// never persisted as a client-settable field.
+	RedactPII bool `json:"-"`
 
 	PendingFollowUps []PendingFollowUp `json:"pendingFollowUps,omitempty"`
 
@@ -1483,6 +1497,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		VideoSource:                 opts.VideoSource,
 		AskFreely:                   opts.AskFreely,
 		AskMode:                     opts.AskMode,
+		RedactPII:                   opts.RedactPII,
 		Turns: []ConversationTurn{
 			{Role: "user", Content: initialTurnContent, Timestamp: now},
 		},
@@ -1613,6 +1628,18 @@ func taskEnv(task *Task) []string {
 		if !replaced {
 			env = append(env, name+"="+value)
 		}
+	}
+	// Co-equal local-model / on-prem / Salad-hosted-model lane: if the runtime
+	// vault carries a runner-provider config, point this runner's endpoint at
+	// it. Appended last so the explicit runtime config wins over any inherited
+	// ANTHROPIC_BASE_URL/OPENAI_BASE_URL. Returns nil (no-op) on the default
+	// OAuth-subscription path. Reached only by owner / guest-with-host-keys.
+	if task != nil {
+		runnerID := task.RunnerID
+		if runnerID == "" {
+			runnerID = task.runner.RunnerID
+		}
+		env = append(env, runnerProviderEnv(runnerID)...)
 	}
 	return env
 }
@@ -2154,6 +2181,16 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// runners keeps the dispatch path simple.
 	if task.Source == "mobile" || task.Source == "mobile-code" {
 		prompt = YaverActionSystemPrompt + "\n\n---\n\n" + prompt
+	}
+	// Company dataPolicy.redactPII: scrub PII/secrets from the fully-assembled
+	// prompt as the LAST step before it reaches the runner (Claude Code / Codex
+	// / OpenCode / a local model). No-op unless the task is under a redaction
+	// policy. This is the on-runtime enforcement of the resolved data policy.
+	if task.RedactPII {
+		if redacted, n := RedactPII(prompt); n > 0 {
+			log.Printf("[task %s] dataPolicy.redactPII: scrubbed %d PII/secret span(s) from prompt", task.ID, n)
+			prompt = redacted
+		}
 	}
 	args := buildRunnerArgsWithWorkDir(runner, prompt, taskDirForArgs)
 

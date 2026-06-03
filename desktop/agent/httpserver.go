@@ -36,6 +36,7 @@ type HTTPServer struct {
 	taskMgr        *TaskManager
 	execMgr        *ExecManager
 	scheduler      *Scheduler
+	companion      *CompanionEngine // companion-compute engine (yaver.companion.yaml)
 	analytics      *Analytics
 	aclMgr         *ACLManager
 	emailMgr       *EmailManager
@@ -286,6 +287,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// than re-OAuthing per box. Avoids the SSH-launched-daemon Keychain
 	// quagmire entirely.
 	mux.HandleFunc("/runner-auth/credentials/import", s.authSDK(s.handleRunnerAuthCredentialsImport))
+	mux.HandleFunc("/runner-provider/preflight", s.authSDK(s.handleRunnerProviderPreflight))
+	mux.HandleFunc("/company-ai/resolve-local", s.authSDK(s.handleCompanyAIResolveLocal))
 	mux.HandleFunc("/machine/onboarding/status", s.auth(s.handleMachineOnboardingStatus))
 	mux.HandleFunc("/machine/onboarding/apply", s.auth(s.handleMachineOnboardingApply))
 	mux.HandleFunc("/machine/onboarding/remove", s.auth(s.handleMachineOnboardingRemove))
@@ -1063,6 +1066,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Phone-first mini backend (in-app SQLite projects, portable to switch-engine targets)
 	s.registerPhoneRoutes(mux)
 
+	// Companion compute (yaver.companion.yaml — crons + workers for serverless projects)
+	s.registerCompanionRoutes(mux)
+
 	// DNS helpers — Cloudflare first (others later). Used by the phone-first
 	// "Custom domain" flow to CNAME <sub>.<zone> to cloud.yaver.io in one tap.
 	s.registerDNSRoutes(mux)
@@ -1712,6 +1718,7 @@ func stripGuestRequestHeaders(r *http.Request) {
 		"X-Yaver-SdkAllowedRunners",
 		"X-Yaver-HostShareAllowedRunners",
 		"X-Yaver-AllowedTools",
+		"X-Yaver-RedactPII",
 		"X-Yaver-Support",
 		"X-Yaver-Proxied-By",
 		"X-Yaver-Proxied-Tool",
@@ -2126,6 +2133,7 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 		}
 		stampSdkRunnerScope(r, sdkInfo.Scopes)
 		stampMcpToolScope(r, sdkInfo.Scopes)
+		stampSdkDataPolicy(r, sdkInfo.Scopes)
 
 		// Check IP binding
 		if len(sdkInfo.AllowedCIDRs) > 0 {
@@ -2250,6 +2258,7 @@ func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
 		}
 		stampSdkRunnerScope(r, info.scopes)
 		stampMcpToolScope(r, info.scopes)
+		stampSdkDataPolicy(r, info.scopes)
 		if len(info.allowedCIDRs) > 0 {
 			cidrs := parseCIDRs(info.allowedCIDRs)
 			if !ipMatchesCIDRs(clientIP(r), cidrs) {
@@ -3171,6 +3180,22 @@ func stampSdkRunnerScope(r *http.Request, scopes []string) {
 	}
 }
 
+// stampSdkDataPolicy translates an SDK token's `policy:redactPII` scope into the
+// server-controlled X-Yaver-RedactPII header that the task-create path reads to
+// enforce the company dataPolicy redaction on the runtime. Always deletes any
+// inbound value first (never trust a client header) and only re-stamps from the
+// validated token scopes. Enforces the company privacy control authoritatively
+// regardless of which surface created the task.
+func stampSdkDataPolicy(r *http.Request, scopes []string) {
+	r.Header.Del("X-Yaver-RedactPII")
+	for _, scope := range scopes {
+		if strings.TrimSpace(scope) == "policy:redactPII" {
+			r.Header.Set("X-Yaver-RedactPII", "1")
+			return
+		}
+	}
+}
+
 func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
@@ -3684,6 +3709,12 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	vp = mergeClientVoiceHints(r, vp, source)
 	taskOpts.Viewport = vp
+
+	// Company dataPolicy.redactPII enforcement: the header is server-stamped
+	// from the validated SDK token's `policy:redactPII` scope (and stripped on
+	// ingress), so this cannot be forged or disabled by a client. When set, the
+	// runtime scrubs PII/secrets from the prompt before the runner sees them.
+	taskOpts.RedactPII = r.Header.Get("X-Yaver-RedactPII") == "1"
 
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
 	if err != nil {
@@ -11503,7 +11534,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.RequestedDeviceID != "" {
 			payload["requestedDeviceId"] = args.RequestedDeviceID
 		}
-		data, err := resolveCompanyAIRuntime(s.convexURL, s.token, payload)
+		data, err := resolveCompanyAIWithFallback(s.convexURL, s.token, payload)
 		if err != nil {
 			return mcpToolError("company_ai_resolve failed: " + err.Error())
 		}
@@ -14412,6 +14443,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		// Phone-first mini backend (desktop/agent/phone_backend.go)
 		if handled, result := dispatchPhoneMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
+		// Companion compute (desktop/agent/companion.go)
+		if handled, result := dispatchCompanionMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
 		// Native build & deploy — iosNative / androidNative / flutter (mcp_native_build.go)

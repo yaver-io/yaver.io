@@ -2782,6 +2782,10 @@ func runServe(args []string) {
 	taskMgr.AuthToken = cfg.AuthToken
 	taskMgr.DeviceID = cfg.DeviceID
 	taskMgr.OwnerEmail = ownerEmail
+	// Enforce dataPolicy.retentionDays from a local (air-gap) company policy by
+	// periodically pruning finished tasks past the retention window. No-op when
+	// no local policy / retention is configured. Idempotent.
+	StartLocalRetentionLoop(taskMgr)
 
 	// Configure sandbox — defaults to enabled with secure settings
 	if cfg.Sandbox != nil {
@@ -3167,6 +3171,25 @@ func runServe(args []string) {
 		log.Printf("Vault unlocked late (%d entries) — runtime store now tracks rotations.", len(vs.List("*")))
 	}
 	globalEmailMgr = emailMgr // enable email notifications
+
+	// Companion compute — re-arm every project's declared crons/services on
+	// boot. Crons are already reloaded by Scheduler.load(); Reconcile heals
+	// drift (manifest changed while the agent was down) and re-verifies
+	// durable OS units. Runs once, best-effort, after the scheduler tick +
+	// ops dispatcher are live and the vault is attached (so vault-backed env
+	// resolves). Status flows P2P via /companion/* — no Convex syncer wired.
+	if httpServer.companion == nil {
+		httpServer.companion = &CompanionEngine{
+			sched:    httpServer.scheduler,
+			svcs:     NewServicesManager(*workDir),
+			vault:    httpServer.vaultStore,
+			deviceID: cfg.DeviceID,
+		}
+	}
+	go func() {
+		defer func() { _ = recover() }()
+		httpServer.companion.Reconcile()
+	}()
 
 	// Wire notification callbacks
 	taskMgr.OnTaskDone = func(task *Task) {

@@ -95,3 +95,16 @@ export {
   LAYER4_DENIED_TOOLS,
 } from './acl';
 export type { Entitlement, EffectiveEntitlement } from './acl';
+
+// Companion compute — crons + workers for serverless projects
+// (yaver.companion.yaml). Standalone client; talks to a resolved agent baseURL.
+export { CompanionClient } from './companion';
+export type {
+  CompanionClientOptions,
+  CompanionDetectItem,
+  CompanionDetectResult,
+  CompanionStatus,
+  CompanionCronStatus,
+  CompanionSvcStatus,
+  CompanionProjectSummary,
+} from './companion';

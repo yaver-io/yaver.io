@@ -4150,6 +4150,9 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// Phone-first mini backend — desktop/agent/phone_backend.go
 	tools = append(tools, phoneProjectMCPTools()...)
 
+	// Companion compute (crons + workers for serverless projects) — companion.go
+	tools = append(tools, companionMCPTools()...)
+
 	// Native build & deploy (iosNative / androidNative / flutter) — native_build.go
 	tools = append(tools, nativeBuildMCPTools()...)
 

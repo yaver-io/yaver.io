@@ -38,6 +38,7 @@ import VibePreviewView from "@/components/dashboard/VibePreviewView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
 import CompanyAIOptionsView from "@/components/dashboard/CompanyAIOptionsView";
+import CompanionView from "@/components/dashboard/CompanionView";
 import VibeCodingView, { ASSISTANT_MARKDOWN_COMPONENTS, stripAnsi } from "@/components/dashboard/VibeCodingView";
 import ReactMarkdown from "react-markdown";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
@@ -783,7 +784,7 @@ export default function DashboardPage() {
   // pointed at it; if not it offers a "Connect & open shell" affordance
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings" | "billing">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings" | "billing">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1890,6 +1891,7 @@ export default function DashboardPage() {
     { id: "apikeys", label: "Yaver Tokens", icon: "\uD83D\uDD11" },
     { id: "schedules", label: "Schedules", icon: "\u23F0" },
     { id: "phone", label: "Phone Backend", icon: "\u26A1" },
+    { id: "companion", label: "Companion", icon: "\u23F0" },
     { id: "vibe-preview", label: "Vibe Preview", icon: "\uD83C\uDFAC" },
     { id: "domains", label: "Domains", icon: "\uD83C\uDF10" },
     { id: "exec", label: "Exec", icon: "\u2699\uFE0F" },
@@ -2671,6 +2673,8 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><SchedulesView /></div>
           ) : activeTab === "phone" ? (
             <div className="flex-1 min-h-0 w-full max-w-6xl mx-auto overflow-auto p-4"><PhoneProjectsView /></div>
+          ) : activeTab === "companion" ? (
+            <div className="flex-1 min-h-0 w-full overflow-auto"><CompanionView /></div>
           ) : activeTab === "vibe-preview" ? (
             <div className="flex-1 min-h-0 w-full"><VibePreviewView /></div>
           ) : activeTab === "domains" ? (
