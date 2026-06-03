@@ -65,6 +65,58 @@ Use a scoped, least-privilege `clientToken` (per-device / short-lived) — the
 account token stays on the server. The agent runs the runner with whatever MCP
 servers you've configured on the box, so your AI uses your own tools on-prem.
 
+## Policy + multi-provider runtime (the "OpenRouter of coding agents")
+
+Yaver wraps many **runners** (claude-code / codex / opencode / aider) and, via
+OpenCode BYOK, many **providers** (anthropic / openai / openrouter / gemini /
+ollama / salad / on-prem vLLM). A team policy decides *which* a given role may
+use; the resolver projects that onto a concrete runtime for a unit of work.
+
+```typescript
+const app = new YaverApp({ accountToken });
+
+// Read / write the generic team policy (runners, provider catalog, work kinds,
+// per-role caps, approvals, data policy). No secrets ever stored.
+const { options } = await app.getPolicy(teamId);
+await app.setPolicy(teamId, options);
+
+// Resolve a runtime for a unit of work (any app-defined workKind string).
+const resolved = await app.resolve({ teamId, workKind: 'app-code', requestedRunner: 'codex' });
+//   → { runner, model, provider, runtime.deviceId, approvals, nextActions, … }
+
+// One call: resolve + mint a scoped token + build the client handle.
+const handle = await app.resolvedHandle({ teamId, workKind: 'app-code', source: 'api' });
+```
+
+Apps stay out of the Yaver core: a consumer registers its own work kinds, role
+caps, and provider catalog via `options.appProfile` (`AppProfile`) instead of
+baking app vocabulary into Yaver. Talos's `harness-cad` / `robot-trial` are just
+one profile.
+
+### Composable ACL — jointly inclusive, never forcing
+
+The team policy is **one layer**. It composes with Yaver's existing layers
+(guest grants, SDK-token scopes, host-share policy, peer ACL, and the user's own
+prefs) by **intersecting only the constraints each layer sets** — an absent
+allowlist never narrows, and no layer is forced onto another:
+
+```typescript
+import { composeEntitlements, entitlementFromGuest, entitlementFromUser } from 'yaver-sdk';
+
+// company allows codex+opencode, but this guest is capped to opencode → codex blocked.
+const handle = await app.resolvedHandle(
+  { teamId, workKind: 'app-code' },
+  { entitlements: [
+      entitlementFromGuest({ scope: 'full', allowedRunners: ['opencode'] }),
+      entitlementFromUser({ allowedProviders: ['ollama'] }),
+  ]},
+);
+// handle.effective.allowedRunners === ['opencode']
+```
+
+The effective runner scope is baked into the minted token; the **agent enforces
+it authoritatively** — the client SDK only renders what's allowed.
+
 ## Features
 
 - **Task management**: create, list, get, stop, delete, continue tasks

@@ -20,6 +20,19 @@
 import { YaverConvexClient, type DeviceCoords, DEFAULT_CONVEX_URL } from './discovery';
 import { YaverBroker, type ConnectBundle } from './broker';
 import { connect, type AgentStatus, type ConnectOptions } from './connect';
+import {
+  YaverPolicyClient,
+  type CompanyAIOptions,
+  type CompanyAIOptionsResponse,
+  type ResolveRequest,
+  type ResolvedSession,
+} from './policy';
+import {
+  composeEntitlements,
+  entitlementFromResolved,
+  type Entitlement,
+  type EffectiveEntitlement,
+} from './acl';
 
 export interface YaverAppOptions {
   /** The org's Yaver account session token. SERVER-ONLY secret. */
@@ -35,22 +48,56 @@ export interface SessionHandle extends ConnectBundle {
   /** Scoped bearer the agent accepts. Attach before sending to the client. */
   token?: string;
   convexUrl: string;
+  /**
+   * Policy the client must render within. The client treats these as the
+   * menu of allowed choices — it never widens them. The agent enforces them
+   * authoritatively from the token scope.
+   */
+  resolved?: ResolvedSession;
+  allowedRunners?: string[];
+  runner?: string;
+  model?: string;
+  /** Effective entitlement after composing every ACL layer (company + user/guest/host-share). */
+  effective?: EffectiveEntitlement;
 }
 
 export class YaverApp {
   private readonly convex: YaverConvexClient;
   private readonly broker: YaverBroker;
+  private readonly policy: YaverPolicyClient;
   readonly convexUrl: string;
 
   constructor(opts: YaverAppOptions) {
     this.convexUrl = (opts.convexUrl ?? DEFAULT_CONVEX_URL).replace(/\/+$/, '');
     this.convex = new YaverConvexClient(opts.accountToken, this.convexUrl);
     this.broker = new YaverBroker({ accountToken: opts.accountToken, convexUrl: this.convexUrl });
+    this.policy = new YaverPolicyClient(opts.accountToken, this.convexUrl);
   }
 
   /** Devices (agents) the org can reach, with presence. */
   listDevices(): Promise<DeviceCoords[]> {
     return this.convex.listDevices();
+  }
+
+  // ── Policy + runtime resolution (the generic control plane) ──────────
+
+  /** Read a team's AI policy (safe defaults when unconfigured). */
+  getPolicy(teamId: string): Promise<CompanyAIOptionsResponse> {
+    return this.policy.getOptions(teamId);
+  }
+
+  /** Write a team's AI policy. Server enforces admin/owner role. */
+  setPolicy(teamId: string, options: CompanyAIOptions): Promise<{ ok: boolean; id?: string; error?: string }> {
+    return this.policy.setOptions(teamId, options);
+  }
+
+  /**
+   * Resolve a concrete runtime (device + runner + model + provider + approvals)
+   * for a unit of work. This is the shared contract every surface (web, mobile,
+   * desktop, MCP) should call before starting a job. Returns no secrets.
+   */
+  resolve(req: ResolveRequest): Promise<ResolvedSession> {
+    return this.policy.resolve(req);
   }
 
   /**
@@ -61,10 +108,61 @@ export class YaverApp {
     return this.convex.mintSdkToken({ label: opts?.label, scopes: opts?.scopes, expiresInMs: opts?.ttlMs });
   }
 
-  /** Build the opaque handle a client needs to connect. Attach `token` before sending. */
-  async sessionHandle(deviceId: string, token?: string): Promise<SessionHandle> {
+  /**
+   * Build the opaque handle a client needs to connect. Attach `token` before
+   * sending. Pass a `resolved` session to bake the allowed runner/model/policy
+   * into the handle so the client renders only what policy permits.
+   */
+  async sessionHandle(
+    deviceId: string,
+    token?: string,
+    resolved?: ResolvedSession,
+    effective?: EffectiveEntitlement,
+  ): Promise<SessionHandle> {
     const bundle = await this.broker.prepareSession(deviceId);
-    return { ...bundle, token, convexUrl: this.convexUrl };
+    const allowedRunners = effective?.allowedRunners ?? resolved?.runner.allowedRunners;
+    return {
+      ...bundle,
+      token,
+      convexUrl: this.convexUrl,
+      resolved,
+      effective,
+      allowedRunners,
+      runner: resolved?.runner.id,
+      model: resolved?.runner.model,
+    };
+  }
+
+  /**
+   * One call: resolve company policy for a unit of work, COMPOSE it with any
+   * other ACL layers the caller already has (the user's own prefs, a guest
+   * grant, a host-share policy — pass them via `opts.entitlements`), mint a
+   * scoped client token carrying the EFFECTIVE allowed-runner scope, and return
+   * a ready handle.
+   *
+   * Composition is jointly inclusive: company policy never overrides the user's
+   * own ACL, and an absent layer never forces anything (see acl.ts). The token
+   * and handle carry the intersection, so the client cannot reach a runner that
+   * ANY applicable layer disallows.
+   */
+  async resolvedHandle(
+    req: ResolveRequest,
+    opts?: { label?: string; ttlMs?: number; entitlements?: Entitlement[] },
+  ): Promise<SessionHandle> {
+    const resolved = await this.resolve(req);
+    const deviceId = resolved.runtime.deviceId ?? req.requestedDeviceId;
+    if (!deviceId) throw new Error('resolvedHandle: no runtime device bound for this team/work-kind');
+    const effective = composeEntitlements([
+      entitlementFromResolved(resolved),
+      ...(opts?.entitlements ?? []),
+    ]);
+    const allowedRunners = effective.allowedRunners ?? resolved.runner.allowedRunners;
+    const scopes = [
+      `runners:${allowedRunners.join(',') || resolved.runner.id}`,
+      `workKind:${resolved.workKind}`,
+    ];
+    const { token } = await this.mintClientToken({ label: opts?.label ?? `${req.source ?? 'api'}:${req.workKind}`, scopes, ttlMs: opts?.ttlMs });
+    return this.sessionHandle(deviceId, token, resolved, effective);
   }
 
   /**

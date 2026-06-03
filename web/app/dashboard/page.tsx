@@ -37,6 +37,7 @@ import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import VibePreviewView from "@/components/dashboard/VibePreviewView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
+import CompanyAIOptionsView from "@/components/dashboard/CompanyAIOptionsView";
 import VibeCodingView, { ASSISTANT_MARKDOWN_COMPONENTS, stripAnsi } from "@/components/dashboard/VibeCodingView";
 import ReactMarkdown from "react-markdown";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
@@ -782,7 +783,7 @@ export default function DashboardPage() {
   // pointed at it; if not it offers a "Connect & open shell" affordance
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings" | "billing">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings" | "billing">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1874,6 +1875,7 @@ export default function DashboardPage() {
     { id: "data", label: "Data", icon: "\uD83D\uDDC4\uFE0F" },
     { id: "switch", label: "Switch", icon: "\uD83D\uDD04" },
     { id: "accounts", label: "Accounts", icon: "\uD83D\uDD11" },
+    { id: "company-ai", label: "Company AI", icon: "AI" },
     { id: "infra", label: "Infra", icon: "\uD83D\uDEE0\uFE0F" },
     { id: "connect", label: "Connect", icon: "\uD83C\uDF10" },
     { id: "tools", label: "Tools", icon: "\uD83E\uDDE9" },
@@ -2618,6 +2620,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><SwitchView /></div>
           ) : activeTab === "accounts" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><AccountsView /></div>
+          ) : activeTab === "company-ai" ? (
+            <div className="flex-1 min-h-0 w-full"><CompanyAIOptionsView /></div>
           ) : activeTab === "infra" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><InfraView /></div>
           ) : activeTab === "connect" ? (

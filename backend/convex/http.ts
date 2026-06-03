@@ -3949,6 +3949,86 @@ http.route({
   }),
 });
 
+// --- Company AI Options (Talos/Yaver mode tenant policy) ---
+
+/** GET /company-ai/options?teamId=team_xxx — Read company AI policy.
+ *  Returns safe defaults when the team has not configured AI yet. */
+http.route({
+  path: "/company-ai/options",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+
+    const url = new URL(request.url);
+    const teamId = url.searchParams.get("teamId");
+    if (!teamId) return errorResponse("teamId required", 400);
+
+    const result = await ctx.runQuery(api.companyAIOptions.getByToken, { tokenHash, teamId });
+    if (!result) return errorResponse("Team not found or access denied", 404);
+    return jsonResponse({ ok: true, ...result });
+  }),
+});
+
+/** POST /company-ai/options — Update company AI policy.
+ *  Only team admins may write. Body: {teamId, options}. */
+http.route({
+  path: "/company-ai/options",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+
+    const body = await request.json();
+    if (!body?.teamId || !body?.options) {
+      return errorResponse("teamId and options are required", 400);
+    }
+
+    try {
+      const id = await ctx.runMutation(api.companyAIOptions.setByToken, {
+        tokenHash,
+        teamId: body.teamId,
+        options: body.options,
+      });
+      return jsonResponse({ ok: true, id });
+    } catch (e: any) {
+      return errorResponse(e?.message || "Failed to update company AI options", 403);
+    }
+  }),
+});
+
+/** POST /company-ai/resolve — Resolve Talos/Yaver mode runtime for a work kind.
+ *  Returns no secrets; clients use the selected Yaver device + existing agent endpoints. */
+http.route({
+  path: "/company-ai/resolve",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+
+    const body = await request.json();
+    if (!body?.teamId || !body?.workKind) {
+      return errorResponse("teamId and workKind are required", 400);
+    }
+
+    const result = await ctx.runQuery(api.companyAIOptions.resolveForToken, {
+      tokenHash,
+      teamId: body.teamId,
+      workKind: body.workKind,
+      requestedRunner: body.requestedRunner,
+      requestedModel: body.requestedModel,
+      requestedProvider: body.requestedProvider,
+      requestedDeviceId: body.requestedDeviceId,
+      source: body.source,
+    });
+    if (!result) return errorResponse("Team not found or access denied", 404);
+    return jsonResponse(result);
+  }),
+});
+
 // --- Cloud Machines ---
 
 /** GET /machines — List cloud machines for the authenticated user. */

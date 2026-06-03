@@ -881,6 +881,148 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_team_user", ["teamId", "userId"]),
 
+  // Company-level AI/runtime policy for Talos-style tenants that use
+  // Yaver as the remote execution plane. This is intentionally policy
+  // and routing metadata only: no API keys, OAuth tokens, customer
+  // prompts, output, logs, absolute paths, relay hosts, or secrets.
+  // Secrets live on the tenant runtime, in a company vault, or in the
+  // provider's own secret store. Convex stores only booleans/ids/labels
+  // needed for UI gating and execution planning.
+  companyAIOptions: defineTable({
+    teamId: v.string(),
+    enabled: v.boolean(),
+    runtime: v.object({
+      mode: v.union(
+        v.literal("dedicated-compute"),
+        v.literal("bring-your-own-yaver"),
+        v.literal("local-only"),
+      ),
+      defaultProvider: v.union(
+        v.literal("hetzner"),
+        v.literal("aws"),
+        v.literal("gcp"),
+        v.literal("azure"),
+        v.literal("onprem"),
+        v.literal("byo-yaver-device"),
+      ),
+      defaultDeviceId: v.optional(v.string()),
+      fallbackDeviceIds: v.optional(v.array(v.string())),
+      region: v.optional(v.string()),
+    }),
+    convex: v.object({
+      deploymentKind: v.union(
+        v.literal("dedicated"),
+        v.literal("shared-isolated"),
+        v.literal("external"),
+      ),
+      deploymentName: v.optional(v.string()),
+      siteUrl: v.optional(v.string()),
+      envName: v.string(),
+    }),
+    runners: v.object({
+      defaultRunner: v.string(),
+      allowedRunners: v.array(v.string()),
+      defaultModelByRunner: v.optional(v.array(v.object({
+        runner: v.string(),
+        model: v.string(),
+      }))),
+      allowUserOverride: v.boolean(),
+      requireRunnerAuthPerUser: v.boolean(),
+      credentialMode: v.union(
+        v.literal("user-auth-on-runtime"),
+        v.literal("company-api-key-on-runtime"),
+        v.literal("local-model-on-runtime"),
+        v.literal("external-onprem-endpoint"),
+      ),
+    }),
+    opencode: v.optional(v.object({
+      providers: v.array(v.object({
+        id: v.string(),
+        label: v.string(),
+        baseUrl: v.optional(v.string()),
+        models: v.array(v.string()),
+        keyPolicy: v.union(
+          v.literal("company-secret"),
+          v.literal("user-secret"),
+          v.literal("none"),
+        ),
+        keyConfigured: v.optional(v.boolean()),
+      })),
+      defaultAgent: v.optional(v.string()),
+    })),
+    mcp: v.object({
+      enabledServers: v.array(v.string()),
+      requiredServers: v.array(v.string()),
+      toolPolicyByRole: v.optional(v.array(v.object({
+        role: v.string(),
+        allowedTools: v.array(v.string()),
+      }))),
+    }),
+    workKinds: v.object({
+      appCode: v.boolean(),
+      erpFlow: v.boolean(),
+      convex: v.boolean(),
+      webUi: v.boolean(),
+      harnessCad: v.boolean(),
+      openScadCad: v.boolean(),
+      robotTrial: v.boolean(),
+      inspection: v.boolean(),
+    }),
+    approvals: v.object({
+      requireApprovalForProductionWrites: v.boolean(),
+      requireApprovalForDeploy: v.boolean(),
+      requireApprovalForRobotMotion: v.boolean(),
+      requireApprovalForSecretsAccess: v.boolean(),
+    }),
+    dataPolicy: v.object({
+      allowCustomerDataInPrompts: v.boolean(),
+      allowScreenshotsInPrompts: v.boolean(),
+      allowTelemetryInPrompts: v.boolean(),
+      redactPII: v.boolean(),
+      retentionDays: v.number(),
+    }),
+    // Generic, app-contributed profile — the de-Talos-ified path. An app
+    // (talos, carrotbet, …) registers its own work kinds + role caps +
+    // provider catalog here instead of baking app vocabulary into Yaver's
+    // fixed `workKinds` booleans. Optional for back-compat. Config only.
+    appProfile: v.optional(v.object({
+      app: v.string(),
+      workKinds: v.array(v.object({
+        key: v.string(),
+        label: v.optional(v.string()),
+        enabled: v.optional(v.boolean()),
+        requiredTools: v.optional(v.array(v.string())),
+        requiredMcp: v.optional(v.array(v.string())),
+        approvals: v.optional(v.array(v.string())),
+        promptHints: v.optional(v.array(v.string())),
+        artifactKinds: v.optional(v.array(v.string())),
+        allowedRoles: v.optional(v.array(v.string())),
+      })),
+      roles: v.optional(v.array(v.object({
+        role: v.string(),
+        allowedTools: v.optional(v.array(v.string())),
+        allowedRunners: v.optional(v.array(v.string())),
+        allowedProviders: v.optional(v.array(v.string())),
+        allowedWorkKinds: v.optional(v.array(v.string())),
+      }))),
+      providers: v.optional(v.array(v.object({
+        id: v.string(),
+        label: v.string(),
+        baseUrl: v.optional(v.string()),
+        models: v.array(v.string()),
+        keyPolicy: v.union(
+          v.literal("company-secret"),
+          v.literal("user-secret"),
+          v.literal("none"),
+        ),
+        keyConfigured: v.optional(v.boolean()),
+      }))),
+    })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.id("users")),
+  }).index("by_teamId", ["teamId"]),
+
   // Cloud dev machines (provisioned on Hetzner, subscription required)
   cloudMachines: defineTable({
     userId: v.id("users"),

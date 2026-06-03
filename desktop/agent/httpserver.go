@@ -1709,6 +1709,8 @@ func stripGuestRequestHeaders(r *http.Request) {
 		"X-Yaver-GuestScope",
 		"X-Yaver-GuestAllowedProjects",
 		"X-Yaver-GuestAllowedRunners",
+		"X-Yaver-SdkAllowedRunners",
+		"X-Yaver-HostShareAllowedRunners",
 		"X-Yaver-Support",
 		"X-Yaver-Proxied-By",
 		"X-Yaver-Proxied-Tool",
@@ -2121,6 +2123,7 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, http.StatusForbidden, "SDK token scope does not allow this endpoint")
 			return
 		}
+		stampSdkRunnerScope(r, sdkInfo.Scopes)
 
 		// Check IP binding
 		if len(sdkInfo.AllowedCIDRs) > 0 {
@@ -2243,6 +2246,7 @@ func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
 			jsonError(w, http.StatusForbidden, "SDK token scope does not allow this endpoint")
 			return
 		}
+		stampSdkRunnerScope(r, info.scopes)
 		if len(info.allowedCIDRs) > 0 {
 			cidrs := parseCIDRs(info.allowedCIDRs)
 			if !ipMatchesCIDRs(clientIP(r), cidrs) {
@@ -3100,6 +3104,70 @@ func (s *HTTPServer) handleRunnerRestart(w http.ResponseWriter, r *http.Request)
 }
 
 // handleRunnerSwitch switches the active runner. Validates the binary exists first.
+// parseRunnerAllowCSV parses a server-stamped CSV runner allowlist header into
+// a normalized set. Empty/blank → nil, meaning "this layer imposes no runner
+// constraint".
+func parseRunnerAllowCSV(csv string) map[string]bool {
+	csv = strings.TrimSpace(csv)
+	if csv == "" {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, part := range strings.Split(csv, ",") {
+		if p := normalizeRunnerID(strings.TrimSpace(part)); p != "" {
+			out[p] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// runnerDeniedByScopeHeaders enforces the runner allowlists carried by
+// server-stamped scope headers — host-share policy (X-Yaver-HostShareAllowedRunners)
+// and SDK-token runner scope (X-Yaver-SdkAllowedRunners). Jointly inclusive: the
+// requested runner must satisfy EVERY present allowlist; an absent/empty header
+// imposes no constraint and never forces a choice. Guest allowlists are enforced
+// separately via GuestConfigManager.CheckRequestedRunner. Returns a denial reason
+// or nil when allowed.
+func runnerDeniedByScopeHeaders(r *http.Request, requestedRunnerID, defaultRunnerID string) *AccessDeniedReason {
+	runner := normalizeRunnerID(strings.TrimSpace(requestedRunnerID))
+	if runner == "" {
+		runner = normalizeRunnerID(strings.TrimSpace(defaultRunnerID))
+	}
+	if runner == "" {
+		return nil
+	}
+	for _, header := range []string{"X-Yaver-HostShareAllowedRunners", "X-Yaver-SdkAllowedRunners"} {
+		allowed := parseRunnerAllowCSV(r.Header.Get(header))
+		if allowed == nil {
+			continue // layer doesn't constrain runners
+		}
+		if !allowed[runner] {
+			return &AccessDeniedReason{Denied: true, Reason: fmt.Sprintf("runner %q is not permitted by policy (allowed: %s)", runner, r.Header.Get(header))}
+		}
+	}
+	return nil
+}
+
+// stampSdkRunnerScope translates an SDK token's `runners:<csv>` scope into the
+// server-controlled X-Yaver-SdkAllowedRunners header that runner enforcement
+// reads. It always deletes any inbound value first (never trust a client-set
+// header) and only re-stamps from the validated token scopes. No-op when the
+// token carries no runner scope.
+func stampSdkRunnerScope(r *http.Request, scopes []string) {
+	r.Header.Del("X-Yaver-SdkAllowedRunners")
+	for _, scope := range scopes {
+		if rest, ok := strings.CutPrefix(scope, "runners:"); ok {
+			if rest = strings.TrimSpace(rest); rest != "" {
+				r.Header.Set("X-Yaver-SdkAllowedRunners", rest)
+			}
+			return
+		}
+	}
+}
+
 func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
@@ -3122,6 +3190,23 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 	newRunner, known := builtinRunners[runnerID]
 	if !known {
 		jsonError(w, http.StatusBadRequest, fmt.Sprintf("unknown runner: %s", body.RunnerID))
+		return
+	}
+
+	// Enforce runner allowlists carried by the caller's scope. Switching the
+	// runner mutates global task-manager state, so a scoped caller (guest,
+	// host-share, or SDK-token runner scope) may only switch to a runner their
+	// policy permits. Jointly inclusive — each present layer must allow it.
+	if s.guestConfigMgr != nil {
+		if guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")); guestUID != "" {
+			if denied := s.guestConfigMgr.CheckRequestedRunner(guestUID, runnerID, s.taskMgr.runner.RunnerID); denied != nil {
+				jsonError(w, http.StatusForbidden, denied.Reason)
+				return
+			}
+		}
+	}
+	if denied := runnerDeniedByScopeHeaders(r, runnerID, s.taskMgr.runner.RunnerID); denied != nil {
+		jsonError(w, http.StatusForbidden, denied.Reason)
 		return
 	}
 
@@ -3467,6 +3552,13 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			}
 			guestWorkDir = resolvedWorkDir
 		}
+	}
+
+	// Enforce host-share / SDK-token runner scope (guest runners were already
+	// checked in the guest block above). Jointly inclusive with any other layer.
+	if denied := runnerDeniedByScopeHeaders(r, body.Runner, s.taskMgr.runner.RunnerID); denied != nil {
+		jsonError(w, http.StatusForbidden, denied.Reason)
+		return
 	}
 
 	// For guest tasks, prepend security context to the prompt so the AI agent
@@ -11304,6 +11396,46 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return true
 		})
 		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
+
+	case "company_ai_resolve":
+		var args struct {
+			TeamID            string `json:"teamId"`
+			WorkKind          string `json:"workKind"`
+			RequestedRunner   string `json:"requestedRunner"`
+			RequestedModel    string `json:"requestedModel"`
+			RequestedProvider string `json:"requestedProvider"`
+			RequestedDeviceID string `json:"requestedDeviceId"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.TeamID) == "" || strings.TrimSpace(args.WorkKind) == "" {
+			return mcpToolError("teamId and workKind are required")
+		}
+		payload := map[string]interface{}{
+			"teamId":   args.TeamID,
+			"workKind": args.WorkKind,
+			"source":   "mcp",
+		}
+		if args.RequestedRunner != "" {
+			payload["requestedRunner"] = args.RequestedRunner
+		}
+		if args.RequestedModel != "" {
+			payload["requestedModel"] = args.RequestedModel
+		}
+		if args.RequestedProvider != "" {
+			payload["requestedProvider"] = args.RequestedProvider
+		}
+		if args.RequestedDeviceID != "" {
+			payload["requestedDeviceId"] = args.RequestedDeviceID
+		}
+		data, err := resolveCompanyAIRuntime(s.convexURL, s.token, payload)
+		if err != nil {
+			return mcpToolError("company_ai_resolve failed: " + err.Error())
+		}
+		var pretty bytes.Buffer
+		if json.Indent(&pretty, data, "", "  ") != nil {
+			return mcpToolResult(string(data))
+		}
+		return mcpToolResult(pretty.String())
 
 	// --- Grand MCP: ops (unified verb-based API) ---
 	case "ops":

@@ -106,6 +106,158 @@ export interface ToolchainGitCredentialSummary {
   hasToken: boolean;
 }
 
+export type TenantComputeProvider =
+  | "hetzner"
+  | "aws"
+  | "gcp"
+  | "azure"
+  | "onprem"
+  | "byo-yaver-device";
+
+export interface CompanyAIOptions {
+  enabled: boolean;
+  runtime: {
+    mode: "dedicated-compute" | "bring-your-own-yaver" | "local-only";
+    defaultProvider: TenantComputeProvider;
+    defaultDeviceId?: string;
+    fallbackDeviceIds?: string[];
+    region?: string;
+  };
+  convex: {
+    deploymentKind: "dedicated" | "shared-isolated" | "external";
+    deploymentName?: string;
+    siteUrl?: string;
+    envName: string;
+  };
+  runners: {
+    defaultRunner: string;
+    allowedRunners: string[];
+    defaultModelByRunner?: Array<{ runner: string; model: string }>;
+    allowUserOverride: boolean;
+    requireRunnerAuthPerUser: boolean;
+    credentialMode:
+      | "user-auth-on-runtime"
+      | "company-api-key-on-runtime"
+      | "local-model-on-runtime"
+      | "external-onprem-endpoint";
+  };
+  opencode?: {
+    providers: Array<{
+      id: string;
+      label: string;
+      baseUrl?: string;
+      models: string[];
+      keyPolicy: "company-secret" | "user-secret" | "none";
+      keyConfigured?: boolean;
+    }>;
+    defaultAgent?: string;
+  };
+  mcp: {
+    enabledServers: string[];
+    requiredServers: string[];
+    toolPolicyByRole?: Array<{ role: string; allowedTools: string[] }>;
+  };
+  workKinds: {
+    appCode: boolean;
+    erpFlow: boolean;
+    convex: boolean;
+    webUi: boolean;
+    harnessCad: boolean;
+    openScadCad: boolean;
+    robotTrial: boolean;
+    inspection: boolean;
+  };
+  approvals: {
+    requireApprovalForProductionWrites: boolean;
+    requireApprovalForDeploy: boolean;
+    requireApprovalForRobotMotion: boolean;
+    requireApprovalForSecretsAccess: boolean;
+  };
+  dataPolicy: {
+    allowCustomerDataInPrompts: boolean;
+    allowScreenshotsInPrompts: boolean;
+    allowTelemetryInPrompts: boolean;
+    redactPII: boolean;
+    retentionDays: number;
+  };
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface CompanyAIOptionsResponse {
+  ok: boolean;
+  teamId: string;
+  role: string;
+  options: CompanyAIOptions;
+  canEdit: boolean;
+}
+
+export interface TeamSummary {
+  teamId: string;
+  name: string;
+  role?: string;
+  plan?: string;
+  maxMembers?: number;
+}
+
+export type CompanyAIWorkKind =
+  | "app-code"
+  | "erp-flow"
+  | "convex"
+  | "web-ui"
+  | "harness-cad"
+  | "openscad-cad"
+  | "robot-trial"
+  | "inspection";
+
+export interface CompanyAIResolvedRuntime {
+  ok: boolean;
+  teamId: string;
+  role: string;
+  source: string;
+  workKind: CompanyAIWorkKind;
+  enabled: boolean;
+  workKindEnabled: boolean;
+  runtimeReady: boolean;
+  runtime: {
+    mode: CompanyAIOptions["runtime"]["mode"];
+    provider: TenantComputeProvider;
+    region?: string;
+    deviceId: string | null;
+    fallbackDeviceIds: string[];
+  };
+  convex: CompanyAIOptions["convex"];
+  runner: {
+    id: string;
+    model?: string;
+    allowedRunners: string[];
+    credentialMode: CompanyAIOptions["runners"]["credentialMode"];
+    requireRunnerAuthPerUser: boolean;
+    allowUserOverride: boolean;
+  };
+  mcp: CompanyAIOptions["mcp"];
+  approvals: CompanyAIOptions["approvals"] & { required: string[] };
+  dataPolicy: CompanyAIOptions["dataPolicy"];
+  promptPolicy: {
+    systemHints: string[];
+    artifactKinds: string[];
+  };
+  nextActions: {
+    configureCompanyAI: boolean;
+    configureRuntimeDevice: boolean;
+    enableWorkKind: boolean;
+    reauthRunner: boolean;
+  };
+  dispatch: {
+    target: "yaver-device" | "unresolved";
+    deviceId: string | null;
+    createTaskPath: string;
+    runnerSwitchPath: string;
+    runnerStatusPath: string;
+    taskOutputPathTemplate: string;
+  };
+}
+
 export interface SyncItem<T = any> {
   key: string;
   value?: T;
@@ -4345,6 +4497,76 @@ export class AgentClient {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  async getCompanyAIOptions(teamId: string): Promise<CompanyAIOptionsResponse> {
+    if (!this.token) throw new Error("not signed in");
+    const url = new URL(`${CONVEX_URL}/company-ai/options`);
+    url.searchParams.set("teamId", teamId);
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${this.token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `company-ai/options ${res.status}`);
+    }
+    return data as CompanyAIOptionsResponse;
+  }
+
+  async saveCompanyAIOptions(teamId: string, options: CompanyAIOptions): Promise<{ ok: boolean; id?: string; error?: string }> {
+    if (!this.token) throw new Error("not signed in");
+    const res = await fetch(`${CONVEX_URL}/company-ai/options`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ teamId, options }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: data?.error || `company-ai/options ${res.status}` };
+    }
+    return data as { ok: boolean; id?: string };
+  }
+
+  async resolveCompanyAIRuntime(params: {
+    teamId: string;
+    workKind: CompanyAIWorkKind;
+    requestedRunner?: string;
+    requestedModel?: string;
+    requestedDeviceId?: string;
+    source?: "talos-web" | "talos-mobile" | "talos-desktop" | "yaver-web" | "yaver-mobile" | "yaver-desktop" | "mcp" | "api";
+  }): Promise<CompanyAIResolvedRuntime> {
+    if (!this.token) throw new Error("not signed in");
+    const res = await fetch(`${CONVEX_URL}/company-ai/resolve`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify(params),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `company-ai/resolve ${res.status}`);
+    }
+    return data as CompanyAIResolvedRuntime;
+  }
+
+  async listTeams(): Promise<TeamSummary[]> {
+    if (!this.token) throw new Error("not signed in");
+    const res = await fetch(`${CONVEX_URL}/teams`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `teams ${res.status}`);
+    }
+    return Array.isArray(data?.teams) ? data.teams as TeamSummary[] : [];
   }
 
   /** Get auth headers for direct fetch calls (non-SSE). */

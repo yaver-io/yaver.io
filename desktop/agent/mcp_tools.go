@@ -2692,6 +2692,45 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, guestTools...)
 
+	// --- Company AI policy resolver (headless/MCP entry to the runtime resolver) ---
+	companyAITools := []map[string]interface{}{
+		{
+			"name":        "company_ai_resolve",
+			"description": "Resolve the policy-bound runtime for a unit of work on a team: which device, runner, model, and model provider are permitted, plus required MCP servers, approvals, and next-setup actions. Mirrors what web/mobile/desktop call before starting a job. Returns no secrets. Use before dispatching a task so the agent picks a runner/provider the company policy allows.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"teamId": map[string]interface{}{
+						"type":        "string",
+						"description": "Team/company id the work runs under.",
+					},
+					"workKind": map[string]interface{}{
+						"type":        "string",
+						"description": "App-defined work-kind key (e.g. app-code, convex, web-ui, harness-cad, openscad-cad, or any kind the team's app profile registers).",
+					},
+					"requestedRunner": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional preferred runner (claude/codex/opencode/…). Honored only if policy allows the override.",
+					},
+					"requestedModel": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional preferred model. Honored only if policy allows the override.",
+					},
+					"requestedProvider": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional preferred model provider (openrouter/gemini/ollama/salad/on-prem id). Honored only if policy allows it.",
+					},
+					"requestedDeviceId": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional target device; defaults to the team's bound runtime device.",
+					},
+				},
+				"required": []interface{}{"teamId", "workKind"},
+			},
+		},
+	}
+	tools = append(tools, companyAITools...)
+
 	// --- Primary-device preference (auto-connect) ---
 	primaryTools := []map[string]interface{}{
 		{

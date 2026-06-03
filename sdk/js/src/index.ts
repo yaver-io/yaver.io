@@ -59,3 +59,38 @@ export type { ConnectBundle, YaverBrokerOptions } from './broker';
 export { YaverApp } from './app';
 export type { YaverAppOptions, SessionHandle, AppStatus } from './app';
 export type { AgentStatus, AgentRunnerState } from './connect';
+
+// Generic policy + runtime resolver (the "OpenRouter of coding agents" spine).
+// Apps register an AppProfile; Yaver core stays free of app vocabulary.
+export { YaverPolicyClient, selectRunner, selectProvider, isWorkKindEnabled } from './policy';
+export type {
+  CompanyAIOptions,
+  CompanyAIOptionsResponse,
+  ResolvedSession,
+  ResolveRequest,
+  ResolveSource,
+  AppProfile,
+  WorkKindDef,
+  RolePolicy,
+  ProviderDef,
+  ProviderKeyPolicy,
+  TenantComputeProvider,
+  RuntimeMode,
+  CredentialMode,
+  TeamSummary,
+} from './policy';
+
+// Composable ACL — the new company policy is ONE layer that intersects with
+// Yaver's existing layers (guest grants, SDK-token scopes, host-share, peer
+// ACL, the user's own prefs). Jointly inclusive, never forcing.
+export {
+  composeEntitlements,
+  entitlementAllows,
+  entitlementFromResolved,
+  entitlementFromGuest,
+  entitlementFromSdkToken,
+  entitlementFromHostShare,
+  entitlementFromUser,
+  LAYER4_DENIED_TOOLS,
+} from './acl';
+export type { Entitlement, EffectiveEntitlement } from './acl';

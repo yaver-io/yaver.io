@@ -47,6 +47,18 @@ export interface ConnectOptions {
   deviceId: string;
   /** Yaver bearer the agent accepts (scoped session / per-device token). */
   token: string;
+  /**
+   * Mobile/long-session hook: called to mint a fresh token when the current
+   * one is rejected (401/403). Lets a backgrounded app recover transparently
+   * instead of dying mid-session. Returns the new bearer.
+   */
+  getToken?: () => Promise<string>;
+  /**
+   * Client-side defense-in-depth: the runner allowlist from the resolved
+   * policy. `createTask` refuses a runner outside it. The agent still enforces
+   * authoritatively from the token scope; this is just a fast, honest failure.
+   */
+  allowedRunners?: string[];
   /** Device coordinates from YaverConvexClient.listDevices(). */
   device?: DeviceCoords;
   /** Relay endpoint + password from getSettings()/getConfig(). */
@@ -134,22 +146,48 @@ export async function pickTransport(opts: ConnectOptions): Promise<Transport> {
 /** A connected agent session bound to a winning transport. */
 export class AgentSession {
   readonly transport: Transport;
-  readonly token: string;
-  constructor(transport: Transport, token: string) {
+  private _token: string;
+  private readonly getToken?: () => Promise<string>;
+  private readonly allowedRunners?: string[];
+
+  constructor(
+    transport: Transport,
+    token: string,
+    opts?: { getToken?: () => Promise<string>; allowedRunners?: string[] },
+  ) {
     this.transport = transport;
-    this.token = token;
+    this._token = token;
+    this.getToken = opts?.getToken;
+    this.allowedRunners = opts?.allowedRunners;
   }
+
+  /** Current bearer (may rotate over the session's life via the refresh hook). */
+  get token(): string { return this._token; }
 
   private headers(json = false): Record<string, string> {
     return {
-      Authorization: `Bearer ${this.token}`,
+      Authorization: `Bearer ${this._token}`,
       ...(json ? { 'Content-Type': 'application/json' } : {}),
       ...this.transport.headers,
     };
   }
 
+  /**
+   * fetch with one transparent token refresh on 401/403. Without a getToken
+   * hook this behaves like a plain authed fetch.
+   */
+  private async authedFetch(path: string, init: RequestInit = {}, json = false): Promise<Response> {
+    const run = () => fetch(`${this.transport.baseURL}${path}`, { ...init, headers: { ...this.headers(json), ...(init.headers as Record<string, string> | undefined) } });
+    let res = await run();
+    if ((res.status === 401 || res.status === 403) && this.getToken) {
+      try { this._token = await this.getToken(); } catch { return res; }
+      res = await run();
+    }
+    return res;
+  }
+
   async health(): Promise<boolean> {
-    try { return (await fetch(`${this.transport.baseURL}/health`, { headers: this.headers() })).ok; }
+    try { return (await this.authedFetch('/health')).ok; }
     catch { return false; }
   }
 
@@ -160,7 +198,9 @@ export class AgentSession {
   async status(): Promise<AgentStatus> {
     const get = async <T>(p: string, auth = true): Promise<T | null> => {
       try {
-        const res = await fetch(`${this.transport.baseURL}${p}`, { headers: auth ? this.headers() : this.transport.headers });
+        const res = auth
+          ? await this.authedFetch(p)
+          : await fetch(`${this.transport.baseURL}${p}`, { headers: this.transport.headers });
         return res.ok ? (await res.json() as T) : null;
       } catch { return null; }
     };
@@ -181,13 +221,14 @@ export class AgentSession {
   }
 
   async createTask(prompt: string, opts?: CreateTaskOptions & { source?: string }): Promise<Task> {
+    if (opts?.runner && this.allowedRunners && this.allowedRunners.length > 0 && !this.allowedRunners.includes(opts.runner)) {
+      throw new Error(`runner "${opts.runner}" is not permitted by policy (allowed: ${this.allowedRunners.join(', ')})`);
+    }
     const body: Record<string, unknown> = { title: prompt, source: opts?.source ?? 'sdk' };
     if (opts?.model) body.model = opts.model;
     if (opts?.runner) body.runner = opts.runner;
     if (opts?.images?.length) body.images = opts.images;
-    const res = await fetch(`${this.transport.baseURL}/tasks`, {
-      method: 'POST', headers: this.headers(true), body: JSON.stringify(body),
-    });
+    const res = await this.authedFetch('/tasks', { method: 'POST', body: JSON.stringify(body) }, true);
     if (!res.ok) throw new Error(`createTask -> HTTP ${res.status}`);
     const r = await res.json() as { ok?: boolean; taskId?: string; status?: string; runnerId?: string; error?: string };
     if (r.ok === false || !r.taskId) throw new Error(r.error || 'Failed to create task');
@@ -195,18 +236,66 @@ export class AgentSession {
   }
 
   async getTask(taskId: string): Promise<Task> {
-    const res = await fetch(`${this.transport.baseURL}/tasks/${encodeURIComponent(taskId)}`, { headers: this.headers() });
+    const res = await this.authedFetch(`/tasks/${encodeURIComponent(taskId)}`);
     if (!res.ok) throw new Error(`getTask -> HTTP ${res.status}`);
     const r = await res.json() as { task: Task };
     return r.task;
   }
 
   async stopTask(taskId: string): Promise<void> {
-    await fetch(`${this.transport.baseURL}/tasks/${encodeURIComponent(taskId)}/stop`, { method: 'POST', headers: this.headers() });
+    await this.authedFetch(`/tasks/${encodeURIComponent(taskId)}/stop`, { method: 'POST' });
   }
 
-  /** Stream output by polling getTask until terminal. */
+  /**
+   * Stream task output. Prefers the agent's server-sent stream
+   * (`/tasks/{id}/output`) — cheap on mobile/cellular — and falls back to
+   * polling getTask when the stream isn't available or drops.
+   */
   async *streamOutput(taskId: string, pollIntervalMs = 1000): AsyncGenerator<string> {
+    const sseOk = yield* this.streamOutputSSE(taskId);
+    if (sseOk) return;
+    yield* this.streamOutputPolling(taskId, pollIntervalMs);
+  }
+
+  /** SSE path. Yields chunks; returns true if it ran to a terminal state. */
+  private async *streamOutputSSE(taskId: string): AsyncGenerator<string, boolean> {
+    let res: Response;
+    try {
+      res = await this.authedFetch(`/tasks/${encodeURIComponent(taskId)}/output`, { headers: { Accept: 'text/event-stream' } });
+    } catch { return false; }
+    const ctype = res.headers.get('content-type') ?? '';
+    if (!res.ok || !res.body || !ctype.includes('text/event-stream')) return false;
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let sawData = false;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const events = buf.split('\n\n');
+        buf = events.pop() ?? '';
+        for (const ev of events) {
+          for (const line of ev.split('\n')) {
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).replace(/^ /, '');
+            if (data === '[DONE]') return true;
+            sawData = true;
+            yield data;
+          }
+        }
+      }
+    } catch {
+      return sawData; // partial stream: if we got anything, let caller decide; treat as handled
+    } finally {
+      try { reader.releaseLock(); } catch { /* noop */ }
+    }
+    return sawData;
+  }
+
+  /** Polling fallback — re-GET the task and diff the output tail. */
+  private async *streamOutputPolling(taskId: string, pollIntervalMs: number): AsyncGenerator<string> {
     let lastLen = 0;
     for (;;) {
       const task = await this.getTask(taskId);
@@ -221,7 +310,7 @@ export class AgentSession {
 /** Discover the best transport and return a ready AgentSession. */
 export async function connect(opts: ConnectOptions): Promise<AgentSession> {
   const transport = await pickTransport(opts);
-  return new AgentSession(transport, opts.token);
+  return new AgentSession(transport, opts.token, { getToken: opts.getToken, allowedRunners: opts.allowedRunners });
 }
 
 /**
@@ -238,8 +327,19 @@ export function connectHandle(
     relayServers?: RelayServer[];
     tunnelUrl?: string;
     forceRelay?: boolean;
+    /** Allowed-runner scope baked in by the server (YaverApp.resolvedHandle). */
+    allowedRunners?: string[];
   },
-  opts?: { token?: string; directPort?: number; probeTimeoutMs?: number; cached?: Transport | null },
+  opts?: {
+    token?: string;
+    directPort?: number;
+    probeTimeoutMs?: number;
+    cached?: Transport | null;
+    /** Mobile token-refresh hook (re-mint a scoped token on expiry). */
+    getToken?: () => Promise<string>;
+    /** Override the handle's runner scope (rarely needed). */
+    allowedRunners?: string[];
+  },
 ): Promise<AgentSession> {
   const token = opts?.token ?? handle.token;
   if (!token) throw new Error('connectHandle: a token is required (on the handle or in opts)');
@@ -254,6 +354,8 @@ export function connectHandle(
     directPort: opts?.directPort,
     probeTimeoutMs: opts?.probeTimeoutMs,
     cached: opts?.cached ?? null,
+    getToken: opts?.getToken,
+    allowedRunners: opts?.allowedRunners ?? handle.allowedRunners,
   });
 }
 
