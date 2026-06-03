@@ -1629,4 +1629,28 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_state", ["state"])
     .index("by_expiresAt", ["expiresAt"]),
+
+  /** Companion-compute bookkeeping (desktop/agent/companion.go). Cross-device
+   *  visibility for which box runs which serverless project's crons. Privacy
+   *  contract: bookkeeping ONLY — slug + bound deviceId + cron names/schedules
+   *  + last/next-run status. NEVER endpoint URLs, cron auth tokens, vault
+   *  secrets, or absolute paths (those stay on the agent). The agent builds
+   *  the payload through buildCompanionUpsertPayload, guarded by
+   *  desktop/agent/convex_privacy_test.go. */
+  companionProjects: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),
+    slug: v.string(),
+    enabled: v.boolean(),
+    crons: v.array(v.object({
+      name: v.string(),
+      schedule: v.string(),
+      lastOutcome: v.optional(v.string()),
+      lastRunAt: v.optional(v.number()),
+      nextRunAt: v.optional(v.number()),
+    })),
+    serviceCount: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"])
+    .index("by_device_slug", ["deviceId", "slug"]),
 });

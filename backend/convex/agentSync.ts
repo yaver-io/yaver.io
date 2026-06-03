@@ -284,7 +284,7 @@ export const listMyActivity = query({
 
 // ---- Helpers ----
 
-async function resolveUser(ctx: any): Promise<Id<"users">> {
+export async function resolveUser(ctx: any): Promise<Id<"users">> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("unauthenticated");
   // Match by email (Yaver's users table uses email as the lookup key).
