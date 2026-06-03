@@ -63,12 +63,16 @@ func TestBuildRunnerArgs_CodexCdInjection(t *testing.T) {
 		}
 	})
 
-	t.Run("claude includes git trust bypass for non-repo mobile tasks", func(t *testing.T) {
+	t.Run("claude omits --skip-git-repo-check (codex-only flag; claude-cli rejects it)", func(t *testing.T) {
+		// claude-cli 2.x rejects --skip-git-repo-check ("error: unknown
+		// option") and crashes, so builtinRunners["claude"] intentionally
+		// drops it — the flag is codex-only. Claude runs fine in non-git
+		// dirs without it. (Previously this asserted the opposite, which
+		// went stale when the flag was removed from the claude config.)
 		claude := builtinRunners["claude"]
 		args := buildRunnerArgs(claude, "run ls")
-		joined := strings.Join(args, " ")
-		if !strings.Contains(joined, "--skip-git-repo-check") {
-			t.Fatalf("expected claude args to include --skip-git-repo-check, got: %v", args)
+		if containsArg(args, "--skip-git-repo-check") {
+			t.Fatalf("claude must NOT receive --skip-git-repo-check (codex-only): %v", args)
 		}
 	})
 
