@@ -161,6 +161,13 @@ export class YaverApp {
       `runners:${allowedRunners.join(',') || resolved.runner.id}`,
       `workKind:${resolved.workKind}`,
     ];
+    // Bake the per-role MCP tool allowlist (toolPolicyByRole) into the scope so
+    // the agent gates tool calls. '*' (e.g. admin) = unconstrained → no scope;
+    // an empty list (e.g. viewer) = deny all → the "(none)" sentinel.
+    const toolPolicy = resolved.mcp?.toolPolicyByRole?.find((p) => p.role === resolved.role);
+    if (toolPolicy && !toolPolicy.allowedTools.includes('*')) {
+      scopes.push(`tools:${toolPolicy.allowedTools.length ? toolPolicy.allowedTools.join(',') : '(none)'}`);
+    }
     const { token } = await this.mintClientToken({ label: opts?.label ?? `${req.source ?? 'api'}:${req.workKind}`, scopes, ttlMs: opts?.ttlMs });
     return this.sessionHandle(deviceId, token, resolved, effective);
   }

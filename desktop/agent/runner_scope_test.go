@@ -86,3 +86,59 @@ func TestStampSdkRunnerScope(t *testing.T) {
 		t.Fatalf("no runner scope should leave header empty (spoof stripped), got %q", got)
 	}
 }
+
+func TestMcpToolMatchesPatterns(t *testing.T) {
+	cases := []struct {
+		tool     string
+		patterns []string
+		want     bool
+	}{
+		{"code_build", []string{"*"}, true},
+		{"code_build", []string{"code_*"}, true},
+		{"code_build", []string{"talos_*", "code_*"}, true},
+		{"web_preview_start", []string{"code_*", "talos_*"}, false},
+		{"talos_robot_status", []string{"talos_robot_status"}, true}, // exact
+		{"talos_robot_start", []string{"talos_robot_status"}, false},
+		{"anything", []string{}, false}, // empty list matches nothing
+		{"anything", []string{""}, false},
+	}
+	for _, c := range cases {
+		if got := mcpToolMatchesPatterns(c.tool, c.patterns); got != c.want {
+			t.Errorf("mcpToolMatchesPatterns(%q, %v) = %v, want %v", c.tool, c.patterns, got, c.want)
+		}
+	}
+}
+
+func TestMcpToolDeniedByScope(t *testing.T) {
+	// No header → owner / unconstrained → allowed.
+	if d := mcpToolDeniedByScope(reqWithHeaders(nil), "vault_get"); d != nil {
+		t.Fatalf("absent header should impose no constraint, got %q", d.Reason)
+	}
+	// "(none)" → viewer role → deny every tool.
+	if d := mcpToolDeniedByScope(reqWithHeaders(map[string]string{"X-Yaver-AllowedTools": "(none)"}), "git_info"); d == nil {
+		t.Fatalf("(none) must deny all tools")
+	}
+	// Pattern allowlist.
+	r := reqWithHeaders(map[string]string{"X-Yaver-AllowedTools": "code_*,talos_*"})
+	if d := mcpToolDeniedByScope(r, "code_build"); d != nil {
+		t.Fatalf("code_build should be allowed by code_*, got %q", d.Reason)
+	}
+	if d := mcpToolDeniedByScope(r, "exec_command"); d == nil {
+		t.Fatalf("exec_command must be denied when allowlist is code_*/talos_*")
+	}
+}
+
+func TestStampMcpToolScope(t *testing.T) {
+	// tools: scope overwrites any inbound spoof.
+	r := reqWithHeaders(map[string]string{"X-Yaver-AllowedTools": "*"})
+	stampMcpToolScope(r, []string{"runners:opencode", "tools:code_*,talos_*"})
+	if got := r.Header.Get("X-Yaver-AllowedTools"); got != "code_*,talos_*" {
+		t.Fatalf("tools scope should overwrite spoof, got %q", got)
+	}
+	// No tools scope → inbound spoof stripped to empty.
+	r2 := reqWithHeaders(map[string]string{"X-Yaver-AllowedTools": "*"})
+	stampMcpToolScope(r2, []string{"runners:opencode"})
+	if got := r2.Header.Get("X-Yaver-AllowedTools"); got != "" {
+		t.Fatalf("no tools scope should strip header, got %q", got)
+	}
+}

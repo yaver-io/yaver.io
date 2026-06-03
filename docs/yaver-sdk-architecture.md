@@ -124,8 +124,14 @@ authoritative enforcer is the **agent**, using the scope baked into the token:
   (`mcp_tools.go` def + `httpserver.go` dispatch → `resolveCompanyAIRuntime`
   calls Convex `/company-ai/resolve`), so headless/MCP callers get the same
   `ResolvedSession`.
-- **TODO (Go):** enforce `toolPolicyByRole` at MCP dispatch (the per-role tool
-  allowlist is resolved but not yet gated at the tool-call layer).
+- **DONE (Go):** `toolPolicyByRole` is enforced at MCP dispatch.
+  `resolvedHandle` projects the resolved role's `allowedTools` into a
+  `tools:<patterns>` token scope (`'*'` → unconstrained/no scope; `[]` →
+  `(none)` deny-all sentinel). `stampMcpToolScope` turns that into the
+  server-controlled `X-Yaver-AllowedTools` header (inbound stripped first), and
+  `mcpToolDeniedByScope` (glob matcher: `*` / `prefix_*` / exact) gates the
+  `tools/call` case in `handleMCP`. Owner calls carry no scope → unconstrained.
+  Covered by `runner_scope_test.go`.
 
 ## What a consumer (e.g. Talos) does
 

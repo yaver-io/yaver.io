@@ -1711,6 +1711,7 @@ func stripGuestRequestHeaders(r *http.Request) {
 		"X-Yaver-GuestAllowedRunners",
 		"X-Yaver-SdkAllowedRunners",
 		"X-Yaver-HostShareAllowedRunners",
+		"X-Yaver-AllowedTools",
 		"X-Yaver-Support",
 		"X-Yaver-Proxied-By",
 		"X-Yaver-Proxied-Tool",
@@ -2124,6 +2125,7 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		stampSdkRunnerScope(r, sdkInfo.Scopes)
+		stampMcpToolScope(r, sdkInfo.Scopes)
 
 		// Check IP binding
 		if len(sdkInfo.AllowedCIDRs) > 0 {
@@ -2247,6 +2249,7 @@ func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		stampSdkRunnerScope(r, info.scopes)
+		stampMcpToolScope(r, info.scopes)
 		if len(info.allowedCIDRs) > 0 {
 			cidrs := parseCIDRs(info.allowedCIDRs)
 			if !ipMatchesCIDRs(clientIP(r), cidrs) {
@@ -4851,6 +4854,68 @@ type mcpError struct {
 	Message string `json:"message"`
 }
 
+// mcpToolMatchesPatterns reports whether toolName satisfies any glob pattern.
+// "*" matches everything; "prefix_*" / "prefix*" match by prefix; otherwise an
+// exact match is required. An empty list matches nothing (the caller decides
+// whether that means "unconstrained" or "deny all").
+func mcpToolMatchesPatterns(toolName string, patterns []string) bool {
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		switch {
+		case p == "":
+			continue
+		case p == "*":
+			return true
+		case strings.HasSuffix(p, "*"):
+			if strings.HasPrefix(toolName, strings.TrimSuffix(p, "*")) {
+				return true
+			}
+		case p == toolName:
+			return true
+		}
+	}
+	return false
+}
+
+// mcpToolDeniedByScope enforces the per-role MCP tool allowlist carried by the
+// server-stamped X-Yaver-AllowedTools header (derived from a token's
+// tools:<patterns> scope, itself projected from companyAIOptions
+// toolPolicyByRole). Semantics:
+//   - header absent        → no constraint (e.g. owner); allowed.
+//   - header == "(none)"   → deny all tools (e.g. viewer role).
+//   - header == "a_*,b_x"  → allowed only if the tool matches a pattern.
+//
+// Returns a denial reason or nil.
+func mcpToolDeniedByScope(r *http.Request, toolName string) *AccessDeniedReason {
+	header := strings.TrimSpace(r.Header.Get("X-Yaver-AllowedTools"))
+	if header == "" {
+		return nil
+	}
+	if header == "(none)" {
+		return &AccessDeniedReason{Denied: true, Reason: fmt.Sprintf("tool %q is not permitted: this role may not call MCP tools", toolName)}
+	}
+	if mcpToolMatchesPatterns(toolName, strings.Split(header, ",")) {
+		return nil
+	}
+	return &AccessDeniedReason{Denied: true, Reason: fmt.Sprintf("tool %q is not permitted by policy (allowed: %s)", toolName, header)}
+}
+
+// stampMcpToolScope translates a token's tools:<patterns> scope into the
+// server-controlled X-Yaver-AllowedTools header that MCP dispatch enforces. The
+// inbound value is always stripped first (never trust a client header). No-op
+// when the token carries no tools scope.
+func stampMcpToolScope(r *http.Request, scopes []string) {
+	r.Header.Del("X-Yaver-AllowedTools")
+	for _, scope := range scopes {
+		if rest, ok := strings.CutPrefix(scope, "tools:"); ok {
+			if rest = strings.TrimSpace(rest); rest != "" {
+				r.Header.Set("X-Yaver-AllowedTools", rest)
+			}
+			return
+		}
+	}
+}
+
 func (s *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
@@ -4894,7 +4959,18 @@ func (s *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 		resp.Result = s.getMCPToolsList()
 
 	case "tools/call":
-		resp.Result = s.handleMCPToolCallWithAddr(req.Params, r.RemoteAddr)
+		// Enforce the per-role MCP tool allowlist (companyAIOptions
+		// toolPolicyByRole, carried as the token's tools:<patterns> scope).
+		// Owner calls carry no scope header and are unconstrained.
+		var tc struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(req.Params, &tc)
+		if denied := mcpToolDeniedByScope(r, tc.Name); denied != nil {
+			resp.Result = mcpToolError(denied.Reason)
+		} else {
+			resp.Result = s.handleMCPToolCallWithAddr(req.Params, r.RemoteAddr)
+		}
 
 	case "notifications/initialized":
 		// Client notification, no response needed but we return empty result
