@@ -19,6 +19,7 @@ import type * as authLogs from "../authLogs.js";
 import type * as cleanup from "../cleanup.js";
 import type * as cloudLifecycle from "../cloudLifecycle.js";
 import type * as cloudMachines from "../cloudMachines.js";
+import type * as companion from "../companion.js";
 import type * as companyAIOptions from "../companyAIOptions.js";
 import type * as cronSecret from "../cronSecret.js";
 import type * as crons from "../crons.js";
@@ -73,6 +74,7 @@ declare const fullApi: ApiFromModules<{
   cleanup: typeof cleanup;
   cloudLifecycle: typeof cloudLifecycle;
   cloudMachines: typeof cloudMachines;
+  companion: typeof companion;
   companyAIOptions: typeof companyAIOptions;
   cronSecret: typeof cronSecret;
   crons: typeof crons;

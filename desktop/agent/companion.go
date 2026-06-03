@@ -500,7 +500,13 @@ func (e *CompanionEngine) Reconcile() {
 }
 
 func (e *CompanionEngine) syncBookkeeping(project string, enabled bool, status CompanionStatus) {
-	if e.syncer == nil {
+	syncer := e.syncer
+	if syncer == nil {
+		// Fall back to the process-global syncer (set after the agent authes to
+		// Convex). Best-effort, privacy-safe bookkeeping; never fatal.
+		syncer = globalConvexSync
+	}
+	if syncer == nil {
 		return
 	}
 	crons := make([]CompanionCronSummary, 0, len(status.Crons))
@@ -513,7 +519,7 @@ func (e *CompanionEngine) syncBookkeeping(project string, enabled bool, status C
 		})
 	}
 	payload := buildCompanionUpsertPayload(e.deviceID, project, enabled, crons, len(status.Services))
-	e.syncer.callMutation("companion:upsertCompanionProject", payload)
+	syncer.callMutation("companion:upsertCompanionProject", payload)
 }
 
 // --- env interpolation ---
