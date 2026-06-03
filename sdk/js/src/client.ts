@@ -1,6 +1,6 @@
 import type {
   Task, CreateTaskOptions, AgentInfo, ImageAttachment, ExecSession, ExecOptions,
-  RunnerInfo, RunnerAuthSession, RunnerSetupOptions, YaverCapability,
+  RunnerInfo, RunnerAuthSession, RunnerSetupOptions, YaverCapability, AccountLinkSession,
 } from './types';
 
 /**
@@ -230,6 +230,23 @@ export class YaverClient {
   /** Yaver account level — is the agent linked to a Yaver account? */
   async accountStatus(): Promise<Record<string, unknown>> {
     return this.get<Record<string, unknown>>('/auth/status');
+  }
+
+  /**
+   * Start the account-level "Yaver OAuth" link (device-code flow). Requires the
+   * caller to be host-authenticated (the owner/agent bearer). The agent kicks
+   * off the Convex device-code dance and returns `deviceCodeUrl` + `userCode`
+   * to approve in a browser, plus `recovery_id` + `wait_token` to poll with.
+   */
+  async accountLinkStart(): Promise<AccountLinkSession> {
+    return this.post<AccountLinkSession>('/auth/recover', { mode: 'device-code' });
+  }
+
+  /** Poll an account-link session until `state === 'recovered'`. */
+  async accountLinkStatus(recoveryId: string, waitToken: string): Promise<AccountLinkSession> {
+    return this.get<AccountLinkSession>(
+      `/auth/recover/session?id=${encodeURIComponent(recoveryId)}&wait_token=${encodeURIComponent(waitToken)}`,
+    );
   }
 
   /**

@@ -149,6 +149,25 @@ export interface RunnerAuthSession {
   error?: string;
 }
 
+/**
+ * Account-level "Yaver OAuth" session — links/relinks the agent to a Yaver
+ * account via the device-code flow (the agent drives the Convex device-code
+ * dance; the caller opens `deviceCodeUrl`, enters `userCode`, then polls).
+ * Returned by accountLinkStart(); polled via accountLinkStatus(id, waitToken).
+ */
+export interface AccountLinkSession {
+  ok?: boolean;
+  mode?: string;            // "device-code"
+  state?: string;           // awaiting_browser_oauth → applying_token → recovered | expired | failed
+  next_action?: string;     // "open-browser"
+  deviceCodeUrl?: string;   // open this in a browser
+  userCode?: string;        // enter this at the URL
+  recovery_id?: string;     // pass back to accountLinkStatus
+  wait_token?: string;      // pass back to accountLinkStatus
+  expiresAt?: string;
+  error?: string;
+}
+
 /** Headless / API-key runner setup options. setupMCP wires in MCP servers. */
 export interface RunnerSetupOptions {
   installIfMissing?: boolean;

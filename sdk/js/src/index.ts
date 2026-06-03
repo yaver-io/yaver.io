@@ -36,6 +36,7 @@ export type {
   RunnerAuthSession,
   RunnerSetupOptions,
   YaverCapability,
+  AccountLinkSession,
 } from './types';
 
 // Phone-backend runtime — what a third-party RN/web app uses to hit the
