@@ -27,7 +27,9 @@ echo "[yaver-pi-firstboot] starting"
 echo "[yaver-pi-firstboot] auto-update preference: $YAVER_AUTO_UPDATE"
 
 apt-get update
-apt-get install -y git gh jq tmux ffmpeg python3 python3-pip python3-venv curl ca-certificates unzip xz-utils docker.io docker-compose-v2
+# chromium: required by the UI web-ghost (chromedp) so the appliance can drive
+# web-UI ERPs headlessly for migration + keeping the local ERP synced.
+apt-get install -y git gh jq tmux ffmpeg python3 python3-pip python3-venv curl ca-certificates unzip xz-utils docker.io docker-compose-v2 chromium
 
 if ! command -v yaver >/dev/null 2>&1; then
   echo "[yaver-pi-firstboot] yaver binary missing at /usr/local/bin/yaver" >&2

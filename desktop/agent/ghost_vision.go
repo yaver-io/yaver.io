@@ -27,18 +27,47 @@ type visionLocator struct {
 	model   string
 }
 
+// localOllamaV1 is Yaver's on-box local model server (OpenAI-compatible).
+const localOllamaV1 = "http://localhost:11434/v1"
+
+// newVisionLocator resolves the grounding model through Yaver's underlying AI
+// infra, in priority order:
+//  1. explicit payload (baseUrl/apiKey/model) — the Talos driver picks.
+//  2. GHOST_VISION_* env.
+//  3. OPENAI_* env — this is what Yaver's runner/llm-settings layer injects for
+//     the user's chosen provider (Claude Code / Codex / OpenRouter / gateway),
+//     so the ghost reuses the same configured AI with no extra creds.
+//  4. local Ollama (Yaver's on-box model server) as the on-prem default.
+//
+// This keeps the ghost provider-agnostic and lets a customer run fully local.
 func newVisionLocator(baseURL, apiKey, model string) (*visionLocator, error) {
 	if baseURL == "" {
-		baseURL = firstNonEmptyStr(os.Getenv("GHOST_VISION_BASE_URL"), os.Getenv("OPENAI_BASE_URL"))
+		baseURL = firstNonEmptyStr(
+			os.Getenv("GHOST_VISION_BASE_URL"),
+			os.Getenv("OPENAI_BASE_URL"),
+			localOllamaV1, // Yaver local AI infra fallback
+		)
 	}
 	if apiKey == "" {
 		apiKey = firstNonEmptyStr(os.Getenv("GHOST_VISION_API_KEY"), os.Getenv("OPENAI_API_KEY"))
 	}
 	if model == "" {
-		model = firstNonEmptyStr(os.Getenv("GHOST_VISION_MODEL"), "gpt-4o-mini")
+		model = firstNonEmptyStr(
+			os.Getenv("GHOST_VISION_MODEL"),
+			os.Getenv("OPENAI_MODEL"),
+		)
+		if model == "" {
+			// Default per provider: a local vision model for Ollama, else a
+			// cheap cloud vision model.
+			if strings.Contains(baseURL, "11434") {
+				model = "llama3.2-vision"
+			} else {
+				model = "gpt-4o-mini"
+			}
+		}
 	}
 	if baseURL == "" {
-		return nil, fmt.Errorf("no vision endpoint: pass baseUrl in the payload or set GHOST_VISION_BASE_URL/OPENAI_BASE_URL (e.g. http://localhost:11434/v1 for a local model)")
+		return nil, fmt.Errorf("no vision endpoint resolved")
 	}
 	return &visionLocator{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, model: model}, nil
 }
