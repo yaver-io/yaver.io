@@ -57,19 +57,20 @@ type MachineRunnerCapability struct {
 }
 
 type MachineCapabilities struct {
-	Hardware           HardwareProfile           `json:"hardware"`
-	Runners            []MachineRunnerCapability `json:"runners"`
-	SupportsIOS        bool                      `json:"supportsIos"`
-	SupportsAndroid    bool                      `json:"supportsAndroid"`
-	SupportsDocker     bool                      `json:"supportsDocker"`
-	SupportsLocalLLM   bool                      `json:"supportsLocalLlm"`
-	SupportsTestFlight bool                      `json:"supportsTestFlight"`
-	SupportsPlayStore  bool                      `json:"supportsPlayStore"`
-	SupportsGhostUI    bool                      `json:"supportsGhostUi"`  // native desktop ghost (Windows now; macOS w/ cgo)
-	SupportsGhostWeb   bool                      `json:"supportsGhostWeb"` // web ghost (chromedp) — cross-OS incl. RPi appliance
-	LowPower           bool                      `json:"lowPower"`
-	MaxTaskSlots       int                       `json:"maxTaskSlots"`
-	Profile            *MachineProfile           `json:"profile,omitempty"`
+	Hardware             HardwareProfile           `json:"hardware"`
+	Runners              []MachineRunnerCapability `json:"runners"`
+	SupportsIOS          bool                      `json:"supportsIos"`
+	SupportsAndroid      bool                      `json:"supportsAndroid"`
+	SupportsDocker       bool                      `json:"supportsDocker"`
+	SupportsLocalLLM     bool                      `json:"supportsLocalLlm"`
+	SupportsTestFlight   bool                      `json:"supportsTestFlight"`
+	SupportsPlayStore    bool                      `json:"supportsPlayStore"`
+	SupportsGhostUI      bool                      `json:"supportsGhostUi"`      // native desktop ghost (Windows now; macOS w/ cgo)
+	SupportsGhostWeb     bool                      `json:"supportsGhostWeb"`     // web ghost (chromedp) — cross-OS incl. RPi appliance
+	SupportsMachineSniff bool                      `json:"supportsMachineSniff"` // machine/PLC hijack: Modbus TCP everywhere; serial sniff on Linux
+	LowPower             bool                      `json:"lowPower"`
+	MaxTaskSlots         int                       `json:"maxTaskSlots"`
+	Profile              *MachineProfile           `json:"profile,omitempty"`
 }
 
 // listAllMachines returns every Yaver-managed machine this user owns — the
@@ -237,6 +238,10 @@ func detectMachineCapabilities(workDir string) *MachineCapabilities {
 	// on-prem RPi appliance (ARM Linux) for web-UI ERPs. Chrome/Chromium is
 	// resolved at runtime; the verbs report cleanly if it's missing.
 	caps.SupportsGhostWeb = true
+	// Machine/PLC hijack: Modbus-TCP works on every platform; serial (RTU) bus
+	// sniffing needs the Linux termios path. Gated per-agent by --machine at
+	// verb-call time; this only advertises platform support.
+	caps.SupportsMachineSniff = true
 	caps.LowPower = caps.Hardware.CPUCores <= 4 || strings.Contains(strings.ToLower(caps.Hardware.Arch), "arm")
 	if caps.Profile != nil {
 		if profileHasAny(caps.Profile, "testflight", "xcode", "ios") {

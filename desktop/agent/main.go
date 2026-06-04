@@ -34,6 +34,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 	"github.com/yaver-io/agent/ghost"
+	"github.com/yaver-io/agent/machine"
 	"golang.org/x/mod/semver"
 	"golang.org/x/term"
 )
@@ -2095,6 +2096,7 @@ func runServe(args []string) {
 	relayPassword := fs.String("relay-password", "", "Password for relay server authentication")
 	vaultPass := fs.String("vault-passphrase", "", "Custom vault passphrase (default: derived from auth token)")
 	ghostFlag := fs.Bool("ghost", false, "Enable the GUI ghost (UI-automation slave) capability so remote Commanders can drive this machine's desktop")
+	machineFlag := fs.Bool("machine", false, "Enable the machine/PLC hijack capability (Modbus sniff + register fetch + AI understand) so remote Commanders can read/tune this machine")
 	multiUser := fs.Bool("multi-user", false, "Enable multi-user mode (shared machines)")
 	teamID := fs.String("team", "", "Restrict access to team members (requires --multi-user)")
 	maxUsers := fs.Int("max-users", 0, "Max concurrent users in multi-user mode (0 = unlimited)")
@@ -2300,6 +2302,12 @@ func runServe(args []string) {
 		}
 		if *vaultPass != "" {
 			childArgs = append(childArgs, fmt.Sprintf("--vault-passphrase=%s", *vaultPass))
+		}
+		if *ghostFlag {
+			childArgs = append(childArgs, "--ghost")
+		}
+		if *machineFlag {
+			childArgs = append(childArgs, "--machine")
 		}
 		if *allowIPs != "" {
 			childArgs = append(childArgs, fmt.Sprintf("--allow-ips=%s", *allowIPs))
@@ -3061,6 +3069,13 @@ func runServe(args []string) {
 	httpServer.ghostEnabled = *ghostFlag || cfg.GhostEnabled
 	if httpServer.ghostEnabled {
 		log.Printf("GUI ghost enabled (supported on this OS: %v)", ghost.Supported())
+	}
+
+	// Machine/PLC hijack — opt-in via --machine or config. Engine created lazily
+	// on first machine verb (ops_machine.go).
+	httpServer.machineEnabled = *machineFlag || cfg.MachineEnabled
+	if httpServer.machineEnabled {
+		log.Printf("Machine/PLC hijack enabled (serial sniff supported on this OS: %v)", machine.Supported())
 	}
 
 	// Container isolation (optional — requires Docker + yaver-sandbox image)
