@@ -1,12 +1,11 @@
 package ghost
 
-// Phase 1 ships a stub accessibility Tree on every OS. Phase 2 replaces
-// newTree with build-tagged implementations (Windows UIAutomation, macOS AX,
-// Linux AT-SPI). Callers feature-detect by checking for ErrUnsupported.
+// Shared accessibility-tree stub. Per-OS implementations live in
+// tree_windows.go (UIAutomation via PowerShell), tree_darwin.go (AX via cgo),
+// and stubs in tree_linux.go / tree_other.go. newTree() is defined per build
+// tag. Callers feature-detect by checking for ErrUnsupported.
 
 type stubTree struct{}
-
-func newTree() Tree { return stubTree{} }
 
 func (stubTree) Windows() ([]Node, error)                { return nil, ErrUnsupported }
 func (stubTree) ElementTree(window string) (Node, error) { return Node{}, ErrUnsupported }

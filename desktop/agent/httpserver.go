@@ -410,6 +410,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// /ops/verbs     — GET list of registered verbs + their payload schemas
 	mux.HandleFunc("/ops", s.auth(s.handleOps))
 	mux.HandleFunc("/ops/plan", s.auth(s.handleOpsPlan))
+	// Remote-view (RustDesk/AnyDesk/VNC) management — first-class in the agent.
+	mux.HandleFunc("/remoteview/providers", s.auth(s.handleRemoteViewProviders))
+	mux.HandleFunc("/remoteview/status", s.auth(s.handleRemoteViewStatus))
+	mux.HandleFunc("/remoteview/connect", s.auth(s.handleRemoteViewConnect))
+	mux.HandleFunc("/remoteview/disconnect", s.auth(s.handleRemoteViewDisconnect))
 	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
