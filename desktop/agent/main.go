@@ -33,6 +33,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
+	"github.com/yaver-io/agent/ghost"
 	"golang.org/x/mod/semver"
 	"golang.org/x/term"
 )
@@ -2093,6 +2094,7 @@ func runServe(args []string) {
 	dummy := fs.Bool("dummy", false, "Use dummy runner (fake responses for network testing)")
 	relayPassword := fs.String("relay-password", "", "Password for relay server authentication")
 	vaultPass := fs.String("vault-passphrase", "", "Custom vault passphrase (default: derived from auth token)")
+	ghostFlag := fs.Bool("ghost", false, "Enable the GUI ghost (UI-automation slave) capability so remote Commanders can drive this machine's desktop")
 	multiUser := fs.Bool("multi-user", false, "Enable multi-user mode (shared machines)")
 	teamID := fs.String("team", "", "Restrict access to team members (requires --multi-user)")
 	maxUsers := fs.Int("max-users", 0, "Max concurrent users in multi-user mode (0 = unlimited)")
@@ -3054,6 +3056,13 @@ func runServe(args []string) {
 		httpServer.guestConfigMgr = NewGuestConfigManager(cfgDir)
 		log.Printf("Guest config manager ready")
 	}
+	// GUI ghost (UI-automation slave) — opt-in via --ghost or config. The
+	// engine itself is created lazily on first ghost verb (ops_ghost.go).
+	httpServer.ghostEnabled = *ghostFlag || cfg.GhostEnabled
+	if httpServer.ghostEnabled {
+		log.Printf("GUI ghost enabled (supported on this OS: %v)", ghost.Supported())
+	}
+
 	// Container isolation (optional — requires Docker + yaver-sandbox image)
 	useContainerGuests := *containerizeGuests || cfg.ContainerizeGuests
 	useContainerHost := *containerizeHost || cfg.ContainerizeHost

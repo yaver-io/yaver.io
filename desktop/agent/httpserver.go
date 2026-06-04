@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/yaver-io/agent/ghost"
 )
 
 var currentLocalAgentPort atomic.Int64
@@ -117,6 +119,14 @@ type HTTPServer struct {
 	lastNativeBundleMu          sync.Mutex
 
 	iosInstallMethod string // "auto", "native", "bundle" — resolved at startup
+
+	// GUI ghost (UI-automation slave). Opt-in via --ghost / config.GhostEnabled.
+	// The engine is created lazily on first ghost verb so non-ghost agents pay
+	// nothing. See ops_ghost.go.
+	ghostEnabled bool
+	ghostEngine  *ghost.Engine
+	ghostOnce    sync.Once
+	ghostErr     error
 
 	// Test app sessions
 	testAppSession       sync.Map // sessionID -> *TestAppSession

@@ -130,6 +130,14 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"swipeCoord",
 	"keyText",
 	"clipboardText",
+	// GUI ghost (ops_ghost.go): screenshots, click coordinates, typed text and
+	// any OCR/vision output stay on-device and flow only to the live caller —
+	// they must never be synced to Convex.
+	"ghostScreenshot",
+	"ghostPngBase64",
+	"ghostCoords",
+	"ghostInputText",
+	"ghostOCR",
 	"remoteBuilderHostname",
 	"remoteBuilderTunnelToken",
 	"builderUrl",
