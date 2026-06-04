@@ -22,8 +22,9 @@ import (
 var (
 	modUser32 = windows.NewLazySystemDLL("user32.dll")
 
-	procSendInput    = modUser32.NewProc("SendInput")
-	procSetCursorPos = modUser32.NewProc("SetCursorPos")
+	procSendInput          = modUser32.NewProc("SendInput")
+	procSetCursorPos       = modUser32.NewProc("SetCursorPos")
+	procSetProcessDPIAware = modUser32.NewProc("SetProcessDPIAware")
 )
 
 const (
@@ -110,7 +111,12 @@ func sendInputs(inputs ...winInput) error {
 
 type winInputDev struct{}
 
-func newInput() (Input, error) { return winInputDev{}, nil }
+func newInput() (Input, error) {
+	// Become DPI-aware so SetCursorPos and GDI capture share one physical-pixel
+	// coordinate space (vision coords from the screenshot then map 1:1).
+	procSetProcessDPIAware.Call()
+	return winInputDev{}, nil
+}
 
 func (winInputDev) Move(x, y int) error {
 	ret, _, err := procSetCursorPos.Call(uintptr(int32(x)), uintptr(int32(y)))

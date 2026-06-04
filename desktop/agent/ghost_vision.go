@@ -13,6 +13,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/png"
 	"net/http"
 	"os"
 	"strings"
@@ -89,17 +91,22 @@ Reply with ONLY a compact JSON object, no prose, no markdown:
 - Use "type" with "text" to enter text into the already-focused field.
 - Use "key" with "keys" for shortcuts/chords (e.g. ["ctrl","s"], ["enter"]).
 - Use "none" if the instruction is already satisfied or impossible.
+- The screen may be a remote PC mirrored via a remote-view tool (RustDesk/AnyDesk/VNC); ignore the remote-view toolbar/title-bar and act on the ERP application content itself.
 Return strictly valid JSON.`
 
 func (v *visionLocator) Locate(ctx context.Context, screenshotPNG []byte, instruction string) (ghost.Action, error) {
 	b64 := base64.StdEncoding.EncodeToString(screenshotPNG)
+	dims := ""
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(screenshotPNG)); err == nil {
+		dims = fmt.Sprintf("\nThe screenshot is %dx%d pixels; x,y must be within 0..%d and 0..%d from the top-left.", cfg.Width, cfg.Height, cfg.Width, cfg.Height)
+	}
 	body := map[string]any{
 		"model":       v.model,
 		"temperature": 0,
 		"messages": []any{
 			map[string]any{"role": "system", "content": ghostVisionSystemPrompt},
 			map[string]any{"role": "user", "content": []any{
-				map[string]any{"type": "text", "text": "Instruction: " + instruction + "\nReturn the single next action as JSON."},
+				map[string]any{"type": "text", "text": "Instruction: " + instruction + dims + "\nReturn the single next action as JSON."},
 				map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64," + b64}},
 			}},
 		},
