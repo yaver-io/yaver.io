@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v3/host"
+	"github.com/yaver-io/agent/ghost"
 )
 
 // MachineInfo is the universal descriptor for anything that runs a Yaver agent.
@@ -64,6 +65,7 @@ type MachineCapabilities struct {
 	SupportsLocalLLM   bool                      `json:"supportsLocalLlm"`
 	SupportsTestFlight bool                      `json:"supportsTestFlight"`
 	SupportsPlayStore  bool                      `json:"supportsPlayStore"`
+	SupportsGhostUI    bool                      `json:"supportsGhostUi"`
 	LowPower           bool                      `json:"lowPower"`
 	MaxTaskSlots       int                       `json:"maxTaskSlots"`
 	Profile            *MachineProfile           `json:"profile,omitempty"`
@@ -226,6 +228,10 @@ func detectMachineCapabilities(workDir string) *MachineCapabilities {
 	caps.SupportsIOS = caps.SupportsTestFlight || runtime.GOOS == "darwin"
 	caps.SupportsPlayStore = toolLooksInstalled("java") || toolLooksInstalled("javac") || toolLooksInstalled("gradle")
 	caps.SupportsAndroid = caps.SupportsPlayStore || toolLooksInstalled("adb")
+	// GUI ghost capability: the OS must have a screen+input implementation
+	// (Phase 1: Windows). Actual invocation is still gated per-agent by the
+	// --ghost opt-in at verb-call time; this only advertises platform support.
+	caps.SupportsGhostUI = ghost.Supported()
 	caps.LowPower = caps.Hardware.CPUCores <= 4 || strings.Contains(strings.ToLower(caps.Hardware.Arch), "arm")
 	if caps.Profile != nil {
 		if profileHasAny(caps.Profile, "testflight", "xcode", "ios") {
