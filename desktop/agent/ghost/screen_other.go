@@ -1,14 +1,14 @@
-//go:build !windows && (!darwin || !cgo)
+//go:build !windows && !linux && (!darwin || !cgo)
 
 package ghost
 
 import "image"
 
-// Fallback stub for platforms without a native ghost implementation: Linux
-// (native X11 path is Phase 2b), macOS built without cgo, and any other OS.
-// Windows has a native impl always; macOS has one when CGO is enabled. The
-// package still builds (CGO_ENABLED=0) everywhere so the agent compiles
-// host-side; ghost ops simply report unavailable here.
+// Fallback stub for platforms without a native ghost implementation: macOS built
+// without cgo, and any OS other than Windows/Linux. Windows and Linux always
+// have native impls; macOS has one when CGO is enabled. The package still builds
+// (CGO_ENABLED=0) everywhere so the agent compiles host-side; ghost ops simply
+// report unavailable here.
 const platformSupported = false
 
 type unsupportedScreen struct{}
