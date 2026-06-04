@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/yaver-io/agent/ghost"
+	"github.com/yaver-io/agent/machine"
 )
 
 var currentLocalAgentPort atomic.Int64
@@ -127,6 +128,14 @@ type HTTPServer struct {
 	ghostEngine  *ghost.Engine
 	ghostOnce    sync.Once
 	ghostErr     error
+
+	// Machine/PLC hijack (Modbus sniff + register fetch + AI understand).
+	// Opt-in via --machine / config.MachineEnabled. Engine created lazily on
+	// first machine verb. See ops_machine.go / package machine.
+	machineEnabled bool
+	machineEngine  *machine.Engine
+	machineOnce    sync.Once
+	machineErr     error
 
 	// Test app sessions
 	testAppSession       sync.Map // sessionID -> *TestAppSession

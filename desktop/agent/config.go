@@ -141,6 +141,7 @@ type Config struct {
 	TLSPort                         int      `json:"tls_port,omitempty"`           // HTTPS port (default 18443)
 	IOSInstallMethod                string   `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"
 	GhostEnabled                    bool     `json:"ghost_enabled,omitempty"`      // enable the GUI ghost (UI-automation slave) capability (default: false)
+	MachineEnabled                  bool     `json:"machine_enabled,omitempty"`    // enable the machine/PLC hijack capability (Modbus sniff/read/understand) (default: false)
 
 	// Container isolation — run tasks inside Docker containers
 	ContainerizeGuests bool                   `json:"containerize_guests,omitempty"` // run guest tasks in containers (default: false)
