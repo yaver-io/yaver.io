@@ -415,6 +415,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/remoteview/status", s.auth(s.handleRemoteViewStatus))
 	mux.HandleFunc("/remoteview/connect", s.auth(s.handleRemoteViewConnect))
 	mux.HandleFunc("/remoteview/disconnect", s.auth(s.handleRemoteViewDisconnect))
+	// Live ghost screen stream (Bambu-camera style) — proxied by the Talos web UI.
+	mux.HandleFunc("/ghost/stream", s.auth(s.handleGhostStream))
+	mux.HandleFunc("/ghost/frame.jpg", s.auth(s.handleGhostFrame))
 	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
