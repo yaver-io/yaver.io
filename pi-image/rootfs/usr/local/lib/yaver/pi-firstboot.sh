@@ -33,7 +33,8 @@ apt-get update
 #   only RustDesk is installed). ffmpeg also gives the recorder x11grab for the
 #   temporary operation recordings shown in onboarding.
 apt-get install -y git gh jq tmux ffmpeg python3 python3-pip python3-venv curl ca-certificates unzip xz-utils docker.io docker-compose-v2 chromium \
-  xserver-xorg xinit openbox x11-xserver-utils
+  xserver-xorg xinit openbox x11-xserver-utils \
+  python3-pyatspi gir1.2-atspi-2.0
 
 # RustDesk client — for the "blackbox" deployment where the customer installs
 # ONLY RustDesk on their Logo PC and this appliance remote-controls it. Pinned
