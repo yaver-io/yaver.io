@@ -65,7 +65,8 @@ type MachineCapabilities struct {
 	SupportsLocalLLM   bool                      `json:"supportsLocalLlm"`
 	SupportsTestFlight bool                      `json:"supportsTestFlight"`
 	SupportsPlayStore  bool                      `json:"supportsPlayStore"`
-	SupportsGhostUI    bool                      `json:"supportsGhostUi"`
+	SupportsGhostUI    bool                      `json:"supportsGhostUi"`  // native desktop ghost (Windows now; macOS w/ cgo)
+	SupportsGhostWeb   bool                      `json:"supportsGhostWeb"` // web ghost (chromedp) — cross-OS incl. RPi appliance
 	LowPower           bool                      `json:"lowPower"`
 	MaxTaskSlots       int                       `json:"maxTaskSlots"`
 	Profile            *MachineProfile           `json:"profile,omitempty"`
@@ -232,6 +233,10 @@ func detectMachineCapabilities(workDir string) *MachineCapabilities {
 	// (Phase 1: Windows). Actual invocation is still gated per-agent by the
 	// --ghost opt-in at verb-call time; this only advertises platform support.
 	caps.SupportsGhostUI = ghost.Supported()
+	// Web ghost (chromedp/headless browser) is cross-platform — it runs on the
+	// on-prem RPi appliance (ARM Linux) for web-UI ERPs. Chrome/Chromium is
+	// resolved at runtime; the verbs report cleanly if it's missing.
+	caps.SupportsGhostWeb = true
 	caps.LowPower = caps.Hardware.CPUCores <= 4 || strings.Contains(strings.ToLower(caps.Hardware.Arch), "arm")
 	if caps.Profile != nil {
 		if profileHasAny(caps.Profile, "testflight", "xcode", "ios") {
