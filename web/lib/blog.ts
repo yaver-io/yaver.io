@@ -10,6 +10,22 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "yaver-rustdesk-ghosting",
+    title: "Ghost mode: drive any legacy desktop ERP through RustDesk, with AI",
+    date: "2026-06-04",
+    published: true,
+    description:
+      "Yaver's UI ghost operates a legacy app's own GUI the way a human clerk would — screenshot, locate with a vision model, click and type — across Windows, macOS, and Linux, plus headless web. The blackbox pattern: install only RustDesk on the customer's PC, drop in a pre-configured Yaver appliance, and let it read the data and write back through the app's screens. Includes the abstract remote-view layer (RustDesk/AnyDesk/VNC), DPI/retina-correct coordinates, a live MJPEG camera view, and the on-prem vs cloud-brain AI split.",
+  },
+  {
+    slug: "yaver-machine-discovery-modbus",
+    title: "Machine discovery: reverse-engineering a PLC over Modbus with AI",
+    date: "2026-06-04",
+    published: true,
+    description:
+      "Point Yaver at a wire-harness machine's PLC — sniff the Modbus-RTU bus read-only or read-scan it over Modbus-TCP — and let an AI infer what each holding register means (cut_length, strip_left, quantity, speed, alarm word…), its unit, and its scale, anchored on the job's ground-truth values. Then read/verify, optionally range-clamped write-back (safety registers never network-writable), and sync the learned schematic to Talos. How yaver serve --machine turns an opaque controller into a typed, queryable device.",
+  },
+  {
     slug: "stt-tts-voice-local-byok",
     title: "Voice in Yaver: local STT/TTS by default, bring-your-own cloud, keys in the vault",
     date: "2026-05-30",
