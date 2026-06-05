@@ -208,12 +208,44 @@ async function meshPeersForUser(ctx: any, userId: Id<"users">) {
     }
 
     const sharedNodes = [];
+    const seenDevice = new Set<string>(own.map((n: any) => n.deviceId));
     for (const deviceId of sharedDeviceIds) {
       const node = await ctx.db
         .query("meshNodes")
         .withIndex("by_device", (q: any) => q.eq("deviceId", deviceId))
         .first();
-      if (node && node.userId !== userId) sharedNodes.push(node);
+      if (node && node.userId !== userId && !seenDevice.has(node.deviceId)) {
+        seenDevice.add(node.deviceId);
+        sharedNodes.push(node);
+      }
+    }
+
+    // Reverse direction: for grants where I'm the HOST, the GUEST's nodes must
+    // also be WG peers, or the return path fails — WireGuard requires BOTH ends
+    // to list each other. This is what lets a supporter actually reach a friend
+    // who shared a device to them (and vice-versa for any infra grant).
+    const now = Date.now();
+    const hostGrants = (
+      await ctx.db
+        .query("infraAccessGrants")
+        .withIndex("by_hostUserId", (q: any) => q.eq("hostUserId", userId))
+        .filter((q: any) => q.eq(q.field("status"), "active"))
+        .collect()
+    ).filter((g: any) => !g.expiresAt || g.expiresAt > now);
+    const counterpartNodes = [];
+    const counterpartSeen = new Set<string>();
+    for (const g of hostGrants) {
+      if (counterpartSeen.has(String(g.guestUserId))) continue;
+      counterpartSeen.add(String(g.guestUserId));
+      const guestNodes = await ctx.db
+        .query("meshNodes")
+        .withIndex("by_user", (q: any) => q.eq("userId", g.guestUserId))
+        .collect();
+      for (const n of guestNodes) {
+        if (n.userId === userId || seenDevice.has(n.deviceId)) continue;
+        seenDevice.add(n.deviceId);
+        counterpartNodes.push(n);
+      }
     }
 
     // Resolve each node's device alias for MagicDNS (<alias>.mesh). The alias
@@ -226,7 +258,7 @@ async function meshPeersForUser(ctx: any, userId: Id<"users">) {
       return dev?.alias ?? dev?.name;
     };
 
-    const shape = async (n: any, scope: "owner" | "shared") => ({
+    const shape = async (n: any, scope: "owner" | "shared" | "peer") => ({
       deviceId: n.deviceId,
       ownerUserId: n.userId, // for agent-side ACL "user" resolution
       alias: await aliasFor(n.deviceId),
@@ -252,6 +284,7 @@ async function meshPeersForUser(ctx: any, userId: Id<"users">) {
       peers: [
         ...(await Promise.all(own.map((n: any) => shape(n, "owner")))),
         ...(await Promise.all(sharedNodes.map((n: any) => shape(n, "shared")))),
+        ...(await Promise.all(counterpartNodes.map((n: any) => shape(n, "peer")))),
       ],
     };
 }

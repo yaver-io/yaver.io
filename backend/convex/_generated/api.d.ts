@@ -51,6 +51,7 @@ import type * as runnerUsage from "../runnerUsage.js";
 import type * as seed from "../seed.js";
 import type * as shortcuts from "../shortcuts.js";
 import type * as subscriptions from "../subscriptions.js";
+import type * as support_link from "../support_link.js";
 import type * as survey from "../survey.js";
 import type * as teams from "../teams.js";
 import type * as totp from "../totp.js";
@@ -107,6 +108,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   shortcuts: typeof shortcuts;
   subscriptions: typeof subscriptions;
+  support_link: typeof support_link;
   survey: typeof survey;
   teams: typeof teams;
   totp: typeof totp;

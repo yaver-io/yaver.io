@@ -397,6 +397,7 @@ for (const path of [
   "/auth/email-providers", "/auth/verify-email/request", "/auth/verify-email/confirm",
   "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/mesh/peers", "/mesh/acls", "/mesh/acls/set", "/mesh/tags", "/mesh/tags/set", "/mesh/node/config", "/mesh/join", "/mesh/leave",
+  "/support/invite", "/support/invite/info", "/support/connections", "/support/grant/revoke", "/support/deny-all",
   "/shortcuts", "/shortcuts/delete",
   "/subscription",
   "/billing/yaver-cloud/checkout",
@@ -2301,6 +2302,99 @@ http.route({
     try {
       await ctx.runMutation(api.mesh.leaveMeshWeb, { tokenHash, deviceId: body.deviceId ?? "" });
       return jsonResponse({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+// --- Yaver Support Link routes (web/landing) ---
+
+http.route({
+  path: "/support/invite",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      const res = await ctx.runMutation(api.support_link.createSupportInviteWeb, {
+        tokenHash,
+        offerTerminal: body.offerTerminal,
+        offerDesktopControl: body.offerDesktopControl,
+        defaultTtlHours: body.defaultTtlHours,
+        label: body.label,
+        singleUse: body.singleUse,
+      });
+      return jsonResponse(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+// Public (no auth) — the landing/consent page reads invite metadata before the
+// friend signs in. Returns only the inviter's display identity + offered scope.
+http.route({
+  path: "/support/invite/info",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const code = new URL(request.url).searchParams.get("code") ?? "";
+    if (!code) return errorResponse("code required", 400);
+    const res = await ctx.runQuery(api.support_link.getSupportInviteInfo, { code });
+    return jsonResponse(res);
+  }),
+});
+
+http.route({
+  path: "/support/connections",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      const res = await ctx.runQuery(api.support_link.listSupportConnectionsWeb, { tokenHash });
+      return jsonResponse(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/support/grant/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      await ctx.runMutation(api.support_link.revokeSupportGrantWeb, { tokenHash, grantId: body.grantId });
+      return jsonResponse({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("Unauthorized") ? 401 : msg.includes("Forbidden") ? 403 : 500;
+      return errorResponse(msg, code);
+    }
+  }),
+});
+
+http.route({
+  path: "/support/deny-all",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      const res = await ctx.runMutation(api.support_link.denyAllSupportWeb, { tokenHash });
+      return jsonResponse(res);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 500);

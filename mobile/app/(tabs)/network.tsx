@@ -6,15 +6,26 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
+  Share,
   Text,
   TextInput,
   View,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useColors } from "../../src/context/ThemeContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { CONVEX_SITE_URL } from "../../src/_core/constants";
+
+type SupportConn = {
+  grantId: string;
+  deviceId: string | null;
+  counterpartName: string;
+  allowDesktopControl: boolean;
+  expiresAt: number | null;
+};
 
 type MeshPeer = {
   deviceId: string;
@@ -22,7 +33,7 @@ type MeshPeer = {
   meshIPv4?: string;
   online?: boolean;
   isExitNode?: boolean;
-  accessScope?: "owner" | "shared";
+  accessScope?: "owner" | "shared" | "peer";
   advertisedRoutes?: string[];
   wantExitNode?: boolean;
   wantUseExitNode?: string;
@@ -43,6 +54,9 @@ export default function NetworkScreen() {
   const { token } = useAuth();
   const [peers, setPeers] = useState<MeshPeer[]>([]);
   const [rules, setRules] = useState<ACLRule[]>([]);
+  const [supportLink, setSupportLink] = useState<string | null>(null);
+  const [supporting, setSupporting] = useState<SupportConn[]>([]);
+  const [supportedBy, setSupportedBy] = useState<SupportConn[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +76,12 @@ export default function NetworkScreen() {
       if (aRes.ok) {
         const aJson = await aRes.json();
         setRules(aJson.rules ?? []);
+      }
+      const cRes = await fetch(`${CONVEX_SITE_URL}/support/connections`, { headers });
+      if (cRes.ok) {
+        const cJson = await cRes.json();
+        setSupporting(cJson.supporting ?? []);
+        setSupportedBy(cJson.supportedBy ?? []);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -87,6 +107,47 @@ export default function NetworkScreen() {
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         void load();
+      }
+    },
+    [token, load]
+  );
+
+  const createSupportLink = useCallback(
+    async (offerTerminal: boolean, offerDesktopControl: boolean) => {
+      if (!token) return;
+      try {
+        const res = await fetch(`${CONVEX_SITE_URL}/support/invite`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ offerTerminal, offerDesktopControl }),
+        });
+        if (!res.ok) throw new Error(`invite: HTTP ${res.status}`);
+        const json = await res.json();
+        const url = `https://yaver.io/j/${json.code}`;
+        setSupportLink(url);
+        // Open the native share sheet (WhatsApp, Messages, Mail, …).
+        await Share.share({
+          message: `Let me help you on your computer with Yaver — open this to connect: ${url}`,
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [token]
+  );
+
+  const revokeSupport = useCallback(
+    async (grantId: string) => {
+      if (!token) return;
+      try {
+        await fetch(`${CONVEX_SITE_URL}/support/grant/revoke`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ grantId }),
+        });
+        void load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       }
     },
     [token, load]
@@ -130,6 +191,80 @@ export default function NetworkScreen() {
         </View>
       ) : null}
 
+      {/* Support a friend — generate a link and share it (WhatsApp, Messages, …) */}
+      <View style={{ borderRadius: 16, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, padding: 14, gap: 10 }}>
+        <Text style={{ fontSize: 15, fontWeight: "700", color: c.textPrimary }}>Support a friend</Text>
+        <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 17 }}>
+          Send a link. Your friend installs Yaver, approves access, and their computer joins your
+          mesh so you can help them. Default = view + files; they opt into more on their own screen.
+        </Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable
+            onPress={() => void createSupportLink(false, false)}
+            style={{ flex: 1, borderRadius: 999, paddingVertical: 9, alignItems: "center", borderWidth: 1, borderColor: "#34d39955", backgroundColor: "#34d39915" }}
+          >
+            <Text style={{ color: "#34d399", fontSize: 13, fontWeight: "600" }}>View-only link</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => void createSupportLink(true, true)}
+            style={{ flex: 1, borderRadius: 999, paddingVertical: 9, alignItems: "center", borderWidth: 1, borderColor: "#fcd34d55", backgroundColor: "#fcd34d15" }}
+          >
+            <Text style={{ color: "#fcd34d", fontSize: 13, fontWeight: "600" }}>Full-support link</Text>
+          </Pressable>
+        </View>
+        {supportLink ? (
+          <View style={{ gap: 8 }}>
+            <Text selectable style={{ color: "#34d399", fontSize: 12, fontFamily: "Menlo" }}>{supportLink}</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Pressable
+                onPress={async () => {
+                  await Clipboard.setStringAsync(supportLink);
+                  Alert.alert("Copied", "Support link copied to clipboard.");
+                }}
+                style={{ borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6, borderWidth: 1, borderColor: c.border }}
+              >
+                <Text style={{ color: c.textPrimary, fontSize: 12 }}>Copy</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => Share.share({ message: `Open this to let me help you on your computer: ${supportLink}` })}
+                style={{ borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6, borderWidth: 1, borderColor: c.border }}
+              >
+                <Text style={{ color: c.textPrimary, fontSize: 12 }}>Share…</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+        {supporting.length > 0 ? (
+          <View style={{ gap: 4, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8 }}>
+            <Text style={{ fontSize: 11, color: c.textMuted }}>YOU CAN SUPPORT</Text>
+            {supporting.map((s) => (
+              <View key={s.grantId} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={{ flex: 1, color: c.textPrimary, fontSize: 13 }}>
+                  {s.counterpartName}{s.allowDesktopControl ? "  · desktop" : ""}
+                  {s.expiresAt ? "  · time-boxed" : "  · until revoked"}
+                </Text>
+                <Pressable onPress={() => void revokeSupport(s.grantId)}>
+                  <Text style={{ color: c.textMuted, fontSize: 12 }}>end</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {supportedBy.length > 0 ? (
+          <View style={{ gap: 4, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8 }}>
+            <Text style={{ fontSize: 11, color: "#fca5a5" }}>WHO CAN ACCESS YOUR MACHINES</Text>
+            {supportedBy.map((s) => (
+              <View key={s.grantId} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={{ flex: 1, color: c.textPrimary, fontSize: 13 }}>{s.counterpartName}</Text>
+                <Pressable onPress={() => void revokeSupport(s.grantId)} style={{ borderRadius: 6, borderWidth: 1, borderColor: "#ef444455", paddingHorizontal: 8, paddingVertical: 2 }}>
+                  <Text style={{ color: "#fca5a5", fontSize: 12 }}>revoke</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        ) : null}
+      </View>
+
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <Text style={{ fontSize: 12, fontWeight: "700", letterSpacing: 1.2, color: c.textMuted }}>
           MESH NODES
@@ -151,7 +286,7 @@ export default function NetworkScreen() {
       ) : (
         <View style={{ gap: 8 }}>
           {peers.map((p) => {
-            const isOwner = p.accessScope !== "shared";
+            const isOwner = p.accessScope === "owner";
             const advertisingExit = p.isExitNode || p.wantExitNode;
             const exitOptions = peers.filter((x) => x.deviceId !== p.deviceId && (x.isExitNode || x.wantExitNode));
             const usingName =
