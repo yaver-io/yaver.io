@@ -36,6 +36,7 @@ import type * as guests from "../guests.js";
 import type * as hostShare from "../hostShare.js";
 import type * as http from "../http.js";
 import type * as managedRelays from "../managedRelays.js";
+import type * as mesh from "../mesh.js";
 import type * as mobileStreamLogs from "../mobileStreamLogs.js";
 import type * as ownerAllowlist from "../ownerAllowlist.js";
 import type * as packages from "../packages.js";
@@ -91,6 +92,7 @@ declare const fullApi: ApiFromModules<{
   hostShare: typeof hostShare;
   http: typeof http;
   managedRelays: typeof managedRelays;
+  mesh: typeof mesh;
   mobileStreamLogs: typeof mobileStreamLogs;
   ownerAllowlist: typeof ownerAllowlist;
   packages: typeof packages;

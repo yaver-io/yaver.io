@@ -665,6 +665,47 @@ export const fleetDevices = query({
   },
 });
 
+/** Org-wide Yaver Mesh fleet view: every meshNode with owner email + device
+ *  alias + advertised routes/exit-node + liveness. Powers /admin/network. */
+export const fleetMesh = query({
+  args: {},
+  handler: async (ctx) => {
+    const nodes = await ctx.db.query("meshNodes").collect();
+    const now = Date.now();
+    const emailById = new Map<string, string>();
+    const aliasByDevice = new Map<string, string>();
+    for (const n of nodes) {
+      const id = String(n.userId);
+      if (!emailById.has(id)) {
+        const u = await ctx.db.get(n.userId as any);
+        if (u && (u as any).email) emailById.set(id, (u as any).email);
+      }
+      const dev = await ctx.db
+        .query("devices")
+        .withIndex("by_deviceId", (q) => q.eq("deviceId", n.deviceId))
+        .first();
+      if (dev) aliasByDevice.set(n.deviceId, dev.alias ?? dev.name);
+    }
+    const aclCount = (await ctx.db.query("meshAcls").collect()).length;
+    return {
+      aclCount,
+      nodes: nodes
+        .map((n: any) => ({
+          deviceId: n.deviceId,
+          alias: aliasByDevice.get(n.deviceId) ?? null,
+          ownerEmail: emailById.get(String(n.userId)) ?? "(unknown)",
+          meshIPv4: n.meshIPv4,
+          online: n.online === true && (n.updatedAt ?? 0) > now - 5 * 60 * 1000,
+          isExitNode: n.isExitNode === true,
+          advertisedRoutes: n.advertisedRoutes ?? [],
+          lastHandshake: n.lastHandshake ?? 0,
+          updatedAt: n.updatedAt ?? 0,
+        }))
+        .sort((a, b) => (a.ownerEmail + a.meshIPv4).localeCompare(b.ownerEmail + b.meshIPv4)),
+    };
+  },
+});
+
 /** Active sessions with user email + device alias joined. */
 export const activeSessionsForAdmin = query({
   args: {},

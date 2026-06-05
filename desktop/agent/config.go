@@ -154,6 +154,10 @@ type Config struct {
 	ContainerMounts    []string               `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
 	SharedStorage      []SharedStorageProfile `json:"shared_storage,omitempty"`
 	Code               *CodeCLIConfig         `json:"code,omitempty"`
+	// Mesh is the optional WireGuard overlay ("Yaver Mesh" — Tailscale
+	// alternative). nil = never opted in; nothing in the mesh code path runs
+	// and no TUN/listener is created. Populated by `yaver mesh up`.
+	Mesh *MeshConfig `json:"mesh,omitempty"`
 }
 
 // CodeCLIConfig persists the deterministic `yaver code` control-plane state so

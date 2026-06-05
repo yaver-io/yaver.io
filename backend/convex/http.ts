@@ -396,6 +396,7 @@ for (const path of [
   "/auth/passkey/list", "/auth/passkey/remove", "/auth/passkey/check",
   "/auth/email-providers", "/auth/verify-email/request", "/auth/verify-email/confirm",
   "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
+  "/mesh/peers", "/mesh/acls", "/mesh/acls/set", "/mesh/tags", "/mesh/tags/set", "/mesh/node/config", "/mesh/join", "/mesh/leave",
   "/shortcuts", "/shortcuts/delete",
   "/subscription",
   "/billing/yaver-cloud/checkout",
@@ -2171,6 +2172,165 @@ http.route({
     }
 
     return jsonResponse({ devices });
+  }),
+});
+
+// --- Yaver Mesh console routes (web/mobile) — session-token-hash auth ---
+
+http.route({
+  path: "/mesh/peers",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      const res = await ctx.runQuery(api.mesh.listMeshPeersWeb, { tokenHash });
+      return jsonResponse(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg.includes("Unauthorized") ? "Unauthorized" : msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/mesh/acls",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      const rules = await ctx.runQuery(api.mesh.listMeshAclsWeb, { tokenHash });
+      return jsonResponse({ rules });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg.includes("Unauthorized") ? "Unauthorized" : msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/mesh/acls/set",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      await ctx.runMutation(api.mesh.setMeshAclsWeb, { tokenHash, rules: body.rules ?? [] });
+      return jsonResponse({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg.includes("Unauthorized") ? "Unauthorized" : msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/mesh/tags",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      const tags = await ctx.runQuery(api.mesh.listMeshTagsWeb, { tokenHash });
+      return jsonResponse({ tags });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg.includes("Unauthorized") ? "Unauthorized" : msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/mesh/tags/set",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      await ctx.runMutation(api.mesh.tagDeviceWeb, { tokenHash, deviceId: body.deviceId ?? "", tags: body.tags ?? [] });
+      return jsonResponse({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg.includes("Unauthorized") ? "Unauthorized" : msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/mesh/join",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      const res = await ctx.runMutation(api.mesh.joinMeshWeb, {
+        tokenHash,
+        deviceId: body.deviceId ?? "",
+        wgPublicKey: body.wgPublicKey ?? "",
+        endpoints: body.endpoints ?? [],
+        meshIPv6: body.meshIPv6,
+        advertisedRoutes: body.advertisedRoutes,
+        isExitNode: body.isExitNode,
+      });
+      return jsonResponse(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/mesh/leave",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      await ctx.runMutation(api.mesh.leaveMeshWeb, { tokenHash, deviceId: body.deviceId ?? "" });
+      return jsonResponse({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse(msg, msg.includes("Unauthorized") ? 401 : 500);
+    }
+  }),
+});
+
+http.route({
+  path: "/mesh/node/config",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      await ctx.runMutation(api.mesh.setMeshNodeConfigWeb, {
+        tokenHash,
+        deviceId: body.deviceId ?? "",
+        wantEnabled: body.wantEnabled,
+        wantExitNode: body.wantExitNode,
+        wantUseExitNode: body.wantUseExitNode,
+        wantRoutes: body.wantRoutes,
+      });
+      return jsonResponse({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("Unauthorized") ? 401 : msg.includes("Forbidden") ? 403 : 500;
+      return errorResponse(msg, code);
+    }
   }),
 });
 
@@ -5382,6 +5542,17 @@ http.route({
     if (!gate.ok) return gate.response;
     const rows = await ctx.runQuery(api.admin.activeSessionsForAdmin, {});
     return jsonResponse({ rows });
+  }),
+});
+
+http.route({
+  path: "/admin/mesh",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const data = await ctx.runQuery(api.admin.fleetMesh, {});
+    return jsonResponse(data);
   }),
 });
 

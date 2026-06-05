@@ -1653,4 +1653,80 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"])
     .index("by_device_slug", ["deviceId", "slug"]),
+
+  /** Yaver Mesh — optional WireGuard overlay control plane (desktop/agent
+   *  mesh_cmd.go + desktop/agent/mesh/). STRICTLY OPT-IN: a device only gets
+   *  a row here after the user runs `yaver mesh up`. Privacy contract:
+   *  PUBLIC keys + endpoints + assigned mesh IP ONLY. The WireGuard PRIVATE
+   *  key never leaves the device (it lives in the vault); `wgPrivateKey` is
+   *  on the Convex forbidden-field list and pinned by
+   *  desktop/agent/convex_privacy_test.go. `endpoints` are host:port UDP
+   *  candidates the peer can be reached at — the same privacy class as the
+   *  existing quicHost/publicEndpoints on the devices table. */
+  meshNodes: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),
+    // Base64 WireGuard public key (Curve25519). Never the private half.
+    wgPublicKey: v.string(),
+    // Stable overlay address assigned by joinMesh. Globally unique across
+    // all meshNodes so devices shared between users never collide.
+    meshIPv4: v.string(),
+    meshIPv6: v.optional(v.string()),
+    // host:port UDP candidates for WireGuard (LAN IPs, public endpoint,
+    // relay-DERP pseudo-endpoint). Privacy-equivalent to devices.localIps.
+    endpoints: v.array(v.string()),
+    // Subnet-router CIDRs this node is willing to route (Phase 5).
+    advertisedRoutes: v.optional(v.array(v.string())),
+    isExitNode: v.optional(v.boolean()),
+    online: v.boolean(),
+    lastHandshake: v.optional(v.number()),
+    updatedAt: v.number(),
+    // DESIRED state set by the web/mobile console (Tailscale-style: the control
+    // plane holds intent, the agent converges to it on its reconcile tick).
+    // The agent reads these for its OWN node and applies them; they are NOT
+    // touched by joinMesh (which only reports actual state).
+    wantEnabled: v.optional(v.boolean()),     // false = console asked this node to leave
+    wantExitNode: v.optional(v.boolean()),    // advertise as exit node
+    wantUseExitNode: v.optional(v.string()),  // deviceId of exit node to route through ("" = none)
+    wantRoutes: v.optional(v.array(v.string())), // subnet routes to advertise
+    desiredAt: v.optional(v.number()),        // when intent last changed (agent dedupe)
+  }).index("by_user", ["userId"])
+    .index("by_device", ["deviceId"])
+    .index("by_meshIPv4", ["meshIPv4"]),
+
+  /** Mesh ACL rules (Phase 4). The tailnet owner authors who-can-reach-whom
+   *  on which ports; the agent is the authoritative enforcer (compiled to a
+   *  TUN packet filter), mirroring sdk/js/src/acl.ts "Convex composes, agent
+   *  enforces". src/dst resolve by tag, deviceId, userId, or "*" (any). */
+  meshAcls: defineTable({
+    userId: v.id("users"),
+    srcType: v.union(
+      v.literal("tag"),
+      v.literal("device"),
+      v.literal("user"),
+      v.literal("any")
+    ),
+    src: v.string(),
+    dstType: v.union(
+      v.literal("tag"),
+      v.literal("device"),
+      v.literal("user"),
+      v.literal("any")
+    ),
+    dst: v.string(),
+    // Port specs: "22", "80-90", or "*".
+    ports: v.array(v.string()),
+    action: v.union(v.literal("accept"), v.literal("drop")),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
+  /** Device tags for group ACLs (Phase 4) — lets a rule target many devices
+   *  ("tag:prod") without per-pair grants. */
+  meshTags: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),
+    tag: v.string(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"])
+    .index("by_device", ["deviceId"]),
 });

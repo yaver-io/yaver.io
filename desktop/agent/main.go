@@ -409,6 +409,8 @@ func main() {
 		runEmail(os.Args[2:])
 	case "acl":
 		runACL(os.Args[2:])
+	case "mesh":
+		runMesh(os.Args[2:])
 	case "discover":
 		discoverProjects()
 		fp, _ := projectsFilePath()
@@ -3214,6 +3216,30 @@ func runServe(args []string) {
 		defer func() { _ = recover() }()
 		httpServer.companion.Reconcile()
 	}()
+
+	// Yaver Mesh — restore the OPTIONAL WireGuard overlay if (and only if) the
+	// user previously opted in with `yaver mesh up`. A device that never opted
+	// in has cfg.Mesh == nil and this block is skipped entirely — no TUN, no
+	// listener, no behavior change. Data-plane bring-up needs elevated
+	// privilege; failure is logged, never fatal (the box still serves normally).
+	if cfg.Mesh != nil && cfg.Mesh.Enabled {
+		go func() {
+			defer func() { _ = recover() }()
+			httpServer.meshMu.Lock()
+			mgr, err := httpServer.ensureMeshManagerLocked(cfg.DeviceID)
+			httpServer.meshMu.Unlock()
+			if err != nil {
+				log.Printf("[mesh] restore skipped: %v", err)
+				return
+			}
+			if err := mgr.Start(); err != nil {
+				log.Printf("[mesh] data plane not started (run serve with privilege?): %v", err)
+				return
+			}
+			httpServer.startMeshDesiredLoop(cfg.DeviceID)
+			log.Printf("[mesh] overlay up: %s on %s", cfg.Mesh.MeshIPv4, mgr.Status().IfaceName)
+		}()
+	}
 
 	// Wire notification callbacks
 	taskMgr.OnTaskDone = func(task *Task) {
@@ -9973,6 +9999,12 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 	// Re-register any active expose entries on the new connection
 	if exposeMgr != nil {
 		exposeMgr.SetConn(conn, deviceID)
+	}
+
+	// Attach the Yaver Mesh DERP transport to this relay connection so
+	// symmetric-NAT peers can be bridged. No-op if the mesh isn't enabled.
+	if globalMeshDERP != nil {
+		globalMeshDERP.attach(conn, deviceID)
 	}
 
 	// Handle incoming proxied requests.
