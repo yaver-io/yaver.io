@@ -22,6 +22,8 @@ import { TerminalPane3D } from "./TerminalPane3D";
 import { VoiceOrb3D } from "./VoiceOrb3D";
 import { AppScreenPlane3D } from "./AppScreenPlane3D";
 import { RemoteWindow3D } from "./RemoteWindow3D";
+import { DataPane3D } from "./DataPane3D";
+import { summarizeFleet } from "../lib/fleetStats";
 
 // Single XR store shared across the page so the "Enter VR" button
 // in page.tsx can trigger session entry without prop-drilling.
@@ -72,6 +74,12 @@ export function VRScene({ cfg, tasks, voice }: Props) {
 
         <PaneArc cfg={cfg} tasks={tasks} />
 
+        {/* "Company / fleet at a glance" — a quiet billboard to the far
+            left of the terminal arc, summarizing the whole task fleet
+            (running/queued/review/failed + token burn). Derived from the
+            tasks we already poll, so no extra agent round-trip. */}
+        <FleetPane tasks={tasks} />
+
         {/* Live guest-app screen — only mounts when a vibe-preview
             session is active. Sits to the right of the terminal arc,
             angled back toward the user. */}
@@ -87,6 +95,26 @@ export function VRScene({ cfg, tasks, voice }: Props) {
         <StatusStrip tasks={tasks} />
       </XR>
     </Canvas>
+  );
+}
+
+// Far-left "company at a glance" billboard, angled back toward the user.
+function FleetPane({ tasks }: { tasks: Task[] }) {
+  const stats = useMemo(() => summarizeFleet(tasks), [tasks]);
+  return (
+    <DataPane3D
+      title="Fleet"
+      accent="#10b981"
+      headline={stats.headline}
+      rows={stats.rows}
+      spark={stats.spark}
+      position={[-1.42, 1.55, -0.62]}
+      rotationY={Math.PI / 4.6}
+      width={0.92}
+      height={0.56}
+      focused={false}
+      onFocus={() => {}}
+    />
   );
 }
 
