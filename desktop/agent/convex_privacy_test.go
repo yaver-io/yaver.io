@@ -41,6 +41,13 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"password",
 	"vaultValue",
 	"privateKey",
+	// Yaver Mesh (mesh_cmd.go + backend/convex/mesh.ts). The WireGuard
+	// PRIVATE key lives ONLY in the vault — joinMesh publishes the public
+	// half + endpoints. If a sync path ever tries to ship the private key
+	// (under any of these spellings) it trips here first.
+	"wgPrivateKey",
+	"wg_private_key",
+	"meshPrivateKey",
 	// Voice provider API keys — Yaver itself does NOT ship default
 	// keys; each user pastes their own into ~/.yaver/config.json.
 	// These MUST NEVER reach Convex. Defense-in-depth: VoiceConfig
@@ -479,10 +486,10 @@ func TestRemoteBuilderPairingMetadata_isAliasOnly(t *testing.T) {
 	convexMutationRecorder(
 		"agentSync:recordRemoteBuilderPairing",
 		map[string]interface{}{
-			"deviceId": "test-device",
-			"alias":    "mac-rack-1",
+			"deviceId":  "test-device",
+			"alias":     "mac-rack-1",
 			"platforms": []interface{}{"ios"},
-			"pairedAt": 1714000060,
+			"pairedAt":  1714000060,
 		},
 	)
 	if len(*buf) != 1 {
@@ -495,6 +502,65 @@ func TestRemoteBuilderPairingMetadata_isAliasOnly(t *testing.T) {
 		case "url", "token", "builderUrl", "builderToken",
 			"remoteBuilderHostname", "remoteBuilderTunnelToken":
 			t.Errorf("forbidden field %q must not be in builder pairing payload", k)
+		}
+	}
+}
+
+// TestMeshNodeFields_AreNotConvexForbidden pins the meshNodes table
+// (backend/convex/schema.ts) as public-control-plane-only. Every synced field
+// must be a public key / endpoint / overlay IP / counter / timestamp and must
+// NOT collide with the forbidden-secret list. In particular the WireGuard
+// PRIVATE key (stored in the vault as wgPrivateKey) must never appear here.
+func TestMeshNodeFields_AreNotConvexForbidden(t *testing.T) {
+	meshFields := []string{
+		// meshNodes
+		"userId", "deviceId", "wgPublicKey", "meshIPv4", "meshIPv6",
+		"endpoints", "advertisedRoutes", "isExitNode", "online",
+		"lastHandshake", "updatedAt",
+	}
+	forbidden := map[string]bool{}
+	for _, k := range fieldsWeForbidInAnyConvexPayload {
+		forbidden[k] = true
+	}
+	for _, f := range meshFields {
+		if forbidden[f] {
+			t.Errorf("meshNodes field %q is on the Convex forbidden-secret "+
+				"list — mesh rows must stay public-key + endpoint only", f)
+		}
+	}
+	// And the converse: the private-key field names MUST be forbidden.
+	for _, secret := range []string{"wgPrivateKey", "wg_private_key", "meshPrivateKey"} {
+		if !forbidden[secret] {
+			t.Errorf("%q must be on the Convex forbidden list — the WireGuard "+
+				"private key may never reach Convex", secret)
+		}
+	}
+}
+
+// TestMeshJoinPayload_isPublicOnly feeds the exact arg shape `yaver mesh up`
+// posts to mesh:joinMesh through the recorder and asserts it carries only the
+// PUBLIC key + endpoints — never the private key under any spelling.
+func TestMeshJoinPayload_isPublicOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	convexMutationRecorder(
+		"mesh:joinMesh",
+		map[string]interface{}{
+			"deviceId":    "test-device",
+			"wgPublicKey": "TUVTSF9QVUJMSUNfS0VZX0JBU0U2NF8zMmI=",
+			"endpoints":   []interface{}{"192.168.1.20:51820"},
+		},
+	)
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(*buf))
+	}
+	rec := (*buf)[0]
+	assertNoForbiddenFields(t, rec)
+	for k := range rec.Args {
+		switch k {
+		case "wgPrivateKey", "wg_private_key", "meshPrivateKey", "privateKey":
+			t.Errorf("forbidden field %q must not be in the mesh join payload", k)
 		}
 	}
 }

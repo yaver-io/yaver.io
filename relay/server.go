@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -90,6 +91,12 @@ type RelayServer struct {
 	pwUserIDs   map[string]string // password -> userId (short cache)
 	pwUserIDExp map[string]time.Time
 
+	// Yaver Mesh DERP relay — persistent per-device frame streams that forward
+	// WireGuard packets between peers that can't reach each other directly
+	// (symmetric NAT). Pass-through: the relay never decrypts payloads.
+	meshMu      sync.RWMutex
+	meshStreams map[string]*meshStreamHandle // deviceId -> its mesh frame stream
+
 	// adminToken gates /admin/* and the auth-required diagnostic
 	// endpoints (/tunnels, /presence, /admin/bandwidth, /admin/status).
 	// Read from RELAY_ADMIN_TOKEN at process start. Empty disables the
@@ -125,6 +132,7 @@ func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain st
 		validatedPw:  make(map[string]time.Time),
 		startedAt:    time.Now(),
 		tunnels:      make(map[string]*agentTunnel),
+		meshStreams:  make(map[string]*meshStreamHandle),
 		exposeRoutes: make(map[string]*exposeRoute),
 		exposeDomain: exposeDomain,
 		busHub:       newBusHub(),
@@ -607,6 +615,7 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		delete(s.tunnels, reg.DeviceID)
 	}
 	s.mu.Unlock()
+	s.dropMeshStream(reg.DeviceID)
 
 	// Mirror the disconnect to Convex. duration lets the reactive UI
 	// show "last seen X ago" without waiting for the next heartbeat.
@@ -1316,17 +1325,37 @@ func (s *RelayServer) handleAgentControlStreams(conn quic.Connection, deviceID s
 }
 
 func (s *RelayServer) handleControlMsg(stream quic.Stream, deviceID string) {
-	defer stream.Close()
-	data, err := io.ReadAll(io.LimitReader(stream, 1<<16))
-	if err != nil {
+	// Read a single header. Mesh streams send a newline-terminated header and
+	// then keep the stream open for binary frames; legacy one-shot control
+	// messages (expose_*) send a whole-stream JSON blob with no newline, so
+	// ReadBytes returns it with io.EOF.
+	br := bufio.NewReader(stream)
+	header, rerr := br.ReadBytes('\n')
+	if rerr != nil && rerr != io.EOF {
+		stream.Close()
 		return
 	}
 
 	var peek struct {
 		Type string `json:"type"`
 	}
-	if err := json.Unmarshal(data, &peek); err != nil {
+	if err := json.Unmarshal(header, &peek); err != nil {
+		stream.Close()
 		return
+	}
+
+	// Persistent mesh frame stream — do NOT close until the loop ends.
+	if peek.Type == "mesh_relay" {
+		s.handleMeshStream(stream, br, deviceID)
+		return
+	}
+
+	defer stream.Close()
+	// Legacy one-shot: the header IS the message (read any remainder for safety).
+	data := header
+	if rerr != io.EOF {
+		rest, _ := io.ReadAll(io.LimitReader(br, 1<<16))
+		data = append(data, rest...)
 	}
 
 	switch peek.Type {

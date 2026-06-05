@@ -196,6 +196,14 @@ export const Users = (p: IconProps) => (
   </Svg>
 );
 
+export const Globe = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18" />
+    <path d="M12 3c2.5 2.5 2.5 15.5 0 18M12 3c-2.5 2.5-2.5 15.5 0 18" />
+  </Svg>
+);
+
 export const X = (p: IconProps) => (
   <Svg {...p}>
     <line x1="18" y1="6" x2="6" y2="18" />

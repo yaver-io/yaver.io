@@ -24,6 +24,7 @@ import (
 
 	"github.com/yaver-io/agent/ghost"
 	"github.com/yaver-io/agent/machine"
+	"github.com/yaver-io/agent/mesh"
 )
 
 var currentLocalAgentPort atomic.Int64
@@ -192,6 +193,14 @@ type HTTPServer struct {
 	streams *LogStreamRegistry
 
 	hostShareWorkspaceMgr *HostShareWorkspaceManager
+
+	// meshMgr owns the optional Yaver Mesh data plane (WireGuard overlay).
+	// nil until `yaver mesh up` / a serve-time restore brings it up; guarded
+	// by meshMu for construction races. meshDesiredStarted ensures only one
+	// desired-state convergence loop runs.
+	meshMgr            *mesh.Manager
+	meshMu             sync.Mutex
+	meshDesiredStarted bool
 
 	// Lets handlers that change reportable state (e.g. runner auth just
 	// completed via /runner-auth/browser/start) cut in front of the 30 s
@@ -1095,6 +1104,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Companion compute (yaver.companion.yaml — crons + workers for serverless projects)
 	s.registerCompanionRoutes(mux)
+	s.registerMeshRoutes(mux)
 
 	// DNS helpers — Cloudflare first (others later). Used by the phone-first
 	// "Custom domain" flow to CNAME <sub>.<zone> to cloud.yaver.io in one tap.

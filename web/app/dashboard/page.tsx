@@ -27,6 +27,7 @@ import ShareView from "@/components/dashboard/ShareView";
 import GuestsStatusView from "@/components/dashboard/GuestsStatusView";
 import InfraView from "@/components/dashboard/InfraView";
 import ConnectivityView from "@/components/dashboard/ConnectivityView";
+import NetworkView from "@/components/dashboard/NetworkView";
 import ToolsView from "@/components/dashboard/ToolsView";
 import TwoFactorView from "@/components/dashboard/TwoFactorView";
 import VaultView from "@/components/dashboard/VaultView";
@@ -784,7 +785,7 @@ export default function DashboardPage() {
   // pointed at it; if not it offers a "Connect & open shell" affordance
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings" | "billing">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings" | "billing">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1879,6 +1880,7 @@ export default function DashboardPage() {
     { id: "company-ai", label: "Company AI", icon: "AI" },
     { id: "infra", label: "Infra", icon: "\uD83D\uDEE0\uFE0F" },
     { id: "connect", label: "Connect", icon: "\uD83C\uDF10" },
+    { id: "network", label: "Mesh", icon: "\uD83D\uDD78\uFE0F" },
     { id: "tools", label: "Tools", icon: "\uD83E\uDDE9" },
     { id: "observ", label: "Observ", icon: "\uD83D\uDCCA" },
     { id: "ops", label: "Ops", icon: "\uD83D\uDE80" },
@@ -2635,6 +2637,10 @@ export default function DashboardPage() {
                 connState={connState}
                 connectDiagnostics={connectDiagnostics}
               />
+            </div>
+          ) : activeTab === "network" ? (
+            <div className="flex-1 min-h-0 w-full">
+              <NetworkView token={token} />
             </div>
           ) : activeTab === "tools" ? (
             <ToolsView devices={devices} />
