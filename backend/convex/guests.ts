@@ -976,7 +976,7 @@ export const getGuestConfig = query({
       guestUserId: string;
       guestEmail: string;
       guestName: string;
-      scope: "full" | "feedback-only" | "sdk-project";
+      scope: "full" | "feedback-only" | "sdk-project" | "support";
       allowedProjects?: string[];
       dailyTokenLimit?: number;
       allowedRunners?: string[];

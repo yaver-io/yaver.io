@@ -42,7 +42,15 @@ const (
 	// their allowedProjects list, but cannot read code, run tasks, or
 	// touch the vault directly. The script body + vault values stay on
 	// the host; the guest sees only stdout/stderr + exit code.
-	GuestScopeDeploy        = "deploy"
+	GuestScopeDeploy = "deploy"
+	// GuestScopeSupport — least-privilege tier for support links
+	// (docs/mesh-support-link.md). A supporter the friend let in at the
+	// default "view + files" consent level can read status + browse/read
+	// files + watch streams, but CANNOT run tasks, exec, deploy, or touch
+	// the vault. If the friend opts UP to terminal at consent time, the
+	// grant is recorded as scope "full" instead (AI tasks); desktop control
+	// is a separate allowDesktopControl flag. So this tier is read-only.
+	GuestScopeSupport       = "support"
 	guestScopeDefaultLegacy = GuestScopeFull
 )
 
@@ -144,7 +152,25 @@ var guestDeployAllowedPrefixes = []string{
 	"/runner/pools",
 }
 
-// guestScopeOrDefault normalizes a cached scope string to one of the two
+// guestSupportAllowedPrefixes is the read-only support tier: status + file
+// browse/read + streams + the agent's support endpoints. No /tasks, /exec,
+// /dev, /deploy, /vault. Mirrors the read-only set of support sessions.
+var guestSupportAllowedPrefixes = []string{
+	"/info",
+	"/health",
+	"/agent/status",
+	"/agent/capabilities",
+	"/agent/runners",
+	"/files/roots",
+	"/files/list",
+	"/files/read",
+	"/files/raw",
+	"/streams",
+	"/streams/",
+	"/support/",
+}
+
+// guestScopeOrDefault normalizes a cached scope string to one of the
 // known tiers. An empty or unknown scope maps to the legacy default ("full").
 func guestScopeOrDefault(s string) string {
 	switch strings.TrimSpace(s) {
@@ -154,6 +180,8 @@ func guestScopeOrDefault(s string) string {
 		return GuestScopeSDKProject
 	case GuestScopeDeploy:
 		return GuestScopeDeploy
+	case GuestScopeSupport:
+		return GuestScopeSupport
 	case GuestScopeFull:
 		return GuestScopeFull
 	default:
@@ -178,6 +206,8 @@ func isGuestAllowedPathForScope(path, scope string) bool {
 		list = guestFeedbackOnlyAllowedPrefixes
 	case GuestScopeDeploy:
 		list = guestDeployAllowedPrefixes
+	case GuestScopeSupport:
+		list = guestSupportAllowedPrefixes
 	}
 	if path == "" {
 		path = "/"

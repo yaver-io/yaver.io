@@ -47,6 +47,15 @@ func runSupport(args []string) {
 		runSupportStatus()
 	case "connect":
 		runSupportConnect(args[1:])
+	// --- Support LINK flow (Convex-backed; lets a friend grant ME access) ---
+	case "link":
+		runSupportLink(args[1:])
+	case "connections", "conns":
+		runSupportConnections()
+	case "drop":
+		runSupportDrop(args[1:])
+	case "deny-all", "deny":
+		runSupportDenyAll()
 	case "help", "-h", "--help":
 		printSupportUsage()
 	default:

@@ -5,18 +5,25 @@ type AccessCtx = QueryCtx | MutationCtx;
 
 export type ActiveInfraGrant = Doc<"infraAccessGrants">;
 
+// notExpired treats a grant with a past expiresAt (set by a time-boxed support
+// link, "Allow for 24h") as inactive without needing a sweep.
+function notExpired(g: ActiveInfraGrant): boolean {
+  return !g.expiresAt || g.expiresAt > Date.now();
+}
+
 export async function getActiveInfraGrant(
   ctx: AccessCtx,
   hostUserId: Id<"users">,
   guestUserId: Id<"users">,
 ): Promise<ActiveInfraGrant | null> {
-  return await ctx.db
+  const g = await ctx.db
     .query("infraAccessGrants")
     .withIndex("by_host_guest", (q) =>
       q.eq("hostUserId", hostUserId).eq("guestUserId", guestUserId),
     )
     .filter((q) => q.eq(q.field("status"), "active"))
     .first();
+  return g && notExpired(g) ? g : null;
 }
 
 export async function getLegacyGuestAccess(
@@ -37,11 +44,12 @@ export async function listActiveInfraGrantsForGuest(
   ctx: AccessCtx,
   guestUserId: Id<"users">,
 ): Promise<ActiveInfraGrant[]> {
-  return await ctx.db
+  const grants = await ctx.db
     .query("infraAccessGrants")
     .withIndex("by_guestUserId", (q) => q.eq("guestUserId", guestUserId))
     .filter((q) => q.eq(q.field("status"), "active"))
     .collect();
+  return grants.filter(notExpired);
 }
 
 export async function listGrantedDeviceIdsForGrant(

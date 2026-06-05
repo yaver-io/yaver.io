@@ -411,6 +411,8 @@ func main() {
 		runACL(os.Args[2:])
 	case "mesh":
 		runMesh(os.Args[2:])
+	case "join":
+		runJoin(os.Args[2:])
 	case "discover":
 		discoverProjects()
 		fp, _ := projectsFilePath()

@@ -1198,7 +1198,7 @@ export default defineSchema({
     //                     /info is redacted of project metadata; /projects returns 403.
     // Absent on legacy rows → treated as "full" at runtime (backward-compat). New invites
     // default to "feedback-only" (safer for Feedback-SDK-distributed end-users).
-    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"))),
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"), v.literal("support"))),
     // Optional project narrowing at invite time — copied into guestAccess.allowedProjects
     // when the invitation is accepted. See guestAccess.allowedProjects for semantics.
     allowedProjects: v.optional(v.array(v.string())),
@@ -1221,7 +1221,7 @@ export default defineSchema({
     revokedAt: v.optional(v.number()),  // null = active, set = revoked
     // Access tier inherited from the accepted invitation. See guestInvitations.scope for semantics.
     // Absent on legacy rows → treated as "full" at runtime.
-    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"))),
+    scope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"), v.literal("support"))),
     // Project narrowing — scopes the grant to a subset of the host's
     // projects/repos even within the allowed path list. Most useful with
     // scope=feedback-only when a dev wants to let end-users of Project
@@ -1276,6 +1276,13 @@ export default defineSchema({
     grantedAt: v.number(),
     updatedAt: v.number(),
     revokedAt: v.optional(v.number()),
+    // Optional auto-expiry — set by support-link redemption when the friend
+    // chose "Allow for 24h" rather than "until I revoke". access.ts treats an
+    // expired grant as inactive.
+    expiresAt: v.optional(v.number()),
+    // Provenance: set when this grant was created by a support-link redemption
+    // (vs a normal host→guest invite), so the UI can label it "support".
+    origin: v.optional(v.string()), // "support-link" | undefined
   })
     .index("by_hostUserId", ["hostUserId"])
     .index("by_guestUserId", ["guestUserId"])
@@ -1304,6 +1311,37 @@ export default defineSchema({
     .index("by_guestUserId", ["guestUserId"])
     .index("by_hostUserId", ["hostUserId"])
     .index("by_machine_guest", ["machineId", "guestUserId"]),
+
+  // Support links (docs/mesh-support-link.md). A supporter mints a shareable
+  // link (yaver.io/j/<code>); when a FRIEND redeems it on their machine, a
+  // REVERSE grant is created (host=friend, guest=supporter) so the friend's box
+  // joins the supporter's mesh and the supporter can ssh/exec/code into it. The
+  // link only OFFERS scope; the friend's consent decides the actual grant.
+  supportInvites: defineTable({
+    inviterUserId: v.id("users"),
+    code: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("redeemed"),
+      v.literal("revoked"),
+      v.literal("expired")
+    ),
+    singleUse: v.boolean(),
+    // The MAX the link offers; the friend opts up to these on the consent screen.
+    offerTerminal: v.boolean(),
+    offerDesktopControl: v.boolean(),
+    defaultTtlHours: v.number(), // suggested session length shown on consent
+    label: v.optional(v.string()),
+    createdAt: v.number(),
+    expiresAt: v.number(), // redeem window for the link itself
+    // Populated on redemption:
+    redeemedByUserId: v.optional(v.id("users")),
+    redeemedDeviceId: v.optional(v.string()),
+    redeemedAt: v.optional(v.number()),
+    grantId: v.optional(v.id("infraAccessGrants")),
+  })
+    .index("by_code", ["code"])
+    .index("by_inviter", ["inviterUserId"]),
 
   hostShareInvites: defineTable({
     hostUserId: v.id("users"),

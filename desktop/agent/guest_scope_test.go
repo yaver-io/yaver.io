@@ -169,7 +169,7 @@ func TestGuestConfigManagerScope(t *testing.T) {
 	}{
 		{"user_feedback", GuestScopeFeedbackOnly, true},
 		{"user_full", GuestScopeFull, false},
-		{"user_legacy", GuestScopeFull, false}, // pre-scope rows → full
+		{"user_legacy", GuestScopeFull, false},  // pre-scope rows → full
 		{"user_unknown", GuestScopeFull, false}, // never-seen guests → full (auth middleware also gates on isApprovedGuest)
 	}
 	for _, tc := range cases {
@@ -217,7 +217,7 @@ func TestGuestProjectScoping(t *testing.T) {
 		{"narrow", "sfmg", true},
 		{"narrow", "Talos", true},
 		{"narrow", "yaver", false},
-		{"narrow", "", false},      // no project identity → reject
+		{"narrow", "", false}, // no project identity → reject
 		{"narrow", "unknown", false},
 
 		// Wide guest — no project narrowing, everything allowed.
@@ -242,5 +242,37 @@ func TestGuestProjectScoping(t *testing.T) {
 	}
 	if out[0] != "SFMG" || out[1] != "Talos" {
 		t.Errorf("cleanProjectList dropped the wrong entries: %v", out)
+	}
+}
+
+// TestGuestSupportScope locks the support-link read-only contract: a
+// "support" scope guest (the default "view + files" consent level) can read
+// status + files + streams, but is BLOCKED from /tasks, /exec, /dev, /deploy,
+// /vibing, /vault — anything that runs code or touches secrets. Opting up to
+// terminal is recorded as scope "full" instead, not widened here.
+func TestGuestSupportScope(t *testing.T) {
+	mustAllow := []string{
+		"/info", "/health", "/agent/status", "/agent/capabilities",
+		"/files/list", "/files/read", "/files/raw", "/files/roots",
+		"/streams", "/streams/foo", "/support/info",
+	}
+	for _, p := range mustAllow {
+		if !isGuestAllowedPathForScope(p, GuestScopeSupport) {
+			t.Errorf("support scope should ALLOW %q (view+files tier)", p)
+		}
+	}
+	mustBlock := []string{
+		"/tasks", "/tasks/abc", "/exec", "/exec/1", "/dev/start",
+		"/vibing", "/builds", "/deploy/ship", "/vault", "/vault/get",
+		"/sessions", "/runner/runs", "/projects",
+	}
+	for _, p := range mustBlock {
+		if isGuestAllowedPathForScope(p, GuestScopeSupport) {
+			t.Errorf("support scope must BLOCK %q (read-only tier)", p)
+		}
+	}
+	// A support scope string must NOT collapse to the permissive default.
+	if guestScopeOrDefault("support") != GuestScopeSupport {
+		t.Fatal("support scope must not fall through to the 'full' default")
 	}
 }
