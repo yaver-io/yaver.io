@@ -828,6 +828,20 @@ run_mesh_e2e_test() {
     fi
 }
 
+run_relay_tunnel_e2e_test() {
+    header "Relay — HTTP-over-QUIC tunnel (client → relay → agent, local, \$0)"
+
+    if ! docker info >/dev/null 2>&1; then
+        skip "Relay HTTP-tunnel e2e (Docker not running)"
+        return
+    fi
+    if "$SCRIPT_DIR/test-relay-tunnel-e2e.sh"; then
+        pass "Relay HTTP tunnel: request round-tripped through the agent ✓"
+    else
+        fail "Relay HTTP-tunnel e2e"
+    fi
+}
+
 run_machine_e2e_test() {
     header "Talos-IoT Machine — Modbus hijack edge flow (emulated PLC, local, \$0)"
 
@@ -2973,7 +2987,7 @@ run_ollama_ci_test() {
     local run_all=true
     local run_builds=false run_lan=false run_relay=false run_relay_docker=false
     local run_relay_binary=false run_tailscale=false run_cloudflare=false run_unit=false
-    local run_mesh_e2e=false run_mesh_relay_e2e=false run_machine_e2e=false
+    local run_mesh_e2e=false run_mesh_relay_e2e=false run_machine_e2e=false run_relay_tunnel_e2e=false
     local run_sdk=false
     local run_auth=false
     local run_feedback=false
@@ -3004,6 +3018,7 @@ run_ollama_ci_test() {
             --mesh-e2e)        run_mesh_e2e=true; run_all=false ;;
             --mesh-relay-e2e)  run_mesh_relay_e2e=true; run_all=false ;;
             --machine-e2e)     run_machine_e2e=true; run_all=false ;;
+            --relay-tunnel-e2e) run_relay_tunnel_e2e=true; run_all=false ;;
             --cloudflare)      run_cloudflare=true; run_all=false ;;
             --sdk)             run_sdk=true; run_all=false ;;
             --auth)            run_auth=true; run_all=false ;;
@@ -3143,6 +3158,9 @@ HELP
     fi
     if $run_machine_e2e; then
         run_machine_e2e_test
+    fi
+    if $run_relay_tunnel_e2e; then
+        run_relay_tunnel_e2e_test
     fi
     if $run_all || $run_tailscale; then
         run_tailscale_test

@@ -27,8 +27,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "sniff" {
+		runSniffMode(os.Args[2:])
+		return
+	}
 	if len(os.Args) < 3 || os.Args[1] != "flow" {
-		fmt.Fprintln(os.Stderr, "usage: machinetest flow <modbusAddr>")
+		fmt.Fprintln(os.Stderr, "usage: machinetest flow <modbusAddr> | sniff <readDev> <writeDev>")
 		os.Exit(2)
 	}
 	addr := os.Args[2]
