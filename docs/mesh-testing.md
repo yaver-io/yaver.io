@@ -54,6 +54,59 @@ the signature of a working tunnel.
 `./scripts/test-suite.sh --unit --mesh-e2e`. The `--mesh-e2e` category skips
 gracefully (not fail) when Docker isn't running.
 
+## Roadmap — what else we can test locally (no cloud, no OAuth)
+
+The mesh e2e proved the pattern: real Linux kernel in a container, no Hetzner,
+no Convex, no OAuth. Here's the prioritized catalog of what else can move to
+local-container / mock-backed e2e, grouped by effort→confidence.
+
+### A. The enabler: a reusable mock-Convex + mock-OAuth fixture
+Bootstrap/auth UNIT coverage is already strong (auth_recover_test.go ×14,
+bootstrap_integration_test.go ×8, auth_owner_claim_test.go ×5,
+devicecode_test.go ×7). What's missing is the stitched END-TO-END loop. Build
+once, unlocks everything in B:
+- Reuse `newMockConvex` (auth_convex_path_test.go) → a `ci/mock-convex` that
+  serves `/auth/validate`, `/devices/bootstrap{,-pending}`, `/devices/list`,
+  `/devices/owner-by-hardware`, `/auth/device-code` (+poll).
+- Reuse `ci/oauth-mock` (already serves Google/MS/Apple/GitHub/GitLab).
+
+### B. Bootstrap e2e (needs A) — highest product value
+1. **Fresh install → pair → owner-claim → serve** — `yaver serve` (no token) →
+   bootstrap mode → POST `/auth/pair/owner-claim` (simulated mobile) → token
+   splice → re-exec to serve. Catches passkey/relay/re-exec bugs.
+2. **Headless device-code full loop** — `yaver auth --headless` → mock Convex
+   issues code → mock OAuth authorizes → poll returns token → persisted.
+3. **Auth recovery direct + pair against mock Convex** — the real
+   `/devices/owner-by-hardware` validation path (today stubbed in units).
+
+### C. Multi-node networking e2e (containers, ranked by ROI)
+1. **Relay-as-DERP fallback** ⭐ best ROI — relay + 2 agents in netns; iptables
+   DROP the direct path → prove WG still flows via the relay mesh_relay stream
+   (`relay/mesh.go` + `mesh_derp_transport.go`). The one piece the mesh e2e
+   couldn't cover. ~`test-mesh-relay-e2e.sh`.
+2. **Relay HTTP-over-QUIC tunnel** — relay + 1 agent; external client →
+   relay `/d/<id>/health` → agent. Reuses `relay/server_collision_test.go`
+   harness (`startTestRelayQUIC`).
+3. **LAN beacon discovery** — 2 agents on one docker network; verify UDP 19837
+   discovery + token-fingerprint match + `classifyRemoteBaseKind`=="same-lan".
+4. **Manual-peer mesh** — like mesh e2e but bypassing Convex with a static peer
+   list (already effectively done by cmd/meshtest).
+
+### D. Kill the Hetzner test box — convert cloud tests to local containers
+These currently need a paid box (~€6/mo) and only health-check anyway:
+- `--relay-docker`, `--relay-binary` → local privileged container + health.
+- `--features-remote` → drop in favor of local `--features` + a CI arch matrix.
+- `ci/remote/verify-guest-docker-isolation.sh` (security!) → local
+  `--guest-isolation` category (docker-in-docker / privileged).
+- `ci/remote/verify-host-share-lifecycle.sh` → local `--host-share` category.
+
+### E. Untested subsystems worth unit/e2e coverage
+relay `tunnel.go` + `mesh.go`; agent `SendHeartbeat`; MCP tool-invocation
+(only initialize+tools/list covered today); voice STT streaming.
+
+**Recommended build order:** A (the fixture) → C1 (relay-DERP, the one real
+data-plane gap) → B1 (fresh-install→serve) → D (retire the Hetzner box).
+
 ## Files
 
 - `desktop/agent/cmd/meshtest/main.go` — keygen + run harness (linux).

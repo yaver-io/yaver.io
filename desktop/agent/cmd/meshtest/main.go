@@ -34,6 +34,8 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("%s %s\n", kp.PrivateKey, kp.PublicKey)
+	case "derp":
+		runDerpMode(os.Args[2:])
 	case "run":
 		if len(os.Args) != 9 {
 			fmt.Fprintln(os.Stderr, "run needs: <ifname> <selfIPv4> <listenPort> <privB64> <peerPubB64> <peerEndpoint> <peerIPv4>")

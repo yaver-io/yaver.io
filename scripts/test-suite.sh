@@ -828,6 +828,23 @@ run_mesh_e2e_test() {
     fi
 }
 
+run_mesh_relay_e2e_test() {
+    header "Yaver Mesh — relay-DERP fallback (symmetric NAT, local, \$0)"
+
+    if ! docker info >/dev/null 2>&1; then
+        skip "Mesh relay-DERP e2e (Docker not running)"
+        return
+    fi
+    # Relay + two agents with NO direct path (separate netns/subnets) — proves
+    # WireGuard frames ride the relay's mesh_relay stream. See
+    # scripts/test-mesh-relay-e2e.sh + ci/mesh/e2e-relay-in-container.sh.
+    if "$SCRIPT_DIR/test-mesh-relay-e2e.sh"; then
+        pass "Mesh relay-DERP: overlay ping with no direct path ✓"
+    else
+        fail "Mesh relay-DERP e2e"
+    fi
+}
+
 run_tailscale_test() {
     header "Tailscale — Cross-machine CLI-to-CLI (local ↔ Hetzner)"
 
@@ -2939,7 +2956,7 @@ run_ollama_ci_test() {
     local run_all=true
     local run_builds=false run_lan=false run_relay=false run_relay_docker=false
     local run_relay_binary=false run_tailscale=false run_cloudflare=false run_unit=false
-    local run_mesh_e2e=false
+    local run_mesh_e2e=false run_mesh_relay_e2e=false
     local run_sdk=false
     local run_auth=false
     local run_feedback=false
@@ -2968,6 +2985,7 @@ run_ollama_ci_test() {
             --relay-binary)    run_relay_binary=true; run_all=false ;;
             --tailscale)       run_tailscale=true; run_all=false ;;
             --mesh-e2e)        run_mesh_e2e=true; run_all=false ;;
+            --mesh-relay-e2e)  run_mesh_relay_e2e=true; run_all=false ;;
             --cloudflare)      run_cloudflare=true; run_all=false ;;
             --sdk)             run_sdk=true; run_all=false ;;
             --auth)            run_auth=true; run_all=false ;;
@@ -3101,6 +3119,9 @@ HELP
 
     if $run_mesh_e2e; then
         run_mesh_e2e_test
+    fi
+    if $run_mesh_relay_e2e; then
+        run_mesh_relay_e2e_test
     fi
     if $run_all || $run_tailscale; then
         run_tailscale_test
