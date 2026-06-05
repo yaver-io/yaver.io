@@ -10,6 +10,14 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "yaver-sdk-developer-guide",
+    title: "Embed Yaver: using yaver-sdk as a library",
+    date: "2026-06-05",
+    published: true,
+    description:
+      "Yaver ships as a library, not just an app. yaver-sdk lets your own React Native, web, or Node app run Claude Code, Codex, or OpenCode on a remote machine — broker a scoped token on the server, connectHandle() on the client, stream the runner's output, and drive runner OAuth in an in-app browser. The full developer guide: the broker/connect model, self-healing token refresh, the two OAuth levels, and the complete export surface. Talos is the first external consumer.",
+  },
+  {
     slug: "yaver-rustdesk-ghosting",
     title: "Ghost mode: drive any legacy desktop ERP through RustDesk, with AI",
     date: "2026-06-04",
