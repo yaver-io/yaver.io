@@ -6,7 +6,7 @@
 // controls grey out and guide you to re-authorize it.
 // docs/yaver-robot-fleet-mesh-design.md + yaver-robot-teach-motor-multicam.md.
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, Share, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -28,8 +28,9 @@ import { ScrewdriverPanel } from "../../src/components/robot/ScrewdriverPanel";
 import { TeachPendant } from "../../src/components/robot/TeachPendant";
 import { ProfileSheet } from "../../src/components/robot/ProfileSheet";
 import { CalibrationPanel } from "../../src/components/robot/CalibrationPanel";
+import { MachineSetupPanel } from "../../src/components/robot/MachineSetupPanel";
 import { ArrayPanel } from "../../src/components/robot/ArrayPanel";
-import type { ArrayParams } from "../../src/lib/robotClient";
+import type { ArrayParams, JigParams } from "../../src/lib/robotClient";
 
 const STEPS = [1, 10, 50];
 const FEED_XY = 3000;
@@ -359,6 +360,17 @@ export default function RobotScreen() {
       setBusy(false);
     }
   };
+  const getJig = async (jp: JigParams) => {
+    const t = buildTarget(deviceId);
+    if (!t) return;
+    setBusy(true);
+    try {
+      const r = await robotClient.jigScad(t, jp);
+      if (r?.scad) await Share.share({ message: r.scad, title: r.filename || "klemens-jig.scad" });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const pos = status?.position;
   const toolOn = status?.tool === "on";
@@ -514,6 +526,9 @@ export default function RobotScreen() {
         />
       )}
 
+      {/* Machine setup — Fuju steps/mm + envelope (motion cells, calibrate view) */}
+      {showCalib && hasMotion && <MachineSetupPanel c={c} busy={busy} onApply={(patch) => patchConfig(patch)} />}
+
       {/* Motion: home + jog pad (cartesian profiles only) */}
       {hasMotion && (
         <>
@@ -567,7 +582,7 @@ export default function RobotScreen() {
       )}
 
       {/* Klemens array → fastening program (jig grid or rail) */}
-      {hasMotion && hasTool && <ArrayPanel c={c} disabled={controlsDisabled} busy={busy} onGenerate={generateArray} />}
+      {hasMotion && hasTool && <ArrayPanel c={c} disabled={controlsDisabled} busy={busy} onGenerate={generateArray} onJig={getJig} />}
 
       {/* Teach & Repeat */}
       <TeachPendant

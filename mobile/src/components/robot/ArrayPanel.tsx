@@ -5,9 +5,9 @@
 // program then appears under Teach & Repeat to Run.
 import React, { useState } from "react";
 import { Pressable, Switch, Text, TextInput, View } from "react-native";
-import type { ArrayParams } from "../../lib/robotClient";
+import type { ArrayParams, JigParams } from "../../lib/robotClient";
 
-export function ArrayPanel({ c, disabled, busy, onGenerate }: { c: any; disabled?: boolean; busy?: boolean; onGenerate: (p: ArrayParams) => void }) {
+export function ArrayPanel({ c, disabled, busy, onGenerate, onJig }: { c: any; disabled?: boolean; busy?: boolean; onGenerate: (p: ArrayParams) => void; onJig?: (p: JigParams) => void }) {
   const [mode, setMode] = useState<"grid" | "linear">("grid");
   const [name, setName] = useState("klemens-strip");
   const [cols, setCols] = useState("5");
@@ -20,6 +20,8 @@ export function ArrayPanel({ c, disabled, busy, onGenerate }: { c: any; disabled
   const [torque, setTorque] = useState("400");
   const [capture, setCapture] = useState(true);
   const [home, setHome] = useState(true);
+  const [klemW, setKlemW] = useState("8");
+  const [klemL, setKlemL] = useState("12");
   const card = { backgroundColor: c.bgCard ?? c.bg, borderColor: c.borderSubtle, borderWidth: 1, borderRadius: 16, padding: 14 } as const;
   const n = (s: string) => parseFloat(s) || 0;
 
@@ -50,12 +52,27 @@ export function ArrayPanel({ c, disabled, busy, onGenerate }: { c: any; disabled
       </View>
 
       {mode === "grid" ? (
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <Field c={c} label="cols" v={cols} set={setCols} />
-          <Field c={c} label="rows" v={rows} set={setRows} />
-          <Field c={c} label="pitchX" v={pitchX} set={setPitchX} />
-          <Field c={c} label="pitchY" v={pitchY} set={setPitchY} />
-        </View>
+        <>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Field c={c} label="cols" v={cols} set={setCols} />
+            <Field c={c} label="rows" v={rows} set={setRows} />
+            <Field c={c} label="pitchX" v={pitchX} set={setPitchX} />
+            <Field c={c} label="pitchY" v={pitchY} set={setPitchY} />
+          </View>
+          {onJig && (
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
+              <Field c={c} label="klemens W" v={klemW} set={setKlemW} />
+              <Field c={c} label="klemens L" v={klemL} set={setKlemL} />
+              <Pressable
+                onPress={() => onJig({ cols: n(cols), rows: n(rows), pitchX: n(pitchX), pitchY: n(pitchY), klemensW: n(klemW), klemensL: n(klemL) })}
+                disabled={busy}
+                style={{ flex: 1, alignItems: "center", borderColor: c.borderSubtle, borderWidth: 1, borderRadius: 10, paddingVertical: 11, opacity: busy ? 0.5 : 1 }}
+              >
+                <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Get jig .scad</Text>
+              </Pressable>
+            </View>
+          )}
+        </>
       ) : (
         <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
           <View>
