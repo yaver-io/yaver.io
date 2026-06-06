@@ -1,6 +1,9 @@
 package robot
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Modular profiles: a robot device exposes only the modules its hardware has,
 // chosen by a profile the user picks in Yaver. "Control only the screwdriver" is
@@ -41,6 +44,11 @@ type Config struct {
 	Envelope *Envelope `json:"envelope,omitempty"` // soft limits (motion profiles)
 	Strict   bool      `json:"strictEncoder,omitempty"`
 
+	// Axis steps/mm (M92) — calibrate external Fuju (or any step/dir) drivers to
+	// the rail lead × microstepping. Pushed to the board on connect so a
+	// Fuju-driven 3-axis Cartesian moves in real mm. nil → leave firmware as-is.
+	StepsPerMM *AxisSteps `json:"stepsPerMm,omitempty"`
+
 	// Screwdriver calibration (camera Z touch-off) + torque (terminal blocks).
 	ZSafe           float64 `json:"zSafe,omitempty"`           // travel/retract height (mm)
 	ZEngage         float64 `json:"zEngage,omitempty"`         // tip meets the screw head (mm) — found by camera touch-off
@@ -50,6 +58,35 @@ type Config struct {
 
 	Label     string `json:"label,omitempty"` // human name for this cell
 	UpdatedAt int64  `json:"updatedAt,omitempty"`
+}
+
+// AxisSteps is steps/mm per axis for M92 (external-driver calibration).
+type AxisSteps struct {
+	X float64 `json:"x,omitempty"`
+	Y float64 `json:"y,omitempty"`
+	Z float64 `json:"z,omitempty"`
+}
+
+// M92 renders the steps/mm as a Marlin command, e.g. "M92 X80.00 Y80.00 Z400.00".
+// Empty when no axis is set.
+func (a *AxisSteps) M92() string {
+	if a == nil {
+		return ""
+	}
+	parts := []string{}
+	if a.X > 0 {
+		parts = append(parts, fmt.Sprintf("X%.4f", a.X))
+	}
+	if a.Y > 0 {
+		parts = append(parts, fmt.Sprintf("Y%.4f", a.Y))
+	}
+	if a.Z > 0 {
+		parts = append(parts, fmt.Sprintf("Z%.4f", a.Z))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "M92 " + strings.Join(parts, " ")
 }
 
 // ProfileOption describes a selectable profile for the mobile UI.
