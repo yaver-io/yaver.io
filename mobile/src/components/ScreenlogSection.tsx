@@ -39,6 +39,8 @@ export function ScreenlogSection({ device }: { device: Device }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [frames, setFrames] = useState<Frame[]>([]);
+  const [frameIdx, setFrameIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +79,15 @@ export function ScreenlogSection({ device }: { device: Device }) {
 
   useEffect(() => { if (open) void refresh(); }, [open, refresh]);
 
+  // Security-cam playback — advance through frames while playing.
+  useEffect(() => {
+    if (!playing || frames.length === 0) return;
+    const t = setInterval(() => {
+      setFrameIdx((i) => (i + 1 >= frames.length ? (setPlaying(false), i) : i + 1));
+    }, 700);
+    return () => clearInterval(t);
+  }, [playing, frames.length]);
+
   const openSession = async (id: string) => {
     setSelected(id); setReport(null); setFrames([]);
     try {
@@ -85,12 +96,12 @@ export function ScreenlogSection({ device }: { device: Device }) {
         get(`/screenlog/${id}/frames.json`),
       ]);
       setReport(r.report);
-      const all: Frame[] = f.session?.frames || [];
-      const n = Math.min(6, all.length);
-      const out: Frame[] = [];
-      const step = n > 1 ? (all.length - 1) / (n - 1) : 0;
-      for (let i = 0; i < n; i++) out.push(all[Math.round(i * step)]);
-      setFrames(out);
+      const all: Frame[] = (f.session?.frames || [])
+        .filter((fr: Frame) => fr.file)
+        .sort((a: Frame, b: Frame) => a.capturedAt - b.capturedAt);
+      setFrames(all);
+      setFrameIdx(all.length ? all.length - 1 : 0);
+      setPlaying(false);
     } catch (e: any) { setError(e.message); }
   };
 
@@ -160,15 +171,24 @@ export function ScreenlogSection({ device }: { device: Device }) {
                     </View>
                   ))}
                   {frames.length > 0 && (
-                    <View style={styles.grid}>
-                      {frames.map((f) => (
-                        <Image
-                          key={f.idx}
-                          source={{ uri: `${base}/screenlog/${selected}/${f.file}`, headers: quicClient.getAuthHeaders() } as any}
-                          style={styles.frame}
-                          resizeMode="cover"
-                        />
-                      ))}
+                    <View style={{ marginTop: 8 }}>
+                      <Image
+                        source={{ uri: `${base}/screenlog/${selected}/${frames[Math.min(frameIdx, frames.length - 1)].file}`, headers: quicClient.getAuthHeaders() } as any}
+                        style={styles.player}
+                        resizeMode="contain"
+                      />
+                      <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }}>
+                        {new Date(frames[Math.min(frameIdx, frames.length - 1)].capturedAt).toLocaleString()}
+                        {frames[Math.min(frameIdx, frames.length - 1)].activeApp ? " · " + frames[Math.min(frameIdx, frames.length - 1)].activeApp : ""}
+                        {"  ·  " + (frameIdx + 1) + "/" + frames.length}
+                      </Text>
+                      <View style={styles.controls}>
+                        <Pressable onPress={() => { setPlaying(false); setFrameIdx(0); }} style={styles.ctlBtn}><Text style={styles.ctl}>⏮</Text></Pressable>
+                        <Pressable onPress={() => { setPlaying(false); setFrameIdx((i) => Math.max(0, i - 1)); }} style={styles.ctlBtn}><Text style={styles.ctl}>◀</Text></Pressable>
+                        <Pressable onPress={() => setPlaying((p) => !p)} style={styles.ctlBtn}><Text style={styles.ctl}>{playing ? "⏸" : "▶"}</Text></Pressable>
+                        <Pressable onPress={() => { setPlaying(false); setFrameIdx((i) => Math.min(frames.length - 1, i + 1)); }} style={styles.ctlBtn}><Text style={styles.ctl}>▶</Text></Pressable>
+                        <Pressable onPress={() => { setPlaying(false); setFrameIdx(frames.length - 1); }} style={styles.ctlBtn}><Text style={styles.ctl}>⏭</Text></Pressable>
+                      </View>
                     </View>
                   )}
                 </View>
@@ -189,4 +209,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderRadius: 8, padding: 8, gap: 8, marginTop: 4 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 },
   frame: { width: "31.5%", aspectRatio: 16 / 10, borderRadius: 4, backgroundColor: "#0002" },
+  player: { width: "100%", aspectRatio: 16 / 10, borderRadius: 6, backgroundColor: "#000" },
+  controls: { flexDirection: "row", justifyContent: "center", gap: 8, marginTop: 6 },
+  ctlBtn: { width: 34, height: 30, borderRadius: 6, backgroundColor: "#ffffff14", alignItems: "center", justifyContent: "center" },
+  ctl: { color: "#cbd5e1", fontSize: 14 },
 });

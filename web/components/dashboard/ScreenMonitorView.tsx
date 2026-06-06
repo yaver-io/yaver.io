@@ -11,7 +11,7 @@
 // never touch Convex; this view just renders them through the encrypted
 // relay tunnel.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 
 interface Session {
@@ -232,7 +232,7 @@ export default function ScreenMonitorView() {
                   </div>
                 ))}
               </div>
-              {selected && <FrameGrid sessionId={selected} />}
+              {selected && <SecurityCamPlayer sessionId={selected} />}
             </div>
           )}
         </div>
@@ -269,47 +269,90 @@ function PolicyToggle({ label, on, onChange }: { label: string; on: boolean; onC
   );
 }
 
-// FrameGrid lazily blob-loads a sample of frames through the auth'd relay
-// (a plain <img src> can't carry the bearer/relay headers).
-function FrameGrid({ sessionId }: { sessionId: string }) {
-  const [urls, setUrls] = useState<{ url: string; label: string }[]>([]);
+// SecurityCamPlayer — a DVR-style scrubber over a session's frames. Scrub the
+// timeline forward/back, step frame-by-frame, or hit play to watch his screen
+// like security-cam footage. Frames are blob-loaded on demand through the
+// auth'd relay (a plain <img src> can't carry the bearer/relay headers) and
+// cached, so scrubbing is smooth without pulling every frame up front.
+function SecurityCamPlayer({ sessionId }: { sessionId: string }) {
+  const [frames, setFrames] = useState<Frame[]>([]);
+  const [idx, setIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [curUrl, setCurUrl] = useState<string | null>(null);
+  const cache = useRef<Map<number, string>>(new Map());
+
+  // Load the frame index (only kept frames with an image), oldest→newest.
   useEffect(() => {
-    let revoked: string[] = [];
     let cancelled = false;
+    const c = cache.current;
     (async () => {
       try {
         const data = await getJSON(`/screenlog/${sessionId}/frames.json`);
-        const frames: Frame[] = data.session?.frames || [];
-        if (frames.length === 0) return;
-        const n = Math.min(8, frames.length);
-        const step = (frames.length - 1) / Math.max(1, n - 1);
-        const picks: Frame[] = [];
-        for (let i = 0; i < n; i++) picks.push(frames[Math.round(i * step)]);
-        const out: { url: string; label: string }[] = [];
-        for (const f of picks) {
-          const res = await agentClient.agentFetch(`/screenlog/${sessionId}/${f.file}`);
-          if (!res.ok) continue;
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          revoked.push(url);
-          out.push({ url, label: `${new Date(f.capturedAt).toLocaleTimeString()}${f.activeApp ? " · " + f.activeApp : ""}` });
-        }
-        if (!cancelled) setUrls(out);
+        const fr: Frame[] = ((data.session?.frames || []) as Frame[])
+          .filter((f) => f.file)
+          .sort((a, b) => a.capturedAt - b.capturedAt);
+        if (!cancelled) { setFrames(fr); setIdx(fr.length ? fr.length - 1 : 0); }
       } catch { /* ignore */ }
     })();
-    return () => { cancelled = true; revoked.forEach((u) => URL.revokeObjectURL(u)); };
+    return () => { cancelled = true; c.forEach((u) => URL.revokeObjectURL(u)); c.clear(); };
   }, [sessionId]);
 
-  if (urls.length === 0) return null;
+  // Load + cache the current frame's blob.
+  useEffect(() => {
+    const f = frames[idx];
+    if (!f) return;
+    const cached = cache.current.get(idx);
+    if (cached) { setCurUrl(cached); return; }
+    let cancelled = false;
+    (async () => {
+      const res = await agentClient.agentFetch(`/screenlog/${sessionId}/${f.file}`);
+      if (!res.ok || cancelled) return;
+      const url = URL.createObjectURL(await res.blob());
+      if (cancelled) { URL.revokeObjectURL(url); return; }
+      cache.current.set(idx, url);
+      setCurUrl(url);
+    })();
+    return () => { cancelled = true; };
+  }, [idx, frames, sessionId]);
+
+  // Playback — advance ~1.4 fps, stop at the end.
+  useEffect(() => {
+    if (!playing || frames.length === 0) return;
+    const t = setInterval(() => setIdx((i) => (i + 1 >= frames.length ? (setPlaying(false), i) : i + 1)), 700);
+    return () => clearInterval(t);
+  }, [playing, frames.length]);
+
+  if (frames.length === 0) return <div className="text-xs text-surface-500 pt-2">No frames captured yet.</div>;
+  const f = frames[idx];
+  const btn = "w-8 h-8 inline-flex items-center justify-center rounded-md bg-surface-800 hover:bg-surface-700 text-surface-200 text-sm";
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
-      {urls.map((u, i) => (
-        <figure key={i} className="m-0">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={u.url} alt={u.label} className="w-full rounded border border-surface-800" loading="lazy" />
-          <figcaption className="text-[10px] text-surface-500 mt-0.5 truncate">{u.label}</figcaption>
-        </figure>
-      ))}
+    <div className="pt-2 space-y-2">
+      <div className="relative bg-black rounded-md overflow-hidden border border-surface-800">
+        {curUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={curUrl} alt="" className="w-full block" />
+        ) : (
+          <div className="aspect-video flex items-center justify-center text-surface-600 text-xs">loading…</div>
+        )}
+        <div className="absolute top-1 left-2 text-[11px] text-white/85 bg-black/50 px-1.5 py-0.5 rounded">
+          {new Date(f.capturedAt).toLocaleString()}{f.activeApp ? " · " + f.activeApp : ""}
+        </div>
+        <div className="absolute top-1 right-2 text-[11px] text-white/70 bg-black/50 px-1.5 py-0.5 rounded">
+          {idx + 1}/{frames.length}
+        </div>
+      </div>
+      <input
+        type="range" min={0} max={frames.length - 1} value={idx}
+        onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }}
+        className="w-full accent-emerald-500"
+      />
+      <div className="flex items-center justify-center gap-2">
+        <button className={btn} title="First" onClick={() => { setPlaying(false); setIdx(0); }}>⏮</button>
+        <button className={btn} title="Back" onClick={() => { setPlaying(false); setIdx((i) => Math.max(0, i - 1)); }}>◀</button>
+        <button className={btn} title={playing ? "Pause" : "Play"} onClick={() => setPlaying((p) => !p)}>{playing ? "⏸" : "▶"}</button>
+        <button className={btn} title="Forward" onClick={() => { setPlaying(false); setIdx((i) => Math.min(frames.length - 1, i + 1)); }}>▶</button>
+        <button className={btn} title="Latest" onClick={() => { setPlaying(false); setIdx(frames.length - 1); }}>⏭</button>
+      </div>
     </div>
   );
 }
