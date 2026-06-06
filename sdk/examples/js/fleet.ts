@@ -35,14 +35,30 @@ async function main() {
   if (first) await first.tag({ add: ['ml-pool'] });
 
   // 5. Dispatch an autonomous coding agent to a machine and stream its session
-  //    — "run claude-code on box N" with no SSH / manual attach.
+  //    — "run claude-code on box N" with no SSH / manual attach. preferLocal
+  //    routes to the on-device model when the machine can run one.
   if (first) {
     for await (const { text } of first.agent('profile the CUDA kernel in ./bench and open a PR', {
       runner: 'claude-code',
+      preferLocal: true,           // → local model on `local-inference` machines (P12)
     })) {
       process.stdout.write(text);
     }
   }
+
+  // 6. Interactive PTY shell on a machine (P5).
+  if (first) {
+    const sh = await first.shell();
+    sh.onData((t) => process.stdout.write(t));
+    sh.write('uptime && exit\n');
+  }
+
+  // 7. Store-and-forward: park a command for a machine that may be offline,
+  //    flush it later when reachable (P13). Durable across restarts.
+  const queue = fleet.queue('/tmp/yaver-fleet-queue.json');
+  await queue.enqueue('edge-pi-3', 'sudo apt upgrade -y');
+  const flushed = await queue.flush();
+  console.log(`${flushed.filter((f) => f.ran).length} queued commands ran`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

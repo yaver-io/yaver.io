@@ -6,7 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectRunner, selectProvider, isWorkKindEnabled, type CompanyAIOptions } from './policy';
 import { buildCandidates } from './connect';
-import { Fleet, Machine, Selection, serviceCmd, type ExecResult, type MachineInfo } from './fleet';
+import { Fleet, Machine, Selection, serviceCmd, pickAgentRunner, terminalWsUrl, type ExecResult, type MachineInfo } from './fleet';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { rm } from 'node:fs/promises';
 import {
   composeEntitlements, entitlementAllows, entitlementFromGuest, entitlementFromResolved,
   LAYER4_DENIED_TOOLS, type Entitlement,
@@ -338,6 +341,46 @@ test('low-risk exec does not consult the approval gate', async () => {
   });
   await m.run('ls -la').catch(() => { /* transport failure is expected/irrelevant */ });
   assert.equal(asked, 0, 'low-risk exec must not call approve');
+});
+
+test('pickAgentRunner routes local-first when the machine supports it (P12)', () => {
+  assert.equal(pickAgentRunner({ runner: 'claude-code', preferLocal: true }, ['gpu', 'local-inference']), 'ollama');
+  assert.equal(pickAgentRunner({ runner: 'claude-code', preferLocal: true, localRunner: 'ollama:qwen' }, ['local-inference']), 'ollama:qwen');
+  // preferLocal but machine has no local model → fall back to the cloud runner
+  assert.equal(pickAgentRunner({ runner: 'claude-code', preferLocal: true }, ['gpu']), 'claude-code');
+  // no preferLocal → always the requested runner
+  assert.equal(pickAgentRunner({ runner: 'codex' }, ['local-inference']), 'codex');
+});
+
+test('terminalWsUrl converts scheme and carries token + opts (P5)', () => {
+  assert.equal(
+    terminalWsUrl('https://relay.example/d/dev1', 'tok'),
+    'wss://relay.example/d/dev1/ws/terminal?token=tok',
+  );
+  assert.equal(
+    terminalWsUrl('http://192.168.1.5:18080/', 'tok', { shell: '/bin/zsh', cwd: '/srv', sessionId: 's1' }),
+    'ws://192.168.1.5:18080/ws/terminal?token=tok&shell=%2Fbin%2Fzsh&cwd=%2Fsrv&session_id=s1',
+  );
+});
+
+test('CommandQueue persists across restarts (P13 store-and-forward)', async () => {
+  const fleet = await Fleet.connect({ token: 't' });
+  const path = join(tmpdir(), `yaver-queue-test-${process.pid}.json`);
+  await rm(path, { force: true });
+  try {
+    const q1 = fleet.queue(path);
+    await q1.enqueue('box-a', 'systemctl restart yaver');
+    await q1.enqueue('box-b', 'apt upgrade -y');
+    // A fresh queue (simulating a process restart) loads the same durable items.
+    const q2 = fleet.queue(path);
+    const items = await q2.list();
+    assert.equal(items.length, 2);
+    assert.equal(items[0].deviceId, 'box-a');
+    assert.equal(items[1].command, 'apt upgrade -y');
+    assert.ok(items.every((i) => i.attempts === 0 && typeof i.enqueuedAt === 'number'));
+  } finally {
+    await rm(path, { force: true });
+  }
 });
 
 test('serviceCmd builds platform-native service commands', () => {
