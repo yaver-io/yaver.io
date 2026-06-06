@@ -44,6 +44,9 @@ export function ScreenlogSection({ device }: { device: Device }) {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveOn, setLiveOn] = useState(false);
+  const [liveTick, setLiveTick] = useState(0);
+  const [liveRunning, setLiveRunning] = useState<boolean | null>(null);
 
   const get = useCallback(async (path: string) => {
     const res = await fetch(`${base}${path}`, { headers: quicClient.getAuthHeaders() });
@@ -87,6 +90,25 @@ export function ScreenlogSection({ device }: { device: Device }) {
     }, 700);
     return () => clearInterval(t);
   }, [playing, frames.length]);
+
+  // Live view — poll the newest frame (+ "is recording active") at the capture
+  // cadence. Works for a remote box over relay/mesh via the peer-routed base.
+  useEffect(() => {
+    if (!liveOn) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await get("/screenlog/live?meta=1");
+        if (alive) setLiveRunning(Boolean(r.running));
+      } catch {
+        if (alive) setLiveRunning(null);
+      }
+      if (alive) setLiveTick((t) => t + 1);
+    };
+    void tick();
+    const id = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, [liveOn, get]);
 
   const openSession = async (id: string) => {
     setSelected(id); setReport(null); setFrames([]);
@@ -143,6 +165,27 @@ export function ScreenlogSection({ device }: { device: Device }) {
                 )}
               </Pressable>
               {error && <Text style={{ color: "#fbbf24", fontSize: 11, marginTop: 4 }}>{error}</Text>}
+
+              <Pressable
+                onPress={() => setLiveOn((v) => !v)}
+                style={[styles.btn, { marginTop: 6, backgroundColor: liveOn ? "#ef444422" : "#3b82f622", borderColor: liveOn ? "#ef444455" : "#3b82f655" }]}
+              >
+                <Text style={{ color: liveOn ? "#f87171" : "#60a5fa", fontWeight: "600", fontSize: 12 }}>
+                  {liveOn ? "● LIVE — tap to stop" : "◉ Live view"}
+                </Text>
+              </Pressable>
+              {liveOn && (
+                <View style={{ marginTop: 6 }}>
+                  <Image
+                    source={{ uri: `${base}/screenlog/live?_=${liveTick}`, headers: quicClient.getAuthHeaders() } as any}
+                    style={styles.player}
+                    resizeMode="contain"
+                  />
+                  <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }}>
+                    {liveRunning === null ? "connecting…" : liveRunning ? "● recording — live, ~2s cadence" : "○ not recording (showing last frame)"}
+                  </Text>
+                </View>
+              )}
 
               {sessions.slice(0, 5).map((s) => (
                 <Pressable key={s.id} onPress={() => openSession(s.id)}
