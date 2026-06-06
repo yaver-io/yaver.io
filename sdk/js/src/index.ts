@@ -57,7 +57,7 @@ export { YaverBroker } from './broker';
 export type { ConnectBundle, YaverBrokerOptions } from './broker';
 
 // Fleet — drive a SET of remote machines from code (select by tag, fan exec).
-export { Fleet, Machine, Selection } from './fleet';
+export { Fleet, Machine, Selection, fileAuditSink } from './fleet';
 export type {
   FleetConnectOptions,
   MachineInfo,
@@ -70,6 +70,8 @@ export type {
   AgentResult,
   VerifiedAction,
   ApplyResult,
+  ActionEvent,
+  AuditEvent,
 } from './fleet';
 
 // Developer-API facade (the boundary consumers use)

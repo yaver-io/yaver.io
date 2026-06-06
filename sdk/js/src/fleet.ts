@@ -27,6 +27,33 @@
 import { DEFAULT_CONVEX_URL, type DeviceCoords } from './discovery';
 import { buildCandidates, pickTransport, type Transport } from './connect';
 
+/** A mutating fleet action, surfaced to the approval gate + audit sink. */
+export interface ActionEvent {
+  kind: 'exec' | 'agent' | 'apply' | 'upload';
+  machine: MachineInfo;
+  risk: 'low' | 'high';
+  command?: string; // exec
+  prompt?: string;  // agent
+  key?: string;     // apply (idempotency key)
+  path?: string;    // upload (remote path)
+}
+
+/** An action's outcome, emitted to the audit sink after it runs. */
+export interface AuditEvent extends ActionEvent {
+  at: number; // epoch ms
+  outcome: 'ok' | 'denied' | 'error';
+  detail?: string;
+}
+
+// Destructive-by-default patterns: rm -rf, mkfs, dd, fork bombs, chmod -R 777,
+// writes to raw block devices, DB drops, force-push, reboot/shutdown.
+const DEFAULT_RISK =
+  /(\brm\s+-rf?\b|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{|\bchmod\s+-R\s+777\b|>\s*\/dev\/sd|\bdrop\s+(table|database)\b|\bgit\s+push\b.*--force|\b(reboot|shutdown|halt|poweroff)\b)/i;
+
+function defaultClassifyRisk(command: string): 'low' | 'high' {
+  return DEFAULT_RISK.test(command) ? 'high' : 'low';
+}
+
 export interface FleetConnectOptions {
   /** Yaver bearer the agents + Convex accept (the user's session token). */
   token: string;
@@ -38,6 +65,16 @@ export interface FleetConnectOptions {
   directPort?: number;
   /** Per-candidate health-probe timeout (ms). */
   probeTimeoutMs?: number;
+  /**
+   * Human-in-the-loop gate. Called before a mutating action (agent dispatch,
+   * apply, upload, and HIGH-risk exec). Return false to block it; the action
+   * resolves to a denied outcome rather than running. Low-risk exec is not gated.
+   */
+  approve?: (ev: ActionEvent) => boolean | Promise<boolean>;
+  /** Audit sink — called after every action with its outcome. Never throws into the action. */
+  onAudit?: (ev: AuditEvent) => void;
+  /** Override the exec risk classifier (default flags destructive patterns). */
+  classifyRisk?: (command: string) => 'low' | 'high';
 }
 
 /** A machine as returned by the selector — compact, privacy-safe. */
@@ -174,6 +211,7 @@ async function transportFetch(
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const nowMs = () => Date.now();
 
 /**
  * One machine in the fleet. Resolves a transport lazily (and caches the
@@ -193,6 +231,25 @@ export class Machine {
   get alias(): string | null { return this.info.alias; }
   get tags(): string[] { return this.info.tags; }
   get online(): boolean { return this.info.online; }
+
+  /** Run the approval gate for a mutating action. True ⇒ proceed. */
+  private async guard(ev: ActionEvent): Promise<boolean> {
+    const approve = this.fleet.opts.approve;
+    if (!approve) return true;
+    if (ev.kind === 'exec' && ev.risk !== 'high') return true; // only gate risky exec
+    return Boolean(await approve(ev));
+  }
+
+  /** Emit an audit event. A throwing sink must never break the action. */
+  private audit(ev: Omit<AuditEvent, 'at'>): void {
+    const sink = this.fleet.opts.onAudit;
+    if (!sink) return;
+    try { sink({ ...ev, at: nowMs() }); } catch { /* audit must not break the action */ }
+  }
+
+  private classifyRisk(command: string): 'low' | 'high' {
+    return (this.fleet.opts.classifyRisk ?? defaultClassifyRisk)(command);
+  }
 
   /** Resolve (and cache) the winning transport via the connect.ts ladder. */
   async transport(): Promise<Transport> {
@@ -222,6 +279,11 @@ export class Machine {
 
   /** Run a command, streaming stdout/stderr deltas; the generator's return is the ExecResult. */
   async *exec(command: string, opts: ExecOpts = {}): AsyncGenerator<{ stream: 'stdout' | 'stderr'; text: string }, ExecResult> {
+    const risk = this.classifyRisk(command);
+    if (!(await this.guard({ kind: 'exec', machine: this.info, risk, command }))) {
+      this.audit({ kind: 'exec', machine: this.info, risk, command, outcome: 'denied' });
+      return { machine: this.info, code: -1, stdout: '', stderr: '', error: 'denied by approval gate' };
+    }
     const t = await this.transport();
     const o = this.fleet.opts;
     const startRes = await transportFetch(t, o.token, '/exec', {
@@ -229,7 +291,9 @@ export class Machine {
       body: JSON.stringify({ command, workDir: opts.workDir, timeout: opts.timeout, env: opts.env }),
     }, true);
     if (!startRes.ok) {
-      return { machine: this.info, code: -1, stdout: '', stderr: '', error: `start exec: HTTP ${startRes.status}` };
+      const detail = `start exec: HTTP ${startRes.status}`;
+      this.audit({ kind: 'exec', machine: this.info, risk, command, outcome: 'error', detail });
+      return { machine: this.info, code: -1, stdout: '', stderr: '', error: detail };
     }
     const { execId } = (await startRes.json()) as { execId: string };
     let lastOut = 0, lastErr = 0;
@@ -238,13 +302,17 @@ export class Machine {
     while (true) {
       const res = await transportFetch(t, o.token, `/exec/${execId}`);
       if (!res.ok) {
-        return { machine: this.info, code: -1, stdout: '', stderr: '', error: `poll exec: HTTP ${res.status}` };
+        const detail = `poll exec: HTTP ${res.status}`;
+        this.audit({ kind: 'exec', machine: this.info, risk, command, outcome: 'error', detail });
+        return { machine: this.info, code: -1, stdout: '', stderr: '', error: detail };
       }
       const { exec } = (await res.json()) as { exec: ExecSessionView };
       if (exec.stdout.length > lastOut) { yield { stream: 'stdout', text: exec.stdout.slice(lastOut) }; lastOut = exec.stdout.length; }
       if (exec.stderr.length > lastErr) { yield { stream: 'stderr', text: exec.stderr.slice(lastErr) }; lastErr = exec.stderr.length; }
       if (exec.status === 'completed' || exec.status === 'failed' || exec.status === 'killed') {
-        return { machine: this.info, code: exec.exitCode ?? (exec.status === 'completed' ? 0 : 1), stdout: exec.stdout, stderr: exec.stderr };
+        const code = exec.exitCode ?? (exec.status === 'completed' ? 0 : 1);
+        this.audit({ kind: 'exec', machine: this.info, risk, command, outcome: code === 0 ? 'ok' : 'error' });
+        return { machine: this.info, code, stdout: exec.stdout, stderr: exec.stderr };
       }
       await sleep(poll);
     }
@@ -266,6 +334,11 @@ export class Machine {
    * and tails it; no SSH, no manual attach.
    */
   async *agent(prompt: string, opts: AgentOpts = {}): AsyncGenerator<{ text: string }, AgentResult> {
+    // Agent dispatch is autonomous → always gateable (treated as high-risk).
+    if (!(await this.guard({ kind: 'agent', machine: this.info, risk: 'high', prompt }))) {
+      this.audit({ kind: 'agent', machine: this.info, risk: 'high', prompt, outcome: 'denied' });
+      return { machine: this.info, taskId: '', status: 'failed', output: '', error: 'denied by approval gate' };
+    }
     const t = await this.transport();
     const o = this.fleet.opts;
     const startRes = await transportFetch(t, o.token, '/tasks', {
@@ -273,7 +346,9 @@ export class Machine {
       body: JSON.stringify({ title: prompt, runner: opts.runner, model: opts.model }),
     }, true);
     if (!startRes.ok) {
-      return { machine: this.info, taskId: '', status: 'failed', output: '', error: `dispatch: HTTP ${startRes.status}` };
+      const detail = `dispatch: HTTP ${startRes.status}`;
+      this.audit({ kind: 'agent', machine: this.info, risk: 'high', prompt, outcome: 'error', detail });
+      return { machine: this.info, taskId: '', status: 'failed', output: '', error: detail };
     }
     const { taskId } = (await startRes.json()) as { taskId: string };
     let lastLen = 0;
@@ -282,12 +357,15 @@ export class Machine {
     while (true) {
       const res = await transportFetch(t, o.token, `/tasks/${taskId}`);
       if (!res.ok) {
-        return { machine: this.info, taskId, status: 'failed', output: '', error: `poll task: HTTP ${res.status}` };
+        const detail = `poll task: HTTP ${res.status}`;
+        this.audit({ kind: 'agent', machine: this.info, risk: 'high', prompt, outcome: 'error', detail });
+        return { machine: this.info, taskId, status: 'failed', output: '', error: detail };
       }
       const { task } = (await res.json()) as { task: { status: string; output?: string; resultText?: string; costUsd?: number } };
       const output = task.output ?? '';
       if (output.length > lastLen) { yield { text: output.slice(lastLen) }; lastLen = output.length; }
       if (task.status === 'completed' || task.status === 'failed' || task.status === 'stopped') {
+        this.audit({ kind: 'agent', machine: this.info, risk: 'high', prompt, outcome: task.status === 'completed' ? 'ok' : 'error' });
         return { machine: this.info, taskId, status: task.status as AgentResult['status'], output, resultText: task.resultText, costUsd: task.costUsd };
       }
       await sleep(poll);
@@ -300,6 +378,10 @@ export class Machine {
    * file's permission bits. Node-only (dynamically imports node:fs).
    */
   async upload(localPath: string, remotePath: string): Promise<{ bytes: number }> {
+    if (!(await this.guard({ kind: 'upload', machine: this.info, risk: 'high', path: remotePath }))) {
+      this.audit({ kind: 'upload', machine: this.info, risk: 'high', path: remotePath, outcome: 'denied' });
+      throw new Error(`upload ${remotePath}: denied by approval gate`);
+    }
     const fs = await import('node:fs/promises');
     const data = await fs.readFile(localPath);
     const mode = ((await fs.stat(localPath)).mode & 0o777).toString(8);
@@ -309,8 +391,13 @@ export class Machine {
       `/fleet/file?path=${encodeURIComponent(remotePath)}&mode=${mode}`,
       { method: 'POST', body: new Uint8Array(data) },
     );
-    if (!res.ok) throw new Error(`upload ${remotePath}: HTTP ${res.status}`);
-    return { bytes: (await res.json() as { bytes: number }).bytes };
+    if (!res.ok) {
+      this.audit({ kind: 'upload', machine: this.info, risk: 'high', path: remotePath, outcome: 'error', detail: `HTTP ${res.status}` });
+      throw new Error(`upload ${remotePath}: HTTP ${res.status}`);
+    }
+    const bytes = (await res.json() as { bytes: number }).bytes;
+    this.audit({ kind: 'upload', machine: this.info, risk: 'high', path: remotePath, outcome: 'ok', detail: `${bytes} bytes` });
+    return { bytes };
   }
 
   /** Download an absolute remote file to a local path (creating parent dirs). */
@@ -365,7 +452,14 @@ export class Machine {
   async apply(action: VerifiedAction): Promise<ApplyResult> {
     if (action.precheck) {
       const pre = await this.check(action.precheck, action.expect);
-      if (pre.ok) return { machine: this.info, key: action.key, status: 'already', attempts: 0 };
+      if (pre.ok) {
+        this.audit({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, outcome: 'ok', detail: 'already' });
+        return { machine: this.info, key: action.key, status: 'already', attempts: 0 };
+      }
+    }
+    if (!(await this.guard({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, command: action.do }))) {
+      this.audit({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, outcome: 'denied' });
+      return { machine: this.info, key: action.key, status: 'failed', attempts: 0, detail: 'denied by approval gate' };
     }
     const maxAttempts = Math.max(1, action.retries ?? 1);
     let lastDetail = '';
@@ -373,16 +467,22 @@ export class Machine {
       const did = await this.run(action.do);
       const v = await this.check(action.verify, action.expect);
       lastDetail = (v.out || did.stderr || '').slice(0, 500);
-      if (v.ok) return { machine: this.info, key: action.key, status: 'verified', attempts: attempt };
+      if (v.ok) {
+        this.audit({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, outcome: 'ok' });
+        return { machine: this.info, key: action.key, status: 'verified', attempts: attempt };
+      }
     }
     const onFail = action.onFail ?? 'throw';
     if (onFail === 'rollback' && action.rollback) {
       await this.run(action.rollback);
+      this.audit({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, outcome: 'error', detail: `rolled-back: ${lastDetail}` });
       return { machine: this.info, key: action.key, status: 'rolled-back', attempts: maxAttempts, detail: lastDetail };
     }
     if (onFail === 'leave') {
+      this.audit({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, outcome: 'error', detail: lastDetail });
       return { machine: this.info, key: action.key, status: 'failed', attempts: maxAttempts, detail: lastDetail };
     }
+    this.audit({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, outcome: 'error', detail: lastDetail });
     throw new Error(`apply '${action.key}' on ${this.info.deviceId}: verify failed after ${maxAttempts} attempt(s)${lastDetail ? ` — ${lastDetail}` : ''}`);
   }
 
@@ -491,6 +591,46 @@ export class Selection {
   async map<T>(fn: (m: Machine) => Promise<T>): Promise<T[]> {
     return Promise.all(this.machines.map(fn));
   }
+
+  /**
+   * Commander/worker fan-out: distribute a work-list across the machines with
+   * work-stealing — each machine pulls the next item as soon as it's free, up
+   * to `concurrency` items in flight per machine. Results come back in input
+   * order. Wall-clock ≈ the busiest machine's chain, not the slowest item ×
+   * count. The general "spread N tasks over my fleet and aggregate" primitive.
+   */
+  async distribute<I, O>(
+    items: I[],
+    worker: (machine: Machine, item: I, index: number) => Promise<O>,
+    opts: { concurrency?: number } = {},
+  ): Promise<O[]> {
+    if (this.machines.length === 0) throw new Error('distribute: no machines in selection');
+    const results = new Array<O>(items.length);
+    const conc = Math.max(1, opts.concurrency ?? 1);
+    let next = 0; // shared cursor; ++ is atomic between awaits (single-threaded)
+    const pull = async (m: Machine): Promise<void> => {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const i = next++;
+        if (i >= items.length) return;
+        results[i] = await worker(m, items[i], i);
+      }
+    };
+    const runners: Promise<void>[] = [];
+    for (const m of this.machines) for (let k = 0; k < conc; k++) runners.push(pull(m));
+    await Promise.all(runners);
+    return results;
+  }
+
+  /** Map an async fn over every machine, then fold the results into one value. */
+  async mapReduce<T, R>(
+    map: (m: Machine) => Promise<T>,
+    reduce: (acc: R, value: T, machine: Machine) => R,
+    init: R,
+  ): Promise<R> {
+    const values = await Promise.all(this.machines.map(map));
+    return values.reduce((acc, v, i) => reduce(acc, v, this.machines[i]), init);
+  }
 }
 
 /** The fleet handle. `Fleet.connect()` then `select()`. */
@@ -530,4 +670,25 @@ export class Fleet {
     if (!hit) throw new Error(`machine not found: ${idOrAlias}`);
     return hit;
   }
+}
+
+/**
+ * A ready-made audit sink that appends each AuditEvent as one JSON line to a
+ * file — the client-side record plane for every fleet action (who ran what,
+ * where, with what outcome). Node-only; pass to Fleet.connect({ onAudit }).
+ *
+ * @example Fleet.connect({ token, onAudit: fileAuditSink('/var/log/yaver-fleet.jsonl') })
+ */
+export function fileAuditSink(path: string): (ev: AuditEvent) => void {
+  return (ev: AuditEvent) => {
+    // Fire-and-forget append; never blocks or throws into the action.
+    void import('node:fs/promises')
+      .then((fs) => fs.appendFile(path, JSON.stringify({
+        at: ev.at, kind: ev.kind, outcome: ev.outcome,
+        deviceId: ev.machine.deviceId, alias: ev.machine.alias, risk: ev.risk,
+        command: ev.command, prompt: ev.prompt, key: ev.key, filePath: ev.path,
+        detail: ev.detail,
+      }) + '\n'))
+      .catch(() => { /* a broken sink must never break the fleet action */ });
+  };
 }
