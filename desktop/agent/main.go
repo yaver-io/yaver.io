@@ -7807,6 +7807,22 @@ func resolveSSHHost(target string) string {
 		}
 	}
 
+	// 2.5 Yaver Mesh overlay (100.96/12). When our own mesh is up, the
+	//     target's overlay IP is a real, encrypted, NAT-traversing route
+	//     that does NOT depend on Tailscale at all — so a user who
+	//     dropped Tailscale and runs `yaver mesh up` keeps overlay-SSH.
+	//     Sits above the Tailscale paths on purpose. Gated on our local
+	//     mesh being up so we never hand ssh a 100.96 address we can't
+	//     reach (same 30 s-timeout guard as the Tailscale gate below).
+	meshUp := localMeshUp()
+	if dev != nil && meshUp {
+		for _, ip := range dev.LocalIps {
+			if isMeshOverlayIPv4(ip) {
+				return ip
+			}
+		}
+	}
+
 	// 3. Tailscale-by-hint (cheap, handles devices not in Convex).
 	//    Gated on local Tailscale being up.
 	if tsUp {
@@ -7873,11 +7889,19 @@ func resolveSSHHost(target string) string {
 		if !tsUp && isCGNATTailscaleIP(ip) {
 			continue
 		}
+		// Mesh overlay IP we can't reach because our own mesh is down —
+		// skip rather than hand ssh a 100.96 address that hangs 30 s.
+		if !meshUp && isMeshOverlayIPv4(ip) {
+			continue
+		}
 		return ip
 	}
 
 	if dev.QuicHost != "" && dev.QuicHost != "0.0.0.0" && !isLikelyDockerBridgeIP(dev.QuicHost) {
 		if !tsUp && isCGNATTailscaleIP(dev.QuicHost) {
+			return ""
+		}
+		if !meshUp && isMeshOverlayIPv4(dev.QuicHost) {
 			return ""
 		}
 		return dev.QuicHost

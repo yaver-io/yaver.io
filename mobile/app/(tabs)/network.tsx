@@ -18,6 +18,13 @@ import * as Clipboard from "expo-clipboard";
 import { useColors } from "../../src/context/ThemeContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { CONVEX_SITE_URL } from "../../src/_core/constants";
+import {
+  isMeshTunnelSupported,
+  meshTunnelDown,
+  meshTunnelStatus,
+  meshTunnelUp,
+  type MeshTunnelStatus,
+} from "../../src/lib/yaverMesh";
 
 type SupportConn = {
   grantId: string;
@@ -49,6 +56,12 @@ type ACLRule = {
   action: "accept" | "drop";
 };
 
+// Bridging a Tailnet = advertising Tailscale's CGNAT block as a mesh route on
+// a node sitting on BOTH networks. Mesh peer /32s + the 100.96/12 overlay are
+// longer-prefix, so they still win — only real Tailnet hosts route through the
+// bridge. Lets mesh peers reach a Tailnet without Tailscale on every node.
+const TAILSCALE_BRIDGE_CIDR = "100.64.0.0/10";
+
 export default function NetworkScreen() {
   const c = useColors();
   const { token } = useAuth();
@@ -59,6 +72,33 @@ export default function NetworkScreen() {
   const [supportedBy, setSupportedBy] = useState<SupportConn[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // On-device tunnel (Phase 7) — only meaningful on a build that bundled the
+  // native NetworkExtension/VpnService. Absent everywhere else → tunnel stays
+  // null and the card renders a "coming in a native update" hint.
+  const tunnelSupported = isMeshTunnelSupported();
+  const [tunnel, setTunnel] = useState<MeshTunnelStatus | null>(null);
+  const [tunnelBusy, setTunnelBusy] = useState(false);
+
+  useEffect(() => {
+    if (!tunnelSupported) return;
+    void meshTunnelStatus().then(setTunnel);
+  }, [tunnelSupported]);
+
+  const toggleTunnel = useCallback(async () => {
+    if (!token || tunnelBusy) return;
+    setTunnelBusy(true);
+    try {
+      const connected = tunnel?.state === "connected";
+      const next = connected
+        ? await meshTunnelDown()
+        : await meshTunnelUp({ convexSiteUrl: CONVEX_SITE_URL, token });
+      setTunnel(next);
+      if (next.state === "error" && next.error) setError(next.error);
+      void load();
+    } finally {
+      setTunnelBusy(false);
+    }
+  }, [token, tunnel, tunnelBusy]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -180,9 +220,58 @@ export default function NetworkScreen() {
         <Text style={{ fontSize: 13, color: c.textMuted, lineHeight: 18 }}>
           Yaver Mesh is an optional WireGuard overlay — a Tailscale alternative across your
           fleet. Bring a machine on with <Text style={{ fontWeight: "600" }}>yaver mesh up</Text>;
-          it gets a stable overlay IP every other node can reach. This phone manages the mesh;
-          on-device tunneling arrives in a later update.
+          it gets a stable overlay IP every other node can reach. This phone manages the mesh{tunnelSupported ? " and can join it directly below." : "; on-device tunneling arrives in a later update."}
         </Text>
+      </View>
+
+      {/* This phone — on-device tunnel (Phase 7). Real toggle on extension
+          builds; a graceful hint otherwise so the card always renders. */}
+      <View style={{ borderRadius: 16, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, padding: 14, gap: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <Text style={{ fontSize: 15, fontWeight: "700", color: c.textPrimary }}>This phone</Text>
+          {tunnelSupported ? (
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: tunnel?.state === "connected" ? "#34d399" : c.textMuted,
+              }}
+            />
+          ) : null}
+        </View>
+        {tunnelSupported ? (
+          <>
+            <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 17 }}>
+              {tunnel?.state === "connected"
+                ? `Connected · ${tunnel.meshIPv4 ?? "overlay IP pending"}`
+                : "Join the mesh from this phone — get a 100.96 overlay IP so ssh/HTTP to any peer works directly."}
+            </Text>
+            <Pressable
+              onPress={() => void toggleTunnel()}
+              disabled={tunnelBusy}
+              style={{
+                borderRadius: 999,
+                paddingVertical: 10,
+                alignItems: "center",
+                opacity: tunnelBusy ? 0.5 : 1,
+                backgroundColor: tunnel?.state === "connected" ? "#ef444415" : "#34d39915",
+                borderWidth: 1,
+                borderColor: tunnel?.state === "connected" ? "#ef444455" : "#34d39955",
+              }}
+            >
+              <Text style={{ color: tunnel?.state === "connected" ? "#fca5a5" : "#34d399", fontSize: 14, fontWeight: "700" }}>
+                {tunnelBusy ? "…" : tunnel?.state === "connected" ? "Disconnect" : "Connect to mesh"}
+              </Text>
+            </Pressable>
+          </>
+        ) : (
+          <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 17 }}>
+            On-device tunneling (this phone carrying mesh traffic with its own overlay IP) arrives
+            in a native update. For now this phone manages the mesh; your desktops and servers form
+            the data plane.
+          </Text>
+        )}
       </View>
 
       {error ? (
@@ -288,6 +377,14 @@ export default function NetworkScreen() {
           {peers.map((p) => {
             const isOwner = p.accessScope === "owner";
             const advertisingExit = p.isExitNode || p.wantExitNode;
+            const currentRoutes = p.wantRoutes ?? (p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0");
+            const bridgingTailnet = currentRoutes.includes(TAILSCALE_BRIDGE_CIDR);
+            const toggleTailnetBridge = () => {
+              const next = bridgingTailnet
+                ? currentRoutes.filter((r) => r !== TAILSCALE_BRIDGE_CIDR)
+                : [...currentRoutes, TAILSCALE_BRIDGE_CIDR];
+              void saveNodeConfig(p.deviceId, { wantRoutes: next });
+            };
             const exitOptions = peers.filter((x) => x.deviceId !== p.deviceId && (x.isExitNode || x.wantExitNode));
             const usingName =
               p.wantUseExitNode
@@ -352,15 +449,32 @@ export default function NetworkScreen() {
                       </Pressable>
                     ) : null}
                     <TextInput
-                      defaultValue={(p.wantRoutes ?? (p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0")).join(", ")}
+                      defaultValue={currentRoutes.filter((r) => r !== TAILSCALE_BRIDGE_CIDR).join(", ")}
                       onEndEditing={(e) => {
-                        const next = e.nativeEvent.text.split(",").map((s) => s.trim()).filter(Boolean);
+                        const typed = e.nativeEvent.text.split(",").map((s) => s.trim()).filter(Boolean);
+                        // Preserve the Tailnet-bridge route (it has its own toggle).
+                        const next = bridgingTailnet ? [...typed, TAILSCALE_BRIDGE_CIDR] : typed;
                         void saveNodeConfig(p.deviceId, { wantRoutes: next });
                       }}
                       placeholder="routes 10.0.0.0/24"
                       placeholderTextColor={c.textMuted}
                       style={{ flex: 1, minWidth: 120, color: c.textPrimary, borderWidth: 1, borderColor: c.border, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 11 }}
                     />
+                    <Pressable
+                      onPress={toggleTailnetBridge}
+                      style={{
+                        borderRadius: 999,
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        backgroundColor: bridgingTailnet ? "#22d3ee22" : c.bg,
+                        borderWidth: 1,
+                        borderColor: bridgingTailnet ? "#22d3ee55" : c.border,
+                      }}
+                    >
+                      <Text style={{ color: bridgingTailnet ? "#22d3ee" : c.textMuted, fontSize: 11 }}>
+                        {bridgingTailnet ? "✓ Tailnet" : "bridge Tailnet"}
+                      </Text>
+                    </Pressable>
                   </View>
                 ) : null}
               </View>
