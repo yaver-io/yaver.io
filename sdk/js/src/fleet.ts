@@ -258,6 +258,60 @@ export class Machine {
     }
   }
 
+  /**
+   * Upload a local file to an absolute path on this machine, over the resolved
+   * transport (so it works behind NAT via relay/mesh). Preserves the local
+   * file's permission bits. Node-only (dynamically imports node:fs).
+   */
+  async upload(localPath: string, remotePath: string): Promise<{ bytes: number }> {
+    const fs = await import('node:fs/promises');
+    const data = await fs.readFile(localPath);
+    const mode = ((await fs.stat(localPath)).mode & 0o777).toString(8);
+    const t = await this.transport();
+    const res = await transportFetch(
+      t, this.fleet.opts.token,
+      `/fleet/file?path=${encodeURIComponent(remotePath)}&mode=${mode}`,
+      { method: 'POST', body: new Uint8Array(data) },
+    );
+    if (!res.ok) throw new Error(`upload ${remotePath}: HTTP ${res.status}`);
+    return { bytes: (await res.json() as { bytes: number }).bytes };
+  }
+
+  /** Download an absolute remote file to a local path (creating parent dirs). */
+  async download(remotePath: string, localPath: string): Promise<{ bytes: number }> {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const t = await this.transport();
+    const res = await transportFetch(t, this.fleet.opts.token, `/fleet/file?path=${encodeURIComponent(remotePath)}`);
+    if (!res.ok) throw new Error(`download ${remotePath}: HTTP ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    await fs.mkdir(path.dirname(localPath), { recursive: true });
+    await fs.writeFile(localPath, bytes);
+    const mode = res.headers.get('X-Yaver-File-Mode');
+    if (mode) { try { await fs.chmod(localPath, parseInt(mode, 8)); } catch { /* best-effort */ } }
+    return { bytes: bytes.length };
+  }
+
+  /** Recursively upload a local directory tree to a remote directory. */
+  async uploadDir(localDir: string, remoteDir: string): Promise<{ files: number; bytes: number }> {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const remoteBase = remoteDir.replace(/\/+$/, '');
+    let files = 0, bytes = 0;
+    const walk = async (rel: string): Promise<void> => {
+      const entries = await fs.readdir(path.join(localDir, rel), { withFileTypes: true });
+      for (const e of entries) {
+        const childRel = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) { await walk(childRel); continue; }
+        if (!e.isFile()) continue;
+        const r = await this.upload(path.join(localDir, ...childRel.split('/')), `${remoteBase}/${childRel}`);
+        files++; bytes += r.bytes;
+      }
+    };
+    await walk('');
+    return { files, bytes };
+  }
+
   /** Set / add / remove fleet tags on this machine (via Convex /devices/tags). */
   async tag(change: { set?: string[]; add?: string[]; remove?: string[] }): Promise<string[]> {
     const res = await fetch(`${this.fleet.convexUrl}/devices/tags`, {
@@ -337,6 +391,11 @@ export class Selection {
   /** Run a command on every machine to completion; collect all results. */
   async run(command: string, opts: ExecOpts = {}): Promise<ExecResult[]> {
     return Promise.all(this.machines.map((m) => m.run(command, opts)));
+  }
+
+  /** Upload a local file to the same absolute path on every machine concurrently. */
+  async upload(localPath: string, remotePath: string): Promise<Array<{ machine: MachineInfo; bytes: number }>> {
+    return Promise.all(this.machines.map(async (m) => ({ machine: m.info, ...(await m.upload(localPath, remotePath)) })));
   }
 
   /** Map an async fn over each machine concurrently. */

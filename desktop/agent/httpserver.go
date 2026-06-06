@@ -675,6 +675,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/exec", s.auth(s.handleExec))
 	mux.HandleFunc("/exec/", s.auth(s.handleExecByID))
 
+	// Fleet file transfer (owner-only; absent from guest/support allowlists).
+	mux.HandleFunc("/fleet/file", s.auth(s.handleFleetFile))
+
 	// Tunnels (TCP port tunneling for hot reload)
 	mux.HandleFunc("/tunnels", s.auth(s.handleTunnels))
 	mux.HandleFunc("/tunnels/", s.auth(s.handleTunnelByID))
