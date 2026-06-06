@@ -65,6 +65,9 @@ export type {
   ExecLine,
   ExecResult,
   ExecOpts,
+  AgentOpts,
+  AgentLine,
+  AgentResult,
 } from './fleet';
 
 // Developer-API facade (the boundary consumers use)
