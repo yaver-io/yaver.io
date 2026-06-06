@@ -30,6 +30,7 @@ import { ProfileSheet } from "../../src/components/robot/ProfileSheet";
 import { CalibrationPanel } from "../../src/components/robot/CalibrationPanel";
 import { MachineSetupPanel } from "../../src/components/robot/MachineSetupPanel";
 import { ArrayPanel } from "../../src/components/robot/ArrayPanel";
+import { FullscreenRobotView } from "../../src/components/robot/FullscreenRobotView";
 import type { ArrayParams, JigParams } from "../../src/lib/robotClient";
 
 const STEPS = [1, 10, 50];
@@ -74,6 +75,7 @@ export default function RobotScreen() {
   const [steps, setSteps] = useState<RobotStep[]>([]);
   const [runResult, setRunResult] = useState<RobotRunResult | null>(null);
   const [showCalib, setShowCalib] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [liveTorque, setLiveTorque] = useState<number | null>(null);
   const polling = useRef(false);
   const torquePolling = useRef(false);
@@ -227,6 +229,7 @@ export default function RobotScreen() {
   const gpio = (pin: number, value: number) => run(() => robotClient.gpio(buildTarget(deviceId)!, pin, value));
   const power = (on: boolean) => run(() => robotClient.power(buildTarget(deviceId)!, on));
   const motorsOff = () => run(() => robotClient.motorsOff(buildTarget(deviceId)!));
+  const cycleVerify = () => setVerify(verify === "frames" ? "agent" : verify === "agent" ? "off" : "frames");
 
   // fine Z jog for touch-off — exact mm from the calibration panel, no recording
   const jogZfine = (dist: number) =>
@@ -475,10 +478,40 @@ export default function RobotScreen() {
           {live && frame && <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: DANGER }} />}
           {live && frame && <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>LIVE</Text>}
         </View>
-        <Pressable onPress={() => setLive((l) => !l)} style={{ position: "absolute", top: 8, right: 10, padding: 6 }}>
-          <Ionicons name={live ? "pause" : "play"} size={20} color="#fff" />
-        </Pressable>
+        <View style={{ position: "absolute", top: 8, right: 10, flexDirection: "row", gap: 4 }}>
+          <Pressable onPress={() => setLive((l) => !l)} style={{ padding: 6 }}>
+            <Ionicons name={live ? "pause" : "play"} size={20} color="#fff" />
+          </Pressable>
+          {frame && (
+            <Pressable onPress={() => setFullscreen(true)} style={{ padding: 6 }}>
+              <Ionicons name="expand" size={20} color="#fff" />
+            </Pressable>
+          )}
+        </View>
       </View>
+
+      {/* Immersive fullscreen camera + overlay controls (YouTube-style) */}
+      <FullscreenRobotView
+        visible={fullscreen}
+        onClose={() => setFullscreen(false)}
+        frame={frame}
+        status={status}
+        busy={busy}
+        controlsDisabled={controlsDisabled}
+        hasMotion={hasMotion}
+        hasTool={hasTool}
+        hasRotate={hasRotate}
+        step={step}
+        setStep={setStep}
+        verify={verify}
+        cycleVerify={cycleVerify}
+        onJog={jog}
+        onHome={home}
+        onTool={tool}
+        onRotate={(turns, ccw) => rotate(turns, 300, ccw)}
+        onEstop={estop}
+        onReset={reset}
+      />
 
       {/* Status strip */}
       <View style={[card, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
