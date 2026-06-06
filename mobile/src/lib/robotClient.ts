@@ -55,6 +55,11 @@ export type RobotStatus = {
   profile?: string;
   modules?: RobotModule[];
   label?: string;
+  // screwdriver calibration + torque sensor
+  companion?: boolean;
+  targetTorqueNmm?: number;
+  zEngage?: number;
+  zSafe?: number;
 };
 export type VerifyMode = "agent" | "frames" | "off";
 
@@ -68,6 +73,26 @@ export type RobotConfig = {
   camera?: string;
   strictEncoder?: boolean;
   label?: string;
+  // screwdriver calibration + torque (terminal blocks)
+  zSafe?: number;
+  zEngage?: number;
+  maxPlunge?: number;
+  targetTorqueNmm?: number;
+  companion?: string;
+};
+export type SenseReading = { currentmA?: number; forceG?: number; torqueNmm?: number; raw?: string };
+export type RobotScrewResult = {
+  ok: boolean;
+  code?: string;
+  error?: string;
+  seated?: boolean;
+  targetTorqueNmm?: number;
+  measuredTorqueNmm?: number;
+  finalZ?: number;
+  steps?: number;
+  position?: RobotPosition;
+  frames?: RobotFrames;
+  tookMs?: number;
 };
 export type ProfileOption = { kind: string; label: string; modules: RobotModule[]; desc: string };
 
@@ -85,6 +110,9 @@ export type RobotStep = {
   turns?: number;
   rpm?: number;
   ccw?: boolean;
+  torque?: number;
+  zEngage?: number;
+  zSafe?: number;
   label?: string;
 };
 export type RobotProgram = { name: string; steps: RobotStep[]; createdAt?: number; updatedAt?: number };
@@ -177,6 +205,11 @@ export const robotClient = {
   gpio: (t: RobotTarget, pin: number, value: number) =>
     robotOps<RobotMoveResponse>(t, "robot_gpio", { pin, value }, 20000),
   gcode: (t: RobotTarget, line: string) => robotOps<RobotMoveResponse>(t, "robot_gcode", { line }, 30000),
+
+  // --- torque + drive-home (terminal blocks) ---
+  torque: (t: RobotTarget) => robotOps<SenseReading>(t, "robot_torque", {}, 10000),
+  screw: (t: RobotTarget, opts?: { x?: number; y?: number; targetTorqueNmm?: number; verify?: VerifyMode }) =>
+    robotOps<RobotScrewResult>(t, "robot_screw", { ...(opts || {}) }, 120000),
 
   // --- profiles / config (vault-backed) ---
   profiles: (t: RobotTarget) => robotOps<{ profiles: ProfileOption[] }>(t, "robot_profiles", {}, 15000),
