@@ -56,6 +56,17 @@ export type { Transport, TransportKind, ConnectOptions } from './connect';
 export { YaverBroker } from './broker';
 export type { ConnectBundle, YaverBrokerOptions } from './broker';
 
+// Fleet — drive a SET of remote machines from code (select by tag, fan exec).
+export { Fleet, Machine, Selection } from './fleet';
+export type {
+  FleetConnectOptions,
+  MachineInfo,
+  SelectFilter,
+  ExecLine,
+  ExecResult,
+  ExecOpts,
+} from './fleet';
+
 // Developer-API facade (the boundary consumers use)
 export { YaverApp } from './app';
 export type { YaverAppOptions, SessionHandle, AppStatus } from './app';

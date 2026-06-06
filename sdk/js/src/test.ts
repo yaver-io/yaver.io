@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectRunner, selectProvider, isWorkKindEnabled, type CompanyAIOptions } from './policy';
 import { buildCandidates } from './connect';
+import { Selection, type ExecResult, type Machine, type MachineInfo } from './fleet';
 import {
   composeEntitlements, entitlementAllows, entitlementFromGuest, entitlementFromResolved,
   LAYER4_DENIED_TOOLS, type Entitlement,
@@ -179,4 +180,51 @@ test('buildCandidates with forceRelay skips direct and tunnel', () => {
     relay: { url: 'https://relay.example', password: 'pw' },
   });
   assert.ok(candidates.every((c) => c.kind === 'relay'));
+});
+
+// --- Fleet: the concurrent merge is the subtle part, so pin it network-free ---
+function fakeMachine(
+  id: string,
+  lines: Array<{ stream: 'stdout' | 'stderr'; text: string }>,
+  perLineDelayMs = 0,
+): Machine {
+  const info: MachineInfo = {
+    deviceId: id, name: id, alias: id, platform: 'linux', tags: [],
+    online: true, quicHost: '', quicPort: 0, localIps: [], publicEndpoints: [],
+  };
+  return {
+    info,
+    async *exec(): AsyncGenerator<{ stream: 'stdout' | 'stderr'; text: string }, ExecResult> {
+      for (const l of lines) {
+        if (perLineDelayMs) await new Promise((r) => setTimeout(r, perLineDelayMs));
+        yield l;
+      }
+      return {
+        machine: info, code: 0,
+        stdout: lines.filter((l) => l.stream === 'stdout').map((l) => l.text).join(''),
+        stderr: lines.filter((l) => l.stream === 'stderr').map((l) => l.text).join(''),
+      };
+    },
+  } as unknown as Machine;
+}
+
+test('Selection.exec merges per-machine streams and collects results', async () => {
+  const sel = new Selection([
+    fakeMachine('a', [{ stream: 'stdout', text: 'a1' }, { stream: 'stdout', text: 'a2' }], 5),
+    fakeMachine('b', [{ stream: 'stderr', text: 'b1' }]),
+  ]);
+  const seen: string[] = [];
+  const it = sel.exec('noop');
+  let n = await it.next();
+  while (!n.done) {
+    seen.push(`${n.value.machine.deviceId}:${n.value.stream}:${n.value.text}`);
+    n = await it.next();
+  }
+  const results = n.value;
+  assert.equal(results.length, 2, 'one ExecResult per machine');
+  assert.ok(seen.includes('a:stdout:a1') && seen.includes('a:stdout:a2'));
+  assert.ok(seen.includes('b:stderr:b1'));
+  assert.ok(results.every((r) => r.code === 0));
+  // b has no delay so its line must arrive before a's delayed second line.
+  assert.ok(seen.indexOf('b:stderr:b1') < seen.indexOf('a:stdout:a2'), 'fast machine not blocked by slow one');
 });
