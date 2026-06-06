@@ -512,6 +512,22 @@ func init() {
 		}
 		return OpsResult{OK: true, Initial: ctrl.ScrewHome(c.Ctx, x, y, p.Target, atCurrent, p.Verify)}
 	})
+	reg("robot_power", "Power the machine PSU on/off (M80/M81) — needs PSU-control wiring", func(c OpsContext, payload json.RawMessage) OpsResult {
+		ctrl, deny := robotForOps()
+		if deny != nil {
+			return *deny
+		}
+		p := parseRobot(payload)
+		on := p.On != nil && *p.On
+		return OpsResult{OK: true, Initial: ctrl.Power(c.Ctx, on)}
+	})
+	reg("robot_motors_off", "Release the steppers (M84) so the axes move freely by hand", func(c OpsContext, _ json.RawMessage) OpsResult {
+		ctrl, deny := robotForOps()
+		if deny != nil {
+			return *deny
+		}
+		return OpsResult{OK: true, Initial: ctrl.MotorsOff(c.Ctx)}
+	})
 	reg("robot_gcode", "Raw G-code passthrough (power users); e-stop gated", func(c OpsContext, payload json.RawMessage) OpsResult {
 		ctrl, deny := robotForOps()
 		if deny != nil {

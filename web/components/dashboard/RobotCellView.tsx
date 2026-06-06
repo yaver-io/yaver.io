@@ -354,6 +354,8 @@ export default function RobotCellView({ devices, token }: { devices: Device[]; t
       stepsPerMm: { x: num(stepsX), y: num(stepsY), z: num(stepsZ) },
       envelope: { Xmin: 0, Xmax: num(envX), Ymin: 0, Ymax: num(envY), Zmin: 0, Zmax: num(envZ) },
     });
+  const power = (on: boolean) => run("robot_power", { on });
+  const motorsOff = () => run("robot_motors_off", {});
 
   // ---- render helpers ----
   const card = "rounded-xl border border-surface-800 bg-surface-900/50 p-4";
@@ -701,6 +703,27 @@ export default function RobotCellView({ devices, token }: { devices: Device[]; t
             {last.ok ? "Program complete ✓" : "Program halted ✗"} — {last.completed ?? 0}/{last.total ?? 0} steps
           </span>
           {!last.ok && last.error && <p className="mt-1 text-sm text-surface-400">{last.error}</p>}
+        </div>
+      )}
+
+      {/* machine power */}
+      {hasMotion && (
+        <div className={`${card} space-y-2`}>
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-surface-100">Machine power</span>
+            <div className="flex gap-2">
+              <button onClick={() => power(true)} disabled={disabled} className={btn}>
+                On
+              </button>
+              <button onClick={() => power(false)} disabled={disabled} className={btn}>
+                Off
+              </button>
+              <button onClick={motorsOff} disabled={disabled} className={btn}>
+                Release motors
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-surface-500">On/Off uses M80/M81 — works only with PSU-control wiring. For a guaranteed cut, use a smart plug.</p>
         </div>
       )}
 
