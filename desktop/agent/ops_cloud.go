@@ -40,6 +40,14 @@ type opsScalePayload struct {
 	CPU      int    `json:"cpu,omitempty"`
 	RAMGb    int    `json:"ramGb,omitempty"`
 	GPU      string `json:"gpu,omitempty"`
+	// GPU-rental "change inference backend" path (gpu_rental.go). When a
+	// provider/model/baseUrl is present, scale performs an in-process
+	// rebind of the app's inference config instead of a VM resize:
+	// DeepInfra model swap (zero infra) or repoint at a Salad endpoint.
+	Provider string `json:"provider,omitempty"` // "deepinfra" → fill baseUrl + key from account
+	Model    string `json:"model,omitempty"`
+	BaseURL  string `json:"baseUrl,omitempty"`
+	Project  string `json:"project,omitempty"` // vault project the app companion reads
 }
 
 func init() {
@@ -451,8 +459,45 @@ func opsScaleHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
 	}
+	// GPU-rental "change inference backend" path: a DeepInfra model swap or
+	// a repoint at a new endpoint is zero-infra — do it in-process by
+	// rewriting the app's vault binding (the seam the companion reads). This
+	// is the "change GPU/model type" operation for serverless inference.
+	if strings.EqualFold(p.Provider, "deepinfra") || strings.TrimSpace(p.BaseURL) != "" || strings.TrimSpace(p.Model) != "" {
+		baseURL := strings.TrimSpace(p.BaseURL)
+		apiKey := ""
+		if strings.EqualFold(p.Provider, "deepinfra") {
+			if baseURL == "" {
+				baseURL = deepInfraOpenAIBase
+			}
+			apiKey = accountField(ProviderDeepInfra, "token")
+			if apiKey == "" {
+				return OpsResult{OK: false, Code: "no_account", Error: "DeepInfra not connected — /accounts/connect first"}
+			}
+		}
+		if baseURL == "" {
+			return OpsResult{OK: false, Code: "bad_payload", Error: "scale-inference needs provider=deepinfra or an explicit baseUrl"}
+		}
+		if m := strings.TrimSpace(p.Model); m != "" && !VoiceSafeModel(m) {
+			return OpsResult{OK: false, Code: "not_voice_safe", Error: "model " + m + " is reasoning/batch (not voice-safe) — use gpu_bind with allowUnsafe=true to force"}
+		}
+		if currentRuntimeVaultStore() == nil {
+			return OpsResult{OK: false, Code: "no_vault", Error: "no runtime vault mounted — cannot rebind inference"}
+		}
+		written := rebindInference(strings.TrimSpace(p.Project), baseURL, apiKey, strings.TrimSpace(p.Model))
+		proj := strings.TrimSpace(p.Project)
+		if proj == "" {
+			proj = inferenceVaultDefaultProject
+		}
+		return OpsResult{OK: true, Initial: map[string]interface{}{
+			"rebound":     true,
+			"project":     proj,
+			"keysWritten": written,
+			"hint":        "inference backend changed in-process (no VM resize); restart the app's companion to apply, in-flight calls finish on the old endpoint",
+		}}
+	}
 	if p.DeviceID == "" {
-		return OpsResult{OK: false, Code: "bad_payload", Error: "deviceId required"}
+		return OpsResult{OK: false, Code: "bad_payload", Error: "deviceId required (or pass provider/model/baseUrl to change the inference backend)"}
 	}
 	return OpsResult{OK: true, Initial: map[string]interface{}{
 		"hint":    "call cloud_scale MCP tool",
