@@ -12,6 +12,7 @@ import { useColors, useTheme } from "../context/ThemeContext";
 import { quicClient, type RunnerAuthStatusRow } from "../lib/quic";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import RunnerAuthModal from "./RunnerAuthModal";
+import { ScreenlogSection } from "./ScreenlogSection";
 
 const CODING_AGENTS: ReadonlyArray<{ id: "claude" | "codex" | "opencode"; label: string }> = [
   { id: "claude", label: "Claude Code" },
@@ -1662,6 +1663,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
               entries (often empty) instead of the actually-useful
               "is claude/codex/opencode signed in on this box?" view. */}
           <CodingAgentsSection device={device} />
+          <ScreenlogSection device={device} />
           <HardwareCapabilitiesSection device={device} />
           <WirelessPhonesSection device={device} />
 

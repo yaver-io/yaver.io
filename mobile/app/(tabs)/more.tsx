@@ -2734,6 +2734,7 @@ export default function MoreScreen() {
   const insets = useSafeAreaInsets();
   const handleHotReload = useCallback(() => router.navigate("/(tabs)/hotreload" as any), [router]);
   const handleDevices = useCallback(() => router.navigate("/(tabs)/devices" as any), [router]);
+  const handleScreenlog = useCallback(() => router.navigate("/(tabs)/screenlog" as any), [router]);
   const handleNetwork = useCallback(() => router.navigate("/(tabs)/network" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
@@ -2952,6 +2953,22 @@ export default function MoreScreen() {
                   <Text style={[s.label, { color: c.textPrimary }]}>Devices</Text>
                   <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                     Manage your remote boxes and pairing
+                  </Text>
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+              </Pressable>
+            ) : null}
+
+            {connected ? (
+              <Pressable
+                style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                onPress={handleScreenlog}
+              >
+                <Text style={[s.icon, { color: c.textMuted }]}>{"\uD83C\uDFA5"}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.label, { color: c.textPrimary }]}>Screen Monitor</Text>
+                  <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                    Local screen black box \u2014 record, analyze, what a box spent time on
                   </Text>
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>

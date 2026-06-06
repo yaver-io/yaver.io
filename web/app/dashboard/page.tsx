@@ -14,6 +14,7 @@ import TodosView from "@/components/dashboard/TodosView";
 import BuildsView from "@/components/dashboard/BuildsView";
 import { DeployCapabilitiesView } from "@/components/dashboard/DeployCapabilitiesView";
 import HealthView from "@/components/dashboard/HealthView";
+import ScreenMonitorView from "@/components/dashboard/ScreenMonitorView";
 import QualityView from "@/components/dashboard/QualityView";
 import ConvexView from "@/components/dashboard/ConvexView";
 import DataView from "@/components/dashboard/DataView";
@@ -785,7 +786,7 @@ export default function DashboardPage() {
   // pointed at it; if not it offers a "Connect & open shell" affordance
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings" | "billing">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1898,6 +1899,7 @@ export default function DashboardPage() {
     { id: "domains", label: "Domains", icon: "\uD83C\uDF10" },
     { id: "exec", label: "Exec", icon: "\u2699\uFE0F" },
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
+    { id: "screenlog", label: "Screen Monitor", icon: "\uD83C\uDFA5" },
   ];
 
   return (
@@ -2616,6 +2618,8 @@ export default function DashboardPage() {
             </div>
           ) : activeTab === "health" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><HealthView /></div>
+          ) : activeTab === "screenlog" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ScreenMonitorView /></div>
           ) : activeTab === "quality" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><QualityView /></div>
           ) : activeTab === "data" ? (

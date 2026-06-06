@@ -342,6 +342,10 @@ export default function TabLayout() {
         options={{ href: null, title: "Devices", headerShown: true, headerLeft: backToMore }}
       />
       <Tabs.Screen
+        name="screenlog"
+        options={{ href: null, title: "Screen Monitor", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
         name="network"
         options={{ href: null, title: "Mesh", headerShown: true, headerLeft: backToMore }}
       />

@@ -108,6 +108,13 @@ var guestFullAllowedPrefixes = []string{
 	"/runner/jobs",
 	"/runner/runs",
 	"/runner/pools",
+	// screenlog (local screen black box). A full-tier teammate may
+	// monitor + analyze (the "watch my dad's box / a shared machine"
+	// case). Deliberately NOT in the feedback-only or support
+	// (read-only) tiers — screen-history access is high-trust. The
+	// recorded machine's ScreenlogPolicy (allowedPeers / kill-switch)
+	// is a second gate on top of this scope check.
+	"/screenlog/",
 }
 
 // guestFeedbackOnlyAllowedPrefixes is the hardened end-user surface.
