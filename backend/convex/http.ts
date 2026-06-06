@@ -395,7 +395,7 @@ for (const path of [
   "/auth/passkey/signup/start", "/auth/passkey/signup/finish",
   "/auth/passkey/list", "/auth/passkey/remove", "/auth/passkey/check",
   "/auth/email-providers", "/auth/verify-email/request", "/auth/verify-email/confirm",
-  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
+  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/devices/tags", "/devices/select", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/mesh/peers", "/mesh/acls", "/mesh/acls/set", "/mesh/tags", "/mesh/tags/set", "/mesh/node/config", "/mesh/join", "/mesh/leave",
   "/support/invite", "/support/invite/info", "/support/connections", "/support/grant/revoke", "/support/deny-all",
   "/shortcuts", "/shortcuts/delete",
@@ -2568,6 +2568,63 @@ http.route({
       if (errorMessageIncludes(e, "Device not found")) return errorResponse(msg, 404);
       if (errorMessageIncludes(e, "alias already used")) return errorResponse(msg, 409);
       if (errorMessageIncludes(e, "alias invalid")) return errorResponse(msg, 400);
+      return errorResponse(msg, 400);
+    }
+  }),
+});
+
+// Fleet tags — set/add/remove labels on a device for selector-based ops.
+http.route({
+  path: "/devices/tags",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string" || !body.deviceId.trim()) {
+      return errorResponse("deviceId required", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.devices.setDeviceTags, {
+        tokenHash,
+        deviceId: body.deviceId,
+        tags: Array.isArray(body.tags) ? body.tags : undefined,
+        add: Array.isArray(body.add) ? body.add : undefined,
+        remove: Array.isArray(body.remove) ? body.remove : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      const msg = e?.message || "tag update failed";
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse(msg, 401);
+      if (errorMessageIncludes(e, "Device not found")) return errorResponse(msg, 404);
+      return errorResponse(msg, 400);
+    }
+  }),
+});
+
+// Fleet selector — resolve the caller's devices matching tags/platform/online.
+// The Fleet SDK calls this to turn `select({tags,...})` into machines.
+http.route({
+  path: "/devices/select",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      const result = await ctx.runQuery(api.devices.selectDevices, {
+        tokenHash,
+        tags: Array.isArray(body.tags) ? body.tags : undefined,
+        match: body.match === "any" ? "any" : body.match === "all" ? "all" : undefined,
+        platform: typeof body.platform === "string" ? body.platform : undefined,
+        online: typeof body.online === "boolean" ? body.online : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      const msg = e?.message || "select failed";
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse(msg, 401);
       return errorResponse(msg, 400);
     }
   }),

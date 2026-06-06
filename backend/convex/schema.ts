@@ -252,6 +252,13 @@ export default defineSchema({
     // setDeviceAlias mutation. Lower-cased and trimmed before storage
     // so lookups don't have to re-normalize.
     alias: v.optional(v.string()),
+    // Fleet labels for selector-based ops ("run on all gpu/arm64/edge
+    // machines"). Auto-seeded at first registration from platform +
+    // hardware (os, arch, gpu, docker, edge); thereafter user-owned via
+    // setDeviceTags. Lower-cased, deduped. Powers Fleet.select({tags}) in
+    // the yaver SDK and selectDevices below. Privacy-safe: static
+    // capability/affinity labels, never a path or secret.
+    tags: v.optional(v.array(v.string())),
     platform: v.union(
       v.literal("macos"),
       v.literal("windows"),
