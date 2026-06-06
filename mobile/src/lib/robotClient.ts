@@ -96,6 +96,30 @@ export type RobotScrewResult = {
 };
 export type ProfileOption = { kind: string; label: string; modules: RobotModule[]; desc: string };
 
+// A klemens (terminal-block) layout to fasten — grid (jig in the work area) or
+// linear (single rail indexes a strip).
+export type ArrayParams = {
+  name?: string;
+  mode: "grid" | "linear";
+  // grid
+  cols?: number;
+  rows?: number;
+  pitchX?: number;
+  pitchY?: number;
+  originX?: number;
+  originY?: number;
+  serpentine?: boolean;
+  // linear
+  axis?: "X" | "Y";
+  count?: number;
+  pitch?: number;
+  origin?: number;
+  // common
+  targetTorqueNmm?: number;
+  home?: boolean;
+  captureOrigin?: boolean;
+};
+
 // A taught step — mirrors robot.Step.
 export type RobotStep = {
   type: "home" | "move" | "jog" | "tool" | "dwell" | "screw" | "rotate";
@@ -226,6 +250,10 @@ export const robotClient = {
     robotOps<{ ok?: boolean; deleted?: string; error?: string }>(t, "robot_program_delete", { name }, 15000),
   programRun: (t: RobotTarget, name: string, verify: VerifyMode) =>
     robotOps<RobotRunResult>(t, "robot_program_run", { name, verify }, 600000),
+
+  // klemens array → fastening program (grid jig or linear rail)
+  arrayBuild: (t: RobotTarget, params: ArrayParams) =>
+    robotOps<{ ok?: boolean; saved?: string; steps?: number; program?: RobotProgram; error?: string }>(t, "robot_array_build", params as any, 20000),
 
   // --- optional Talos backup (off unless configured on the edge) ---
   backup: (t: RobotTarget) => robotOps<{ ok?: boolean; backedUp?: boolean; programs?: number; error?: string; code?: string }>(t, "robot_backup", {}, 30000),
