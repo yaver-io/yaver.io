@@ -2736,6 +2736,7 @@ export default function MoreScreen() {
   const handleDevices = useCallback(() => router.navigate("/(tabs)/devices" as any), [router]);
   const handleScreenlog = useCallback(() => router.navigate("/(tabs)/screenlog" as any), [router]);
   const handleNetwork = useCallback(() => router.navigate("/(tabs)/network" as any), [router]);
+  const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
 
@@ -2990,6 +2991,22 @@ export default function MoreScreen() {
                 <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
               </Pressable>
             ) : null}
+
+            {/* Robot Cell talks to robotd directly over LAN (by IP), so it is
+                reachable WITHOUT a paired remote agent \u2014 always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleRobot}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83e\udd16"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Robot Cell</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Jog the Ender-3 screwdriver robot \u2014 camera-validated moves"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
 
             <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
               <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>
