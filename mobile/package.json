@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@amplitude/analytics-react-native": "^1.5.52",
+    "@expo/config-plugins": "~54.0.4",
     "@expo/metro-runtime": "~6.1.2",
     "@expo/vector-icons": "^15.1.1",
     "@gorhom/bottom-sheet": "^5.2.9",
