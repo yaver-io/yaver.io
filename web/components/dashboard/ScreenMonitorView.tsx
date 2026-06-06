@@ -93,6 +93,7 @@ export default function ScreenMonitorView() {
   const [selected, setSelected] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [busy, setBusy] = useState(false);
+  const [live, setLive] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -160,6 +161,9 @@ export default function ScreenMonitorView() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setLive((v) => !v)} className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md ${live ? "bg-rose-500/15 text-rose-300 hover:bg-rose-500/25" : "bg-sky-500/15 text-sky-300 hover:bg-sky-500/25"}`}>
+              <span className={`w-2 h-2 rounded-full ${live ? "bg-rose-400 animate-pulse" : "bg-sky-400"}`} /> {live ? "Live" : "Live view"}
+            </button>
             {running ? (
               <button onClick={stop} disabled={busy} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 disabled:opacity-50">
                 <StopIcon /> Stop
@@ -171,6 +175,7 @@ export default function ScreenMonitorView() {
             )}
           </div>
         </div>
+        {live && <LiveView />}
         {running && (
           <div className="mt-3 text-xs text-surface-400 flex gap-4">
             <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" /> recording</span>
@@ -253,6 +258,52 @@ export default function ScreenMonitorView() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// LiveView — near-real-time "see his screen now" feed. Polls the device's
+// newest captured frame (+ whether recording is active) every 2s through the
+// auth'd relay/mesh tunnel. Not full-motion — it advances at the capture
+// cadence, security-cam style — but it's "what's on screen right now".
+function LiveView() {
+  const [url, setUrl] = useState<string | null>(null);
+  const [running, setRunning] = useState<boolean | null>(null);
+  const prev = useRef<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const meta = await getJSON("/screenlog/live?meta=1");
+        if (alive) setRunning(Boolean(meta.running));
+        if (!meta.has) return;
+        const res = await agentClient.agentFetch("/screenlog/live");
+        if (!res.ok || !alive) return;
+        const u = URL.createObjectURL(await res.blob());
+        if (!alive) { URL.revokeObjectURL(u); return; }
+        if (prev.current) URL.revokeObjectURL(prev.current);
+        prev.current = u;
+        setUrl(u);
+      } catch { if (alive) setRunning(null); }
+    };
+    void tick();
+    const i = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(i); if (prev.current) URL.revokeObjectURL(prev.current); };
+  }, []);
+
+  return (
+    <div className="mt-3 relative bg-black rounded-md overflow-hidden border border-surface-800">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="live screen" className="w-full block" />
+      ) : (
+        <div className="aspect-video flex items-center justify-center text-surface-600 text-xs">connecting to live feed…</div>
+      )}
+      <div className="absolute top-1 left-2 text-[11px] text-white/85 bg-black/50 px-1.5 py-0.5 rounded inline-flex items-center gap-1.5">
+        <span className={`w-2 h-2 rounded-full ${running ? "bg-rose-400 animate-pulse" : "bg-surface-500"}`} />
+        {running === null ? "connecting…" : running ? "LIVE · recording" : "last frame (not recording)"}
+      </div>
     </div>
   );
 }
