@@ -27,6 +27,7 @@ import {
 import { ScrewdriverPanel } from "../../src/components/robot/ScrewdriverPanel";
 import { TeachPendant } from "../../src/components/robot/TeachPendant";
 import { ProfileSheet } from "../../src/components/robot/ProfileSheet";
+import { CalibrationPanel } from "../../src/components/robot/CalibrationPanel";
 
 const STEPS = [1, 10, 50];
 const FEED_XY = 3000;
@@ -69,7 +70,10 @@ export default function RobotScreen() {
   const [recording, setRecording] = useState(false);
   const [steps, setSteps] = useState<RobotStep[]>([]);
   const [runResult, setRunResult] = useState<RobotRunResult | null>(null);
+  const [showCalib, setShowCalib] = useState(false);
+  const [liveTorque, setLiveTorque] = useState<number | null>(null);
   const polling = useRef(false);
+  const torquePolling = useRef(false);
 
   const robotDevice = devices.find((d) => d.id === deviceId);
   const state = cellState(deviceId, connected, status);
@@ -149,6 +153,33 @@ export default function RobotScreen() {
     };
   }, [live, deviceId, connected, buildTarget]);
 
+  // Live torque: poll robot_torque while calibrating + a companion is present.
+  useEffect(() => {
+    if (!showCalib || !status?.companion || !deviceId || !connected) {
+      setLiveTorque(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      if (torquePolling.current || cancelled) return;
+      torquePolling.current = true;
+      try {
+        const t = buildTarget(deviceId);
+        if (!t) return;
+        const r = await robotClient.torque(t);
+        if (!cancelled && typeof r?.torqueNmm === "number") setLiveTorque(r.torqueNmm);
+      } finally {
+        torquePolling.current = false;
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 700);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [showCalib, status?.companion, deviceId, connected, buildTarget]);
+
   const pick = useCallback(
     async (id: string) => {
       await setRobotDeviceId(id);
@@ -191,6 +222,62 @@ export default function RobotScreen() {
   const rotate = (turns: number, rpm: number, ccw: boolean) =>
     run(() => robotClient.rotate(buildTarget(deviceId)!, turns, rpm, ccw), { type: "rotate", turns, rpm, ccw });
   const gpio = (pin: number, value: number) => run(() => robotClient.gpio(buildTarget(deviceId)!, pin, value));
+
+  // fine Z jog for touch-off — exact mm from the calibration panel, no recording
+  const jogZfine = (dist: number) =>
+    run(() => robotClient.jog(buildTarget(deviceId)!, "Z", dist, FEED_Z, "off", `Z touch-off ${dist >= 0 ? "+" : ""}${dist}mm`));
+
+  // --- calibration (camera-guided Z touch-off) + drive-home test ---
+  const patchConfig = async (patch: Record<string, unknown>) => {
+    const t = buildTarget(deviceId);
+    if (!t) return;
+    setBusy(true);
+    try {
+      const cur = await robotClient.configGet(t);
+      await robotClient.configSet(t, { ...(cur?.config || {}), ...patch } as any);
+      await refresh(deviceId);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setEngage = () => {
+    const z = status?.position?.z;
+    if (z != null) patchConfig({ zEngage: z });
+  };
+  const setSafe = () => {
+    const z = status?.position?.z;
+    if (z != null) patchConfig({ zSafe: z });
+  };
+  const setTarget = (nmm: number) => patchConfig({ targetTorqueNmm: nmm });
+  const testScrew = () =>
+    run(() => robotClient.screw(buildTarget(deviceId)!, { verify }) as any, recording ? screwStepAtCurrent() : undefined);
+
+  // record a move-to-here + screw step (one fastening point in the program)
+  const screwStepAtCurrent = (): RobotStep | undefined => {
+    const p = status?.position;
+    if (!p) return undefined;
+    return { type: "screw", x: p.x, y: p.y, label: "drive home" };
+  };
+  const addScrewPoint = async () => {
+    const t = buildTarget(deviceId);
+    if (!t) return;
+    const st = await robotClient.status(t);
+    const p = st?.position;
+    if (!p) return;
+    setSteps((prev) => [
+      ...prev,
+      { type: "move", x: p.x, y: p.y, feed: 3000, label: "to screw" },
+      { type: "screw", x: p.x, y: p.y, label: "drive home" },
+    ]);
+  };
+  const markWaypoint = async () => {
+    const t = buildTarget(deviceId);
+    if (!t) return;
+    const st = await robotClient.status(t);
+    const p = st?.position;
+    if (!p) return;
+    setSteps((prev) => [...prev, { type: "move", x: p.x, y: p.y, z: p.z, feed: 3000, label: "waypoint" }]);
+  };
   // e-stop / reset bypass the controlsDisabled gate — safety always works.
   const estop = async () => {
     if (!deviceId) return;
@@ -285,6 +372,11 @@ export default function RobotScreen() {
             </Text>
           </View>
         </View>
+        {deviceId && state === "ok" && (hasTool || hasMotion) && (
+          <Pressable onPress={() => setShowCalib((s) => !s)} hitSlop={8} style={{ padding: 8 }}>
+            <Ionicons name="construct-outline" size={20} color={showCalib ? c.accent : c.tabInactive} />
+          </Pressable>
+        )}
         {deviceId && state === "ok" && profiles.length > 0 && (
           <Pressable onPress={() => setShowProfiles((s) => !s)} hitSlop={8} style={{ padding: 8 }}>
             <Ionicons name="options-outline" size={20} color={c.accent} />
@@ -369,6 +461,7 @@ export default function RobotScreen() {
           {hasMotion && <Stat label="Z" value={pos ? pos.z.toFixed(0) : "—"} c={c} />}
           {hasMotion && <Stat label="Homed" value={pos?.homed ? "yes" : "no"} good={pos?.homed} c={c} />}
           <Stat label="Cam" value={status?.cameraOk ? "ok" : "—"} good={status?.cameraOk} c={c} />
+          {status?.companion && <Stat label="Torque" value={liveTorque != null ? `${liveTorque.toFixed(0)}` : "sensor"} good={status?.companion} c={c} />}
           <Stat label="E-stop" value={status?.estopped ? "TRIP" : "clear"} good={!status?.estopped} c={c} />
         </View>
         <Pressable onPress={() => refresh(deviceId)} hitSlop={10}><Ionicons name="refresh" size={18} color={c.accent} /></Pressable>
@@ -385,6 +478,26 @@ export default function RobotScreen() {
           onTool={hasTool ? tool : undefined}
           onRotate={rotate}
           onGpio={hasGpio ? gpio : undefined}
+        />
+      )}
+
+      {/* Calibration — camera-guided Z touch-off + seat torque (screwdriver cells) */}
+      {showCalib && hasTool && (
+        <CalibrationPanel
+          c={c}
+          disabled={controlsDisabled}
+          homed={!!pos?.homed}
+          currentZ={pos?.z}
+          companion={status?.companion}
+          liveTorque={liveTorque}
+          zEngage={status?.zEngage}
+          zSafe={status?.zSafe}
+          targetTorqueNmm={status?.targetTorqueNmm}
+          onJogZ={(d) => hasMotion && jogZfine(d)}
+          onSetEngage={setEngage}
+          onSetSafe={setSafe}
+          onSetTarget={setTarget}
+          onTestScrew={testScrew}
         />
       )}
 
@@ -422,6 +535,22 @@ export default function RobotScreen() {
             </View>
           </View>
         </>
+      )}
+
+      {/* Teach actions — capture fastening points while recording (jog there first) */}
+      {recording && hasMotion && (
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Pressable onPress={markWaypoint} disabled={controlsDisabled} style={[card, { flex: 1, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", opacity: controlsDisabled ? 0.5 : 1 }]}>
+            <Ionicons name="location-outline" size={18} color={c.textPrimary} />
+            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Mark waypoint</Text>
+          </Pressable>
+          {hasTool && (
+            <Pressable onPress={addScrewPoint} disabled={controlsDisabled} style={[card, { flex: 1, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", backgroundColor: c.accent + "1A", borderColor: c.accent, opacity: controlsDisabled ? 0.5 : 1 }]}>
+              <Ionicons name="add-circle-outline" size={18} color={c.accent} />
+              <Text style={{ color: c.accent, fontWeight: "700" }}>Add screw point</Text>
+            </Pressable>
+          )}
+        </View>
       )}
 
       {/* Teach & Repeat */}

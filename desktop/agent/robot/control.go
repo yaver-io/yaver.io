@@ -32,6 +32,10 @@ type Controller struct {
 	// EPerTurn calibrates screwdriver rotation (E units per revolution); used by
 	// Rotate and by replayed "rotate" steps when the caller omits it.
 	EPerTurn float64
+	// Screwdriver calibration (camera Z touch-off) + seat torque for terminal
+	// blocks. Used by ScrewHome and replayed "screw" steps as the fallback when
+	// the step/payload omits them.
+	ZSafe, ZEngage, MaxPlunge, TargetTorqueNmm float64
 
 	mu       sync.Mutex
 	estopped bool
@@ -289,6 +293,58 @@ func (c *Controller) Rotate(ctx context.Context, turns float64, rpm int, ccw boo
 	_ = c.Backend.WaitMoves(ctx)
 	on := true
 	return MoveResponse{OK: true, Action: &Action{Kind: "rotate", Dist: turns, Feed: rpm, On: &on}}
+}
+
+// screwParamsFromCalibration builds a torque-gated screw cycle at (x,y) from the
+// cell's calibration, letting explicit args override. zSafe = travel height,
+// zEngage = where the tip meets the head (camera touch-off), maxPlunge = how far
+// below engage the driver may travel as the screw seats. target = seat torque.
+func (c *Controller) screwParamsFromCalibration(x, y, zEngage, zSafe, target float64) ScrewParams {
+	if zSafe <= 0 {
+		zSafe = c.ZSafe
+	}
+	if zSafe <= 0 {
+		zSafe = 25
+	}
+	if zEngage <= 0 {
+		zEngage = c.ZEngage
+	}
+	if zEngage <= 0 {
+		zEngage = 5
+	}
+	plunge := c.MaxPlunge
+	if plunge <= 0 {
+		plunge = 10
+	}
+	zmax := zEngage - plunge
+	if zmax < c.Env.Zmin {
+		zmax = c.Env.Zmin
+	}
+	if target <= 0 {
+		target = c.TargetTorqueNmm
+	}
+	return ScrewParams{
+		X: x, Y: y, Zapproach: zEngage, Zmax: zmax, Step: 0.3, Feed: 60,
+		Zsafe: zSafe, TargetTorqueNmm: target, ToolPin: -1, DwellMs: 500, TimeoutSec: 30,
+	}
+}
+
+// ScrewHome drives the screw at (x,y) HOME to the calibrated seat torque — the
+// terminal-block operation. Torque-closed-loop via the companion sensor; halts
+// the instant torque ≥ target (screw seated) or at the plunge floor. target ≤ 0
+// uses the calibrated default.
+func (c *Controller) ScrewHome(ctx context.Context, x, y, target float64, verifyMode string) ScrewResult {
+	p := c.screwParamsFromCalibration(x, y, 0, 0, target)
+	return c.DriveScrew(ctx, p, verifyMode, "drive the terminal-block screw home to the target torque")
+}
+
+// Torque reads the companion's current force/torque (live readout). Errors when
+// no companion sensor is configured.
+func (c *Controller) Torque(ctx context.Context) (SenseReading, error) {
+	if c.Companion == nil {
+		return SenseReading{}, fmt.Errorf("no torque sensor (companion) configured")
+	}
+	return c.Companion.Sense(ctx)
 }
 
 // GPIO sets a board pin (M42 P<pin> S<value>) — driver enable/direction, a

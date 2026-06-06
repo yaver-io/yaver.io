@@ -107,7 +107,22 @@ func ensureRobot() (*robot.Controller, error) {
 			c.Env = *cfg.Envelope
 		}
 		c.EPerTurn = cfg.EPerTurn
+		c.ZSafe = cfg.ZSafe
+		c.ZEngage = cfg.ZEngage
+		c.MaxPlunge = cfg.MaxPlunge
+		c.TargetTorqueNmm = cfg.TargetTorqueNmm
 		c.StrictEncoder = cfg.Strict || os.Getenv("YAVER_ROBOT_STRICT") == "1"
+		// Optional torque sensor on a 2nd serial link (INA219 / HX711 companion).
+		// Best-effort: a missing companion only disables torque-gated screwing.
+		compDev := cfg.Companion
+		if compDev == "" {
+			compDev = os.Getenv("YAVER_ROBOT_COMPANION")
+		}
+		if compDev != "" {
+			if rw, cerr := robotOpenSerial(compDev); cerr == nil {
+				c.Companion = robot.NewLineCompanion(rw)
+			}
+		}
 		robotCtrl = c
 	})
 	return robotCtrl, robotErr
@@ -265,6 +280,8 @@ type robotPayload struct {
 	Pin      int     `json:"pin"`
 	Value    int     `json:"value"`
 	Line     string  `json:"line"`
+	// screw / torque
+	Target float64 `json:"targetTorqueNmm"`
 	// teach / programs
 	Name    string         `json:"name"`
 	Steps   []robot.Step   `json:"steps"`
@@ -275,9 +292,13 @@ type robotPayload struct {
 // and adds the active profile + modules so the app shows the right controls.
 type robotStatusResult struct {
 	robot.Status
-	Profile string   `json:"profile"`
-	Modules []string `json:"modules"`
-	Label   string   `json:"label,omitempty"`
+	Profile         string   `json:"profile"`
+	Modules         []string `json:"modules"`
+	Label           string   `json:"label,omitempty"`
+	Companion       bool     `json:"companion"`                 // torque sensor present
+	TargetTorqueNmm float64  `json:"targetTorqueNmm,omitempty"` // calibrated seat torque
+	ZEngage         float64  `json:"zEngage,omitempty"`         // calibrated engage height
+	ZSafe           float64  `json:"zSafe,omitempty"`           // calibrated travel height
 }
 
 func parseRobot(payload json.RawMessage) robotPayload {
@@ -300,10 +321,14 @@ func init() {
 		st, _ := ctrl.Status(c.Ctx)
 		cfg := robotConfigGet()
 		return OpsResult{OK: true, Initial: robotStatusResult{
-			Status:  st,
-			Profile: cfg.Profile,
-			Modules: cfg.ResolvedModules(),
-			Label:   cfg.Label,
+			Status:          st,
+			Profile:         cfg.Profile,
+			Modules:         cfg.ResolvedModules(),
+			Label:           cfg.Label,
+			Companion:       ctrl.Companion != nil,
+			TargetTorqueNmm: cfg.TargetTorqueNmm,
+			ZEngage:         cfg.ZEngage,
+			ZSafe:           cfg.ZSafe,
 		}}
 	})
 	reg("robot_profiles", "List selectable robot profiles (cartesian / +screwdriver / screwdriver-only)", func(c OpsContext, _ json.RawMessage) OpsResult {
@@ -451,6 +476,35 @@ func init() {
 		}
 		p := parseRobot(payload)
 		return OpsResult{OK: true, Initial: ctrl.GPIO(c.Ctx, p.Pin, p.Value)}
+	})
+	reg("robot_torque", "Live torque/force readout from the companion sensor (N·mm)", func(c OpsContext, _ json.RawMessage) OpsResult {
+		ctrl, deny := robotForOps()
+		if deny != nil {
+			return *deny
+		}
+		r, err := ctrl.Torque(c.Ctx)
+		if err != nil {
+			return OpsResult{OK: false, Code: "no_companion", Error: err.Error()}
+		}
+		return OpsResult{OK: true, Initial: r}
+	})
+	reg("robot_screw", "Drive the screw at (x,y) HOME to the calibrated/target torque — terminal blocks", func(c OpsContext, payload json.RawMessage) OpsResult {
+		ctrl, deny := robotForOps()
+		if deny != nil {
+			return *deny
+		}
+		if g := robotGate(robot.ModuleTool); g != nil {
+			return *g
+		}
+		p := parseRobot(payload)
+		// (x,y) from payload, else drive at the current position.
+		var x, y float64
+		if p.X != nil && p.Y != nil {
+			x, y = *p.X, *p.Y
+		} else if pos, perr := ctrl.Backend.Position(c.Ctx); perr == nil {
+			x, y = pos.X, pos.Y
+		}
+		return OpsResult{OK: true, Initial: ctrl.ScrewHome(c.Ctx, x, y, p.Target, p.Verify)}
 	})
 	reg("robot_gcode", "Raw G-code passthrough (power users); e-stop gated", func(c OpsContext, payload json.RawMessage) OpsResult {
 		ctrl, deny := robotForOps()
