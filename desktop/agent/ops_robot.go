@@ -572,6 +572,15 @@ func init() {
 		}
 		return OpsResult{OK: true, Initial: map[string]any{"saved": prog.Name, "steps": len(prog.Steps), "program": prog}}
 	})
+	reg("robot_jig_scad", "Generate a printable klemens jig (OpenSCAD) matching a grid — render + print on your own printer", func(c OpsContext, payload json.RawMessage) OpsResult {
+		var jp robot.JigParams
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &jp); err != nil {
+				return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+			}
+		}
+		return OpsResult{OK: true, Initial: map[string]any{"scad": robot.BuildJigSCAD(jp), "filename": "klemens-jig.scad"}}
+	})
 	reg("robot_program_list", "List taught programs", func(c OpsContext, _ json.RawMessage) OpsResult {
 		return OpsResult{OK: true, Initial: map[string]any{"programs": robotStore.List()}}
 	})
