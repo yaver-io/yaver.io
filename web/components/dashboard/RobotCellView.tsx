@@ -31,6 +31,7 @@ type Status = {
 };
 type Step = {
   type: string;
+  ms?: number;
   axis?: string;
   dist?: number;
   x?: number;
