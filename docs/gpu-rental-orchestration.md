@@ -15,10 +15,42 @@ runnable as a Yaver **companion** project. See `docs/serverless-companion-audit.
 
 ---
 
-## Status (2026-06-06) — BUILT (agent + Convex), not yet committed/deployed
+## Status (2026-06-06) — SHIPPED end-to-end
 
-P0–P5 implemented and unit-tested in the agent; Convex bookkeeping added (not
-deployed). Build + `go vet` clean; focused tests green. Not committed.
+P0–P5 implemented, unit-tested, committed + pushed to `main` (`67b98579`); Convex
+`gpuRentals` table deployed to PROD; and the driving app (`e-back/call-center`)
+now exposes the `/metrics` contract the dispatcher polls (committed on its
+`call-center` branch). Build + `go vet` clean; focused tests green; `/metrics`
+verified live (`{"concurrency":0,"p95TtftMs":0,"samples":0}`).
+
+### End-to-end runbook (the call-center)
+
+```bash
+# 1. Connect the GPU/inference accounts (BYO keys, vault-encrypted)
+yaver account connect deepinfra --fields '{"token":"<deepinfra-key>"}'
+yaver account connect salad     --fields '{"token":"<salad-key>"}'
+
+# 2. Bind the always-on serverless baseline into the app's vault project
+#    (the companion service reads these as DEEPINFRA_BASE_URL/_API_KEY/LLM_MODEL)
+yaver ops gpu_bind --provider deepinfra \
+  --model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B --project callcenter
+
+# 3. Run the call-center backend as a companion service (reads vault: callcenter)
+#    so it serves /health, /metrics, and the VoIP gateway.
+
+# 4. Start the dispatcher: poll /metrics, burst Salad on sustained load, reap on idle
+yaver ops gpu_autoscale_start \
+  --organization <salad-org> --project <salad-project> \
+  --metricsUrl http://localhost:8809/metrics \
+  --gpuClass a100-80gb --burstAt 20 --reapAfterSec 300 --bindProject callcenter
+
+yaver ops gpu_autoscale_status      # watch state: baseline → bursted → draining
+yaver ops gpu_autoscale_stop --key callcenter
+```
+
+DeepInfra serverless is always the baseline (no cold-start dead air); Salad
+bursts in only when sustained concurrency justifies it, drains gracefully (no
+dropped calls), and is reaped to stop the hourly bill.
 
 | Phase | Status | Where |
 |---|---|---|
