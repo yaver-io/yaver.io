@@ -86,6 +86,31 @@ export interface ExecOpts {
   pollIntervalMs?: number;
 }
 
+export interface AgentOpts {
+  /** Coding runner to spawn: 'claude-code' | 'codex' | 'opencode' (agent default if omitted). */
+  runner?: string;
+  model?: string;
+  /** Output poll interval (ms). */
+  pollIntervalMs?: number;
+}
+
+/** One chunk of an agent session's output, tagged with its source machine. */
+export interface AgentLine {
+  machine: MachineInfo;
+  text: string;
+}
+
+/** Terminal result of an agent run on one machine. */
+export interface AgentResult {
+  machine: MachineInfo;
+  taskId: string;
+  status: 'completed' | 'failed' | 'stopped' | 'queued' | 'running';
+  output: string;
+  resultText?: string;
+  costUsd?: number;
+  error?: string;
+}
+
 interface ExecSessionView {
   status: string; // running | completed | failed | killed
   stdout: string;
@@ -197,6 +222,42 @@ export class Machine {
     return next.value;
   }
 
+  /**
+   * Dispatch an autonomous coding agent (claude-code / codex / opencode) to
+   * this machine on `prompt`, streaming its session output. The generator's
+   * return is the terminal AgentResult. This is "run agent on machine N" — it
+   * creates a task the remote runner works on (over the resolved transport)
+   * and tails it; no SSH, no manual attach.
+   */
+  async *agent(prompt: string, opts: AgentOpts = {}): AsyncGenerator<{ text: string }, AgentResult> {
+    const t = await this.transport();
+    const o = this.fleet.opts;
+    const startRes = await transportFetch(t, o.token, '/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ title: prompt, runner: opts.runner, model: opts.model }),
+    }, true);
+    if (!startRes.ok) {
+      return { machine: this.info, taskId: '', status: 'failed', output: '', error: `dispatch: HTTP ${startRes.status}` };
+    }
+    const { taskId } = (await startRes.json()) as { taskId: string };
+    let lastLen = 0;
+    const poll = opts.pollIntervalMs ?? 800;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const res = await transportFetch(t, o.token, `/tasks/${taskId}`);
+      if (!res.ok) {
+        return { machine: this.info, taskId, status: 'failed', output: '', error: `poll task: HTTP ${res.status}` };
+      }
+      const { task } = (await res.json()) as { task: { status: string; output?: string; resultText?: string; costUsd?: number } };
+      const output = task.output ?? '';
+      if (output.length > lastLen) { yield { text: output.slice(lastLen) }; lastLen = output.length; }
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'stopped') {
+        return { machine: this.info, taskId, status: task.status as AgentResult['status'], output, resultText: task.resultText, costUsd: task.costUsd };
+      }
+      await sleep(poll);
+    }
+  }
+
   /** Set / add / remove fleet tags on this machine (via Convex /devices/tags). */
   async tag(change: { set?: string[]; add?: string[]; remove?: string[] }): Promise<string[]> {
     const res = await fetch(`${this.fleet.convexUrl}/devices/tags`, {
@@ -211,6 +272,34 @@ export class Machine {
   }
 }
 
+/**
+ * Merge per-machine async generators into one stream: yield each delta tagged
+ * by its machine, collect each generator's return value. Concurrent — every
+ * in-flight promise carries its machine's index so the settled one is re-armed
+ * by identity, and a slow machine never blocks a fast one.
+ */
+async function* mergeFanout<D, R, L>(
+  machines: Machine[],
+  make: (m: Machine) => AsyncGenerator<D, R>,
+  tag: (info: MachineInfo, delta: D) => L,
+): AsyncGenerator<L, R[]> {
+  const results: R[] = [];
+  const iters = machines.map(make);
+  const inflight = new Map<number, Promise<{ i: number; r: IteratorResult<D, R> }>>();
+  iters.forEach((it, i) => inflight.set(i, it.next().then((r) => ({ i, r }))));
+  while (inflight.size > 0) {
+    const { i, r } = await Promise.race(inflight.values());
+    inflight.delete(i);
+    if (r.done) {
+      results.push(r.value);
+    } else {
+      yield tag(machines[i].info, r.value);
+      inflight.set(i, iters[i].next().then((rr) => ({ i, r: rr })));
+    }
+  }
+  return results;
+}
+
 /** A resolved set of machines you can fan operations across. */
 export class Selection {
   readonly machines: Machine[];
@@ -221,28 +310,28 @@ export class Selection {
 
   /**
    * Fan a command across every machine; merge their streamed output into one
-   * async iterator, each line tagged with its source machine. Machines run
-   * concurrently — slow boxes don't block fast ones. Each in-flight promise
-   * carries its machine's index so the settled one can be re-armed by identity.
+   * async iterator, each line tagged with its source machine. Concurrent — slow
+   * boxes don't block fast ones. The generator's return is one ExecResult per machine.
    */
-  async *exec(command: string, opts: ExecOpts = {}): AsyncGenerator<ExecLine, ExecResult[]> {
-    type Delta = { stream: 'stdout' | 'stderr'; text: string };
-    const results: ExecResult[] = [];
-    const iters = this.machines.map((m) => m.exec(command, opts));
-    const inflight = new Map<number, Promise<{ i: number; r: IteratorResult<Delta, ExecResult> }>>();
-    iters.forEach((it, i) => inflight.set(i, it.next().then((r) => ({ i, r }))));
+  exec(command: string, opts: ExecOpts = {}): AsyncGenerator<ExecLine, ExecResult[]> {
+    return mergeFanout(
+      this.machines,
+      (m) => m.exec(command, opts),
+      (machine, d): ExecLine => ({ machine, stream: d.stream, text: d.text }),
+    );
+  }
 
-    while (inflight.size > 0) {
-      const { i, r } = await Promise.race(inflight.values());
-      inflight.delete(i);
-      if (r.done) {
-        results.push(r.value);
-      } else {
-        yield { machine: this.machines[i].info, stream: r.value.stream, text: r.value.text };
-        inflight.set(i, iters[i].next().then((rr) => ({ i, r: rr })));
-      }
-    }
-    return results;
+  /**
+   * Dispatch an autonomous agent to every machine on the same prompt; merge
+   * their session output tagged by machine. The generator's return is one
+   * AgentResult per machine. This is fleet-wide "send this work to N boxes."
+   */
+  agent(prompt: string, opts: AgentOpts = {}): AsyncGenerator<AgentLine, AgentResult[]> {
+    return mergeFanout(
+      this.machines,
+      (m) => m.agent(prompt, opts),
+      (machine, d): AgentLine => ({ machine, text: d.text }),
+    );
   }
 
   /** Run a command on every machine to completion; collect all results. */

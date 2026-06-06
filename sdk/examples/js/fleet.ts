@@ -33,6 +33,16 @@ async function main() {
   // 4. Label a machine for future selectors.
   const [first] = gpu.machines;
   if (first) await first.tag({ add: ['ml-pool'] });
+
+  // 5. Dispatch an autonomous coding agent to a machine and stream its session
+  //    — "run claude-code on box N" with no SSH / manual attach.
+  if (first) {
+    for await (const { text } of first.agent('profile the CUDA kernel in ./bench and open a PR', {
+      runner: 'claude-code',
+    })) {
+      process.stdout.write(text);
+    }
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
