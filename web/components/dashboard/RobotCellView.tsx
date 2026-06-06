@@ -68,6 +68,25 @@ export default function RobotCellView({ devices, token }: { devices: Device[]; t
   const [target, setTarget] = useState(200);
   const [last, setLast] = useState<any>(null);
   const [connErr, setConnErr] = useState<string | null>(null);
+  // klemens array + jig + machine setup
+  const [aMode, setAMode] = useState<"grid" | "linear">("grid");
+  const [aName, setAName] = useState("klemens-strip");
+  const [aCols, setACols] = useState("5");
+  const [aRows, setARows] = useState("2");
+  const [aPitchX, setAPitchX] = useState("15");
+  const [aPitchY, setAPitchY] = useState("15");
+  const [aCount, setACount] = useState("10");
+  const [aPitch, setAPitch] = useState("8");
+  const [aTorque, setATorque] = useState("400");
+  const [klemW, setKlemW] = useState("8");
+  const [klemL, setKlemL] = useState("12");
+  const [aCapture, setACapture] = useState(true);
+  const [stepsX, setStepsX] = useState("80");
+  const [stepsY, setStepsY] = useState("80");
+  const [stepsZ, setStepsZ] = useState("400");
+  const [envX, setEnvX] = useState("220");
+  const [envY, setEnvY] = useState("220");
+  const [envZ, setEnvZ] = useState("250");
 
   const clientRef = useRef<AgentClient | null>(null);
   const connectedTo = useRef("");
@@ -304,6 +323,37 @@ export default function RobotCellView({ devices, token }: { devices: Device[]; t
     await callRobot("robot_program_delete", { name });
     await loadMeta();
   };
+  const num = (s: string) => parseFloat(s) || 0;
+  const generateArray = async () => {
+    setBusy(true);
+    try {
+      const base = { name: aName.trim() || "klemens-strip", targetTorqueNmm: num(aTorque), home: true, captureOrigin: aCapture };
+      const params =
+        aMode === "grid"
+          ? { ...base, mode: "grid", cols: num(aCols), rows: num(aRows), pitchX: num(aPitchX), pitchY: num(aPitchY), serpentine: true }
+          : { ...base, mode: "linear", axis: "X", count: num(aCount), pitch: num(aPitch) };
+      await callRobot("robot_array_build", params);
+      await loadMeta();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const getJig = async () => {
+    const r = await callRobot("robot_jig_scad", { cols: num(aCols), rows: num(aRows), pitchX: num(aPitchX), pitchY: num(aPitchY), klemensW: num(klemW), klemensL: num(klemL) });
+    if (!r?.scad) return;
+    const blob = new Blob([r.scad], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = r.filename || "klemens-jig.scad";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const applyMachineSetup = () =>
+    patchConfig({
+      stepsPerMm: { x: num(stepsX), y: num(stepsY), z: num(stepsZ) },
+      envelope: { Xmin: 0, Xmax: num(envX), Ymin: 0, Ymax: num(envY), Zmin: 0, Zmax: num(envZ) },
+    });
 
   // ---- render helpers ----
   const card = "rounded-xl border border-surface-800 bg-surface-900/50 p-4";
@@ -511,6 +561,77 @@ export default function RobotCellView({ devices, token }: { devices: Device[]; t
         </div>
       )}
 
+      {/* klemens array + printable jig */}
+      {hasMotion && hasTool && (
+        <div className={`${card} space-y-3`}>
+          <span className="font-semibold text-surface-100">Klemens array</span>
+          <div className="flex gap-2">
+            <button onClick={() => setAMode("grid")} className={aMode === "grid" ? btnA : btn}>
+              Grid (jig)
+            </button>
+            <button onClick={() => setAMode("linear")} className={aMode === "linear" ? btnA : btn}>
+              Linear (rail)
+            </button>
+          </div>
+          {aMode === "grid" ? (
+            <div className="grid grid-cols-4 gap-2">
+              <Inp label="cols" v={aCols} set={setACols} />
+              <Inp label="rows" v={aRows} set={setARows} />
+              <Inp label="pitchX" v={aPitchX} set={setAPitchX} />
+              <Inp label="pitchY" v={aPitchY} set={setAPitchY} />
+              <Inp label="klemens W" v={klemW} set={setKlemW} />
+              <Inp label="klemens L" v={klemL} set={setKlemL} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              <Inp label="count" v={aCount} set={setACount} />
+              <Inp label="pitch" v={aPitch} set={setAPitch} />
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <Inp label="torque N·mm" v={aTorque} set={setATorque} />
+            <Inp label="name" v={aName} set={setAName} />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-surface-300">
+            <input type="checkbox" checked={aCapture} onChange={(e) => setACapture(e.target.checked)} /> Use current position as origin (jog over klemens #1 first)
+          </label>
+          <div className="flex gap-2">
+            <button onClick={generateArray} disabled={disabled} className={`${btnA} flex-1`}>
+              Generate program
+            </button>
+            {aMode === "grid" && (
+              <button onClick={getJig} disabled={busy} className={btn}>
+                Download jig .scad
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* machine setup — Fuju steps/mm + envelope */}
+      {hasMotion && (
+        <details className={card}>
+          <summary className="cursor-pointer font-semibold text-surface-100">Machine setup (Fuju / external drivers)</summary>
+          <div className="mt-3 space-y-3">
+            <div className="text-xs text-surface-400">steps/mm per axis (pushed as M92)</div>
+            <div className="grid grid-cols-3 gap-2">
+              <Inp label="X steps/mm" v={stepsX} set={setStepsX} />
+              <Inp label="Y steps/mm" v={stepsY} set={setStepsY} />
+              <Inp label="Z steps/mm" v={stepsZ} set={setStepsZ} />
+            </div>
+            <div className="text-xs text-surface-400">work envelope (mm)</div>
+            <div className="grid grid-cols-3 gap-2">
+              <Inp label="X max" v={envX} set={setEnvX} />
+              <Inp label="Y max" v={envY} set={setEnvY} />
+              <Inp label="Z max" v={envZ} set={setEnvZ} />
+            </div>
+            <button onClick={applyMachineSetup} disabled={busy} className={btnA}>
+              Apply (restart agent to take effect)
+            </button>
+          </div>
+        </details>
+      )}
+
       {/* teach & repeat */}
       <div className={`${card} space-y-3`}>
         <div className="flex items-center justify-between">
@@ -593,6 +714,15 @@ export default function RobotCellView({ devices, token }: { devices: Device[]; t
         </button>
       </div>
     </div>
+  );
+}
+
+function Inp({ label, v, set }: { label: string; v: string; set: (s: string) => void }) {
+  return (
+    <label className="block">
+      <span className="text-[11px] text-surface-500">{label}</span>
+      <input value={v} onChange={(e) => set(e.target.value)} className="mt-1 w-full rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm text-surface-200" />
+    </label>
   );
 }
 
