@@ -1,6 +1,6 @@
 {
   "name": "yaver-sdk",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Yaver SDK — embed Yaver's local-first agent runtime into your JavaScript and TypeScript apps",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
