@@ -98,6 +98,21 @@ func localDeviceID() string {
 //   - errors.Is(err, errLayer4Remote) → surface as MCP error
 //   - other non-nil err               → network / auth failure, surface as-is
 func proxyToDevice(ctx context.Context, toolName, deviceID, method, path string, bodyJSON []byte) (int, []byte, error) {
+	return proxyToDeviceAs(ctx, toolName, deviceID, method, path, bodyJSON, "")
+}
+
+// proxyToDeviceAs is proxyToDevice but forwards bearerOverride (the ORIGINAL
+// caller's user bearer) as the Authorization to the target, instead of this
+// agent's own device token. This is the correct mesh identity model: the target
+// validates the REAL user, so cross-device control works through ANY gateway
+// regardless of the gateway's own token/userId (e.g. after an account merge left
+// the gateway's token resolving to a stale id). It's also strictly more secure —
+// a forwarded user bearer is only accepted by devices that user actually owns,
+// so a gateway can't act as a different identity. The relay-layer auth (the
+// __rp password baked into the candidate) is unchanged; only the agent-level
+// Bearer is overridden. bearerOverride == "" keeps the legacy gateway-token
+// behaviour (MCP/CLI callers that have no inbound user bearer).
+func proxyToDeviceAs(ctx context.Context, toolName, deviceID, method, path string, bodyJSON []byte, bearerOverride string) (int, []byte, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return 0, nil, errProxyLocal
@@ -112,6 +127,9 @@ func proxyToDevice(ctx context.Context, toolName, deviceID, method, path string,
 	candidates, token, err := resolveRemoteAgentCandidates(deviceID)
 	if err != nil {
 		return 0, nil, fmt.Errorf("resolve device: %w", err)
+	}
+	if b := strings.TrimSpace(bearerOverride); b != "" {
+		token = b // forward the real user's bearer, not this gateway's token
 	}
 
 	if method == "" {
