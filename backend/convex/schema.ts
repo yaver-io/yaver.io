@@ -1699,6 +1699,38 @@ export default defineSchema({
   }).index("by_user", ["userId"])
     .index("by_device_slug", ["deviceId", "slug"]),
 
+  // GPU-rental orchestration bookkeeping (gpuRentals.ts, written by the
+  // agent's gpu_rental_sync.go). Cross-device visibility of which dispatcher
+  // box rented which burst GPU / bound which serverless inference, for the
+  // call-center and any app that bursts GPU. See docs/gpu-rental-orchestration.md.
+  //
+  // PRIVACY: bookkeeping ONLY. provider + opaque resource id + kind + gpu
+  // class + the PUBLIC inference endpoint (host-only, no key) + model id + the
+  // vault PROJECT NAME the app reads (never its values) + voiceSafe + status +
+  // usage counters. NO api keys, vault values, prompts, call data, or absolute
+  // paths — the agent strips them via buildGpuRentalUpsertPayload and
+  // desktop/agent/convex_privacy_test.go pins it. Same class as
+  // cloudMachines.hostedConvexUrl / cloudResourceId (public id/url, privacy-safe).
+  gpuRentals: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),          // dispatcher box that owns this rental
+    provider: v.string(),          // "salad" | "deepinfra"
+    resourceId: v.string(),        // salad container-group id | "deepinfra:<model>"
+    kind: v.string(),              // "gpu-group" | "serverless-binding"
+    gpuClass: v.optional(v.string()),
+    endpoint: v.optional(v.string()), // PUBLIC OpenAI-compatible base URL (no key)
+    model: v.optional(v.string()),
+    bindProject: v.optional(v.string()), // vault project NAME (not its values)
+    voiceSafe: v.optional(v.boolean()),
+    status: v.string(),            // "provisioning" | "running" | "draining" | "stopped"
+    // Usage rollup — SUMMARY only, never per-call content.
+    hoursUsed: v.optional(v.number()),
+    tokensUsed: v.optional(v.number()),
+    costCents: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"])
+    .index("by_device_resource", ["deviceId", "resourceId"]),
+
   /** Yaver Mesh — optional WireGuard overlay control plane (desktop/agent
    *  mesh_cmd.go + desktop/agent/mesh/). STRICTLY OPT-IN: a device only gets
    *  a row here after the user runs `yaver mesh up`. Privacy contract:

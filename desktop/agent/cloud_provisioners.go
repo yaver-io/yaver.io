@@ -42,6 +42,11 @@ func provisionerRegistry() map[TargetHost]provisioner {
 		HostVercel:        provisionVercel,
 		HostHetzner:       provisionHetzner,
 		HostHetznerRobot:  provisionHetznerRobot,
+		// GPU-rental orchestration (gpu_rental.go): Salad = hourly GPU
+		// container group; DeepInfra = serverless inference binding (no
+		// machine). Both mint application-runtime inference config.
+		HostSalad:     provisionSalad,
+		HostDeepInfra: provisionDeepInfra,
 	}
 }
 

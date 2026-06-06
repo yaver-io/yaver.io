@@ -34,6 +34,19 @@ const (
 	ProviderGCP          AccountProvider = "gcp"
 	ProviderDigitalOcean AccountProvider = "digitalocean"
 	ProviderYaver        AccountProvider = "yaver"
+	// GPU / inference providers. These are NOT general VPS hosts — they
+	// rent GPU compute (Salad/RunPod/Vast: hourly container groups / pods)
+	// or serve serverless inference (DeepInfra: per-token, no machine).
+	// Used by the GPU-rental orchestration layer (gpu_rental.go) to
+	// provision burst GPU and mint application-runtime inference config.
+	// Distinct from the coding-runner provider lane (provider_keys.go,
+	// vault project "runner-provider"), which points coding AGENTS at a
+	// model — these accounts let Yaver provision + bind inference for the
+	// running app. See docs/gpu-rental-orchestration.md.
+	ProviderSalad     AccountProvider = "salad"
+	ProviderDeepInfra AccountProvider = "deepinfra"
+	ProviderRunPod    AccountProvider = "runpod"
+	ProviderVast      AccountProvider = "vast"
 )
 
 // AccountProviderMeta describes a provider's auth requirements for UI rendering.
@@ -63,6 +76,11 @@ func AccountProviders() []AccountProviderMeta {
 		{ID: ProviderGCP, Label: "Google Cloud", AuthType: "browser", Fields: []string{}, SignupURL: "https://cloud.google.com", Notes: "Run `gcloud auth login` — Yaver reads token from gcloud CLI"},
 		{ID: ProviderDigitalOcean, Label: "DigitalOcean", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://digitalocean.com", TokenURL: "https://cloud.digitalocean.com/account/api/tokens"},
 		{ID: ProviderYaver, Label: "Yaver Cloud", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://yaver.io", TokenURL: "Yaver Cloud onboarding flow"},
+		// --- GPU / inference (BYO key; user pays the provider directly) ---
+		{ID: ProviderDeepInfra, Label: "DeepInfra (serverless inference)", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://deepinfra.com", TokenURL: "https://deepinfra.com/dash/api_keys", Notes: "OpenAI-compatible serverless LLM/ASR — per-token billing, no machine to manage. Used as the always-on inference baseline (no cold start)."},
+		{ID: ProviderSalad, Label: "Salad (GPU container marketplace)", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://salad.com", TokenURL: "https://portal.salad.com → API Access", Notes: "Hourly community GPU. organization + project are passed per-provision (cloud_provision opts), not stored. The cost-efficient burst tier."},
+		{ID: ProviderRunPod, Label: "RunPod (hourly GPU pods)", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://runpod.io", TokenURL: "https://www.runpod.io/console/user/settings → API Keys", Notes: "Optional alternative burst provider (hourly pods)."},
+		{ID: ProviderVast, Label: "Vast.ai (GPU spot market)", AuthType: "token", Fields: []string{"token"}, SignupURL: "https://vast.ai", TokenURL: "https://cloud.vast.ai/account/ → API Keys", Notes: "Optional alternative burst provider (spot market; cheapest, least reliable)."},
 	}
 }
 
