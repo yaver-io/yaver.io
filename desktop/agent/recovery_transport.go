@@ -10,9 +10,17 @@ import (
 )
 
 type RecoveryTransportPosture struct {
-	Status                     string   `json:"status,omitempty"`
-	MobileApprovedTransports   []string `json:"mobileApprovedTransports,omitempty"`
-	WebApprovedTransports      []string `json:"webApprovedTransports,omitempty"`
+	Status string `json:"status,omitempty"`
+	// NOTE: these two arrays must NOT be `omitempty`, and must be non-nil.
+	// Convex's recoveryPostureValidator (backend/convex/devices.ts) requires
+	// `mobileApprovedTransports`/`webApprovedTransports` as non-optional
+	// arrays. On a fresh box with no approved transports the slices are empty;
+	// with `omitempty` they were dropped from the JSON entirely, so EVERY
+	// device registration failed the nested validator with
+	// "Object is missing the required field `mobileApprovedTransports`" → 500.
+	// Always send them (as `[]` when empty) so registration validates.
+	MobileApprovedTransports   []string `json:"mobileApprovedTransports"`
+	WebApprovedTransports      []string `json:"webApprovedTransports"`
 	HasPrivateTransport        bool     `json:"hasPrivateTransport"`
 	HasBrowserTransport        bool     `json:"hasBrowserTransport"`
 	PublicDirectRecoveryClosed bool     `json:"publicDirectRecoveryClosed"`
@@ -28,6 +36,15 @@ type recoveryIngressVerdict struct {
 func computeRecoveryTransportPosture(cfg *Config) RecoveryTransportPosture {
 	mobile := approvedMobileRecoveryTransports(cfg)
 	web := approvedWebRecoveryTransports(cfg)
+	// Coerce nil → empty slice so the JSON carries `[]`, not `null`. A nil
+	// slice marshals to `null`, which Convex's `v.array(...)` rejects just as
+	// hard as a missing field — both 500 the registration on a fresh box.
+	if mobile == nil {
+		mobile = []string{}
+	}
+	if web == nil {
+		web = []string{}
+	}
 	posture := RecoveryTransportPosture{
 		MobileApprovedTransports:   mobile,
 		WebApprovedTransports:      web,
