@@ -215,6 +215,14 @@ const nowMs = () => Date.now();
 
 export type ServiceAction = 'restart' | 'start' | 'stop' | 'status';
 
+/** A scheduled job: run `command` on `schedule` (cron expression). */
+export interface CronJob {
+  name: string;
+  /** Cron expression (5-field), e.g. "0 3 * * *" for 03:00 daily. */
+  schedule: string;
+  command: string;
+}
+
 /**
  * Build the platform-native service-control command. Linux → systemctl,
  * Windows → sc, macOS → launchctl (best-effort: kickstart for restart, print
@@ -529,6 +537,31 @@ export class Machine {
     return this.run(this.info.platform === 'windows' ? 'shutdown /r /t 0' : 'sudo reboot');
   }
 
+  /**
+   * Install a scheduled (cron) job on this machine: run `command` on `schedule`
+   * (cron expression). The per-machine half of fleet-wide cron.
+   */
+  async schedule(job: CronJob): Promise<{ ok: boolean; error?: string }> {
+    const t = await this.transport();
+    const res = await transportFetch(t, this.fleet.opts.token, '/cron/create', {
+      method: 'POST',
+      body: JSON.stringify({ name: job.name, schedule: job.schedule, target: job.command }),
+    }, true);
+    if (!res.ok) throw new Error(`schedule '${job.name}': HTTP ${res.status}`);
+    const j = (await res.json()) as { error?: string };
+    return { ok: !j.error, error: j.error };
+  }
+
+  /** Remove a scheduled job by name. */
+  async unschedule(name: string): Promise<{ ok: boolean }> {
+    const t = await this.transport();
+    const res = await transportFetch(t, this.fleet.opts.token, '/cron/delete', {
+      method: 'POST', body: JSON.stringify({ name }),
+    }, true);
+    if (!res.ok) throw new Error(`unschedule '${name}': HTTP ${res.status}`);
+    return { ok: true };
+  }
+
   /** Set / add / remove fleet tags on this machine (via Convex /devices/tags). */
   async tag(change: { set?: string[]; add?: string[]; remove?: string[] }): Promise<string[]> {
     const res = await fetch(`${this.fleet.convexUrl}/devices/tags`, {
@@ -613,6 +646,20 @@ export class Selection {
   /** Restart a service on every machine concurrently (e.g. recycle a runner pool). */
   async serviceRestart(name: string): Promise<ExecResult[]> {
     return Promise.all(this.machines.map((m) => m.serviceRestart(name)));
+  }
+
+  /**
+   * Fleet-wide cron: install the same scheduled job on every machine in the
+   * selection — one definition, N machines (e.g. nightly backup on every edge
+   * node). Collects one outcome per machine.
+   */
+  async schedule(job: CronJob): Promise<Array<{ machine: MachineInfo; ok: boolean; error?: string }>> {
+    return Promise.all(this.machines.map(async (m) => ({ machine: m.info, ...(await m.schedule(job)) })));
+  }
+
+  /** Remove a scheduled job by name from every machine. */
+  async unschedule(name: string): Promise<Array<{ machine: MachineInfo; ok: boolean }>> {
+    return Promise.all(this.machines.map(async (m) => ({ machine: m.info, ...(await m.unschedule(name)) })));
   }
 
   /** Upload a local file to the same absolute path on every machine concurrently. */
