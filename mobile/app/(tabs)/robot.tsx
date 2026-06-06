@@ -28,6 +28,8 @@ import { ScrewdriverPanel } from "../../src/components/robot/ScrewdriverPanel";
 import { TeachPendant } from "../../src/components/robot/TeachPendant";
 import { ProfileSheet } from "../../src/components/robot/ProfileSheet";
 import { CalibrationPanel } from "../../src/components/robot/CalibrationPanel";
+import { ArrayPanel } from "../../src/components/robot/ArrayPanel";
+import type { ArrayParams } from "../../src/lib/robotClient";
 
 const STEPS = [1, 10, 50];
 const FEED_XY = 3000;
@@ -346,6 +348,17 @@ export default function RobotScreen() {
     await robotClient.programDelete(t, name);
     await loadMeta(deviceId);
   };
+  const generateArray = async (params: ArrayParams) => {
+    const t = buildTarget(deviceId);
+    if (!t) return;
+    setBusy(true);
+    try {
+      await robotClient.arrayBuild(t, params);
+      await loadMeta(deviceId);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const pos = status?.position;
   const toolOn = status?.tool === "on";
@@ -552,6 +565,9 @@ export default function RobotScreen() {
           )}
         </View>
       )}
+
+      {/* Klemens array → fastening program (jig grid or rail) */}
+      {hasMotion && hasTool && <ArrayPanel c={c} disabled={controlsDisabled} busy={busy} onGenerate={generateArray} />}
 
       {/* Teach & Repeat */}
       <TeachPendant

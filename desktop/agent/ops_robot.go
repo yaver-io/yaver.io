@@ -103,6 +103,12 @@ func ensureRobot() (*robot.Controller, error) {
 			backend = bb
 		}
 		c := robot.NewController(backend, cam, robot.VisionConfig{})
+		// Calibrate external (Fuju) drivers: push steps/mm so the rails move in mm.
+		if m92 := cfg.StepsPerMM.M92(); m92 != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			_ = backend.Raw(ctx, m92)
+			cancel()
+		}
 		if cfg.Envelope != nil {
 			c.Env = *cfg.Envelope
 		}
@@ -497,14 +503,14 @@ func init() {
 			return *g
 		}
 		p := parseRobot(payload)
-		// (x,y) from payload, else drive at the current position.
+		// (x,y) given → travel there then plunge (jig). No (x,y) → plunge in place
+		// (linear rail already indexed the klemens under a fixed screwdriver).
+		atCurrent := p.X == nil || p.Y == nil
 		var x, y float64
-		if p.X != nil && p.Y != nil {
+		if !atCurrent {
 			x, y = *p.X, *p.Y
-		} else if pos, perr := ctrl.Backend.Position(c.Ctx); perr == nil {
-			x, y = pos.X, pos.Y
 		}
-		return OpsResult{OK: true, Initial: ctrl.ScrewHome(c.Ctx, x, y, p.Target, p.Verify)}
+		return OpsResult{OK: true, Initial: ctrl.ScrewHome(c.Ctx, x, y, p.Target, atCurrent, p.Verify)}
 	})
 	reg("robot_gcode", "Raw G-code passthrough (power users); e-stop gated", func(c OpsContext, payload json.RawMessage) OpsResult {
 		ctrl, deny := robotForOps()
@@ -529,6 +535,42 @@ func init() {
 			return OpsResult{OK: false, Code: "save_failed", Error: err.Error()}
 		}
 		return OpsResult{OK: true, Initial: map[string]any{"saved": prog.Name, "steps": len(prog.Steps)}}
+	})
+	reg("robot_array_build", "Generate + save a klemens fastening program (grid jig or linear rail)", func(c OpsContext, payload json.RawMessage) OpsResult {
+		ctrl, deny := robotForOps()
+		if deny != nil {
+			return *deny
+		}
+		if g := robotGate(robot.ModuleMotion); g != nil {
+			return *g
+		}
+		var ap robot.ArrayParams
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &ap); err != nil {
+				return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+			}
+		}
+		// optionally anchor the array at the current position ("teach the origin")
+		var cap struct {
+			CaptureOrigin bool `json:"captureOrigin"`
+		}
+		_ = json.Unmarshal(payload, &cap)
+		if cap.CaptureOrigin {
+			if pos, err := ctrl.Backend.Position(c.Ctx); err == nil {
+				ap.OriginX, ap.OriginY, ap.Origin = pos.X, pos.Y, pos.X
+			}
+		}
+		if ap.TargetTorqueNmm <= 0 {
+			ap.TargetTorqueNmm = robotConfigGet().TargetTorqueNmm
+		}
+		prog, err := robot.BuildKlemensArray(ap)
+		if err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+		}
+		if err := robotStore.Save(prog); err != nil {
+			return OpsResult{OK: false, Code: "save_failed", Error: err.Error()}
+		}
+		return OpsResult{OK: true, Initial: map[string]any{"saved": prog.Name, "steps": len(prog.Steps), "program": prog}}
 	})
 	reg("robot_program_list", "List taught programs", func(c OpsContext, _ json.RawMessage) OpsResult {
 		return OpsResult{OK: true, Initial: map[string]any{"programs": robotStore.List()}}

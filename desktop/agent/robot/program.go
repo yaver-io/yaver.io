@@ -197,6 +197,7 @@ func (c *Controller) runStep(ctx context.Context, i int, st Step, verifyMode str
 		x := derefOr(st.X, 0)
 		y := derefOr(st.Y, 0)
 		p := c.screwParamsFromCalibration(x, y, st.Zengage, st.Zsafe, st.Torque)
+		p.AtCurrent = st.X == nil && st.Y == nil // no pole given → plunge in place (rail indexer)
 		if st.DwellMs > 0 {
 			p.DwellMs = st.DwellMs
 		}

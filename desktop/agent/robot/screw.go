@@ -18,6 +18,8 @@ type ScrewParams struct {
 	ToolPin         int     // companion GPIO pin for the driver; <0 → use Marlin tool
 	DwellMs         int     // hold at seat torque before release
 	TimeoutSec      int     // abort the plunge after this long
+	AtCurrent       bool    // skip XY travel — plunge at the current X/Y (linear-rail indexer:
+	//                         the rail already positioned the klemens under a fixed screwdriver)
 }
 
 // ScrewResult is the torque-closed-loop verdict: did the screw seat AT torque,
@@ -73,13 +75,21 @@ func (c *Controller) DriveScrew(ctx context.Context, p ScrewParams, verifyMode, 
 		expectation = "screwdriver plunged into the screw head at the pole"
 	}
 
-	// 1) Travel to the pole at safe Z.
+	// 1) Get to safe Z above the screw. Normally travel to the pole (X,Y); for a
+	// linear-rail indexer the rail already positioned the klemens under a fixed
+	// screwdriver, so AtCurrent just lifts Z and plunges in place.
 	zsafe := p.Zsafe
 	if zsafe <= 0 {
 		zsafe = p.Zapproach + 10
 	}
-	if r := c.Move(ctx, &p.X, &p.Y, &zsafe, 3000, "off", ""); !r.OK {
-		return ScrewResult{Code: r.Code, Error: r.Error}
+	var travel MoveResponse
+	if p.AtCurrent {
+		travel = c.Move(ctx, nil, nil, &zsafe, 3000, "off", "")
+	} else {
+		travel = c.Move(ctx, &p.X, &p.Y, &zsafe, 3000, "off", "")
+	}
+	if !travel.OK {
+		return ScrewResult{Code: travel.Code, Error: travel.Error}
 	}
 	var before []byte
 	camOK := c.Camera != nil && c.Camera.Available()
