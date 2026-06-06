@@ -16,8 +16,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -26,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/mdp/qrterminal/v3"
+	"rsc.io/qr"
 )
 
 func runProvision(args []string) {
@@ -40,6 +43,8 @@ func runProvision(args []string) {
 		runProvisionMint(rest)
 	case "qr":
 		runProvisionQR(rest)
+	case "flash":
+		runProvisionFlash(rest)
 	case "claim":
 		runProvisionClaim(rest)
 	case "product":
@@ -64,7 +69,14 @@ func printProvisionUsage() {
       --out <path>                  Where to write the SD seed (default: ./provision-<id>.json)
       --no-register                 Don't register with Convex (offline; you must mint later)
 
-  yaver provision qr <seed.json>    Re-print the scannable QR for a seed
+  yaver provision qr <seed.json> [--png <out.png>]
+                                    Re-print (or save) the scannable QR
+
+  yaver provision flash --seed <seed.json> --boot <mountpoint>
+                                    Install a seed onto a device's MOUNTED
+                                    boot partition (writes yaver-provision.json)
+                                    + print the label QR. (Flash the base
+                                    image with your usual tool first.)
 
   yaver provision claim <qr|deviceId> [flags]   Claim a device (buyer side)
       --secret <s>                  Claim secret (when passing a bare deviceId)
@@ -308,6 +320,7 @@ func runBulkMint(count int, productID, model, platform, name, vendor, outDir, co
 	defer f.Close()
 	fmt.Fprintln(f, "deviceId,productId,model,seedPath,qrPayload")
 
+	var labels []labelRow
 	minted := 0
 	for i := 0; i < count; i++ {
 		seed, gerr := GenerateProvisionSeed(productID, model, platform, convexURL)
@@ -332,12 +345,85 @@ func runBulkMint(count int, productID, model, platform, name, vendor, outDir, co
 			os.Exit(1)
 		}
 		fmt.Fprintf(f, "%s,%s,%s,%s,%s\n", seed.DeviceID, productID, csvField(model), seedPath, uri)
+		labels = append(labels, labelRow{DeviceID: seed.DeviceID, Model: model, URI: uri})
 		minted++
 	}
+
+	// A printable HTML sheet with embedded QR images — open it and print to a
+	// label roll / sticker sheet. Self-contained (data-URI PNGs, no network).
+	htmlPath := filepath.Join(outDir, "labels.html")
+	if werr := writeLabelSheet(htmlPath, productID, model, labels); werr != nil {
+		fmt.Fprintf(os.Stderr, "mint: write label sheet: %v\n", werr)
+		os.Exit(1)
+	}
+
 	fmt.Printf("\n✓ Minted %d devices%s\n", minted, regSuffix(register))
 	fmt.Printf("  Seeds:  %s/provision-<id>.json  (flash each as yaver-provision.json)\n", outDir)
-	fmt.Printf("  Labels: %s  (deviceId,productId,model,seedPath,qrPayload — feed to your label printer)\n", csvPath)
+	fmt.Printf("  Labels: %s  (printable QR sheet — open in a browser and print)\n", htmlPath)
+	fmt.Printf("          %s  (deviceId,productId,model,seedPath,qrPayload for tooling)\n", csvPath)
 	fmt.Println()
+}
+
+// labelRow is one device's printable label data.
+type labelRow struct {
+	DeviceID string
+	Model    string
+	URI      string
+}
+
+// qrPNGBytes renders a QR payload to PNG bytes via rsc.io/qr (already in the
+// module graph — no extra download). Scale gives crisp, printable pixels.
+func qrPNGBytes(payload string) ([]byte, error) {
+	code, err := qr.Encode(payload, qr.M)
+	if err != nil {
+		return nil, err
+	}
+	code.Scale = 6
+	return code.PNG(), nil
+}
+
+// qrPNGDataURI returns a data: URI for inline-HTML embedding.
+func qrPNGDataURI(payload string) (string, error) {
+	png, err := qrPNGBytes(payload)
+	if err != nil {
+		return "", err
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), nil
+}
+
+// writeLabelSheet emits a self-contained printable HTML grid of QR labels.
+func writeLabelSheet(path, productID, model string, rows []labelRow) error {
+	var b strings.Builder
+	title := model
+	if title == "" {
+		title = productID
+	}
+	b.WriteString("<!doctype html><html><head><meta charset=\"utf-8\"><title>")
+	b.WriteString(html.EscapeString(title))
+	b.WriteString(" — Yaver provisioning labels</title><style>")
+	b.WriteString("body{font-family:system-ui,sans-serif;margin:16px}")
+	b.WriteString(".grid{display:flex;flex-wrap:wrap;gap:10px}")
+	b.WriteString(".label{border:1px solid #ccc;border-radius:8px;padding:10px;width:200px;text-align:center;page-break-inside:avoid}")
+	b.WriteString(".label img{width:170px;height:170px}")
+	b.WriteString(".m{font-weight:600;font-size:13px;margin-top:6px}")
+	b.WriteString(".d{font-family:ui-monospace,monospace;font-size:10px;color:#666;word-break:break-all}")
+	b.WriteString("@media print{.label{width:30%}}</style></head><body>")
+	b.WriteString("<h2>" + html.EscapeString(title) + " — scan to claim</h2><div class=\"grid\">")
+	for _, r := range rows {
+		uri, err := qrPNGDataURI(r.URI)
+		if err != nil {
+			return err
+		}
+		b.WriteString("<div class=\"label\"><img src=\"")
+		b.WriteString(uri)
+		b.WriteString("\" alt=\"QR\"><div class=\"m\">")
+		b.WriteString(html.EscapeString(firstNonEmptyStr(r.Model, title)))
+		b.WriteString("</div><div class=\"d\">")
+		b.WriteString(html.EscapeString(r.DeviceID))
+		b.WriteString("</div></div>")
+	}
+	b.WriteString("</div></body></html>")
+	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 // csvField quotes a field if it contains a comma or quote.
@@ -357,10 +443,20 @@ func regSuffix(registered bool) string {
 
 func runProvisionQR(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: yaver provision qr <seed.json>")
+		fmt.Fprintln(os.Stderr, "usage: yaver provision qr <seed.json> [--png <out.png>]")
 		os.Exit(1)
 	}
-	seed, err := readProvisionSeed(args[0])
+	seedPath := args[0]
+	pngOut := ""
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--png" {
+			i++
+			if i < len(args) {
+				pngOut = args[i]
+			}
+		}
+	}
+	seed, err := readProvisionSeed(seedPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "qr: %v\n", err)
 		os.Exit(1)
@@ -370,8 +466,71 @@ func runProvisionQR(args []string) {
 		fmt.Fprintf(os.Stderr, "qr: %v\n", err)
 		os.Exit(1)
 	}
+	if pngOut != "" {
+		png, perr := qrPNGBytes(uri)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "qr: render png: %v\n", perr)
+			os.Exit(1)
+		}
+		if werr := os.WriteFile(pngOut, png, 0o644); werr != nil {
+			fmt.Fprintf(os.Stderr, "qr: write png: %v\n", werr)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ QR written to %s\n", pngOut)
+	}
 	printProvisionQR(uri)
 	fmt.Printf("\n  %s\n", uri)
+}
+
+// runProvisionFlash installs a minted seed onto a device's MOUNTED boot
+// partition (the FAT volume your flasher created). It deliberately does NOT
+// touch raw block devices / dd an image — that's destructive and risks
+// wiping the wrong disk. Flash the base image with your usual tool, mount
+// the boot partition, then point this at it.
+func runProvisionFlash(args []string) {
+	var seedPath, bootDir string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--seed":
+			i++
+			if i < len(args) {
+				seedPath = args[i]
+			}
+		case "--boot":
+			i++
+			if i < len(args) {
+				bootDir = args[i]
+			}
+		}
+	}
+	if seedPath == "" || bootDir == "" {
+		fmt.Fprintln(os.Stderr, "usage: yaver provision flash --seed <seed.json> --boot <mounted-boot-partition>")
+		os.Exit(1)
+	}
+	seed, err := readProvisionSeed(seedPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "flash: %v\n", err)
+		os.Exit(1)
+	}
+	info, err := os.Stat(bootDir)
+	if err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "flash: --boot %q is not a mounted directory\n", bootDir)
+		os.Exit(1)
+	}
+	dest := filepath.Join(bootDir, "yaver-provision.json")
+	if werr := writeProvisionSeed(dest, seed); werr != nil {
+		fmt.Fprintf(os.Stderr, "flash: write seed: %v\n", werr)
+		os.Exit(1)
+	}
+	uri, _ := seed.ProvisionQRURI()
+	fmt.Printf("\n✓ Installed seed for device %s onto %s\n", seed.DeviceID, dest)
+	fmt.Println("  On first boot the box reads this, attests, and self-credentials.")
+	fmt.Println("  Print this QR on the device label:")
+	fmt.Println()
+	if uri != "" {
+		printProvisionQR(uri)
+	}
+	fmt.Println()
 }
 
 func runProvisionClaim(args []string) {

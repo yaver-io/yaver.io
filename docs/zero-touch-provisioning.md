@@ -137,8 +137,17 @@ Builder flow:
 ```
 yaver provision mint --manifest yaver.provision.yaml --count 100 --out-dir batch/
 # -> registers the product (model shown in the claim UI), mints 100 SD seeds
-#    into batch/, and writes batch/labels.csv (deviceId,productId,model,
-#    seedPath,qrPayload) for the label printer / factory line.
+#    into batch/, and writes:
+#      batch/labels.html  printable QR sticker sheet (embedded PNGs, no network)
+#      batch/labels.csv   deviceId,productId,model,seedPath,qrPayload (for tooling)
+
+yaver provision flash --seed batch/provision-<id>.json --boot /Volumes/bootfs
+# -> after you flash the base image with your usual tool and mount the boot
+#    partition, installs the seed as yaver-provision.json + prints the label QR.
+#    (Deliberately does NOT dd raw block devices — that risks wiping the wrong
+#    disk; use your normal flasher for the image, this just injects the seed.)
+
+yaver provision qr batch/provision-<id>.json --png label.png   # single QR image
 ```
 
 When a box self-credentials (claim + attest), the agent runs the manifest's
@@ -147,21 +156,25 @@ provisioned) — see `provision_postclaim.go`. Long-running services delegate
 to the existing companion engine (`yaver companion up`) rather than a second
 runtime. A complete example: `examples/talos-edge/yaver.provision.yaml`.
 
-End users claim with the generic mobile "scan to add device" screen
-(`/provision-add`, `mobile/app/provision-add.tsx` →
-`src/components/ProvisionScanner.tsx` → `claimProvisionedDevice`) or
-`yaver provision claim "<qr-uri>"`.
+End users claim three ways:
+
+- **Mobile**: Devices tab → "+ Add a device (scan QR)" → camera scan
+  (`mobile/app/provision-add.tsx` → `src/components/ProvisionScanner.tsx` →
+  `claimProvisionedDevice`).
+- **Web**: `/add-device` (`web/app/add-device/page.tsx`) — browser-native
+  `BarcodeDetector` camera scan with a paste-the-payload / enter-id+secret
+  fallback. Posts to `/devices/provision-claim`.
+- **CLI**: `yaver provision claim "<qr-uri>"`.
 
 ## Not yet built
 
-- `yaver flash` (write base image + inject seed in one step) and a printed
-  QR label *sheet* (current bulk output is seeds + a `labels.csv`; rendering
-  QR images needs a QR-image dep — deferred to keep the bundle lean).
-- Mobile entry point: `app/provision-add.tsx` exists and is route-addressable
-  (`/provision-add`) but isn't yet linked from a tab/menu (the nav files are
-  under active edit by other work; add one `router.push('/provision-add')`
-  button when convenient). Needs on-device testing (camera).
-- Web "scan/enter to add device" form on `claimProvisionedDevice` /
-  `peekProvisionedDevice`.
-- Talos repo wiring: ship `examples/talos-edge/yaver.provision.yaml` in the
-  Talos image + register the `talos-edge-v1` product on the Talos account.
+- `yaver flash` does NOT write the base OS image to a raw block device (that's
+  destructive / risks wiping the wrong disk untested). Flash the image with
+  your normal tool; `yaver provision flash` then injects the seed onto the
+  mounted boot partition.
+- On-device camera testing for the mobile scan screen (built + typechecks; not
+  yet exercised on a physical device).
+- Talos repo wiring (separate repo, owned elsewhere): ship
+  `examples/talos-edge/yaver.provision.yaml` in the Talos image + run
+  `yaver provision product --id talos-edge-v1 --name "Talos Edge Node"` on the
+  Talos account.
