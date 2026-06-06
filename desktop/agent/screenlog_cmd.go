@@ -166,6 +166,15 @@ func runScreenlog(args []string) {
 	case "stop":
 		res, err := localAgentRequest("POST", "/screenlog/stop", nil)
 		printScreenlogResult(res, err)
+	case "kill", "panic":
+		// The panic button: stop the live session, disarm reboot auto-resume,
+		// AND flip the master kill-switch so nothing restarts it. --purge also
+		// deletes captured frames. Always permitted (stopping is never gated).
+		fs := flag.NewFlagSet("screenlog kill", flag.ExitOnError)
+		purge := fs.Bool("purge", false, "also delete all captured session data off disk")
+		_ = fs.Parse(rest)
+		res, err := localAgentRequest("POST", "/screenlog/kill", map[string]interface{}{"purge": *purge})
+		printScreenlogResult(res, err)
 	case "status":
 		res, err := localAgentRequest("GET", "/screenlog/status", nil)
 		printScreenlogResult(res, err)
@@ -301,6 +310,7 @@ func screenlogUsage() {
   yaver screenlog start [flags]           begin a local recording
   yaver screenlog status                  live counters
   yaver screenlog stop                    finish
+  yaver screenlog kill [--purge]          PANIC: stop + disarm reboot-resume + master kill-switch (+ wipe data)
   yaver screenlog list                    past sessions
   yaver screenlog analyze <id>            time-by-app report ("what did it spend time on")
   yaver screenlog open [<id>]             print the local viewer URL

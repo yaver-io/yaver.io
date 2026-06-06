@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -183,7 +184,8 @@ type activeScreenlog struct {
 	nextIdx      int
 	totalBytes   int64
 	dropped      int
-	dirty        int // kept frames since last index.json save (throttle)
+	dirty        int   // kept frames since last index.json save (throttle)
+	lastSaveAt   int64 // unix ms of last index.json save (time-based flush)
 	lastErr      string
 	startedAt    time.Time
 }
@@ -221,6 +223,12 @@ func screenlogSessionDir(id string) (string, error) {
 	base, err := screenlogDir()
 	if err != nil {
 		return "", err
+	}
+	// Harden against path traversal: id reaches here straight from the HTTP
+	// path (/screenlog/<id>/...). Reject anything that isn't a flat session
+	// slug so a crafted id can't MkdirAll / ServeFile outside the root.
+	if id == "" || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+		return "", fmt.Errorf("invalid session id")
 	}
 	p := filepath.Join(base, id)
 	if err := os.MkdirAll(p, 0o700); err != nil {
@@ -573,6 +581,15 @@ var (
 // stays cheap regardless of session length.
 const screenlogSaveEvery = 10
 
+// screenlogSaveMaxIntervalMs bounds how stale the on-disk index may get vs the
+// frames actually written. A pure count throttle is not enough: on a
+// dedup-heavy static screen almost nothing is KEPT, so `dirty` rarely reaches
+// screenlogSaveEvery and the index can stay empty for minutes — then a reboot
+// or crash before the clean-stop save loses every captured frame from
+// index.json (the viewer/scrubber read frames[], not the jpgs on disk). With
+// this time bound, crash loss is capped at a few seconds regardless of cadence.
+const screenlogSaveMaxIntervalMs = 8000
+
 // captureOnce grabs every display and feeds each decoded frame through the
 // shared ingestFrame path.
 func (a *activeScreenlog) captureOnce(cfg ScreenlogConfig) {
@@ -672,7 +689,7 @@ func (a *activeScreenlog) ingestFrame(now int64, display int, img image.Image, a
 
 	removed := a.enforceFrameCapLocked(cfg, dir) + a.enforceDiskBudgetLocked(cfg, dir)
 	a.shiftSlotsLocked(removed)
-	a.saveIfDueLocked()
+	a.saveIfDueLocked(now)
 	a.mu.Unlock()
 }
 
@@ -732,12 +749,20 @@ func (a *activeScreenlog) shiftSlotsLocked(removed int) {
 	}
 }
 
-// saveIfDueLocked persists the index every screenlogSaveEvery kept frames.
-// Caller holds a.mu.
-func (a *activeScreenlog) saveIfDueLocked() {
+// saveIfDueLocked persists the index when EITHER enough kept frames have
+// accumulated OR enough capture-time has elapsed since the last save. The very
+// first kept frame always flushes, so a freshly-started (or just-resumed)
+// session is never represented on disk by an empty index. `now` is the frame's
+// capture timestamp so the time bound tracks the emulator's clock too. Caller
+// holds a.mu.
+func (a *activeScreenlog) saveIfDueLocked(now int64) {
 	a.dirty++
-	if a.dirty >= screenlogSaveEvery {
+	due := a.dirty >= screenlogSaveEvery ||
+		a.lastSaveAt == 0 ||
+		now-a.lastSaveAt >= screenlogSaveMaxIntervalMs
+	if due {
 		_ = saveScreenlogSession(a.session)
 		a.dirty = 0
+		a.lastSaveAt = now
 	}
 }
