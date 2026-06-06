@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	urlpkg "net/url"
 	"sort"
@@ -1523,38 +1524,78 @@ func FetchRelayServers(baseURL string) ([]RelayServerInfo, error) {
 	return cfg.RelayServers, nil
 }
 
+// registerDeviceMaxAttempts bounds how many times RegisterDevice retries a
+// transient failure. 4 attempts → 3 backoff sleeps (≈2.8s worst case).
+const registerDeviceMaxAttempts = 4
+
+// registerRetryBackoff is the delay before the Nth retry (attempt 1→400ms,
+// 2→800ms, 3→1600ms). Pulled out so tests can assert the schedule without
+// actually sleeping the wall clock.
+func registerRetryBackoff(attempt int) time.Duration {
+	return time.Duration(200*(1<<attempt)) * time.Millisecond
+}
+
 // RegisterDevice registers this desktop agent with the Convex backend.
+//
+// Convex mutations can return a transient 5xx — an OCC/write-conflict surfaced
+// as a 500, or a cold-start blip. Observed in the field as a registerDevice
+// 500 immediately after a fresh login that then succeeds on the very next
+// attempt. A single un-retried failure used to leave the agent permanently
+// half-registered: it still connects to the relay (so it can reach OUT and
+// `yaver ping` works outbound), but with no Convex device row peers can't see
+// or reach it and every heartbeat 500s with "Device not found" forever — only
+// a manual restart healed it. So we retry transient failures (network error or
+// 5xx) with a short backoff, and fail fast on 4xx (401 unauthorized,
+// "belongs to another user") which are not retryable.
 func RegisterDevice(baseURL string, r RegisterDeviceRequest) (string, error) {
 	body, err := json.Marshal(r)
 	if err != nil {
 		return "", fmt.Errorf("marshal register request: %w", err)
 	}
 
-	req, err := newBearerRequest("POST", baseURL+"/devices/register", r.Token, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("create register request: %w", err)
-	}
+	var lastErr error
+	for attempt := 1; attempt <= registerDeviceMaxAttempts; attempt++ {
+		// Fresh request + body reader each attempt — a Reader is consumed
+		// once, so it must be rebuilt before any retry.
+		req, err := newBearerRequest("POST", baseURL+"/devices/register", r.Token, bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("create register request: %w", err)
+		}
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("register device request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			// Network/transport error — transient, retry.
+			lastErr = fmt.Errorf("register device request: %w", err)
+		} else if resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			if r.HardwareProfile != nil {
+				markHardwareProfileSent()
+			}
+			var result struct {
+				Token string `json:"token"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return "", fmt.Errorf("decode register device response: %w", err)
+			}
+			return strings.TrimSpace(result.Token), nil
+		} else {
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("register device failed (status %d): %s", resp.StatusCode, string(respBody))
+			// 4xx is a client error (bad/expired token, device owned by
+			// another user) — not retryable, surface immediately so the
+			// caller's conflict/auth handling kicks in.
+			if resp.StatusCode < 500 {
+				return "", lastErr
+			}
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("register device failed (status %d): %s", resp.StatusCode, string(respBody))
+		if attempt < registerDeviceMaxAttempts {
+			log.Printf("[register] transient failure (attempt %d/%d): %v — retrying", attempt, registerDeviceMaxAttempts, lastErr)
+			time.Sleep(registerRetryBackoff(attempt))
+		}
 	}
-	if r.HardwareProfile != nil {
-		markHardwareProfileSent()
-	}
-	var result struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode register device response: %w", err)
-	}
-	return strings.TrimSpace(result.Token), nil
+	return "", lastErr
 }
 
 // ErrAuthExpired is returned when a 401 response indicates the token has expired.
