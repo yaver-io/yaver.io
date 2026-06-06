@@ -591,6 +591,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/screenlog/drivers", s.auth(s.handleScreenlogDrivers))
 	mux.HandleFunc("/screenlog/list", s.auth(s.handleScreenlogList))
 	mux.HandleFunc("/screenlog/policy", s.auth(s.handleScreenlogPolicy))
+	mux.HandleFunc("/screenlog/autostart", s.auth(s.handleScreenlogAutostart))
 	mux.HandleFunc("/screenlog/audit", s.auth(s.handleScreenlogAudit))
 	mux.HandleFunc("/screenlog/analyze", s.auth(s.handleScreenlogAnalyze))
 	mux.HandleFunc("/screenlog/", s.auth(s.handleScreenlogDetail))
@@ -13059,6 +13060,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			CaptureInput  *bool  `json:"capture_input"`
 			Ephemeral     *bool  `json:"ephemeral"`
 			AllowRawText  *bool  `json:"allow_raw_text"`
+			Persist       bool   `json:"persist"`
 		}
 		json.Unmarshal(call.Arguments, &body)
 		cfg := defaultScreenlogConfig()
@@ -13098,12 +13100,27 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if body.Dedup != nil {
 			cfg.Dedup = *body.Dedup
 		}
+		cfg.normalize()
 		caller := screenlogCaller{Remote: clientAddr != "" && !isLoopbackAddr(clientAddr)}
 		sess, err := startScreenlogGuarded(cfg, body.Title, caller)
 		if err != nil {
 			return mcpToolError(err.Error())
 		}
-		return mcpToolJSON(map[string]interface{}{"session": sess, "viewUrl": "/screenlog/" + sess.ID})
+		if body.Persist {
+			_ = setScreenlogAutostart(true, cfg, body.Title)
+		}
+		return mcpToolJSON(map[string]interface{}{"session": sess, "viewUrl": "/screenlog/" + sess.ID, "persisted": body.Persist})
+	case "screenlog_autostart":
+		var body struct {
+			Set     bool `json:"set"`
+			Enabled bool `json:"enabled"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		if body.Set {
+			_ = setScreenlogAutostart(body.Enabled, defaultScreenlogConfig(), "")
+		}
+		a, _ := loadScreenlogAutostart()
+		return mcpToolJSON(map[string]interface{}{"autostart": a})
 	case "screenlog_stop":
 		sess, err := stopScreenlog()
 		if err != nil {

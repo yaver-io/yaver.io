@@ -15,7 +15,7 @@ import (
 
 // activeWindowInfo returns (appName, windowTitle), either possibly "".
 func activeWindowInfo() (string, string) {
-	if runtime.GOOS == "linux" && isWSLHost() && lookPathOK("powershell.exe") {
+	if runtime.GOOS == "linux" && isWSLHost() && wslHasPowershell() {
 		return windowsActiveWindow(true)
 	}
 	switch runtime.GOOS {
@@ -73,7 +73,11 @@ func linuxActiveWindow() (string, string) {
 func windowsActiveWindow(fromWSL bool) (string, string) {
 	psBin := "powershell"
 	if fromWSL {
-		psBin = "powershell.exe"
+		if p := wslPowershellPath(); p != "" {
+			psBin = p
+		} else {
+			psBin = "powershell.exe"
+		}
 	}
 	// Double-quote here-string + a literal "|" delimiter so the whole
 	// script lives in a Go raw string with no escaping. $wpid avoids the

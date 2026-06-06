@@ -67,6 +67,28 @@ func winPathToWSL(winPath string) string {
 	return p
 }
 
+// wslPowershellPath resolves powershell.exe for WSL→Windows interop. Over
+// SSH or inside a systemd service / logon task the Windows dirs are NOT on
+// $PATH, so fall back to the well-known absolute path. Returns "" if the
+// Windows host PowerShell can't be found. This is what lets screenlog work
+// from an autostarted agent with zero PATH plumbing.
+func wslPowershellPath() string {
+	if p, err := exec.LookPath("powershell.exe"); err == nil {
+		return p
+	}
+	for _, fb := range []string{
+		"/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+		"/mnt/c/Windows/SysWOW64/WindowsPowerShell/v1.0/powershell.exe",
+	} {
+		if _, err := os.Stat(fb); err == nil {
+			return fb
+		}
+	}
+	return ""
+}
+
+func wslHasPowershell() bool { return wslPowershellPath() != "" }
+
 // captureViaPowerShell runs the PS capture and returns the PNG bytes.
 // When fromWSL is true the printed Windows path is mapped to /mnt/c and
 // the file is read (and removed) from there; otherwise it's a native
@@ -74,7 +96,10 @@ func winPathToWSL(winPath string) string {
 func captureViaPowerShell(all, fromWSL bool) ([]byte, error) {
 	psBin := "powershell"
 	if fromWSL {
-		psBin = "powershell.exe"
+		psBin = wslPowershellPath()
+		if psBin == "" {
+			return nil, fmt.Errorf("powershell.exe not found (WSL interop unavailable)")
+		}
 	}
 	cmd := exec.Command(psBin, "-NoProfile", "-NonInteractive", "-Command", powershellCaptureScript(all))
 	out, err := cmd.Output()
@@ -165,7 +190,7 @@ func wslShouldUseHost(cfg ScreenlogConfig) bool {
 	case "wslg":
 		return false
 	default: // auto — prefer the Windows desktop if interop is available
-		return lookPathOK("powershell.exe")
+		return wslHasPowershell()
 	}
 }
 
@@ -176,7 +201,7 @@ func captureScreenlogFrames(cfg ScreenlogConfig) ([]rawScreenlogFrame, error) {
 
 	if runtime.GOOS == "linux" && isWSLHost() {
 		if wslShouldUseHost(cfg) {
-			if !lookPathOK("powershell.exe") {
+			if !wslHasPowershell() {
 				return nil, fmt.Errorf("WSL host capture needs powershell.exe on PATH (Windows interop) — or set wslTarget=wslg")
 			}
 			data, err := captureViaPowerShell(all, true)

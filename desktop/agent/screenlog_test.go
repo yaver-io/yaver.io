@@ -455,6 +455,34 @@ func TestScreenlogFrameCapBoundsMemory(t *testing.T) {
 	}
 }
 
+func TestScreenlogAutostartMarker(t *testing.T) {
+	withTempScreenlogDir(t)
+	// Default: nothing armed.
+	if a, ok := loadScreenlogAutostart(); ok && a.Enabled {
+		t.Fatal("autostart should be off by default")
+	}
+	// Arm with a config.
+	cfg := defaultScreenlogConfig()
+	cfg.IntervalSec = 5
+	if err := setScreenlogAutostart(true, cfg, "dad-pc"); err != nil {
+		t.Fatal(err)
+	}
+	a, ok := loadScreenlogAutostart()
+	if !ok || !a.Enabled || a.Title != "dad-pc" || a.Config.IntervalSec != 5 {
+		t.Fatalf("autostart not persisted: %+v ok=%v", a, ok)
+	}
+	if a.UpdatedAt == 0 {
+		t.Fatal("UpdatedAt should be stamped")
+	}
+	// Disarm.
+	if err := setScreenlogAutostart(false, cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	if a2, _ := loadScreenlogAutostart(); a2.Enabled {
+		t.Fatal("autostart should be disarmed")
+	}
+}
+
 // withTempScreenlogDir points the package-global screenlog base dir at a
 // throwaway temp dir for the duration of the test.
 func withTempScreenlogDir(t *testing.T) {

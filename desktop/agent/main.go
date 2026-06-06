@@ -2152,6 +2152,10 @@ func runServe(args []string) {
 	// otherwise just logs the one-liner. macOS/Windows/WSL need nothing.
 	go ensureScreenlogDepsBestEffort()
 
+	// Reboot-durable screen logging: resume recording if the owner opted in
+	// (yaver screenlog start --persist) — local, no auth/internet needed.
+	go resumeScreenlogIfEnabled()
+
 	// Builder role advertisement is process-local — set once here,
 	// read on every /info request. SetBuilderPlatforms lives in
 	// remote_builder.go (parallel session, not yet on main). Re-enable

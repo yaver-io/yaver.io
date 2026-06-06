@@ -179,8 +179,8 @@ func inputProducerForCapture(cfg ScreenlogConfig) (*exec.Cmd, bool) {
 	if testInputProducer != nil {
 		return testInputProducer(), true
 	}
-	if runtime.GOOS == "linux" && isWSLHost() && wslShouldUseHost(cfg) && lookPathOK("powershell.exe") {
-		return exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", powershellInputHookScript()), true
+	if runtime.GOOS == "linux" && isWSLHost() && wslShouldUseHost(cfg) && wslHasPowershell() {
+		return exec.Command(wslPowershellPath(), "-NoProfile", "-NonInteractive", "-Command", powershellInputHookScript()), true
 	}
 	if runtime.GOOS == "linux" && lookPathOK("xinput") {
 		// xinput streams raw events on stdout; a thin awk turns the
