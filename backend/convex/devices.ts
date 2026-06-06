@@ -82,6 +82,52 @@ const HEARTBEAT_STALE_MS = 360 * 1000;
  * the explicit isOnline flag with heartbeat freshness. Use this
  * everywhere a query returns isOnline to clients.
  */
+// TAG_PATTERN — fleet labels are short, lower-case, URL/selector-safe.
+const TAG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
+
+function normalizeTag(raw: string): string | null {
+  const t = raw.trim().toLowerCase();
+  return TAG_PATTERN.test(t) ? t : null;
+}
+
+// deriveAutoTags computes the fleet labels we seed at first registration
+// from facts the agent already reports: platform, arch, gpu presence,
+// docker, and edge/local-inference capability. Selector-friendly so a
+// brand-new box is immediately addressable as `{tags:['gpu']}` etc.
+// without the user labelling anything. Kept additive + reality-derived;
+// the user owns the array afterward via setDeviceTags.
+function deriveAutoTags(args: {
+  platform: string;
+  deviceClass?: string;
+  hardwareProfile?: Record<string, unknown> | undefined;
+  edgeProfile?: { supportsLocalInference?: boolean } | undefined;
+}): string[] {
+  const tags = new Set<string>();
+  tags.add(args.platform); // macos | windows | linux | android | ios
+  if (args.platform === "macos" || args.platform === "windows" || args.platform === "linux") {
+    tags.add("desktop-class");
+  }
+  if (args.platform === "android" || args.platform === "ios") tags.add("mobile");
+  if (args.deviceClass) tags.add(args.deviceClass); // desktop | edge-mobile | server
+
+  const hw = args.hardwareProfile ?? {};
+  const arch = String(hw.arch ?? "").toLowerCase();
+  if (arch.includes("arm") || arch.includes("aarch64")) tags.add("arm64");
+  else if (arch.includes("x86") || arch.includes("amd64") || arch.includes("x64")) tags.add("x64");
+
+  const gpu = String(hw.gpu ?? "").toLowerCase();
+  if (gpu && gpu !== "none" && gpu !== "unknown") {
+    tags.add("gpu");
+    if (gpu.includes("nvidia") || gpu.includes("geforce") || gpu.includes("rtx") || gpu.includes("cuda")) tags.add("nvidia");
+    if (gpu.includes("apple") || gpu.includes("m1") || gpu.includes("m2") || gpu.includes("m3") || gpu.includes("m4")) tags.add("apple-gpu");
+  }
+  if (typeof hw.hasDocker === "boolean" ? hw.hasDocker : false) tags.add("docker");
+
+  if (args.edgeProfile?.supportsLocalInference) tags.add("local-inference");
+
+  return [...tags].map(normalizeTag).filter((t): t is string => !!t);
+}
+
 function deriveIsOnline(d: { isOnline: boolean; lastHeartbeat: number }): boolean {
   if (!d.isOnline) return false;
   const age = Date.now() - d.lastHeartbeat;
@@ -609,6 +655,16 @@ export const registerDevice = mutation({
       deviceId: args.deviceId,
       name: resolvedName,
       ...(autoAlias ? { alias: autoAlias } : {}),
+      // Auto-seed fleet labels from reported facts so the box is
+      // selector-addressable the moment it registers. User-owned after
+      // this via setDeviceTags (we only seed on first insert, never
+      // overwrite on re-register).
+      tags: deriveAutoTags({
+        platform: args.platform,
+        deviceClass: args.deviceClass,
+        hardwareProfile: hw,
+        edgeProfile: args.edgeProfile,
+      }),
       platform: args.platform,
       deviceClass: args.deviceClass,
       edgeProfile: args.edgeProfile,
@@ -1636,6 +1692,113 @@ export const setDeviceAlias = mutation({
 
     await ctx.db.patch(device._id, { alias: raw });
     return { ok: true, alias: raw };
+  },
+});
+
+/**
+ * Set / add / remove fleet tags on a device. Owner-scoped (token-hash).
+ * Three modes (checked in order):
+ *   - `tags` present → replace the whole array.
+ *   - `add` / `remove` present → mutate the existing array.
+ * Tags are normalized (lower-case, [a-z0-9._-], ≤32 chars) and deduped;
+ * invalid tags are dropped silently rather than failing the whole call.
+ * Powers `yaver tag` / the SDK `machine.tag()` and selector queries.
+ */
+export const setDeviceTags = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    tags: v.optional(v.array(v.string())),
+    add: v.optional(v.array(v.string())),
+    remove: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const norm = (xs: string[] | undefined) =>
+      (xs ?? []).map(normalizeTag).filter((t): t is string => !!t);
+
+    let next: string[];
+    if (args.tags !== undefined) {
+      next = norm(args.tags);
+    } else {
+      const removeSet = new Set(norm(args.remove));
+      next = [...(device.tags ?? []).filter((t) => !removeSet.has(t)), ...norm(args.add)];
+    }
+    // dedupe, stable order
+    next = [...new Set(next)];
+
+    await ctx.db.patch(device._id, { tags: next });
+    return { ok: true, tags: next };
+  },
+});
+
+/**
+ * Selector query for the Fleet SDK: return the caller's devices that
+ * match a tag/platform/online filter. `match` controls tag semantics:
+ *   - "all" (default): device must carry every requested tag.
+ *   - "any": device carries at least one requested tag.
+ * Empty `tags` matches all the caller's devices (subject to other
+ * filters). Returns a compact, privacy-safe projection (no paths/secrets)
+ * with derived online status — exactly what `fleet.select(...)` needs to
+ * resolve a transport per machine.
+ */
+export const selectDevices = query({
+  args: {
+    tokenHash: v.string(),
+    tags: v.optional(v.array(v.string())),
+    match: v.optional(v.union(v.literal("all"), v.literal("any"))),
+    platform: v.optional(v.string()),
+    online: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const want = (args.tags ?? [])
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean);
+    const match = args.match ?? "all";
+
+    const devices = await ctx.db
+      .query("devices")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .collect();
+
+    const out = [];
+    for (const d of devices) {
+      const tags = d.tags ?? [];
+      if (want.length > 0) {
+        const has = match === "all"
+          ? want.every((t) => tags.includes(t))
+          : want.some((t) => tags.includes(t));
+        if (!has) continue;
+      }
+      if (args.platform && d.platform !== args.platform) continue;
+      const online = deriveIsOnline(d);
+      if (args.online !== undefined && online !== args.online) continue;
+      out.push({
+        deviceId: d.deviceId,
+        name: d.name,
+        alias: d.alias ?? null,
+        platform: d.platform,
+        tags,
+        online,
+        quicHost: d.quicHost,
+        quicPort: d.quicPort,
+        localIps: d.localIps ?? [],
+        publicEndpoints: d.publicEndpoints ?? [],
+      });
+    }
+    return { devices: out };
   },
 });
 
