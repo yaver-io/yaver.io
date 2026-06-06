@@ -29,6 +29,10 @@ func runMachine(args []string) {
 		runMachineHealthCmd()
 	case "onboarding":
 		runMachineOnboarding(args[1:])
+	case "edge-loop":
+		runMachineEdgeLoop(args[1:])
+	case "companion":
+		emitCompanionManifest(args[1:])
 	case "help", "--help", "-h":
 		printMachineUsage()
 	default:
@@ -45,6 +49,8 @@ Usage:
   yaver machine health            Print the latest disk + SMART snapshot
   yaver machine scan              Force a fresh scan now
   yaver machine onboarding ...    Configure OpenAI / GitHub / GitLab on this or a remote machine
+  yaver machine edge-loop ...     Durable poll→understand→Talos-sync loop (RTU/TCP); run as a companion service
+  yaver machine companion ...     Print a yaver.companion.yaml that runs edge-loop as a reboot-durable service
 
 When the agent is running as a daemon, it scans every 10
 minutes and fires a notification whenever a filesystem crosses

@@ -101,27 +101,41 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_scan_registers",
-		Description: "Active read-scan a contiguous register range over Modbus-TCP (read-only presence/values). fc 3=holding, 4=input.",
+		Description: "Active read-scan a contiguous register range. Modbus-TCP via `addr` (host:port) OR Modbus-RTU via `device` (e.g. /dev/ttyUSB0 or a /dev/serial/by-id link) + `baud`. fc 3=holding, 4=input. Read-only.",
 		Schema: ghostJSONSchema(map[string]interface{}{
-			"addr":  map[string]interface{}{"type": "string", "description": "host:port of the Modbus-TCP slave (e.g. 10.0.0.50:502)"},
-			"unit":  map[string]interface{}{"type": "integer", "description": "unit/slave id (default 1)"},
-			"fc":    map[string]interface{}{"type": "integer", "description": "3=holding, 4=input (default 3)"},
-			"start": map[string]interface{}{"type": "integer"},
-			"count": map[string]interface{}{"type": "integer"},
-		}, "addr", "start", "count"),
+			"addr":   map[string]interface{}{"type": "string", "description": "host:port of the Modbus-TCP slave (e.g. 10.0.0.50:502)"},
+			"device": map[string]interface{}{"type": "string", "description": "serial device for Modbus-RTU (e.g. /dev/ttyUSB0); use instead of addr"},
+			"baud":   map[string]interface{}{"type": "integer", "description": "RTU baud (default 9600)"},
+			"unit":   map[string]interface{}{"type": "integer", "description": "unit/slave id (default 1)"},
+			"fc":     map[string]interface{}{"type": "integer", "description": "3=holding, 4=input (default 3)"},
+			"start":  map[string]interface{}{"type": "integer"},
+			"count":  map[string]interface{}{"type": "integer"},
+		}, "start", "count"),
 		Handler: machineScanHandler,
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_read",
-		Description: "Read specific registers over Modbus-TCP (for verify / current value). Returns raw uint16 values.",
+		Description: "Read specific registers for verify / current value. Modbus-TCP via `addr` OR Modbus-RTU via `device`+`baud`. Returns raw uint16 values.",
 		Schema: ghostJSONSchema(map[string]interface{}{
-			"addr":  map[string]interface{}{"type": "string"},
-			"unit":  map[string]interface{}{"type": "integer"},
-			"fc":    map[string]interface{}{"type": "integer"},
-			"start": map[string]interface{}{"type": "integer"},
-			"count": map[string]interface{}{"type": "integer"},
-		}, "addr", "start", "count"),
+			"addr":   map[string]interface{}{"type": "string"},
+			"device": map[string]interface{}{"type": "string", "description": "serial device for Modbus-RTU"},
+			"baud":   map[string]interface{}{"type": "integer"},
+			"unit":   map[string]interface{}{"type": "integer"},
+			"fc":     map[string]interface{}{"type": "integer"},
+			"start":  map[string]interface{}{"type": "integer"},
+			"count":  map[string]interface{}{"type": "integer"},
+		}, "start", "count"),
 		Handler: machineReadHandler,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "machine_ports",
+		Description: "List serial devices on this machine (ttyUSB/ttyACM + stable /dev/serial/by-id links + kernel driver). With `autobaud` + `device`, passively probe the bus at each candidate baud and report the one with the most CRC-valid Modbus frames. Linux-only.",
+		Schema: ghostJSONSchema(map[string]interface{}{
+			"autobaud": map[string]interface{}{"type": "boolean", "description": "probe baud rates on `device` (needs live bus traffic)"},
+			"device":   map[string]interface{}{"type": "string", "description": "device to auto-baud (required when autobaud=true)"},
+			"windowMs": map[string]interface{}{"type": "integer", "description": "per-baud probe window in ms (default 1500)"},
+		}),
+		Handler: machinePortsHandler,
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_understand",
@@ -139,16 +153,18 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_write",
-		Description: "Write one holding register over Modbus-TCP, then read it back to verify. Range-clamped: provide min/max; refuses if value is outside. High-risk (set allowHighRisk=true only after upstream approval). Safety functions are never network-writable.",
+		Description: "Write one holding register then read it back to verify. Modbus-TCP via `addr` OR Modbus-RTU via `device`+`baud`. Range-clamped: provide min/max; refuses if value is outside. High-risk (set allowHighRisk=true only after upstream approval). Safety functions are never network-writable.",
 		Schema: ghostJSONSchema(map[string]interface{}{
 			"addr":          map[string]interface{}{"type": "string"},
+			"device":        map[string]interface{}{"type": "string", "description": "serial device for Modbus-RTU"},
+			"baud":          map[string]interface{}{"type": "integer"},
 			"unit":          map[string]interface{}{"type": "integer"},
 			"reg":           map[string]interface{}{"type": "integer"},
 			"value":         map[string]interface{}{"type": "integer"},
 			"min":           map[string]interface{}{"type": "integer"},
 			"max":           map[string]interface{}{"type": "integer"},
 			"allowHighRisk": map[string]interface{}{"type": "boolean"},
-		}, "addr", "reg", "value"),
+		}, "reg", "value"),
 		Handler: machineWriteHandler,
 	})
 	registerOpsVerb(opsVerbSpec{
@@ -168,6 +184,83 @@ func init() {
 		}, "deviceId"),
 		Handler: machineSyncHandler,
 	})
+
+	// ── G-code / CNC class (separate protocol from Modbus; shares only the
+	// serial port + bus arbitration). Line-oriented ok/error flow control. ──
+	registerOpsVerb(opsVerbSpec{
+		Name:        "gcode_open",
+		Description: "Open a CNC / 3D-printer controller on a serial device (GRBL/Marlin/generic). Takes exclusive ownership of the bus. Returns a session id used by gcode_send/stream/status/estop/close.",
+		Schema: ghostJSONSchema(map[string]interface{}{
+			"device":  map[string]interface{}{"type": "string", "description": "serial device, e.g. /dev/ttyACM0 or a /dev/serial/by-id link"},
+			"baud":    map[string]interface{}{"type": "integer", "description": "baud (default 115200)"},
+			"dialect": map[string]interface{}{"type": "string", "enum": []string{"grbl", "marlin", "generic"}, "description": "controller dialect (default generic)"},
+		}, "device"),
+		Handler: gcodeOpenHandler,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "gcode_send",
+		Description: "Send one G-code line and wait for the controller's ok/error. Single motion lines are soft-limit checked when limits are supplied.",
+		Schema: ghostJSONSchema(map[string]interface{}{
+			"session":       map[string]interface{}{"type": "string"},
+			"line":          map[string]interface{}{"type": "string"},
+			"limits":        gcodeLimitsSchema(),
+			"allowHighRisk": map[string]interface{}{"type": "boolean", "description": "required to send a motion line with no soft-limit envelope"},
+		}, "session", "line"),
+		Handler: gcodeSendHandler,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "gcode_stream",
+		Description: "Stream a G-code program with ok-gated flow control. ALWAYS validated against the soft-limit envelope first; dryRun validates without sending. An out-of-envelope move aborts before any transmission.",
+		Schema: ghostJSONSchema(map[string]interface{}{
+			"session": map[string]interface{}{"type": "string"},
+			"lines":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"program": map[string]interface{}{"type": "string", "description": "whole program as one newline-separated string (alternative to lines)"},
+			"limits":  gcodeLimitsSchema(),
+			"dryRun":  map[string]interface{}{"type": "boolean"},
+		}, "session"),
+		Handler: gcodeStreamHandler,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "gcode_status",
+		Description: "Query live controller state (GRBL realtime `?`, Marlin M114).",
+		Schema: ghostJSONSchema(map[string]interface{}{
+			"session": map[string]interface{}{"type": "string"},
+		}, "session"),
+		Handler: gcodeStatusHandler,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "gcode_estop",
+		Description: "Emergency stop: realtime feed-hold + soft-reset (GRBL) / M112 (Marlin). UN-gated and bypasses any in-flight stream — stopping never needs approval.",
+		Schema: ghostJSONSchema(map[string]interface{}{
+			"session": map[string]interface{}{"type": "string"},
+		}, "session"),
+		Handler: gcodeEStopHandler,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "gcode_close",
+		Description: "Close a G-code session and release the serial bus.",
+		Schema: ghostJSONSchema(map[string]interface{}{
+			"session": map[string]interface{}{"type": "string"},
+		}, "session"),
+		Handler: gcodeCloseHandler,
+	})
+}
+
+// gcodeLimitsSchema is the soft-limit envelope shared by gcode_send/stream.
+func gcodeLimitsSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "object",
+		"description": "soft-limit envelope in mm; when enabled, out-of-box moves are refused",
+		"properties": map[string]interface{}{
+			"enabled": map[string]interface{}{"type": "boolean"},
+			"xMin":    map[string]interface{}{"type": "number"},
+			"xMax":    map[string]interface{}{"type": "number"},
+			"yMin":    map[string]interface{}{"type": "number"},
+			"yMax":    map[string]interface{}{"type": "number"},
+			"zMin":    map[string]interface{}{"type": "number"},
+			"zMax":    map[string]interface{}{"type": "number"},
+		},
+	}
 }
 
 func machineStatusHandler(c OpsContext, payload json.RawMessage) OpsResult {
@@ -271,11 +364,13 @@ func machineScanHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		return *deny
 	}
 	var p struct {
-		Addr  string `json:"addr"`
-		Unit  int    `json:"unit"`
-		FC    int    `json:"fc"`
-		Start int    `json:"start"`
-		Count int    `json:"count"`
+		Addr   string `json:"addr"`
+		Device string `json:"device"`
+		Baud   int    `json:"baud"`
+		Unit   int    `json:"unit"`
+		FC     int    `json:"fc"`
+		Start  int    `json:"start"`
+		Count  int    `json:"count"`
 	}
 	if r := ghostUnmarshal(payload, &p); r != nil {
 		return *r
@@ -283,7 +378,18 @@ func machineScanHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if p.Unit == 0 {
 		p.Unit = 1
 	}
-	sch, err := eng.ScanTCP(p.Addr, byte(p.Unit), byte(p.FC), p.Start, p.Count, machineHTTPTimeout)
+	var (
+		sch machine.Schematic
+		err error
+	)
+	switch {
+	case strings.TrimSpace(p.Device) != "":
+		sch, err = eng.ScanRTU(p.Device, p.Baud, byte(p.Unit), byte(p.FC), p.Start, p.Count, machineHTTPTimeout)
+	case strings.TrimSpace(p.Addr) != "":
+		sch, err = eng.ScanTCP(p.Addr, byte(p.Unit), byte(p.FC), p.Start, p.Count, machineHTTPTimeout)
+	default:
+		return OpsResult{OK: false, Code: "bad_payload", Error: "provide addr (Modbus-TCP) or device (Modbus-RTU)"}
+	}
 	if err != nil {
 		return OpsResult{OK: false, Code: "machine_failed", Error: err.Error()}
 	}
@@ -296,11 +402,13 @@ func machineReadHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		return *deny
 	}
 	var p struct {
-		Addr  string `json:"addr"`
-		Unit  int    `json:"unit"`
-		FC    int    `json:"fc"`
-		Start int    `json:"start"`
-		Count int    `json:"count"`
+		Addr   string `json:"addr"`
+		Device string `json:"device"`
+		Baud   int    `json:"baud"`
+		Unit   int    `json:"unit"`
+		FC     int    `json:"fc"`
+		Start  int    `json:"start"`
+		Count  int    `json:"count"`
 	}
 	if r := ghostUnmarshal(payload, &p); r != nil {
 		return *r
@@ -308,11 +416,22 @@ func machineReadHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if p.Unit == 0 {
 		p.Unit = 1
 	}
-	vals, err := eng.ReadTCP(p.Addr, byte(p.Unit), byte(p.FC), p.Start, p.Count, machineHTTPTimeout)
+	var (
+		vals []uint16
+		err  error
+	)
+	switch {
+	case strings.TrimSpace(p.Device) != "":
+		vals, err = eng.ReadRTU(p.Device, p.Baud, byte(p.Unit), byte(p.FC), p.Start, p.Count, machineHTTPTimeout)
+	case strings.TrimSpace(p.Addr) != "":
+		vals, err = eng.ReadTCP(p.Addr, byte(p.Unit), byte(p.FC), p.Start, p.Count, machineHTTPTimeout)
+	default:
+		return OpsResult{OK: false, Code: "bad_payload", Error: "provide addr (Modbus-TCP) or device (Modbus-RTU)"}
+	}
 	if err != nil {
 		return OpsResult{OK: false, Code: "machine_failed", Error: err.Error()}
 	}
-	return OpsResult{OK: true, Initial: map[string]interface{}{"values": vals, "start": p.Start, "count": p.Count}}
+	return OpsResult{OK: true, Initial: map[string]interface{}{"values": vals, "start": p.Start, "count": p.Count, "transport": machineTransport(p.Device)}}
 }
 
 func machineWriteHandler(c OpsContext, payload json.RawMessage) OpsResult {
@@ -322,6 +441,8 @@ func machineWriteHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	}
 	var p struct {
 		Addr          string `json:"addr"`
+		Device        string `json:"device"`
+		Baud          int    `json:"baud"`
 		Unit          int    `json:"unit"`
 		Reg           int    `json:"reg"`
 		Value         int    `json:"value"`
@@ -347,13 +468,63 @@ func machineWriteHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if (p.Min == nil || p.Max == nil) && !p.AllowHighRisk {
 		return OpsResult{OK: false, Code: "needs_approval", Error: "write without explicit min/max range is high-risk; set allowHighRisk=true after upstream approval"}
 	}
-	rb, err := eng.WriteTCP(p.Addr, byte(p.Unit), p.Reg, uint16(p.Value), machineHTTPTimeout)
+	var (
+		rb  uint16
+		err error
+	)
+	switch {
+	case strings.TrimSpace(p.Device) != "":
+		rb, err = eng.WriteRTU(p.Device, p.Baud, byte(p.Unit), p.Reg, uint16(p.Value), machineHTTPTimeout)
+	case strings.TrimSpace(p.Addr) != "":
+		rb, err = eng.WriteTCP(p.Addr, byte(p.Unit), p.Reg, uint16(p.Value), machineHTTPTimeout)
+	default:
+		return OpsResult{OK: false, Code: "bad_payload", Error: "provide addr (Modbus-TCP) or device (Modbus-RTU)"}
+	}
 	if err != nil {
 		return OpsResult{OK: false, Code: "machine_failed", Error: err.Error()}
 	}
 	return OpsResult{OK: true, Initial: map[string]interface{}{
-		"reg": p.Reg, "wrote": p.Value, "readback": rb, "verified": int(rb) == p.Value,
+		"reg": p.Reg, "wrote": p.Value, "readback": rb, "verified": int(rb) == p.Value, "transport": machineTransport(p.Device),
 	}}
+}
+
+// machineTransport labels a result by the path it took.
+func machineTransport(device string) string {
+	if strings.TrimSpace(device) != "" {
+		return "modbus_rtu"
+	}
+	return "modbus_tcp"
+}
+
+func machinePortsHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	eng, deny := machineEngineForOps(c)
+	if deny != nil {
+		return *deny
+	}
+	var p struct {
+		AutoBaud bool   `json:"autobaud"`
+		Device   string `json:"device"`
+		WindowMs int    `json:"windowMs"`
+	}
+	if r := ghostUnmarshal(payload, &p); r != nil {
+		return *r
+	}
+	ports, err := eng.ListSerialPorts()
+	if err != nil && !p.AutoBaud {
+		return OpsResult{OK: false, Code: "unsupported", Error: err.Error()}
+	}
+	out := map[string]interface{}{"ports": ports, "serialSupported": machine.Supported()}
+	if p.AutoBaud {
+		if strings.TrimSpace(p.Device) == "" {
+			return OpsResult{OK: false, Code: "bad_payload", Error: "autobaud needs a device"}
+		}
+		ab, aerr := eng.AutoBaud(p.Device, p.WindowMs)
+		if aerr != nil {
+			return OpsResult{OK: false, Code: "machine_failed", Error: aerr.Error()}
+		}
+		out["autobaud"] = ab
+	}
+	return OpsResult{OK: true, Initial: out}
 }
 
 func machineUnderstandHandler(c OpsContext, payload json.RawMessage) OpsResult {
@@ -491,10 +662,18 @@ func machinePost(ctx context.Context, url, secret string, body any) (int, error)
 const machineUnderstandSystemPrompt = `You are an industrial controls reverse-engineering assistant for wire-harness machines (cut/strip/crimp). You are given observed Modbus register statistics and (optionally) ground-truth expected values from the job that was running. Infer, for each register, a human meaning (e.g. cut_length, strip_left, strip_right, quantity, speed, crimp_height, blade_depth, alarm_word, piece_counter), the engineering unit (mm, pcs, etc.), a numeric scale (observed_value * scale = engineering_value), and a confidence 0..1. Use the ground-truth labels to anchor: if a label says lengthMm=1250 and a setpoint register reads 5000, infer scale 0.25 and name cut_length. Respond ONLY with a compact JSON object: {"registers":[{"addr":N,"unit":U,"func":F,"name":"...","unit2":"mm","scale":0.25,"kind":"setpoint|live|counter|alarm|unknown","confidence":0.0}], "notes":"..."}.`
 
 func machineUnderstandLLM(ctx context.Context, baseURL, apiKey, model string, sch machine.Schematic, labels map[string]any) (machine.Schematic, error) {
-	baseURL = firstNonEmptyStr(baseURL, os.Getenv("GHOST_VISION_BASE_URL"), os.Getenv("OPENAI_BASE_URL"), localOllamaV1)
-	apiKey = firstNonEmptyStr(apiKey, os.Getenv("GHOST_VISION_API_KEY"), os.Getenv("OPENAI_API_KEY"))
+	// Inference offload: a Raspberry Pi can't run a useful model, so resolution
+	// prefers an explicitly pointed endpoint (a paired beefy peer, or a rented
+	// GPU from the GPU-rental lane) before falling back to the on-box Ollama. Set
+	// YAVER_MACHINE_UNDERSTAND_URL on the edge box to your Mac / GPU host.
+	baseURL = firstNonEmptyStr(baseURL,
+		os.Getenv("YAVER_MACHINE_UNDERSTAND_URL"),
+		os.Getenv("GHOST_VISION_BASE_URL"), os.Getenv("OPENAI_BASE_URL"), localOllamaV1)
+	apiKey = firstNonEmptyStr(apiKey,
+		os.Getenv("YAVER_MACHINE_UNDERSTAND_API_KEY"),
+		os.Getenv("GHOST_VISION_API_KEY"), os.Getenv("OPENAI_API_KEY"))
 	if model == "" {
-		model = firstNonEmptyStr(os.Getenv("GHOST_VISION_MODEL"), os.Getenv("OPENAI_MODEL"))
+		model = firstNonEmptyStr(os.Getenv("YAVER_MACHINE_UNDERSTAND_MODEL"), os.Getenv("GHOST_VISION_MODEL"), os.Getenv("OPENAI_MODEL"))
 		if model == "" {
 			if strings.Contains(baseURL, "11434") {
 				model = "llama3.1"

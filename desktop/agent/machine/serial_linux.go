@@ -36,13 +36,16 @@ func baudConst(b int) uint32 {
 	}
 }
 
-// openSerial opens a serial device in raw 8N1 mode at the given baud for
-// passive Modbus-RTU sniffing. VMIN=0/VTIME=1 gives a 0.1s read timeout so the
-// reader loop can check its stop channel.
-func openSerial(dev string, baud int) (io.ReadCloser, error) {
+// openSerial opens a serial device in raw 8N1 mode at the given baud. The port
+// is opened O_RDWR so the same handle drives both passive sniffing (read-only
+// use) and the active RTU master (read+write). VMIN=0/VTIME=1 gives a 0.1s read
+// timeout so reader loops can check their stop channel and so the RTU master's
+// framed reader makes forward progress without blocking forever.
+func openSerial(dev string, baud int) (io.ReadWriteCloser, error) {
 	if baud == 0 {
 		baud = 9600
 	}
+	dev = resolveSerialDevice(dev)
 	fd, err := unix.Open(dev, unix.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
