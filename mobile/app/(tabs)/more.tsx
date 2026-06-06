@@ -2969,7 +2969,7 @@ export default function MoreScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={[s.label, { color: c.textPrimary }]}>Screen Monitor</Text>
                   <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                    Local screen black box \u2014 record, analyze, what a box spent time on
+                    Local screen black box {"\u2014"} record, analyze, what a box spent time on
                   </Text>
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
@@ -3027,7 +3027,7 @@ export default function MoreScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={[s.label, { color: c.textPrimary }]}>Voice &amp; Speech Test</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                  Test STT + TTS \u2014 on-device or your API key
+                  Test STT + TTS {"\u2014"} on-device or your API key
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
