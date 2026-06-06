@@ -1183,6 +1183,16 @@ export default function DevicesScreen() {
           </Pressable>
         </View>
 
+        {/* Zero-touch: claim a Yaver-powered device by scanning its label QR
+            (DPP-style). Opens the camera scanner; the box self-credentials
+            on its next boot. See app/provision-add.tsx. */}
+        <Pressable
+          style={[styles.addDeviceBtn, { borderColor: c.accent }]}
+          onPress={() => router.push("/provision-add")}
+        >
+          <Text style={[styles.addDeviceBtnText, { color: c.accent }]}>+ Add a device (scan QR)</Text>
+        </Pressable>
+
         {/* Pending claims section: fresh yaver boxes that joined the
             user's relay but have no Convex devices row yet. Different
             reachability path from the LAN bootstrap section above
@@ -1500,6 +1510,20 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "600",
+  },
+  addDeviceBtn: {
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 4,
+    height: 44,
+    borderWidth: 1,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  addDeviceBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
   },
   statusBar: {
     flexDirection: "row",
