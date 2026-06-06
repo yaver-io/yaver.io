@@ -100,6 +100,42 @@ export interface AgentLine {
   text: string;
 }
 
+/**
+ * A verified, reversible remote mutation. The difference between "an agent ran
+ * a command" and "an agent made a checked, idempotent, rollback-safe change":
+ *   precheck (already in desired state? skip) → do → verify → commit | rollback.
+ */
+export interface VerifiedAction {
+  /** Idempotency / natural key — identifies the change (for logging + skip). */
+  key: string;
+  /** Command that performs the change. */
+  do: string;
+  /** Command whose success (+ optional `expect`) confirms the change took. */
+  verify: string;
+  /**
+   * Verify passes when: exit 0 AND (expect is a string → stdout includes it;
+   * expect is a predicate → it returns true; expect omitted → exit 0 alone).
+   * Also used by `precheck`.
+   */
+  expect?: string | ((stdout: string) => boolean);
+  /** Optional pre-check (same semantics as verify): if it already passes, skip `do`. */
+  precheck?: string;
+  /** Command to undo the change when verify fails and onFail==='rollback'. */
+  rollback?: string;
+  /** Retry do+verify up to N times before giving up (default 1). */
+  retries?: number;
+  /** What to do when verify fails: throw (default), rollback, or leave as-is. */
+  onFail?: 'throw' | 'rollback' | 'leave';
+}
+
+export interface ApplyResult {
+  machine: MachineInfo;
+  key: string;
+  status: 'verified' | 'already' | 'rolled-back' | 'failed';
+  attempts: number;
+  detail?: string;
+}
+
 /** Terminal result of an agent run on one machine. */
 export interface AgentResult {
   machine: MachineInfo;
@@ -312,6 +348,44 @@ export class Machine {
     return { files, bytes };
   }
 
+  /** Run a check command; ok = exit 0 AND (expect satisfied, if given). */
+  private async check(command: string, expect?: VerifiedAction['expect']): Promise<{ ok: boolean; out: string }> {
+    const r = await this.run(command);
+    let ok = r.code === 0;
+    if (ok && expect !== undefined) ok = typeof expect === 'function' ? expect(r.stdout) : r.stdout.includes(expect);
+    return { ok, out: r.stdout || r.stderr };
+  }
+
+  /**
+   * Apply a verified, reversible mutation: skip if already in the desired state
+   * (idempotency), else do → verify → commit | rollback. Throws on failure
+   * unless onFail is 'rollback' or 'leave'. This is the safety primitive that
+   * makes autonomous remote changes trustworthy.
+   */
+  async apply(action: VerifiedAction): Promise<ApplyResult> {
+    if (action.precheck) {
+      const pre = await this.check(action.precheck, action.expect);
+      if (pre.ok) return { machine: this.info, key: action.key, status: 'already', attempts: 0 };
+    }
+    const maxAttempts = Math.max(1, action.retries ?? 1);
+    let lastDetail = '';
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const did = await this.run(action.do);
+      const v = await this.check(action.verify, action.expect);
+      lastDetail = (v.out || did.stderr || '').slice(0, 500);
+      if (v.ok) return { machine: this.info, key: action.key, status: 'verified', attempts: attempt };
+    }
+    const onFail = action.onFail ?? 'throw';
+    if (onFail === 'rollback' && action.rollback) {
+      await this.run(action.rollback);
+      return { machine: this.info, key: action.key, status: 'rolled-back', attempts: maxAttempts, detail: lastDetail };
+    }
+    if (onFail === 'leave') {
+      return { machine: this.info, key: action.key, status: 'failed', attempts: maxAttempts, detail: lastDetail };
+    }
+    throw new Error(`apply '${action.key}' on ${this.info.deviceId}: verify failed after ${maxAttempts} attempt(s)${lastDetail ? ` — ${lastDetail}` : ''}`);
+  }
+
   /** Set / add / remove fleet tags on this machine (via Convex /devices/tags). */
   async tag(change: { set?: string[]; add?: string[]; remove?: string[] }): Promise<string[]> {
     const res = await fetch(`${this.fleet.convexUrl}/devices/tags`, {
@@ -396,6 +470,21 @@ export class Selection {
   /** Upload a local file to the same absolute path on every machine concurrently. */
   async upload(localPath: string, remotePath: string): Promise<Array<{ machine: MachineInfo; bytes: number }>> {
     return Promise.all(this.machines.map(async (m) => ({ machine: m.info, ...(await m.upload(localPath, remotePath)) })));
+  }
+
+  /**
+   * Apply a verified mutation across every machine, collecting one ApplyResult
+   * each. Fleet semantics: a single machine throwing never aborts the others —
+   * its outcome is captured as status 'failed' with the error detail.
+   */
+  async apply(action: VerifiedAction): Promise<ApplyResult[]> {
+    return Promise.all(this.machines.map(async (m) => {
+      try {
+        return await m.apply(action);
+      } catch (e) {
+        return { machine: m.info, key: action.key, status: 'failed' as const, attempts: 0, detail: e instanceof Error ? e.message : String(e) };
+      }
+    }));
   }
 
   /** Map an async fn over each machine concurrently. */

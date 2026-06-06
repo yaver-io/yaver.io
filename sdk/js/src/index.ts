@@ -68,6 +68,8 @@ export type {
   AgentOpts,
   AgentLine,
   AgentResult,
+  VerifiedAction,
+  ApplyResult,
 } from './fleet';
 
 // Developer-API facade (the boundary consumers use)
