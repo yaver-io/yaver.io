@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -219,7 +220,14 @@ func dispatchOps(octx OpsContext, req OpsRequest) (res OpsResult) {
 			"verb":    req.Verb,
 			"payload": req.Payload,
 		})
-		status, body, err := proxyToDevice(octx.Ctx, "ops:"+req.Verb, machine, "POST", "/ops", payloadBytes)
+		// Forward the ORIGINAL caller's user bearer so the target device
+		// validates the real user (not this gateway's token). Empty for
+		// MCP/CLI callers → proxyToDeviceAs keeps the legacy gateway-token path.
+		userBearer := ""
+		if octx.RequestHeaders != nil {
+			userBearer = strings.TrimSpace(strings.TrimPrefix(octx.RequestHeaders.Get("Authorization"), "Bearer "))
+		}
+		status, body, err := proxyToDeviceAs(octx.Ctx, "ops:"+req.Verb, machine, "POST", "/ops", payloadBytes, userBearer)
 		if err != nil {
 			if errors.Is(err, errProxyLocal) {
 				// Caller asked for a machine that resolves to this one —
