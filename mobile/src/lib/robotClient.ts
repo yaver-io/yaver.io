@@ -247,6 +247,9 @@ export const robotClient = {
   gpio: (t: RobotTarget, pin: number, value: number) =>
     robotOps<RobotMoveResponse>(t, "robot_gpio", { pin, value }, 20000),
   gcode: (t: RobotTarget, line: string) => robotOps<RobotMoveResponse>(t, "robot_gcode", { line }, 30000),
+  // machine power (M80/M81, needs PSU-control wiring) + release steppers (M84)
+  power: (t: RobotTarget, on: boolean) => robotOps<RobotMoveResponse>(t, "robot_power", { on }, 15000),
+  motorsOff: (t: RobotTarget) => robotOps<RobotMoveResponse>(t, "robot_motors_off", {}, 15000),
 
   // --- torque + drive-home (terminal blocks) ---
   torque: (t: RobotTarget) => robotOps<SenseReading>(t, "robot_torque", {}, 10000),

@@ -225,6 +225,8 @@ export default function RobotScreen() {
   const rotate = (turns: number, rpm: number, ccw: boolean) =>
     run(() => robotClient.rotate(buildTarget(deviceId)!, turns, rpm, ccw), { type: "rotate", turns, rpm, ccw });
   const gpio = (pin: number, value: number) => run(() => robotClient.gpio(buildTarget(deviceId)!, pin, value));
+  const power = (on: boolean) => run(() => robotClient.power(buildTarget(deviceId)!, on));
+  const motorsOff = () => run(() => robotClient.motorsOff(buildTarget(deviceId)!));
 
   // fine Z jog for touch-off — exact mm from the calibration panel, no recording
   const jogZfine = (dist: number) =>
@@ -605,6 +607,29 @@ export default function RobotScreen() {
             {runResult.ok ? "Program complete ✓" : "Program halted ✗"} — {runResult.completed ?? 0}/{runResult.total ?? 0} steps
           </Text>
           {!runResult.ok && runResult.error && <Text style={{ color: c.tabInactive, marginTop: 4 }}>{runResult.error}</Text>}
+        </View>
+      )}
+
+      {/* Machine power (M80/M81) + release motors (M84) */}
+      {hasMotion && (
+        <View style={card}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Machine power</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Pressable onPress={() => power(true)} disabled={controlsDisabled} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderColor: OK, borderWidth: 1, opacity: controlsDisabled ? 0.5 : 1 }}>
+                <Text style={{ color: OK, fontWeight: "700" }}>On</Text>
+              </Pressable>
+              <Pressable onPress={() => power(false)} disabled={controlsDisabled} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderColor: c.borderSubtle, borderWidth: 1, opacity: controlsDisabled ? 0.5 : 1 }}>
+                <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Off</Text>
+              </Pressable>
+              <Pressable onPress={motorsOff} disabled={controlsDisabled} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderColor: c.borderSubtle, borderWidth: 1, opacity: controlsDisabled ? 0.5 : 1 }}>
+                <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Release motors</Text>
+              </Pressable>
+            </View>
+          </View>
+          <Text style={{ color: c.tabInactive, fontSize: 11, marginTop: 8 }}>
+            On/Off uses M80/M81 — works only if the board has PSU-control wiring. For a guaranteed cut, use a smart plug.
+          </Text>
         </View>
       )}
 
