@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectRunner, selectProvider, isWorkKindEnabled, type CompanyAIOptions } from './policy';
 import { buildCandidates } from './connect';
-import { Selection, type ExecResult, type Machine, type MachineInfo } from './fleet';
+import { Fleet, Machine, Selection, type ExecResult, type MachineInfo } from './fleet';
 import {
   composeEntitlements, entitlementAllows, entitlementFromGuest, entitlementFromResolved,
   LAYER4_DENIED_TOOLS, type Entitlement,
@@ -227,4 +227,60 @@ test('Selection.exec merges per-machine streams and collects results', async () 
   assert.ok(results.every((r) => r.code === 0));
   // b has no delay so its line must arrive before a's delayed second line.
   assert.ok(seen.indexOf('b:stderr:b1') < seen.indexOf('a:stdout:a2'), 'fast machine not blocked by slow one');
+});
+
+// --- Fleet: verified-action loop (precheck/do/verify/rollback) ---------------
+// Build a real Machine and script its run() so apply()'s logic is exercised
+// network-free. Returns [machine, the ordered list of commands it ran].
+async function applyMachine(
+  responses: Record<string, { code: number; stdout?: string }>,
+): Promise<{ m: Machine; calls: string[] }> {
+  const fleet = await Fleet.connect({ token: 't' });
+  const info: MachineInfo = {
+    deviceId: 'm1', name: 'm1', alias: 'm1', platform: 'linux', tags: [],
+    online: true, quicHost: '', quicPort: 0, localIps: [], publicEndpoints: [],
+  };
+  const m = new Machine(fleet, info);
+  const calls: string[] = [];
+  (m as unknown as { run: (cmd: string) => Promise<ExecResult> }).run = async (cmd: string) => {
+    calls.push(cmd);
+    const r = responses[cmd] ?? { code: 0, stdout: '' };
+    return { machine: info, code: r.code, stdout: r.stdout ?? '', stderr: '' };
+  };
+  return { m, calls };
+}
+
+test('apply skips the mutation when precheck already passes (idempotency)', async () => {
+  const { m, calls } = await applyMachine({ 'get rate': { code: 0, stdout: '5' } });
+  const res = await m.apply({ key: 'rate', precheck: 'get rate', do: 'set rate 5', verify: 'get rate', expect: '5' });
+  assert.equal(res.status, 'already');
+  assert.ok(!calls.includes('set rate 5'), 'mutation must be skipped');
+});
+
+test('apply runs do then verifies', async () => {
+  const { m, calls } = await applyMachine({
+    'get rate': { code: 0, stdout: '5' },     // precheck/verify both read 5
+    'set rate 5': { code: 0, stdout: '' },
+  });
+  // precheck reads 5 already → would skip; drop precheck to force the do path.
+  const res = await m.apply({ key: 'rate', do: 'set rate 5', verify: 'get rate', expect: '5' });
+  assert.equal(res.status, 'verified');
+  assert.equal(res.attempts, 1);
+  assert.ok(calls.includes('set rate 5') && calls.includes('get rate'));
+});
+
+test('apply rolls back when verify fails and onFail=rollback', async () => {
+  const { m, calls } = await applyMachine({
+    'set rate 9': { code: 0, stdout: '' },
+    'get rate': { code: 0, stdout: '3' },   // verify expects 9 but reads 3 → fail
+    'set rate 0': { code: 0, stdout: '' },  // rollback
+  });
+  const res = await m.apply({ key: 'rate', do: 'set rate 9', verify: 'get rate', expect: '9', rollback: 'set rate 0', onFail: 'rollback' });
+  assert.equal(res.status, 'rolled-back');
+  assert.ok(calls.includes('set rate 0'), 'rollback must run');
+});
+
+test('apply throws by default when verify fails', async () => {
+  const { m } = await applyMachine({ 'do x': { code: 0 }, 'check x': { code: 1 } });
+  await assert.rejects(() => m.apply({ key: 'x', do: 'do x', verify: 'check x' }));
 });
