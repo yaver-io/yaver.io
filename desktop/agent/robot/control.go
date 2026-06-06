@@ -333,8 +333,9 @@ func (c *Controller) screwParamsFromCalibration(x, y, zEngage, zSafe, target flo
 // terminal-block operation. Torque-closed-loop via the companion sensor; halts
 // the instant torque ≥ target (screw seated) or at the plunge floor. target ≤ 0
 // uses the calibrated default.
-func (c *Controller) ScrewHome(ctx context.Context, x, y, target float64, verifyMode string) ScrewResult {
+func (c *Controller) ScrewHome(ctx context.Context, x, y, target float64, atCurrent bool, verifyMode string) ScrewResult {
 	p := c.screwParamsFromCalibration(x, y, 0, 0, target)
+	p.AtCurrent = atCurrent
 	return c.DriveScrew(ctx, p, verifyMode, "drive the terminal-block screw home to the target torque")
 }
 
