@@ -188,6 +188,26 @@ func runScreenlog(args []string) {
 		}
 		res, err := localAgentRequest("GET", "/screenlog/analyze?id="+rest[0], nil)
 		printScreenlogResult(res, err)
+	case "process-model", "ghost":
+		// GHOST ANALYSIS — print the deterministic episode skeleton + runner
+		// prompt (analysis is done by the runner; this surfaces the inputs),
+		// or the saved model with --saved.
+		fs := flag.NewFlagSet("screenlog process-model", flag.ExitOnError)
+		saved := fs.Bool("saved", false, "show the saved (runner-completed) model instead of the skeleton")
+		_ = fs.Parse(rest)
+		if fs.NArg() == 0 {
+			fmt.Fprintln(os.Stderr, "usage: yaver screenlog process-model <id> [--saved]")
+			os.Exit(1)
+		}
+		path := "/screenlog/process-model?id=" + fs.Arg(0)
+		if *saved {
+			path += "&saved=1"
+		}
+		res, err := localAgentRequest("GET", path, nil)
+		printScreenlogResult(res, err)
+	case "live":
+		res, err := localAgentRequest("GET", "/screenlog/live?meta=1", nil)
+		printScreenlogResult(res, err)
 	case "emulate":
 		fs := flag.NewFlagSet("screenlog emulate", flag.ExitOnError)
 		scale := fs.Int("scale-seconds", 1, "seconds per scenario-minute (1 = fast headless demo)")
@@ -313,6 +333,8 @@ func screenlogUsage() {
   yaver screenlog kill [--purge]          PANIC: stop + disarm reboot-resume + master kill-switch (+ wipe data)
   yaver screenlog list                    past sessions
   yaver screenlog analyze <id>            time-by-app report ("what did it spend time on")
+  yaver screenlog process-model <id>      GHOST analysis: task episodes + runner prompt ("what they did / how machinery used")
+  yaver screenlog live                    near-real-time: is recording active + newest frame (image at /screenlog/live)
   yaver screenlog open [<id>]             print the local viewer URL
 
   yaver screenlog start --local           record in THIS process (no daemon)

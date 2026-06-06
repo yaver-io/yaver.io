@@ -588,6 +588,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/screenlog/start", s.auth(s.handleScreenlogStart))
 	mux.HandleFunc("/screenlog/stop", s.auth(s.handleScreenlogStop))
 	mux.HandleFunc("/screenlog/kill", s.auth(s.handleScreenlogKill))
+	mux.HandleFunc("/screenlog/live", s.auth(s.handleScreenlogLive))
+	mux.HandleFunc("/screenlog/process-model", s.auth(s.handleScreenlogProcessModel))
 	mux.HandleFunc("/screenlog/status", s.auth(s.handleScreenlogStatus))
 	mux.HandleFunc("/screenlog/drivers", s.auth(s.handleScreenlogDrivers))
 	mux.HandleFunc("/screenlog/list", s.auth(s.handleScreenlogList))
@@ -13138,6 +13140,53 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &body)
 		res := killScreenlog(body.Purge)
 		return mcpToolJSON(map[string]interface{}{"killed": res})
+	case "screenlog_process_model":
+		var body struct {
+			ID string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		pm, _, err := buildProcessSkeleton(body.ID)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"skeleton": pm,
+			"prompt":   processModelPrompt(body.ID),
+			"hint":     "call screenlog_frames {id, sample:N} to SEE keyframes, fill the episode semantics + machinery[], then call screenlog_process_model_save",
+		})
+	case "screenlog_process_model_save":
+		var body struct {
+			ID    string        `json:"id"`
+			Model *ProcessModel `json:"model"`
+		}
+		if err := json.Unmarshal(call.Arguments, &body); err != nil || body.Model == nil {
+			return mcpToolError("model required")
+		}
+		body.Model.SessionID = body.ID
+		if err := saveProcessModel(body.Model); err != nil {
+			return mcpToolError(err.Error())
+		}
+		appendScreenlogAudit(screenlogAuditEntry{Action: "process-model", Session: body.ID, Note: "saved via mcp"})
+		return mcpToolJSON(map[string]interface{}{"ok": true, "episodes": len(body.Model.Episodes)})
+	case "screenlog_process_model_get":
+		var body struct {
+			ID string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		pm, err := loadProcessModel(body.ID)
+		if err != nil {
+			return mcpToolError("no saved process model for " + body.ID)
+		}
+		return mcpToolJSON(map[string]interface{}{"processModel": pm})
+	case "screenlog_live":
+		sid, fr, ok := screenlogLatestFrame()
+		screenlogMu.Lock()
+		running := screenlogActive != nil
+		screenlogMu.Unlock()
+		return mcpToolJSON(map[string]interface{}{
+			"running": running, "sessionId": sid, "has": ok, "frame": fr,
+			"liveUrl": "/screenlog/live",
+		})
 	case "screenlog_status":
 		return mcpToolJSON(map[string]interface{}{"status": screenlogStatus()})
 	case "screenlog_list":
