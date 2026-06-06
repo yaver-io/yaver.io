@@ -28,6 +28,9 @@ type Step struct {
 	Feed    int      `json:"feed,omitempty"`    // move/jog
 	On      *bool    `json:"on,omitempty"`      // tool
 	Ms      int      `json:"ms,omitempty"`      // dwell
+	Turns   float64  `json:"turns,omitempty"`   // rotate (screwdriver)
+	Rpm     int      `json:"rpm,omitempty"`     // rotate
+	Ccw     bool     `json:"ccw,omitempty"`     // rotate (reverse)
 	Zengage float64  `json:"zEngage,omitempty"` // screw
 	Zsafe   float64  `json:"zSafe,omitempty"`   // screw
 	DwellMs int      `json:"dwellMs,omitempty"` // screw torque dwell
@@ -179,6 +182,8 @@ func (c *Controller) runStep(ctx context.Context, i int, st Step, verifyMode str
 	case "tool":
 		on := st.On != nil && *st.On
 		mr = c.Tool(ctx, on)
+	case "rotate":
+		mr = c.Rotate(ctx, st.Turns, st.Rpm, st.Ccw, c.EPerTurn)
 	case "dwell":
 		select {
 		case <-ctx.Done():

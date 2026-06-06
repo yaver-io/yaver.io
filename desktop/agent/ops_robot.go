@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,6 +106,7 @@ func ensureRobot() (*robot.Controller, error) {
 		if cfg.Envelope != nil {
 			c.Env = *cfg.Envelope
 		}
+		c.EPerTurn = cfg.EPerTurn
 		c.StrictEncoder = cfg.Strict || os.Getenv("YAVER_ROBOT_STRICT") == "1"
 		robotCtrl = c
 	})
@@ -154,50 +156,77 @@ func robotConfigDefault() robot.Config {
 	return c
 }
 
-// robotConfigGet returns the cached config, loading from the vault on first use
-// and falling back to the hardware default. Never errors — a locked/empty vault
-// just yields the default so the cell stays usable.
+// robotConfigFile is the local fallback when the vault is locked/rotated. The
+// box itself is the trust boundary (local-first); the vault adds encryption-at-
+// rest when available, but the cell must stay usable "as is" regardless.
+func robotConfigFile() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".yaver", "robot-config.json")
+}
+
+// robotConfigGet returns the cached config: vault first (encrypted), then the
+// local file, then the hardware default. Never errors.
 func robotConfigGet() robot.Config {
 	robotCfgMu.Lock()
 	defer robotCfgMu.Unlock()
 	if robotCfgCached != nil {
 		return *robotCfgCached
 	}
-	cfg := robotConfigDefault()
+	def := robotConfigDefault()
+	cfg := def
+	found := false
+	// 1) vault (encrypted, preferred)
 	if vs, err := openVaultOptional(); err == nil {
 		if e, gerr := vs.Get(robotVaultProject, robotVaultConfigName); gerr == nil && e != nil && e.Value != "" {
 			var c robot.Config
 			if json.Unmarshal([]byte(e.Value), &c) == nil {
-				c.Normalize()
-				// keep the machine-local hardware path if config omits it
-				if c.Serial == "" {
-					c.Serial = cfg.Serial
-				}
-				cfg = c
+				cfg, found = c, true
 			}
 		}
+	}
+	// 2) local file fallback (vault locked / no entry)
+	if !found {
+		if b, err := os.ReadFile(robotConfigFile()); err == nil {
+			var c robot.Config
+			if json.Unmarshal(b, &c) == nil {
+				cfg, found = c, true
+			}
+		}
+	}
+	cfg.Normalize()
+	if cfg.Serial == "" { // keep the machine-local hardware path
+		cfg.Serial = def.Serial
 	}
 	robotCfgCached = &cfg
 	return cfg
 }
 
-// robotConfigSave persists the config to the vault and refreshes the cache.
+// robotConfigSave persists to the vault when unlocked, else to the local file.
+// Either way the cell keeps working — the vault is an encryption bonus, not a
+// hard dependency.
 func robotConfigSave(c robot.Config) error {
 	c.Normalize()
 	c.UpdatedAt = time.Now().UnixMilli()
-	vs, err := openVaultOptional()
-	if err != nil {
-		return fmt.Errorf("vault unavailable (sign in to save config): %w", err)
-	}
 	b, _ := json.Marshal(c)
-	if err := vs.Set(VaultEntry{
-		Project:  robotVaultProject,
-		Name:     robotVaultConfigName,
-		Category: "custom",
-		Value:    string(b),
-		Notes:    "Yaver robot cell config (profile + calibration)",
-	}); err != nil {
-		return err
+
+	var vaultErr error
+	if vs, err := openVaultOptional(); err == nil {
+		vaultErr = vs.Set(VaultEntry{
+			Project:  robotVaultProject,
+			Name:     robotVaultConfigName,
+			Category: "custom",
+			Value:    string(b),
+			Notes:    "Yaver robot cell config (profile + calibration)",
+		})
+	} else {
+		vaultErr = err
+	}
+
+	if vaultErr != nil {
+		// vault locked/rotated → local file so config still saves ("as is")
+		if ferr := os.WriteFile(robotConfigFile(), b, 0o600); ferr != nil {
+			return fmt.Errorf("vault unavailable (%v) and file write failed: %w", vaultErr, ferr)
+		}
 	}
 	robotCfgMu.Lock()
 	robotCfgCached = &c
@@ -242,6 +271,15 @@ type robotPayload struct {
 	Program *robot.Program `json:"program"`
 }
 
+// robotStatusResult embeds Status (its fields stay top-level for back-compat)
+// and adds the active profile + modules so the app shows the right controls.
+type robotStatusResult struct {
+	robot.Status
+	Profile string   `json:"profile"`
+	Modules []string `json:"modules"`
+	Label   string   `json:"label,omitempty"`
+}
+
 func parseRobot(payload json.RawMessage) robotPayload {
 	var p robotPayload
 	if len(payload) > 0 {
@@ -261,11 +299,11 @@ func init() {
 		}
 		st, _ := ctrl.Status(c.Ctx)
 		cfg := robotConfigGet()
-		return OpsResult{OK: true, Initial: map[string]any{
-			"status":  st,
-			"profile": cfg.Profile,
-			"modules": cfg.ResolvedModules(),
-			"label":   cfg.Label,
+		return OpsResult{OK: true, Initial: robotStatusResult{
+			Status:  st,
+			Profile: cfg.Profile,
+			Modules: cfg.ResolvedModules(),
+			Label:   cfg.Label,
 		}}
 	})
 	reg("robot_profiles", "List selectable robot profiles (cartesian / +screwdriver / screwdriver-only)", func(c OpsContext, _ json.RawMessage) OpsResult {
