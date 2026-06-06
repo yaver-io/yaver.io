@@ -1,11 +1,33 @@
 # Yaver Mesh — mobile on-device tunnel (Phase 7)
 
-**Status: reference implementation + integration steps. NOT yet wired into the
-native build.** Unlike every other mesh phase (which is built, tested, and
-type-clean), the phone *carrying* mesh traffic is a native-toolchain +
-Apple-entitlement task that cannot be compiled or verified from the agent/CI
-environment. This doc + the reference sources under `mobile/native-mesh/` make
-it executable on the Mac with Xcode/Gradle.
+**Status: JS half SHIPPED; native half scaffolded, not yet activated.** The
+RN-side shim (`src/lib/yaverMesh.ts`) and the "This phone → Connect to mesh"
+card in `app/(tabs)/network.tsx` ship today — with no native module present they
+no-op (`{ supported: false }`) and the card shows a "coming in a native update"
+hint, so they are safe in every current build. The native half (the phone
+actually *carrying* mesh traffic) is a native-toolchain + Apple-entitlement task
+that can't be compiled or verified from the agent/CI environment.
+
+**Scaffolded (tracked, NOT activated):**
+- `mobile/native-mesh/ios/PacketTunnelProvider.swift` — NEPacketTunnelProvider.
+- `mobile/native-mesh/ios/YaverMeshModule.swift` + `.m` — the `NativeModules.YaverMesh`
+  RN bridge (ensureKeyPair/up/down/status; private key stays in the Keychain).
+- `mobile/native-mesh/android/YaverMeshVpnService.kt` — Android VpnService.
+- `mobile/plugins/withMeshTunnel.js` — Expo config plugin (entitlement, App
+  Group, Android manifest service + permission, WireGuard deps). **Deliberately
+  NOT in app.json `plugins`** — registering it is the activation step and must
+  land together with the Apple entitlement + a native rebuild, or prebuild
+  output changes in a build no one verified.
+
+**Activation checklist (on the Mac, when ready):**
+1. Grant the Network Extension capability on the App ID + regenerate the
+   provisioning profile (Apple-gated).
+2. Add `"./plugins/withMeshTunnel"` to `mobile/app.json` → `expo.plugins`.
+3. Finish the iOS extension *target* creation in the plugin (the one PBX piece
+   left as a `TODO(activation)` — use `@config-plugins/apple-target` or an
+   xcode-mod; provider bundle id must equal `io.yaver.mobile.YaverMeshTunnel`).
+4. `expo prebuild --clean` → restore force-tracked iOS overlays → pod install →
+   native rebuild → verify on a real device (Simulator NE is unreliable).
 
 Until this lands, the phone is a **mesh console only** (`app/(tabs)/network.tsx`):
 it shows peers, edits ACLs, toggles exit-node/routes — but does not get its own

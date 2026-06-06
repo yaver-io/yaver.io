@@ -120,16 +120,41 @@ func isPrivateLanIPv4(ip net.IP) bool {
 	return false
 }
 
+// isMeshOverlayIPv4 reports whether ip falls in Yaver's mesh overlay
+// range 100.96.0.0/12 (second octet 96–111). This block is deliberately
+// a SUBSET of Tailscale's 100.64/10 CGNAT range, so anything that needs
+// to tell a Yaver mesh IP apart from a Tailscale IP must check this
+// FIRST — isCGNATTailscaleIP below explicitly excludes the mesh subnet
+// so the two never both claim the same address.
+func isMeshOverlayIPv4(ip string) bool {
+	parsed := net.ParseIP(strings.TrimSpace(ip)).To4()
+	if parsed == nil {
+		return false
+	}
+	return parsed[0] == 100 && parsed[1] >= 96 && parsed[1] <= 111
+}
+
 // isCGNATTailscaleIP reports whether ip falls in 100.64.0.0/10 (the
-// IANA Carrier-Grade NAT range Tailscale uses). Used by callers that
-// need to distinguish a real LAN IP from a Tailscale overlay IP in a
-// list that mixes both — e.g. when sorting fallback candidates.
+// IANA Carrier-Grade NAT range Tailscale uses) but NOT in Yaver's mesh
+// sub-range 100.96/12. Used by callers that need to distinguish a real
+// LAN IP from a Tailscale overlay IP in a list that mixes both — e.g.
+// when sorting fallback candidates. Excluding the mesh subnet lets the
+// SSH resolver gate Tailscale and Yaver-mesh addresses independently:
+// a user who dropped Tailscale but runs `yaver mesh up` still reaches
+// peers over the overlay.
 func isCGNATTailscaleIP(ip string) bool {
 	parsed := net.ParseIP(strings.TrimSpace(ip)).To4()
 	if parsed == nil {
 		return false
 	}
-	return parsed[0] == 100 && parsed[1] >= 64 && parsed[1] <= 127
+	if parsed[0] != 100 || parsed[1] < 64 || parsed[1] > 127 {
+		return false
+	}
+	// 100.96–111 is the Yaver mesh overlay, handled on its own path.
+	if parsed[1] >= 96 && parsed[1] <= 111 {
+		return false
+	}
+	return true
 }
 
 // sameIPv4Slash24 returns true when a and b share the first three
@@ -175,7 +200,49 @@ func localTailscaleUp() bool {
 			if v4 == nil {
 				continue
 			}
-			if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+			// Tailscale CGNAT, but NOT the Yaver mesh sub-range — a
+			// host can be mesh-up while Tailscale-down, and counting a
+			// 100.96 mesh address as "Tailscale up" would wrongly send
+			// the SSH resolver down the Tailscale CLI paths.
+			if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 && !(v4[1] >= 96 && v4[1] <= 111) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// localMeshUp reports whether this host has a Yaver mesh overlay IP
+// (100.96/12) on a non-loopback interface — i.e. `yaver mesh up` has
+// brought the WireGuard TUN online. Distinct from localTailscaleUp:
+// the ranges overlap, so this is what lets the SSH resolver prefer the
+// overlay route with no dependency on Tailscale being installed or up.
+func localMeshUp() bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			v4 := ip.To4()
+			if v4 == nil {
+				continue
+			}
+			if v4[0] == 100 && v4[1] >= 96 && v4[1] <= 111 {
 				return true
 			}
 		}

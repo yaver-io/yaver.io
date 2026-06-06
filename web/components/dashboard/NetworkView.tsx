@@ -59,6 +59,12 @@ function Icon({ path, className }: { path: string; className?: string }) {
     </svg>
   );
 }
+// Bridging a Tailnet means advertising Tailscale's CGNAT block as a mesh
+// subnet route on a node that sits on BOTH networks. Mesh peer /32s and the
+// 100.96/12 overlay are longer-prefix matches, so they still win — only real
+// Tailnet hosts (the rest of 100.64/10) route through the bridge. Lets mesh
+// peers reach a Tailnet without every node needing Tailscale installed.
+const TAILSCALE_BRIDGE_CIDR = "100.64.0.0/10";
 const ICON_GLOBE = "M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c2.5 2.5 2.5 15.5 0 18M12 3c-2.5 2.5-2.5 15.5 0 18";
 const ICON_SHIELD = "M12 3l7 3v6c0 4-3 6.5-7 9-4-2.5-7-5-7-9V6l7-3z";
 const ICON_PLUS = "M12 5v14M5 12h14";
@@ -270,6 +276,14 @@ export default function NetworkView({ token }: { token: string | null }) {
             {peers.map((p) => {
               const isOwner = p.accessScope === "owner";
               const advertisingExit = p.isExitNode || p.wantExitNode;
+              const currentRoutes = p.wantRoutes ?? (p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0");
+              const bridgingTailnet = currentRoutes.includes(TAILSCALE_BRIDGE_CIDR);
+              const toggleTailnetBridge = () => {
+                const next = bridgingTailnet
+                  ? currentRoutes.filter((r) => r !== TAILSCALE_BRIDGE_CIDR)
+                  : [...currentRoutes, TAILSCALE_BRIDGE_CIDR];
+                void saveNodeConfig(p.deviceId, { wantRoutes: next });
+              };
               return (
                 <div
                   key={p.deviceId}
@@ -342,15 +356,28 @@ export default function NetworkView({ token }: { token: string | null }) {
                         </select>
                       </span>
                       <input
-                        defaultValue={(p.wantRoutes ?? (p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0")).join(", ")}
+                        defaultValue={currentRoutes.filter((r) => r !== TAILSCALE_BRIDGE_CIDR).join(", ")}
                         onBlur={(e) => {
-                          const next = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+                          const typed = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+                          // Preserve the Tailnet-bridge route (it has its own toggle).
+                          const next = bridgingTailnet ? [...typed, TAILSCALE_BRIDGE_CIDR] : typed;
                           void saveNodeConfig(p.deviceId, { wantRoutes: next });
                         }}
                         placeholder="subnet routes e.g. 10.0.0.0/24"
                         className="w-52 rounded-lg border border-surface-700 bg-surface-950 px-2 py-1 text-surface-300"
                         title="Subnet routes to advertise (subnet router)"
                       />
+                      <button
+                        onClick={toggleTailnetBridge}
+                        className={`rounded-full border px-3 py-1 text-[11px] ${
+                          bridgingTailnet
+                            ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-200"
+                            : "border-surface-700 bg-surface-950 text-surface-400 hover:text-surface-200"
+                        }`}
+                        title="If this node is also on a Tailscale tailnet, bridge it so mesh peers can reach Tailnet hosts (advertises 100.64.0.0/10)"
+                      >
+                        {bridgingTailnet ? "✓ bridging Tailnet" : "bridge Tailnet"}
+                      </button>
                       <button
                         onClick={() => void saveNodeConfig(p.deviceId, { wantEnabled: false })}
                         className="ml-auto rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-[11px] text-red-200 hover:bg-red-500/20"
