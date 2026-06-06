@@ -29,6 +29,9 @@ type Controller struct {
 	// commanded delta (missed steps / blockage). The deterministic, always-on
 	// edge closed-loop gate — needs no camera or model.
 	StrictEncoder bool
+	// EPerTurn calibrates screwdriver rotation (E units per revolution); used by
+	// Rotate and by replayed "rotate" steps when the caller omits it.
+	EPerTurn float64
 
 	mu       sync.Mutex
 	estopped bool
@@ -264,6 +267,9 @@ func (c *Controller) Rotate(ctx context.Context, turns float64, rpm int, ccw boo
 	c.mu.Unlock()
 	if es {
 		return fail("estopped", "e-stopped; call reset")
+	}
+	if ePerTurn <= 0 {
+		ePerTurn = c.EPerTurn
 	}
 	if ePerTurn <= 0 {
 		ePerTurn = 1
