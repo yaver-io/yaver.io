@@ -350,6 +350,10 @@ export default function TabLayout() {
         options={{ href: null, title: "Mesh", headerShown: true, headerLeft: backToMore }}
       />
       <Tabs.Screen
+        name="robot"
+        options={{ href: null, title: "Robot Cell", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
         name="more"
         options={{
           title: "More",
