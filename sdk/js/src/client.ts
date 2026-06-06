@@ -2,6 +2,7 @@ import type {
   Task, CreateTaskOptions, AgentInfo, ImageAttachment, ExecSession, ExecOptions,
   RunnerInfo, RunnerAuthSession, RunnerSetupOptions, YaverCapability, AccountLinkSession,
 } from './types';
+import type { ScreenlogAPI, ScreenlogConfig, ScreenlogPolicy, InputEvent } from './screenlog';
 
 /**
  * Yaver client — connects to a Yaver agent's HTTP API.
@@ -21,6 +22,39 @@ export class YaverClient {
   /** Check if the agent is reachable. */
   async health(): Promise<{ status: string }> {
     return this.get('/health');
+  }
+
+  /**
+   * Screen Monitor (screenlog) — local screen-frame black box on this
+   * agent's machine. See ./screenlog.ts. Lets talos / any SDK consumer
+   * drive recording, pull the smart activity report, and feed an
+   * input-event trace. Everything stays local to the recorded machine.
+   */
+  get screenlog(): ScreenlogAPI {
+    return {
+      drivers: () => this.get('/screenlog/drivers'),
+      start: (config?: ScreenlogConfig, title?: string) =>
+        this.post('/screenlog/start', { title, config }),
+      stop: () => this.post('/screenlog/stop', {}),
+      status: () => this.get('/screenlog/status'),
+      list: () => this.get('/screenlog/list'),
+      analyze: (id: string, opts?: { idleGapSec?: number; maxAttributeSec?: number }) => {
+        const q = new URLSearchParams({ id });
+        if (opts?.idleGapSec) q.set('idle_gap_sec', String(opts.idleGapSec));
+        if (opts?.maxAttributeSec) q.set('max_attribute_sec', String(opts.maxAttributeSec));
+        return this.get(`/screenlog/analyze?${q.toString()}`);
+      },
+      frames: (id: string) => this.get(`/screenlog/${encodeURIComponent(id)}/frames.json`),
+      events: (id: string) => this.get(`/screenlog/${encodeURIComponent(id)}/events`),
+      ingestEvents: (id: string, events: InputEvent[]) =>
+        this.post(`/screenlog/${encodeURIComponent(id)}/events`, { events }),
+      policyGet: () => this.get('/screenlog/policy'),
+      policySet: (patch: ScreenlogPolicy) => this.post('/screenlog/policy', patch),
+      audit: () => this.get('/screenlog/audit'),
+      frameUrl: (id: string, file: string) =>
+        `${this.baseURL}/screenlog/${encodeURIComponent(id)}/${file}`,
+      exportUrl: (id: string) => `${this.baseURL}/screenlog/${encodeURIComponent(id)}/export`,
+    };
   }
 
   /** Measure round-trip time in milliseconds. */

@@ -583,6 +583,18 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/clips/private/", s.auth(s.handleClipPrivateDetail))
 	mux.HandleFunc("/clips/", s.handleClipDetail)
 
+	// screenlog — local-only screen-frame black box. All routes are
+	// authed; nothing is public (unlike clips' share links).
+	mux.HandleFunc("/screenlog/start", s.auth(s.handleScreenlogStart))
+	mux.HandleFunc("/screenlog/stop", s.auth(s.handleScreenlogStop))
+	mux.HandleFunc("/screenlog/status", s.auth(s.handleScreenlogStatus))
+	mux.HandleFunc("/screenlog/drivers", s.auth(s.handleScreenlogDrivers))
+	mux.HandleFunc("/screenlog/list", s.auth(s.handleScreenlogList))
+	mux.HandleFunc("/screenlog/policy", s.auth(s.handleScreenlogPolicy))
+	mux.HandleFunc("/screenlog/audit", s.auth(s.handleScreenlogAudit))
+	mux.HandleFunc("/screenlog/analyze", s.auth(s.handleScreenlogAnalyze))
+	mux.HandleFunc("/screenlog/", s.auth(s.handleScreenlogDetail))
+
 	// Affiliate tracking (extends the shortener with commissions)
 	mux.HandleFunc("/affiliates", s.auth(s.handleAffiliates))
 	mux.HandleFunc("/affiliates/", s.auth(s.handleAffiliateSub))
@@ -13028,6 +13040,239 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "clip_list":
 		sessions, _ := listClipSessions()
 		return mcpToolJSON(map[string]interface{}{"sessions": sessions})
+
+	case "screenlog_drivers":
+		info, _ := screenlogProbe(defaultScreenlogConfig())
+		return mcpToolJSON(map[string]interface{}{"drivers": info})
+	case "screenlog_start":
+		var body struct {
+			Title         string `json:"title"`
+			IntervalSec   int    `json:"interval_sec"`
+			Format        string `json:"format"`
+			MaxWidth      int    `json:"max_width"`
+			Displays      string `json:"displays"`
+			MaxDiskMB     int    `json:"max_disk_mb"`
+			TagWindow     *bool  `json:"tag_window"`
+			Dedup         *bool  `json:"dedup"`
+			RetentionDays int    `json:"retention_days"`
+			WSLTarget     string `json:"wsl_target"`
+			CaptureInput  *bool  `json:"capture_input"`
+			Ephemeral     *bool  `json:"ephemeral"`
+			AllowRawText  *bool  `json:"allow_raw_text"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		cfg := defaultScreenlogConfig()
+		if body.IntervalSec > 0 {
+			cfg.IntervalSec = body.IntervalSec
+		}
+		if body.CaptureInput != nil {
+			cfg.CaptureInput = *body.CaptureInput
+		}
+		if body.Ephemeral != nil {
+			cfg.EphemeralFrames = *body.Ephemeral
+		}
+		if body.AllowRawText != nil {
+			cfg.AllowRawText = *body.AllowRawText
+		}
+		if body.Format != "" {
+			cfg.Format = body.Format
+		}
+		if body.MaxWidth != 0 {
+			cfg.MaxWidth = body.MaxWidth
+		}
+		if body.Displays != "" {
+			cfg.Displays = body.Displays
+		}
+		if body.MaxDiskMB != 0 {
+			cfg.MaxDiskMB = body.MaxDiskMB
+		}
+		if body.RetentionDays != 0 {
+			cfg.RetentionDays = body.RetentionDays
+		}
+		if body.WSLTarget != "" {
+			cfg.WSLTarget = body.WSLTarget
+		}
+		if body.TagWindow != nil {
+			cfg.TagWindow = *body.TagWindow
+		}
+		if body.Dedup != nil {
+			cfg.Dedup = *body.Dedup
+		}
+		caller := screenlogCaller{Remote: clientAddr != "" && !isLoopbackAddr(clientAddr)}
+		sess, err := startScreenlogGuarded(cfg, body.Title, caller)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"session": sess, "viewUrl": "/screenlog/" + sess.ID})
+	case "screenlog_stop":
+		sess, err := stopScreenlog()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		appendScreenlogAudit(screenlogAuditEntry{Action: "stop", Session: sess.ID})
+		return mcpToolJSON(map[string]interface{}{
+			"id": sess.ID, "frames": len(sess.Frames), "viewUrl": "/screenlog/" + sess.ID,
+		})
+	case "screenlog_status":
+		return mcpToolJSON(map[string]interface{}{"status": screenlogStatus()})
+	case "screenlog_list":
+		sessions, _ := listScreenlogSessions()
+		out := []map[string]interface{}{}
+		for _, se := range sessions {
+			out = append(out, map[string]interface{}{
+				"id": se.ID, "title": se.Title, "host": se.Host,
+				"startedAt": se.StartedAt, "stoppedAt": se.StoppedAt, "frames": len(se.Frames),
+			})
+		}
+		return mcpToolJSON(map[string]interface{}{"sessions": out})
+	case "screenlog_frames":
+		var body struct {
+			ID     string `json:"id"`
+			Limit  int    `json:"limit"`
+			Sample int    `json:"sample"` // return N evenly-spaced frames as inline images
+		}
+		json.Unmarshal(call.Arguments, &body)
+		sess, err := loadScreenlogSession(body.ID)
+		if err != nil {
+			return mcpToolError("session not found: " + body.ID)
+		}
+		frames := sess.Frames
+		if body.Limit > 0 && len(frames) > body.Limit {
+			frames = frames[len(frames)-body.Limit:]
+		}
+		// Without sampling: metadata only (cheap, agent-readable).
+		if body.Sample <= 0 {
+			return mcpToolJSON(map[string]interface{}{
+				"id": sess.ID, "count": len(frames), "frames": frames,
+				"viewUrl": "/screenlog/" + sess.ID,
+			})
+		}
+		// With sampling: mix a JSON text block with inline images so a
+		// vision-capable runner can actually SEE representative moments.
+		keys := sampleKeyframes(sess, body.Sample)
+		content := []map[string]interface{}{{
+			"type": "text",
+			"text": fmt.Sprintf("screenlog %s — %d frames total, %d keyframes attached (newest context at /screenlog/%s).", sess.ID, len(sess.Frames), len(keys), sess.ID),
+		}}
+		dir, _ := screenlogSessionDir(sess.ID)
+		for _, kf := range keys {
+			data, rerr := os.ReadFile(filepath.Join(dir, kf.File))
+			if rerr != nil {
+				continue
+			}
+			mime := "image/png"
+			if strings.HasSuffix(kf.File, ".jpg") {
+				mime = "image/jpeg"
+			}
+			content = append(content, map[string]interface{}{
+				"type": "text",
+				"text": fmt.Sprintf("frame %d @ %s — %s %s", kf.Idx, time.UnixMilli(kf.CapturedAt).Format("15:04:05"), kf.ActiveApp, kf.ActiveWindow),
+			})
+			content = append(content, map[string]interface{}{
+				"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": mime,
+			})
+		}
+		return map[string]interface{}{"content": content}
+	case "screenlog_analyze":
+		var body struct {
+			ID           string `json:"id"`
+			IdleGapSec   int    `json:"idle_gap_sec"`
+			MaxAttribSec int    `json:"max_attribute_sec"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		rep, _, err := analyzeScreenlogSession(body.ID, body.IdleGapSec, body.MaxAttribSec)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		top := ""
+		if len(rep.ByCategory) > 0 {
+			top = rep.ByCategory[0].Name
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"report": rep, "topActivity": top, "narrativePrompt": rep.NarrativePrompt(),
+		})
+	case "screenlog_policy_get":
+		return mcpToolJSON(map[string]interface{}{"policy": loadScreenlogPolicy()})
+	case "screenlog_policy_set":
+		pol := loadScreenlogPolicy()
+		var body struct {
+			Enabled            *bool  `json:"enabled"`
+			AllowRemoteControl *bool  `json:"allow_remote_control"`
+			RequireMeshGrant   *bool  `json:"require_mesh_grant"`
+			NotifyOnStart      *bool  `json:"notify_on_start"`
+			AllowInputCapture  *bool  `json:"allow_input_capture"`
+			AllowPeer          string `json:"allow_peer"`
+			RevokePeer         string `json:"revoke_peer"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		if body.Enabled != nil {
+			pol.Enabled = *body.Enabled
+		}
+		if body.AllowInputCapture != nil {
+			pol.AllowInputCapture = *body.AllowInputCapture
+		}
+		if body.AllowRemoteControl != nil {
+			pol.AllowRemoteControl = *body.AllowRemoteControl
+		}
+		if body.RequireMeshGrant != nil {
+			pol.RequireMeshGrant = *body.RequireMeshGrant
+		}
+		if body.NotifyOnStart != nil {
+			pol.NotifyOnStart = *body.NotifyOnStart
+		}
+		if body.AllowPeer != "" && !peerAllowed(pol, body.AllowPeer) {
+			pol.AllowedPeers = append(pol.AllowedPeers, body.AllowPeer)
+		}
+		if body.RevokePeer != "" {
+			kept := pol.AllowedPeers[:0]
+			for _, p := range pol.AllowedPeers {
+				if p != body.RevokePeer {
+					kept = append(kept, p)
+				}
+			}
+			pol.AllowedPeers = kept
+		}
+		if err := saveScreenlogPolicy(pol); err != nil {
+			return mcpToolError(err.Error())
+		}
+		appendScreenlogAudit(screenlogAuditEntry{Action: "policy", Note: "updated"})
+		return mcpToolJSON(map[string]interface{}{"policy": pol})
+	case "screenlog_audit":
+		var body struct {
+			Limit int `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		if body.Limit <= 0 {
+			body.Limit = 50
+		}
+		return mcpToolJSON(map[string]interface{}{"audit": readScreenlogAudit(body.Limit)})
+	case "screenlog_events":
+		var body struct {
+			ID    string `json:"id"`
+			Limit int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		events, err := readInputEvents(body.ID, body.Limit)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"id": body.ID, "events": events, "stats": inputStats(events),
+		})
+	case "screenlog_export":
+		var body struct {
+			ID string `json:"id"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		sess, err := loadScreenlogSession(body.ID)
+		if err != nil {
+			return mcpToolError("session not found: " + body.ID)
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"id": sess.ID, "frames": len(sess.Frames),
+			"exportUrl": "/screenlog/" + sess.ID + "/export",
+			"hint":      "GET this URL (auth'd) for a tar.gz of index.json + frames + events.jsonl; or `yaver screenlog pull " + sess.ID + "`",
+		})
 
 	case "chat_conversations":
 		dir, _ := chatDir()

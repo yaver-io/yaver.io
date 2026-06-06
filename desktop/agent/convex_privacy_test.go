@@ -101,6 +101,23 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"clipPath",
 	"videoBlob",
 	"posterBytes",
+	// screenlog — local-only screen-frame black box (screenlog.go). The
+	// whole point is that frames + window titles NEVER leave the machine,
+	// so every field name the index uses is fenced here. There is no
+	// screenlog sync path today; this keeps it that way if someone adds
+	// one carelessly.
+	"screenlogFrame",
+	"activeWindow",
+	"activeWindowTitle",
+	"phash",
+	"screenlogDir",
+	"screenlogPath",
+	// screenlog input-event companion stream (keystrokes + mouse). The
+	// events.jsonl trace is local-only and can contain keystroke content;
+	// these names must never reach Convex.
+	"inputEvents",
+	"keystroke",
+	"keylog",
 	"summaryText",
 	"previewSummary",
 	"exerciseScript",

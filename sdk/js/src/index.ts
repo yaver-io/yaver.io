@@ -131,3 +131,16 @@ export type {
   CompanionSvcStatus,
   CompanionProjectSummary,
 } from './companion';
+
+// Screen Monitor (screenlog) — local screen-frame black box. Access via
+// `client.screenlog`. Lets talos / any SDK consumer record the screen, pull
+// the activity report, and feed an input-event trace. All local to the box.
+export type {
+  ScreenlogAPI,
+  ScreenlogConfig,
+  ScreenlogPolicy,
+  ScreenlogSession,
+  ScreenlogFrame,
+  ActivityReport,
+  InputEvent,
+} from './screenlog';

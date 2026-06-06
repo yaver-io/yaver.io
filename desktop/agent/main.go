@@ -455,6 +455,8 @@ func main() {
 		runRelease(os.Args[2:])
 	case "monitor":
 		runMonitor(os.Args[2:])
+	case "screenlog":
+		runScreenlog(os.Args[2:])
 	case "provision":
 		runProvision(os.Args[2:])
 	case "shell":
@@ -2143,6 +2145,12 @@ func runServe(args []string) {
 	// as root. The no-root contract is documented in NO_ROOT.md +
 	// enforced visibly here. See no_root_check.go for full rationale.
 	warnIfRunningAsRoot()
+
+	// Self-provision the screen-capture dependency on Linux (scrot) so
+	// `yaver install` -> `yaver serve` makes screenlog work out of the box.
+	// Async + non-fatal: installs where passwordless sudo/root allows,
+	// otherwise just logs the one-liner. macOS/Windows/WSL need nothing.
+	go ensureScreenlogDepsBestEffort()
 
 	// Builder role advertisement is process-local — set once here,
 	// read on every /info request. SetBuilderPlatforms lives in
