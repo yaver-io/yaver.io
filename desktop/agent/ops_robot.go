@@ -65,16 +65,32 @@ func robotOpenSerial(dev string) (io.ReadWriteCloser, error) {
 // ensureRobot lazily builds the Controller. Non-robot agents never pay for it.
 func ensureRobot() (*robot.Controller, error) {
 	robotOnce.Do(func() {
-		toolMode := robotEnvOr("YAVER_ROBOT_TOOL", "fan")
-		cam := robot.NewGstCamera(os.Getenv("YAVER_ROBOT_CAMERA")) // "" → /dev/video0
+		cfg := robotConfigGet()
+		toolMode := cfg.ToolMode
+		if toolMode == "" {
+			toolMode = robotEnvOr("YAVER_ROBOT_TOOL", "fan")
+		}
+		camDev := cfg.Camera
+		if camDev == "" {
+			camDev = os.Getenv("YAVER_ROBOT_CAMERA")
+		}
+		cam := robot.NewGstCamera(camDev) // "" → /dev/video0
 		var backend robot.Backend
-		if dev := os.Getenv("YAVER_ROBOT_SERIAL"); dev != "" {
+		dev := cfg.Serial
+		if dev == "" {
+			dev = os.Getenv("YAVER_ROBOT_SERIAL")
+		}
+		if dev != "" {
 			rw, err := robotOpenSerial(dev)
 			if err != nil {
 				robotErr = fmt.Errorf("open serial %s: %w", dev, err)
 				return
 			}
-			sb := robot.NewSerialBackend(rw, toolMode, robotAtoi("YAVER_ROBOT_TOOL_PIN", 6))
+			toolPin := cfg.ToolPin
+			if toolPin == 0 {
+				toolPin = robotAtoi("YAVER_ROBOT_TOOL_PIN", 6)
+			}
+			sb := robot.NewSerialBackend(rw, toolMode, toolPin)
 			sb.Reopen = func() (io.ReadWriteCloser, error) { return robotOpenSerial(dev) }
 			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 			_ = sb.Settle(ctx)
@@ -86,7 +102,10 @@ func ensureRobot() (*robot.Controller, error) {
 			backend = bb
 		}
 		c := robot.NewController(backend, cam, robot.VisionConfig{})
-		c.StrictEncoder = os.Getenv("YAVER_ROBOT_STRICT") == "1"
+		if cfg.Envelope != nil {
+			c.Env = *cfg.Envelope
+		}
+		c.StrictEncoder = cfg.Strict || os.Getenv("YAVER_ROBOT_STRICT") == "1"
 		robotCtrl = c
 	})
 	return robotCtrl, robotErr
@@ -105,6 +124,97 @@ func robotForOps() (*robot.Controller, *OpsResult) {
 
 // robotStore persists taught programs on the edge.
 var robotStore = robot.DefaultProgramStore()
+
+// --- vault-backed config (profiles, calibration, recipes) ---
+//
+// The robot config lives in the Yaver VAULT (project "robot", name "config"):
+// encrypted per-user, local-first, locks with the auth token — so a wire-harness
+// shop's profile + squeeze calibration stays private even on shared infra, with
+// NO Talos required. Talos backup is an optional seam (robot_backup). A user can
+// run the whole cell standalone, as is.
+const robotVaultProject = "robot"
+const robotVaultConfigName = "config"
+
+var (
+	robotCfgMu     sync.Mutex
+	robotCfgCached *robot.Config
+)
+
+// robotConfigDefault derives a config from hardware env when the vault has none
+// yet — an existing rig keeps working with zero setup.
+func robotConfigDefault() robot.Config {
+	c := robot.DefaultConfig(robotEnabled(), true)
+	c.Serial = os.Getenv("YAVER_ROBOT_SERIAL")
+	c.ToolMode = robotEnvOr("YAVER_ROBOT_TOOL", "fan")
+	c.ToolPin = robotAtoi("YAVER_ROBOT_TOOL_PIN", 6)
+	c.Camera = os.Getenv("YAVER_ROBOT_CAMERA")
+	c.EPerTurn = robotEnvFloat("YAVER_ROBOT_E_PER_TURN", 1)
+	c.Strict = os.Getenv("YAVER_ROBOT_STRICT") == "1"
+	c.Normalize()
+	return c
+}
+
+// robotConfigGet returns the cached config, loading from the vault on first use
+// and falling back to the hardware default. Never errors — a locked/empty vault
+// just yields the default so the cell stays usable.
+func robotConfigGet() robot.Config {
+	robotCfgMu.Lock()
+	defer robotCfgMu.Unlock()
+	if robotCfgCached != nil {
+		return *robotCfgCached
+	}
+	cfg := robotConfigDefault()
+	if vs, err := openVaultOptional(); err == nil {
+		if e, gerr := vs.Get(robotVaultProject, robotVaultConfigName); gerr == nil && e != nil && e.Value != "" {
+			var c robot.Config
+			if json.Unmarshal([]byte(e.Value), &c) == nil {
+				c.Normalize()
+				// keep the machine-local hardware path if config omits it
+				if c.Serial == "" {
+					c.Serial = cfg.Serial
+				}
+				cfg = c
+			}
+		}
+	}
+	robotCfgCached = &cfg
+	return cfg
+}
+
+// robotConfigSave persists the config to the vault and refreshes the cache.
+func robotConfigSave(c robot.Config) error {
+	c.Normalize()
+	c.UpdatedAt = time.Now().UnixMilli()
+	vs, err := openVaultOptional()
+	if err != nil {
+		return fmt.Errorf("vault unavailable (sign in to save config): %w", err)
+	}
+	b, _ := json.Marshal(c)
+	if err := vs.Set(VaultEntry{
+		Project:  robotVaultProject,
+		Name:     robotVaultConfigName,
+		Category: "custom",
+		Value:    string(b),
+		Notes:    "Yaver robot cell config (profile + calibration)",
+	}); err != nil {
+		return err
+	}
+	robotCfgMu.Lock()
+	robotCfgCached = &c
+	robotCfgMu.Unlock()
+	return nil
+}
+
+// robotGate denies a verb when the active profile lacks the needed module, so a
+// screwdriver-only device answers motion verbs cleanly instead of moving nothing.
+func robotGate(module string) *OpsResult {
+	cfg := robotConfigGet()
+	if !cfg.Has(module) {
+		return &OpsResult{OK: false, Code: "no_" + module,
+			Error: fmt.Sprintf("profile %q has no %s module", cfg.Profile, module)}
+	}
+	return nil
+}
 
 // robotPayload is the superset of every robot verb's payload.
 type robotPayload struct {
@@ -144,18 +254,57 @@ func init() {
 	reg := func(name, desc string, h VerbHandler) {
 		registerOpsVerb(opsVerbSpec{Name: name, Description: desc, Handler: h, AllowGuest: false})
 	}
-	reg("robot_status", "Robot cell status (position, homed, tool, e-stop, camera)", func(c OpsContext, _ json.RawMessage) OpsResult {
+	reg("robot_status", "Robot cell status (position, homed, tool, e-stop, camera, profile)", func(c OpsContext, _ json.RawMessage) OpsResult {
 		ctrl, deny := robotForOps()
 		if deny != nil {
 			return *deny
 		}
 		st, _ := ctrl.Status(c.Ctx)
-		return OpsResult{OK: true, Initial: st}
+		cfg := robotConfigGet()
+		return OpsResult{OK: true, Initial: map[string]any{
+			"status":  st,
+			"profile": cfg.Profile,
+			"modules": cfg.ResolvedModules(),
+			"label":   cfg.Label,
+		}}
+	})
+	reg("robot_profiles", "List selectable robot profiles (cartesian / +screwdriver / screwdriver-only)", func(c OpsContext, _ json.RawMessage) OpsResult {
+		return OpsResult{OK: true, Initial: map[string]any{"profiles": robot.Profiles()}}
+	})
+	reg("robot_config_get", "Get this cell's config (profile, modules, calibration) from the vault", func(c OpsContext, _ json.RawMessage) OpsResult {
+		cfg := robotConfigGet()
+		return OpsResult{OK: true, Initial: map[string]any{"config": cfg, "modules": cfg.ResolvedModules()}}
+	})
+	reg("robot_config_set", "Set this cell's profile + calibration (saved encrypted in the vault)", func(c OpsContext, payload json.RawMessage) OpsResult {
+		var cfg robot.Config
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &cfg); err != nil {
+				return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+			}
+		}
+		// preserve machine-local hardware path the phone doesn't know
+		if cfg.Serial == "" {
+			cfg.Serial = robotConfigGet().Serial
+		}
+		if err := robotConfigSave(cfg); err != nil {
+			return OpsResult{OK: false, Code: "save_failed", Error: err.Error()}
+		}
+		saved := robotConfigGet()
+		return OpsResult{OK: true, Initial: map[string]any{
+			"config": saved, "modules": saved.ResolvedModules(),
+			"note": "hardware changes (serial/camera) apply on next agent restart",
+		}}
+	})
+	reg("robot_backup", "Optional: back up config + programs to a Talos target (no-op unless configured)", func(c OpsContext, payload json.RawMessage) OpsResult {
+		return robotBackup(c, payload)
 	})
 	reg("robot_home", "Home the robot (G28), optionally camera-verified", func(c OpsContext, payload json.RawMessage) OpsResult {
 		ctrl, deny := robotForOps()
 		if deny != nil {
 			return *deny
+		}
+		if g := robotGate(robot.ModuleMotion); g != nil {
+			return *g
 		}
 		p := parseRobot(payload)
 		return OpsResult{OK: true, Initial: ctrl.Home(c.Ctx, p.Axes, p.Verify, p.Expectation)}
@@ -165,6 +314,9 @@ func init() {
 		if deny != nil {
 			return *deny
 		}
+		if g := robotGate(robot.ModuleMotion); g != nil {
+			return *g
+		}
 		p := parseRobot(payload)
 		return OpsResult{OK: true, Initial: ctrl.Jog(c.Ctx, p.Axis, p.Dist, p.Feed, p.Verify, p.Expectation)}
 	})
@@ -173,6 +325,9 @@ func init() {
 		if deny != nil {
 			return *deny
 		}
+		if g := robotGate(robot.ModuleMotion); g != nil {
+			return *g
+		}
 		p := parseRobot(payload)
 		return OpsResult{OK: true, Initial: ctrl.Move(c.Ctx, p.X, p.Y, p.Z, p.Feed, p.Verify, p.Expectation)}
 	})
@@ -180,6 +335,9 @@ func init() {
 		ctrl, deny := robotForOps()
 		if deny != nil {
 			return *deny
+		}
+		if g := robotGate(robot.ModuleTool); g != nil {
+			return *g
 		}
 		p := parseRobot(payload)
 		on := p.On != nil && *p.On
@@ -235,13 +393,23 @@ func init() {
 		if deny != nil {
 			return *deny
 		}
+		if g := robotGate(robot.ModuleRotate); g != nil {
+			return *g
+		}
 		p := parseRobot(payload)
-		return OpsResult{OK: true, Initial: ctrl.Rotate(c.Ctx, p.Turns, p.Rpm, p.Ccw, robotEnvFloat("YAVER_ROBOT_E_PER_TURN", p.EPerTurn))}
+		ePerTurn := p.EPerTurn
+		if ePerTurn <= 0 {
+			ePerTurn = robotConfigGet().EPerTurn // calibrated per-rig, from the vault
+		}
+		return OpsResult{OK: true, Initial: ctrl.Rotate(c.Ctx, p.Turns, p.Rpm, p.Ccw, ePerTurn)}
 	})
 	reg("robot_gpio", "Set a board pin (M42 P<pin> S<value>) — driver enable/dir, relay, LED", func(c OpsContext, payload json.RawMessage) OpsResult {
 		ctrl, deny := robotForOps()
 		if deny != nil {
 			return *deny
+		}
+		if g := robotGate(robot.ModuleGPIO); g != nil {
+			return *g
 		}
 		p := parseRobot(payload)
 		return OpsResult{OK: true, Initial: ctrl.GPIO(c.Ctx, p.Pin, p.Value)}
