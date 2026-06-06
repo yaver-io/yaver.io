@@ -9,7 +9,7 @@
 > cells, pick any from the app. Yaver supports this as a first-class feature.
 >
 > Status: **AUDIT + DESIGN** (no build yet, per request). Verified against the
-> codebase + the live bench (magara=10.0.0.45 edge, simkab-Vostro=10.0.0.30
+> codebase + the live bench (robot-edge=<edge-lan-ip> edge, gateway-box=<gateway-lan-ip>
 > gateway, iPhone via mesh).
 
 ---
@@ -20,10 +20,10 @@ The current `robotClient` (`mobile/src/lib/robotClient.ts`) talks to robotd at a
 **hardcoded `host:8336`**, defaulting the host to `quicClient.baseUrl`'s hostname.
 In a mesh/gateway/fleet topology that is simply the wrong layer:
 
-- The phone is paired via the **gateway** (simkab, 10.0.0.30); the printer is on
-  a **different** box (magara, 10.0.0.45). The default host became `10.0.0.30`
+- The phone is paired via the **gateway** (gateway, <gateway-lan-ip>); the printer is on
+  a **different** box (robot-edge, <edge-lan-ip>). The default host became `<gateway-lan-ip>`
   → every request hit the wrong machine → "no camera" + "can't control".
-- Even pointed at `10.0.0.45`, it only works if the phone is on magara's LAN.
+- Even pointed at `<edge-lan-ip>`, it only works if the phone is on robot-edge's LAN.
   Over relay/4G/Tailscale there is no such route.
 - It can't address **multiple** robots — one hardcoded host.
 
@@ -49,8 +49,8 @@ The mesh already has everything needed; almost nothing is net-new plumbing.
 | **Headless mobile test harness** | `mobile-headless/` (bun CLI `ops --verb --machine --payload`, shares `mobile/src/lib/*`) | test the whole mesh-routed flow with **no native rebuild** |
 | **Mobile mesh client** | `mobile/src/lib/quic.ts:1164` `baseUrl` (tunnel→relay `/d/<id>`→direct), `callOps:7439` | already resolves a device's mesh route; the robot screen should use it |
 
-Live-verified: magara's **mesh agent is active** (`:18080`, device `08182df8…`,
-same account) and **robotd active** (`:8336`). So magara is reachable over the
+Live-verified: robot-edge's **mesh agent is active** (`:18080`, device `<deviceId>…`,
+same account) and **robotd active** (`:8336`). So robot-edge is reachable over the
 mesh today; only the robot *control path* is at the wrong layer.
 
 ---
@@ -60,16 +60,16 @@ mesh today; only the robot *control path* is at the wrong layer.
 ```
    ┌────────────── Yaver mobile app (one app, many robots) ──────────────┐
    │  Device picker: list devices where capabilities ∋ "robot"            │
-   │  Selected robot = a deviceId (magara-A, magara-B, … phone-cells)     │
+   │  Selected robot = a deviceId (edge-A, edge-B, … phone-cells)     │
    │   Commands:  callOps("robot_jog", payload, machine=<robotDeviceId>)  │
    │   Video:     GET <mesh>/d/<robotDeviceId>/robot/snapshot (poll)      │
    └───────────────┬───────────────────────────────────────┬─────────────┘
                    │ mesh (LAN → relay → 4G), via gateway   │ same mesh route
         ┌──────────▼───────────┐                 ┌──────────▼───────────┐
-        │ gateway agent (simkab)│  proxyToDevice  │  relay /d/<id>/…      │
+        │ gateway agent (gateway)│  proxyToDevice  │  relay /d/<id>/…      │
         └──────────┬───────────┘ ───────────────► └──────────┬───────────┘
                    ▼                                          ▼
-   ┌──────────── robot edge device (magara: Lenovo now / phone+kit later) ─────┐
+   ┌──────────── robot edge device (robot-edge: Lenovo now / phone+kit later) ─────┐
    │  yaver AGENT (:18080)                                                      │
    │    robot_* ops verbs ──► robot.Controller ──► SerialBackend ──► machine    │
    │    GET /robot/snapshot,/robot/stream ──► GstCamera / phone Camera2         │
@@ -139,12 +139,12 @@ is identical regardless of edge hardware — the app never knows the difference.
 ```bash
 cd mobile-headless && bun install
 YMH_AUTH_TOKEN=<token> bun run src/bin/cli.ts ops \
-  --verb=robot_status --machine=<magaraDeviceId> --payload='{}'
+  --verb=robot_status --machine=<robotDeviceId> --payload='{}'
 bun run src/bin/cli.ts ops --verb=robot_jog \
-  --machine=<magaraDeviceId> --payload='{"axis":"Z","dist":10,"verify":"off"}'
+  --machine=<robotDeviceId> --payload='{"axis":"Z","dist":10,"verify":"off"}'
 ```
 This exercises the exact path the phone uses (callOps → proxyToDevice → relay →
-magara agent → robot driver) with **no Xcode build** — the iteration loop you
+robot-edge agent → robot driver) with **no Xcode build** — the iteration loop you
 asked for. Add a `mobile-headless/test/robot.test.ts` to lock it in CI.
 
 ---
@@ -159,10 +159,10 @@ asked for. Add a `mobile-headless/test/robot.test.ts` to lock it in CI.
 | G4 | Mobile uses hardcoded host | `robotClient` → `callOps(verb,payload,machine)` + mesh snapshot URL; **device picker** for multi-robot |
 | G5 | No headless robot test | `mobile-headless/test/robot.test.ts` |
 | G6 | Edge only laptop | Phone host (Termux `OpenMarlinFD`) + connector-box BOM (separate track) |
-| G7 | Fleet UI | Robot list (capability-filtered) → per-robot screen; "more than one magara" |
+| G7 | Fleet UI | Robot list (capability-filtered) → per-robot screen; "more than one robot-edge" |
 
 **Phase 1 (unblocks the phone now):** G1+G2+G4 minimal — `robot_*` verbs in the
-agent on magara + agent-served snapshot + mobile `robotClient` via `callOps`/mesh.
+agent on robot-edge + agent-served snapshot + mobile `robotClient` via `callOps`/mesh.
 Test headless (G5). **Phase 2:** capability advertisement + fleet picker (G3,G7).
 **Phase 3:** phone-host edge + connector box (G6) + PLC unification.
 
