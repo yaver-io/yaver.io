@@ -284,3 +284,69 @@ test('apply throws by default when verify fails', async () => {
   const { m } = await applyMachine({ 'do x': { code: 0 }, 'check x': { code: 1 } });
   await assert.rejects(() => m.apply({ key: 'x', do: 'do x', verify: 'check x' }));
 });
+
+test('Selection.distribute spreads a work-list across machines (work-stealing)', async () => {
+  const fleet = await Fleet.connect({ token: 't' });
+  const mk = (id: string): Machine => new Machine(fleet, {
+    deviceId: id, name: id, alias: id, platform: 'linux', tags: [],
+    online: true, quicHost: '', quicPort: 0, localIps: [], publicEndpoints: [],
+  });
+  const sel = new Selection([mk('a'), mk('b')]);
+  const items = [1, 2, 3, 4, 5, 6, 7];
+  const handledBy: Record<number, string> = {};
+  const out = await sel.distribute(items, async (machine, item) => {
+    handledBy[item] = machine.deviceId;
+    await new Promise((r) => setTimeout(r, item === 1 ? 20 : 1)); // make 'a' briefly slow
+    return item * 10;
+  });
+  // results in input order
+  assert.deepEqual(out, [10, 20, 30, 40, 50, 60, 70]);
+  // every item handled, by one of the two machines
+  assert.equal(Object.keys(handledBy).length, 7);
+  assert.ok(items.every((i) => handledBy[i] === 'a' || handledBy[i] === 'b'));
+  // work-stealing: both machines did some work (not all on one)
+  const counts = Object.values(handledBy);
+  assert.ok(counts.includes('a') && counts.includes('b'), 'both machines should pull work');
+});
+
+test('approval gate blocks high-risk exec and records denial; audit fires', async () => {
+  const seen: string[] = [];
+  const fleet = await Fleet.connect({
+    token: 't',
+    approve: (ev) => ev.risk !== 'high',          // deny anything high-risk
+    onAudit: (ev) => seen.push(`${ev.kind}:${ev.outcome}`),
+  });
+  const m = new Machine(fleet, {
+    deviceId: 'm1', name: 'm1', alias: 'm1', platform: 'linux', tags: [],
+    online: true, quicHost: '', quicPort: 0, localIps: [], publicEndpoints: [],
+  });
+  // high-risk command → gate denies before any transport/network call.
+  const res = await m.run('rm -rf /tmp/x');
+  assert.equal(res.code, -1);
+  assert.match(res.error ?? '', /denied/);
+  assert.ok(seen.includes('exec:denied'), 'audit must record the denial');
+});
+
+test('low-risk exec does not consult the approval gate', async () => {
+  let asked = 0;
+  const fleet = await Fleet.connect({ token: 't', approve: () => { asked++; return true; } });
+  // No transport coords → a non-denied command fails at transport resolution.
+  // We only assert the gate was never consulted for a low-risk command.
+  const m = new Machine(fleet, {
+    deviceId: 'm1', name: 'm1', alias: 'm1', platform: 'linux', tags: [],
+    online: true, quicHost: '', quicPort: 0, localIps: [], publicEndpoints: [],
+  });
+  await m.run('ls -la').catch(() => { /* transport failure is expected/irrelevant */ });
+  assert.equal(asked, 0, 'low-risk exec must not call approve');
+});
+
+test('Selection.mapReduce folds per-machine values', async () => {
+  const fleet = await Fleet.connect({ token: 't' });
+  const mk = (id: string): Machine => new Machine(fleet, {
+    deviceId: id, name: id, alias: id, platform: 'linux', tags: [],
+    online: true, quicHost: '', quicPort: 0, localIps: [], publicEndpoints: [],
+  });
+  const sel = new Selection([mk('a'), mk('b'), mk('c')]);
+  const total = await sel.mapReduce(async (m) => m.deviceId.length + 1, (acc, v) => acc + v, 0);
+  assert.equal(total, 6); // each deviceId length 1 → (1+1)*3
+});
