@@ -41,6 +41,13 @@ type Config struct {
 	Envelope *Envelope `json:"envelope,omitempty"` // soft limits (motion profiles)
 	Strict   bool      `json:"strictEncoder,omitempty"`
 
+	// Screwdriver calibration (camera Z touch-off) + torque (terminal blocks).
+	ZSafe           float64 `json:"zSafe,omitempty"`           // travel/retract height (mm)
+	ZEngage         float64 `json:"zEngage,omitempty"`         // tip meets the screw head (mm) — found by camera touch-off
+	MaxPlunge       float64 `json:"maxPlunge,omitempty"`       // how far below engage the driver may go (mm)
+	TargetTorqueNmm float64 `json:"targetTorqueNmm,omitempty"` // seat torque for "drive home" (N·mm)
+	Companion       string  `json:"companion,omitempty"`       // torque-sensor serial path, e.g. /dev/ttyUSB1
+
 	Label     string `json:"label,omitempty"` // human name for this cell
 	UpdatedAt int64  `json:"updatedAt,omitempty"`
 }

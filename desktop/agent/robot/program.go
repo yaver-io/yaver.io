@@ -31,8 +31,9 @@ type Step struct {
 	Turns   float64  `json:"turns,omitempty"`   // rotate (screwdriver)
 	Rpm     int      `json:"rpm,omitempty"`     // rotate
 	Ccw     bool     `json:"ccw,omitempty"`     // rotate (reverse)
-	Zengage float64  `json:"zEngage,omitempty"` // screw
-	Zsafe   float64  `json:"zSafe,omitempty"`   // screw
+	Zengage float64  `json:"zEngage,omitempty"` // screw (0 → use calibration)
+	Zsafe   float64  `json:"zSafe,omitempty"`   // screw (0 → use calibration)
+	Torque  float64  `json:"torque,omitempty"`  // screw seat torque N·mm (0 → use calibration)
 	DwellMs int      `json:"dwellMs,omitempty"` // screw torque dwell
 	Label   string   `json:"label,omitempty"`   // optional human note
 }
@@ -47,13 +48,14 @@ type Program struct {
 
 // StepResult is one step's playback outcome.
 type StepResult struct {
-	Index int         `json:"index"`
-	Step  Step        `json:"step"`
-	OK    bool        `json:"ok"`
-	Code  string      `json:"code,omitempty"`
-	Error string      `json:"error,omitempty"`
-	Pos   *Position   `json:"position,omitempty"`
-	Cross *CrossCheck `json:"cross,omitempty"`
+	Index int          `json:"index"`
+	Step  Step         `json:"step"`
+	OK    bool         `json:"ok"`
+	Code  string       `json:"code,omitempty"`
+	Error string       `json:"error,omitempty"`
+	Pos   *Position    `json:"position,omitempty"`
+	Cross *CrossCheck  `json:"cross,omitempty"`
+	Screw *ScrewResult `json:"screw,omitempty"` // torque/seat result for screw steps
 }
 
 // RunResult is the whole playback verdict.
@@ -194,12 +196,16 @@ func (c *Controller) runStep(ctx context.Context, i int, st Step, verifyMode str
 	case "screw":
 		x := derefOr(st.X, 0)
 		y := derefOr(st.Y, 0)
-		p := ScrewParams{X: x, Y: y, Zapproach: st.Zsafe, Zmax: st.Zengage, Step: 0.3, Feed: st.Feed, Zsafe: st.Zsafe, DwellMs: st.DwellMs}
+		p := c.screwParamsFromCalibration(x, y, st.Zengage, st.Zsafe, st.Torque)
+		if st.DwellMs > 0 {
+			p.DwellMs = st.DwellMs
+		}
 		scr := c.DriveScrew(ctx, p, verifyMode, st.Label)
 		sr.OK = scr.OK
 		sr.Code = scr.Code
 		sr.Error = scr.Error
 		sr.Pos = scr.Position
+		sr.Screw = &scr
 		return sr
 	default:
 		sr.Code = "bad_step"
