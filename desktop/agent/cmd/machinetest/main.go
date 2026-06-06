@@ -31,8 +31,12 @@ func main() {
 		runSniffMode(os.Args[2:])
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "rtu" {
+		runRTUMode(os.Args[2:])
+		return
+	}
 	if len(os.Args) < 3 || os.Args[1] != "flow" {
-		fmt.Fprintln(os.Stderr, "usage: machinetest flow <modbusAddr> | sniff <readDev> <writeDev>")
+		fmt.Fprintln(os.Stderr, "usage: machinetest flow <modbusAddr> | sniff <readDev> <writeDev> | rtu <masterDev> <slaveDev>")
 		os.Exit(2)
 	}
 	addr := os.Args[2]

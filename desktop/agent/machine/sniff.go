@@ -18,9 +18,11 @@ type Sniffer struct {
 	obs    map[obsKey]*RegisterObs
 	frames int
 
-	src  io.ReadCloser
-	stop chan struct{}
-	done chan struct{}
+	dev     string // serial device (for arbitration + hotplug reopen); "" for manual
+	reopens int    // count of hotplug reconnects, for status visibility
+	src     io.ReadCloser
+	stop    chan struct{}
+	done    chan struct{}
 }
 
 type obsKey struct {
@@ -170,37 +172,87 @@ func (s *Sniffer) Schematic(source string) Schematic {
 // StartSniff opens a serial port and passively reads it into a new session.
 // Serial is Linux-only for now; returns ErrUnsupported elsewhere.
 func (e *Engine) StartSniff(dev string, baud int) (string, error) {
+	return e.StartSniffOpts(dev, baud, false)
+}
+
+// StartSniffOpts is StartSniff with a reconnect option. When reconnect is true
+// the read loop reopens the device (by its by-id path if that's what was given)
+// after a read error — surviving USB-serial replug / ttyUSB renumbering, which
+// is the difference between a durable edge worker and one that dies on the first
+// cable wiggle. The session takes exclusive ownership of the bus.
+func (e *Engine) StartSniffOpts(dev string, baud int, reconnect bool) (string, error) {
 	rc, err := openSerial(dev, baud)
 	if err != nil {
 		return "", err
 	}
 	sn := newSniffer("modbus_rtu")
+	sn.dev = dev
 	sn.src = rc
 	sn.stop = make(chan struct{})
 	sn.done = make(chan struct{})
+
 	e.mu.Lock()
 	id := e.nextID("sniff")
+	e.mu.Unlock()
+	if err := e.claimExclusive(dev, id); err != nil {
+		_ = rc.Close()
+		return "", err
+	}
+	e.mu.Lock()
 	e.sniffers[id] = sn
 	e.mu.Unlock()
+
 	go func() {
 		defer close(sn.done)
 		buf := make([]byte, 1024)
+		cur := rc
 		for {
 			select {
 			case <-sn.stop:
 				return
 			default:
 			}
-			n, rerr := rc.Read(buf)
+			n, rerr := cur.Read(buf)
 			if n > 0 {
 				sn.Feed(buf[:n])
 			}
 			if rerr != nil {
-				return
+				if !reconnect {
+					return
+				}
+				_ = cur.Close()
+				// Back off, then try to reopen the (resolved) device until stop.
+				if !sleepOrStop(sn.stop, 500*time.Millisecond) {
+					return
+				}
+				nc, oerr := openSerial(dev, baud)
+				if oerr != nil {
+					if !sleepOrStop(sn.stop, 1500*time.Millisecond) {
+						return
+					}
+					continue
+				}
+				cur = nc
+				sn.mu.Lock()
+				sn.src = nc
+				sn.reopens++
+				sn.mu.Unlock()
 			}
 		}
 	}()
 	return id, nil
+}
+
+// sleepOrStop waits d or returns false if the stop channel fires first.
+func sleepOrStop(stop <-chan struct{}, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-stop:
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 // StartManual opens a session with no live source — bytes are injected via
@@ -259,6 +311,9 @@ func (e *Engine) StopSniff(id, source string) (Schematic, bool) {
 	}
 	if sn.src != nil {
 		_ = sn.src.Close()
+	}
+	if sn.dev != "" {
+		e.releaseExclusive(sn.dev, id)
 	}
 	return sn.Schematic(source), true
 }

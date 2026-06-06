@@ -91,7 +91,9 @@ func Supported() bool { return machineSerialSupported }
 // constructed lazily by the ops layer and is safe for concurrent use.
 type Engine struct {
 	mu       sync.Mutex
-	sniffers map[string]*Sniffer // sessionID -> sniffer
+	sniffers map[string]*Sniffer      // sessionID -> sniffer
+	gcodes   map[string]*GCodeSession // sessionID -> open G-code/CNC session
+	buses    map[string]*busState     // resolved device -> half-duplex arbitration
 	seq      int
 }
 
