@@ -1,0 +1,43 @@
+# Talos Edge Node — zero-touch provisioning manifest (example).
+#
+# This is the ONE file a third-party hardware builder (here: Talos) writes to
+# turn a Yaver-powered Raspberry Pi image into a claimable, self-credentialing
+# product. With it on the image, the whole flow is:
+#
+#   builder, flash line:   yaver provision mint --manifest yaver.provision.yaml --count 100
+#                          -> 100 SD seeds + a labels.csv of QR payloads
+#   buyer, box still off:  scans the QR in the Yaver app  -> owns the box
+#   box, first boot:       attests with its baked key -> gets an owner-bound
+#                          token -> runs the `setup` below -> Talos workload up
+#
+# The product slug + model + services here populate the claim UI; `setup` is
+# the one-time post-claim bring-up (run once the box is owned + authenticated).
+# Long-running services are delegated to the existing companion engine
+# (yaver.companion.yaml) rather than redefined here.
+
+version: 1
+
+product: talos-edge-v1
+model: "Talos Edge Node"
+vendor: "Talos"
+platform: linux
+
+# Display-only summary shown when the buyer scans the QR.
+services:
+  - modbus-rtu-master      # active RS485/RS232 -> PLC/CNC master
+  - edge-loop              # durable absorb -> observe -> verified-write -> Talos sync
+  - screenlog              # local-only PC/HMI screen black box
+
+# One-time bring-up after the box self-credentials. Idempotent at the Yaver
+# level (a marker prevents re-runs); keep individual commands idempotent too.
+setup:
+  - name: provision git + model credentials for the runner
+    run: "yaver machine onboarding apply || true"
+    allow_failure: true
+
+  - name: bring up the Talos edge workload (crons + durable services)
+    run: "yaver companion up"
+
+  - name: start the local screen black box
+    run: "yaver screenlog start --interval 2s || true"
+    allow_failure: true

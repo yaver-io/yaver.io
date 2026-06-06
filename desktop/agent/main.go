@@ -2903,6 +2903,11 @@ func runServe(args []string) {
 	// Start heartbeat loop (needs httpServer for authExpired flag)
 	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr, httpServer)
 
+	// Zero-touch post-claim: if this box self-credentialed via a provision
+	// seed, bring up its baked workload (yaver.provision.yaml `setup`) once.
+	// No-ops on a normal (non-provisioned) install. See provision_postclaim.go.
+	go maybeRunProvisionPostClaim(*workDir)
+
 	// Warm the public package registry cache so /install/list is rich
 	// from the first request. The cache refreshes itself every 6h via
 	// PackageRegistry(), so we only need to kick it once here.
