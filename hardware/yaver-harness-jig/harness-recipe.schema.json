@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yaver.io/schemas/harness-recipe.schema.json",
+  "title": "Yaver harnessRecipe",
+  "description": "The per-SKU source of truth for a wire harness. The harness compiler ingests this and emits (a) the printable jig (SCAD params), (b) the robot Program, (c) the GPU-AI task context. Work-derived -> lives in the user's Talos org, never Yaver Convex (privacy contract). See docs/yaver-harness-compiler-design.md.",
+  "type": "object",
+  "required": ["partNumber", "connectors", "fromTo"],
+  "additionalProperties": false,
+  "properties": {
+    "partNumber": { "type": "string", "description": "Harness SKU; also the board-ID QR payload." },
+    "rev":        { "type": "string" },
+    "board": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile":    { "type": "string", "description": "e.g. \"400x600\" or \"200x200\" (tiled).", "pattern": "^[0-9]+x[0-9]+$" },
+        "gridPitch": { "type": "number", "default": 25 },
+        "tagCell": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+        "datum":   { "type": "string", "description": "datum scheme id, e.g. \"3-2-1-A\"." }
+      }
+    },
+    "connectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["ref", "family", "gridCell"],
+        "additionalProperties": false,
+        "properties": {
+          "ref":      { "type": "string", "description": "Designator used in fromTo, e.g. \"A\", \"C\"." },
+          "family":   { "type": "string", "description": "Connector family key -> nest generator preset, e.g. \"molex_megafit_2x3\", \"kf2edgk_3p\"." },
+          "class":    { "type": "string", "enum": ["housing", "terminal_block"], "default": "housing", "description": "housing = crimp-contact-into-cavity (lance click); terminal_block = ferrule/wire-into-cage (screw/spring)." },
+          "nest":     { "type": "string", "description": "Nest generator id (defaults from family)." },
+          "gridCell": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+          "rotDeg":   { "type": "number", "default": 0 },
+          "cavityMap":{ "type": "object", "description": "Optional map of cavity label -> [row,col] if not row-major.", "additionalProperties": { "type": "array", "items": { "type": "integer" } } },
+          "pullSpecN":{ "type": "number", "description": "Contact retention pull-test target (housing class)." },
+          "termTorqueNmm": { "type": "number", "description": "Screw termination torque (terminal_block class)." }
+        }
+      }
+    },
+    "fromTo": {
+      "type": "array",
+      "description": "The circuit list. Each lead connects connector:cavity -> connector:cavity.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["lead", "from", "to"],
+        "additionalProperties": false,
+        "properties": {
+          "lead":  { "type": "string", "description": "Lead id, e.g. \"L01\"." },
+          "from":  { "type": "string", "pattern": "^[^:]+:[^:]+$", "description": "\"<connectorRef>:<cavity>\", e.g. \"A:1\"." },
+          "to":    { "type": "string", "pattern": "^[^:]+:[^:]+$" },
+          "gauge": { "type": "string", "description": "e.g. \"20AWG\" / \"0.5mm2\"." },
+          "color": { "type": "string" },
+          "marker":{ "type": "string", "description": "heat-shrink / ink label text from the CST18D." }
+        }
+      }
+    },
+    "guides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "gridCell"],
+        "additionalProperties": false,
+        "properties": {
+          "type":     { "type": "string", "enum": ["comb", "fork", "clamp"] },
+          "gridCell": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+          "slots":    { "type": "integer" }
+        }
+      }
+    },
+    "ties": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["station", "gridCell"],
+        "additionalProperties": false,
+        "properties": {
+          "station":  { "type": "string", "description": "Tie station id." },
+          "gridCell": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+          "tensionN": { "type": "number" }
+        }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "description": "End-of-line self-tests. continuity uses the companion MATRIX; mating uses Fairino F/T.",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type":     { "type": "string", "enum": ["continuity", "pull", "mating"] },
+          "maxN":     { "type": "number", "description": "Max mating force (mating)." },
+          "pinMap":   { "type": "object", "description": "MATRIX index -> \"<connectorRef>:<cavity>\" so the host maps the scan back to nets.", "additionalProperties": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
