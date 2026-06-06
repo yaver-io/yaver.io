@@ -79,6 +79,9 @@ export type RobotConfig = {
   maxPlunge?: number;
   targetTorqueNmm?: number;
   companion?: string;
+  // Fuju / external-driver machine setup
+  stepsPerMm?: { x?: number; y?: number; z?: number };
+  envelope?: { Xmin: number; Xmax: number; Ymin: number; Ymax: number; Zmin: number; Zmax: number };
 };
 export type SenseReading = { currentmA?: number; forceG?: number; torqueNmm?: number; raw?: string };
 export type RobotScrewResult = {
@@ -118,6 +121,21 @@ export type ArrayParams = {
   targetTorqueNmm?: number;
   home?: boolean;
   captureOrigin?: boolean;
+};
+
+// Printable klemens jig (matches the grid array). Yaver generates the design;
+// you render + print it on your own printer.
+export type JigParams = {
+  cols?: number;
+  rows?: number;
+  pitchX?: number;
+  pitchY?: number;
+  klemensW?: number;
+  klemensL?: number;
+  pocketDepth?: number;
+  wall?: number;
+  plateH?: number;
+  clearance?: number;
 };
 
 // A taught step — mirrors robot.Step.
@@ -254,6 +272,9 @@ export const robotClient = {
   // klemens array → fastening program (grid jig or linear rail)
   arrayBuild: (t: RobotTarget, params: ArrayParams) =>
     robotOps<{ ok?: boolean; saved?: string; steps?: number; program?: RobotProgram; error?: string }>(t, "robot_array_build", params as any, 20000),
+  // printable jig (OpenSCAD) matching the grid — render + print on your own printer
+  jigScad: (t: RobotTarget, params: JigParams) =>
+    robotOps<{ ok?: boolean; scad?: string; filename?: string; error?: string }>(t, "robot_jig_scad", params as any, 15000),
 
   // --- optional Talos backup (off unless configured on the edge) ---
   backup: (t: RobotTarget) => robotOps<{ ok?: boolean; backedUp?: boolean; programs?: number; error?: string; code?: string }>(t, "robot_backup", {}, 30000),
