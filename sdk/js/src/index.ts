@@ -73,6 +73,7 @@ export type {
   ActionEvent,
   AuditEvent,
   ServiceAction,
+  CronJob,
 } from './fleet';
 
 // Developer-API facade (the boundary consumers use)
