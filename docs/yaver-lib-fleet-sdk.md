@@ -50,37 +50,35 @@ await fleet.all().then((s) => s.serviceRestart('yaver'));           // P6 lifecy
 | P11 | `onAudit` trail + `fileAuditSink` JSONL record plane | `fleet.ts` |
 | P6 | `serviceRestart`/`service`/`reboot` (platform-native, gated) | `fleet.ts` |
 | P8 | fleet-wide cron via `schedule`/`unschedule` fan-out | `fleet.ts` |
+| P5 | `Machine.shell()` interactive PTY over the existing `/ws/terminal` | `fleet.ts` |
+| P12 | local-first routing — `agent(prompt, { preferLocal })` picks the local runner on `local-inference` machines | `fleet.ts` |
+| P13 | `Fleet.queue(path)` durable store-and-forward `CommandQueue` (disk-persisted) | `fleet.ts` |
 
 Every shipped item has network-free unit tests (`sdk/js/src/test.ts`) and/or Go
 tests (`file_transfer_http_test.go`). The merge, the verified-action paths, the
-work-stealing distribute, the gate/audit, and the service-command builder are
-all pinned.
+work-stealing distribute, the gate/audit, the service-command builder, the PTY
+URL builder, the local-first runner pick, and the durable queue's persistence
+are all pinned.
 
-## Remaining (agent-side, larger)
+## All 13 proposals shipped
 
-These need deeper work than a lib composition and are intentionally not stubbed:
+The last three landed as **pure lib additions** (no agent changes — they reuse
+endpoints that already existed):
 
-### P5 — Remote interactive PTY
-A live `ssh -t`-style PTY over QUIC so `machine.shell()` streams stdin/stdout/stderr
-and an agent can drive a remote shell (answer sudo prompts, REPLs). Needs an agent
-WebSocket PTY endpoint (the mobile Terminal already has a WS path to reuse) framed
-over the resolved transport. Until then, `exec` covers non-interactive commands.
-
-### P12 — Local-first AI routing
-Route agent/inference work to a machine's **local model first** (the `models_*`
-Ollama lane), spilling to cloud only on capability/uncertainty — same request
-shape either way. Needs an agent-side router that picks local vs cloud per the
-machine's reported `edgeProfile`/installed models; the lib would expose
-`agent(prompt, { preferLocal: true })`. Strong on-prem/edge story (data stays on
-the box). Builds on the existing runner-provider injection + `edgeProfile`.
-
-### P13 — Store-and-forward command queue
-Make a command for an **offline** machine durable: queue locally, replay +
-re-verify on reconnect, transparent to the caller. Needs the agent's job queue to
-be device-targeted and offline-durable (local ring buffer + reconnect replay).
-Turns "machine was offline" from an error into a deferred, eventually-consistent
-action — essential for flaky edge links. Composes naturally with P9's verified
-loop (replay is safe because actions are idempotency-keyed).
+- **P5 remote PTY** → `Machine.shell()` opens the agent's existing `/ws/terminal`
+  (creack/pty + gorilla/websocket) over the resolved transport. stdin is sent as
+  binary frames (never parsed as control), resize/close as text control frames.
+  Direct/tunnel/mesh auth via `?token`; relay needs a custom `WebSocketImpl` that
+  forwards the password header.
+- **P12 local-first routing** → `agent(prompt, { preferLocal, localRunner })`.
+  When the machine carries the auto-seeded `local-inference` tag (P2), dispatch
+  routes to the local runner (default `ollama`) so data stays on the box; else it
+  falls back to the cloud runner. Pure `pickAgentRunner()` is unit-tested.
+- **P13 store-and-forward** → `Fleet.queue(path)` → `CommandQueue`: `enqueue()`
+  parks a command (persisted to disk immediately), `flush()` runs the ones whose
+  target is now reachable and drops them, keeping the rest for next time.
+  Survives restarts; pair with P9 `apply` for exactly-once (raw exec replay is
+  at-least-once).
 
 ## Design notes
 

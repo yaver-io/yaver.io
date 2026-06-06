@@ -129,6 +129,118 @@ export interface AgentOpts {
   model?: string;
   /** Output poll interval (ms). */
   pollIntervalMs?: number;
+  /**
+   * Local-first routing (P12): when true AND the machine can run local
+   * inference (auto-tagged `local-inference` at registration), dispatch to the
+   * local runner instead of `runner` — data stays on the box, no cloud spend.
+   * Falls back to `runner` on machines without a local model.
+   */
+  preferLocal?: boolean;
+  /** Runner to use when preferLocal applies (default 'ollama'). */
+  localRunner?: string;
+}
+
+/**
+ * Local-first runner selection. If the caller asked to prefer local and the
+ * machine is tagged `local-inference`, route to the local runner; otherwise use
+ * the requested runner. Pure + exported so it's unit-tested.
+ */
+export function pickAgentRunner(
+  opts: { runner?: string; preferLocal?: boolean; localRunner?: string },
+  tags: string[],
+): string | undefined {
+  if (opts.preferLocal && tags.includes('local-inference')) return opts.localRunner ?? 'ollama';
+  return opts.runner;
+}
+
+// --- P5: interactive remote PTY over the existing /ws/terminal endpoint -------
+
+// Minimal structural WebSocket type — avoids a DOM lib dependency so the SDK
+// stays isomorphic (browser/RN WebSocket and Node 21+ global WebSocket both fit).
+interface MinimalWS {
+  binaryType: string;
+  send(data: string | Uint8Array): void;
+  close(): void;
+  addEventListener(type: string, listener: (ev: { data?: unknown; code?: number }) => void): void;
+}
+type WSCtor = new (url: string) => MinimalWS;
+
+export interface ShellOpts {
+  /** Login shell to spawn (default: the box's $SHELL). */
+  shell?: string;
+  /** Working directory. */
+  cwd?: string;
+  /** Resume an existing terminal session by id. */
+  sessionId?: string;
+  /** WebSocket implementation (default: globalThis.WebSocket; provide `ws` on Node < 21). */
+  WebSocketImpl?: WSCtor;
+}
+
+/**
+ * Build the /ws/terminal URL: http(s)→ws(s), bearer as ?token= (the agent
+ * promotes it to Authorization). Pure + exported for unit tests.
+ */
+export function terminalWsUrl(baseURL: string, token: string, opts: ShellOpts = {}): string {
+  const ws = baseURL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/+$/, '');
+  const q = new URLSearchParams({ token });
+  if (opts.shell) q.set('shell', opts.shell);
+  if (opts.cwd) q.set('cwd', opts.cwd);
+  if (opts.sessionId) q.set('session_id', opts.sessionId);
+  return `${ws}/ws/terminal?${q.toString()}`;
+}
+
+/**
+ * A live interactive PTY on a remote machine. stdin is sent as binary frames
+ * (so it never collides with the JSON control channel); stdout/stderr arrive via
+ * onData; resize/close use text control frames — matching the agent protocol.
+ */
+export class Shell {
+  readonly ws: MinimalWS;
+  sessionId: string | null = null;
+  private dataCbs: Array<(text: string) => void> = [];
+  private closeCbs: Array<(code: number) => void> = [];
+  private opened: Promise<void>;
+
+  constructor(ws: MinimalWS) {
+    this.ws = ws;
+    ws.binaryType = 'arraybuffer';
+    this.opened = new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('shell: websocket error')));
+    });
+    ws.addEventListener('message', (ev) => {
+      const data = ev.data;
+      if (typeof data === 'string') {
+        try {
+          const ctl = JSON.parse(data) as { type?: string; sessionId?: string };
+          if (ctl.type === 'terminal_session' && ctl.sessionId) { this.sessionId = ctl.sessionId; return; }
+        } catch { /* not control JSON → it's output text */ }
+        this.emit(data);
+      } else {
+        this.emit(new TextDecoder().decode(data as ArrayBuffer));
+      }
+    });
+    ws.addEventListener('close', (ev) => { for (const cb of this.closeCbs) cb(ev.code ?? 0); });
+  }
+
+  private emit(text: string): void { for (const cb of this.dataCbs) cb(text); }
+
+  /** Resolve once the socket is open. */
+  async ready(): Promise<this> { await this.opened; return this; }
+  onData(cb: (text: string) => void): void { this.dataCbs.push(cb); }
+  onClose(cb: (code: number) => void): void { this.closeCbs.push(cb); }
+
+  /** Write stdin to the remote shell (binary frame, never parsed as control). */
+  write(input: string | Uint8Array): void {
+    this.ws.send(typeof input === 'string' ? new TextEncoder().encode(input) : input);
+  }
+  /** Resize the PTY. */
+  resize(cols: number, rows: number): void { this.ws.send(JSON.stringify({ resize: { cols, rows } })); }
+  /** Terminate the session and close the socket. */
+  close(): void {
+    try { this.ws.send(JSON.stringify({ type: 'terminate_session' })); } catch { /* socket may be closing */ }
+    this.ws.close();
+  }
 }
 
 /** One chunk of an agent session's output, tagged with its source machine. */
@@ -374,9 +486,10 @@ export class Machine {
     }
     const t = await this.transport();
     const o = this.fleet.opts;
+    const runner = pickAgentRunner(opts, this.info.tags); // P12 local-first routing
     const startRes = await transportFetch(t, o.token, '/tasks', {
       method: 'POST',
-      body: JSON.stringify({ title: prompt, runner: opts.runner, model: opts.model }),
+      body: JSON.stringify({ title: prompt, runner, model: opts.model }),
     }, true);
     if (!startRes.ok) {
       const detail = `dispatch: HTTP ${startRes.status}`;
@@ -517,6 +630,26 @@ export class Machine {
     }
     this.audit({ kind: 'apply', machine: this.info, risk: 'high', key: action.key, outcome: 'error', detail: lastDetail });
     throw new Error(`apply '${action.key}' on ${this.info.deviceId}: verify failed after ${maxAttempts} attempt(s)${lastDetail ? ` — ${lastDetail}` : ''}`);
+  }
+
+  /**
+   * Open an interactive PTY shell on this machine over the resolved transport
+   * (P5), via the agent's /ws/terminal endpoint. Returns a live Shell:
+   * write()/resize()/onData()/close(). Direct/tunnel/mesh authenticate by
+   * ?token; relay (which needs a password header browser WebSocket can't set)
+   * requires a custom `WebSocketImpl` that forwards transport headers.
+   *
+   * @example
+   * const sh = await box.shell();
+   * sh.onData((t) => process.stdout.write(t));
+   * sh.write('uptime\n');
+   */
+  async shell(opts: ShellOpts = {}): Promise<Shell> {
+    const t = await this.transport();
+    const url = terminalWsUrl(t.baseURL, this.fleet.opts.token, opts);
+    const WS = opts.WebSocketImpl ?? (globalThis as { WebSocket?: WSCtor }).WebSocket;
+    if (!WS) throw new Error("shell(): no WebSocket available — pass opts.WebSocketImpl (e.g. the 'ws' package) on Node < 21");
+    return new Shell(new WS(url)).ready();
   }
 
   /**
@@ -764,6 +897,104 @@ export class Fleet {
     const hit = sel.machines.find((m) => m.deviceId === idOrAlias || m.alias === idOrAlias);
     if (!hit) throw new Error(`machine not found: ${idOrAlias}`);
     return hit;
+  }
+
+  /**
+   * A durable store-and-forward command queue (P13) persisted to `path`.
+   * enqueue() commands for machines that may be offline; flush() runs the ones
+   * whose target is now reachable and drops them, keeping the rest for later.
+   * Survives process restarts. Pair commands with idempotency (P9 apply) for
+   * exactly-once semantics — raw exec replay is at-least-once.
+   */
+  queue(path: string): CommandQueue { return new CommandQueue(this, path); }
+}
+
+/** A command parked for a (possibly offline) machine until it's reachable. */
+export interface QueuedCommand {
+  id: string;
+  deviceId: string;
+  command: string;
+  opts?: ExecOpts;
+  enqueuedAt: number;
+  attempts: number;
+}
+
+export interface FlushOutcome {
+  id: string;
+  deviceId: string;
+  ran: boolean;
+  result?: ExecResult;
+}
+
+/** Durable, disk-backed store-and-forward queue. Created via Fleet.queue(path). */
+export class CommandQueue {
+  private readonly fleet: Fleet;
+  private readonly path: string;
+  private items: QueuedCommand[] = [];
+  private loaded = false;
+
+  constructor(fleet: Fleet, path: string) { this.fleet = fleet; this.path = path; }
+
+  private async load(): Promise<void> {
+    if (this.loaded) return;
+    const fs = await import('node:fs/promises');
+    try { this.items = JSON.parse(await fs.readFile(this.path, 'utf8')) as QueuedCommand[]; }
+    catch { this.items = []; }
+    this.loaded = true;
+  }
+
+  private async persist(): Promise<void> {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    await fs.mkdir(path.dirname(this.path), { recursive: true });
+    await fs.writeFile(this.path, JSON.stringify(this.items, null, 2));
+  }
+
+  /** Park a command for a machine; persisted immediately. Returns its id. */
+  async enqueue(deviceId: string, command: string, opts?: ExecOpts): Promise<string> {
+    await this.load();
+    const id = `${nowMs()}-${this.items.length}-${deviceId.slice(0, 6)}`;
+    this.items.push({ id, deviceId, command, opts, enqueuedAt: nowMs(), attempts: 0 });
+    await this.persist();
+    return id;
+  }
+
+  /** Current durable contents (loads from disk on first call). */
+  async list(): Promise<QueuedCommand[]> { await this.load(); return [...this.items]; }
+
+  /**
+   * Run every queued command whose target machine is now online; drop the ones
+   * that succeed (exit 0), keep the rest (offline, errored, or non-zero) with a
+   * bumped attempt count. Persists the survivors. Returns one outcome per item.
+   */
+  async flush(): Promise<FlushOutcome[]> {
+    await this.load();
+    const reachable = new Map((await this.fleet.all()).machines.map((m) => [m.deviceId, m]));
+    const keep: QueuedCommand[] = [];
+    const outcomes: FlushOutcome[] = [];
+    for (const item of this.items) {
+      const m = reachable.get(item.deviceId);
+      if (!m || !m.online) {
+        item.attempts++; keep.push(item);
+        outcomes.push({ id: item.id, deviceId: item.deviceId, ran: false });
+        continue;
+      }
+      try {
+        const result = await m.run(item.command, item.opts);
+        if (result.code === 0) {
+          outcomes.push({ id: item.id, deviceId: item.deviceId, ran: true, result });
+        } else {
+          item.attempts++; keep.push(item);
+          outcomes.push({ id: item.id, deviceId: item.deviceId, ran: true, result });
+        }
+      } catch {
+        item.attempts++; keep.push(item);
+        outcomes.push({ id: item.id, deviceId: item.deviceId, ran: false });
+      }
+    }
+    this.items = keep;
+    await this.persist();
+    return outcomes;
   }
 }
 
