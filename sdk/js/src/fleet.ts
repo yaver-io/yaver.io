@@ -213,6 +213,31 @@ async function transportFetch(
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const nowMs = () => Date.now();
 
+export type ServiceAction = 'restart' | 'start' | 'stop' | 'status';
+
+/**
+ * Build the platform-native service-control command. Linux → systemctl,
+ * Windows → sc, macOS → launchctl (best-effort: kickstart for restart, print
+ * for status, bootstrap/bootout for start/stop in the system domain; adjust
+ * the domain target for a gui/user service). Exported + pure so it's unit-tested.
+ */
+export function serviceCmd(platform: string, action: ServiceAction, name: string): string {
+  switch (platform) {
+    case 'windows':
+      return `sc ${action === 'status' ? 'query' : action} ${name}`;
+    case 'macos':
+      switch (action) {
+        case 'restart': return `launchctl kickstart -k system/${name}`;
+        case 'status':  return `launchctl print system/${name}`;
+        case 'start':   return `launchctl bootstrap system /Library/LaunchDaemons/${name}.plist`;
+        case 'stop':    return `launchctl bootout system/${name}`;
+      }
+      return `launchctl print system/${name}`;
+    default: // linux + any systemd host
+      return `systemctl ${action} ${name}`;
+  }
+}
+
 /**
  * One machine in the fleet. Resolves a transport lazily (and caches the
  * winner) so a Selection of N machines only probes the ones it actually uses.
@@ -486,6 +511,24 @@ export class Machine {
     throw new Error(`apply '${action.key}' on ${this.info.deviceId}: verify failed after ${maxAttempts} attempt(s)${lastDetail ? ` — ${lastDetail}` : ''}`);
   }
 
+  /**
+   * Restart an OS service — platform-aware (systemd / launchd / Windows SC).
+   * Composes exec, so it's covered by the approval gate + audit like any other
+   * action. For start/stop/status use service() with the action.
+   */
+  serviceRestart(name: string): Promise<ExecResult> { return this.service('restart', name); }
+  service(action: ServiceAction, name: string): Promise<ExecResult> {
+    return this.run(serviceCmd(this.info.platform, action, name));
+  }
+
+  /**
+   * Reboot the machine. The command matches the default high-risk classifier,
+   * so a Fleet configured with an `approve` gate will require confirmation.
+   */
+  reboot(): Promise<ExecResult> {
+    return this.run(this.info.platform === 'windows' ? 'shutdown /r /t 0' : 'sudo reboot');
+  }
+
   /** Set / add / remove fleet tags on this machine (via Convex /devices/tags). */
   async tag(change: { set?: string[]; add?: string[]; remove?: string[] }): Promise<string[]> {
     const res = await fetch(`${this.fleet.convexUrl}/devices/tags`, {
@@ -565,6 +608,11 @@ export class Selection {
   /** Run a command on every machine to completion; collect all results. */
   async run(command: string, opts: ExecOpts = {}): Promise<ExecResult[]> {
     return Promise.all(this.machines.map((m) => m.run(command, opts)));
+  }
+
+  /** Restart a service on every machine concurrently (e.g. recycle a runner pool). */
+  async serviceRestart(name: string): Promise<ExecResult[]> {
+    return Promise.all(this.machines.map((m) => m.serviceRestart(name)));
   }
 
   /** Upload a local file to the same absolute path on every machine concurrently. */

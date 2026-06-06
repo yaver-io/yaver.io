@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectRunner, selectProvider, isWorkKindEnabled, type CompanyAIOptions } from './policy';
 import { buildCandidates } from './connect';
-import { Fleet, Machine, Selection, type ExecResult, type MachineInfo } from './fleet';
+import { Fleet, Machine, Selection, serviceCmd, type ExecResult, type MachineInfo } from './fleet';
 import {
   composeEntitlements, entitlementAllows, entitlementFromGuest, entitlementFromResolved,
   LAYER4_DENIED_TOOLS, type Entitlement,
@@ -338,6 +338,15 @@ test('low-risk exec does not consult the approval gate', async () => {
   });
   await m.run('ls -la').catch(() => { /* transport failure is expected/irrelevant */ });
   assert.equal(asked, 0, 'low-risk exec must not call approve');
+});
+
+test('serviceCmd builds platform-native service commands', () => {
+  assert.equal(serviceCmd('linux', 'restart', 'yaver'), 'systemctl restart yaver');
+  assert.equal(serviceCmd('linux', 'status', 'yaver'), 'systemctl status yaver');
+  assert.equal(serviceCmd('windows', 'restart', 'Yaver'), 'sc restart Yaver');
+  assert.equal(serviceCmd('windows', 'status', 'Yaver'), 'sc query Yaver');
+  assert.equal(serviceCmd('macos', 'restart', 'io.yaver.agent'), 'launchctl kickstart -k system/io.yaver.agent');
+  assert.equal(serviceCmd('macos', 'status', 'io.yaver.agent'), 'launchctl print system/io.yaver.agent');
 });
 
 test('Selection.mapReduce folds per-machine values', async () => {
