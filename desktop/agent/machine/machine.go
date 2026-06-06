@@ -87,20 +87,23 @@ type Schematic struct {
 // always available, so an Engine is always usable for TCP scan/read.
 func Supported() bool { return machineSerialSupported }
 
-// Engine owns active sniff sessions (one per serial port / bus tap). It is
-// constructed lazily by the ops layer and is safe for concurrent use.
+// Engine owns active sniff sessions (one per serial port / bus tap), open
+// G-code/CNC sessions, and the registry of connected Drivers (one per wrapped
+// machine). It is constructed lazily by the ops layer and is safe for
+// concurrent use.
 type Engine struct {
 	mu       sync.Mutex
 	sniffers map[string]*Sniffer      // sessionID -> sniffer
 	gcodes   map[string]*GCodeSession // sessionID -> open G-code/CNC session
 	buses    map[string]*busState     // resolved device -> half-duplex arbitration
+	drivers  map[string]Driver        // machineID -> wrapped-machine driver
 	seq      int
 }
 
 // New constructs an Engine. It never fails today (TCP always works); the error
 // return mirrors ghost.New() for symmetry and future platform checks.
 func New() (*Engine, error) {
-	return &Engine{sniffers: map[string]*Sniffer{}}, nil
+	return &Engine{sniffers: map[string]*Sniffer{}, drivers: map[string]Driver{}}, nil
 }
 
 // nextID returns a stable session id like "sniff-1".
