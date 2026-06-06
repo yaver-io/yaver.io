@@ -115,6 +115,7 @@ func runScreenlog(args []string) {
 		captureInput := fs.Bool("capture-input", false, "also record keystroke/mouse events (needs allow-input)")
 		allowRawText := fs.Bool("allow-raw-text", false, "store typed characters verbatim (default: redact)")
 		local := fs.Bool("local", false, "run the capture loop in THIS process (no agent/daemon needed)")
+		persist := fs.Bool("persist", false, "keep recording across reboots/sign-out (auto-resume on agent start, no auth needed)")
 		_ = fs.Parse(rest)
 
 		cfg := map[string]interface{}{
@@ -132,13 +133,36 @@ func runScreenlog(args []string) {
 			"allowRawText":    *allowRawText,
 		}
 		if *local {
+			if *persist {
+				var pc ScreenlogConfig
+				raw, _ := json.Marshal(cfg)
+				_ = json.Unmarshal(raw, &pc)
+				pc.normalize()
+				_ = setScreenlogAutostart(true, pc, *title)
+			}
 			runScreenlogLocal(*title, cfg)
 			return
 		}
 		res, err := localAgentRequest("POST", "/screenlog/start", map[string]interface{}{
-			"title": *title, "config": cfg,
+			"title": *title, "config": cfg, "persist": *persist,
 		})
 		printScreenlogResult(res, err)
+	case "autostart":
+		sub2 := ""
+		if len(rest) > 0 {
+			sub2 = rest[0]
+		}
+		switch sub2 {
+		case "on", "enable":
+			res, err := localAgentRequest("POST", "/screenlog/autostart", map[string]interface{}{"enabled": true})
+			printScreenlogResult(res, err)
+		case "off", "disable":
+			res, err := localAgentRequest("POST", "/screenlog/autostart", map[string]interface{}{"enabled": false})
+			printScreenlogResult(res, err)
+		default:
+			res, err := localAgentRequest("GET", "/screenlog/autostart", nil)
+			printScreenlogResult(res, err)
+		}
 	case "stop":
 		res, err := localAgentRequest("POST", "/screenlog/stop", nil)
 		printScreenlogResult(res, err)
@@ -282,6 +306,8 @@ func screenlogUsage() {
   yaver screenlog open [<id>]             print the local viewer URL
 
   yaver screenlog start --local           record in THIS process (no daemon)
+  yaver screenlog start --persist         keep recording across reboots/sign-out (auth-free auto-resume)
+  yaver screenlog autostart [on|off]      show/arm/disarm reboot-durable recording
   yaver screenlog events <id>             keystroke/mouse companion stream + stats
   yaver screenlog pull <id> [--out f]     download a session (frames+events) as .tar.gz
   yaver screenlog emulate [--scale-seconds N]  headless demo session (no display/hardware)

@@ -67,14 +67,16 @@ func (s *HTTPServer) handleScreenlogStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body struct {
-		Title  string           `json:"title,omitempty"`
-		Config *ScreenlogConfig `json:"config,omitempty"`
+		Title   string           `json:"title,omitempty"`
+		Config  *ScreenlogConfig `json:"config,omitempty"`
+		Persist bool             `json:"persist,omitempty"` // reboot-durable auto-resume intent
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	cfg := defaultScreenlogConfig()
 	if body.Config != nil {
 		cfg = *body.Config
 	}
+	cfg.normalize()
 	caller := screenlogCaller{
 		Remote: !isLoopbackAddr(r.RemoteAddr),
 		PeerID: r.Header.Get("X-Yaver-Peer"),
@@ -85,10 +87,13 @@ func (s *HTTPServer) handleScreenlogStart(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusForbidden, err.Error())
 		return
 	}
+	if body.Persist {
+		// Record the opt-in so the agent auto-resumes after a reboot —
+		// local, auth-independent.
+		_ = setScreenlogAutostart(true, cfg, body.Title)
+	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":      true,
-		"session": sess,
-		"viewUrl": "/screenlog/" + sess.ID,
+		"ok": true, "session": sess, "viewUrl": "/screenlog/" + sess.ID, "persisted": body.Persist,
 	})
 }
 
@@ -102,7 +107,47 @@ func (s *HTTPServer) handleScreenlogStop(w http.ResponseWriter, r *http.Request)
 		jsonError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	// An explicit stop clears the auto-resume intent unless ?keep=1, so the
+	// box doesn't start recording again on the next reboot after you meant
+	// to stop it.
+	if r.URL.Query().Get("keep") != "1" {
+		if a, ok := loadScreenlogAutostart(); ok && a.Enabled {
+			a.Enabled = false
+			_ = saveScreenlogAutostart(a)
+		}
+	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "session": sess})
+}
+
+// handleScreenlogAutostart reads/sets the reboot-durable "keep recording"
+// intent. POST {enabled:true} arms it with the CURRENT default config;
+// GET reports it.
+func (s *HTTPServer) handleScreenlogAutostart(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a, _ := loadScreenlogAutostart()
+		jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "autostart": a})
+	case http.MethodPost:
+		var body struct {
+			Enabled bool             `json:"enabled"`
+			Config  *ScreenlogConfig `json:"config,omitempty"`
+			Title   string           `json:"title,omitempty"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cfg := defaultScreenlogConfig()
+		if body.Config != nil {
+			cfg = *body.Config
+		}
+		cfg.normalize()
+		if err := setScreenlogAutostart(body.Enabled, cfg, body.Title); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a, _ := loadScreenlogAutostart()
+		jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true, "autostart": a})
+	default:
+		jsonError(w, http.StatusMethodNotAllowed, "use GET or POST")
+	}
 }
 
 func (s *HTTPServer) handleScreenlogStatus(w http.ResponseWriter, r *http.Request) {
