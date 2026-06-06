@@ -41,6 +41,16 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"password",
 	"vaultValue",
 	"privateKey",
+	// Zero-touch provisioning (provisioning.ts / provision.go). The raw
+	// claimSecret and the device's Ed25519 signing seed are sent to Convex
+	// ONLY over the dedicated /devices/provision-{attest,claim} HTTP routes
+	// (where they are hashed/verified and never stored — same precedent as
+	// the bootstrap-pending relayPassword). They must NEVER ride a
+	// callMutation sync payload; only the claimSecretHash + public key are
+	// ever persisted. These fences catch a careless future sync path.
+	"claimSecret",
+	"ed25519Seed",
+	"claimSecretPlaintext",
 	// Yaver Mesh (mesh_cmd.go + backend/convex/mesh.ts). The WireGuard
 	// PRIVATE key lives ONLY in the vault — joinMesh publishes the public
 	// half + endpoints. If a sync path ever tries to ship the private key

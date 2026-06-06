@@ -430,6 +430,91 @@ export default defineSchema({
     .index("by_hardwareId", ["hardwareId"])
     .index("by_lastSeenAt", ["lastSeenAt"]),
 
+  // deviceProducts — the manufacturer/3rd-party registry for zero-touch
+  // (DPP-style) provisioned hardware. A "product" is a SKU/model that a
+  // builder (Talos, or any third party shipping Yaver-powered boxes)
+  // mints device identities under: "Talos Edge Node", "yaver blackbox",
+  // etc. Owned by the builder's user account; surfaced in the claim UI so
+  // an end user scanning a QR sees a friendly model name instead of a raw
+  // deviceId. Privacy-safe: a slug + display strings, no secrets, no paths.
+  //
+  // The flow this enables: builder runs `yaver provision mint --model
+  // <productId>` at flash time, which generates a per-device Ed25519
+  // bootstrap keypair, prints the PUBLIC key + a one-time claimSecret as a
+  // QR on the label, and registers a provisionedDevices row here. End user
+  // scans the QR (device still powered off) → claimProvisionedDevice binds
+  // the device to them → the box attests with its private key on first
+  // boot and self-credentials. See provisioning.ts.
+  deviceProducts: defineTable({
+    // Stable slug, unique per builder account (e.g. "talos-edge-v1").
+    productId: v.string(),
+    // The builder/manufacturer account that owns this product line and is
+    // authorized to mint devices under it.
+    ownerUserId: v.id("users"),
+    // Human-facing model name shown in the claim UI ("Talos Edge Node").
+    name: v.string(),
+    vendor: v.optional(v.string()),
+    // Informational list of services the image auto-starts post-claim
+    // (companion/onboarding wires the actual execution). Display only.
+    defaultServices: v.optional(v.array(v.string())),
+    createdAt: v.number(),
+  })
+    .index("by_productId", ["productId"])
+    .index("by_owner", ["ownerUserId"]),
+
+  // provisionedDevices — the pre-claim holding + attestation table for
+  // zero-touch hardware. This is the DPP "bootstrapping public key" store:
+  // the device's Ed25519 PUBLIC key and a hash of its one-time claimSecret
+  // are registered here at flash/mint time, before the device has ever
+  // powered on. Convex never sees the private key (it lives only on the SD
+  // seed) nor the raw claimSecret (only its SHA-256, like relay passwords).
+  //
+  // Lifecycle / status:
+  //   minted   — keypair registered, nobody owns it yet. A booting device
+  //              attesting here gets {awaiting-claim} and keeps polling.
+  //   claimed  — an end user scanned the QR and bound ownership; the next
+  //              successful attestation mints them a session token.
+  //   active   — device has attested and is credentialed (devices row
+  //              created via the normal registerDevice path).
+  //   revoked  — ownership reset (re-flash / factory reset / admin).
+  //
+  // Why separate from pendingDeviceClaims: that table is relay-password-
+  // scoped and requires the box to already be online; this one is
+  // cryptographic (pre-shared public key + claimSecret) and works
+  // scan-before-boot, through NAT, on any network. Different trust model.
+  provisionedDevices: defineTable({
+    deviceId: v.string(),
+    // Ed25519 bootstrap public key (base64 std), minted at flash time and
+    // printed in the QR. Attestation signatures are verified against this.
+    publicKey: v.string(),
+    // SHA-256 hex of the one-time claimSecret. Proves possession of the
+    // physical QR/label at claim time and the SD seed at attest time.
+    // Plaintext secret never stored (privacy contract, mirrors relay pw).
+    claimSecretHash: v.string(),
+    productId: v.optional(v.string()),
+    // Denormalized model name for the claim UI without a join.
+    model: v.optional(v.string()),
+    // Null until an end user claims via scanning the QR. First-claim-wins.
+    ownerUserId: v.optional(v.id("users")),
+    status: v.union(
+      v.literal("minted"),
+      v.literal("claimed"),
+      v.literal("active"),
+      v.literal("revoked")
+    ),
+    name: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    mintedAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    activatedAt: v.optional(v.number()),
+    // Last time the device attempted attestation — lets the claim UI show
+    // "device is waiting to be claimed (last seen 2m ago)".
+    lastAttestAt: v.optional(v.number()),
+  })
+    .index("by_deviceId", ["deviceId"])
+    .index("by_owner", ["ownerUserId"])
+    .index("by_publicKey", ["publicKey"]),
+
   // Rescue command queue — the *only* control channel that survives a
   // broken relay tunnel. The agent's heartbeat (independent network
   // path from the relay) polls here for pending commands and executes

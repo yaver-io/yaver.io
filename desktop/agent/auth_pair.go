@@ -125,6 +125,36 @@ func EndPairingSession() {
 	}
 }
 
+// completeActivePairingWithToken splices a token into the live pairing
+// session and fires its done channel, exactly as a manual pair-submit
+// would. Used by the zero-touch provision attest loop: when Convex hands
+// back an owner-bound session token, we route it through the same
+// save-and-reexec handoff the manual pairing path uses. Returns false if
+// there is no active session to complete (caller should retry shortly).
+func completeActivePairingWithToken(token, convexURL string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	pairingMu.Lock()
+	defer pairingMu.Unlock()
+	if activePairing == nil {
+		return false
+	}
+	activePairing.ReceivedToken = token
+	if u := strings.TrimSpace(convexURL); u != "" {
+		activePairing.ReceivedURL = u
+	} else if cfg, err := LoadConfig(); err == nil && cfg != nil && strings.TrimSpace(cfg.ConvexSiteURL) != "" {
+		activePairing.ReceivedURL = cfg.ConvexSiteURL
+	}
+	select {
+	case <-activePairing.done:
+	default:
+		close(activePairing.done)
+	}
+	return true
+}
+
 // activePairingSnapshot returns a copy of the current session's
 // public fields or nil if none is active / expired.
 func activePairingSnapshot() *pairingSession {

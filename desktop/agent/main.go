@@ -455,6 +455,10 @@ func main() {
 		runRelease(os.Args[2:])
 	case "monitor":
 		runMonitor(os.Args[2:])
+	case "provision":
+		runProvision(os.Args[2:])
+	case "shell":
+		runShellCmd(os.Args[2:])
 	case "flags":
 		runFlags(os.Args[2:])
 	case "analytics":
@@ -7398,6 +7402,20 @@ func runSSHWrap(args []string) {
 		host = resolvedDevice.Name
 	}
 	if host == "" {
+		// No direct/Tailscale/mesh route. For a relay-only box (a headless
+		// zero-touch Pi behind CGNAT), real OpenSSH has nothing to dial —
+		// but the agent is still reachable over the relay/public HTTP
+		// transport. Fall back to a PTY over /ws/terminal so `yaver ssh`
+		// "just works" for an interactive session. Only when there are no
+		// passthrough args (-L tunnels, remote commands, scp-style use
+		// can't ride a PTY); those keep the original ssh-error behavior.
+		if resolvedDevice != nil && len(passthrough) == 0 {
+			if err := runShellOverRelay(resolvedDevice.DeviceID, ""); err == nil {
+				return
+			} else {
+				fmt.Fprintf(os.Stderr, "→ relay shell unavailable (%v); falling back to ssh\n", err)
+			}
+		}
 		// Couldn't resolve via Tailscale or Convex — fall through to
 		// whatever the user typed. ssh will give a sensible error if
 		// it's not actually a hostname.
