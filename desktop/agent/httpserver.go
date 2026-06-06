@@ -587,6 +587,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// authed; nothing is public (unlike clips' share links).
 	mux.HandleFunc("/screenlog/start", s.auth(s.handleScreenlogStart))
 	mux.HandleFunc("/screenlog/stop", s.auth(s.handleScreenlogStop))
+	mux.HandleFunc("/screenlog/kill", s.auth(s.handleScreenlogKill))
 	mux.HandleFunc("/screenlog/status", s.auth(s.handleScreenlogStatus))
 	mux.HandleFunc("/screenlog/drivers", s.auth(s.handleScreenlogDrivers))
 	mux.HandleFunc("/screenlog/list", s.auth(s.handleScreenlogList))
@@ -13130,6 +13131,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(map[string]interface{}{
 			"id": sess.ID, "frames": len(sess.Frames), "viewUrl": "/screenlog/" + sess.ID,
 		})
+	case "screenlog_kill":
+		var body struct {
+			Purge bool `json:"purge"`
+		}
+		json.Unmarshal(call.Arguments, &body)
+		res := killScreenlog(body.Purge)
+		return mcpToolJSON(map[string]interface{}{"killed": res})
 	case "screenlog_status":
 		return mcpToolJSON(map[string]interface{}{"status": screenlogStatus()})
 	case "screenlog_list":
