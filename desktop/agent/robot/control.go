@@ -348,6 +348,39 @@ func (c *Controller) Torque(ctx context.Context) (SenseReading, error) {
 	return c.Companion.Sense(ctx)
 }
 
+// Power switches the machine PSU via Marlin PSU control: M80 (on) / M81 (off).
+// Only does anything when the board has PSU control wired (PS_ON → PSU relay/
+// MOSFET, PSU_CONTROL in firmware) — over plain USB the logic board stays
+// powered regardless, so a smart plug/relay is the reliable hard-cut. On power-
+// off the homing reference is lost, so we clear the homed flag.
+func (c *Controller) Power(ctx context.Context, on bool) MoveResponse {
+	cmd := "M81"
+	if on {
+		cmd = "M80"
+	}
+	if err := c.Backend.Raw(ctx, cmd); err != nil {
+		return fail("backend", err.Error())
+	}
+	if !on {
+		c.mu.Lock()
+		c.homed = false
+		c.mu.Unlock()
+	}
+	return MoveResponse{OK: true, Action: &Action{Kind: "power", On: &on}}
+}
+
+// MotorsOff releases the steppers (M84) — frees the axes to be moved by hand.
+// Clears homing (position is no longer trusted after a manual move).
+func (c *Controller) MotorsOff(ctx context.Context) MoveResponse {
+	if err := c.Backend.Raw(ctx, "M84"); err != nil {
+		return fail("backend", err.Error())
+	}
+	c.mu.Lock()
+	c.homed = false
+	c.mu.Unlock()
+	return MoveResponse{OK: true, Action: &Action{Kind: "motors_off"}}
+}
+
 // GPIO sets a board pin (M42 P<pin> S<value>) — driver enable/direction, a
 // relay/MOSFET, an LED. The phone's generic motor/IO control.
 func (c *Controller) GPIO(ctx context.Context, pin, value int) MoveResponse {
