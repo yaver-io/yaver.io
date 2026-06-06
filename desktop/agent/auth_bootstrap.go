@@ -205,6 +205,22 @@ func runBootstrapServe(httpPort int) {
 	fmt.Println("machine automatically and offer a one-tap pairing option.")
 	fmt.Println()
 
+	// Zero-touch provisioning seed (DPP-style). If this box was flashed
+	// with a provision seed, pin its deviceId + convex URL into config
+	// NOW — before the relay/notify code below reads cfg.DeviceID — so the
+	// tunnel registers under the provisioned id rather than a fresh random
+	// one. The background attest loop is started further down.
+	provisionSeed, provisionErr := LoadProvisionSeed()
+	if provisionErr != nil {
+		log.Printf("[provision] ignoring unreadable provision seed: %v", provisionErr)
+	}
+	if provisionSeed != nil {
+		applyProvisionSeedToConfig(provisionSeed)
+		fmt.Println("Zero-touch provisioning seed found — this machine will")
+		fmt.Println("self-credential once its QR is claimed in the Yaver app.")
+		fmt.Println()
+	}
+
 	hostname, _ := os.Hostname()
 	session, err := StartPairingSession(bootstrapPairingTTL)
 	if err != nil {
@@ -345,6 +361,17 @@ func runBootstrapServe(httpPort int) {
 		// an auth token — authenticated via (deviceId, hardwareId, pubKey)
 		// triple which is already in Convex from the initial `yaver auth`.
 		go notifyConvexBootstrap(cfg, httpPort)
+	}
+
+	// Zero-touch attest loop: drive a provisioned box from "fresh" to
+	// "credentialed" the instant its owner claims the QR. Runs alongside
+	// the manual pairing server above — whichever credentials the box
+	// first wins, and on success the loop completes the active pairing
+	// session so the shared save-token + re-exec handoff below fires.
+	if provisionSeed != nil {
+		provisionCtx, provisionCancel := context.WithCancel(context.Background())
+		defer provisionCancel()
+		go runProvisionAttestLoop(provisionCtx, provisionSeed)
 	}
 
 	// Block until either a token lands or the pairing window

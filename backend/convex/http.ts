@@ -1647,6 +1647,170 @@ http.route({
   }),
 });
 
+/**
+ * POST /devices/provision-attest — zero-touch first-boot attestation.
+ *
+ * No bearer. The proof is cryptographic: the device signs
+ * `provision-attest|<deviceId>|<timestampMs>` with the Ed25519 private key
+ * baked into its SD seed at flash time, and presents the one-time
+ * claimSecret. Convex verifies both against the public key + secret-hash
+ * registered at mint time. Responses:
+ *   200 {status:"active", token}   — proofs ok + a human has claimed it
+ *   202 {status:"awaiting-claim"}  — proofs ok but unclaimed; keep polling
+ *   403 {status:"revoked"}         — ownership reset; stop
+ *   401 {status:"bad-*"|"stale"}   — proof failed
+ *   404 {status:"not-found"}       — no such provisioned device
+ * See provisioning.ts for the full trust model.
+ */
+http.route({
+  path: "/devices/provision-attest",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => null);
+    if (
+      !body ||
+      typeof body.deviceId !== "string" ||
+      typeof body.claimSecret !== "string" ||
+      typeof body.signature !== "string" ||
+      typeof body.timestampMs !== "number"
+    ) {
+      return errorResponse(
+        "deviceId, claimSecret, timestampMs, signature required",
+        400,
+      );
+    }
+    let result;
+    try {
+      result = await ctx.runMutation(internal.provisioning.attest, {
+        deviceId: body.deviceId,
+        claimSecret: body.claimSecret,
+        timestampMs: body.timestampMs,
+        signature: body.signature,
+      });
+    } catch (e: any) {
+      return errorResponse(e?.message || "attest failed", 500);
+    }
+    switch (result.status) {
+      case "active":
+        return jsonResponse(result, 200);
+      case "awaiting-claim":
+        return jsonResponse(result, 202);
+      case "revoked":
+        return jsonResponse(result, 403);
+      case "not-found":
+        return jsonResponse(result, 404);
+      default:
+        // bad-secret / bad-signature / stale — don't leak which check
+        // failed beyond the status string; all are 401.
+        return jsonResponse(result, 401);
+    }
+  }),
+});
+
+/**
+ * POST /devices/provision-claim — claim a provisioned device by scanned QR
+ * (HTTP variant for CLI / non-Convex-client callers; the mobile/web apps
+ * can also call the api.provisioning.claimProvisionedDevice mutation
+ * directly). Bearer-authed; body carries the scanned {deviceId,
+ * claimSecret} and an optional name.
+ */
+http.route({
+  path: "/devices/provision-claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string" || typeof body.claimSecret !== "string") {
+      return errorResponse("deviceId, claimSecret required", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.provisioning.claimProvisionedDevice, {
+        tokenHash,
+        deviceId: body.deviceId,
+        claimSecret: body.claimSecret,
+        name: typeof body.name === "string" ? body.name : undefined,
+      });
+      return jsonResponse(result, 200);
+    } catch (e: any) {
+      return errorResponse(e?.message || "claim failed", 400);
+    }
+  }),
+});
+
+/**
+ * POST /devices/provision-mint — register a flash-time device identity
+ * (builder/manufacturer side). Bearer-authed. The CLI generates the
+ * Ed25519 keypair + claimSecret locally and sends only the PUBLIC key +
+ * the claimSecret HASH; Convex never sees the private key or raw secret.
+ */
+http.route({
+  path: "/devices/provision-mint",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => null);
+    if (
+      !body ||
+      typeof body.deviceId !== "string" ||
+      typeof body.publicKey !== "string" ||
+      typeof body.claimSecretHash !== "string"
+    ) {
+      return errorResponse("deviceId, publicKey, claimSecretHash required", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.provisioning.mintProvisionedDevice, {
+        tokenHash,
+        deviceId: body.deviceId,
+        publicKey: body.publicKey,
+        claimSecretHash: body.claimSecretHash,
+        productId: typeof body.productId === "string" ? body.productId : undefined,
+        name: typeof body.name === "string" ? body.name : undefined,
+        platform: typeof body.platform === "string" ? body.platform : undefined,
+      });
+      return jsonResponse(result, 200);
+    } catch (e: any) {
+      return errorResponse(e?.message || "mint failed", 400);
+    }
+  }),
+});
+
+/** POST /devices/provision-register-product — builder declares a SKU. */
+http.route({
+  path: "/devices/provision-register-product",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.productId !== "string" || typeof body.name !== "string") {
+      return errorResponse("productId, name required", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.provisioning.registerProduct, {
+        tokenHash,
+        productId: body.productId,
+        name: body.name,
+        vendor: typeof body.vendor === "string" ? body.vendor : undefined,
+        defaultServices: Array.isArray(body.defaultServices) ? body.defaultServices : undefined,
+      });
+      return jsonResponse(result, 200);
+    } catch (e: any) {
+      return errorResponse(e?.message || "register-product failed", 400);
+    }
+  }),
+});
+
 /** POST /devices/heartbeat — Device heartbeat (authed). */
 http.route({
   path: "/devices/heartbeat",
