@@ -21,6 +21,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mdp/qrterminal/v3"
@@ -88,9 +90,10 @@ func provisionAuth() (convexURL, token string) {
 }
 
 func runProvisionMint(args []string) {
-	var productID, model, platform, name, out string
-	platform = "linux"
+	var productID, model, platform, vendor, name, out, outDir, manifestPath string
+	count := 1
 	register := true
+	forceRegisterProduct := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--product":
@@ -108,6 +111,11 @@ func runProvisionMint(args []string) {
 			if i < len(args) {
 				platform = args[i]
 			}
+		case "--vendor":
+			i++
+			if i < len(args) {
+				vendor = args[i]
+			}
 		case "--name":
 			i++
 			if i < len(args) {
@@ -118,17 +126,56 @@ func runProvisionMint(args []string) {
 			if i < len(args) {
 				out = args[i]
 			}
+		case "--out-dir":
+			i++
+			if i < len(args) {
+				outDir = args[i]
+			}
+		case "--manifest":
+			i++
+			if i < len(args) {
+				manifestPath = args[i]
+			}
+		case "--count":
+			i++
+			if i < len(args) {
+				if n, perr := strconv.Atoi(args[i]); perr == nil && n > 0 {
+					count = n
+				}
+			}
+		case "--register-product":
+			forceRegisterProduct = true
 		case "--no-register":
 			register = false
 		}
+	}
+
+	// A yaver.provision.yaml (explicit --manifest, else auto-detected in CWD)
+	// supplies product/model/vendor/platform + the services summary so a
+	// builder doesn't repeat flags per device. Explicit flags still win.
+	manifest := loadMintManifest(manifestPath)
+	if manifest != nil {
+		if productID == "" {
+			productID = manifest.Product
+		}
+		if model == "" {
+			model = manifest.Model
+		}
+		if vendor == "" {
+			vendor = manifest.Vendor
+		}
+		if platform == "" {
+			platform = manifest.Platform
+		}
+	}
+	if platform == "" {
+		platform = "linux"
 	}
 
 	convexURL, token := "", ""
 	if register {
 		convexURL, token = provisionAuth()
 	} else {
-		// Offline mint still needs a convex URL baked into the seed so the
-		// box knows where to attest. Use config's if available.
 		if cfg, err := LoadConfig(); err == nil && cfg != nil {
 			convexURL = strings.TrimRight(cfg.ConvexSiteURL, "/")
 		}
@@ -137,32 +184,46 @@ func runProvisionMint(args []string) {
 		}
 	}
 
+	// Register the product once up front so the claim UI shows a friendly
+	// model name. Triggered by a manifest, --register-product, or any time
+	// we have both a slug and a display name and we're online.
+	if register && productID != "" && (manifest != nil || forceRegisterProduct) && model != "" {
+		var services []string
+		if manifest != nil {
+			services = manifest.Services
+		}
+		body, _ := json.Marshal(map[string]interface{}{
+			"productId":       productID,
+			"name":            model,
+			"vendor":          vendor,
+			"defaultServices": services,
+		})
+		if err := provisionPost(convexURL+"/devices/provision-register-product", token, body); err != nil {
+			fmt.Fprintf(os.Stderr, "mint: register product failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ Product %q (%s) registered\n", productID, model)
+	}
+
+	// Bulk path: write N seeds into --out-dir plus a CSV manifest a factory
+	// line / label printer can consume (raw QR payload per row). We don't
+	// spew N terminal QRs; single mint still prints one.
+	if count > 1 {
+		runBulkMint(count, productID, model, platform, name, vendor, outDir, convexURL, token, register)
+		return
+	}
+
 	seed, err := GenerateProvisionSeed(productID, model, platform, convexURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mint: %v\n", err)
 		os.Exit(1)
 	}
-
 	if register {
-		pub, err := seed.PublicKeyBase64()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "mint: %v\n", err)
-			os.Exit(1)
-		}
-		body, _ := json.Marshal(map[string]interface{}{
-			"deviceId":        seed.DeviceID,
-			"publicKey":       pub,
-			"claimSecretHash": claimSecretHashHex(seed.ClaimSecret),
-			"productId":       productID,
-			"name":            name,
-			"platform":        platform,
-		})
-		if err := provisionPost(convexURL+"/devices/provision-mint", token, body); err != nil {
+		if err := registerMintedSeed(convexURL, token, seed, name, platform); err != nil {
 			fmt.Fprintf(os.Stderr, "mint: register with Convex failed: %v\n", err)
 			os.Exit(1)
 		}
 	}
-
 	if out == "" {
 		out = fmt.Sprintf("./provision-%s.json", seed.DeviceID)
 	}
@@ -170,7 +231,6 @@ func runProvisionMint(args []string) {
 		fmt.Fprintf(os.Stderr, "mint: write seed: %v\n", err)
 		os.Exit(1)
 	}
-
 	uri, err := seed.ProvisionQRURI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mint: build QR: %v\n", err)
@@ -188,6 +248,104 @@ func runProvisionMint(args []string) {
 	fmt.Println()
 	fmt.Printf("  QR payload: %s\n", uri)
 	fmt.Println()
+}
+
+// loadMintManifest resolves the manifest for a mint run: explicit path, or
+// auto-detected yaver.provision.yaml in the current directory. Returns nil
+// (silently) when none is present — flags-only mint stays supported.
+func loadMintManifest(explicitPath string) *ProvisionManifest {
+	if strings.TrimSpace(explicitPath) != "" {
+		dir := explicitPath
+		if !strings.HasSuffix(explicitPath, ".yaml") && !strings.HasSuffix(explicitPath, ".yml") {
+			// treat as a directory
+		} else {
+			dir = filepath.Dir(explicitPath)
+		}
+		m, err := LoadProvisionManifest(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mint: %v\n", err)
+			os.Exit(1)
+		}
+		return m
+	}
+	m, _ := LoadProvisionManifest(".")
+	return m
+}
+
+// registerMintedSeed POSTs a single minted device identity to Convex.
+func registerMintedSeed(convexURL, token string, seed *ProvisionSeed, name, platform string) error {
+	pub, err := seed.PublicKeyBase64()
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"deviceId":        seed.DeviceID,
+		"publicKey":       pub,
+		"claimSecretHash": claimSecretHashHex(seed.ClaimSecret),
+		"productId":       seed.ProductID,
+		"name":            name,
+		"platform":        platform,
+	})
+	return provisionPost(convexURL+"/devices/provision-mint", token, body)
+}
+
+// runBulkMint mints `count` devices into outDir and writes a CSV the label
+// printer / factory tooling consumes. One seed file + one CSV row each.
+func runBulkMint(count int, productID, model, platform, name, vendor, outDir, convexURL, token string, register bool) {
+	if outDir == "" {
+		outDir = "./provision-batch"
+	}
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "mint: create out dir: %v\n", err)
+		os.Exit(1)
+	}
+	csvPath := filepath.Join(outDir, "labels.csv")
+	f, err := os.Create(csvPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mint: create csv: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	fmt.Fprintln(f, "deviceId,productId,model,seedPath,qrPayload")
+
+	minted := 0
+	for i := 0; i < count; i++ {
+		seed, gerr := GenerateProvisionSeed(productID, model, platform, convexURL)
+		if gerr != nil {
+			fmt.Fprintf(os.Stderr, "mint: device %d: %v\n", i+1, gerr)
+			os.Exit(1)
+		}
+		if register {
+			if rerr := registerMintedSeed(convexURL, token, seed, name, platform); rerr != nil {
+				fmt.Fprintf(os.Stderr, "mint: device %d register failed: %v\n", i+1, rerr)
+				os.Exit(1)
+			}
+		}
+		seedPath := filepath.Join(outDir, fmt.Sprintf("provision-%s.json", seed.DeviceID))
+		if werr := writeProvisionSeed(seedPath, seed); werr != nil {
+			fmt.Fprintf(os.Stderr, "mint: device %d write seed: %v\n", i+1, werr)
+			os.Exit(1)
+		}
+		uri, uerr := seed.ProvisionQRURI()
+		if uerr != nil {
+			fmt.Fprintf(os.Stderr, "mint: device %d qr: %v\n", i+1, uerr)
+			os.Exit(1)
+		}
+		fmt.Fprintf(f, "%s,%s,%s,%s,%s\n", seed.DeviceID, productID, csvField(model), seedPath, uri)
+		minted++
+	}
+	fmt.Printf("\n✓ Minted %d devices%s\n", minted, regSuffix(register))
+	fmt.Printf("  Seeds:  %s/provision-<id>.json  (flash each as yaver-provision.json)\n", outDir)
+	fmt.Printf("  Labels: %s  (deviceId,productId,model,seedPath,qrPayload — feed to your label printer)\n", csvPath)
+	fmt.Println()
+}
+
+// csvField quotes a field if it contains a comma or quote.
+func csvField(s string) string {
+	if strings.ContainsAny(s, ",\"\n") {
+		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+	}
+	return s
 }
 
 func regSuffix(registered bool) string {

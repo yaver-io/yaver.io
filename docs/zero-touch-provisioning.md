@@ -115,23 +115,53 @@ yaver provision product --id <slug> --name <name> [--vendor <v>]
 - mutations also callable directly by the app: `claimProvisionedDevice`,
   `peekProvisionedDevice`, `listMine`, `revoke`.
 
-## For third parties (Talos-alike)
+## For third parties (Talos-alike) — `yaver.provision.yaml`
 
-Everything above is generic. A builder: (1) `yaver provision product` once
-to register the SKU display name; (2) `yaver provision mint` per device in
-the flash pipeline; (3) prints the QR; (4) ships. The end user's generic
-Yaver "scan to add device" flow claims it. Post-claim service auto-start
-(the box's own workload — e.g. Talos's Modbus master / edge loop /
-screenlog) is wired via the existing companion-compute + machine-onboarding
-mechanisms; a `yaver.provision.yaml` manifest to declare those is the next
-SDK step.
+Everything is driven by one declarative file the builder commits to their
+image (schema: `desktop/agent/provision_manifest.go`):
+
+```yaml
+version: 1
+product: talos-edge-v1
+model: "Talos Edge Node"
+vendor: Talos
+platform: linux
+services: [modbus-rtu-master, edge-loop, screenlog]   # claim-UI summary
+setup:                                                 # one-time post-claim bring-up
+  - name: bring up the workload
+    run: "yaver companion up"
+```
+
+Builder flow:
+
+```
+yaver provision mint --manifest yaver.provision.yaml --count 100 --out-dir batch/
+# -> registers the product (model shown in the claim UI), mints 100 SD seeds
+#    into batch/, and writes batch/labels.csv (deviceId,productId,model,
+#    seedPath,qrPayload) for the label printer / factory line.
+```
+
+When a box self-credentials (claim + attest), the agent runs the manifest's
+`setup` steps **once** (idempotent marker; gated on the box actually being
+provisioned) — see `provision_postclaim.go`. Long-running services delegate
+to the existing companion engine (`yaver companion up`) rather than a second
+runtime. A complete example: `examples/talos-edge/yaver.provision.yaml`.
+
+End users claim with the generic mobile "scan to add device" screen
+(`/provision-add`, `mobile/app/provision-add.tsx` →
+`src/components/ProvisionScanner.tsx` → `claimProvisionedDevice`) or
+`yaver provision claim "<qr-uri>"`.
 
 ## Not yet built
 
-- `yaver flash` (write base image + inject seed + emit QR in one step) and a
-  bulk label-sheet mint for a factory line.
-- `yaver.provision.yaml` manifest + generalized image builder.
-- Mobile/web "scan to add device" UI on top of `claimProvisionedDevice` /
+- `yaver flash` (write base image + inject seed in one step) and a printed
+  QR label *sheet* (current bulk output is seeds + a `labels.csv`; rendering
+  QR images needs a QR-image dep — deferred to keep the bundle lean).
+- Mobile entry point: `app/provision-add.tsx` exists and is route-addressable
+  (`/provision-add`) but isn't yet linked from a tab/menu (the nav files are
+  under active edit by other work; add one `router.push('/provision-add')`
+  button when convenient). Needs on-device testing (camera).
+- Web "scan/enter to add device" form on `claimProvisionedDevice` /
   `peekProvisionedDevice`.
-- Talos integration: `talos-edge-v1` product + provision manifest that
-  auto-starts the existing edge services post-claim.
+- Talos repo wiring: ship `examples/talos-edge/yaver.provision.yaml` in the
+  Talos image + register the `talos-edge-v1` product on the Talos account.
