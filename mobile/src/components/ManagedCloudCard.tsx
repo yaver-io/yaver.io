@@ -6,14 +6,20 @@
 // project_managed_cloud_onboarding_gap.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, Pressable, Alert, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, Alert, ActivityIndicator, Linking } from "react-native";
 import { getConvexSiteUrl } from "../lib/auth";
 import {
+  createCreditPackCheckout,
+  getCreditPacks,
   getManagedCloudBalance,
+  getManagedCloudUsage,
   getManagedSubscription,
+  provisionManagedCloud,
   startManagedCloudMachine,
   stopManagedCloudMachine,
+  type CreditPack,
   type ManagedCloudBalanceSummary,
+  type ManagedCloudUsageSummary,
   type ManagedSubscriptionSummary,
 } from "../lib/subscription";
 
@@ -38,19 +44,27 @@ export default function ManagedCloudCard({
 }) {
   const [data, setData] = useState<ManagedSubscriptionSummary | null>(null);
   const [balance, setBalance] = useState<ManagedCloudBalanceSummary | null>(null);
-  const [owner, setOwner] = useState<boolean | null>(null);
+  const [usage, setUsage] = useState<ManagedCloudUsageSummary | null>(null);
+  const [packs, setPacks] = useState<CreditPack[]>([]);
+  const [access, setAccess] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showLedger, setShowLedger] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
     const r = await getManagedSubscription(token);
     if (r) {
       setData(r);
-      setOwner(r.cloudPreviewOwner === true);
-      const b = await getManagedCloudBalance(token);
+      // Render for the owner OR when the launch flag opens cloud access.
+      setAccess(r.cloudAccess === true || r.cloudPreviewOwner === true);
+      const [b, u] = await Promise.all([
+        getManagedCloudBalance(token),
+        getManagedCloudUsage(token),
+      ]);
       setBalance(b ?? r.balance ?? null);
+      setUsage(u);
     } else {
-      setOwner(false);
+      setAccess(false);
     }
   }, [token]);
 
@@ -60,9 +74,15 @@ export default function ManagedCloudCard({
     return () => clearInterval(iv);
   }, [load]);
 
-  // Owner-only private preview: render nothing for non-owners or while
-  // ownership is still unknown (never flash to a non-owner).
-  if (!token || owner !== true) return null;
+  // Lazily fetch the credit-pack catalog once access is confirmed.
+  useEffect(() => {
+    if (!token || access !== true || packs.length) return;
+    void getCreditPacks(token).then(setPacks);
+  }, [token, access, packs.length]);
+
+  // Private preview / launch-gated: render nothing for non-access users
+  // or while access is still unknown (never flash to a non-access user).
+  if (!token || access !== true) return null;
 
   const machines = data?.machines ?? [];
   const sub = data?.subscription ?? null;
@@ -137,10 +157,65 @@ export default function ManagedCloudCard({
     }
   };
 
+  // Add credit, OpenAI-style: open a web checkout in the system browser
+  // (NEVER an in-app purchase — keeps Apple/Google billing policy out of
+  // it; compute is remote IaaS, sold on the web). On payment the
+  // order_created webhook credits the wallet; balance refreshes on the
+  // next poll.
+  const addCredit = async (packId: string) => {
+    setBusy(`pack:${packId}`);
+    try {
+      const r = await createCreditPackCheckout(token, packId);
+      if (r?.url) {
+        await Linking.openURL(r.url);
+        Alert.alert(
+          "Finish in your browser",
+          "Complete the payment in the browser that just opened. Your balance updates here automatically once the payment clears.",
+        );
+      } else {
+        throw new Error("No checkout URL returned");
+      }
+    } catch (e: any) {
+      Alert.alert("Couldn't start top-up", e?.message || "Try again in a moment.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const spinUp = (machineType: "cpu" | "gpu") => {
+    Alert.alert(
+      "Spin up a box?",
+      `Provisions a new ${machineType.toUpperCase()} cloud box, billed from your prepaid balance (~${money(balance?.estimatedHourlyCents)}/hr running). You can pause it anytime — paused costs ~€0.50/mo.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Spin up",
+          onPress: async () => {
+            setBusy(`spinup:${machineType}`);
+            try {
+              await provisionManagedCloud(token, { machineType });
+              await load();
+            } catch (e: any) {
+              const msg = e?.message || "";
+              Alert.alert(
+                msg.toLowerCase().includes("balance") ? "Add credit first" : "Couldn't spin up",
+                msg.toLowerCase().includes("balance")
+                  ? "Your prepaid balance is too low to safely run a box. Add credit, then try again."
+                  : msg || "Yaver couldn't provision a box right now. Try again.",
+              );
+            } finally {
+              setBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <View style={[{ borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 14, gap: 8, backgroundColor: c.surface }]}>
       <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "700" }}>
-        ☁ Managed Cloud
+        ☁ Yaver Cloud
       </Text>
       <Text style={{ color: c.textMuted, fontSize: 11 }}>
         {sub
@@ -148,15 +223,117 @@ export default function ManagedCloudCard({
           : "No managed cloud machine is active on this account."}
       </Text>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>
-          Balance {money(balanceCents)}
+        <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "800" }}>
+          {money(balanceCents)}
         </Text>
         {typeof balance?.estimatedHourlyCents === "number" ? (
           <Text style={{ color: c.textMuted, fontSize: 11 }}>
             ~{money(balance.estimatedHourlyCents)}/hr running
           </Text>
         ) : null}
+        {balance?.lowBalance ? (
+          <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>
+            Low balance
+          </Text>
+        ) : null}
       </View>
+
+      {/* Add credit — OpenAI-style web top-up (no in-app purchase). */}
+      <View style={{ gap: 4 }}>
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>Add credit</Text>
+        <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+          {(packs.length
+            ? packs
+            : [
+                { id: "p10", cents: 1000, label: "$10" },
+                { id: "p25", cents: 2500, label: "$25" },
+                { id: "p50", cents: 5000, label: "$50" },
+              ]
+          ).map((p) => (
+            <Pressable
+              key={p.id}
+              disabled={busy !== null}
+              onPress={() => addCredit(p.id)}
+              style={{
+                opacity: busy ? 0.5 : 1,
+                borderWidth: 1,
+                borderColor: "#0ea5e9",
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+              }}
+            >
+              {busy === `pack:${p.id}` ? (
+                <ActivityIndicator size="small" color="#0ea5e9" />
+              ) : (
+                <Text style={{ color: "#0ea5e9", fontSize: 13, fontWeight: "700" }}>
+                  + {p.label}
+                </Text>
+              )}
+            </Pressable>
+          ))}
+        </View>
+        <Text style={{ color: c.textMuted, fontSize: 10 }}>
+          Opens a secure checkout in your browser. Credit is added when payment clears.
+        </Text>
+      </View>
+
+      {/* Spin up a new box from prepaid balance. */}
+      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <Pressable
+          disabled={busy !== null}
+          onPress={() => spinUp("cpu")}
+          style={{
+            opacity: busy ? 0.5 : 1,
+            borderWidth: 1,
+            borderColor: "#059669",
+            borderRadius: 8,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+          }}
+        >
+          {busy === "spinup:cpu" ? (
+            <ActivityIndicator size="small" color="#059669" />
+          ) : (
+            <Text style={{ color: "#059669", fontSize: 13, fontWeight: "700" }}>
+              ＋ Spin up CPU box
+            </Text>
+          )}
+        </Pressable>
+        {usage && (usage.usage.length || usage.topups.length) ? (
+          <Pressable onPress={() => setShowLedger((s) => !s)} style={{ paddingVertical: 6, paddingHorizontal: 6 }}>
+            <Text style={{ color: c.textMuted, fontSize: 11 }}>
+              {showLedger ? "Hide activity" : "Activity"}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {/* Recent wallet activity ledger. */}
+      {showLedger && usage ? (
+        <View style={{ gap: 3, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 6 }}>
+          {usage.topups.slice(0, 5).map((t) => (
+            <View key={`t-${t.orderId}`} style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                Top-up{t.packId ? ` (${t.packId})` : ""}
+              </Text>
+              <Text style={{ color: "#059669", fontSize: 10, fontWeight: "700" }}>
+                + {money(t.amountCents)}
+              </Text>
+            </View>
+          ))}
+          {usage.usage.slice(0, 6).map((u, i) => (
+            <View key={`u-${u.createdAt}-${i}`} style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                {u.date} · {u.state}{u.dryRun ? " · sim" : ""}
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                − {money(u.chargedCents)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       {machines.length === 0 ? (
         <Text style={{ color: c.textMuted, fontSize: 12 }}>No managed boxes.</Text>

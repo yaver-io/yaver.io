@@ -299,6 +299,13 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   // cosmetic — every buy/provision route is independently 403'd
   // server-side, so hiding is UX, not the security boundary.
   const [owner, setOwner] = useState<boolean | null>(null);
+  // access = owner allowlist OR the YAVER_CLOUD_PUBLIC launch flag. The
+  // panel renders when EITHER is true; still cosmetic (routes 403 too).
+  const [access, setAccess] = useState<boolean | null>(null);
+  const [balanceCents, setBalanceCents] = useState<number | null>(null);
+  const [hourlyCents, setHourlyCents] = useState<number | null>(null);
+  const [lowBalance, setLowBalance] = useState(false);
+  const [packs, setPacks] = useState<Array<{ id: string; cents: number; label: string }>>([]);
   const [adoptId, setAdoptId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -355,12 +362,65 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
       }
       const data = await res.json().catch(() => ({}));
       setOwner(data?.cloudPreviewOwner === true);
+      setAccess(data?.cloudAccess === true || data?.cloudPreviewOwner === true);
       setMachines(Array.isArray(data?.machines) ? data.machines : []);
       setLoadError(false);
+      // Wallet + catalog (best-effort; null balance just hides the row).
+      void (async () => {
+        try {
+          const [bRes, pRes] = await Promise.all([
+            fetch(`${CONVEX_URL}/billing/yaver-cloud/balance`, { headers: { Authorization: `Bearer ${token}` } }),
+            fetch(`${CONVEX_URL}/billing/credits/packs`, { headers: { Authorization: `Bearer ${token}` } }),
+          ]);
+          if (bRes.ok) {
+            const b = await bRes.json().catch(() => ({}));
+            setBalanceCents(typeof b?.balanceCents === "number" ? b.balanceCents : null);
+            setHourlyCents(typeof b?.estimatedHourlyCents === "number" ? b.estimatedHourlyCents : null);
+            setLowBalance(b?.lowBalance === true);
+          }
+          if (pRes.ok) {
+            const p = await pRes.json().catch(() => ({}));
+            if (Array.isArray(p?.packs)) setPacks(p.packs);
+          }
+        } catch {
+          /* non-fatal */
+        }
+      })();
     } catch {
       setLoadError(true);
     }
   }, [token]);
+
+  // Add credit (OpenAI-style): create a one-time pack checkout and send
+  // the browser to LemonSqueezy. Webhook credits the wallet on payment.
+  async function addCredit(packId: string) {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const res = await fetch(`${CONVEX_URL}/billing/credits/checkout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ packId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.url) {
+        setError(
+          res.status === 503
+            ? "Credit packs aren't configured yet (owner: set the LemonSqueezy pack variant ids)."
+            : typeof data?.error === "string" && data.error.length <= 140 && !/[<{]/.test(data.error)
+              ? data.error
+              : "Couldn't start top-up. Please try again.",
+        );
+        return;
+      }
+      window.location.href = data.url; // → LemonSqueezy
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // Provision is async (LemonSqueezy webhook → provider → cloud-init →
   // agent heartbeat). Poll while the panel is open so a freshly
@@ -386,7 +446,10 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json().catch(() => ({}));
-        if (alive) setOwner(data?.cloudPreviewOwner === true);
+        if (alive) {
+          setOwner(data?.cloudPreviewOwner === true);
+          setAccess(data?.cloudAccess === true || data?.cloudPreviewOwner === true);
+        }
         const ms = Array.isArray(data?.machines) ? data.machines : [];
         if (alive && ms.length > 0) {
           setMachines(ms);
@@ -443,10 +506,13 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   }
 
   if (!token) return null;
-  // Owner-only private preview: render NOTHING for non-owners (and
-  // while ownership is still unknown, so the panel never flashes to a
-  // non-owner). Server independently 403s every action regardless.
-  if (owner !== true) return null;
+  // Private preview / launch-gated: render NOTHING for non-access users
+  // (and while access is still unknown, so the panel never flashes).
+  // Server independently 403s every action regardless.
+  if (access !== true) return null;
+
+  const money = (cents: number | null) =>
+    typeof cents === "number" ? `$${(cents / 100).toFixed(2)}` : "—";
 
   return (
     <div className="mt-4 rounded-xl border border-slate-300 bg-white/60 p-4 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.6)]">
@@ -469,9 +535,65 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
             decommissions the cloud resource and stops billing.
           </p>
 
+          {/* Prepaid wallet — OpenAI-style credit. Top up on the web
+              (no app-store billing); spend it on compute. */}
+          <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-bold text-slate-800 dark:text-surface-100">
+                {money(balanceCents)}
+              </span>
+              {typeof hourlyCents === "number" ? (
+                <span className="text-[11px] text-slate-500 dark:text-surface-400">
+                  ~{money(hourlyCents)}/hr running
+                </span>
+              ) : null}
+              {lowBalance ? (
+                <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                  Low balance
+                </span>
+              ) : null}
+            </div>
+            <p className="mb-1.5 text-[11px] text-slate-500 dark:text-surface-400">Add credit</p>
+            <div className="flex flex-wrap gap-2">
+              {(packs.length
+                ? packs
+                : [
+                    { id: "p10", cents: 1000, label: "$10" },
+                    { id: "p25", cents: 2500, label: "$25" },
+                    { id: "p50", cents: 5000, label: "$50" },
+                    { id: "p100", cents: 10000, label: "$100" },
+                  ]
+              ).map((p) => (
+                <button
+                  key={p.id}
+                  disabled={busy}
+                  onClick={() => void addCredit(p.id)}
+                  className="rounded-md border border-sky-500/50 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-700 disabled:opacity-50 dark:text-sky-300"
+                >
+                  + {p.label}
+                </button>
+              ))}
+              <button
+                disabled={busy}
+                onClick={() => post("/billing/yaver-cloud/provision", { machineType, region })}
+                className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+              >
+                {busy ? "…" : "Spin up (prepaid)"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-slate-400">
+              Opens a secure checkout; credit is added when payment clears. Spin
+              up bills from your balance — no subscription.
+            </p>
+          </div>
+
+          {/* Subscription buy + adopt are owner/dev paths (server still
+              owner-gates them); prepaid is the public front door above. */}
+          {owner ? (
+          <>
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
             <p className="mb-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-              Buy a managed box
+              Buy a managed box (subscription)
             </p>
             <div className="flex flex-wrap items-end gap-2">
               <label className="text-[11px] text-slate-500 dark:text-surface-400">
@@ -527,6 +649,8 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
               {busy ? "…" : "Adopt as managed"}
             </button>
           </div>
+          </>
+          ) : null}
 
           {machines.length > 0 ? (
             <p className="text-[11px] text-slate-500 dark:text-surface-400">

@@ -1698,6 +1698,22 @@ export default defineSchema({
   }).index("by_user_date", ["userId", "date"])
     .index("by_machine", ["machineId", "createdAt"]),
 
+  // One row per real-money top-up (OpenAI-style prepaid credit pack
+  // bought on the web; LemonSqueezy `order_created` webhook → topUp).
+  // Append-only and keyed by the payment-provider order id so a
+  // re-delivered webhook can't double-credit a wallet (idempotency).
+  // Counter/id/timestamp only — same Convex-allowed class as
+  // creditUsage (privacy: convex_privacy_test.go pins the field names).
+  creditTopups: defineTable({
+    userId: v.id("users"),
+    orderId: v.string(),              // provider order id (idempotency key)
+    source: v.string(),               // "lemonsqueezy" | "owner-dev"
+    packId: v.optional(v.string()),   // catalog pack id (e.g. "p25")
+    amountCents: v.number(),          // credit added to the wallet
+    createdAt: v.number(),
+  }).index("by_user", ["userId", "createdAt"])
+    .index("by_order", ["orderId"]),
+
   // ── Org-admin singletons ──────────────────────────────────────────
   // Both keyed by the literal "org" so .first() always returns the
   // one-and-only row. A new row replaces; a deleted row reverts the

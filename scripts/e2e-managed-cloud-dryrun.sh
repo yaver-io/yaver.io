@@ -40,6 +40,43 @@ bal1=$(curl -fsS "${auth[@]}" "$SITE/billing/yaver-cloud/balance" | jq -r '.bala
 [ "$bal1" -ge $((bal0 + 5000)) ] && pass "balance rose by >=5000 ($bal0 -> $bal1)" \
   || fail "balance did not rise (got $bal1)"
 
+echo "== b2) credit-pack catalog (prepaid front door) =="
+pk=$(curl -fsS "${auth[@]}" "$SITE/billing/credits/packs")
+echo "  $pk"
+[ "$(jqget "$pk" '.packs | length')" -ge 1 ] && pass "credit packs listed" \
+  || fail "no credit packs returned"
+
+echo "== b3) credit-pack checkout (unconfigured variant => 503, configured => url) =="
+co=$(curl -sS -o /tmp/co.json -w '%{http_code}' -X POST "${auth[@]}" "${json[@]}" \
+  -d '{"packId":"p25"}' "$SITE/billing/credits/checkout")
+echo "  HTTP $co $(cat /tmp/co.json)"
+if [ "$co" = "200" ]; then
+  [ "$(jq -r '.url' /tmp/co.json)" != "null" ] && pass "checkout url returned (LS configured)" \
+    || fail "200 but no url"
+elif [ "$co" = "503" ]; then
+  pass "checkout 503 — pack variant not configured yet (expected pre-launch)"
+else
+  fail "unexpected checkout status $co"
+fi
+
+echo "== b3b) SECURITY: forged (unsigned) webhook must NOT mint credit =="
+balB=$(curl -fsS "${auth[@]}" "$SITE/billing/yaver-cloud/balance" | jq -r '.balanceCents')
+fc=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${json[@]}" \
+  -d '{"meta":{"event_name":"order_created","custom_data":{"user_email":"attacker@evil.test","product_type":"credit-pack","pack_id":"p100"}},"data":{"id":"forged-1","attributes":{"status":"paid","total":1,"first_order_item":{"variant_id":"999999","price":1}}}}' \
+  "$SITE/webhooks/lemonsqueezy")
+echo "  forged webhook HTTP $fc"
+[ "$fc" = "401" ] && pass "forged webhook rejected (fail-closed signature)" \
+  || fail "forged webhook returned $fc — expected 401 (set WEBHOOK_SECRET, leave ALLOW_UNSIGNED unset)"
+balA=$(curl -fsS "${auth[@]}" "$SITE/billing/yaver-cloud/balance" | jq -r '.balanceCents')
+[ "$balA" = "$balB" ] && pass "balance unchanged by forged webhook ($balB)" \
+  || fail "balance moved on forged webhook ($balB -> $balA) — CREDIT MINT VULN"
+
+echo "== b4) usage ledger (wallet activity) =="
+us=$(curl -fsS "${auth[@]}" "$SITE/billing/yaver-cloud/usage")
+echo "  $us"
+[ "$(jqget "$us" '.ok')" = "true" ] && pass "usage ledger reachable" \
+  || fail "usage ledger not ok"
+
 echo "== c) STOP — must be dry-run, machine NOT destroyed (P3->P2) =="
 st=$(curl -fsS -X POST "${auth[@]}" "${json[@]}" \
   -d "{\"machineId\":\"$MID\"}" "$SITE/billing/yaver-cloud/stop")

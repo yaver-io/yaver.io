@@ -5,6 +5,7 @@ import { api, internal } from "./_generated/api";
 import { sha256Hex } from "./auth";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
 import { decryptStoredOidcSecret } from "./admin";
+import { estimatedHourlyCents, minimumReserveCents } from "./cloudLifecycle";
 
 const http = httpRouter();
 
@@ -39,6 +40,20 @@ function isCloudPreviewUser(
   return isOwner(email, userId);
 }
 
+// Who may touch the prepaid-cloud surfaces (balance, credit-pack
+// checkout, spin up/down, usage). Owner allowlist is always in; flip
+// YAVER_CLOUD_PUBLIC=true to open it to every authenticated user at
+// launch. Default (env unset) = owner-only private preview, so this is
+// a one-env-flip go-live and the source stays free/fail-closed until
+// the owner decides (project_business_model). Money is still protected
+// independently: real Hetzner spend gated on HCLOUD_TOKEN, debits gated
+// on the prepaid balance — so opening this never lets a stranger spend
+// Yaver's money, only their own topped-up credit.
+function cloudAccessAllowed(email?: string | null, userId?: string | null): boolean {
+  if (isCloudPreviewUser(email, userId)) return true;
+  return parseBooleanEnv(process.env.YAVER_CLOUD_PUBLIC, false);
+}
+
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
   if (!value) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -61,8 +76,18 @@ function lsEnv(suffix: string): string | undefined {
 async function verifyLemonSqueezySignature(body: string, signatureHeader: string | null): Promise<boolean> {
   const secret = lsEnv("WEBHOOK_SECRET");
   if (!secret) {
-    console.warn("[lemonsqueezy] LEMONSQUEEZY_WEBHOOK_SECRET not set — webhook signature NOT verified");
-    return true;
+    // FAIL CLOSED. The webhook credits wallets + provisions paid boxes;
+    // an unsigned-accept here lets anyone who knows the (public, open-
+    // source) Convex URL POST a forged order_created to mint unlimited
+    // free credit. Reject unless the operator EXPLICITLY opts into
+    // unsigned webhooks for LOCAL DEV ONLY via
+    // LEMONSQUEEZY_ALLOW_UNSIGNED=true. Default (env unset) = reject.
+    if (parseBooleanEnv(lsEnv("ALLOW_UNSIGNED"), false)) {
+      console.warn("[lemonsqueezy] WEBHOOK_SECRET unset + ALLOW_UNSIGNED=true — accepting UNSIGNED webhook (DEV ONLY)");
+      return true;
+    }
+    console.error("[lemonsqueezy] WEBHOOK_SECRET not set — rejecting webhook (fail-closed). Set the secret, or LEMONSQUEEZY_ALLOW_UNSIGNED=true for local dev only.");
+    return false;
   }
   if (!signatureHeader) return false;
   const key = await crypto.subtle.importKey(
@@ -96,15 +121,19 @@ function normalizeCloudHost(baseUrl: string): string {
 async function createLemonSqueezyCheckout(args: {
   email: string;
   custom: Record<string, string>;
+  // Defaults to the managed-cloud subscription variant. Credit-pack
+  // checkout passes the resolved one-time pack variant id here.
+  variantId?: string;
+  variantEnvName?: string;
 }): Promise<string> {
   const apiKey = lsEnv("API_KEY");
   const storeId = lsEnv("STORE_ID");
-  const variantId = lsEnv("YAVER_CLOUD_VARIANT_ID");
+  const variantId = args.variantId ?? lsEnv("YAVER_CLOUD_VARIANT_ID");
   if (!apiKey || !storeId || !variantId) {
     const missing = [
       !apiKey && "API_KEY",
       !storeId && "STORE_ID",
-      !variantId && "YAVER_CLOUD_VARIANT_ID",
+      !variantId && (args.variantEnvName ?? "YAVER_CLOUD_VARIANT_ID"),
     ].filter(Boolean).join(", ");
     throw new Error(`Missing Lemon Squeezy configuration: ${missing}`);
   }
@@ -163,6 +192,43 @@ async function createLemonSqueezyCheckout(args: {
     throw new Error("Lemon Squeezy checkout URL missing");
   }
   return url;
+}
+
+// Prepaid credit-pack catalog — OpenAI-style "pick a pack" top-up.
+// Each pack is a LemonSqueezy ONE-TIME product; its variant id lives in
+// env (LEMONSQUEEZY_CREDIT_PACK_<ID>_VARIANT_ID, e.g. *_P25_VARIANT_ID)
+// so packs can be added/repriced without a code change. amountCents is
+// the credit added to the wallet (what the buyer pays = the LS price;
+// keep them equal — the markup is taken on COMPUTE metering, not here).
+const CREDIT_PACKS: Array<{ id: string; cents: number; label: string }> = [
+  { id: "p10", cents: 1000, label: "$10" },
+  { id: "p25", cents: 2500, label: "$25" },
+  { id: "p50", cents: 5000, label: "$50" },
+  { id: "p100", cents: 10000, label: "$100" },
+];
+
+function creditPackById(id: string) {
+  return CREDIT_PACKS.find((p) => p.id === id) || null;
+}
+
+function creditPackVariantEnvName(id: string): string {
+  return `CREDIT_PACK_${id.toUpperCase()}_VARIANT_ID`;
+}
+
+// Resolve a pack from the LemonSqueezy variant id that was ACTUALLY
+// purchased (it rides in the signed webhook payload, so a buyer can't
+// forge which pack they bought). This is the authoritative resolution —
+// never trust pack_id / amount from client-set custom_data. Returns
+// null if the variant isn't one of our configured packs.
+function creditPackByVariantId(variantId: string | number | undefined | null) {
+  if (variantId === undefined || variantId === null) return null;
+  const want = String(variantId).trim();
+  if (!want) return null;
+  for (const p of CREDIT_PACKS) {
+    const configured = lsEnv(creditPackVariantEnvName(p.id));
+    if (configured && String(configured).trim() === want) return p;
+  }
+  return null;
 }
 
 // Cancel a subscription on LemonSqueezy itself (DELETE = cancel at
@@ -3866,6 +3932,56 @@ http.route({
         });
         break;
       }
+
+      // Prepaid credit-pack purchase (OpenAI-style top-up). A one-time
+      // order, NOT a subscription. Idempotent on the order id (LS
+      // re-delivers webhooks). SECURITY (public repo — buyers must not
+      // be able to mint more than they paid):
+      //  1. Resolve the pack from the SIGNED variant id actually
+      //     purchased (data.first_order_item.variant_id) — never from
+      //     client-set custom_data.pack_id, which a buyer controls.
+      //  2. Refunded/non-paid orders never credit.
+      //  3. Cross-check the amount actually paid (signed subtotal/total)
+      //     against the catalog price — reject a mismatch rather than
+      //     credit a bigger pack than was charged.
+      case "order_created": {
+        if (data.refunded === true) break;
+        if (data.status && data.status !== "paid") break;
+        const item = (data.first_order_item || {}) as {
+          variant_id?: number | string;
+          price?: number;
+        };
+        const pack = creditPackByVariantId(item.variant_id);
+        if (!pack) {
+          // Not one of our credit packs (or variant env not configured) —
+          // ignore silently so unrelated store orders never touch wallets.
+          break;
+        }
+        // Amount actually paid, in cents, from the signed payload.
+        // Prefer the line-item price (pre-tax); fall back to subtotal.
+        const paidCents = Number(
+          item.price ?? data.subtotal ?? data.total ?? 0,
+        );
+        if (!Number.isFinite(paidCents) || paidCents + 1 < pack.cents) {
+          // Paid less than the pack's catalog price — refuse to credit
+          // the full pack. (+1c slack for rounding.) Loud, never silent.
+          console.error(
+            `[credits] order ${lemonSqueezyId} pack ${pack.id}: paid ${paidCents}c < catalog ${pack.cents}c — NOT credited (possible tamper)`,
+          );
+          break;
+        }
+        const r = await ctx.runMutation(internal.cloudLifecycle.topUpForOrder, {
+          userId: user._id,
+          orderId: lemonSqueezyId,
+          amountCents: pack.cents,
+          source: "lemonsqueezy",
+          packId: pack.id,
+        });
+        console.log(
+          `[credits] order ${lemonSqueezyId} pack ${pack.id} (${pack.cents}c, paid ${paidCents}c) → user ${user._id}: ${r.credited ? "credited" : "duplicate-noop"}, balance ${r.balanceCents}c`,
+        );
+        break;
+      }
     }
 
     return jsonResponse({ ok: true });
@@ -3902,6 +4018,82 @@ http.route({
         },
       });
       return jsonResponse({ url, mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 500);
+    }
+  }),
+});
+
+/** GET /billing/credits/packs — prepaid credit-pack catalog (the
+ *  "pick a pack" top-up options). Public to any authed user; the UI
+ *  renders these as $10/$25/$50/$100 buttons. */
+http.route({
+  path: "/billing/credits/packs",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    return jsonResponse({
+      ok: true,
+      currency: "usd",
+      packs: CREDIT_PACKS.map((p) => ({ id: p.id, cents: p.cents, label: p.label })),
+    });
+  }),
+});
+
+/** POST /billing/credits/checkout — create a LemonSqueezy ONE-TIME
+ *  checkout for a prepaid credit pack. On payment, the order_created
+ *  webhook credits the wallet (idempotent). Body: { packId }. */
+http.route({
+  path: "/billing/credits/checkout",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
+    }
+    let body: { packId?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      // allow empty body — fall through to validation
+    }
+    const packId = String(body.packId || "").trim();
+    const pack = creditPackById(packId);
+    if (!pack) {
+      return errorResponse(
+        `Unknown credit pack "${packId}". Valid: ${CREDIT_PACKS.map((p) => p.id).join(", ")}`,
+        400,
+      );
+    }
+    const variantEnvName = creditPackVariantEnvName(pack.id);
+    const variantId = lsEnv(variantEnvName);
+    if (!variantId) {
+      return errorResponse(
+        `Credit pack ${pack.id} is not configured (set LEMONSQUEEZY_${variantEnvName})`,
+        503,
+      );
+    }
+    try {
+      const url = await createLemonSqueezyCheckout({
+        email: session.email,
+        variantId,
+        variantEnvName,
+        custom: {
+          user_email: session.email,
+          product_type: "credit-pack",
+          pack_id: pack.id,
+          credit_cents: String(pack.cents),
+        },
+      });
+      return jsonResponse({
+        url,
+        packId: pack.id,
+        cents: pack.cents,
+        mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live",
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(message, 500);
@@ -4039,8 +4231,11 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email, session.userDocId)) {
-      return errorResponse("Owner-only (private preview) on this account", 403);
+    // Open to any cloud-access user — they can only ever decommission a
+    // box they own (the per-machine ownership check below enforces it),
+    // and a prepaid user must be able to tear down their own box.
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
     let body: { machineId?: string } = {};
     try {
@@ -4060,20 +4255,125 @@ http.route({
   }),
 });
 
-/** GET /billing/yaver-cloud/balance — owner-only prepaid wallet read. */
+/** GET /billing/yaver-cloud/balance — prepaid wallet read. Open to any
+ *  cloud-access user; reading a zero balance is harmless. */
 http.route({
   path: "/billing/yaver-cloud/balance",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email, session.userDocId)) {
-      return errorResponse("Owner-only (private preview) on this account", 403);
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
-    const wallet = await ctx.runQuery(api.cloudLifecycle.getWallet, {
+    const wallet = await ctx.runQuery(internal.cloudLifecycle.getWallet, {
       userId: session.userDocId as any,
     });
-    return jsonResponse({ ok: true, ...wallet });
+    // Surface the per-SKU running rate + low-balance flag the wallet UI
+    // shows ("~$X/hr running", "Add credit" nudge). cpu is the default
+    // SKU; the floor is the safe minimum reserve for it.
+    const hourlyCents = estimatedHourlyCents("cpu");
+    const reservedCents = minimumReserveCents("cpu");
+    return jsonResponse({
+      ok: true,
+      ...wallet,
+      prepaidBalanceCents: wallet.balanceCents,
+      estimatedHourlyCents: hourlyCents,
+      reservedCents,
+      lowBalance: wallet.balanceCents <= reservedCents,
+    });
+  }),
+});
+
+/** GET /billing/yaver-cloud/usage — recent wallet activity (metering
+ *  ticks + top-ups) for the mobile/web Wallet ledger. */
+http.route({
+  path: "/billing/yaver-cloud/usage",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
+    }
+    const recent = await ctx.runQuery(internal.cloudLifecycle.getRecentUsage, {
+      userId: session.userDocId as any,
+      limit: 20,
+    });
+    return jsonResponse({ ok: true, ...recent });
+  }),
+});
+
+/** POST /billing/yaver-cloud/provision — prepaid spin-up. Create a new
+ *  managed box funded by the wallet (NO subscription). Balance-gated:
+ *  402 if the wallet can't cover the safe reserve for this SKU. The
+ *  real Hetzner create is still gated on HCLOUD_TOKEN inside
+ *  cloudMachines.provision (fail-closed in prod). Body:
+ *  { machineType?: "cpu"|"gpu", region?: "eu"|"us" }. */
+http.route({
+  path: "/billing/yaver-cloud/provision",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
+    }
+    let body: { machineType?: string; region?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      // allow empty body — defaults below
+    }
+    const machineType = body.machineType === "gpu" ? "gpu" : "cpu";
+    const region = (body.region ?? "eu").trim() === "us" ? "us" : "eu";
+
+    // Anti-fan-out (public repo — a buyer must not turn credit for ONE
+    // box into N boxes by firing concurrent provisions). Count the
+    // user's existing non-stopped managed boxes and require the wallet
+    // to cover the reserve for ALL of them + the new one. Also cap the
+    // absolute count. This bounds the TOCTOU window of canStart (which
+    // only checks a single-box reserve) to nothing meaningful.
+    const MAX_MACHINES = Number(process.env.YAVER_CLOUD_MAX_MACHINES_PER_USER) || 10;
+    const existing = await ctx.runQuery(api.cloudMachines.listForUser, {
+      userId: session.userDocId as any,
+    });
+    const liveCount = Array.isArray(existing)
+      ? existing.filter((m: any) => m.status && m.status !== "stopped").length
+      : 0;
+    if (liveCount >= MAX_MACHINES) {
+      return jsonResponse({
+        ok: false,
+        error: `Machine limit reached (${MAX_MACHINES}). Decommission one first.`,
+      }, 409);
+    }
+    const gate = await ctx.runQuery(internal.cloudLifecycle.canStart, {
+      userId: session.userDocId as any,
+      machineType,
+    });
+    // Reserve must cover every live box plus this one — not just one.
+    const requiredCents = gate.requiredCents * (liveCount + 1);
+    if (!gate.ok || gate.balanceCents < requiredCents) {
+      return jsonResponse({
+        ok: false,
+        error: "Insufficient prepaid balance — add credit to spin up a box",
+        balanceCents: gate.balanceCents,
+        requiredCents,
+      }, 402);
+    }
+
+    try {
+      const machineId = await ctx.runMutation(api.cloudMachines.create, {
+        userId: session.userDocId as any,
+        machineType,
+        region,
+        // No subscriptionId: this is a prepaid (wallet-funded) box.
+        tier: "byok",
+      });
+      return jsonResponse({ ok: true, machineId, machineType, region, mode: "prepaid" });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : String(error), 500);
+    }
   }),
 });
 
@@ -4113,8 +4413,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email, session.userDocId)) {
-      return errorResponse("Owner-only (private preview) on this account", 403);
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
     const body = await request.json().catch(() => ({}));
     const machineId = String(body.machineId ?? "").trim();
@@ -4151,8 +4451,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email, session.userDocId)) {
-      return errorResponse("Owner-only (private preview) on this account", 403);
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
     const body = await request.json().catch(() => ({}));
     const machineId = String(body.machineId ?? "").trim();
@@ -4220,7 +4520,7 @@ http.route({
       ctx.runQuery(api.subscriptions.getByUser, { userId: userDocId }),
       ctx.runQuery(api.managedRelays.getByUser, { userId: userDocId }),
       ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId }),
-      ctx.runQuery(api.cloudLifecycle.getWallet, { userId: userDocId }),
+      ctx.runQuery(internal.cloudLifecycle.getWallet, { userId: userDocId }),
     ]);
 
     return jsonResponse({
@@ -4234,6 +4534,11 @@ http.route({
       // Yaver's Hetzner. Private preview until LemonSqueezy is fully
       // integrated; owner-only purchases for now.
       cloudPreviewOwner: isCloudPreviewUser(session.email, session.userDocId),
+      // True when this account may use the prepaid-cloud surfaces — the
+      // owner allowlist OR the YAVER_CLOUD_PUBLIC launch flag. Mobile/web
+      // render the wallet + machine controls when this is true; still
+      // cosmetic (every money route is independently gated server-side).
+      cloudAccess: cloudAccessAllowed(session.email, session.userDocId),
       subscription: subscription ? {
         plan: subscription.plan,
         status: subscription.status,
@@ -5709,13 +6014,14 @@ const runCron = httpAction(async (ctx, req) => {
       // Managed-cloud prepaid meter (P2). Same external-Hetzner-timer
       // pattern as the prune jobs (no Convex crons.interval, per
       // crons.ts). dryRun:true while in private preview so it never
-      // drains a real wallet pre-launch; the timer flips it to
-      // {dryRun:false} when the prepaid product goes live. The real
+      // drains a real wallet pre-launch; set YAVER_CLOUD_METER_LIVE=true
+      // (Convex env, owner decision per project_business_model) to flip
+      // it live — a one-env-flip go-live, no code change. The real
       // Hetzner spend is independently gated by HCLOUD_TOKEN inside
       // pause/resume — this only meters the wallet ledger.
       await ctx.scheduler.runAfter(0, internal.cloudLifecycle.meterTick, {
         intervalSeconds: 3600,
-        dryRun: true,
+        dryRun: !parseBooleanEnv(process.env.YAVER_CLOUD_METER_LIVE, false),
       });
       break;
     case "sweepStalePendingClaims":
