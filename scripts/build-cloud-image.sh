@@ -135,6 +135,23 @@ cat > "$STAGED_OVERLAY/etc/yaver/cloud-image-release.json" <<EOF
 }
 EOF
 
+# No-leak guard: this overlay ships to EVERY booted box — and for BYO it
+# is snapshotted into the USER'S OWN provider account — so it must carry
+# ZERO secrets (per-box tokens are injected at boot via cloud-init, never
+# baked). Fail the build if a secret-shaped string appears in any text
+# file. grep -I skips the compiled yaver binary (no false positives on
+# its random bytes); the release json is the one allowed hit.
+log "scanning overlay for accidental secrets (no-leak guard)"
+SECRET_HITS="$(grep -rInE \
+  'BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE KEY|AKIA[0-9A-Z]{16}|(hcloud|api[_-]?key|secret|password|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_/+-]{16,}' \
+  "$STAGED_OVERLAY" 2>/dev/null | grep -vE 'cloud-image-release\.json' || true)"
+if [ -n "$SECRET_HITS" ]; then
+  log "ABORT: possible secret(s) baked into the image overlay — remove before building (they would ship to every box, and into the BYO user's own account):"
+  printf '%s\n' "$SECRET_HITS" >&2
+  exit 1
+fi
+log "overlay clean — no secret-shaped strings"
+
 # ─────────────────────────────────────────────────────────────
 # Provider-specific provisioning
 # ─────────────────────────────────────────────────────────────
