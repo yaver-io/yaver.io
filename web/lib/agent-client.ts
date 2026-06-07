@@ -2734,6 +2734,25 @@ export class AgentClient {
     return `${this.baseUrl}${path}`;
   }
 
+  /**
+   * Build an authed MJPEG stream URL for the Remote Desktop screen feed,
+   * suitable for an <img src>. A plain <img> can't carry the bearer/relay
+   * headers, so we mint a path-scoped browser-session token and append it
+   * (plus the relay password) as query params — both of which the relay and
+   * agent accept (the agent's auth middleware promotes ?browser_session=,
+   * the relay validates ?__rp=). `path` defaults to the live MJPEG stream;
+   * pass "/rd/frame.jpg" for a single still.
+   */
+  async remoteDesktopStreamUrl(path: "/rd/stream" | "/rd/frame.jpg" = "/rd/stream"): Promise<string> {
+    const token = await this.issueBrowserSession("/rd/");
+    const base = `${this.baseUrl}${path}`;
+    let url = `${base}?browser_session=${encodeURIComponent(token)}`;
+    if (this._activeRelayUrl && this.activeRelayPassword) {
+      url += `&__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
+  }
+
   private async issueBrowserSession(pathPrefix: string): Promise<string> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/auth/browser-session`, {

@@ -295,7 +295,7 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
 
   return (
     <View style={{
-      flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4,
+      flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4,
     }}>
       <Pressable
         onPress={() => {
@@ -325,6 +325,28 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
         {!isActive ? (
           <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>(connects on open)</Text>
         ) : null}
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          // Remote Desktop rides the active quicClient.baseUrl just like Shell.
+          if (!isActive) {
+            selectDevice(device).catch(() => {});
+          }
+          onClose();
+          setTimeout(() => { router.push("/remote-desktop"); }, 200);
+        }}
+        style={{
+          flexDirection: "row", alignItems: "center", gap: 6,
+          paddingHorizontal: 12, paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: isActive ? "rgba(217,70,239,0.12)" : "rgba(75,85,99,0.10)",
+          borderWidth: 1,
+          borderColor: isActive ? "rgba(217,70,239,0.45)" : c.border,
+        }}
+      >
+        <Text style={{ color: isActive ? "#f0abfc" : c.textMuted, fontSize: 13, fontWeight: "700" }}>
+          🖥  Desktop
+        </Text>
       </Pressable>
       <Pressable
         onPress={async () => {

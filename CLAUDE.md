@@ -565,6 +565,7 @@ matters.
 | Workspace manifest | `desktop/agent/workspace*.go`; `yaver.workspace.yaml` |
 | Managed toggle | `desktop/agent/managed*.go`; `backend/convex/userSettings.ts` |
 | `ops` MCP grand-tool | `desktop/agent/ops*.go` — single MCP tool, 20 verbs |
+| Remote Desktop (screen view + mouse/kbd control) | `desktop/agent/remotedesktop*.go` (`/rd/status`,`/rd/policy`,`/rd/stream` MJPEG,`/rd/frame.jpg`,`/rd/input`); reuses `ghost/` engine + `ghost_stream.go`. Runtime consent policy (control opt-in), NOT the `--ghost` flag. Web `RemoteDesktopView.tsx`/`RemoteDesktopModal.tsx`; mobile `app/remote-desktop.tsx` (iOS-safe snapshot-poll, MJPEG only on web). Fullscreen on shell + remote view both surfaces. |
 
 ## Local development
 

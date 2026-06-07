@@ -3,6 +3,7 @@
 import { useAuth } from "@/lib/use-auth";
 import { useDevices, usePendingClaims, setDeviceAlias, type Device } from "@/lib/use-devices";
 import WebShellModal from "@/components/dashboard/WebShellModal";
+import RemoteDesktopModal from "@/components/dashboard/RemoteDesktopModal";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
@@ -453,6 +454,7 @@ function DeviceConnectCard({
   canToggleSecondary,
   onAliasSaved,
   onOpenShell,
+  onOpenRemoteDesktop,
   token,
   compact = false,
 }: {
@@ -469,6 +471,7 @@ function DeviceConnectCard({
   canToggleSecondary?: boolean;
   onAliasSaved?: () => void;
   onOpenShell?: () => void;
+  onOpenRemoteDesktop?: () => void;
   token?: string | null;
   compact?: boolean;
 }) {
@@ -675,6 +678,15 @@ function DeviceConnectCard({
             <span aria-hidden className="mr-1">⌨</span>Shell
           </button>
         ) : null}
+        {onOpenRemoteDesktop ? (
+          <button
+            onClick={onOpenRemoteDesktop}
+            className="rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/10 px-3 py-1.5 text-xs font-semibold text-fuchsia-200 hover:bg-fuchsia-500/15"
+            title="Open the live desktop (screen view + mouse/keyboard control) over relay"
+          >
+            <span aria-hidden className="mr-1">🖥</span>Desktop
+          </button>
+        ) : null}
         {canTogglePrimary && onTogglePrimary ? (
           <button
             onClick={onTogglePrimary}
@@ -786,6 +798,7 @@ export default function DashboardPage() {
   // pointed at it; if not it offers a "Connect & open shell" affordance
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
+  const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
   const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
@@ -2513,6 +2526,7 @@ export default function DashboardPage() {
                           token={token}
                           onAliasSaved={refreshDevices}
                           onOpenShell={() => setShellDevice(d)}
+                          onOpenRemoteDesktop={() => setRemoteDesktopDevice(d)}
                           onConnect={() => connectToDevice(d)}
                           onTogglePrimary={!d.isGuest && token ? async () => {
                             const nextId = primaryDeviceId === d.id ? null : d.id;
@@ -3454,6 +3468,19 @@ export default function DashboardPage() {
             setActiveTab("devices");
           }}
           onClose={() => setShellDevice(null)}
+        />
+      ) : null}
+      {/* Remote Desktop modal — live screen (MJPEG /rd/stream) + optional
+          mouse/keyboard control (/rd/input) via the relay. Mounted only while
+          open so the stream connection matches the modal lifecycle. */}
+      {remoteDesktopDevice ? (
+        <RemoteDesktopModal
+          device={remoteDesktopDevice}
+          isCurrentDeviceSelected={Boolean(connectedDevice && connectedDevice.id === remoteDesktopDevice.id)}
+          isCurrentDeviceConnected={Boolean(connectedDevice && connectedDevice.id === remoteDesktopDevice.id && connState === "connected")}
+          onConnect={() => { void connectToDevice(remoteDesktopDevice); }}
+          onOpenRescue={() => { setActiveTab("devices"); }}
+          onClose={() => setRemoteDesktopDevice(null)}
         />
       ) : null}
       {/* Lifted out of the chat-tab branch so the Hot Reload "Sign in

@@ -617,6 +617,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/screenlog/analyze", s.auth(s.handleScreenlogAnalyze))
 	mux.HandleFunc("/screenlog/", s.auth(s.handleScreenlogDetail))
 
+	// Remote Desktop — owner-driven screen view + mouse/keyboard control from
+	// web/mobile. Runtime consent policy (remotedesktop.go); no --ghost needed.
+	mux.HandleFunc("/rd/status", s.auth(s.handleRemoteDesktopStatus))
+	mux.HandleFunc("/rd/policy", s.auth(s.handleRemoteDesktopPolicy))
+	mux.HandleFunc("/rd/stream", s.auth(s.handleRemoteDesktopStream))
+	mux.HandleFunc("/rd/frame.jpg", s.auth(s.handleRemoteDesktopFrame))
+	mux.HandleFunc("/rd/input", s.auth(s.handleRemoteDesktopInput))
+
 	// Affiliate tracking (extends the shortener with commissions)
 	mux.HandleFunc("/affiliates", s.auth(s.handleAffiliates))
 	mux.HandleFunc("/affiliates/", s.auth(s.handleAffiliateSub))
