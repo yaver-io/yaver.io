@@ -12,8 +12,11 @@
 export interface AgentLaunch {
   id: "claude" | "codex" | "opencode";
   label: string;
-  /** The exact command line typed into the shell (no trailing newline). */
+  /** The exact command line typed into the shell to OPEN it (no trailing newline). */
   command: string;
+  /** The slash command typed to CLOSE/quit the runner's TUI (no newline).
+   *  All three accept `/exit`; we also expose a Ctrl-C fallback in the UI. */
+  closeCommand: string;
   /** Short gloss for the button's accessibility label / tooltip. */
   hint: string;
 }
@@ -23,23 +26,31 @@ export const AGENT_LAUNCHERS: readonly AgentLaunch[] = [
     id: "claude",
     label: "Claude",
     command: "claude --dangerously-skip-permissions",
+    closeCommand: "/exit",
     hint: "Launch Claude Code with permission prompts skipped",
   },
   {
     id: "codex",
     label: "Codex",
     command: "codex --dangerously-bypass-approvals-and-sandbox",
+    closeCommand: "/exit",
     hint: "Launch Codex with approvals + sandbox bypassed",
   },
   {
     id: "opencode",
     label: "OpenCode",
     command: "opencode",
+    closeCommand: "/exit",
     hint: "Launch OpenCode (bring-your-own-provider TUI)",
   },
 ] as const;
 
-/** The bytes to send to the PTY to run a launcher: the command + Enter. */
+/** Bytes to send to OPEN a runner: the command + Enter. */
 export function launchLine(l: AgentLaunch): string {
   return `${l.command}\n`;
+}
+
+/** Bytes to send to CLOSE a runner: its `/exit` slash command + Enter. */
+export function closeLine(l: AgentLaunch): string {
+  return `${l.closeCommand}\n`;
 }

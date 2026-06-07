@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AGENT_LAUNCHERS, launchLine } from "./agentLaunch.ts";
+import { AGENT_LAUNCHERS, launchLine, closeLine } from "./agentLaunch.ts";
 
 test("the three supported runners are present with exact dangerous flags", () => {
   const byId = Object.fromEntries(AGENT_LAUNCHERS.map((l) => [l.id, l.command]));
@@ -18,5 +18,12 @@ test("launchLine appends exactly one newline (the Enter press)", () => {
   for (const l of AGENT_LAUNCHERS) {
     assert.equal(launchLine(l), `${l.command}\n`);
     assert.equal(launchLine(l).match(/\n/g)?.length, 1);
+  }
+});
+
+test("closeLine sends /exit + Enter for every runner", () => {
+  for (const l of AGENT_LAUNCHERS) {
+    assert.equal(l.closeCommand, "/exit");
+    assert.equal(closeLine(l), "/exit\n");
   }
 });

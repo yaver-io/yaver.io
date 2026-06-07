@@ -24,6 +24,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
   const [closeReason, setCloseReason] = useState<string>("");
   const [attempt, setAttempt] = useState(0);
   const [dictating, setDictating] = useState(false);
+  const [runningRunner, setRunningRunner] = useState<string | null>(null);
   const [sttAvailable] = useState<boolean>(
     () => typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
   );
@@ -43,6 +44,22 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
     ws.send(new TextEncoder().encode(text));
     try { termRef.current?.focus(); } catch {}
   }, []);
+
+  // Open/close toggle: tap an idle runner to launch it, tap the active one to
+  // send `/exit`. Best-effort state — reset on (re)connect since the PTY is new.
+  const toggleRunner = useCallback(
+    (l: { id: string; command: string }) => {
+      if (status !== "open") return;
+      if (runningRunner === l.id) {
+        sendToPty("/exit\n");
+        setRunningRunner(null);
+      } else {
+        sendToPty(`${l.command}\n`);
+        setRunningRunner(l.id);
+      }
+    },
+    [status, runningRunner, sendToPty],
+  );
 
   // Optional browser dictation → typed at the prompt (no auto-Enter).
   const toggleDictation = useCallback(() => {
@@ -123,6 +140,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
       ws.onopen = () => {
         setStatus("open");
         setCloseReason("");
+        setRunningRunner(null); // fresh PTY
         if (attempt > 0) {
           term.writeln("\r\n\x1b[90m— reconnected —\x1b[0m");
         } else {
@@ -137,6 +155,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
       };
       ws.onclose = (ev) => {
         setStatus("closed");
+        setRunningRunner(null);
         const reason = ev.reason
           ? `${ev.reason} (code ${ev.code})`
           : ev.code
@@ -207,17 +226,24 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
     <div className="flex h-full w-full flex-col bg-[#0b0d10] overflow-hidden">
       {/* One-tap agent launchers + optional dictation */}
       <div className="flex items-center gap-2 border-b border-white/10 px-2 py-1.5 overflow-x-auto">
-        {AGENT_LAUNCHERS.map((l) => (
-          <button
-            key={l.id}
-            title={l.hint}
-            disabled={status !== "open"}
-            onClick={() => sendToPty(`${l.command}\n`)}
-            className="shrink-0 rounded border border-violet-400/50 bg-violet-500/15 px-2.5 py-1 text-xs font-semibold text-violet-200 hover:bg-violet-500/25 disabled:opacity-40"
-          >
-            {l.label}
-          </button>
-        ))}
+        {AGENT_LAUNCHERS.map((l) => {
+          const active = runningRunner === l.id;
+          return (
+            <button
+              key={l.id}
+              title={active ? `Exit ${l.label} (sends /exit)` : l.hint}
+              disabled={status !== "open"}
+              onClick={() => toggleRunner(l)}
+              className={`shrink-0 rounded border px-2.5 py-1 text-xs font-semibold disabled:opacity-40 ${
+                active
+                  ? "border-violet-400 bg-violet-500 text-white hover:bg-violet-600"
+                  : "border-violet-400/50 bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
+              }`}
+            >
+              {active ? `■ ${l.label}` : `▷ ${l.label}`}
+            </button>
+          );
+        })}
         <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
         <button
           disabled={status !== "open"}
