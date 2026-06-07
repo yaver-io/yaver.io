@@ -433,6 +433,36 @@ nothing. The prepaid wallet is purely for the *managed* convenience tier.
 Follow-up (not in this build): a first-class in-app "Connect your Hetzner"
 button; today it's CLI/MCP.
 
+## 16. BYO Hetzner full lifecycle from mobile (BUILT 2026-06-07)
+
+First-class in Settings → "Bring your own cloud" (`CloudProvidersSection.tsx`):
+
+- **Connect** Hetzner / DigitalOcean — paste API token, stored AES-256-GCM on
+  the agent vault, never synced to Convex, never rendered back (leak-safe input:
+  secureTextEntry + autofill/autocorrect/spellcheck off; token wiped from state
+  right after the authed POST).
+- **Spin up** a box on the user's OWN account (`cloud_provision` ops verb,
+  `cloud_byo_provision.go`): plan/region picker, ~€/hr shown, optional **prebuilt
+  image id** (fast boot) and optional **git repo** to shallow-clone on first boot
+  (`git clone --depth 1`, URL validated + shell-quoted). They pay Hetzner
+  directly — the wallet/meter is NOT involved.
+- **Stop to save cost / Start** (`cloud_stop` / `cloud_start`, `cloud_stopstart.go`):
+  stop = snapshot (recover-safe) then delete the server so hourly billing halts;
+  the stopped box shows up under "Stopped boxes (snapshots)" and Start recreates
+  it from the snapshot. List/Delete running servers too (`cloud_list`/`cloud_destroy`).
+
+**Safety switch:** all real BYO mutations (provision/stop/start) fire only when
+`confirm=true` AND `YAVER_CLOUD_STOPSTART_LIVE=1` on the agent — one flag enables
+the whole lifecycle together, so a user can never create a real billing box they
+can't then stop. Without it: safe dry-run previews everywhere. All BYO verbs use
+the caller's OWN vault token (`accountField(ProviderHetzner)`) — never the
+platform token, never the payload; a self-destruct guard blocks deleting the box
+the agent runs on. Private-repo clones need creds pushed via `git_push_creds`.
+
+Follow-up: make the MANAGED provision path boot from the prebuilt Yaver image for
+fast first-boot (touches the parallel-owned `cloudMachines.ts`); in-app streaming
+bring-up progress.
+
 ## 12. Anti-goals / guardrails
 
 - Don't delete the dormant subscription / `managedRelays` paths

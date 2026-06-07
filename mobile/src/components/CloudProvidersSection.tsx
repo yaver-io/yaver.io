@@ -60,6 +60,13 @@ export default function CloudProvidersSection({
 
   // BYO server list (for a connected Hetzner account).
   const [servers, setServers] = useState<any[] | null>(null);
+  // Stopped boxes (snapshot images) available to restart.
+  const [snapshots, setSnapshots] = useState<any[] | null>(null);
+  // Spin-up form.
+  const [showSpinUp, setShowSpinUp] = useState(false);
+  const [plan, setPlan] = useState<"starter" | "pro" | "scale">("starter");
+  const [region, setRegion] = useState<"eu" | "us">("eu");
+  const [repoUrl, setRepoUrl] = useState("");
 
   const load = useCallback(async () => {
     if (!token || !quicClient.isConnected) return;
@@ -182,6 +189,108 @@ export default function CloudProvidersSection({
               await loadServers();
             } catch (e: any) {
               Alert.alert("Couldn't delete", e?.message || "Try again.");
+            } finally {
+              setBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // Approx Hetzner hourly price by plan (cx21/31/41), shown so the user
+  // sees the per-hour cost of a box on their own account.
+  const HOURLY_EUR: Record<string, string> = { starter: "€0.007/hr", pro: "€0.013/hr", scale: "€0.026/hr" };
+
+  const spinUp = async () => {
+    setBusy("spinup");
+    try {
+      const r = await quicClient.cloudProvision({ plan, region, repoUrl: repoUrl.trim() || undefined });
+      if (r?.dryRun) {
+        Alert.alert("Dry run — nothing created", String(r.plan || "") + "\n\nTo create real boxes, set YAVER_CLOUD_STOPSTART_LIVE=1 on the connected machine. This keeps spin-up / stop / start consistently enabled together.");
+      } else {
+        Alert.alert(
+          "Box spinning up",
+          `${r?.name || "Box"} is booting on your Hetzner account (${r?.ip || "ip pending"}). It self-installs Yaver and appears as a device to claim. Stop it anytime to halt billing.`,
+        );
+        setShowSpinUp(false);
+        setRepoUrl("");
+        await loadServers();
+      }
+    } catch (e: any) {
+      Alert.alert("Couldn't spin up", e?.message || "Try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const stopServer = (srv: any) => {
+    const id = String(srv.id ?? srv.ID ?? "");
+    const name = String(srv.name ?? srv.Name ?? id);
+    if (!id) return;
+    Alert.alert(
+      `Stop ${name}?`,
+      "Snapshots the box (recover-safe) then deletes the server so Hetzner billing stops — a powered-off server still bills full price; only delete halts it. Bring it back anytime from the snapshot.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Stop",
+          onPress: async () => {
+            setBusy(`stop:${id}`);
+            try {
+              const r = await quicClient.cloudStopServer(id);
+              if (r?.dryRun) {
+                Alert.alert("Dry run", String(r.plan || "") + "\n\nReal stop needs YAVER_CLOUD_STOPSTART_LIVE=1 on the machine.");
+              } else {
+                await loadServers();
+                await loadSnapshots();
+              }
+            } catch (e: any) {
+              Alert.alert("Couldn't stop", e?.message || "Try again.");
+            } finally {
+              setBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const loadSnapshots = async () => {
+    try {
+      const r = await quicClient.cloudSnapshots();
+      setSnapshots(r.snapshots);
+    } catch {
+      // non-fatal
+    }
+  };
+
+  const startFromSnapshot = (snap: any) => {
+    const imageId = String(snap.id ?? snap.ID ?? "");
+    const desc = String(snap.description ?? snap.Description ?? imageId);
+    if (!imageId) return;
+    // Recreate under a fresh name derived from the snapshot label.
+    const name = (desc.replace(/^yaver-stop-/, "yaver-") || `yaver-${imageId}`).slice(0, 40);
+    Alert.alert(
+      "Start this box?",
+      `Recreates a ${plan}/${region} server from snapshot ${imageId} on your account (new IP). Hourly billing resumes.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Start",
+          onPress: async () => {
+            setBusy(`start:${imageId}`);
+            try {
+              const r = await quicClient.cloudStartServer(imageId, name, plan, region);
+              if (r?.dryRun) {
+                Alert.alert("Dry run", String(r.plan || "") + "\n\nReal start needs YAVER_CLOUD_STOPSTART_LIVE=1 on the machine.");
+              } else {
+                Alert.alert("Box starting", `${name} is booting (${r?.ip || "ip pending"}).`);
+                await loadServers();
+                await loadSnapshots();
+              }
+            } catch (e: any) {
+              Alert.alert("Couldn't start", e?.message || "Try again.");
             } finally {
               setBusy(null);
             }
@@ -320,30 +429,75 @@ export default function CloudProvidersSection({
 
               {/* BYO server management (Hetzner connected). */}
               {hetznerConnected ? (
-                <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10, gap: 6 }}>
+                <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10, gap: 8 }}>
+                  {/* Spin up a box on the user's own account. */}
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Your Hetzner servers</Text>
-                    <Pressable disabled={busy !== null} onPress={loadServers} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 8, paddingVertical: 4 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Run a box on your Hetzner</Text>
+                    <Pressable disabled={busy !== null} onPress={() => setShowSpinUp((s) => !s)} style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#059669", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 }}>
+                      <Text style={{ color: "#059669", fontSize: 12, fontWeight: "700" }}>{showSpinUp ? "Close" : "＋ Spin up"}</Text>
+                    </Pressable>
+                  </View>
+
+                  {showSpinUp ? (
+                    <View style={{ gap: 6, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: c.border }}>
+                      <View style={{ flexDirection: "row", gap: 6 }}>
+                        {(["starter", "pro", "scale"] as const).map((pl) => (
+                          <Pressable key={pl} onPress={() => setPlan(pl)} style={{ borderWidth: 1, borderColor: plan === pl ? "#0ea5e9" : c.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 }}>
+                            <Text style={{ color: plan === pl ? "#0ea5e9" : c.textMuted, fontSize: 11, fontWeight: "700" }}>{pl}</Text>
+                          </Pressable>
+                        ))}
+                        {(["eu", "us"] as const).map((rg) => (
+                          <Pressable key={rg} onPress={() => setRegion(rg)} style={{ borderWidth: 1, borderColor: region === rg ? "#0ea5e9" : c.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 }}>
+                            <Text style={{ color: region === rg ? "#0ea5e9" : c.textMuted, fontSize: 11, fontWeight: "700" }}>{rg}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                      <Text style={{ color: c.textMuted, fontSize: 10 }}>~{HOURLY_EUR[plan]} on your Hetzner bill (you pay Hetzner directly).</Text>
+                      <TextInput
+                        value={repoUrl}
+                        onChangeText={setRepoUrl}
+                        placeholder="Git repo to clone (optional, https:// or git@)"
+                        placeholderTextColor={c.textMuted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        spellCheck={false}
+                        style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, color: c.textPrimary, backgroundColor: c.bgCardElevated ?? c.bgCard, fontFamily: "monospace", fontSize: 12 }}
+                      />
+                      <Pressable disabled={busy !== null} onPress={spinUp} style={{ opacity: busy ? 0.5 : 1, borderRadius: 8, paddingVertical: 9, alignItems: "center", backgroundColor: "#059669" }}>
+                        {busy === "spinup" ? <ActivityIndicator size="small" color="#fff" /> : (
+                          <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>Spin up {plan} box</Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  {/* Running servers. */}
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Your servers</Text>
+                    <Pressable disabled={busy !== null} onPress={() => { void loadServers(); void loadSnapshots(); }} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 8, paddingVertical: 4 }}>
                       {busy === "servers" ? <ActivityIndicator size="small" color={c.textMuted} /> : (
                         <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>{servers === null ? "Load" : "Refresh"}</Text>
                       )}
                     </Pressable>
                   </View>
                   {servers === null ? (
-                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                      Tap Load to list servers on your account. Provision new boxes with {"`yaver ops cloud_provision host=hetzner`"} (in-app spin-up coming soon).
-                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>Tap Load to list servers on your account.</Text>
                   ) : servers.length === 0 ? (
-                    <Text style={{ color: c.textMuted, fontSize: 11 }}>No servers on your Hetzner account.</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>No running servers.</Text>
                   ) : (
                     servers.map((s: any) => {
                       const id = String(s.id ?? s.ID ?? "");
                       return (
-                        <View key={id} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 }}>
+                        <View key={id} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 4 }}>
                           <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "monospace", flex: 1 }}>
-                            {String(s.name ?? s.Name ?? id)} · {String(s.status ?? s.Status ?? "?")} · {String(s.ip ?? s.IP ?? s.publicIp ?? "")}
+                            {String(s.name ?? s.Name ?? id)} · {String(s.status ?? s.Status ?? "?")} · {String(s.ip ?? s.IP ?? "")}
                           </Text>
-                          <Pressable disabled={busy !== null} onPress={() => removeServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 8, paddingVertical: 4 }}>
+                          <Pressable disabled={busy !== null} onPress={() => stopServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
+                            {busy === `stop:${id}` ? <ActivityIndicator size="small" color="#b45309" /> : (
+                              <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>Stop</Text>
+                            )}
+                          </Pressable>
+                          <Pressable disabled={busy !== null} onPress={() => removeServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
                             {busy === `rm:${id}` ? <ActivityIndicator size="small" color="#e11d48" /> : (
                               <Text style={{ color: "#e11d48", fontSize: 11, fontWeight: "700" }}>Delete</Text>
                             )}
@@ -352,6 +506,28 @@ export default function CloudProvidersSection({
                       );
                     })
                   )}
+
+                  {/* Stopped boxes (snapshots) — restart to resume. */}
+                  {snapshots && snapshots.length > 0 ? (
+                    <View style={{ gap: 4, marginTop: 2 }}>
+                      <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Stopped boxes (snapshots)</Text>
+                      {snapshots.map((s: any) => {
+                        const id = String(s.id ?? s.ID ?? "");
+                        return (
+                          <View key={id} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 3 }}>
+                            <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "monospace", flex: 1 }}>
+                              {String(s.description ?? s.Description ?? id)} · €{Number(s.estMonthlyEur ?? s.EstMonthlyEUR ?? 0).toFixed(2)}/mo
+                            </Text>
+                            <Pressable disabled={busy !== null} onPress={() => startFromSnapshot(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
+                              {busy === `start:${id}` ? <ActivityIndicator size="small" color="#059669" /> : (
+                                <Text style={{ color: "#059669", fontSize: 11, fontWeight: "700" }}>Start</Text>
+                              )}
+                            </Pressable>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
                 </View>
               ) : null}
 
