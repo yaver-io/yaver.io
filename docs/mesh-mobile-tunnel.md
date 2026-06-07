@@ -19,15 +19,38 @@ that can't be compiled or verified from the agent/CI environment.
   land together with the Apple entitlement + a native rebuild, or prebuild
   output changes in a build no one verified.
 
-**Activation checklist (on the Mac, when ready):**
-1. Grant the Network Extension capability on the App ID + regenerate the
-   provisioning profile (Apple-gated).
-2. Add `"./plugins/withMeshTunnel"` to `mobile/app.json` → `expo.plugins`.
-3. Finish the iOS extension *target* creation in the plugin (the one PBX piece
-   left as a `TODO(activation)` — use `@config-plugins/apple-target` or an
-   xcode-mod; provider bundle id must equal `io.yaver.mobile.YaverMeshTunnel`).
-4. `expo prebuild --clean` → restore force-tracked iOS overlays → pod install →
-   native rebuild → verify on a real device (Simulator NE is unreliable).
+**Activation checklist (on the Mac, when ready) — updated 2026-06-07:**
+
+The iOS extension *target* is now scaffolded via **`@bacons/apple-targets`**
+(installed; supports `network-packet-tunnel`) at
+`mobile/targets/yaver-mesh/{expo-target.config.js,PacketTunnelProvider.swift}`.
+It is **STAGED, not active**: `@bacons/apple-targets` is intentionally NOT in
+`app.json` → `plugins`, so prebuild ignores it and the current build is green.
+
+Finish steps:
+1. **Apple Developer portal (GATE 1, account-level, cannot be automated):**
+   enable the Network Extension capability (`packet-tunnel-provider`) + the
+   App Group `group.io.yaver.mesh` on App ID `io.yaver.mobile`; regenerate the
+   provisioning profile.
+2. **WireGuardKit SPM (GATE 2, no turnkey path):** `@bacons/apple-targets`
+   links only *system* frameworks, so add the Swift Package
+   `github.com/WireGuard/wireguard-apple` (product `WireGuardKit`) to the
+   generated `YaverMeshTunnel` target — via Xcode "Add Package Dependency"
+   after prebuild, or a `withXcodeProject` SPM mod. Its wireguard-go bridge
+   builds with the target. Until this lands, `import WireGuardKit` won't compile.
+3. Register plugins in `app.json` → `expo.plugins`: add
+   `"@bacons/apple-targets"` AND `"./plugins/withMeshTunnel"` (the latter still
+   owns the app-target entitlement/App-Group + the Android VpnService + the RN
+   bridge copy).
+4. `expo prebuild --clean` → restore force-tracked iOS overlays
+   (`git checkout -- mobile/ios mobile/android`) → recreate
+   `mobile/android/keystore.properties` → `pod install` → native rebuild →
+   **verify on a real device** (Simulator NEPacketTunnelProvider is unreliable).
+
+Android is the lower-friction path (no Apple gate, no SPM): the
+`com.wireguard.android:tunnel` GoBackend is a plain Gradle dep that
+`withMeshTunnel.js` already adds, and `VpnService` runs in-process (no separate
+target). An Android on-device tunnel is achievable without GATE 1/GATE 2.
 
 Until this lands, the phone is a **mesh console only** (`app/(tabs)/network.tsx`):
 it shows peers, edits ACLs, toggles exit-node/routes — but does not get its own
