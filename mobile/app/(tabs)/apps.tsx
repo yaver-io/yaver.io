@@ -7,6 +7,7 @@ import {
   Modal,
   NativeModules,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -261,7 +262,7 @@ export default function AppsScreen() {
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("wide");
-  const { activeDevice, connectionStatus, devices, connectedDeviceIds } = useDevice();
+  const { activeDevice, connectionStatus, devices, connectedDeviceIds, refreshDevices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
   // Effective state — focused box OR any pool client live. See
   // lib/connectionState; aligns this tab with Devices/Tasks/Reload so
@@ -418,6 +419,22 @@ export default function AppsScreen() {
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [repos, setRepos] = useState<RepoItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+
+  // Pull-to-refresh on the Projects list: re-scan projects on the box + re-poll
+  // devices. The list updates from the existing poll loop; show the spinner
+  // briefly while the fresh scan is kicked off.
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.allSettled([
+        quicClient.refreshMobileProjects(),
+        refreshDevices(),
+      ]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refreshDevices]);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   const [showWebView, setShowWebView] = useState(false);
   const [webViewKey, setWebViewKey] = useState(0);
@@ -1894,6 +1911,9 @@ export default function AppsScreen() {
           key={`projects-cols-${layout.gridCols("projects")}`}
           numColumns={layout.gridCols("projects")}
           columnWrapperStyle={layout.gridCols("projects") > 1 ? { gap: 10 } : undefined}
+          refreshControl={
+            <RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
+          }
           data={projects.filter((p) => {
             // Fuzzy search
             if (search.trim()) {

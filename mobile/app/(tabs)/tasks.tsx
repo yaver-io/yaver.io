@@ -3978,10 +3978,12 @@ export default function TasksScreen() {
         <FlatList
           data={displayTasks}
           keyExtractor={(item) => item.id}
-          // Only bounce when there's a real list. In the empty / no-machine
-          // state bouncing lets the centered hero be dragged under the top
-          // banner (reads as broken); the empty UI has its own Refresh link.
-          alwaysBounceVertical={displayTasks.length > 0}
+          // Always bounce so pull-to-refresh (RefreshControl below) works even
+          // in the empty / no-machine state — pulling down re-scans for devices.
+          // Safe now that the empty body uses a flexGrow container (discoverEmpty)
+          // that lays out top-down instead of flex:1 centering, so it no longer
+          // overflows under the top banner.
+          alwaysBounceVertical
           // Tablet portrait: 2-col grid for created tasks. Tablet
           // landscape: stays single column because the right pane
           // already shows the selected chat — a narrow 2-col grid
