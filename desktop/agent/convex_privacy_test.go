@@ -639,6 +639,10 @@ func TestPrepaidWalletFields_AreNotConvexForbidden(t *testing.T) {
 		// creditUsage
 		"machineId", "date", "state", "seconds", "hetznerCostCents",
 		"chargedCents", "ratePerHourCents", "dryRun",
+		// creditTopups (real-money prepaid top-up ledger; idempotent on
+		// orderId). Counter/id/timestamp only — orderId is a payment
+		// provider order reference, not a secret.
+		"orderId", "source", "packId", "amountCents",
 	}
 	forbidden := map[string]bool{}
 	for _, k := range fieldsWeForbidInAnyConvexPayload {

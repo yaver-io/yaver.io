@@ -1088,16 +1088,28 @@ export const provision = internalAction({
     // so gating unconditionally here is safe and closes the old
     // subscription-less hole.
     {
-      const entitled = await ctx.runQuery(internal.subscriptions.canProvisionManaged, {
+      let entitled = await ctx.runQuery(internal.subscriptions.canProvisionManaged, {
         subscriptionId: machine.subscriptionId ?? undefined,
         userId: machine.userId,
       });
+      // Prepaid path: a funded wallet entitles provisioning even with no
+      // subscription (OpenAI-style credits — the box is paid by burning
+      // balance, not a recurring plan). Still fail-closed: an empty
+      // wallet + no subscription + non-owner = denied. canStart checks
+      // the balance covers this SKU's safe reserve floor.
+      if (!entitled) {
+        const gate = await ctx.runQuery(internal.cloudLifecycle.canStart, {
+          userId: machine.userId,
+          machineType: machine.machineType ?? "cpu",
+        });
+        entitled = gate.ok;
+      }
       if (!entitled) {
         await ctx.runMutation(internal.cloudMachines.setStatus, {
           machineId: args.machineId,
           status: "error",
           errorMessage:
-            "Not entitled — managed provisioning denied (active subscription or owner allowlist required)",
+            "Not entitled — managed provisioning denied (active subscription, prepaid balance, or owner allowlist required)",
         });
         return;
       }

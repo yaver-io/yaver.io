@@ -18,12 +18,22 @@
 // Privacy: every field here is a counter/timestamp/id — Convex-allowed
 // (runnerUsage/dailyTaskCounts precedent). No secrets/paths/output.
 
-import { mutation, query, internalMutation, internalQuery, internalAction } from "./_generated/server";
+import { internalMutation, internalQuery, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 
-// 100% margin: user pays 2x raw Hetzner in every state.
-export const MARKUP_X = 2;
+// Markup over raw provider COGS, per SKU, env-overridable. Defaults:
+// cpu 2x (100% margin), gpu 3x (GPU COGS is lumpier + pricier). Set
+// YAVER_CLOUD_MARKUP_CPU / _GPU (a number like "2.5") to retune without
+// a redeploy. User pays markup x raw in every state (live + stopped).
+const MARKUP_BY_TYPE: Record<string, number> = { cpu: 2, gpu: 3 };
+export function markup(machineType: string): number {
+  const env = Number(process.env[`YAVER_CLOUD_MARKUP_${(machineType || "cpu").toUpperCase()}`]);
+  if (Number.isFinite(env) && env > 0) return env;
+  return MARKUP_BY_TYPE[machineType] ?? 2;
+}
+// Back-compat default (cpu) for any external reference. Prefer markup().
+export const MARKUP_X = MARKUP_BY_TYPE.cpu;
 
 // Raw Hetzner COGS basis. Managed SKU = cpx42 €29.99/mo (16GB, the
 // RN/Hermes box — see MACHINE_SPECS in cloudMachines.ts). Stopped =
@@ -46,11 +56,18 @@ function rawRate(machineType: string, state: "live" | "stopped"): number {
 // one live→stop snapshot transition + (b) keep the snapshot parked
 // ≥1 month. Pure fn — P2/P3 gate "can start" on balance >= this.
 export function minimumReserveCents(machineType: string): number {
-  const stoppedMonth = rawRate(machineType, "stopped") * 730 * MARKUP_X;
+  const m = markup(machineType);
+  const stoppedMonth = rawRate(machineType, "stopped") * 730 * m;
   // Transition reserve: assume up to ~1h of live billing to snapshot+
   // delete safely (snapshot can take minutes; be generous).
-  const transition = rawRate(machineType, "live") * 1 * MARKUP_X;
+  const transition = rawRate(machineType, "live") * 1 * m;
   return Math.ceil(stoppedMonth + transition);
+}
+
+// User-facing running rate (cents/hour) for a SKU = raw live COGS x
+// markup. Pure; the wallet UI shows "~$X/hr running".
+export function estimatedHourlyCents(machineType: string): number {
+  return Math.ceil(rawRate(machineType, "live") * markup(machineType));
 }
 
 function todayUTC(now: number): string {
@@ -59,7 +76,12 @@ function todayUTC(now: number): string {
 
 // ── Wallet ───────────────────────────────────────────────────────────
 
-export const getWallet = query({
+// internalQuery (not public): wallet balance is per-user money data.
+// A public query taking a userId arg would let any Convex client read
+// any user's balance by id. All reads go through the bearer-authed HTTP
+// endpoints, which resolve userId from the session and call this via
+// internal.* — never client-reachable.
+export const getWallet = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     const w = await ctx.db
@@ -132,6 +154,93 @@ export const topUp = internalMutation({
   },
 });
 
+// Idempotent real-money top-up. The web credit-pack checkout pays via
+// LemonSqueezy; its `order_created` webhook calls this with the provider
+// order id. LemonSqueezy re-delivers webhooks, so we key on orderId in
+// creditTopups and no-op on a duplicate — a re-delivery can never
+// double-credit the wallet. Returns the (possibly unchanged) balance.
+export const topUpForOrder = internalMutation({
+  args: {
+    userId: v.id("users"),
+    orderId: v.string(),
+    amountCents: v.number(),
+    source: v.string(),
+    packId: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    { userId, orderId, amountCents, source, packId },
+  ): Promise<{ balanceCents: number; credited: boolean }> => {
+    if (amountCents <= 0) throw new Error("topUpForOrder: amountCents must be > 0");
+    const existing = await ctx.db
+      .query("creditTopups")
+      .withIndex("by_order", (q) => q.eq("orderId", orderId))
+      .first();
+    if (existing) {
+      const w = await getWalletInternalRow(ctx, userId);
+      return { balanceCents: w?.balanceCents ?? 0, credited: false };
+    }
+    const now = Date.now();
+    await ctx.db.insert("creditTopups", {
+      userId,
+      orderId,
+      source,
+      packId,
+      amountCents,
+      createdAt: now,
+    });
+    const w = await ensureWalletRow(ctx, userId);
+    await ctx.db.patch(w._id, {
+      balanceCents: w.balanceCents + amountCents,
+      totalAddedCents: w.totalAddedCents + amountCents,
+      lastTopupAt: now,
+      updatedAt: now,
+    });
+    return { balanceCents: w.balanceCents + amountCents, credited: true };
+  },
+});
+
+// Recent wallet activity for the mobile/web "Wallet" surface: the last
+// N metering ticks (most recent first) + the last N top-ups. Counter/
+// id/timestamp only.
+// internalQuery (not public): per-user usage ledger. Same reasoning as
+// getWallet — read only via the bearer-authed HTTP /usage endpoint.
+export const getRecentUsage = internalQuery({
+  args: { userId: v.id("users"), limit: v.optional(v.number()) },
+  handler: async (ctx, { userId, limit }) => {
+    const n = Math.max(1, Math.min(100, limit ?? 20));
+    const usage = await ctx.db
+      .query("creditUsage")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId))
+      .order("desc")
+      .take(n);
+    const topups = await ctx.db
+      .query("creditTopups")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .order("desc")
+      .take(n);
+    return {
+      usage: usage.map((u) => ({
+        machineId: u.machineId ? String(u.machineId) : null,
+        date: u.date,
+        state: u.state,
+        seconds: u.seconds,
+        chargedCents: u.chargedCents,
+        ratePerHourCents: u.ratePerHourCents,
+        dryRun: u.dryRun,
+        createdAt: u.createdAt,
+      })),
+      topups: topups.map((t) => ({
+        orderId: t.orderId,
+        source: t.source,
+        packId: t.packId ?? null,
+        amountCents: t.amountCents,
+        createdAt: t.createdAt,
+      })),
+    };
+  },
+});
+
 // ── Metering ─────────────────────────────────────────────────────────
 
 // Record one billable tick for a machine and deduct from the wallet.
@@ -155,9 +264,10 @@ export const recordUsageAndDeduct = internalMutation({
       const w0 = await getWalletInternalRow(ctx, userId);
       return { balanceCents: w0?.balanceCents ?? 0, suspend: false, charged: 0 };
     }
+    const m = markup(machineType);
     const rateHour = rawRate(machineType, state);
     const hetznerCostCents = Math.ceil((rateHour * seconds) / 3600);
-    const chargedCents = hetznerCostCents * MARKUP_X;
+    const chargedCents = hetznerCostCents * m;
     const now = Date.now();
 
     await ctx.db.insert("creditUsage", {
@@ -168,7 +278,7 @@ export const recordUsageAndDeduct = internalMutation({
       seconds,
       hetznerCostCents,
       chargedCents,
-      ratePerHourCents: rateHour * MARKUP_X,
+      ratePerHourCents: rateHour * m,
       dryRun,
       createdAt: now,
     });
@@ -342,6 +452,12 @@ export const listMeterableMachines = internalQuery({
     const rows = await ctx.db.query("cloudMachines").collect();
     return rows
       .filter((m: any) => m.status === "active" || m.status === "paused")
+      // Only meter MANAGED (Yaver-provisioned, platform-funded) boxes.
+      // A self-hosted / BYO-Hetzner box (the user's own provider token,
+      // they pay the provider directly) must NEVER be billed by the
+      // prepaid meter — defensive guard even though BYO boxes live in
+      // the agent's local store, not cloudMachines.
+      .filter((m: any) => (m.origin ?? "managed") === "managed")
       .map((m: any) => ({
         machineId: m._id,
         userId: m.userId,
