@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
+import ByoCloudPanel from "@/components/dashboard/ByoCloudPanel";
 
 type Provider = {
   id: string;
@@ -217,6 +218,10 @@ export default function AccountsView() {
           );
         })}
       </div>
+
+      {/* Manage boxes on the user's own Hetzner (stop / start / delete /
+          bake / spin up) — renders only when Hetzner is connected. */}
+      <ByoCloudPanel />
 
       <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
         <div className="text-xs font-medium uppercase tracking-wider text-red-300">Danger Zone</div>
