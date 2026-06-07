@@ -15,6 +15,9 @@
 //   - ready: mount TerminalView. WebSocket is created/torn down with
 //     the modal lifecycle (mount on open, dispose on close).
 
+"use client";
+
+import { useState } from "react";
 import TerminalView from "./TerminalView";
 import type { Device } from "@/lib/use-devices";
 
@@ -33,6 +36,7 @@ export default function WebShellModal({
   onConnect: () => void;
   onOpenRescue?: () => void;
 }) {
+  const [maximized, setMaximized] = useState(false);
   const reauthRequired = Boolean(device.needsAuth) && !device.isGuest;
   const state: "needs-reauth" | "not-connected" | "connecting" | "ready" = reauthRequired
     ? "needs-reauth"
@@ -49,7 +53,9 @@ export default function WebShellModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex w-full max-w-5xl flex-col overflow-hidden rounded-none border border-slate-200 bg-white shadow-2xl dark:border-surface-700 dark:bg-[#0b0d10] sm:rounded-xl"
+        className={`flex w-full flex-col overflow-hidden border border-slate-200 bg-white shadow-2xl dark:border-surface-700 dark:bg-[#0b0d10] ${
+          maximized ? "max-w-none rounded-none h-screen sm:rounded-none" : "max-w-5xl rounded-none sm:rounded-xl"
+        }`}
       >
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/95 px-4 py-2.5 dark:border-surface-800 dark:bg-surface-900/80">
           <div className="flex items-center gap-2 min-w-0">
@@ -65,6 +71,13 @@ export default function WebShellModal({
             <span className="hidden sm:inline rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 dark:border-surface-700 dark:bg-surface-950/60 dark:text-surface-400">
               {state === "needs-reauth" ? "agent auth required" : state === "connecting" ? "connecting…" : "via relay · PTY"}
             </span>
+            <button
+              onClick={() => setMaximized((m) => !m)}
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-surface-700 dark:bg-surface-950 dark:text-surface-300 dark:hover:border-surface-600 dark:hover:text-surface-100"
+              title={maximized ? "Restore" : "Maximize"}
+            >
+              {maximized ? "❐" : "⛶"}
+            </button>
             <button
               onClick={onClose}
               className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-surface-700 dark:bg-surface-950 dark:text-surface-300 dark:hover:border-surface-600 dark:hover:text-surface-100"

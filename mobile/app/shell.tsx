@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import * as ScreenOrientation from "expo-screen-orientation";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice, type Device } from "../src/context/DeviceContext";
 import { useAuth } from "../src/context/AuthContext";
@@ -67,11 +68,33 @@ export default function ShellScreen() {
   // toggle launched). Reset on disconnect since the PTY is gone.
   const [runningId, setRunningId] = useState<string | null>(null);
   const [opencodeCfgOpen, setOpencodeCfgOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const xtermRef = useRef<XtermHandle | null>(null);
   const sizeRef = useRef<{ cols: number; rows: number }>({ cols: 80, rows: 24 });
   const recRef = useRef<{ stop: () => Promise<string> } | null>(null);
+
+  // Fullscreen = landscape + hide chrome, so the VT grid gets the whole screen.
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!fullscreen) {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        setFullscreen(true);
+      } else {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        setFullscreen(false);
+      }
+    } catch {
+      setFullscreen((f) => !f);
+    }
+    setTimeout(() => xtermRef.current?.fit(), 350);
+  }, [fullscreen]);
+
+  // Always restore portrait when leaving the shell.
+  useEffect(() => {
+    return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); };
+  }, []);
 
   // ── PTY WebSocket ────────────────────────────────────────────────
   useEffect(() => {
@@ -254,6 +277,7 @@ export default function ShellScreen() {
       keyboardVerticalOffset={insets.top}
     >
       {/* Header — tap the title to switch device */}
+      {!fullscreen ? (
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <AppBackButton onPress={() => router.back()} />
         <Pressable style={{ flex: 1, marginLeft: 8 }} onPress={() => setPickerOpen(true)}>
@@ -282,7 +306,11 @@ export default function ShellScreen() {
             <Text style={styles.reconnectText}>Reconnect</Text>
           </Pressable>
         ) : null}
+        <Pressable onPress={toggleFullscreen} style={styles.fsToggle} accessibilityLabel="Fullscreen (landscape)">
+          <Text style={{ color: "#9ca3af", fontSize: 16 }}>⛶</Text>
+        </Pressable>
       </View>
+      ) : null}
 
       {/* The VT grid */}
       <View style={{ flex: 1 }}>
@@ -295,9 +323,15 @@ export default function ShellScreen() {
           foreground="#d1d5db"
           fontSize={13}
         />
+        {fullscreen ? (
+          <Pressable onPress={toggleFullscreen} style={[styles.fsExit, { top: insets.top + 6 }]} accessibilityLabel="Exit fullscreen">
+            <Text style={{ color: "#fff", fontSize: 14 }}>✕</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {/* Agent launchers */}
+      {!fullscreen ? (
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -360,8 +394,9 @@ export default function ShellScreen() {
           </Pressable>
         ) : null}
       </ScrollView>
+      ) : null}
 
-      <View style={{ height: insets.bottom, backgroundColor: "#0b0d10" }} />
+      {!fullscreen ? <View style={{ height: insets.bottom, backgroundColor: "#0b0d10" }} /> : null}
 
       {/* Device picker */}
       <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
@@ -421,6 +456,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   headerTitle: { color: "#e5e7eb", fontSize: 14, fontWeight: "700" },
+  fsToggle: { paddingHorizontal: 8, paddingVertical: 4, marginLeft: 4 },
+  fsExit: { position: "absolute", right: 10, backgroundColor: "rgba(0,0,0,0.5)", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   launchBar: {
     maxHeight: 52,
     borderTopWidth: 1,

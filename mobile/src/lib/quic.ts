@@ -1179,6 +1179,19 @@ export class QuicClient {
     return this.authHeaders;
   }
 
+  /** Authed snapshot URL for the Remote Desktop screen frame, for an <img src>
+   *  inside a WebView (which can't send headers). iOS WKWebView can't render
+   *  multipart MJPEG, so the mobile viewer polls this single-JPEG endpoint. The
+   *  agent promotes ?token= to a bearer; the relay validates ?__rp=. */
+  remoteDesktopFrameUrl(): string {
+    const base = `${this.baseUrl}/rd/frame.jpg`;
+    let url = `${base}?token=${encodeURIComponent(this.token || "")}`;
+    if (this.activeRelayUrl && this.activeRelayPassword) {
+      url += `&__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
+  }
+
   /** Issue an authenticated agent HTTP request over THIS client's live
    *  transport — whatever connect() resolved (direct LAN, Tailscale, tunnel,
    *  or relay). When `targetDeviceId` is the device this client is attached to
