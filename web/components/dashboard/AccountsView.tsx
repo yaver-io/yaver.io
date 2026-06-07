@@ -82,6 +82,10 @@ export default function AccountsView() {
         return;
       }
       setActive(null);
+      // Hygiene: never keep the pasted token (or any secret field) in
+      // React state after it's been sent to the agent.
+      setFields({});
+      setLabel("");
       refresh();
     } catch {
       setConnectError("Couldn't connect this account — the agent may be unreachable.");
