@@ -46,6 +46,7 @@ func TestIsYaverHTTPRelayHost(t *testing.T) {
 		{host: "https://000ca94b-158d-42ab-a02e-edab5a6d9d06.yaver.io", want: false}, // caller strips scheme first
 		{host: "yaver.io", want: false},
 		{host: "relay.yaver.io", want: false},
+		{host: "public.yaver.io", want: true}, // shared relay gateway — never ssh
 		{host: "test.yaver.io", want: false},                 // not a UUID label
 		{host: "12345678-1234-1234-1234-12345678abcd.example.com", want: false},
 		{host: "yaver-test-ephemeral", want: false},

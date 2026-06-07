@@ -7522,6 +7522,20 @@ func runSSHWrap(args []string) {
 		}
 		return
 	}
+	// Direct ssh couldn't establish the connection (255 = an ssh-level error:
+	// refused / timed out / DNS / host-key — NOT a remote command's exit code,
+	// and not the publickey case handled above). For an interactive session
+	// against a device we know, fall back to the relay PTY (the same path
+	// `yaver shell` uses) — it traverses NAT/CGNAT where direct ssh can't.
+	// Passthrough args (-L tunnels, remote commands, scp) can't ride a PTY, so
+	// those keep the raw ssh error instead.
+	if exitCode == 255 && errSummary != sshFailAuth && resolvedDevice != nil && len(passthrough) == 0 {
+		fmt.Fprintf(os.Stderr, "→ direct ssh couldn't connect — falling back to the relay shell (NAT-friendly)…\n")
+		if err := runShellOverRelay(resolvedDevice.DeviceID, ""); err == nil {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "  relay shell also unavailable.\n")
+	}
 	printSSHResolutionDiagnostic(target, dest, resolvedDevice)
 	os.Exit(exitCode)
 }
@@ -7596,6 +7610,18 @@ func printSSHResolutionDiagnostic(input, attempted string, dev *DeviceInfo) {
 			fmt.Fprintln(os.Stderr, "  hint: tailscale is down on this host. Start it (`tailscale up`) or use a LAN/public IP.")
 		}
 	}
+	// The relay PTY (`yaver shell`) traverses NAT/CGNAT where direct ssh
+	// can't — the reliable path when a box only has a relay endpoint (home
+	// box behind CGNAT, no LAN-on-subnet, Tailscale down). Recommend it by
+	// the same handle the user typed.
+	handle := strings.TrimSpace(dev.Alias)
+	if handle == "" {
+		handle = strings.TrimSpace(dev.Name)
+	}
+	if handle == "" {
+		handle = dev.DeviceID
+	}
+	fmt.Fprintf(os.Stderr, "  → no direct ssh route? run: yaver shell %s   (relay PTY — works through NAT)\n", handle)
 	fmt.Fprintln(os.Stderr, "  hint: `yaver devices` lists every endpoint, or `ssh <user>@<other-ip>` directly.")
 }
 
@@ -7898,7 +7924,18 @@ func resolveSSHHost(target string) string {
 	for _, raw := range dev.PublicEndpoints {
 		ep := strings.TrimPrefix(raw, "https://")
 		ep = strings.TrimPrefix(ep, "http://")
-		ep = strings.TrimSuffix(ep, "/")
+		// Strip any URL path BEFORE host extraction. A relay device-tunnel
+		// path ("/d/<uuid>") means this endpoint is the shared HTTP relay
+		// gateway (public.yaver.io/d/<id>), not a directly ssh-able host —
+		// skip it entirely so we never hand `ssh` a "host/d/uuid" string it
+		// can't resolve (and which it couldn't traverse even if it could).
+		// For any other endpoint, drop the path so ssh gets a bare host:port.
+		if slash := strings.IndexByte(ep, '/'); slash >= 0 {
+			if strings.HasPrefix(ep[slash:], "/d/") {
+				continue
+			}
+			ep = ep[:slash]
+		}
 		ep = bareHostNoPort(ep)
 		if ep == "" || isYaverHTTPRelayHost(ep) {
 			continue
@@ -8032,6 +8069,13 @@ func isYaverHTTPRelayHost(host string) bool {
 	}
 	label := strings.TrimSuffix(host, ".yaver.io")
 	label = strings.TrimSuffix(label, ".dev")
+	// The shared relay gateway public.yaver.io terminates HTTPS only — ssh
+	// never works against it. It fronts per-device tunnels at /d/<id> (the
+	// path is stripped by the caller's "/d/" skip; this also covers a bare
+	// "public.yaver.io" endpoint without a path).
+	if label == "public" {
+		return true
+	}
 	if len(label) != 36 || strings.Count(label, "-") != 4 {
 		return false
 	}
