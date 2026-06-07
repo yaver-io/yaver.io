@@ -2016,6 +2016,55 @@ export default function SettingsScreen() {
           );
         })()}
 
+        {/* Mobile Sandbox coding */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Sandbox</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => router.push("/sandbox-ai")}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Sandbox AI</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  On-device model or your own Claude / OpenAI / GLM key for phone coding
+                </Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Configure ›</Text>
+            </Pressable>
+
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => router.push("/local-models")}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>On-device models</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Download + manage local LLMs (voice helper, coder) — run offline
+                </Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Manage ›</Text>
+            </Pressable>
+
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => router.push("/assistant")}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Voice assistant</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Hold-to-talk device control — connect, reconnect, switch agents, run safe actions
+                </Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
+            </Pressable>
+          </View>
+        </View>
+
         {/* Voice Input & TTS */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Voice</Text>
