@@ -647,6 +647,12 @@ export const LOCAL_KEYS = {
   yaverCloudToken: `${LOCAL_KEY_PREFIX}yaver_cloud_token`,
   selfHostedBaseUrl: `${LOCAL_KEY_PREFIX}self_hosted_base_url`,
   selfHostedAuthToken: `${LOCAL_KEY_PREFIX}self_hosted_auth_token`,
+  // BYO Hetzner Cloud API token for phone-DIRECT box management +
+  // provisioning (no paired agent needed). Lives ONLY in the device
+  // keychain; the phone calls api.hetzner.cloud directly, so it never
+  // transits Convex or any relay — same on-device-only posture as the
+  // BYO API keys above.
+  hetznerToken: `${LOCAL_KEY_PREFIX}hetzner_token`,
 } as const;
 
 export async function getLocalSecret(key: string): Promise<string | null> {
