@@ -2345,7 +2345,7 @@ export class QuicClient {
   // ── Autoinit + Autoideas (cached project context + idea queue) ──
 
   /** GET /autoinit/status?work_dir=… */
-  async autoinitStatus(workDir: string): Promise<{
+  async autoinitStatus(workDir: string, target?: string): Promise<{
     done: boolean;
     path: string;
     bytes: number;
@@ -2353,7 +2353,7 @@ export class QuicClient {
     has_generated_section: boolean;
     has_history_section: boolean;
   }> {
-    const url = `${this.baseUrl}/autoinit/status?work_dir=${encodeURIComponent(workDir)}`;
+    const url = this.peerEndpoint(target, `/autoinit/status?work_dir=${encodeURIComponent(workDir)}`);
     const res = await fetch(url, { headers: this.authHeaders });
     return await res.json();
   }
@@ -2367,8 +2367,8 @@ export class QuicClient {
     runner?: string;
     output?: string;
     force?: boolean;
-  }): Promise<any> {
-    const res = await fetch(`${this.baseUrl}/autoinit/start`, {
+  }, target?: string): Promise<any> {
+    const res = await fetch(this.peerEndpoint(target, "/autoinit/start"), {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -4791,12 +4791,24 @@ export class QuicClient {
   // ── Repo Sync ─────────────────────────────────────────────────────
 
   /** Clone a repo to the dev machine. */
-  async cloneRepo(url: string, dir?: string, branch?: string): Promise<{ok: boolean; path: string; output: string}> {
+  async cloneRepo(
+    url: string,
+    dir?: string,
+    branch?: string,
+    target?: string,
+    opts?: { autoInit?: boolean; autoInitRunner?: string },
+  ): Promise<{ok: boolean; path: string; output?: string; alreadyExisted?: boolean; metadata?: any; autoinit?: any}> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/repos/clone`, {
+    const res = await fetch(this.peerEndpoint(target, "/repos/clone"), {
       method: 'POST',
       headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, dir, branch }),
+      body: JSON.stringify({
+        url,
+        dir,
+        branch,
+        autoInit: opts?.autoInit,
+        autoInitRunner: opts?.autoInitRunner,
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -4836,11 +4848,66 @@ export class QuicClient {
   }
 
   /** List repos on dev machine. */
-  async listRepos(): Promise<{name: string; path: string; branch: string; remote: string; lastCommit: string; dirty: boolean}[]> {
+  async listRepos(target?: string): Promise<{name: string; path: string; branch: string; remote: string; lastCommit: string; dirty: boolean}[]> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/repos/list`, { headers: this.authHeaders });
+    const res = await fetch(this.peerEndpoint(target, "/repos/list"), { headers: this.authHeaders });
     if (!res.ok) throw new Error(`Failed to list repos: ${res.status}`);
     return res.json();
+  }
+
+  async dogfoodYaverSourceStatus(target?: string): Promise<{
+    ok: boolean;
+    cloned: boolean;
+    initialized: boolean;
+    path?: string;
+    branch?: string;
+    dirty?: boolean;
+    remote?: string;
+    initPath?: string;
+    initUpdatedAt?: string;
+    error?: string;
+  }> {
+    try {
+      const repos = await this.listRepos(target);
+      const repo = repos.find((r) => {
+        const remote = String(r.remote || "").toLowerCase();
+        const name = String(r.name || "").toLowerCase();
+        return name === "yaver.io" || remote.includes("github.com/kivanccakmak/yaver.io");
+      });
+      if (!repo?.path) return { ok: true, cloned: false, initialized: false };
+      const init = await this.autoinitStatus(repo.path, target).catch(() => null);
+      return {
+        ok: true,
+        cloned: true,
+        initialized: init?.done === true,
+        path: repo.path,
+        branch: repo.branch,
+        dirty: repo.dirty,
+        remote: repo.remote,
+        initPath: init?.path,
+        initUpdatedAt: init?.updated_at,
+      };
+    } catch (err) {
+      return { ok: false, cloned: false, initialized: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async dogfoodYaverSourceInstall(
+    target?: string,
+    opts?: { autoInit?: boolean; runner?: string },
+  ): Promise<{ ok: boolean; path?: string; alreadyExisted?: boolean; autoinit?: any; error?: string }> {
+    try {
+      const res = await this.cloneRepo(
+        "https://github.com/kivanccakmak/yaver.io.git",
+        undefined,
+        undefined,
+        target,
+        { autoInit: opts?.autoInit ?? true, autoInitRunner: opts?.runner },
+      );
+      return { ok: true, path: res.path, alreadyExisted: res.alreadyExisted, autoinit: res.autoinit };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** Store git credential (PAT) on the dev machine. */
