@@ -50,14 +50,23 @@ test("Android with on-device CLI → sandbox even with no cloud backend", () => 
   assert.equal(r.surface, "sandbox");
 });
 
-test("reachable box + phone backend → Hermes-only remote (auth-free box)", () => {
+test("reachable box + compliant phone backend (GLM) → Hermes-only remote (auth-free box)", () => {
   const r = routeCoding(
-    req({ appKind: "code", env: { platform: "ios", online: true, boxDeviceId: "box-1", boxRunnerReady: false, backend: PLAN } }),
+    req({ appKind: "code", env: { platform: "ios", online: true, boxDeviceId: "box-1", boxRunnerReady: false, backend: GLM } }),
   );
   assert.equal(r.surface, "hermes-remote");
   assert.equal(r.deviceId, "box-1");
   assert.equal(r.screen, "sandbox-ai");
   assert.ok(r.session?.boxAuthFree);
+});
+
+test("COMPLIANCE: plan token + UNauthed box → NOT hermes-remote (subscription is CLI-only)", () => {
+  // A plan token can't compliantly drive an unauthed box from the phone; without
+  // another backend that's a setup prompt, not a silent subscription-mimic.
+  const r = routeCoding(
+    req({ appKind: "code", env: { platform: "ios", online: true, boxDeviceId: "box-1", boxRunnerReady: false, backend: PLAN } }),
+  );
+  assert.notEqual(r.surface, "hermes-remote");
 });
 
 test("reachable authed box + remoteEngine:'cli' → remote-task on the box runner", () => {

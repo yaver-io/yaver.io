@@ -12,6 +12,7 @@
 import {
   resolveCodingSession,
   sessionEndpointDeviceId,
+  phoneCanDriveHermes,
   type CodingEnv,
   type CodingPrefs,
   type CodingSession,
@@ -94,14 +95,28 @@ export function routeCoding(req: StartCodingRequest): CodingRoute {
         reason: "the box runs the real CLI runner; opening the task screen targeted at it",
       };
     }
-    // hermes engine driving the box (auth-free remote).
+    // Hermes engine driving the box (auth-free remote) — but ONLY if the phone
+    // actually has a compliant in-app backend. resolveCodingSession returns a
+    // hermes *placeholder* for the "nothing usable" case; that's a setup prompt,
+    // not a real hermes-remote (and never the subscription mimic).
+    if (phoneCanDriveHermes(req.env, req.prefs)) {
+      return {
+        surface: "hermes-remote",
+        session,
+        deviceId: sessionEndpointDeviceId(session),
+        screen: codeScreen,
+        label: session.label,
+        reason: session.reason,
+      };
+    }
     return {
-      surface: "hermes-remote",
+      surface: "needs-setup",
       session,
       deviceId: sessionEndpointDeviceId(session),
-      screen: codeScreen,
-      label: session.label,
-      reason: session.reason,
+      screen: "sandbox-ai",
+      label: "Set up a coding backend",
+      reason:
+        "the box has no authorized runner and the phone has no compliant backend (GLM/BYO/on-device) to drive it — add one",
     };
   }
 

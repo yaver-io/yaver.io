@@ -198,7 +198,7 @@ export function resolveCodingSession(
     }
     const b = hermesBackend(env, prefs);
     return {
-      engine: b ? { kind: "hermes", backend: b } : { kind: "hermes", backend: "subscription" },
+      engine: b ? { kind: "hermes", backend: b } : { kind: "hermes", backend: "glm" },
       target: { kind: "phone" },
       label: b ? `${labelForBackend(b)} · sandbox` : "Sandbox — no backend",
       reason: b
@@ -247,7 +247,7 @@ export function resolveCodingSession(
     }
     // (d) Nothing can drive it.
     return {
-      engine: { kind: "hermes", backend: "subscription" },
+      engine: { kind: "hermes", backend: "glm" },
       target: box,
       label: "Box — no backend",
       reason: "authorize a runner on the box, or set up a phone backend to drive it auth-free",
@@ -267,7 +267,7 @@ export function resolveCodingSession(
   }
   const b = hermesBackend(env, prefs);
   return {
-    engine: b ? { kind: "hermes", backend: b } : { kind: "hermes", backend: "subscription" },
+    engine: b ? { kind: "hermes", backend: b } : { kind: "hermes", backend: "glm" },
     target: { kind: "phone" },
     label: b ? `${labelForBackend(b)} · this phone` : "No backend",
     reason: b

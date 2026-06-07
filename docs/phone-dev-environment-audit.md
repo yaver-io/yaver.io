@@ -5,6 +5,23 @@
 > workstation UX. Code is the source of truth; this is a map, not a promise.
 > Verdict up top, evidence below.
 
+## Compliance rule (enforced 2026-06-08)
+
+**The subscription token (Claude Max/Pro, ChatGPT Plus) is CLI-ONLY.** Using a
+plan token from a *re-implemented* client (the in-app Hermes loop) is against
+Anthropic's / OpenAI's consumer terms and is detectable. So:
+
+- **Subscription → only the GENUINE CLI:** Android proot `claude`/`codex`, or the
+  real CLI on a paired box (Codex even supports official "Sign in with ChatGPT").
+- **In-app Hermes loop (iOS always; Android without proot; any no-box case) →
+  BYO keys only, GLM default.** `subscription` is permanently not usable there.
+
+Enforced in code: `codingBackend.backendUsable("subscription")` always returns
+false; `resolveAutoBackend` drops it (local → glm → anthropic → openai);
+`codingSession` hermes engines never carry `subscription`; `startCoding` routes a
+plan-token-only / unauthed-box case to `needs-setup`, never a hermes mimic.
+Tests pin all of it (codingBackend 7, codingSession 17, startCoding 11).
+
 ## Verdict
 
 | Capability | State | One-line truth |
