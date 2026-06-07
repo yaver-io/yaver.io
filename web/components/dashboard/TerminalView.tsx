@@ -6,14 +6,27 @@ import "@xterm/xterm/css/xterm.css";
 
 type ConnState = "connecting" | "open" | "closed" | "error";
 
+// One-tap coding-agent launchers — kept in sync with the mobile app's
+// src/lib/agentLaunch.ts. Typed straight into the remote PTY in yolo mode.
+const AGENT_LAUNCHERS: ReadonlyArray<{ id: string; label: string; command: string; hint: string }> = [
+  { id: "claude", label: "Claude", command: "claude --dangerously-skip-permissions", hint: "Launch Claude Code with permission prompts skipped" },
+  { id: "codex", label: "Codex", command: "codex --dangerously-bypass-approvals-and-sandbox", hint: "Launch Codex with approvals + sandbox bypassed" },
+  { id: "opencode", label: "OpenCode", command: "opencode", hint: "Launch OpenCode (bring-your-own-provider TUI)" },
+];
+
 export default function TerminalView({ cwd }: { cwd?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<any>(null);
   const fitRef = useRef<any>(null);
+  const recognitionRef = useRef<any>(null);
   const [status, setStatus] = useState<ConnState>("connecting");
   const [closeReason, setCloseReason] = useState<string>("");
   const [attempt, setAttempt] = useState(0);
+  const [dictating, setDictating] = useState(false);
+  const [sttAvailable] = useState<boolean>(
+    () => typeof window !== "undefined" && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
+  );
 
   // Manual reconnect — clears closed state and bumps the attempt counter
   // so the effect below re-runs and rebuilds the WebSocket.
@@ -22,6 +35,39 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
     setCloseReason("");
     setAttempt((n) => n + 1);
   }, []);
+
+  // Type bytes into the PTY (binary stdin frame), then refocus the grid.
+  const sendToPty = useCallback((text: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(new TextEncoder().encode(text));
+    try { termRef.current?.focus(); } catch {}
+  }, []);
+
+  // Optional browser dictation → typed at the prompt (no auto-Enter).
+  const toggleDictation = useCallback(() => {
+    if (!sttAvailable) return;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+      setDictating(false);
+      return;
+    }
+    const Ctor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const rec = new Ctor();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (ev: any) => {
+      const text = ev.results?.[0]?.[0]?.transcript ?? "";
+      if (text.trim()) sendToPty(text.trim());
+    };
+    rec.onend = () => { recognitionRef.current = null; setDictating(false); };
+    rec.onerror = () => { recognitionRef.current = null; setDictating(false); };
+    recognitionRef.current = rec;
+    setDictating(true);
+    try { rec.start(); } catch { recognitionRef.current = null; setDictating(false); }
+  }, [sttAvailable, sendToPty]);
 
   useEffect(() => {
     let disposed = false;
@@ -158,8 +204,45 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
   }, []);
 
   return (
-    <div className="relative h-full w-full bg-[#0b0d10] overflow-hidden">
-      <div ref={ref} className="h-full w-full p-2" />
+    <div className="flex h-full w-full flex-col bg-[#0b0d10] overflow-hidden">
+      {/* One-tap agent launchers + optional dictation */}
+      <div className="flex items-center gap-2 border-b border-white/10 px-2 py-1.5 overflow-x-auto">
+        {AGENT_LAUNCHERS.map((l) => (
+          <button
+            key={l.id}
+            title={l.hint}
+            disabled={status !== "open"}
+            onClick={() => sendToPty(`${l.command}\n`)}
+            className="shrink-0 rounded border border-violet-400/50 bg-violet-500/15 px-2.5 py-1 text-xs font-semibold text-violet-200 hover:bg-violet-500/25 disabled:opacity-40"
+          >
+            {l.label}
+          </button>
+        ))}
+        <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
+        <button
+          disabled={status !== "open"}
+          onClick={() => sendToPty("\x03")}
+          className="shrink-0 rounded border border-white/10 bg-white/5 px-2 py-1 font-mono text-xs text-gray-300 hover:bg-white/10 disabled:opacity-40"
+        >
+          ^C
+        </button>
+        {sttAvailable ? (
+          <button
+            onClick={toggleDictation}
+            disabled={status !== "open"}
+            title="Dictate a command"
+            className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold disabled:opacity-40 ${
+              dictating
+                ? "border-emerald-400 bg-emerald-400 text-black"
+                : "border-emerald-400/50 bg-white/5 text-emerald-300 hover:bg-emerald-500/15"
+            }`}
+          >
+            {dictating ? "● rec" : "🎙"}
+          </button>
+        ) : null}
+      </div>
+      <div className="relative flex-1 overflow-hidden">
+        <div ref={ref} className="h-full w-full p-2" />
       {(status === "closed" || status === "error") ? (
         <div className="pointer-events-none absolute inset-0 flex items-end justify-center pb-3">
           <div className="pointer-events-auto rounded border border-amber-500/40 bg-black/80 px-3 py-2 text-xs text-amber-200 shadow-lg backdrop-blur">
@@ -175,6 +258,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
           </div>
         </div>
       ) : null}
+      </div>
     </div>
   );
 }

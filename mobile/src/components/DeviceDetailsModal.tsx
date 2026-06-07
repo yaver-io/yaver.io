@@ -288,7 +288,7 @@ function AliasRow({ device }: { device: Device }) {
 function ShellActionRow({ device, onClose }: { device: Device; onClose: () => void }) {
   const c = useColors();
   const router = useRouter();
-  const { activeDevice, connectionStatus } = useDevice();
+  const { activeDevice, connectionStatus, selectDevice } = useDevice();
   const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
   const sshCommand = sshCommandForDevice(device);
   const directSSHHost = directSSHHostForDevice(device);
@@ -299,12 +299,11 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
     }}>
       <Pressable
         onPress={() => {
+          // Make this device the active connection if it isn't already; the
+          // shell screen connects once the agent connection comes up (and has
+          // its own picker to hop between boxes). No "connect first" friction.
           if (!isActive) {
-            Alert.alert(
-              "Connect first",
-              `Open ${device.name} from the home screen so the agent connection is active, then come back to start a shell.`,
-            );
-            return;
+            selectDevice(device).catch(() => {});
           }
           onClose();
           // Slight delay so the modal close animation doesn't fight
@@ -324,7 +323,7 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
           ⌨  Open Shell
         </Text>
         {!isActive ? (
-          <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>(connect first)</Text>
+          <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>(connects on open)</Text>
         ) : null}
       </Pressable>
       <Pressable
