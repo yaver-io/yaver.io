@@ -4117,6 +4117,38 @@ export class QuicClient {
     if (!res.ok) throw new Error(`account disconnect: HTTP ${res.status}`);
   }
 
+  // BYO Hetzner: list the user's own servers via the vault token (the
+  // cloud_list ops verb — read-only, token never leaves the agent).
+  async cloudListServers(): Promise<{ servers: any[] }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verb: 'cloud_list', machine: 'local', payload: {} }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data?.error || `cloud_list: HTTP ${res.status}`);
+    return data.initial ?? { servers: [] };
+  }
+
+  // BYO Hetzner: remove one of the user's own servers (cloud_destroy ops
+  // verb, vault token, confirm required). snapshot defaults off.
+  async cloudDestroyServer(serverId: string, opts: { snapshot?: boolean } = {}): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        verb: 'cloud_destroy',
+        machine: 'local',
+        payload: { serverId, snapshot: !!opts.snapshot, confirm: true },
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data?.error || `cloud_destroy: HTTP ${res.status}`);
+    return data.initial ?? {};
+  }
+
   // ── Files (read-only project browser) ──
 
   async filesRoots(): Promise<{ roots: { id: string; name: string; path: string }[] }> {

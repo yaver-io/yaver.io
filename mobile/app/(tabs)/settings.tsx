@@ -29,6 +29,7 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
 import { YaverAgentSettings } from "../../src/components/YaverAgentSettings";
+import CloudProvidersSection from "../../src/components/CloudProvidersSection";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, loadLocalSpeechConfig, saveLocalSpeechConfig, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS, TTS_PROVIDERS, STT_MODELS, TTS_MODELS, TTS_VOICES, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL, DEFAULT_TTS_VOICE } from "../../src/lib/speech";
@@ -5226,6 +5227,13 @@ export default function SettingsScreen() {
           >
             <Text style={[styles.signOutText, { color: c.textSecondary }]}>Factory Reset</Text>
           </Pressable>
+        </View>
+
+        {/* Bring your own cloud (Hetzner / DigitalOcean) — connect your
+            own provider token, run boxes on your account, pay the
+            provider directly. Token stored encrypted on the agent. */}
+        <View style={styles.section}>
+          <CloudProvidersSection c={c} token={token} />
         </View>
 
         {/* Delete account */}
