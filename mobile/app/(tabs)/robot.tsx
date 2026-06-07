@@ -31,6 +31,7 @@ import { CalibrationPanel } from "../../src/components/robot/CalibrationPanel";
 import { MachineSetupPanel } from "../../src/components/robot/MachineSetupPanel";
 import { ArrayPanel } from "../../src/components/robot/ArrayPanel";
 import { FullscreenRobotView } from "../../src/components/robot/FullscreenRobotView";
+import { RobotDevicePicker } from "../../src/components/robot/RobotDevicePicker";
 import type { ArrayParams, JigParams } from "../../src/lib/robotClient";
 
 const STEPS = [1, 10, 50];
@@ -56,7 +57,9 @@ function cellState(deviceId: string, connected: boolean, status: RobotStatus | n
 
 export default function RobotScreen() {
   const c = useColors();
-  const { devices, connectionStatus } = useDevice();
+  const deviceCtx = useDevice();
+  const { devices, connectionStatus } = deviceCtx;
+  const token = (deviceCtx as any).token as string | null;
   const connected = connectionStatus === "connected";
   const [deviceId, setDeviceId] = useState("");
   const [showPicker, setShowPicker] = useState(false);
@@ -421,16 +424,7 @@ export default function RobotScreen() {
       {showPicker && (
         <View style={card}>
           <Text style={{ color: c.tabInactive, fontSize: 12, marginBottom: 8 }}>PICK THE ROBOT DEVICE</Text>
-          {devices.length === 0 && <Text style={{ color: c.tabInactive }}>No devices. Pair a machine first.</Text>}
-          {devices.map((d) => (
-            <Pressable key={d.id} onPress={() => pick(d.id)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, borderBottomColor: c.borderSubtle, borderBottomWidth: 1 }}>
-              <View>
-                <Text style={{ color: c.textPrimary, fontWeight: "600" }}>{d.name}</Text>
-                <Text style={{ color: c.tabInactive, fontSize: 12 }}>{d.os || d.deviceClass || d.id.slice(0, 8)}</Text>
-              </View>
-              {d.id === deviceId && <Ionicons name="checkmark-circle" size={20} color={OK} />}
-            </Pressable>
-          ))}
+          <RobotDevicePicker devices={devices} currentId={deviceId} token={token} onPick={pick} />
         </View>
       )}
 

@@ -58,7 +58,11 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
           <View style={[styles.greenDot, { borderColor: c.bgTabBar }]} />
         )}
       </View>
-      <Text style={[styles.tabLabel, { color: focused ? c.accent : c.tabInactive, fontWeight: focused ? "600" : "400" }]}>
+      <Text
+        numberOfLines={1}
+        allowFontScaling={false}
+        style={[styles.tabLabel, { color: focused ? c.accent : c.tabInactive, fontWeight: focused ? "600" : "400" }]}
+      >
         {label}
       </Text>
     </View>
@@ -408,7 +412,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  tabLabel: { marginTop: 1, fontSize: 12 },
+  // numberOfLines={1} on the <Text> keeps the longest label ("Shortcuts")
+  // on one line; 11pt + tight tracking guarantees it fits the ~78pt tab
+  // slot on a 390pt iPhone (14 / 13 / 12) without ellipsizing or wrapping.
+  tabLabel: { marginTop: 1, fontSize: 11, letterSpacing: -0.2 },
   greenDot: {
     position: "absolute",
     top: 2,
