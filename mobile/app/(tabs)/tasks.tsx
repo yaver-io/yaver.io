@@ -3650,7 +3650,7 @@ export default function TasksScreen() {
                   ) : null}
                 </View>
               ) : null}
-              {isEffectivelyConnected && !agentAuthExpired ? (
+              {activeDevice && isEffectivelyConnected && !agentAuthExpired ? (
                 <View style={s.bannerMetaRow}>
                   <View style={s.bannerTransportRow}>
                     <Ionicons

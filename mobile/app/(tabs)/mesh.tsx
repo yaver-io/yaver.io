@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useAuth } from "../../src/context/AuthContext";
@@ -33,10 +34,15 @@ import {
 } from "../../src/lib/yaverMesh";
 import { nodeLabel } from "../../src/lib/meshTypes";
 import { ConnectHero } from "../../src/components/mesh/ConnectHero";
+import { MeshEnableProgress, type MeshEnableProgressInfo } from "../../src/components/mesh/MeshEnableProgress";
 import { MeshMachineRow } from "../../src/components/mesh/MeshMachineRow";
 import { ChevronRightIcon, SearchIcon } from "../../src/components/mesh/MeshIcons";
 
 type EnableAllState = { done: number; total: number; current: string; phase?: MeshEnablePhase } | null;
+
+// Device IDs the phone has already tried to auto-enable onto the mesh, so a box
+// (or an unreachable one) isn't re-attempted on every launch. Persisted.
+const AUTO_ENABLE_KEY = "mesh:autoEnableAttempted:v1";
 
 export default function MeshHomeScreen() {
   const c = useColors();
@@ -149,7 +155,18 @@ export default function MeshHomeScreen() {
       setBusyIds((prev) => new Set(prev).add(d.id));
       setPhaseById((prev) => ({ ...prev, [d.id]: "updating" }));
       try {
-        connectionManager.clientFor(d.id); // warm the parallel pool (best-effort)
+        // Bring up a live transport FIRST so mesh calls ride QuicClient's own
+        // direct-LAN-first policy instead of a relay-only URL (which 502s for a
+        // box reachable on the same Wi-Fi but not parked on the relay).
+        await connectionManager
+          .ensureConnected(d.id, {
+            host: d.host,
+            port: d.port,
+            token,
+            lanIps: d.lanIps,
+            connectionPreferences: d.connectionPreferences,
+          })
+          .catch(() => {}); // best-effort — enableMeshOnDevice still falls back
         const r = await enableMeshOnDevice(d, token, (p) => {
           setPhaseById((prev) => ({ ...prev, [d.id]: p }));
           onPhase?.(p);
@@ -213,6 +230,62 @@ export default function MeshHomeScreen() {
     void mesh.reload();
   }, [token, machines, meshOnFor, enableOne, enableAll, mesh]);
 
+  // Auto-enable mesh on newly-seen, owned, online boxes — once each, quietly.
+  // "Fresh install / a new machine comes online → it joins the overlay without
+  // a manual tap." A persisted attempted-set guards against re-trying the same
+  // box (or an unreachable one) on every launch; offline boxes are skipped by
+  // the online filter and unreachable ones fail silently (still recorded).
+  const autoEnableRanRef = useRef(false);
+  useEffect(() => {
+    if (!token || autoEnableRanRef.current) return;
+    const candidates = machines.filter((d) => d.online && !d.isGuest && !meshOnFor(d));
+    if (candidates.length === 0) return;
+    autoEnableRanRef.current = true; // once per mount
+    let cancelled = false;
+    (async () => {
+      let attempted: string[] = [];
+      try {
+        const raw = await AsyncStorage.getItem(AUTO_ENABLE_KEY);
+        attempted = raw ? JSON.parse(raw) : [];
+      } catch {}
+      const todo = candidates.filter((d) => !attempted.includes(d.id));
+      if (todo.length === 0 || cancelled) return;
+      try {
+        const next = Array.from(new Set([...attempted, ...todo.map((d) => d.id)]));
+        await AsyncStorage.setItem(AUTO_ENABLE_KEY, JSON.stringify(next));
+      } catch {}
+      let joined = 0;
+      for (const d of todo) {
+        if (cancelled) return;
+        try {
+          await connectionManager
+            .ensureConnected(d.id, {
+              host: d.host,
+              port: d.port,
+              token,
+              lanIps: d.lanIps,
+              connectionPreferences: d.connectionPreferences,
+            })
+            .catch(() => {});
+          const r = await enableMeshOnDevice(d, token);
+          if (cancelled) return;
+          setStatusById((prev) => ({ ...prev, [d.id]: { enabled: true, meshIPv4: r.meshIPv4 } }));
+          probedRef.current.set(d.id, Date.now());
+          joined++;
+        } catch {
+          // best-effort — unreachable box, leave it for a manual tap
+        }
+      }
+      if (!cancelled && joined > 0) {
+        setNotice(`Mesh auto-enabled on ${joined} new machine${joined === 1 ? "" : "s"}`);
+        void mesh.reload();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, machines, meshOnFor, mesh]);
+
   const { mine, shared } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const match = (d: Device) =>
@@ -228,6 +301,24 @@ export default function MeshHomeScreen() {
     () => machines.some((d) => d.online && !d.isGuest && !meshOnFor(d)),
     [machines, meshOnFor]
   );
+
+  // Single source of truth for the animated step overlay: the fleet run wins
+  // (it carries a count), else the lone in-flight single-tap enable.
+  const progressInfo = useMemo<MeshEnableProgressInfo | null>(() => {
+    if (enableAll) {
+      return {
+        title: `Enabling mesh on ${enableAll.total} machine${enableAll.total === 1 ? "" : "s"}`,
+        subtitle: `Machine ${enableAll.done + 1} of ${enableAll.total} · ${enableAll.current}`,
+        phase: enableAll.phase,
+      };
+    }
+    const id = Object.keys(phaseById)[0];
+    if (id) {
+      const d = machines.find((m) => m.id === id);
+      return { title: `Enabling ${d?.name ?? "machine"}`, subtitle: "On the mesh in a moment…", phase: phaseById[id] };
+    }
+    return null;
+  }, [enableAll, phaseById, machines]);
 
   const openNode = (deviceId: string) =>
     router.navigate({ pathname: "/(tabs)/mesh-node", params: { deviceId } } as any);
@@ -369,6 +460,8 @@ export default function MeshHomeScreen() {
           <FooterLink label="Sharing" sub="Support a friend · who can access your machines" onPress={() => router.navigate("/(tabs)/mesh-share" as any)} />
         </View>
       </ScrollView>
+
+      <MeshEnableProgress info={progressInfo} />
     </View>
   );
 }

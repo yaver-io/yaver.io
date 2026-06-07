@@ -4,6 +4,12 @@
 // See ../src/lib/cryptoSetup.ts for why this is two steps.
 import "../src/lib/cryptoSetup";
 
+// Runtime polyfills — Hermes lacks the static AbortSignal.timeout()/any()
+// helpers, so every `fetch(url, { signal: AbortSignal.timeout(ms) })` threw
+// "undefined is not a function" (broke mesh enable + presence probes). Install
+// before any network code runs. Side-effect import.
+import "../src/lib/polyfills";
+
 // Runtime debug — install global JS error + unhandled-rejection
 // handlers so uncaught errors land in the appLog ring buffer AND
 // (when a device is connected) get forwarded to that agent's
