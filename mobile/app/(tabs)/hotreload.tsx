@@ -28,6 +28,8 @@ import { isBundleLoaded, loadAppIfChanged, onBundleEvent, setPhoneFrame } from "
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
+import DiscoveryDiagnosticsPanel from "../../src/components/DiscoveryDiagnosticsPanel";
+import type { DiagnosticsProbe } from "../../src/lib/discoveryDiagnostics";
 import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
 import { lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
 // Guest-crash helpers used to render an inline orange banner in the
@@ -230,6 +232,7 @@ export default function HotReloadScreen() {
   const [reloadIncidents, setReloadIncidents] = useState<IncidentEvent[]>([]);
   const [reloadOperations, setReloadOperations] = useState<OperationState[]>([]);
   const [showRemoteBoxPicker, setShowRemoteBoxPicker] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [remoteHermesReady, setRemoteHermesReady] = useState<{
     enabled: boolean;
     reason?: string;
@@ -750,6 +753,33 @@ export default function HotReloadScreen() {
       setScanStopping(false);
     }
   }, []);
+
+  // Build a device-pinned probe for the diagnostics panel. Read baseUrl +
+  // headers from the active device's pool client (same rule as
+  // fetchMobileProjects) so the preflight hits the box the user actually
+  // picked, not the global proxy's last-known URL.
+  const buildDiagnosticsProbe = useCallback((): DiagnosticsProbe | null => {
+    const targetId = activeDevice?.id;
+    if (!targetId) return null;
+    const client = connectionManager.clientFor(targetId) as any;
+    const baseUrl = client?.baseUrl;
+    const authHeaders = client?.authHeaders;
+    if (!baseUrl || !authHeaders) return null;
+    return {
+      baseUrl,
+      authHeaders,
+      host: agentInfo?.hostname || activeDevice?.name || "this device",
+    };
+  }, [activeDevice?.id, activeDevice?.name, agentInfo?.hostname]);
+
+  const kickRescan = useCallback(async () => {
+    try {
+      setProjectsScanning(true);
+      const probe = buildDiagnosticsProbe();
+      if (!probe) return;
+      await fetch(`${probe.baseUrl}/projects/mobile`, { method: "POST", headers: probe.authHeaders });
+    } catch {}
+  }, [buildDiagnosticsProbe]);
 
   const handleSelectTarget = useCallback(async (deviceId: string | null) => {
     const target = deviceId ? mobileWorkers.find((d) => d.id === deviceId) || null : null;
@@ -1355,13 +1385,14 @@ export default function HotReloadScreen() {
               </View>
               {projectsScanning && scanStalled ? (
                 <Pressable
-                  onPress={() => router.push("/(tabs)/devices")}
+                  onPress={() => setShowDiagnostics(true)}
                   style={[s.warnCallout, { backgroundColor: c.warnBg, borderColor: c.warnBorder }]}
                   hitSlop={8}
                 >
                   <Text style={{ color: c.warn, fontSize: 12, textAlign: "center", lineHeight: 18 }}>
-                    Taking longer than usual — the remote agent may be unreachable.{"\n"}
-                    <Text style={{ color: c.accent, fontWeight: "700" }}>Open Devices ›</Text>
+                    Taking longer than usual. Let's find out why — we'll check the
+                    connection, sign-in, and file access.{"\n"}
+                    <Text style={{ color: c.accent, fontWeight: "700" }}>Diagnose discovery ›</Text>
                   </Text>
                 </Pressable>
               ) : null}
@@ -1391,6 +1422,14 @@ export default function HotReloadScreen() {
                   </Text>
                 </Pressable>
               ) : null}
+              {/* Always-available escape hatch: run the layered preflight
+                  (connection → sign-in → file access) and get numbered
+                  fix-it steps instead of guessing. */}
+              <Pressable onPress={() => setShowDiagnostics(true)} hitSlop={8} style={s.diagnoseLink}>
+                <Text style={{ color: c.accent, fontSize: 13, fontWeight: "700" }}>
+                  Diagnose discovery ›
+                </Text>
+              </Pressable>
             </View>
           }
         />
@@ -1399,6 +1438,16 @@ export default function HotReloadScreen() {
       <RemoteBoxPickerModal
         visible={showRemoteBoxPicker}
         onClose={() => setShowRemoteBoxPicker(false)}
+      />
+
+      <DiscoveryDiagnosticsPanel
+        visible={showDiagnostics}
+        onClose={() => setShowDiagnostics(false)}
+        probe={showDiagnostics ? buildDiagnosticsProbe() : null}
+        onOpenDevices={() => router.push("/(tabs)/devices")}
+        onRetryScan={() => { void kickRescan(); }}
+        onReauth={() => router.push("/(tabs)/settings")}
+        onRunnerAuth={() => router.push("/(tabs)/settings")}
       />
 
     </SafeAreaView>
@@ -1555,6 +1604,7 @@ const s = StyleSheet.create({
   warnCallout: { marginTop: 8, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
   rediscoverBtn: { marginTop: 14, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
   rediscoverBtnText: { fontSize: 14, fontWeight: "600" },
+  diagnoseLink: { marginTop: 14, paddingVertical: 6, paddingHorizontal: 12 },
   stopBanner: {
     marginHorizontal: 16,
     marginTop: 12,
