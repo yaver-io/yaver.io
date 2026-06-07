@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Video, ResizeMode } from "expo-av";
 import { Ionicons } from "@expo/vector-icons";
 import { clipUrl } from "../../src/lib/vibePreview";
+import { AuthenticatedVideoPlayer } from "../../src/components/AuthenticatedVideoPlayer";
 import {
   ActivityIndicator,
   Alert,
@@ -4294,10 +4294,8 @@ export default function TasksScreen() {
         )}
 
         {/* Video summary player — opens when a task's "▶ Watch demo"
-            chip is tapped. Plays the clip at /vibing/preview/clip/<id>
-            via expo-av's Video. The clip URL helper attaches the auth
-            headers under the hood (expo-av accepts headers through the
-            source object). */}
+            chip is tapped. Plays the clip through the authenticated
+            agent path, including relay/direct headers and Range seeks. */}
         <Modal
           visible={!!videoSummaryClipId}
           animationType="fade"
@@ -4309,16 +4307,12 @@ export default function TasksScreen() {
               <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>×</Text>
             </Pressable>
             {videoSummaryClipId && clipUrl(videoSummaryClipId) ? (
-              <Video
+              <AuthenticatedVideoPlayer
                 key={videoSummaryClipId}
-                source={{ uri: clipUrl(videoSummaryClipId)!, headers: quicClient.getAuthHeaders() } as any}
+                uri={clipUrl(videoSummaryClipId)}
+                headers={quicClient.getAuthHeaders()}
                 style={{ width: "100%", height: "70%" }}
-                useNativeControls
-                resizeMode={ResizeMode.CONTAIN}
-                shouldPlay
-                onPlaybackStatusUpdate={(st: any) => {
-                  if (st?.didJustFinish) setVideoSummaryClipId(null);
-                }}
+                onEnd={() => setVideoSummaryClipId(null)}
               />
             ) : (
               <Text style={{ color: "#888" }}>Loading…</Text>

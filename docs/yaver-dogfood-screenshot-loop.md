@@ -383,6 +383,28 @@ After the agent reports done, the thread calls `mobile_hermes_reload`:
 P0 done. P0.5–P2 is the working Vibe loop with live agent interaction; P1 also
 lands PR mode's happy path.
 
+### Built 2026-06-07 (uncommitted) — P0 through P3
+
+- **P0** native capture: `mobile/ios/Yaver/YaverDogfood.swift`+`.m` (pbxproj-registered),
+  `mobile/src/lib/dogfoodCapture.ts`.
+- **P0.5** sticky mode + breadcrumbs: `dogfoodMode.ts`, `dogfoodBreadcrumbs.ts`,
+  wired in root `app/_layout.tsx` (`loadDogfoodMode` + `recordDogfoodRoute`).
+- **P1** thread + capture modal + mode switch + batch:
+  `app/(tabs)/dogfood.tsx` (toggle, config card, history feed, batch bar, manual
+  add), `src/components/DogfoodCaptureHost.tsx` (global capture→modal, mounted in
+  root), `src/lib/dogfoodConfig.ts` + `dogfoodThread.ts` (persist + dispatch via
+  `client.sendTask` with the screenshot as an `ImageAttachment`), More-tab card +
+  `dogfood` route registered.
+- **P2** agentic session: inline `DogfoodSession` streams `quicClient.streamTaskOutput`
+  + "Open in Tasks"; status → done flips item; PR vs Vibe result copy.
+- **P3** annotation + voice: `src/components/DogfoodAnnotateModal.tsx` — pen draw
+  (PanResponder + react-native-svg), color, undo, flatten via react-native-view-shot;
+  caption with hold-to-talk STT (`startRealtimeTranscribe`); TTS read-back (`speakText`).
+
+**Remaining:** P4 (ephemeral cloud box for no-machine PR mode; Android
+`registerScreenCaptureCallback`). Needs `yaver wireless push` (native build) to
+exercise the auto-catch on device.
+
 ---
 
 ## 9. Open decisions (need your call)

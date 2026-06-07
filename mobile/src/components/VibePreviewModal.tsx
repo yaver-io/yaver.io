@@ -17,7 +17,6 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import { Video, ResizeMode } from "expo-av";
 import {
   clipPosterUrl,
   clipUrl,
@@ -37,6 +36,7 @@ import {
 } from "../lib/vibePreview";
 import { isNativeScreenRecorderAvailable } from "../lib/screenRecorder";
 import { quicClient } from "../lib/quic";
+import { AuthenticatedVideoPlayer } from "./AuthenticatedVideoPlayer";
 
 interface Props {
   visible: boolean;
@@ -195,17 +195,12 @@ export function VibePreviewModal({ visible, project, targetUrl, onClose }: Props
         <View style={styles.frameArea}>
           {loading && <ActivityIndicator color="#fff" size="large" />}
           {!loading && playingClipUri ? (
-            <Video
+            <AuthenticatedVideoPlayer
               key={playingClipUri}
-              source={{ uri: playingClipUri, headers: quicClient.getAuthHeaders() } as any}
+              uri={playingClipUri}
+              headers={quicClient.getAuthHeaders()}
               style={styles.video}
-              useNativeControls
-              resizeMode={ResizeMode.CONTAIN}
-              shouldPlay
-              isLooping={false}
-              onPlaybackStatusUpdate={(st: any) => {
-                if (st?.didJustFinish) setActiveClipId(null);
-              }}
+              onEnd={() => setActiveClipId(null)}
             />
           ) : null}
           {!loading && !playingClipUri && frameSrc ? (

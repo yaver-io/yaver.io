@@ -367,6 +367,7 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => <TabIcon label="More" focused={focused} />,
         }}
       />
+      <Tabs.Screen name="dogfood" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="todos" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="healthmon" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="files" options={{ href: null, headerShown: false }} />

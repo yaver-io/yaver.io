@@ -13,8 +13,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { useVideoPlayer, VideoView } from "expo-video";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
+import { AuthenticatedVideoPlayer } from "../../src/components/AuthenticatedVideoPlayer";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
@@ -347,10 +347,6 @@ export default function StudioScreen() {
 function ClipPreviewModal({ clip, onClose }: { clip: any | null; onClose: () => void }) {
   const c = useColors();
   const req = clip ? quicClient.clipPrivateVideoRequest(clip.id, clip.preferredFile) : null;
-  const player = useVideoPlayer(req ? { uri: req.uri, headers: req.headers } : null, (p) => {
-    p.loop = false;
-    p.muted = false;
-  });
 
   return (
     <Modal visible={!!clip} animationType="slide" onRequestClose={onClose}>
@@ -366,12 +362,10 @@ function ClipPreviewModal({ clip, onClose }: { clip: any | null; onClose: () => 
         </View>
         <View style={s.modalBody}>
           {req ? (
-            <VideoView
-              player={player}
+            <AuthenticatedVideoPlayer
+              uri={req.uri}
+              headers={req.headers}
               style={s.previewVideo}
-              contentFit="contain"
-              nativeControls
-              allowsFullscreen
             />
           ) : (
             <Text style={{ color: c.textMuted, textAlign: "center" }}>No playable stream for this clip.</Text>
