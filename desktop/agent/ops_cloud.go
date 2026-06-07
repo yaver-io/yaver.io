@@ -336,6 +336,8 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	if pr, ok := res.(*ProvisionResult); ok && pr != nil && len(pr.OrphanSnapshots) > 0 {
 		out["orphanSnapshots"] = pr.OrphanSnapshots
 	}
+	// Bookkeeping: tombstone the box in Convex BYO state (id/ts only).
+	syncByoMachine("hetzner", strings.TrimSpace(p.ServerID), "deleted", nil)
 	return OpsResult{OK: true, Initial: out}
 }
 

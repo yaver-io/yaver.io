@@ -64,6 +64,18 @@ const STATUS_META: Record<DogfoodItemStatus, { label: string; color: (c: any) =>
   failed: { label: "FAILED", color: (c) => c.warn },
 };
 
+type YaverSourceState = {
+  checking: boolean;
+  installing: boolean;
+  cloned: boolean;
+  initialized: boolean;
+  initializing?: boolean;
+  path?: string;
+  branch?: string;
+  dirty?: boolean;
+  error?: string;
+};
+
 export default function DogfoodScreen() {
   const router = useRouter();
   const c = useColors();
@@ -77,6 +89,12 @@ export default function DogfoodScreen() {
   const [showConfig, setShowConfig] = React.useState(false);
   const [manualShot, setManualShot] = React.useState<string | null>(null);
   const [batchBusy, setBatchBusy] = React.useState(false);
+  const [sourceState, setSourceState] = React.useState<YaverSourceState>({
+    checking: false,
+    installing: false,
+    cloned: false,
+    initialized: false,
+  });
 
   const connected = connectionStatus === "connected" && !!activeDevice;
   const repoDir = config?.repoDir?.trim() || "";
@@ -97,6 +115,57 @@ export default function DogfoodScreen() {
     },
     [user?.id],
   );
+
+  const refreshYaverSource = React.useCallback(async () => {
+    if (!activeDevice?.id || connectionStatus !== "connected") {
+      setSourceState({ checking: false, installing: false, cloned: false, initialized: false });
+      return;
+    }
+    setSourceState((prev) => ({ ...prev, checking: true, error: undefined }));
+    const status = await quicClient.dogfoodYaverSourceStatus(activeDevice.id);
+    const next: YaverSourceState = {
+      checking: false,
+      installing: false,
+      cloned: status.cloned,
+      initialized: status.initialized,
+      path: status.path,
+      branch: status.branch,
+      dirty: status.dirty,
+      error: status.ok ? undefined : status.error || "Could not inspect Yaver source on this box.",
+    };
+    setSourceState(next);
+    if (next.path && !repoDir) {
+      patchConfig({ repoDir: next.path });
+    }
+  }, [activeDevice?.id, connectionStatus, patchConfig, repoDir]);
+
+  React.useEffect(() => {
+    void refreshYaverSource();
+  }, [refreshYaverSource]);
+
+  const installYaverSource = React.useCallback(async () => {
+    if (!activeDevice?.id) {
+      Alert.alert("No box connected", "Connect a remote box first.");
+      return;
+    }
+    setSourceState((prev) => ({ ...prev, installing: true, error: undefined }));
+    const res = await quicClient.dogfoodYaverSourceInstall(activeDevice.id, {
+      autoInit: true,
+      runner: config?.runner ?? "claude-code",
+    });
+    if (!res.ok) {
+      setSourceState((prev) => ({ ...prev, installing: false, error: res.error || "Could not install Yaver source." }));
+      Alert.alert("Install failed", res.error || "Could not clone Yaver onto this box.");
+      return;
+    }
+    if (res.path) {
+      patchConfig({ repoDir: res.path });
+    }
+    await refreshYaverSource();
+    if (res.autoinit?.started) {
+      setSourceState((prev) => ({ ...prev, initializing: true, path: res.path ?? prev.path }));
+    }
+  }, [activeDevice?.id, config?.runner, patchConfig, refreshYaverSource]);
 
   const dispatchItems = React.useCallback(
     async (toSend: DogfoodItem[], mode: DogfoodMode) => {
@@ -267,6 +336,60 @@ export default function DogfoodScreen() {
             </View>
           ) : null}
         </Pressable>
+
+        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: sourceState.error ? c.warn : sourceState.initialized ? c.success : c.border }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "700" }}>
+                Yaver source on this box
+              </Text>
+              <Text style={{ color: sourceState.error ? c.warn : sourceState.initialized ? c.success : c.textMuted, fontSize: 12, marginTop: 4 }} numberOfLines={2}>
+                {!connected
+                  ? "Connect a dev machine to inspect or install."
+                  : sourceState.checking
+                    ? "Checking source state..."
+                    : sourceState.error
+                      ? sourceState.error
+                    : sourceState.initialized
+                      ? `Ready${sourceState.path ? ` · ${sourceState.path}` : ""}`
+                    : sourceState.initializing
+                      ? `Initializing init.md${sourceState.path ? ` · ${sourceState.path}` : ""}`
+                    : sourceState.cloned
+                      ? `Cloned, needs init.md${sourceState.path ? ` · ${sourceState.path}` : ""}`
+                    : "Not cloned yet"}
+              </Text>
+              {sourceState.cloned && sourceState.branch ? (
+                <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+                  {sourceState.branch}{sourceState.dirty ? " · dirty" : " · clean"}
+                </Text>
+              ) : null}
+            </View>
+            {sourceState.checking || sourceState.installing ? (
+              <ActivityIndicator color={c.accent} />
+            ) : (
+              <Pressable
+                disabled={!connected}
+                onPress={sourceState.initialized || sourceState.initializing ? refreshYaverSource : installYaverSource}
+                style={({ pressed }) => ({
+                  paddingVertical: 9,
+                  paddingHorizontal: 12,
+                  borderRadius: 9,
+                  backgroundColor: connected ? c.accent : c.bgInput,
+                  opacity: pressed ? 0.8 : connected ? 1 : 0.55,
+                })}
+              >
+                <Text style={{ color: connected ? "#000" : c.textMuted, fontSize: 12, fontWeight: "800" }}>
+                  {sourceState.cloned ? (sourceState.initialized || sourceState.initializing ? "Check" : "Init") : "Clone"}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+          {sourceState.path && sourceState.path !== repoDir ? (
+            <Pressable onPress={() => sourceState.path && patchConfig({ repoDir: sourceState.path })} style={{ alignSelf: "flex-start", marginTop: 10 }}>
+              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Use this path for Vibe mode</Text>
+            </Pressable>
+          ) : null}
+        </View>
 
         {/* Manual add */}
         <Pressable

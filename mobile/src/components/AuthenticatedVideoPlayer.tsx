@@ -28,7 +28,7 @@ export function AuthenticatedVideoPlayer({
     if (!uri) return null;
     return {
       uri,
-      headers,
+      headers: headers ? { ...headers } : undefined,
       contentType: "progressive",
       useCaching: false,
     };
@@ -39,7 +39,7 @@ export function AuthenticatedVideoPlayer({
     p.muted = muted;
     p.staysActiveInBackground = false;
     p.showNowPlayingNotification = false;
-    if (autoPlay) {
+    if (autoPlay && uri) {
       p.play();
     }
   });

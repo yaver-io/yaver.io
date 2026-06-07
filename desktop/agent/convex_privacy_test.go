@@ -656,6 +656,33 @@ func TestPrepaidWalletFields_AreNotConvexForbidden(t *testing.T) {
 	}
 }
 
+// TestByoMachinesFields_AreNotConvexForbidden pins the byoMachines table
+// (backend/convex/schema.ts) as lifecycle-bookkeeping-only. A BYO box
+// runs on the USER's own provider account; Convex stores only its id +
+// state + timestamps so the alive/sleeping/deleted status is visible
+// across the user's devices. Every field must be an id/state/timestamp/
+// non-secret descriptor — the provider TOKEN never reaches Convex (it
+// stays in the agent vault). If someone adds a token/key/path field this
+// fails loudly.
+func TestByoMachinesFields_AreNotConvexForbidden(t *testing.T) {
+	byoFields := []string{
+		"userId", "provider", "serverId", "deviceId", "name", "region",
+		"plan", "serverIp", "imageId", "snapshotImageId", "state",
+		"createdAt", "lastUpAt", "stoppedAt", "deletedAt", "updatedAt",
+	}
+	forbidden := map[string]bool{}
+	for _, k := range fieldsWeForbidInAnyConvexPayload {
+		forbidden[k] = true
+	}
+	for _, f := range byoFields {
+		if forbidden[f] {
+			t.Errorf("byoMachines field %q is on the Convex forbidden-secret "+
+				"list — BYO rows must stay id/state/timestamp-only (the provider "+
+				"token never leaves the agent vault)", f)
+		}
+	}
+}
+
 // TestCompanionProjectsFields_AreNotConvexForbidden pins the companionProjects
 // table (backend/convex/schema.ts) as bookkeeping-only. Every field name must
 // be a slug / cron expression / counter / status / timestamp and must NOT

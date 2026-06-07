@@ -4304,6 +4304,23 @@ http.route({
   }),
 });
 
+/** GET /byo/machines — the user's bring-your-own cloud boxes' lifecycle
+ *  state (alive/sleeping/deleted + timestamps). Available to ANY authed
+ *  user (BYO is the free, run-on-your-own-account plane). Session-scoped:
+ *  only ever returns the caller's own rows; holds no credentials. */
+http.route({
+  path: "/byo/machines",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const machines = await ctx.runQuery(internal.byoMachines.listForUserInternal, {
+      userId: session.userDocId as any,
+    });
+    return jsonResponse({ ok: true, machines });
+  }),
+});
+
 /** POST /billing/yaver-cloud/provision — prepaid spin-up. Create a new
  *  managed box funded by the wallet (NO subscription). Balance-gated:
  *  402 if the wallet can't cover the safe reserve for this SKU. The

@@ -209,6 +209,12 @@ func opsCloudProvisionHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	if perr != nil {
 		return OpsResult{OK: false, Code: "provision_failed", Error: perr.Error()}
 	}
+	// Bookkeeping: record the new box as active in Convex (id/state/ts
+	// only — token never synced).
+	syncByoMachine("hetzner", id, "active", map[string]interface{}{
+		"name": name, "region": region, "plan": plan, "serverIp": ip,
+		"imageId": strings.TrimSpace(p.ImageID),
+	})
 	return OpsResult{OK: true, Initial: map[string]interface{}{
 		"provisioned": id, "ip": ip, "name": name, "plan": plan, "region": region,
 		"note": "Box booting on your Hetzner account — it self-installs the Yaver agent and will appear as a pending device to claim. Stop it anytime (cloud_stop) to halt hourly billing.",

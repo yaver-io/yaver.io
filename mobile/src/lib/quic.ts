@@ -4188,6 +4188,12 @@ export class QuicClient {
     return { snapshots: Array.isArray(r.snapshots) ? r.snapshots : [] };
   }
 
+  // Refresh Convex BYO lifecycle state from the live Hetzner account
+  // (marks present servers active). Self-heals missed state emits.
+  cloudReconcile(): Promise<any> {
+    return this.byoOps('cloud_reconcile', {});
+  }
+
   // ── Files (read-only project browser) ──
 
   async filesRoots(): Promise<{ roots: { id: string; name: string; path: string }[] }> {
