@@ -16,7 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
-import { useDevice, type Device } from "../src/context/DeviceContext";
+import { useDevice, type Device, type RunnerInfo } from "../src/context/DeviceContext";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
@@ -227,7 +227,10 @@ export default function PhoneProjectsScreen() {
   // empty and the description prompt is the user's text alone.
   const [surveyIndex, setSurveyIndex] = useState(0);
   const [surveySkipped, setSurveySkipped] = useState(false);
-  const [surveyAnswers, setSurveyAnswers] = useState<SurveyAnswers>({});
+  // Pre-seed the first survey question ("Where will it run?") to the
+  // third option — "Web and mobile" — so the survey opens with a
+  // sensible, visible default the user can keep or change.
+  const [surveyAnswers, setSurveyAnswers] = useState<SurveyAnswers>({ platform: "both" });
   // Optional logo URL — concatenated into the description prompt so
   // the LLM can use it as a visual reference. We accept any URL the
   // user can paste (CDN, gist, GitHub raw, etc.) — gallery upload is
@@ -271,25 +274,42 @@ export default function PhoneProjectsScreen() {
     if (activeDevice && !activeDevice.needsAuth) return activeDevice;
     return null;
   }, [activeDevice]);
-  const availableRunners = useMemo(() => {
-    // Yaver's three first-class runners — the only ones we surface
-    // anywhere in the product. opencode wraps the long tail of
-    // providers (Anthropic / OpenAI / OpenRouter / Ollama / GLM /
-    // ZAI / …) via its own BYOK config, so users who want a specific
-    // model still reach it through opencode rather than yaver
-    // shipping a wrapper for every CLI.
+  // Yaver's three first-class runners — the only ones we surface
+  // anywhere in the product. opencode wraps the long tail of
+  // providers (Anthropic / OpenAI / OpenRouter / Ollama / GLM /
+  // ZAI / …) via its own BYOK config, so users who want a specific
+  // model still reach it through opencode rather than yaver
+  // shipping a wrapper for every CLI. Reused for both the connected
+  // machine and a picked "other online box" so the runner-auth gate
+  // is identical across remote targets.
+  const runnersForDevice = useCallback((dev: Device | null | undefined) => {
+    if (!dev || dev.needsAuth) return [] as RunnerInfo[];
     const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
-    const runners = activeRunnerDevice?.runners ?? [];
-    return runners
+    return (dev.runners ?? [])
       .filter((item) => RUNNER_WL.has((item.runnerId || "").toLowerCase()))
       .filter((item) => item.status === "running" || item.status === "queued" || item.status === "completed");
-  }, [activeRunnerDevice?.runners]);
+  }, []);
+  const availableRunners = useMemo(
+    () => runnersForDevice(activeRunnerDevice),
+    [runnersForDevice, activeRunnerDevice],
+  );
+  // Runners signed in on the picked "other online box". The dev-hw
+  // create path targets selectedDevMachine, so its runner-auth state
+  // — not the active device's — is what gates finalization there.
+  const devMachineRunners = useMemo(
+    () => runnersForDevice(selectedDevMachine),
+    [runnersForDevice, selectedDevMachine],
+  );
   const runnerChoiceEnabled = !!activeRunnerDevice;
   useEffect(() => {
-    if (!runner && availableRunners.length) {
-      setRunner(availableRunners[0].runnerId);
+    // Seed a default runner from whichever remote target is in play —
+    // the picked online box wins when dev-hw is selected, otherwise the
+    // connected machine's runners.
+    const seed = startMode === "dev-hw" ? devMachineRunners : availableRunners;
+    if (!runner && seed.length) {
+      setRunner(seed[0].runnerId);
     }
-  }, [availableRunners, runner]);
+  }, [availableRunners, devMachineRunners, startMode, runner]);
   useEffect(() => {
     let cancelled = false;
     const loadMobileAi = async () => {
@@ -595,7 +615,7 @@ export default function PhoneProjectsScreen() {
       setRefineQuestions([]);
       setRefineAnswers({});
       setRefineUsed(false);
-      setSurveyAnswers({});
+      setSurveyAnswers({ platform: "both" });
       setSurveyIndex(0);
       setSurveySkipped(false);
       setStep(0);
@@ -622,23 +642,6 @@ export default function PhoneProjectsScreen() {
     } finally {
       setCreating(false);
     }
-  }
-
-  function pickDevMachine() {
-    if (!devMachines.length) {
-      Alert.alert(
-        "No dev machines online",
-        "Install Yaver on your Mac / Pi / Linux and sign in with the same account.",
-      );
-      return;
-    }
-    Alert.alert("Pick a dev machine", "Where should this project live?", [
-      ...devMachines.map((d) => ({
-        text: `${d.name}${d.local ? " (LAN)" : ""}`,
-        onPress: () => setSelectedDevMachineId(d.id),
-      })),
-      { text: "Cancel", style: "cancel" as const },
-    ]);
   }
 
   async function remove(p: PhoneProject) {
@@ -809,16 +812,27 @@ export default function PhoneProjectsScreen() {
 
             {step === 0 ? (
               <>
+                <Text style={[styles.label, { color: c.textMuted, marginTop: 2 }]}>App name</Text>
                 <TextInput
                   value={name}
                   onChangeText={setName}
                   placeholder="My app"
                   placeholderTextColor={c.textMuted}
-                  style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+                  autoFocus
+                  returnKeyType="next"
+                  style={[
+                    styles.input,
+                    {
+                      color: c.textPrimary,
+                      // Filled, inset surface (darker than the card) +
+                      // an accent border once there's text so the field
+                      // reads unambiguously as an editable input rather
+                      // than a label.
+                      backgroundColor: c.bg,
+                      borderColor: name.trim() ? c.accent : c.border,
+                    },
+                  ]}
                 />
-                <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
-                  You can rename it later.
-                </Text>
               </>
             ) : null}
 
@@ -972,9 +986,6 @@ export default function PhoneProjectsScreen() {
                     onPress={() => {
                       setStartMode(opt.id);
                       setCodingMode(opt.id === "this-phone" ? "phone" : "runner");
-                      if (opt.id === "dev-hw") {
-                        pickDevMachine();
-                      }
                     }}
                     style={[
                       styles.choiceCard,
@@ -1067,14 +1078,7 @@ export default function PhoneProjectsScreen() {
                               : "Open Devices to connect a Yaver machine, then come back and select Connected machine."}
                       </Text>
                       <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                        {startMode === "dev-hw" ? (
-                          <Pressable
-                            onPress={pickDevMachine}
-                            style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
-                          >
-                            <Text style={[styles.btnText, { color: c.textPrimary }]}>Choose box</Text>
-                          </Pressable>
-                        ) : startMode === "current-agent" ? (
+                        {startMode === "current-agent" ? (
                           <Pressable
                             onPress={() => router.push("/(tabs)/devices" as any)}
                             style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
@@ -1095,10 +1099,57 @@ export default function PhoneProjectsScreen() {
                         </Pressable>
                       </View>
                     </View>
-                    {startMode === "current-agent" ? (
+
+                    {/* "Other online box" — list the user's online dev
+                        machines inline and let them tap one, rather than
+                        bouncing through a native Alert. Selecting a box
+                        re-derives its runner-auth state below. */}
+                    {startMode === "dev-hw" ? (
                       <>
+                        <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Choose a machine</Text>
+                        {devMachines.map((m) => {
+                          const active = selectedDevMachineId === m.id;
+                          const authed = !m.needsAuth;
+                          return (
+                            <Pressable
+                              key={m.id}
+                              onPress={() => setSelectedDevMachineId(m.id)}
+                              style={[
+                                styles.choiceCard,
+                                {
+                                  backgroundColor: active ? c.accent + "22" : "transparent",
+                                  borderColor: active ? c.accent : c.border,
+                                },
+                              ]}
+                            >
+                              <Text style={[styles.templateLabel, { color: c.textPrimary }]}>
+                                {m.name}{m.local ? "  (LAN)" : ""}
+                              </Text>
+                              <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={1}>
+                                {m.os || "machine"}
+                                {authed
+                                  ? runnersForDevice(m).length > 0
+                                    ? ` · ${runnersForDevice(m).length} runner${runnersForDevice(m).length === 1 ? "" : "s"} ready`
+                                    : " · no runner signed in"
+                                  : " · needs auth"}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </>
+                    ) : null}
+
+                    {startMode === "current-agent" || startMode === "dev-hw" ? (
+                      <>
+                    {(() => {
+                      // The runner-auth gate is identical for both remote
+                      // targets; only the device + its runner list differ.
+                      const runnerDevice = startMode === "dev-hw" ? selectedDevMachine : activeRunnerDevice;
+                      const runnerList = startMode === "dev-hw" ? devMachineRunners : availableRunners;
+                      return (
+                    <>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Runner</Text>
-                    {availableRunners.length === 0 ? (
+                    {runnerList.length === 0 ? (
                       // No authed runner on the picked machine —
                       // surface an actionable provisioning hint
                       // instead of letting the user pick a runner
@@ -1109,11 +1160,11 @@ export default function PhoneProjectsScreen() {
                       // wizard.
                       <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 4 }]}>
                         <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>
-                          {activeRunnerDevice ? "No coding runner is signed in yet" : "Connect a Yaver machine first"}
+                          {runnerDevice ? "No coding runner is signed in yet" : "Connect a Yaver machine first"}
                         </Text>
                         <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-                          {activeRunnerDevice
-                            ? "Open Devices, pick this machine, and sign in Claude / Codex or configure OpenCode. Come back here once one runner is ready."
+                          {runnerDevice
+                            ? `Open Devices, pick ${runnerDevice.name}, and sign in Claude / Codex or configure OpenCode. Come back here once one runner is ready.`
                             : "Pair a Yaver machine from the Devices tab, then return here. Phone-side coding works without one."}
                         </Text>
                         <Pressable
@@ -1127,7 +1178,7 @@ export default function PhoneProjectsScreen() {
                       </View>
                     ) : (
                       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                        {availableRunners.map((item) => ({
+                        {runnerList.map((item) => ({
                           id: item.runnerId,
                           label: item.title || item.runnerId,
                         })).map((item) => {
@@ -1154,6 +1205,9 @@ export default function PhoneProjectsScreen() {
                         })}
                       </ScrollView>
                     )}
+                    </>
+                      );
+                    })()}
                       </>
                     ) : null}
                   </>
@@ -1190,13 +1244,11 @@ export default function PhoneProjectsScreen() {
                         <Pressable
                           key={opt.value}
                           onPress={() => {
-                            // Record + auto-advance. Last question
-                            // doesn't auto-advance; the user has to
-                            // tap Next so they can review.
+                            // Select only — no auto-advance. Auto-jumping
+                            // to the next question on tap hid the selected
+                            // state and read as "can't select this option".
+                            // The user moves on with "Next question →".
                             setSurveyAnswers((prev) => ({ ...prev, [key]: opt.value as any }));
-                            if (surveyIndex < SURVEY_QUESTIONS.length - 1) {
-                              setSurveyIndex(surveyIndex + 1);
-                            }
                           }}
                           style={[
                             styles.choiceCard,
@@ -1213,14 +1265,22 @@ export default function PhoneProjectsScreen() {
                         </Pressable>
                       );
                     })}
-                    {surveyIndex > 0 ? (
-                      <Pressable
-                        onPress={() => setSurveyIndex(Math.max(0, surveyIndex - 1))}
-                        style={{ marginTop: 8 }}
-                      >
-                        <Text style={{ color: c.textMuted, fontSize: 12 }}>← Previous question</Text>
-                      </Pressable>
-                    ) : null}
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+                      {surveyIndex > 0 ? (
+                        <Pressable onPress={() => setSurveyIndex(Math.max(0, surveyIndex - 1))} hitSlop={8}>
+                          <Text style={{ color: c.textMuted, fontSize: 13 }}>← Previous</Text>
+                        </Pressable>
+                      ) : (
+                        <View />
+                      )}
+                      {surveyIndex < SURVEY_QUESTIONS.length - 1 ? (
+                        <Pressable onPress={() => setSurveyIndex(surveyIndex + 1)} hitSlop={8}>
+                          <Text style={{ color: c.accent, fontSize: 13, fontWeight: "600" }}>Next question →</Text>
+                        </Pressable>
+                      ) : (
+                        <Text style={{ color: c.textMuted, fontSize: 12 }}>Last one — tap Next below</Text>
+                      )}
+                    </View>
                   </>
                 ) : (
                   <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border }]}>
@@ -1483,13 +1543,17 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       applyImportedConversation,
       analyzingImport,
       selectedDevMachine,
-      devMachines.length,
+      selectedDevMachineId,
+      devMachines,
+      devMachineRunners,
+      runnersForDevice,
       importedConversation,
       importedBrief,
       mobileAiProvider,
       openAiKey,
       glmKey,
       availableRunners,
+      runner,
       runnerChoiceEnabled,
     ],
   );
@@ -1502,7 +1566,11 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       startMode === "this-phone" ||
       startMode === "yaver-cloud" ||
       (startMode === "current-agent" && !!activeRunnerDevice) ||
-      (startMode === "dev-hw" && !!selectedDevMachine);
+      // A picked "other online box" must have an authenticated coding
+      // runner before we let the user finalize — otherwise the cross-
+      // device create lands on a machine with no runner and the first
+      // task fails. The runner card below already routes to Devices.
+      (startMode === "dev-hw" && !!selectedDevMachine && devMachineRunners.length > 0);
     const descOk = prompt.trim().length > 0 || importedConversation.trim().length > 0;
     const canAdvance = step === 0 ? nameOk : placementOk;
     const primaryLabel =
@@ -1513,7 +1581,9 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
             ? startMode === "current-agent"
               ? "Connect machine"
               : startMode === "dev-hw"
-                ? "Choose box"
+                ? !selectedDevMachine
+                  ? "Choose a machine"
+                  : "Sign in a runner"
                 : "Choose location"
             : "Next"
         : !descOk
@@ -1581,6 +1651,7 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
     name,
     prompt,
     selectedDevMachine,
+    devMachineRunners,
     showForm,
     startMode,
     step,
