@@ -13,17 +13,28 @@ import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, Pressable, TextInput, Alert, ActivityIndicator, Linking } from "react-native";
 import { LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret } from "../lib/auth";
 import type { ThemeColors } from "../constants/colors";
-import { HetznerClient, monthlyEur, uptimeLabel, looksLikeToken, type HetznerServer } from "../lib/hcloud";
+import { HetznerClient, monthlyEur, uptimeLabel, looksLikeToken, serverTypeFor, type HetznerServer, type Plan, type Region } from "../lib/hcloud";
+import { provisionByoBox } from "../lib/byoProvision";
 
 const TOKEN_URL = "https://console.hetzner.cloud/"; // Project → Security → API tokens (Read & Write)
 
-export default function HetznerSection({ c }: { c: ThemeColors }) {
+// Spin-up is gated until the Convex /byo/provision-* routes are deployed AND a
+// real-box validation run has happened (provisioning costs money). Flip to true
+// after `cd backend && npx convex deploy` + one successful test spin-up.
+const PROVISION_ENABLED = false;
+
+export default function HetznerSection({ c, token }: { c: ThemeColors; token?: string | null }) {
   const [open, setOpen] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null); // null = loading
   const [secret, setSecret] = useState("");
   const [servers, setServers] = useState<HetznerServer[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Spin-up form.
+  const [plan, setPlan] = useState<Plan>("starter");
+  const [region, setRegion] = useState<Region>("eu");
+  const [provMsg, setProvMsg] = useState<string | null>(null);
 
   // Detect a previously-wired token (presence only — never read into the form).
   useEffect(() => {
@@ -146,6 +157,46 @@ export default function HetznerSection({ c }: { c: ThemeColors }) {
     [client, loadServers],
   );
 
+  const spinUp = useCallback(() => {
+    if (!PROVISION_ENABLED) return;
+    Alert.alert(
+      "Spin up a box?",
+      `Creates a ${plan}/${region} box on YOUR Hetzner account (~€/mo on your Hetzner bill, billed by Hetzner — not us). It self-installs Yaver, signs in as you, and is ready to vibe code in a few minutes.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Spin up",
+          onPress: async () => {
+            const hetznerToken = await getLocalSecret(LOCAL_KEYS.hetznerToken);
+            if (!hetznerToken || !token) {
+              setErr("wire Hetzner + sign in first");
+              return;
+            }
+            setBusy("provision");
+            setErr(null);
+            setProvMsg("starting…");
+            try {
+              await provisionByoBox({
+                token,
+                hetznerToken,
+                machineType: "cpu",
+                region,
+                plan,
+                onProgress: (p) => setProvMsg(p.message),
+              });
+              await loadServers();
+            } catch (e: any) {
+              setErr(e?.message || "spin-up failed");
+              setProvMsg(null);
+            } finally {
+              setBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  }, [plan, region, token, loadServers]);
+
   // ── render ──
   const burn = (() => {
     if (!servers) return null;
@@ -260,6 +311,41 @@ export default function HetznerSection({ c }: { c: ThemeColors }) {
                   );
                 })
               )}
+
+              {/* Spin up a vibe-ready box — gated until the provision routes
+                  are deployed + validated (PROVISION_ENABLED). */}
+              <View style={{ borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10, gap: 6 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>Spin up a box</Text>
+                <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                  {(["starter", "pro", "scale"] as Plan[]).map((p) => (
+                    <Pressable key={p} onPress={() => setPlan(p)} style={{ borderWidth: 1, borderColor: plan === p ? c.accent : c.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 }}>
+                      <Text style={{ color: plan === p ? c.accent : c.textMuted, fontSize: 11, fontWeight: "700" }}>{p}</Text>
+                    </Pressable>
+                  ))}
+                  {(["eu", "us"] as Region[]).map((r) => (
+                    <Pressable key={r} onPress={() => setRegion(r)} style={{ borderWidth: 1, borderColor: region === r ? c.accent : c.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 }}>
+                      <Text style={{ color: region === r ? c.accent : c.textMuted, fontSize: 11, fontWeight: "700" }}>{r.toUpperCase()}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                  {serverTypeFor(plan, region)}{monthlyEur(serverTypeFor(plan, region)) !== null ? ` · ~€${monthlyEur(serverTypeFor(plan, region))!.toFixed(2)}/mo on your Hetzner bill` : ""}
+                </Text>
+                <Pressable
+                  disabled={busy !== null || !PROVISION_ENABLED}
+                  onPress={spinUp}
+                  style={{ backgroundColor: PROVISION_ENABLED ? c.accent : c.neutralBg, borderRadius: 8, paddingVertical: 10, alignItems: "center", opacity: busy ? 0.6 : 1 }}
+                >
+                  {busy === "provision" ? (
+                    <ActivityIndicator size="small" color={c.textInverse} />
+                  ) : (
+                    <Text style={{ color: PROVISION_ENABLED ? c.textInverse : c.textMuted, fontWeight: "700", fontSize: 13 }}>
+                      {PROVISION_ENABLED ? `Spin up ${plan} box` : "Spin up — available after deploy"}
+                    </Text>
+                  )}
+                </Pressable>
+                {provMsg ? <Text style={{ color: c.textMuted, fontSize: 11 }}>{provMsg}</Text> : null}
+              </View>
             </>
           )}
 
