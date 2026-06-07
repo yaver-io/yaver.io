@@ -89,6 +89,11 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // to "Pick" so the action verb matches the empty state.
   const deviceLabel = activeDevice?.name?.trim() || (noDevicesYet ? "No remote device added" : "No device selected");
   const ctaLabel = activeDevice ? "Switch" : noDevicesYet ? "Add" : "Pick";
+  // "Pool is warm but you haven't chosen which box runs your tasks" is its own
+  // state — painting it green "Connected" (because some pooled client is live)
+  // while the row also says "No device selected" reads as a contradiction. Flag
+  // it as an attention state with a prominent CTA so the next action is obvious.
+  const needsPick = !activeDevice && !noDevicesYet;
   const roleLabel =
     activeDevice?.id === primaryDeviceId
       ? "Primary"
@@ -111,30 +116,47 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
           },
         ]}
       >
-        <View style={[styles.accent, { backgroundColor: palette.stripe }]} />
-        <View style={styles.row}>
-          <View style={styles.rowMain}>
-            <View style={styles.statusLine}>
-              <View style={[styles.dot, { backgroundColor: palette.dot }]} />
-              <Text style={[styles.label, { color: palette.text }]} numberOfLines={1}>
-                {noDevicesYet ? "Not set up" : palette.label}
+        <View style={[styles.accent, { backgroundColor: needsPick ? c.warn : palette.stripe }]} />
+        <View style={styles.stack}>
+          <View style={styles.row}>
+            <View style={styles.rowMain}>
+              <View style={styles.statusLine}>
+                <View style={[styles.dot, { backgroundColor: needsPick ? c.warn : palette.dot }]} />
+                <Text style={[styles.label, { color: needsPick ? c.warn : palette.text }]} numberOfLines={1}>
+                  {noDevicesYet ? "Not set up" : needsPick ? "No machine selected" : palette.label}
+                </Text>
+              </View>
+              {roleLabel ? (
+                <View style={[styles.inlineChip, styles.rolePill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                  <Text style={[styles.roleText, { color: c.textSecondary }]}>{roleLabel}</Text>
+                </View>
+              ) : null}
+              <Text
+                style={[styles.deviceText, { color: needsPick ? c.textMuted : c.textPrimary }]}
+                numberOfLines={1}
+              >
+                {needsPick ? "Tap to choose where tasks run" : deviceLabel}
               </Text>
             </View>
-            {roleLabel ? (
-              <View style={[styles.inlineChip, styles.rolePill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
-                <Text style={[styles.roleText, { color: c.textSecondary }]}>{roleLabel}</Text>
+            {!disableTap && (
+              <View
+                style={[
+                  styles.inlineChip,
+                  styles.ctaPill,
+                  needsPick
+                    ? { borderColor: c.accent, backgroundColor: c.accentSoft }
+                    : { borderColor: c.borderSubtle, backgroundColor: c.bgInput },
+                ]}
+              >
+                <Text style={[styles.cta, { color: needsPick ? c.accent : c.textSecondary }]}>{ctaLabel} ›</Text>
               </View>
-            ) : null}
-            <Text style={[styles.deviceText, { color: c.textPrimary }]} numberOfLines={1}>
-              {deviceLabel}
-            </Text>
-            {extra ? <View style={styles.extraInline}>{extra}</View> : null}
+            )}
           </View>
-          {!disableTap && (
-            <View style={[styles.inlineChip, styles.ctaPill, { borderColor: c.borderSubtle, backgroundColor: c.bgInput }]}>
-              <Text style={[styles.cta, { color: c.textSecondary }]}>{ctaLabel} ›</Text>
-            </View>
-          )}
+          {/* Per-tab affordances (transport · ping · re-auth) get their OWN row
+              below the status line. Inlining them into rowMain made the row wrap
+              to two lines while the Switch/Pick chip stayed vertically centered —
+              so Ping and Pick floated at different heights and read as misaligned. */}
+          {extra ? <View style={styles.extraRow}>{extra}</View> : null}
         </View>
       </Wrapper>
       <RemoteBoxPickerModal
@@ -168,8 +190,12 @@ const styles = StyleSheet.create({
   // adjacent latency chip read as floating in their own column.
   // Centering keeps the right-side pills aligned to the row's
   // vertical midline so they read as part of the banner, not above it.
+  stack: { gap: 8 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  rowMain: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0, gap: 8, flexWrap: "wrap" },
+  rowMain: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0, gap: 8 },
+  // Affordance row: full-width, left-aligned, wraps on its own beneath the
+  // status line so it never fights the right-side Switch/Pick chip.
+  extraRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, minWidth: 0 },
   statusLine: { flexDirection: "row", alignItems: "center", flexShrink: 0 },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   label: {
@@ -207,14 +233,5 @@ const styles = StyleSheet.create({
   cta: {
     ...typography.caption,
     fontWeight: "700",
-  },
-  extraInline: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexWrap: "wrap",
-    minWidth: 0,
-    flexShrink: 1,
-    backgroundColor: "transparent",
   },
 });

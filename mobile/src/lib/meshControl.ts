@@ -1,22 +1,28 @@
 // meshControl.ts — drive a *remote* box's Yaver Mesh state from the phone.
 //
 // The mesh home (app/(tabs)/mesh.tsx) lists every machine in the account and
-// lets the user flip mesh on/off per box (and "enable on all"). These calls go
-// straight to each agent's owner-authed HTTP surface via deviceAgentContext():
+// lets the user flip mesh on/off per box (and "enable on all").
 //
 //   POST /mesh/up        — ensure keypair, register control plane, bring up the
 //                          data plane. Body: none. (desktop/agent/mesh_http.go)
 //   POST /mesh/down      — tear down + mark offline.
 //   GET  /mesh/status    — { enabled, meshIPv4 }.
 //   POST /agent/self-heal — { Apply, AllowSelfUpdate, Quiet } downloads+stages
-//                          the latest signed binary. Field names match the Go
-//                          SelfHealOptions struct (json is case-insensitive).
+//                          the latest signed binary.
+//
+// Transport: these requests go through the box's LIVE QuicClient
+// (connectionManager.clientFor) whenever one is connected — so they ride the
+// transport connect() already resolved (direct LAN first, relay last). The
+// old path always built a relay-only URL, which 502'd ("device not connected
+// to relay") for a box reachable on the same Wi-Fi but not parked on the relay.
+// When no client is connected we fall back to the relay/host URL.
 //
 // Enabling bundles a best-effort agent self-update FIRST (stage only — the
 // running process keeps the old code until the next `yaver serve` restart, so
 // we never risk killing a remote box mid-flow), then brings mesh up.
 
 import { deviceAgentContext } from "./deviceAgentFetch";
+import { connectionManager } from "./connectionManager";
 
 export type MeshDeviceStatus = {
   enabled: boolean;
@@ -54,19 +60,37 @@ const STATUS_TIMEOUT_MS = 5000;
 const SELF_HEAL_TIMEOUT_MS = 30000;
 const MESH_UP_TIMEOUT_MS = 25000;
 
+/** Issue an agent request to `device`, preferring its live QuicClient transport
+ *  (direct-LAN-first) and falling back to the relay/host URL when nothing is
+ *  connected. Throws "unreachable" when there's no route at all. */
+async function agentFetch(
+  device: DeviceRef,
+  token: string | null,
+  path: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const client = connectionManager.clientFor(device.id);
+  if (client?.isConnected) {
+    return client.agentRequest(device.id, path, init, timeoutMs);
+  }
+  const ctx = deviceAgentContext(device, token);
+  if (!ctx) throw new Error("unreachable");
+  return fetch(`${ctx.baseUrl}${path}`, {
+    ...init,
+    headers: { ...ctx.headers, ...((init.headers as Record<string, string>) || {}) },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
+
 /** Probe a box's live mesh state. Returns null when unreachable so the caller
  *  can fall back to the Convex control-plane view (mesh.peers). */
 export async function meshStatusForDevice(
   device: DeviceRef,
   token: string | null,
 ): Promise<MeshDeviceStatus | null> {
-  const ctx = deviceAgentContext(device, token);
-  if (!ctx) return null;
   try {
-    const res = await fetch(`${ctx.baseUrl}/mesh/status`, {
-      headers: ctx.headers,
-      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
-    });
+    const res = await agentFetch(device, token, "/mesh/status", { method: "GET" }, STATUS_TIMEOUT_MS);
     if (!res.ok) return null;
     const j = await res.json();
     return {
@@ -85,23 +109,21 @@ export async function enableMeshOnDevice(
   token: string | null,
   onPhase?: (phase: MeshEnablePhase) => void,
 ): Promise<MeshEnableResult> {
-  const ctx = deviceAgentContext(device, token);
-  if (!ctx) throw new Error("unreachable");
-
   // 1. Best-effort agent self-update — stage only, no restart. Never blocks the
   //    mesh bring-up: a failed/slow update still leaves mesh enable to proceed.
   onPhase?.("updating");
-  const stagedVersion = await stageAgentUpdate(ctx);
+  const stagedVersion = await stageAgentUpdate(device, token);
 
   // 2. Bring mesh up. The agent ensures its keypair, registers with the control
   //    plane, and starts the data plane. A dataPlaneWarning is non-fatal.
   onPhase?.("bringing-up");
-  const res = await fetch(`${ctx.baseUrl}/mesh/up`, {
-    method: "POST",
-    headers: { ...ctx.headers, "Content-Type": "application/json" },
-    body: "{}",
-    signal: AbortSignal.timeout(MESH_UP_TIMEOUT_MS),
-  });
+  const res = await agentFetch(
+    device,
+    token,
+    "/mesh/up",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    MESH_UP_TIMEOUT_MS,
+  );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`mesh up: HTTP ${res.status}${body ? ` — ${body.slice(0, 120)}` : ""}`);
@@ -120,29 +142,33 @@ export async function disableMeshOnDevice(
   device: DeviceRef,
   token: string | null,
 ): Promise<void> {
-  const ctx = deviceAgentContext(device, token);
-  if (!ctx) throw new Error("unreachable");
-  const res = await fetch(`${ctx.baseUrl}/mesh/down`, {
-    method: "POST",
-    headers: { ...ctx.headers, "Content-Type": "application/json" },
-    body: "{}",
-    signal: AbortSignal.timeout(MESH_UP_TIMEOUT_MS),
-  });
+  const res = await agentFetch(
+    device,
+    token,
+    "/mesh/down",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+    MESH_UP_TIMEOUT_MS,
+  );
   if (!res.ok) throw new Error(`mesh down: HTTP ${res.status}`);
 }
 
 /** POST /agent/self-heal with AllowSelfUpdate. Returns the staged release tag
  *  when a newer binary was actually pulled, else undefined. Swallows every
  *  error — a box that can't update still gets mesh enabled. */
-async function stageAgentUpdate(ctx: { baseUrl: string; headers: Record<string, string> }): Promise<string | undefined> {
+async function stageAgentUpdate(device: DeviceRef, token: string | null): Promise<string | undefined> {
   try {
-    const res = await fetch(`${ctx.baseUrl}/agent/self-heal`, {
-      method: "POST",
-      headers: { ...ctx.headers, "Content-Type": "application/json" },
-      // Field names mirror Go's SelfHealOptions (Apply/AllowSelfUpdate/Quiet).
-      body: JSON.stringify({ Apply: true, AllowSelfUpdate: true, Quiet: true }),
-      signal: AbortSignal.timeout(SELF_HEAL_TIMEOUT_MS),
-    });
+    const res = await agentFetch(
+      device,
+      token,
+      "/agent/self-heal",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Field names mirror Go's SelfHealOptions (Apply/AllowSelfUpdate/Quiet).
+        body: JSON.stringify({ Apply: true, AllowSelfUpdate: true, Quiet: true }),
+      },
+      SELF_HEAL_TIMEOUT_MS,
+    );
     if (!res.ok) return undefined;
     const rep = await res.json().catch(() => ({}));
     // Report "staged" only when self-heal both saw a newer release and applied

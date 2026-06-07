@@ -1179,6 +1179,24 @@ export class QuicClient {
     return this.authHeaders;
   }
 
+  /** Issue an authenticated agent HTTP request over THIS client's live
+   *  transport — whatever connect() resolved (direct LAN, Tailscale, tunnel,
+   *  or relay). When `targetDeviceId` is the device this client is attached to
+   *  it hits the box directly; otherwise it proxies via `/peer/<id>`. This is
+   *  how callers reach an agent without re-deriving a relay-only URL (which
+   *  fails for a box that's reachable on the LAN but not parked on the relay).
+   *  `path` is the agent route, e.g. "/mesh/up". */
+  async agentRequest(
+    targetDeviceId: string,
+    path: string,
+    init?: RequestInit,
+    timeoutMs = 15000,
+  ): Promise<Response> {
+    const url = this.peerEndpoint(targetDeviceId, path);
+    const headers = { ...this.authHeaders, ...((init?.headers as Record<string, string>) || {}) };
+    return this.fetchWithTimeout(url, { ...init, headers }, timeoutMs);
+  }
+
   /** Public accessor for the deviceId this client is currently attached
    *  to. Used by the connection manager to keep a per-device pool, and
    *  by peer-aware callers that want to compare a target id against
