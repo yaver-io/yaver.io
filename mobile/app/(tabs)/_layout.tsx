@@ -54,7 +54,13 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
       <Text
         numberOfLines={1}
         allowFontScaling={false}
-        style={[styles.tabLabel, { color: focused ? c.accent : c.tabInactive, fontWeight: focused ? "600" : "400" }]}
+        // Active state is conveyed by the accent COLOR only — NOT a
+        // heavier font weight. Bumping "Shortcuts" to 600 when selected
+        // widens the glyphs just enough to overflow the tab slot, which
+        // is what forced the label onto a second line / ellipsized the
+        // trailing "s". Keep the weight constant so the longest label
+        // fits identically whether or not it's the active tab.
+        style={[styles.tabLabel, { color: focused ? c.accent : c.tabInactive }]}
       >
         {label}
       </Text>
@@ -243,8 +249,19 @@ export default function TabLayout() {
         // BlurView, Android Material 3 surface (per spatial_constraints
         // memory: don't port Liquid Glass to Android). Tab bar BG is
         // transparent so the YaverGlass underlay shows through.
+        //
+        // borderRadius:0 is REQUIRED here. YaverGlass defaults to a
+        // 12pt corner radius (it's normally a floating card/sheet), but
+        // as a full-width tab-bar underlay that rounds the blur's
+        // corners against the black screen behind it — rendering an ugly
+        // floating rounded-rectangle "frame" instead of a clean
+        // edge-to-edge bar. Flatten the corners so it sits flush like a
+        // native iOS tab bar.
         tabBarBackground: () => (
-          <YaverGlass style={StyleSheet.absoluteFillObject as any} tint={c.bgTabBar} />
+          <YaverGlass
+            style={[StyleSheet.absoluteFillObject, { borderRadius: 0 }] as any}
+            tint={c.bgTabBar}
+          />
         ),
         tabBarStyle: useLeftRail
           ? {
