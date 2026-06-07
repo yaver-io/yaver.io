@@ -2107,6 +2107,7 @@ func runServe(args []string) {
 	vaultPass := fs.String("vault-passphrase", "", "Custom vault passphrase (default: derived from auth token)")
 	ghostFlag := fs.Bool("ghost", false, "Enable the GUI ghost (UI-automation slave) capability so remote Commanders can drive this machine's desktop")
 	machineFlag := fs.Bool("machine", false, "Enable the machine/PLC hijack capability (Modbus sniff + register fetch + AI understand) so remote Commanders can read/tune this machine")
+	netcaptureFlag := fs.Bool("netcapture", false, "Enable wire-observe & deep-analysis (tcpdump network capture + serial RS232/RS485 tty tap) for PLC/robotics/ERP troubleshooting")
 	multiUser := fs.Bool("multi-user", false, "Enable multi-user mode (shared machines)")
 	teamID := fs.String("team", "", "Restrict access to team members (requires --multi-user)")
 	maxUsers := fs.Int("max-users", 0, "Max concurrent users in multi-user mode (0 = unlimited)")
@@ -3101,6 +3102,13 @@ func runServe(args []string) {
 	httpServer.machineEnabled = *machineFlag || cfg.MachineEnabled
 	if httpServer.machineEnabled {
 		log.Printf("Machine/PLC hijack enabled (serial sniff supported on this OS: %v)", machine.Supported())
+	}
+
+	// Netcapture — opt-in via --netcapture or config. Engine created lazily on
+	// first netcapture verb (ops_netcapture.go).
+	httpServer.netcaptureEnabled = *netcaptureFlag || cfg.NetcaptureEnabled
+	if httpServer.netcaptureEnabled {
+		log.Printf("Netcapture (wire-observe & deep-analysis) enabled")
 	}
 
 	// Container isolation (optional — requires Docker + yaver-sandbox image)

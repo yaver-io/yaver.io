@@ -1,0 +1,38 @@
+ref,qty,block,value/part,description,package,supplier_pn,lcsc,unit_usd,populate,notes
+U1,1,B,TPS54360DDA,Buck 4.5-60V 3.5A,SO-8 PowerPAD,TI TPS54360DDAR,C9865,1.20,full;wired;wireless,VIN->5V
+U2,1,B,AP63203WU,Buck 5V->3V3 2A,TSOT23-6,Diodes AP63203WU-7,C868422,0.45,full;wired;wireless,logic+ESP rail
+U3,1,C,TPS65987DDK,USB-PD controller (source),VQFN-64,TI TPS65987DDKR,,4.80,full;wired,charge-while-host
+U4,1,C,TPS55288,Buck-boost VBUS 5/9/12V,VQFN,TI TPS55288RPMR,,2.10,full;wired,PD VBUS rail
+U5,1,C,TPD6S300,USB-C CC/SBU/VBUS ESD,QFN,TI TPD6S300ARUKR,,1.00,full;wired,Type-C protection
+U6,1,C,USBLC6-2SC6,USB D+/- ESD,SOT23-6,ST USBLC6-2SC6,C7519,0.10,full;wired,
+U7,1,D,FE1.1S,USB2.0 4-port hub,SSOP-28,FE1.1S,C84365,0.55,full;wired,phone-host hub
+Y1,1,D,12MHz,Crystal,SMD3225,X322512MSB4SI,C9002,0.10,full;wired,hub clock
+U9,1,E,ESP32-S3-WROOM-1U-N8,WiFi/BLE MCU module (u.FL),module,ESP32-S3-WROOM-1U-N8,C2913202,3.20,full;wired;wireless,FACADE BRAIN - no OS
+J5,1,E,u.FL,RF connector,SMD,U.FL-R-SMT-1,C660420,0.15,full;wireless,ext antenna
+ANT1,1,E,2.4GHz antenna,External dipole u.FL pigtail,—,2.4G-dipole-ufl,,1.50,full;wireless,factory-metal friendly
+U10,1,F,ADM2587EBRWZ,Isolated RS485 + iso DC-DC,SOIC-20W,ADI ADM2587EBRWZ,C7440,5.50,full;wired;wireless,isolated bus
+U11,1,F,TS3A24159,Dual SPDT analog switch,UQFN-10,TI TS3A24159RSER,C155389,0.40,full;wired;wireless,A/B swap
+U12,1,G,ADM3251EARWZ,Isolated RS232 + iso DC-DC,SOIC-20W,ADI ADM3251EARWZ,C20828,6.20,full;wired;wireless,isolated RS232
+U13,1,H,SN65HVD230,CAN transceiver 3.3V,SOIC-8,TI SN65HVD230DR,C12084,0.50,plus-can,optional CANopen
+U14,1,I,INA219,Current/voltage monitor I2C,SOIC-8,TI INA219AIDR,C77961,0.55,full;wired;wireless,input power telemetry
+U8,1,D,MIC2005,USB power switch 0.9A,SOT23-6,MIC2005A-1YM6,,0.40,full;wired,USB-A VBUS limit
+J3,1,C,USB-C 16P,Type-C receptacle,SMD,TYPE-C-31-M-12,C165948,0.30,full;wired,to phone
+J4,1,D,USB-A,USB-A host receptacle,THT,USB-A-F,C46393,0.20,full;wired,printer/USB passthrough
+J6,1,F,3.5mm-3P,Pluggable screw terminal,5.08/3.5mm,KF2EDGK-3P,C474881,0.25,full;wired;wireless,RS485 A/B/GND
+J7,1,G,3.5mm-3P,Pluggable screw terminal,3.5mm,KF2EDGK-3P,C474881,0.25,full;wired;wireless,RS232 TX/RX/GND
+J8,1,H,2P-3.5mm,Pluggable screw terminal,3.5mm,KF2EDGK-2P,,0.20,plus-can,CANH/CANL
+J1,1,A,DC-005,DC barrel jack 5.5x2.1,THT,DC-005,C16320,0.15,full;wired;wireless,9-24V in
+J2,1,A,2P-5.08,Screw terminal power,5.08mm,KF301-2P,,0.20,full;wired;wireless,alt power in
+F1,1,A,PTC 3A,Resettable fuse,1812,MF-MSMF300,C70071,0.10,full;wired;wireless,
+D1,1,A,SMBJ26A,TVS,SMB,SMBJ26A,C77606,0.10,full;wired;wireless,VIN clamp
+D2,1,A,SS54,Schottky reverse-prot,SMA,SS54,C22452,0.08,full;wired;wireless,
+D3,1,F,SM712,RS485 bus ESD,SOT23,SM712,C112501,0.20,full;wired;wireless,A/B clamp
+L1,1,B,10uH,Power inductor 3A,SMD,SWPA6045,C167222,0.15,full;wired;wireless,buck1
+SW1,1,J,BOOT,Tact switch,SMD,TS-1187A,C318884,0.05,full;wired;wireless,
+SW4,1,J,RESET,Tact switch,SMD,TS-1187A,C318884,0.05,full;wired;wireless,EN
+SW2,1,F,DIP-2,Termination/bias DIP,SMD,—,,0.20,full;wired;wireless,485 term/bias
+LED1,1,J,WS2812B,RGB status LED,5050,WS2812B,C114587,0.10,full;wired;wireless,or 3x discrete LEDs
+HX711,1,E,HX711,Load-cell ADC (force/torque),SOP-16,HX711,C16263,0.30,plus-sense,companion force
+R/C,~,*,passives,0402/0603 R+C kit,,,,~1.50,full;wired;wireless,decoupling/dividers/pull-ups
+PCB,1,*,4-layer,100x80mm 4L ENIG,,JLCPCB,,2.00,full;wired;wireless,see pcb.md
+ENCL,1,*,3D print,PETG/ASA enclosure+lid,,enclosure.scad,,1.50,full;wired;wireless,or injection later

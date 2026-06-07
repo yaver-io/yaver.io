@@ -1,0 +1,20 @@
+[Unit]
+Description=Yaver BLE transport bridge (no-Wi-Fi agent access)
+# Bridge the agent's HTTP/ops API over BLE so a phone can reach this Pi on a
+# production floor with no Wi-Fi. Starts after BlueZ and (best-effort) the agent.
+After=bluetooth.target network.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/yaver/ble-bridge/peripheral.py
+Restart=always
+RestartSec=3
+# BlueZ access
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+# the bridge only ever talks to 127.0.0.1:18080 + the local BLE adapter
+IPAddressAllow=localhost
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
+import { NetCaptureModal } from "./NetCaptureModal";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
@@ -4004,6 +4005,7 @@ function useRelayHealth(relayUrl: string | null | undefined) {
 }
 
 function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
+  const [showNetcap, setShowNetcap] = useState(false);
   const { info, error, errorDetails: runtimeErrorDetails, loading } = useDeviceRuntimeInfo(device, true, token);
   const runtimeFailure: ClassifiedFailure | null = error
     ? classifyFetchError({
@@ -4117,7 +4119,19 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
 
   return (
     <div className="mt-3 rounded-lg border border-surface-800 bg-surface-900/40 p-3">
+      {showNetcap && (
+        <NetCaptureModal device={device} token={token} onClose={() => setShowNetcap(false)} />
+      )}
       <div className="mb-3 flex flex-wrap justify-end gap-2">
+        {!device.isGuest && (
+          <button
+            onClick={() => setShowNetcap(true)}
+            className="rounded-md border border-surface-700 px-2.5 py-1 text-[11px] font-semibold text-surface-200 hover:border-surface-500 hover:text-surface-50"
+            title="Capture and deep-analyze network + serial traffic on this machine (PLC/Modbus/S7/OPC-UA/SQL/HTTP, RS232/RS485). Requires the agent to run with --netcapture."
+          >
+            Network / Wire Monitor
+          </button>
+        )}
         {outdated && latestVersion ? (
           <button
             onClick={() => {

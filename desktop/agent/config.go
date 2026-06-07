@@ -142,6 +142,7 @@ type Config struct {
 	IOSInstallMethod                string   `json:"ios_install_method,omitempty"` // "auto" (default), "native", "bundle"
 	GhostEnabled                    bool     `json:"ghost_enabled,omitempty"`      // enable the GUI ghost (UI-automation slave) capability (default: false)
 	MachineEnabled                  bool     `json:"machine_enabled,omitempty"`    // enable the machine/PLC hijack capability (Modbus sniff/read/understand) (default: false)
+	NetcaptureEnabled               bool     `json:"netcapture_enabled,omitempty"` // enable wire-observe & deep-analysis (tcpdump + serial RS232/RS485 capture) (default: false)
 
 	// Container isolation — run tasks inside Docker containers
 	ContainerizeGuests bool                   `json:"containerize_guests,omitempty"` // run guest tasks in containers (default: false)

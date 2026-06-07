@@ -13,6 +13,7 @@ import { quicClient, type RunnerAuthStatusRow } from "../lib/quic";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import RunnerAuthModal from "./RunnerAuthModal";
 import { ScreenlogSection } from "./ScreenlogSection";
+import { NetCaptureSection } from "./NetCaptureSection";
 
 const CODING_AGENTS: ReadonlyArray<{ id: "claude" | "codex" | "opencode"; label: string }> = [
   { id: "claude", label: "Claude Code" },
@@ -1664,6 +1665,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
               "is claude/codex/opencode signed in on this box?" view. */}
           <CodingAgentsSection device={device} />
           <ScreenlogSection device={device} />
+          <NetCaptureSection device={device} />
           <HardwareCapabilitiesSection device={device} />
           <WirelessPhonesSection device={device} />
 
