@@ -23,6 +23,31 @@ import { getByoMachines, type ByoMachine } from "../lib/subscription";
 // provision on directly). Others connect via the web Accounts view.
 const FEATURED = ["hetzner", "digitalocean"];
 
+// Approx Hetzner running cost (EUR/mo, incl. IPv4) by server_type. Rough —
+// for at-a-glance "what am I burning right now", NOT billing. A running box
+// bills full price even powered-off; only DELETE halts it. Unknown type → null
+// (we then just show the type, no fake number).
+const TYPE_EUR_MO: Record<string, number> = {
+  cx11: 4.15, cx21: 5.83, cx31: 10.59, cx41: 19.9, cx51: 35.79,
+  cx22: 4.59, cx32: 7.59, cx42: 17.49, cx52: 33.69,
+  cpx11: 4.79, cpx21: 8.49, cpx31: 15.49, cpx41: 29.99, cpx51: 65.99,
+  cax11: 3.99, cax21: 7.49, cax31: 14.99, cax41: 29.99,
+};
+function monthlyEur(type?: string | null): number | null {
+  if (!type) return null;
+  return TYPE_EUR_MO[String(type).toLowerCase()] ?? null;
+}
+function uptimeLabel(created?: string | null): string {
+  if (!created) return "";
+  const t = Date.parse(String(created));
+  if (Number.isNaN(t)) return "";
+  const ms = Date.now() - t;
+  const days = Math.floor(ms / 86400000);
+  if (days >= 1) return `up ${days}d`;
+  const hrs = Math.floor(ms / 3600000);
+  return `up ${Math.max(1, hrs)}h`;
+}
+
 type ProviderMeta = {
   id: string;
   label: string;
@@ -533,10 +558,34 @@ export default function CloudProvidersSection({
                   ) : servers.length === 0 ? (
                     <Text style={{ color: c.textMuted, fontSize: 11 }}>No running servers.</Text>
                   ) : (
-                    servers.map((s: any) => {
-                      const id = String(s.id ?? s.ID ?? "");
-                      return (
-                        <View key={id} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 4 }}>
+                    <>
+                      {/* Headline monthly burn — the at-a-glance "am I leaking
+                          money on idle boxes" number. A running box bills even
+                          when idle; Stop (snapshot+delete) is what halts it. */}
+                      {(() => {
+                        const known = servers.map((s: any) => monthlyEur(s.type ?? s.Type)).filter((x): x is number => x !== null);
+                        const total = known.reduce((a, b) => a + b, 0);
+                        if (!total) return null;
+                        const approx = known.length < servers.length ? "+" : "";
+                        return (
+                          <Text style={{ color: total > 20 ? "#b45309" : c.textMuted, fontSize: 11, fontWeight: "700", marginTop: 2 }}>
+                            ≈ €{total.toFixed(2)}{approx}/mo across {servers.length} running box{servers.length === 1 ? "" : "es"} — you pay Hetzner directly. Stop idle ones to save.
+                          </Text>
+                        );
+                      })()}
+                      {servers.map((s: any) => {
+                        const id = String(s.id ?? s.ID ?? "");
+                        const type = s.type ?? s.Type ?? null;
+                        const eur = monthlyEur(type);
+                        const up = uptimeLabel(s.created ?? s.Created);
+                        const costLine = [
+                          type ? String(type) : null,
+                          eur !== null ? `~€${eur.toFixed(2)}/mo` : null,
+                          up || null,
+                        ].filter(Boolean).join(" · ");
+                        return (
+                        <View key={id} style={{ paddingVertical: 4 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                           <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "monospace", flex: 1 }}>
                             {String(s.name ?? s.Name ?? id)} · {String(s.status ?? s.Status ?? "?")} · {String(s.ip ?? s.IP ?? "")}
                           </Text>
@@ -556,8 +605,13 @@ export default function CloudProvidersSection({
                             )}
                           </Pressable>
                         </View>
+                        {costLine ? (
+                          <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "monospace", marginLeft: 2 }}>{costLine}</Text>
+                        ) : null}
+                        </View>
                       );
-                    })
+                    })}
+                    </>
                   )}
 
                   {/* Stopped boxes (snapshots) — restart to resume. */}
