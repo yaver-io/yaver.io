@@ -4604,6 +4604,10 @@ http.route({
             // (phase="error"); drives the synthetic "Setting up" card's
             // failure state + recovery hint in web/mobile.
             provisionError: machine.provisionError ?? null,
+            // "golden" ⇒ fast boot from a prebuilt snapshot; "vanilla" ⇒
+            // ubuntu-24.04 with a 3–5 min first-boot build. Lets the card
+            // show the right "setting up" expectation.
+            bootImageSource: machine.bootImageSource ?? null,
             runnersAuthorized: machine.runnersAuthorized ?? false,
           }))
         : [],

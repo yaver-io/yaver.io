@@ -468,6 +468,11 @@ export default function ManagedCloudCard({
                     Setting up your box —{" "}
                     {phase ? PHASE_LABEL[phase] ?? phase : "initializing…"}
                   </Text>
+                  {m.bootImageSource === "golden" ? (
+                    <Text style={{ color: "#059669", fontSize: 10 }}>⚡ Fast boot from a prebuilt image</Text>
+                  ) : m.bootImageSource === "vanilla" ? (
+                    <Text style={{ color: c.textMuted, fontSize: 10 }}>First boot — building the image (~3-5 min)</Text>
+                  ) : null}
                   <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border, overflow: "hidden" }}>
                     <View
                       style={{

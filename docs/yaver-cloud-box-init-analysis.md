@@ -31,11 +31,12 @@ first-class **"Box"** concept on mobile:
   (git), toolchain-sync, and runner-mirror all live in different screens with
   different mental models. There is no single "is this box ready to code?"
   answer. See §3 — this is the highest-leverage fix.
-- **Image utilization is bifurcated**: the *managed* provision path uses a thin
-  inline bootstrap (slow, installs everything at boot), while a full
-  golden-image build pipeline (`build-cloud-image.sh` → `cloud-images.json` →
-  `launch_hetzner.go`) exists but the managed lane doesn't consistently read
-  from it. See §4.
+- **Image utilization**: the managed provision path DOES boot from a golden
+  snapshot when one is configured (`YAVER_CLOUD_IMAGE_ID_<ARCH>`,
+  `cloudMachines.ts:1207` "P3 fast boot"), falling back to ubuntu-24.04 + a
+  3–5 min inline build otherwise. The gap was *visibility* — nothing recorded
+  which path ran. Now fixed: a `bootImageSource` field ("golden" | "vanilla")
+  is persisted at provision time and shown on the device card. See §4.
 - On-device coding (proot/Alpine on Android, Hermes loop on iOS, Claude
   *subscription* OAuth instead of metered API) is freshly scaffolded and
   tested but not device-run. It changes what "a box" even means — the phone
@@ -218,41 +219,39 @@ first-class setting the request is asking for.
 
 ---
 
-## 4. Cloud image utilization — bifurcated, under-used
+## 4. Cloud image utilization — golden-first, now made visible
 
-Two paths exist and they don't fully meet:
+**It already prefers the golden image.** `cloudMachines.ts:1207` ("P3 fast
+boot") reads `YAVER_CLOUD_IMAGE_ID_<ARCH>` (or `YAVER_CLOUD_IMAGE_ID`) and
+passes it as the Hetzner `image` for a brand-new box; cloud-init still runs for
+per-box token injection + device registration. Unset ⇒ byte-identical legacy
+behaviour (`image: "ubuntu-24.04"`, the 3–5 min first-boot build). The build
+pipeline that produces those snapshots is `scripts/build-cloud-image.sh` →
+`dist/cloud-image/<provider>-<version>-<arch>.json`; `launch_hetzner.go`
+(`readHetznerSnapshot`) is the agent-side consumer for the `yaver launch` path.
 
-**Path A — golden image (fast, exists, under-wired for managed):**
-`scripts/build-cloud-image.sh` provisions a VM → installs everything via
-`ci/remote/bootstrap.sh` → snapshots → writes
-`dist/cloud-image/<provider>-<version>-<arch>.json`. `launch_hetzner.go`
-(`readHetznerSnapshot`) reads that manifest and boots **from the snapshot**
-(~30s) with a fallback to vanilla ubuntu (+~3min npm install).
+So the cold-provision speed-up exists. The pause→snapshot→resume loop already
+recreates from a snapshot (`cloudLifecycle.ts:hetznerCreateFromImage`), so
+resume was never the slow case.
 
-**Path B — inline bootstrap (slow, what managed provision uses):**
-`cloudMachines.ts:buildManagedCloudInit()` generates a cloud-config that
-installs Docker/Node/Go/Python (and NVIDIA/Ollama for GPU) **at first boot
-every time**. This is the path the prepaid managed flow actually runs.
+### What was actually missing — and is now fixed
 
-### Consequence
+Nothing recorded or surfaced **which** path a box took, so a slow
+vanilla-fallback (no golden snapshot configured for that arch) looked
+indistinguishable from a hang. Fixed end-to-end:
 
-Every managed box pays the full install cost on **both** initial provision and
-**every resume** (resume = create-from-snapshot, so resume is fine — but the
-*first* provision and any vanilla-fallback are slow). The golden-image
-pipeline that would cut cold-provision from minutes to ~30s isn't consistently
-consumed by the managed lane.
+- `schema.ts cloudMachines.bootImageSource` ("golden" | "vanilla").
+- `cloudMachines.provision` sets it (`goldenImageId ? "golden" : "vanilla"`)
+  via `setProvisioned`.
+- `http.ts /subscription` projection passes it through.
+- `subscription.ts` type + `ManagedCloudCard` render: "⚡ Fast boot from a
+  prebuilt image" vs "First boot — building the image (~3-5 min)" under the
+  setup progress bar.
 
-### Recommendation
+### Still open (not blocking)
 
-1. Make `cloudMachines.create()` prefer a golden snapshot ID (per region/arch,
-   per `cloud-images.json`) and fall back to inline cloud-init only when no
-   fresh image exists.
-2. Add the golden image's version stamp to provisioning telemetry so stale
-   images are visible.
-3. Surface "image: golden v1.99.x / vanilla-fallback" in the provision
-   progress UI — today the user can't tell which path they got.
-4. Keep the pause→snapshot→resume loop (it's correct); the only fix is the
-   *cold* provision source.
+- Stamp the golden image's *version* (not just golden/vanilla) so a stale
+  snapshot is visible, not just the path class.
 
 ---
 

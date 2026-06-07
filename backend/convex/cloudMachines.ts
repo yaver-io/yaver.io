@@ -945,6 +945,7 @@ export const setProvisioned = internalMutation({
     hostname: v.string(),
     machineTokenHash: v.optional(v.string()),
     deviceId: v.optional(v.string()),
+    bootImageSource: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {
@@ -959,6 +960,7 @@ export const setProvisioned = internalMutation({
     };
     if (args.machineTokenHash) patch.machineTokenHash = args.machineTokenHash;
     if (args.deviceId) patch.deviceId = args.deviceId;
+    if (args.bootImageSource) patch.bootImageSource = args.bootImageSource;
     await ctx.db.patch(args.machineId, patch);
   },
 });
@@ -1312,6 +1314,10 @@ export const provision = internalAction({
         hostname: autoDomain,
         machineTokenHash,
         deviceId, // deterministic cloud-<shortId> the box registers as
+        // Record which boot path ran so a slow vanilla-fallback (no
+        // golden snapshot configured for this arch) is visible on the
+        // card instead of looking like a hang.
+        bootImageSource: goldenImageId ? "golden" : "vanilla",
       });
 
       // ── 4b. Phase 2B+2C — managed box doubles as this user's relay ──
