@@ -4194,6 +4194,12 @@ export class QuicClient {
     return this.byoOps('cloud_reconcile', {});
   }
 
+  // Bake a ready box into a reusable golden image on the user's OWN
+  // account (fast re-spin). Returns {baked,cached} | {dryRun,plan}.
+  cloudBake(serverId: string): Promise<any> {
+    return this.byoOps('cloud_bake', { serverId, confirm: true });
+  }
+
   // ── Files (read-only project browser) ──
 
   async filesRoots(): Promise<{ roots: { id: string; name: string; path: string }[] }> {

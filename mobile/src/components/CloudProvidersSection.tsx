@@ -272,6 +272,38 @@ export default function CloudProvidersSection({
     );
   };
 
+  const bakeServer = (srv: any) => {
+    const id = String(srv.id ?? srv.ID ?? "");
+    const name = String(srv.name ?? srv.Name ?? id);
+    if (!id) return;
+    Alert.alert(
+      `Bake ${name} into a fast-boot image?`,
+      "Snapshots this ready box into a reusable golden image on YOUR account (the box keeps running). Future spin-ups boot from it in seconds. Re-bake after upgrading the box.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Bake",
+          onPress: async () => {
+            setBusy(`bake:${id}`);
+            try {
+              const r = await quicClient.cloudBake(id);
+              if (r?.dryRun) {
+                Alert.alert("Dry run", String(r.plan || "") + "\n\nReal bake needs YAVER_CLOUD_STOPSTART_LIVE=1 on the machine.");
+              } else {
+                Alert.alert("Baked", `Golden image ${r?.baked || ""} cached — new boxes will spin up fast.`);
+                await loadSnapshots();
+              }
+            } catch (e: any) {
+              Alert.alert("Couldn't bake", e?.message || "Try again.");
+            } finally {
+              setBusy(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const loadSnapshots = async () => {
     try {
       const r = await quicClient.cloudSnapshots();
@@ -508,6 +540,11 @@ export default function CloudProvidersSection({
                           <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "monospace", flex: 1 }}>
                             {String(s.name ?? s.Name ?? id)} · {String(s.status ?? s.Status ?? "?")} · {String(s.ip ?? s.IP ?? "")}
                           </Text>
+                          <Pressable disabled={busy !== null} onPress={() => bakeServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
+                            {busy === `bake:${id}` ? <ActivityIndicator size="small" color="#0ea5e9" /> : (
+                              <Text style={{ color: "#0ea5e9", fontSize: 11, fontWeight: "700" }}>Bake</Text>
+                            )}
+                          </Pressable>
                           <Pressable disabled={busy !== null} onPress={() => stopServer(s)} style={{ opacity: busy ? 0.5 : 1, paddingHorizontal: 6, paddingVertical: 4 }}>
                             {busy === `stop:${id}` ? <ActivityIndicator size="small" color="#b45309" /> : (
                               <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>Stop</Text>
