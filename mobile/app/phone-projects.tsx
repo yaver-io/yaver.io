@@ -758,6 +758,15 @@ export default function PhoneProjectsScreen() {
             >
               <Text style={[styles.btnText, { color: c.bg }]}>+ New mobile app</Text>
             </Pressable>
+            <Pressable
+              onPress={() => router.push("/repo-coding" as any)}
+              style={[
+                styles.btn,
+                { backgroundColor: "transparent", borderWidth: 1, borderColor: c.border, marginTop: 10 },
+              ]}
+            >
+              <Text style={[styles.btnText, { color: c.textPrimary }]}>Clone a GitHub repo & code with AI</Text>
+            </Pressable>
             <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
               {connected ? "Start on your phone or a Yaver backend." : "Runs locally on this phone."}
             </Text>

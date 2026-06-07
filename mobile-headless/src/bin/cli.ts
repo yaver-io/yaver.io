@@ -13,7 +13,7 @@ import { MobileClient } from "../mobile-client.js";
 
 async function main() {
   const argv = minimist(process.argv.slice(2), {
-    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload", "name", "template", "slug", "prompt", "base-url", "target-token", "on-conflict", "bundle-url", "module-name", "repo-url", "branch", "commit", "manifest-url", "workflow", "run-id", "provider", "out", "dir", "bootstrap-secret", "mode", "agent-url", "scheme", "flavor"],
+    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload", "name", "template", "slug", "prompt", "base-url", "target-token", "on-conflict", "bundle-url", "module-name", "repo-url", "branch", "commit", "manifest-url", "workflow", "run-id", "provider", "out", "dir", "bootstrap-secret", "mode", "agent-url", "scheme", "flavor", "glm-key"],
     alias: { t: "token", d: "device" },
   });
 
@@ -341,6 +341,73 @@ async function main() {
       let body: any = undefined;
       if (argv.body) body = JSON.parse(argv.body);
       out(await mobile.raw.post(path, body));
+      break;
+    }
+    case "sandbox-agent": {
+      // Run the agentic coding loop (GLM by default) against a phone-project's
+      // src/ tree, headless. Proves the Mobile Sandbox local-development flow
+      // end-to-end without a device, reusing the SAME pure agent core the app
+      // uses (runner + tools from mobile/src/lib/codingAgent — no native deps).
+      //
+      // The CodingSandbox is supplied HERE via node fs (the app supplies an
+      // expo-file-system-backed one). We point it at the exact path the
+      // expo-file-system shim uses, so the tree is wire-identical to the app's:
+      //   <dataDir>/expo-fs/doc/phone-projects/<slug>/src/
+      // We can't import phoneSandboxSourceDefault here: tsconfig path aliases
+      // don't reach bare specifiers (expo-file-system → react-native) imported
+      // from ../mobile/src/lib/*, so that module pulls real RN and crashes bun.
+      const slug = argv.slug || rest[0];
+      if (!slug) die("sandbox-agent needs --slug <slug>");
+      if (!argv.prompt) die("sandbox-agent needs --prompt <text>");
+      const inlineKey = (argv["glm-key"] && String(argv["glm-key"])) || process.env.GLM_API_KEY;
+      if (!inlineKey) die("sandbox-agent needs --glm-key <key> or $GLM_API_KEY");
+
+      const { runCodingAgent, defaultCodingAgentConfig } = await import(
+        "@yaver/mobile-lib/codingAgent/runner"
+      );
+      const baseDir = argv["data-dir"]
+        ? String(argv["data-dir"])
+        : process.env.YMH_DATA_DIR || path.join(process.env.HOME || ".", ".yaver-mobile-headless");
+      const srcRoot = path.join(baseDir, "expo-fs", "doc", "phone-projects", String(slug), "src");
+
+      // node-fs CodingSandbox (the headless surface's binding).
+      const listRec = (dir: string, rel = ""): Array<{ path: string; isDirectory: boolean; size: number }> => {
+        const out2: Array<{ path: string; isDirectory: boolean; size: number }> = [];
+        let names: string[] = [];
+        try { names = fs.readdirSync(dir); } catch { return out2; }
+        for (const name of names) {
+          if (name.endsWith(".tmp")) continue;
+          const full = path.join(dir, name);
+          const childRel = rel ? `${rel}/${name}` : name;
+          const st = fs.statSync(full);
+          out2.push({ path: childRel, isDirectory: st.isDirectory(), size: st.isDirectory() ? 0 : st.size });
+          if (st.isDirectory()) out2.push(...listRec(full, childRel));
+        }
+        return out2;
+      };
+      const sandbox = {
+        async readFile(p: string) { return fs.readFileSync(path.join(srcRoot, p), "utf8"); },
+        async listFiles() { return listRec(srcRoot).sort((a, b) => a.path.localeCompare(b.path)); },
+        async writeFile(p: string, content: string) {
+          const full = path.join(srcRoot, p);
+          fs.mkdirSync(path.dirname(full), { recursive: true });
+          fs.writeFileSync(full, content);
+        },
+        async deleteFile(p: string) { try { fs.unlinkSync(path.join(srcRoot, p)); } catch { /* idempotent */ } },
+      };
+
+      const res = await runCodingAgent({
+        prompt: String(argv.prompt),
+        sandbox,
+        config: defaultCodingAgentConfig(inlineKey),
+        onProgress: (e: any) => {
+          if (e.kind === "tool_call") {
+            const tag = e.call.error ? "✗" : e.call.denied ? "⊘" : "✓";
+            process.stderr.write(`  ${tag} ${e.call.name} ${JSON.stringify(e.call.args).slice(0, 100)}\n`);
+          }
+        },
+      });
+      out(res);
       break;
     }
     case "mcp": {

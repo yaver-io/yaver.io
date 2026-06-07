@@ -39,6 +39,7 @@ import {
   UnsafeSourcePathError,
 } from "../../../src/lib/phoneSandboxSource";
 import { SandboxAiPanel } from "../../../src/components/SandboxAiPanel";
+import SandboxGitPanel from "../../../src/components/SandboxGitPanel";
 
 const STARTER_FILE = "App.tsx";
 const STARTER_CONTENT = `// ${STARTER_FILE} — your phone-authored app entry point.
@@ -382,6 +383,8 @@ export default function PhoneProjectCodeScreen() {
       ) : null}
 
       <SandboxAiPanel slug={slugStr} openPath={openPath} onApplied={onAiApplied} />
+
+      <SandboxGitPanel slug={slugStr} onChanged={() => { void onAiApplied([]); }} />
 
       <View style={styles.body}>
         <View style={[styles.tree, { borderColor: c.border, backgroundColor: c.bgCard }]}>

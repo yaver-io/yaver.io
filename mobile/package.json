@@ -83,6 +83,7 @@
     "expo-video": "~3.0.16",
     "expo-video-thumbnails": "~10.0.8",
     "expo-web-browser": "~15.0.10",
+    "isomorphic-git": "^1.38.4",
     "lottie-react-native": "^7.3.6",
     "posthog-react-native": "^4.42.1",
     "react": "19.1.0",

@@ -38,6 +38,11 @@ class MainApplication : Application(), ReactApplication {
               // hands the event to dispatchKey(...) BEFORE the normal
               // RN keyboard pipeline so a grabbed sink can intercept.
               add(YaverKeyboardRouterPackage())
+              // On-device coding agent: foreground service that runs
+              // `libyaver.so serve` on loopback + a proot rootfs (claude/
+              // codex/opencode ON the phone). JS: src/lib/sandboxControl.ts
+              // + src/lib/localBox.ts. See docs/coding-agent-on-device.md.
+              add(io.yaver.mobile.sandbox.SandboxPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

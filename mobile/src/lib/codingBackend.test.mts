@@ -15,6 +15,7 @@ import {
 
 const NONE: CodingBackendAvailability = {
   localModelReady: false,
+  claudeSubscription: false,
   anthropicKey: false,
   openaiKey: false,
   glmKey: false,
@@ -26,12 +27,20 @@ test("backendMeta resolves and rejects unknown", () => {
   assert.throws(() => backendMeta("nope" as any));
 });
 
-test("auto prefers on-device, then anthropic, then openai, then glm", () => {
+test("auto prefers on-device, then subscription, then anthropic, then openai, then glm", () => {
   assert.equal(resolveAutoBackend({ ...NONE, localModelReady: true, anthropicKey: true }), "local");
+  // subscription (free plan) OUTRANKS the metered BYO Claude key.
+  assert.equal(resolveAutoBackend({ ...NONE, claudeSubscription: true, anthropicKey: true }), "subscription");
   assert.equal(resolveAutoBackend({ ...NONE, anthropicKey: true, openaiKey: true }), "anthropic");
   assert.equal(resolveAutoBackend({ ...NONE, openaiKey: true, glmKey: true }), "openai");
   assert.equal(resolveAutoBackend({ ...NONE, glmKey: true }), "glm");
   assert.equal(resolveAutoBackend(NONE), null);
+});
+
+test("subscription is usable when a mirrored plan token is present", () => {
+  assert.equal(backendUsable("subscription", { ...NONE, claudeSubscription: true }), true);
+  assert.equal(backendUsable("subscription", NONE), false);
+  assert.equal(backendMeta("subscription").requiresKey, undefined); // no BYO key
 });
 
 test("backendUsable + usableBackends reflect availability", () => {
