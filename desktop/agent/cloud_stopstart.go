@@ -253,6 +253,8 @@ func opsCloudStopHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 		return OpsResult{OK: false, Code: code, Error: serr.Error(),
 			Initial: map[string]interface{}{"snapshotImageId": snapID}}
 	}
+	// Bookkeeping: box is now sleeping (snapshot kept, server deleted).
+	syncByoMachine("hetzner", p.ServerID, "stopped", map[string]interface{}{"snapshotImageId": snapID})
 	return OpsResult{OK: true, Initial: map[string]interface{}{
 		"stopped": p.ServerID, "snapshotImageId": snapID,
 	}}
@@ -299,6 +301,8 @@ func opsCloudStartHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	if serr != nil {
 		return OpsResult{OK: false, Code: "start_failed", Error: serr.Error()}
 	}
+	// Bookkeeping: box is alive again at a new id/ip.
+	syncByoMachine("hetzner", id, "active", map[string]interface{}{"name": p.Name, "serverIp": ip})
 	return OpsResult{OK: true, Initial: map[string]interface{}{
 		"started": id, "ip": ip, "fromSnapshot": p.SnapshotImageID,
 	}}

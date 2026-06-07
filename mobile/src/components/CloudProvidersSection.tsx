@@ -17,6 +17,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, Pressable, TextInput, Alert, ActivityIndicator, Linking } from "react-native";
 import { quicClient } from "../lib/quic";
+import { getByoMachines, type ByoMachine } from "../lib/subscription";
 
 // Featured BYO compute providers (the VM providers the agent can
 // provision on directly). Others connect via the web Accounts view.
@@ -62,6 +63,8 @@ export default function CloudProvidersSection({
   const [servers, setServers] = useState<any[] | null>(null);
   // Stopped boxes (snapshot images) available to restart.
   const [snapshots, setSnapshots] = useState<any[] | null>(null);
+  // Convex-synced lifecycle state (alive/sleeping/deleted across devices).
+  const [byoState, setByoState] = useState<ByoMachine[] | null>(null);
   // Spin-up form.
   const [showSpinUp, setShowSpinUp] = useState(false);
   const [plan, setPlan] = useState<"starter" | "pro" | "scale">("starter");
@@ -163,10 +166,23 @@ export default function CloudProvidersSection({
     try {
       const r = await quicClient.cloudListServers();
       setServers(Array.isArray(r.servers) ? r.servers : []);
+      void loadLifecycle();
     } catch (e: any) {
       Alert.alert("Couldn't list servers", e?.message || "Try again.");
     } finally {
       setBusy(null);
+    }
+  };
+
+  // Refresh the Convex-synced lifecycle (reconcile live servers → active,
+  // then read the cross-device state). Best-effort.
+  const loadLifecycle = async () => {
+    if (!token) return;
+    try {
+      await quicClient.cloudReconcile().catch(() => {});
+      setByoState(await getByoMachines(token));
+    } catch {
+      /* non-fatal */
     }
   };
 
@@ -523,6 +539,30 @@ export default function CloudProvidersSection({
                                 <Text style={{ color: "#059669", fontSize: 11, fontWeight: "700" }}>Start</Text>
                               )}
                             </Pressable>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+
+                  {/* Convex-synced lifecycle — visible across all your
+                      devices (alive / sleeping / deleted + timestamps).
+                      Convex holds only id/state/time — never the token. */}
+                  {byoState && byoState.length > 0 ? (
+                    <View style={{ gap: 3, marginTop: 2, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 6 }}>
+                      <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>Lifecycle (all devices)</Text>
+                      {byoState.slice(0, 8).map((b) => {
+                        const color = b.state === "active" ? "#059669" : b.state === "stopped" ? "#b45309" : c.textMuted;
+                        const label = b.state === "active" ? "alive" : b.state === "stopped" ? "sleeping" : "deleted";
+                        const ts = b.state === "deleted" ? b.deletedAt : b.state === "stopped" ? b.stoppedAt : b.lastUpAt;
+                        const when = ts ? new Date(ts).toISOString().slice(0, 16).replace("T", " ") : "";
+                        return (
+                          <View key={b.id} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                            <Text style={{ color, fontSize: 10, fontWeight: "700", width: 56 }}>{label}</Text>
+                            <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "monospace", flex: 1 }} numberOfLines={1}>
+                              {b.name}{b.serverIp ? ` · ${b.serverIp}` : ""}
+                            </Text>
+                            <Text style={{ color: c.textMuted, fontSize: 9 }}>{when}</Text>
                           </View>
                         );
                       })}

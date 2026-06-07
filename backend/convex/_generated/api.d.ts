@@ -16,6 +16,7 @@ import type * as aiModels from "../aiModels.js";
 import type * as aiRunners from "../aiRunners.js";
 import type * as auth from "../auth.js";
 import type * as authLogs from "../authLogs.js";
+import type * as byoMachines from "../byoMachines.js";
 import type * as cleanup from "../cleanup.js";
 import type * as cloudLifecycle from "../cloudLifecycle.js";
 import type * as cloudMachines from "../cloudMachines.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   aiRunners: typeof aiRunners;
   auth: typeof auth;
   authLogs: typeof authLogs;
+  byoMachines: typeof byoMachines;
   cleanup: typeof cleanup;
   cloudLifecycle: typeof cloudLifecycle;
   cloudMachines: typeof cloudMachines;

@@ -145,6 +145,40 @@ export function devTopUpManagedCloud(token: string, amountCents = 1000) {
   );
 }
 
+export interface ByoMachine {
+  id: string;
+  provider: string;
+  serverId: string;
+  deviceId?: string | null;
+  name: string;
+  region?: string | null;
+  plan?: string | null;
+  serverIp?: string | null;
+  imageId?: string | null;
+  snapshotImageId?: string | null;
+  state: "active" | "stopped" | "deleted";
+  createdAt: number;
+  lastUpAt?: number | null;
+  stoppedAt?: number | null;
+  deletedAt?: number | null;
+  updatedAt: number;
+}
+
+// BYO cloud boxes' lifecycle state from Convex (alive/sleeping/deleted +
+// timestamps). Convex holds id/state/timestamps only — never the token.
+export async function getByoMachines(token: string): Promise<ByoMachine[]> {
+  try {
+    const res = await fetch(`${getConvexSiteUrl()}/byo/machines`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { machines?: ByoMachine[] };
+    return Array.isArray(data.machines) ? data.machines : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function getManagedCloudBalance(token: string): Promise<ManagedCloudBalanceSummary | null> {
   try {
     const res = await fetch(`${getConvexSiteUrl()}/billing/yaver-cloud/balance`, {

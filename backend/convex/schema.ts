@@ -1728,6 +1728,39 @@ export default defineSchema({
   }).index("by_user", ["userId", "createdAt"])
     .index("by_order", ["orderId"]),
 
+  // BYO (bring-your-own) cloud boxes the user runs on THEIR OWN provider
+  // account (Hetzner/DigitalOcean) via their vault token — Yaver's wallet
+  // is NOT involved (they pay the provider directly). Lifecycle
+  // BOOKKEEPING ONLY so state (alive/sleeping/deleted) + timestamps are
+  // visible across the user's devices. STRICTLY id/state/timestamps — NO
+  // token, NO key, NO path, NO secret (privacy contract; pinned by
+  // convex_privacy_test.go). serverId / serverIp are the user's own
+  // public cloud resource (not credentials); the token to act on them
+  // never leaves the owner's agent vault.
+  byoMachines: defineTable({
+    userId: v.id("users"),
+    provider: v.string(),                    // "hetzner" | "digitalocean"
+    serverId: v.string(),                    // provider numeric id (not a secret)
+    deviceId: v.optional(v.string()),        // once the box self-registers
+    name: v.string(),
+    region: v.optional(v.string()),
+    plan: v.optional(v.string()),
+    serverIp: v.optional(v.string()),        // user's own public box ip
+    imageId: v.optional(v.string()),         // baked per-account golden image (fast re-spin)
+    snapshotImageId: v.optional(v.string()), // current stop snapshot to resume from
+    state: v.union(
+      v.literal("active"),                   // alive / running
+      v.literal("stopped"),                  // sleeping (snapshot kept, server deleted)
+      v.literal("deleted"),                  // gone
+    ),
+    createdAt: v.number(),
+    lastUpAt: v.optional(v.number()),        // last time it went active
+    stoppedAt: v.optional(v.number()),       // last sleep
+    deletedAt: v.optional(v.number()),       // tombstone
+    updatedAt: v.number(),
+  }).index("by_user", ["userId", "updatedAt"])
+    .index("by_user_server", ["userId", "serverId"]),
+
   // ── Org-admin singletons ──────────────────────────────────────────
   // Both keyed by the literal "org" so .first() always returns the
   // one-and-only row. A new row replaces; a deleted row reverts the
