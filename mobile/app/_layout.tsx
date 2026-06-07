@@ -15,7 +15,7 @@ import "../src/lib/cryptoSetup";
 import { installRuntimeDebugHandlers } from "../src/lib/runtimeDebug";
 installRuntimeDebugHandlers();
 
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useEffect } from "react";
@@ -26,11 +26,13 @@ import { DeviceProvider } from "../src/context/DeviceContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { FeedbackOverlay } from "../src/components/FeedbackOverlay";
 import { ShareComposeModal } from "../src/components/ShareComposeModal";
+import { DogfoodCaptureHost } from "../src/components/DogfoodCaptureHost";
 import { RunningTasksPill } from "../src/components/RunningTasksPill";
 import { PairLinkHandler } from "../src/lib/pairLinkHandler";
 import { ShareIntentReceiver } from "../src/lib/shareReceiver";
 import { registerNativeScreenRecorder } from "../src/lib/screenRecorder";
 import { startFeedbackShakeBridge } from "../src/lib/feedbackTrigger";
+import { loadDogfoodMode, recordDogfoodRoute } from "../src/lib/dogfoodMode";
 import { useAuth } from "../src/context/AuthContext";
 
 class ErrorBoundary extends React.Component<
@@ -76,6 +78,17 @@ function InnerLayout() {
   useEffect(() => {
     return startFeedbackShakeBridge(user?.id);
   }, [user?.id]);
+  // Dogfood mode: re-arm the sticky toggle on sign-in (per-user flag). When on,
+  // this starts the native screenshot auto-catch + breadcrumb recorder.
+  useEffect(() => {
+    void loadDogfoodMode(user?.id);
+  }, [user?.id]);
+  // Feed the active route into dogfood breadcrumbs + the native capture payload
+  // so a caught screenshot knows which screen it's on. No-op when dogfood is off.
+  const pathname = usePathname();
+  useEffect(() => {
+    recordDogfoodRoute(pathname);
+  }, [pathname]);
   // Orientation policy: phones stay portrait (system rotation lock
   // is unreliable across Android OEMs, so enforce in-app); tablets
   // run free so split-pane layouts can use landscape. Decision is
@@ -113,6 +126,7 @@ function InnerLayout() {
       <PairLinkHandler />
       <ShareIntentReceiver />
       <ShareComposeModal />
+      <DogfoodCaptureHost />
     </>
   );
 }

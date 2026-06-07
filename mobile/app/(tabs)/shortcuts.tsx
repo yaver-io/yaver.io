@@ -26,22 +26,35 @@ import {
   type Shortcut,
   type ShortcutStep,
   type ShortcutStepKind,
+  type RobotShortcutAction,
 } from "../../src/lib/shortcuts";
 import { runShortcut, type StepPhase } from "../../src/lib/runShortcut";
 
 // Mobile Shortcuts tab — one-tap, chainable action shortcuts (connect →
-// open → reload, Talos-style). Storage is Convex-synced (userShortcuts);
-// the chain runs client-side via runShortcut.ts. Creation is seeded with
-// common-case templates plus a step editor for custom chains.
+// open → reload, robot cell view/debug/actions). Storage is Convex-synced
+// (userShortcuts); the chain runs client-side via runShortcut.ts.
+// Creation is seeded with common-case templates plus a step editor.
 
-const STEP_KINDS: { kind: ShortcutStepKind; label: string; icon: keyof typeof Ionicons.glyphMap; needsDevice: boolean; needsProject: boolean }[] = [
+const STEP_KINDS: { kind: ShortcutStepKind; label: string; icon: keyof typeof Ionicons.glyphMap; needsDevice: boolean; needsProject: boolean; isRobot?: boolean }[] = [
   { kind: "select-device", label: "Connect to device", icon: "desktop-outline", needsDevice: true, needsProject: false },
   { kind: "open-project", label: "Open project on phone", icon: "play-circle-outline", needsDevice: true, needsProject: true },
   { kind: "start-dev", label: "Start dev server", icon: "rocket-outline", needsDevice: true, needsProject: true },
   { kind: "hermes-reload", label: "Hermes reload", icon: "flash-outline", needsDevice: true, needsProject: true },
+  { kind: "open-robot", label: "Open robot controls", icon: "radio-outline", needsDevice: true, needsProject: false, isRobot: true },
+  { kind: "robot-action", label: "Robot action", icon: "hardware-chip-outline", needsDevice: true, needsProject: false, isRobot: true },
 ];
 
 const CARD_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7"];
+const ROBOT_ACTIONS: { value: RobotShortcutAction; label: string }[] = [
+  { value: "status", label: "Status" },
+  { value: "home", label: "Home" },
+  { value: "jog", label: "Jog" },
+  { value: "tool", label: "Tool" },
+  { value: "screw", label: "Drive screw" },
+  { value: "program-run", label: "Run program" },
+  { value: "estop", label: "E-stop" },
+  { value: "reset", label: "Reset" },
+];
 
 type RunState = { id: string; steps: Record<number, StepPhase>; error?: string } | null;
 
@@ -144,6 +157,7 @@ export default function ShortcutsScreen() {
           await selectDevice(d);
         },
         openProjectsTab: () => router.push("/(tabs)/apps"),
+        openRobotTab: () => router.push("/(tabs)/robot"),
         setAgent: async (deviceId, runner, model) => {
           try { await setPrimaryRunnerForDevice(deviceId, runner, model || ""); } catch { /* best-effort preset */ }
         },
@@ -172,7 +186,7 @@ export default function ShortcutsScreen() {
     loadRunners();
   }, [shortcuts.length, loadProjects, loadRunners]);
 
-  const applyTemplate = useCallback((tpl: "reload" | "open" | "startReload" | "full") => {
+  const applyTemplate = useCallback((tpl: "reload" | "open" | "startReload" | "full" | "robotView" | "robotDebug" | "robotHome" | "robotScrew" | "robotEstop") => {
     const dId = activeDevice?.id;
     const dName = activeDevice?.name;
     const proj = projects[0] || "";
@@ -182,12 +196,22 @@ export default function ShortcutsScreen() {
       open: [dev, { kind: "open-project", deviceId: dId, projectSlug: proj }],
       startReload: [dev, { kind: "start-dev", deviceId: dId, projectSlug: proj }, { kind: "hermes-reload", deviceId: dId, mode: "bundle" }],
       full: [dev, { kind: "open-project", deviceId: dId, projectSlug: proj }, { kind: "hermes-reload", deviceId: dId, mode: "bundle" }],
+      robotView: [dev, { kind: "open-robot", deviceId: dId, deviceName: dName }],
+      robotDebug: [dev, { kind: "open-robot", deviceId: dId, deviceName: dName }, { kind: "robot-action", deviceId: dId, deviceName: dName, robotAction: "status" }],
+      robotHome: [dev, { kind: "robot-action", deviceId: dId, deviceName: dName, robotAction: "home", verify: "frames" }],
+      robotScrew: [dev, { kind: "robot-action", deviceId: dId, deviceName: dName, robotAction: "screw", verify: "frames" }],
+      robotEstop: [{ kind: "robot-action", deviceId: dId, deviceName: dName, robotAction: "estop" }],
     };
     const names: Record<typeof tpl, string> = {
       reload: `Reload on ${dName || "device"}`,
       open: `Open ${proj || "project"}`,
       startReload: `Start + reload ${proj || "project"}`,
       full: `Open + reload ${proj || "project"}`,
+      robotView: `Open ${dName || "robot"}`,
+      robotDebug: `Debug ${dName || "robot"}`,
+      robotHome: `Home ${dName || "robot"}`,
+      robotScrew: `Drive screw on ${dName || "robot"}`,
+      robotEstop: `E-stop ${dName || "robot"}`,
     };
     setEditingId(undefined);
     setDraftName(names[tpl]);
@@ -241,6 +265,13 @@ export default function ShortcutsScreen() {
     if (spec.needsDevice) { next.deviceId = activeDevice?.id; next.deviceName = activeDevice?.name; }
     if (spec.needsProject) next.projectSlug = projects[0] || "";
     if (kind === "hermes-reload") next.mode = "bundle";
+    if (kind === "robot-action") {
+      next.robotAction = "status";
+      next.verify = "frames";
+      next.axis = "X";
+      next.distanceMm = 10;
+      next.feed = 3000;
+    }
     setDraftSteps((s) => [...s, next]);
   };
   const updateStep = (i: number, patch: Partial<ShortcutStep>) =>
@@ -357,6 +388,11 @@ export default function ShortcutsScreen() {
               { key: "startReload", label: "Start dev + reload", sub: "Connect → start dev server → reload", icon: "rocket-outline" },
               { key: "open", label: "Open project on phone", sub: "Connect → load project", icon: "play-circle-outline" },
               { key: "full", label: "Open + reload", sub: "Connect → open → reload", icon: "albums-outline" },
+              { key: "robotView", label: "Open robot controls", sub: "Connect → select robot → live controls", icon: "radio-outline" },
+              { key: "robotDebug", label: "Robot debug view", sub: "Connect → controls → status check", icon: "bug-outline" },
+              { key: "robotHome", label: "Home robot", sub: "Connect → robot home with verification", icon: "locate-outline" },
+              { key: "robotScrew", label: "Drive screw", sub: "Connect → torque-gated screw action", icon: "construct-outline" },
+              { key: "robotEstop", label: "Robot e-stop", sub: "Immediate stop on the selected robot", icon: "hand-left-outline" },
             ] as const).map((t) => (
               <Pressable
                 key={t.key}
@@ -581,6 +617,99 @@ function StepEditor({
           }}
         />
       )}
+      {step.kind === "robot-action" && (
+        <View>
+          <Chips
+            label="Action"
+            items={ROBOT_ACTIONS}
+            selected={step.robotAction || "status"}
+            onSelect={(value) => onChange({ robotAction: value as RobotShortcutAction })}
+          />
+          {["home", "jog", "screw", "program-run"].includes(step.robotAction || "status") && (
+            <Chips
+              label="Verify"
+              items={[
+                { value: "frames", label: "Frames" },
+                { value: "agent", label: "Agent" },
+                { value: "off", label: "Off" },
+              ]}
+              selected={step.verify || "frames"}
+              onSelect={(value) => onChange({ verify: value as any })}
+            />
+          )}
+          {step.robotAction === "jog" && (
+            <View>
+              <Chips
+                label="Axis"
+                items={[
+                  { value: "X", label: "X" },
+                  { value: "Y", label: "Y" },
+                  { value: "Z", label: "Z" },
+                ]}
+                selected={step.axis || "X"}
+                onSelect={(value) => onChange({ axis: value as any, feed: value === "Z" ? 600 : 3000 })}
+              />
+              <NumberField label="Distance mm" value={step.distanceMm ?? 10} onChange={(distanceMm) => onChange({ distanceMm })} />
+              <NumberField label="Feed" value={step.feed ?? (step.axis === "Z" ? 600 : 3000)} onChange={(feed) => onChange({ feed })} />
+            </View>
+          )}
+          {step.robotAction === "tool" && (
+            <Chips
+              label="Tool"
+              items={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              selected={step.toolOn === false ? "off" : "on"}
+              onSelect={(value) => onChange({ toolOn: value === "on" })}
+            />
+          )}
+          {step.robotAction === "program-run" && (
+            <TextInput
+              value={step.programName || ""}
+              onChangeText={(programName) => onChange({ programName })}
+              placeholder="program name"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              style={[stepStyles.smallInput, { backgroundColor: c.bg, color: c.textPrimary, borderColor: c.border }]}
+            />
+          )}
+          {step.robotAction === "screw" && (
+            <View>
+              <NumberField label="Target torque Nmm" value={step.targetTorqueNmm} onChange={(targetTorqueNmm) => onChange({ targetTorqueNmm })} optional />
+              <NumberField label="X position" value={step.x} onChange={(x) => onChange({ x })} optional />
+              <NumberField label="Y position" value={step.y} onChange={(y) => onChange({ y })} optional />
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function NumberField({ label, value, onChange, optional }: {
+  label: string;
+  value?: number;
+  onChange: (value: number | undefined) => void;
+  optional?: boolean;
+}) {
+  const c = useColors();
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 6 }}>{label.toUpperCase()}</Text>
+      <TextInput
+        value={value == null ? "" : String(value)}
+        onChangeText={(text) => {
+          const trimmed = text.trim();
+          if (!trimmed && optional) { onChange(undefined); return; }
+          const n = Number(trimmed);
+          if (Number.isFinite(n)) onChange(n);
+        }}
+        keyboardType="numbers-and-punctuation"
+        placeholder={optional ? "optional" : "0"}
+        placeholderTextColor={c.textMuted}
+        style={[stepStyles.smallInput, { backgroundColor: c.bg, color: c.textPrimary, borderColor: c.border, marginTop: 0 }]}
+      />
     </View>
   );
 }

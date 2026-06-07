@@ -2,6 +2,7 @@ import React from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -10,6 +11,7 @@ import {
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../context/ThemeContext";
+import { AppScreenHeader } from "./AppScreenHeader";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
 import { connectionManager } from "../lib/connectionManager";
@@ -60,6 +62,10 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   const [pickedDeviceId, setPickedDeviceId] = React.useState<string | null>(null);
   const [switching, setSwitching] = React.useState(false);
   const [switchError, setSwitchError] = React.useState<string | null>(null);
+  // Brief "✓ connected" confirmation shown before the modal auto-closes, so a
+  // successful switch isn't an instant silent dismiss (which read as "did it
+  // even work?"). Holds the connected device's name.
+  const [switchSuccess, setSwitchSuccess] = React.useState<string | null>(null);
   const [pingByDevice, setPingByDevice] = React.useState<
     Record<string, { rttMs: number; ok: boolean; at: number }>
   >({});
@@ -91,6 +97,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     if (!visible) {
       setSwitching(false);
       setSwitchError(null);
+      setSwitchSuccess(null);
       return;
     }
     if (activeDevice?.id && eligibleDevices.some((d) => d.id === activeDevice.id)) {
@@ -223,12 +230,19 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
             : `Couldn't reach ${target.name}.`,
         );
       }
-      onSelected?.(target);
-      onClose();
+      // Success — show a brief "✓ connected" confirmation instead of a silent
+      // dismiss, then hand off + close. Keep `switching` true so the success
+      // view stays up during the short delay.
+      setSwitchSuccess(target.name);
+      setTimeout(() => {
+        onSelected?.(target);
+        onClose();
+      }, 1100);
     } catch (err: any) {
+      // Keep `switching` true (do NOT clear it) so the error view with the
+      // failure detail + Try again renders instead of dropping back to the
+      // list, which made failures look identical to successes.
       setSwitchError(err?.message || "Failed to switch remote box.");
-    } finally {
-      setSwitching(false);
     }
   }, [pickedDevice, selectDevice, activeDevice?.id, lastError, onSelected, onClose]);
 
@@ -313,66 +327,93 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: c.bg }}>
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingHorizontal: 16,
-            paddingTop: Math.max(insets.top, 12) + 6,
-            paddingBottom: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: c.border,
-          }}
-        >
-          <Pressable
-            onPress={onClose}
-            hitSlop={12}
-            style={({ pressed }) => ({
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 4,
-              paddingLeft: 10,
-              paddingRight: 14,
-              paddingVertical: 8,
-              borderRadius: 999,
-              backgroundColor: pressed ? c.border : c.bgCard,
-            })}
-          >
-            <Text style={{ color: c.textMuted, fontSize: 18, lineHeight: 18, marginTop: -1 }}>{"‹"}</Text>
-            <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>Cancel</Text>
-          </Pressable>
-          <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>
-            {switching ? "Switching" : "Remote Box"}
-          </Text>
-          <View style={{ width: 88 }} />
-        </View>
+        <AppScreenHeader
+          title={switchSuccess ? "Connected" : switching ? "Switching" : "Remote Box"}
+          backLabel="Cancel"
+          onBack={onClose}
+          style={{ paddingTop: Math.max(insets.top, 12) + 6 }}
+        />
 
         {switching ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
-            {switchError ? (
+            {switchSuccess ? (
               <>
-                <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "600", marginBottom: 6 }}>
+                <View
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 32,
+                    backgroundColor: c.success + "22",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginBottom: 16,
+                  }}
+                >
+                  <Text style={{ color: c.success, fontSize: 34, fontWeight: "800", marginTop: -2 }}>{"✓"}</Text>
+                </View>
+                <Text style={{ color: c.textPrimary, fontSize: 17, fontWeight: "700", marginBottom: 4 }}>
+                  Connected
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center" }}>
+                  Now using {switchSuccess}
+                </Text>
+              </>
+            ) : switchError ? (
+              <>
+                <Text style={{ color: c.warn, fontSize: 17, fontWeight: "700", marginBottom: 8 }}>
                   Couldn't switch
                 </Text>
-                <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 20, textAlign: "center" }}>
-                  {switchError}
-                </Text>
-                <Pressable
-                  onPress={() => {
-                    setSwitchError(null);
-                    setSwitching(false);
-                  }}
-                  style={({ pressed }) => ({
-                    backgroundColor: c.accent,
-                    paddingVertical: 12,
-                    paddingHorizontal: 22,
+                <View
+                  style={{
+                    alignSelf: "stretch",
+                    maxHeight: 220,
+                    backgroundColor: c.bgCard,
+                    borderWidth: 1,
+                    borderColor: c.border,
                     borderRadius: 10,
-                    opacity: pressed ? 0.85 : 1,
-                  })}
+                    padding: 12,
+                    marginBottom: 20,
+                  }}
                 >
-                  <Text style={{ color: "#000", fontWeight: "700" }}>Try again</Text>
-                </Pressable>
+                  <ScrollView>
+                    <Text
+                      selectable
+                      style={{ color: c.textMuted, fontSize: 12, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", lineHeight: 18 }}
+                    >
+                      {switchError}
+                    </Text>
+                  </ScrollView>
+                </View>
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <Pressable
+                    onPress={() => {
+                      setSwitchError(null);
+                      setSwitching(false);
+                    }}
+                    style={({ pressed }) => ({
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      paddingVertical: 12,
+                      paddingHorizontal: 20,
+                      borderRadius: 10,
+                      opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    <Text style={{ color: c.textPrimary, fontWeight: "600" }}>Back to list</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => { void handleContinue(); }}
+                    style={({ pressed }) => ({
+                      backgroundColor: c.accent,
+                      paddingVertical: 12,
+                      paddingHorizontal: 22,
+                      borderRadius: 10,
+                      opacity: pressed ? 0.85 : 1,
+                    })}
+                  >
+                    <Text style={{ color: "#000", fontWeight: "700" }}>Try again</Text>
+                  </Pressable>
+                </View>
               </>
             ) : (
               <>
@@ -389,10 +430,10 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
             contentContainerStyle={[{ padding: 16, paddingBottom: 32 }, tabletContent]}
           >
             <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "700", marginBottom: 4 }}>
-              Switch remote box
+              Choose remote box
             </Text>
             <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 20 }}>
-              Pick which machine should own Hermes builds, reloads, and project discovery. This choice applies across the whole app.
+              Select the machine Yaver should use for app builds, live reload, and project tools. Confirm at the bottom when you're ready.
             </Text>
             {eligibleDevices.length === 0 ? (
               <View style={{ padding: 16, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard }}>
@@ -431,9 +472,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                       ? "Connected (pool) · ping failed"
                       : "Connected · pinging…"
                   : device.online
-                    ? "Live · tap to connect"
+                    ? "Online · tap to select"
                     : reachableNow
-                      ? `Reachable · ${probe?.line ?? ""} · tap to connect`
+                      ? `Reachable · ${probe?.line ?? ""} · tap to select`
                       : `Down · ${lastSeenLabel((device as any).lastSeen)}`;
                 const roleLabel =
                   device.id === primaryDeviceId
@@ -446,13 +487,6 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                     key={device.id}
                     onPress={() => {
                       setPickedDeviceId(device.id);
-                      if (switching) return;
-                      if (activeDevice?.id === device.id && connectedSet.has(device.id)) {
-                        onSelected?.(device);
-                        onClose();
-                        return;
-                      }
-                      void handleContinue(device);
                     }}
                     style={({ pressed }) => ({
                       marginBottom: 10,
@@ -629,7 +663,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                     ? "Keep using this machine"
                     : pickedDeviceIsCurrent
                       ? "Reconnect to this machine"
-                    : "Switch to this machine"}
+                      : "Use selected machine"}
               </Text>
             </Pressable>
           </ScrollView>

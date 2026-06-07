@@ -9,9 +9,9 @@
  */
 
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import { AppBackButton } from "../src/components/AppBackButton";
 import { SafeAreaView } from "react-native-safe-area-context";
 import VoiceTestPanel from "../src/components/VoiceTestPanel";
 
@@ -20,9 +20,7 @@ export default function VoiceTestScreen(): React.JSX.Element {
   return (
     <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
       <View style={styles.headerRow}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <Ionicons name="chevron-back" size={24} color="#fff" />
-        </Pressable>
+        <AppBackButton variant="icon" color="#fff" onPress={() => router.back()} />
         <Text style={styles.headerTitle}>Voice test</Text>
         <View style={{ width: 24 }} />
       </View>

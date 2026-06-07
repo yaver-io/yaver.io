@@ -1,5 +1,5 @@
 import { Tabs, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ExpoDevice from "expo-device";
@@ -10,7 +10,6 @@ import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
-import { AppBackButton } from "../../src/components/AppBackButton";
 import { typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 
@@ -22,36 +21,30 @@ import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
+  // One consistent line-icon family across the bar — outline when
+  // inactive, solid when active. Avoids the old mismatch where some tabs
+  // used heavy "-circle" glyphs and others a bare bolt, which read as
+  // ugly/unrhythmic. Active state is a clean accent tint (icon + label),
+  // iOS-native style — no boxy pill behind the glyph.
   const icons: Record<string, { on: keyof typeof Ionicons.glyphMap; off: keyof typeof Ionicons.glyphMap }> = {
-    Reload: { on: "refresh-circle", off: "refresh-circle-outline" },
-    Tasks: { on: "checkmark-circle", off: "checkmark-circle-outline" },
+    Reload: { on: "refresh", off: "refresh-outline" },
+    Tasks: { on: "list", off: "list-outline" },
     Todos: { on: "checkbox", off: "square-outline" },
-    Projects: { on: "play-circle", off: "play-circle-outline" },
+    Projects: { on: "apps", off: "apps-outline" },
     Shortcuts: { on: "flash", off: "flash-outline" },
     Repos: { on: "folder", off: "folder-outline" },
     Builds: { on: "hammer", off: "hammer-outline" },
     Devices: { on: "desktop", off: "desktop-outline" },
-    More: { on: "ellipsis-horizontal-circle", off: "ellipsis-horizontal-circle-outline" },
+    More: { on: "ellipsis-horizontal", off: "ellipsis-horizontal" },
     Settings: { on: "settings", off: "settings-outline" },
   };
   const glyph = icons[label] ?? { on: "ellipse", off: "ellipse-outline" };
-  // Accent-tinted pill bg behind the focused icon glyph (Material 3 /
-  // Linear pattern). Replaces the prior 24x2 indicator bar floating
-  // above the icon — that read as a stuck artifact on iOS where no
-  // first-party app uses that affordance. Inactive: bare wrapper.
   return (
     <View style={styles.tabIconWrap}>
-      <View
-        style={[
-          styles.iconPill,
-          focused
-            ? { backgroundColor: c.accent + "1A" }
-            : null,
-        ]}
-      >
+      <View style={styles.iconSlot}>
         <Ionicons
           name={focused ? glyph.on : glyph.off}
-          size={20}
+          size={24}
           color={focused ? c.accent : c.tabInactive}
         />
         {showGreenDot && (
@@ -94,12 +87,6 @@ export default function TabLayout() {
   const bottomBarPaddingBottom = Math.max(insets.bottom, isTabletPortrait ? 4 : 0);
   const bottomBarPaddingTop = isTabletPortrait ? 8 : 6;
 
-  const backToMore = useCallback(
-    () => (
-      <AppBackButton onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingLeft: 14 }} />
-    ),
-    [router],
-  );
 
   // Poll dev server status — drives the green-dot badge on the Hot
   // Reload + Projects tabs. We INTENTIONALLY do not auto-navigate to
@@ -343,35 +330,35 @@ export default function TabLayout() {
           Tasks. Reached from More, so it gets a back button like runs/monitor. */}
       <Tabs.Screen
         name="devices"
-        options={{ href: null, title: "Devices", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Devices", headerShown: false }}
       />
       <Tabs.Screen
         name="screenlog"
-        options={{ href: null, title: "Screen Monitor", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Screen Monitor", headerShown: false }}
       />
       <Tabs.Screen
         name="mesh"
-        options={{ href: null, title: "Yaver Mesh", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Yaver Mesh", headerShown: false }}
       />
       <Tabs.Screen
         name="mesh-node"
-        options={{ href: null, title: "Node", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Node", headerShown: false }}
       />
       <Tabs.Screen
         name="mesh-exit"
-        options={{ href: null, title: "Exit node", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Exit node", headerShown: false }}
       />
       <Tabs.Screen
         name="mesh-access"
-        options={{ href: null, title: "Access rules", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Access rules", headerShown: false }}
       />
       <Tabs.Screen
         name="mesh-share"
-        options={{ href: null, title: "Sharing", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Sharing", headerShown: false }}
       />
       <Tabs.Screen
         name="robot"
-        options={{ href: null, title: "Robot Cell", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Robot Cell", headerShown: false }}
       />
       <Tabs.Screen
         name="more"
@@ -402,15 +389,15 @@ export default function TabLayout() {
       <Tabs.Screen name="project" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="runs"
-        options={{ href: null, title: "Local CI", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Local CI", headerShown: false }}
       />
       <Tabs.Screen
         name="monitor"
-        options={{ href: null, title: "Monitor", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Monitor", headerShown: false }}
       />
       <Tabs.Screen
         name="agent"
-        options={{ href: null, title: "Agent Mode", headerShown: true, headerLeft: backToMore }}
+        options={{ href: null, title: "Agent Mode", headerShown: false }}
       />
     </Tabs>
   );
@@ -418,13 +405,11 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 2, gap: 3 },
-  // Pill behind the icon glyph; only painted on focus (background set
-  // inline). 48x28 / radius 14 mirrors the Material 3 active-tab
-  // indicator and works in both themes via accent + low alpha.
-  iconPill: {
-    width: 48,
+  // Plain centered slot for the glyph — no pill. Active state is conveyed
+  // by the accent tint + solid icon, matching iOS-native tab bars.
+  iconSlot: {
+    width: 44,
     height: 28,
-    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -434,8 +419,8 @@ const styles = StyleSheet.create({
   tabLabel: { marginTop: 1, fontSize: 11, letterSpacing: -0.2 },
   greenDot: {
     position: "absolute",
-    top: 2,
-    right: 8,
+    top: 1,
+    right: 6,
     width: 8,
     height: 8,
     borderRadius: 4,

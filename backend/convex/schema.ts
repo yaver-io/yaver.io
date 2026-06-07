@@ -1592,12 +1592,13 @@ export default defineSchema({
 
   // User-defined one-tap shortcuts (mobile Shortcuts tab). Each shortcut
   // is an ordered chain of deterministic actions — connect to a device,
-  // open a project, push a Hermes reload, start a dev server — run
-  // client-side on the phone. Privacy contract: steps carry ONLY a
-  // deviceId (uuid), a project slug, and flags/labels. They MUST NOT
-  // carry absolute paths or task-prompt text (a "speak/type a task" step
-  // collects its prompt at run time and never persists it) — same
-  // reasoning as userProjects above. Enforced by convex_privacy_test.go.
+  // open a project, push a Hermes reload, start a dev server, open/debug a
+  // robot cell — run client-side on the phone. Privacy contract: steps carry
+  // ONLY a deviceId (uuid), a project slug, numeric robot flags, and labels.
+  // They MUST NOT carry absolute paths, task-prompt text, logs, images, or
+  // sensor captures (a "speak/type a task" step collects its prompt at run
+  // time and never persists it) — same reasoning as userProjects above.
+  // Enforced by convex_privacy_test.go.
   userShortcuts: defineTable({
     userId: v.id("users"),
     name: v.string(),
@@ -1606,13 +1607,26 @@ export default defineSchema({
     order: v.number(),              // sort position in the grid
     steps: v.array(
       v.object({
-        kind: v.string(),                     // select-device | open-project | hermes-reload | start-dev | create-task
+        kind: v.string(),                     // select-device | open-project | hermes-reload | start-dev | open-robot | robot-action
         deviceId: v.optional(v.string()),     // uuid, matches devices.deviceId
         deviceName: v.optional(v.string()),   // display label only (resolved deviceId can roam)
         projectSlug: v.optional(v.string()),  // filesystem basename only — never a path
         mode: v.optional(v.string()),         // hermes-reload: "dev" | "bundle"
         framework: v.optional(v.string()),    // start-dev: expo | vite | nextjs | flutter | ...
         label: v.optional(v.string()),        // UI label ONLY — never a task prompt
+        runner: v.optional(v.string()),        // agent id only (codex / claude / ...)
+        model: v.optional(v.string()),         // model id only
+        runnerLabel: v.optional(v.string()),   // display label only
+        robotAction: v.optional(v.string()),   // status | home | jog | tool | screw | program-run | estop | reset
+        verify: v.optional(v.string()),        // frames | agent | off
+        axis: v.optional(v.string()),          // X | Y | Z
+        distanceMm: v.optional(v.number()),
+        feed: v.optional(v.number()),
+        toolOn: v.optional(v.boolean()),
+        programName: v.optional(v.string()),   // taught robot program name only
+        targetTorqueNmm: v.optional(v.number()),
+        x: v.optional(v.number()),
+        y: v.optional(v.number()),
       }),
     ),
     updatedAt: v.number(),

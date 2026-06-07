@@ -2,10 +2,11 @@
 //
 // Storage lives in Convex (`userShortcuts` table) so shortcuts roam
 // across a user's phones and survive reinstall. Privacy contract: a
-// shortcut step carries ONLY a deviceId, a project slug, and flags/labels
-// — never an absolute path or task-prompt text (see backend/convex/
-// schema.ts + shortcuts.ts). The chain itself runs client-side on the
-// phone via runShortcut.ts.
+// shortcut step carries ONLY a deviceId, a project slug, small robot
+// action parameters, and flags/labels — never an absolute path,
+// task-prompt text, logs, or captured media (see backend/convex/schema.ts
+// + shortcuts.ts). The chain itself runs client-side on the phone via
+// runShortcut.ts.
 
 import { getConvexSiteUrl } from "./auth";
 
@@ -13,7 +14,19 @@ export type ShortcutStepKind =
   | "select-device" // connect this phone's client to a dev machine
   | "open-project" // load a project onto the phone (Hermes) via the Projects tab
   | "start-dev" // switch the dev box to a project + start its dev server
-  | "hermes-reload"; // push a fresh Hermes bundle to the phone
+  | "hermes-reload" // push a fresh Hermes bundle to the phone
+  | "open-robot" // select a robot cell and open the Robot tab
+  | "robot-action"; // drive a robot cell over the mesh
+
+export type RobotShortcutAction =
+  | "status"
+  | "home"
+  | "jog"
+  | "tool"
+  | "screw"
+  | "program-run"
+  | "estop"
+  | "reset";
 
 export interface ShortcutStep {
   kind: ShortcutStepKind;
@@ -39,6 +52,18 @@ export interface ShortcutStep {
   runnerLabel?: string;
   /** Optional human label shown in the step list. */
   label?: string;
+  /** Robot shortcut action. Params below are privacy-safe machine flags
+   *  only: no paths, no prompts, no raw camera frames. */
+  robotAction?: RobotShortcutAction;
+  verify?: "agent" | "frames" | "off";
+  axis?: "X" | "Y" | "Z";
+  distanceMm?: number;
+  feed?: number;
+  toolOn?: boolean;
+  programName?: string;
+  targetTorqueNmm?: number;
+  x?: number;
+  y?: number;
 }
 
 export interface Shortcut {
@@ -113,7 +138,39 @@ export function describeStep(step: ShortcutStep): string {
       const base = step.projectSlug ? `Reload ${step.projectSlug}` : "Hermes bundle reload";
       return step.runnerLabel ? `${base} · ${step.runnerLabel}` : base;
     }
+    case "open-robot":
+      return `Open ${step.deviceName || "robot"} controls`;
+    case "robot-action":
+      return describeRobotStep(step);
     default:
       return step.label || (step as ShortcutStep).kind;
   }
+}
+
+function describeRobotStep(step: ShortcutStep): string {
+  const robot = step.deviceName || "robot";
+  switch (step.robotAction) {
+    case "status":
+      return `Check ${robot} status`;
+    case "home":
+      return `Home ${robot}`;
+    case "jog":
+      return `Jog ${robot} ${step.axis || "X"} ${signed(step.distanceMm ?? 10)}mm`;
+    case "tool":
+      return `${step.toolOn === false ? "Turn off" : "Turn on"} ${robot} tool`;
+    case "screw":
+      return `Drive screw${step.targetTorqueNmm ? ` to ${step.targetTorqueNmm} Nmm` : ""}`;
+    case "program-run":
+      return `Run ${step.programName || "robot program"}`;
+    case "estop":
+      return `E-stop ${robot}`;
+    case "reset":
+      return `Reset ${robot}`;
+    default:
+      return step.label || "Robot action";
+  }
+}
+
+function signed(n: number): string {
+  return n > 0 ? `+${n}` : `${n}`;
 }

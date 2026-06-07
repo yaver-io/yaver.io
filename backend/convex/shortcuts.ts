@@ -4,12 +4,13 @@ import { validateSessionInternal } from "./auth";
 
 // User-defined one-tap shortcuts for the mobile Shortcuts tab. A shortcut
 // is an ordered chain of deterministic actions executed client-side on the
-// phone (connect → open project → Hermes reload → …).
+// phone (connect → open project → Hermes reload → open robot/debug → …).
 //
 // PRIVACY: rows store ONLY deviceId (uuid) + project slug + flags + UI
-// labels. No absolute paths, no task-prompt text — the same contract as
-// userProjects. The validator below is the enforced boundary; if you add a
-// field, make sure it can never carry a path or a prompt, and update
+// labels / numeric robot action flags. No absolute paths, no task-prompt
+// text, no camera frames — the same contract as userProjects. The validator
+// below is the enforced boundary; if you add a field, make sure it can never
+// carry a path, a prompt, or captured data, and update
 // desktop/agent/convex_privacy_test.go.
 const stepValidator = v.object({
   kind: v.string(),
@@ -25,6 +26,20 @@ const stepValidator = v.object({
   model: v.optional(v.string()),
   runnerLabel: v.optional(v.string()),
   label: v.optional(v.string()),
+  // Robot shortcuts are deterministic control/view/debug flags. They may
+  // select a device, open the Robot tab, check status, run a named taught
+  // program, or send small numeric motion/tool parameters. They never store
+  // prompts, paths, logs, images, or sensor captures.
+  robotAction: v.optional(v.string()),
+  verify: v.optional(v.string()),
+  axis: v.optional(v.string()),
+  distanceMm: v.optional(v.number()),
+  feed: v.optional(v.number()),
+  toolOn: v.optional(v.boolean()),
+  programName: v.optional(v.string()),
+  targetTorqueNmm: v.optional(v.number()),
+  x: v.optional(v.number()),
+  y: v.optional(v.number()),
 });
 
 /** List the caller's shortcuts, ordered for the grid. */

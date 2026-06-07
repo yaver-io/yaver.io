@@ -28,6 +28,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { AppBackButton } from "../../src/components/AppBackButton";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
@@ -122,9 +123,7 @@ export default function RunnerAuthApproveScreen(): React.JSX.Element {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
       <View style={styles.headerRow}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
-          <Ionicons name="chevron-back" size={24} color={c.textPrimary} />
-        </Pressable>
+        <AppBackButton variant="icon" color={c.textPrimary} onPress={() => router.back()} />
         <Text style={{ color: c.textPrimary, fontSize: 17, fontWeight: "600" }}>Runner Auth</Text>
         <View style={{ width: 24 }} />
       </View>

@@ -8,6 +8,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, Share, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import {
@@ -24,6 +26,7 @@ import {
   type RobotTarget,
   type VerifyMode,
 } from "../../src/lib/robotClient";
+import { openRobotBus } from "../../src/lib/openRobotBus";
 import { ScrewdriverPanel } from "../../src/components/robot/ScrewdriverPanel";
 import { TeachPendant } from "../../src/components/robot/TeachPendant";
 import { ProfileSheet } from "../../src/components/robot/ProfileSheet";
@@ -57,6 +60,7 @@ function cellState(deviceId: string, connected: boolean, status: RobotStatus | n
 
 export default function RobotScreen() {
   const c = useColors();
+  const router = useRouter();
   const deviceCtx = useDevice();
   const { devices, connectionStatus } = deviceCtx;
   const token = (deviceCtx as any).token as string | null;
@@ -200,6 +204,12 @@ export default function RobotScreen() {
     },
     [refresh, loadMeta],
   );
+
+  useEffect(() => {
+    return openRobotBus.subscribe((id) => {
+      pick(id).catch(() => {});
+    });
+  }, [pick]);
 
   // run a control action; if recording + it succeeded, capture it as a step.
   const run = useCallback(
@@ -391,7 +401,9 @@ export default function RobotScreen() {
   const profileLabel = profiles.find((p) => p.kind === status?.profile)?.label || status?.profile;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 14 }}>
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <AppScreenHeader title="Robot Cell" onBack={() => router.navigate("/(tabs)/more" as any)} />
+      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 14 }}>
       {/* Header */}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <View style={{ flex: 1 }}>
@@ -688,7 +700,8 @@ export default function RobotScreen() {
         </View>
       )}
       <View style={{ height: 40 }} />
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 

@@ -28,6 +28,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -57,6 +58,7 @@ export default function MonitorScreen() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={[]}>
+      <AppScreenHeader title="Monitor" onBack={() => router.navigate("/(tabs)/more" as any)} />
       <View style={[styles.header, { borderBottomColor: c.border }]}>
         <Text style={[styles.subtitle, { color: c.textSecondary }]}>
           Errors · Releases · Uptime · Events · Flags

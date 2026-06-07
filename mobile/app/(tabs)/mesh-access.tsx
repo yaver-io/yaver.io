@@ -4,6 +4,8 @@
 // port-level packet filter.
 
 import { ScrollView, Text, TextInput, View, Pressable } from "react-native";
+import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useMesh } from "../../src/lib/useMesh";
 import type { ACLRule } from "../../src/lib/meshTypes";
@@ -17,11 +19,14 @@ function describeEndpoint(type: ACLRule["srcType"], val: string) {
 
 export default function MeshAccessScreen() {
   const c = useColors();
+  const router = useRouter();
   const mesh = useMesh();
   const { rules, saveRules } = mesh;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 12 }}>
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <AppScreenHeader title="Access rules" onBack={() => router.navigate("/(tabs)/more" as any)} />
+      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 12 }}>
       <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18 }}>
         No rules = open mesh (every node reaches every node). Add a rule and everything not explicitly
         allowed is denied. Rules apply on every device, live.
@@ -75,6 +80,7 @@ export default function MeshAccessScreen() {
       >
         <Text style={{ color: "#34d399", fontSize: 13, fontWeight: "600" }}>+ Add rule</Text>
       </Pressable>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }

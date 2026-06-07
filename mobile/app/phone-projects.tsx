@@ -14,10 +14,10 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Stack, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice, type Device } from "../src/context/DeviceContext";
-import { AppBackButton } from "../src/components/AppBackButton";
+import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { isCloudPreviewUser } from "../src/lib/cloudPreview";
@@ -343,7 +343,7 @@ export default function PhoneProjectsScreen() {
     }
   }, [codingMode, runnerChoiceEnabled]);
   useEffect(() => {
-    if (!connected && startMode !== "this-phone") {
+    if (!connected && startMode !== "this-phone" && startMode !== "yaver-cloud") {
       setStartMode("this-phone");
     }
   }, [connected, startMode]);
@@ -459,7 +459,7 @@ export default function PhoneProjectsScreen() {
       );
       return;
     }
-    if (codingMode === "runner" && !connected) {
+    if (codingMode === "runner" && startMode !== "yaver-cloud" && !connected) {
       Alert.alert("Connect a runner", "Remote coding needs a connected Yaver runner.");
       return;
     }
@@ -748,7 +748,7 @@ export default function PhoneProjectsScreen() {
               onPress={() => {
                 setStep(0);
                 setStartMode("this-phone");
-                setCodingMode(activeRunnerDevice ? "runner" : "phone");
+                setCodingMode("phone");
                 setShowForm(true);
               }}
               style={[styles.btn, { backgroundColor: c.accent, marginTop: 12 }]}
@@ -779,7 +779,7 @@ export default function PhoneProjectsScreen() {
               {[
                 "1. Name your app",
                 "2. Git (optional)",
-                "3. Who will code?",
+                "3. Where should it run?",
                 "4. Quick survey (optional)",
                 "5. Describe the app",
               ][step]}
@@ -788,7 +788,7 @@ export default function PhoneProjectsScreen() {
               {[
                 "You can change this later.",
                 "GitHub or GitLab, public or private. You can skip — Yaver works without git.",
-                "Use this phone, or send the project to a connected Yaver machine.",
+                "Choose this phone, your connected machine, another online box, or Yaver Cloud.",
                 "Five quick multiple-choice questions. Skip if you'd rather just type.",
                 "Required. Tell Yaver what you're building, in your own words.",
               ][step]}
@@ -934,36 +934,53 @@ export default function PhoneProjectsScreen() {
 
             {step === 2 ? (
               <>
-                <Text style={[styles.label, { color: c.textMuted }]}>Who will code?</Text>
+                <Text style={[styles.label, { color: c.textMuted }]}>Where should this sandbox run?</Text>
                 {(
                   [
                     {
-                      id: "phone" as CodingMode,
+                      id: "this-phone" as StartMode,
                       label: "This phone",
-                      sub: "Use your OpenAI or GLM key on this device",
+                      sub: "Private local sandbox. Works without a remote box.",
                     },
                     {
-                      id: "runner" as CodingMode,
-                      label: "Remote runner",
+                      id: "current-agent" as StartMode,
+                      label: "Connected machine",
                       sub: activeRunnerDevice
-                        ? `${activeRunnerDevice.name} connected`
-                        : "Connect a Yaver machine to use a remote runner",
+                        ? `${activeRunnerDevice.name} will build and run it`
+                        : "Connect a Yaver machine first",
                     },
-                  ] as const
+                    ...(devMachines.length > 0
+                      ? [{
+                          id: "dev-hw" as StartMode,
+                          label: "Other online box",
+                          sub: selectedDevMachine
+                            ? `${selectedDevMachine.name} selected`
+                            : "Pick a Mac, Linux box, or Pi",
+                        }]
+                      : []),
+                    ...(canUseYaverCloud
+                      ? [{
+                          id: "yaver-cloud" as StartMode,
+                          label: "Yaver Cloud",
+                          sub: "Managed machine. No local computer needed.",
+                        }]
+                      : []),
+                  ]
                 ).map((opt) => (
                   <Pressable
                     key={opt.id}
                     onPress={() => {
-                      setCodingMode(opt.id);
-                      if (opt.id === "runner" && runnerChoiceEnabled) {
-                        setStartMode("current-agent");
+                      setStartMode(opt.id);
+                      setCodingMode(opt.id === "this-phone" ? "phone" : "runner");
+                      if (opt.id === "dev-hw") {
+                        pickDevMachine();
                       }
                     }}
                     style={[
                       styles.choiceCard,
                       {
-                        backgroundColor: codingMode === opt.id ? c.accent + "22" : "transparent",
-                        borderColor: codingMode === opt.id ? c.accent : c.border,
+                        backgroundColor: startMode === opt.id ? c.accent + "22" : "transparent",
+                        borderColor: startMode === opt.id ? c.accent : c.border,
                       },
                     ]}
                   >
@@ -972,7 +989,7 @@ export default function PhoneProjectsScreen() {
                   </Pressable>
                 ))}
 
-                {codingMode === "phone" ? (
+                {startMode === "this-phone" ? (
                   <>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>AI provider</Text>
                     <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
@@ -1023,40 +1040,63 @@ export default function PhoneProjectsScreen() {
                   </>
                 ) : null}
 
-                {codingMode === "runner" ? (
+                {startMode !== "this-phone" ? (
                   <>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Backend</Text>
                     <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 4 }]}>
                       <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>
-                        {activeRunnerDevice ? "Connected machine ready" : "No machine connected"}
+                        {startMode === "yaver-cloud"
+                          ? "Yaver Cloud selected"
+                          : startMode === "dev-hw"
+                            ? selectedDevMachine
+                              ? "Online box selected"
+                              : "Pick an online box"
+                            : activeRunnerDevice
+                              ? "Connected machine ready"
+                              : "No machine connected"}
                       </Text>
                       <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-                        {activeRunnerDevice
-                          ? `${activeRunnerDevice.name} is connected. This project will be created there.`
-                          : "Open Devices to connect a Yaver machine, then come back and select Remote runner."}
+                        {startMode === "yaver-cloud"
+                          ? "Yaver will create this sandbox on a managed cloud machine."
+                          : startMode === "dev-hw"
+                            ? selectedDevMachine
+                              ? `${selectedDevMachine.name} will own this sandbox.`
+                              : "Choose which online box should own this sandbox."
+                            : activeRunnerDevice
+                              ? `${activeRunnerDevice.name} is connected. This project will be created there.`
+                              : "Open Devices to connect a Yaver machine, then come back and select Connected machine."}
                       </Text>
                       <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                        <Pressable
-                          onPress={() => router.push("/(tabs)/devices" as any)}
-                          style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
-                        >
-                          <Text style={[styles.btnText, { color: c.textPrimary }]}>
-                            {activeRunnerDevice ? "Open Devices" : "Connect machine"}
-                          </Text>
-                        </Pressable>
-                        {activeRunnerDevice ? (
+                        {startMode === "dev-hw" ? (
                           <Pressable
-                            onPress={() => {
-                              setCodingMode("phone");
-                              setStartMode("this-phone");
-                            }}
+                            onPress={pickDevMachine}
                             style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
                           >
-                            <Text style={[styles.btnText, { color: c.textPrimary }]}>Use this phone instead</Text>
+                            <Text style={[styles.btnText, { color: c.textPrimary }]}>Choose box</Text>
+                          </Pressable>
+                        ) : startMode === "current-agent" ? (
+                          <Pressable
+                            onPress={() => router.push("/(tabs)/devices" as any)}
+                            style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
+                          >
+                            <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                              {activeRunnerDevice ? "Open Devices" : "Connect machine"}
+                            </Text>
                           </Pressable>
                         ) : null}
+                        <Pressable
+                          onPress={() => {
+                            setCodingMode("phone");
+                            setStartMode("this-phone");
+                          }}
+                          style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
+                        >
+                          <Text style={[styles.btnText, { color: c.textPrimary }]}>Use this phone instead</Text>
+                        </Pressable>
                       </View>
                     </View>
+                    {startMode === "current-agent" ? (
+                      <>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Runner</Text>
                     {availableRunners.length === 0 ? (
                       // No authed runner on the picked machine —
@@ -1114,6 +1154,8 @@ export default function PhoneProjectsScreen() {
                         })}
                       </ScrollView>
                     )}
+                      </>
+                    ) : null}
                   </>
                 ) : null}
               </>
@@ -1414,63 +1456,6 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
               </>
             ) : null}
 
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-              <Pressable
-                onPress={() => {
-                  if (step === 0) {
-                    setShowForm(false);
-                    return;
-                  }
-                  setStep((prev) => Math.max(0, prev - 1));
-                }}
-                style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
-              >
-                <Text style={[styles.btnText, { color: c.textPrimary }]}>{step === 0 ? "Cancel" : "Back"}</Text>
-              </Pressable>
-              {step < 4 ? (() => {
-                // Per-step validation. Mandatory steps: 0 (name) and
-                // 4 (description, gated separately on the Create
-                // button). 1 (git), 2 (LLM placement), 3 (survey)
-                // all have safe defaults so Next is always
-                // available there.
-                const nameOk = name.trim().length > 0;
-                const canAdvance = step === 0 ? nameOk : true;
-                return (
-                  <Pressable
-                    disabled={!canAdvance}
-                    onPress={() => setStep((prev) => Math.min(4, prev + 1))}
-                    style={[
-                      styles.btn,
-                      { backgroundColor: c.accent, flex: 1, opacity: canAdvance ? 1 : 0.4 },
-                    ]}
-                  >
-                    <Text style={[styles.btnText, { color: c.bg }]}>
-                      {!canAdvance && step === 0 ? "Name required" : "Next"}
-                    </Text>
-                  </Pressable>
-                );
-              })() : (() => {
-                const descOk = prompt.trim().length > 0;
-                return (
-                  <Pressable
-                    onPress={create}
-                    disabled={creating || !descOk}
-                    style={[
-                      styles.btn,
-                      { backgroundColor: c.accent, flex: 1, opacity: creating || !descOk ? 0.4 : 1 },
-                    ]}
-                  >
-                    {creating ? (
-                      <ActivityIndicator color={c.bg} />
-                    ) : (
-                      <Text style={[styles.btnText, { color: c.bg }]}>
-                        {!descOk ? "Description required" : "Create"}
-                      </Text>
-                    )}
-                  </Pressable>
-                );
-              })()}
-            </View>
           </View>
         )}
         {err ? (
@@ -1509,26 +1494,110 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
     ],
   );
 
+  const wizardFooter = useMemo(() => {
+    if (!showForm) return null;
+    const nameOk = name.trim().length > 0;
+    const placementOk =
+      step !== 2 ||
+      startMode === "this-phone" ||
+      startMode === "yaver-cloud" ||
+      (startMode === "current-agent" && !!activeRunnerDevice) ||
+      (startMode === "dev-hw" && !!selectedDevMachine);
+    const descOk = prompt.trim().length > 0 || importedConversation.trim().length > 0;
+    const canAdvance = step === 0 ? nameOk : placementOk;
+    const primaryLabel =
+      step < 4
+        ? !canAdvance && step === 0
+          ? "Name required"
+          : !canAdvance && step === 2
+            ? startMode === "current-agent"
+              ? "Connect machine"
+              : startMode === "dev-hw"
+                ? "Choose box"
+                : "Choose location"
+            : "Next"
+        : !descOk
+          ? "Description required"
+          : "Create sandbox";
+
+    return (
+      <View
+        style={[
+          styles.wizardFooter,
+          {
+            paddingBottom: Math.max(insets.bottom, 10),
+            backgroundColor: c.bg,
+            borderTopColor: c.border,
+          },
+        ]}
+      >
+        <Pressable
+          onPress={() => {
+            if (step === 0) {
+              setShowForm(false);
+              return;
+            }
+            setStep((prev) => Math.max(0, prev - 1));
+          }}
+          style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
+        >
+          <Text style={[styles.btnText, { color: c.textPrimary }]}>{step === 0 ? "Cancel" : "Back"}</Text>
+        </Pressable>
+        {step < 4 ? (
+          <Pressable
+            disabled={!canAdvance}
+            onPress={() => setStep((prev) => Math.min(4, prev + 1))}
+            style={[
+              styles.btn,
+              { backgroundColor: c.accent, flex: 1, opacity: canAdvance ? 1 : 0.4 },
+            ]}
+          >
+            <Text style={[styles.btnText, { color: c.bg }]}>{primaryLabel}</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={create}
+            disabled={creating || !descOk}
+            style={[
+              styles.btn,
+              { backgroundColor: c.accent, flex: 1, opacity: creating || !descOk ? 0.4 : 1 },
+            ]}
+          >
+            {creating ? (
+              <ActivityIndicator color={c.bg} />
+            ) : (
+              <Text style={[styles.btnText, { color: c.bg }]}>{primaryLabel}</Text>
+            )}
+          </Pressable>
+        )}
+      </View>
+    );
+  }, [
+    activeRunnerDevice,
+    c,
+    creating,
+    importedConversation,
+    insets.bottom,
+    name,
+    prompt,
+    selectedDevMachine,
+    showForm,
+    startMode,
+    step,
+  ]);
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 84 : 0}
       style={{ flex: 1, backgroundColor: c.bg }}
     >
-      <Stack.Screen
-        options={{
-          headerShown: true,
-          title: "Mobile Sandbox",
-          headerShadowVisible: false,
-          headerStyle: { backgroundColor: c.bg },
-          headerTintColor: c.accent,
-          headerTitleStyle: { color: c.textPrimary, fontWeight: "700" },
-          headerLeft: () => <AppBackButton onPress={() => router.back()} label="Back" />,
-        }}
-      />
+      <AppScreenHeader title="Mobile Sandbox" onBack={() => router.back()} />
       <FlatList
         data={projects}
         keyExtractor={(p) => p.slug}
-        contentContainerStyle={{ paddingBottom: 80 + insets.bottom, paddingTop: 12 }}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: (showForm ? 128 : 80) + insets.bottom, paddingTop: 12 }}
         ListHeaderComponent={header}
         refreshControl={
           <RefreshControl
@@ -1571,6 +1640,7 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
           </View>
         )}
       />
+      {wizardFooter}
     </KeyboardAvoidingView>
   );
 }
@@ -1605,6 +1675,13 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 6,
     borderRadius: 999,
+  },
+  wizardFooter: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    borderTopWidth: 1,
   },
   btn: { paddingVertical: 12, borderRadius: 8, alignItems: "center" },
   btnSecondary: {

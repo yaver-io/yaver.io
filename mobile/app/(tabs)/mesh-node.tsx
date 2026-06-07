@@ -14,6 +14,7 @@ import {
   nodeLabel,
   type MeshPeer,
 } from "../../src/lib/meshTypes";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { CopyableAddress } from "../../src/components/mesh/CopyableAddress";
 import { CidrChips } from "../../src/components/mesh/CidrChips";
 import { ChevronRightIcon, ExitNodeIcon, GatewayIcon } from "../../src/components/mesh/MeshIcons";
@@ -39,15 +40,21 @@ export default function MeshNodeScreen() {
 
   if (mesh.loading && !peer) {
     return (
-      <View style={{ flex: 1, backgroundColor: c.bg, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator color={c.textMuted} />
+      <View style={{ flex: 1, backgroundColor: c.bg }}>
+        <AppScreenHeader title="Node" onBack={() => router.navigate("/(tabs)/more" as any)} />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator color={c.textMuted} />
+        </View>
       </View>
     );
   }
   if (!peer) {
     return (
-      <View style={{ flex: 1, backgroundColor: c.bg, alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <Text style={{ color: c.textMuted, fontSize: 14 }}>Node not found. Pull to refresh on the mesh screen.</Text>
+      <View style={{ flex: 1, backgroundColor: c.bg }}>
+        <AppScreenHeader title="Node" onBack={() => router.navigate("/(tabs)/more" as any)} />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <Text style={{ color: c.textMuted, fontSize: 14 }}>Node not found. Pull to refresh on the mesh screen.</Text>
+        </View>
       </View>
     );
   }
@@ -72,7 +79,9 @@ export default function MeshNodeScreen() {
     : "None";
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <AppScreenHeader title="Node" onBack={() => router.navigate("/(tabs)/more" as any)} />
+      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       {/* Identity */}
       <View style={{ gap: 8 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -167,7 +176,8 @@ export default function MeshNodeScreen() {
           <ChevronRightIcon size={16} color={c.textMuted} />
         </Pressable>
       ) : null}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
