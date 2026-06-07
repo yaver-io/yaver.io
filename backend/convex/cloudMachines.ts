@@ -965,6 +965,149 @@ export const setProvisioned = internalMutation({
   },
 });
 
+// ─── BYO phone-direct provisioning (no Yaver HCLOUD_TOKEN) ─────────
+// The privacy-preserving counterpart to the managed provision action:
+// Convex mints the box's device credential + self-bootstrapping
+// cloud-init (reusing buildManagedCloudInit), but DOES NOT call Hetzner.
+// The phone creates the server itself with the user's OWN Hetzner token
+// (which never touches Convex). The box self-installs yaver, auths as
+// the user via the baked userSessionToken, registers as a device, and
+// mirrors the runner — same vibe-ready bootstrap as a managed box, on
+// the user's own account.
+
+/** Insert a BYO ("self-hosted" origin) row WITHOUT scheduling the managed
+ *  provision action (there's no Yaver token; the phone provisions). */
+export const createByoRow = internalMutation({
+  args: {
+    userId: v.id("users"),
+    machineType: v.string(),
+    region: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const specDef = MACHINE_SPECS[args.machineType as keyof typeof MACHINE_SPECS];
+    if (!specDef) throw new Error("Invalid machine type: " + args.machineType);
+    const now = Date.now();
+    const specs: { vcpu: number; ramGb: number; diskGb: number; arch: string; gpu?: string; vram?: number } = {
+      vcpu: specDef.vcpu,
+      ramGb: specDef.ramGb,
+      diskGb: specDef.diskGb,
+      arch: specDef.arch,
+    };
+    if ("gpu" in specDef) {
+      specs.gpu = (specDef as any).gpu;
+      specs.vram = (specDef as any).vram;
+    }
+    return await ctx.db.insert("cloudMachines", {
+      userId: args.userId,
+      machineType: args.machineType,
+      origin: "self-hosted", // user's own Hetzner account
+      provider: "hetzner",
+      tier: "byok",
+      status: "provisioning",
+      provisionPhase: "creating",
+      provisionProgress: 5,
+      provisionPhaseAt: now,
+      runnersAuthorized: false,
+      multiUser: false,
+      region: args.region ?? "eu",
+      tools: [],
+      specs,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+/** Store the bootstrap identity (token hash + deviceId) on a BYO row,
+ *  before the phone creates the server. Separate from setProvisioned,
+ *  which records the Hetzner id/ip the phone reports back afterwards. */
+export const setByoBootstrap = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    machineTokenHash: v.string(),
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.machineId, {
+      machineTokenHash: args.machineTokenHash,
+      deviceId: args.deviceId,
+      bootImageSource: "vanilla", // BYO boots ubuntu + first-boot build
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/** Mint a BYO box bootstrap: create the row, mint creds, create the user
+ *  session the box will use, and build the cloud-init the phone bakes
+ *  into the Hetzner server. Returns everything the phone needs to create
+ *  the server itself — NO Hetzner token involved. */
+export const mintByoBootstrap = internalAction({
+  args: {
+    userId: v.id("users"),
+    machineType: v.string(),
+    region: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{
+    machineId: string;
+    deviceId: string;
+    serverName: string;
+    userData: string;
+  }> => {
+    const specDef = MACHINE_SPECS[args.machineType as keyof typeof MACHINE_SPECS];
+    if (!specDef) throw new Error("Invalid machine type: " + args.machineType);
+
+    const machineId: any = await ctx.runMutation(internal.cloudMachines.createByoRow, {
+      userId: args.userId,
+      machineType: args.machineType,
+      region: args.region,
+    });
+
+    const shortId = machineId.toString().substring(0, 8);
+    const serverName = `yaver-${args.machineType}-${shortId}`;
+    const deviceId = `byo-${shortId}`;
+    const isGpu = args.machineType === "gpu";
+    const yaverArch = specDef.arch === "amd64" ? "amd64" : "arm64";
+    const yaverReleaseUrl = `https://github.com/kivanccakmak/yaver.io/releases/latest/download/yaver-linux-${yaverArch}.tar.gz`;
+
+    const machineToken = randomHex(24);
+    const machineTokenHash = await sha256Hex(machineToken);
+    const userSessionToken = randomHex(32);
+    const userSessionTokenHash = await sha256Hex(userSessionToken);
+    const convexSite = process.env.CONVEX_SITE_URL || "https://perceptive-minnow-557.eu-west-1.convex.site";
+
+    // Box auths as the user via this session; valid 1 year.
+    await ctx.runMutation(api.auth.createSession, {
+      tokenHash: userSessionTokenHash,
+      userId: args.userId,
+      deviceId,
+      expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
+    });
+
+    await ctx.runMutation(internal.cloudMachines.setByoBootstrap, {
+      machineId,
+      machineTokenHash,
+      deviceId,
+    });
+
+    // BYO has no Yaver-managed DNS; the box is reached by IP + registers
+    // as a device. hostname is cosmetic here (no auto subdomain / TLS).
+    const userData = buildManagedCloudInit({
+      convexSite,
+      machineId: machineId.toString(),
+      machineToken,
+      userSessionToken,
+      deviceId,
+      hostname: deviceId,
+      yaverArch,
+      yaverReleaseUrl,
+      gpu: isGpu,
+      tier: "byok",
+    });
+
+    return { machineId: machineId.toString(), deviceId, serverName, userData };
+  },
+});
+
 export const setStatus = internalMutation({
   args: {
     machineId: v.id("cloudMachines"),

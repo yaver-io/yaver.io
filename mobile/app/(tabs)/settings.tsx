@@ -5295,7 +5295,7 @@ export default function SettingsScreen() {
             phone with no paired agent (api.hetzner.cloud called directly;
             token stays in the device keychain). */}
         <View style={styles.section}>
-          <HetznerSection c={c} />
+          <HetznerSection c={c} token={token} />
         </View>
 
         {/* Delete account */}

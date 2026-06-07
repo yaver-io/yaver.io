@@ -4321,6 +4321,78 @@ http.route({
   }),
 });
 
+// POST /byo/provision-init — mint a BYO box bootstrap (device credential +
+// self-bootstrapping cloud-init) so the PHONE can create the server on the
+// user's own Hetzner account. No Hetzner token here: the phone holds it and
+// calls api.hetzner.cloud directly. Returns the cloud-init user_data the
+// phone bakes into the server. project: phone-direct hcloud provision-to-vibe.
+http.route({
+  path: "/byo/provision-init",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    let body: { machineType?: string; region?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      /* defaults below */
+    }
+    const machineType = body.machineType === "gpu" ? "gpu" : "cpu";
+    const region = (body.region ?? "eu").trim() === "us" ? "us" : "eu";
+    // Anti-fan-out: cap BYO rows per user the same way managed does.
+    const MAX = Number(process.env.YAVER_CLOUD_MAX_MACHINES_PER_USER) || 10;
+    const existing = await ctx.runQuery(api.cloudMachines.listForUser, { userId: session.userDocId as any });
+    const live = Array.isArray(existing) ? existing.filter((m: any) => m.status && m.status !== "stopped").length : 0;
+    if (live >= MAX) {
+      return jsonResponse({ ok: false, error: `Machine limit reached (${MAX}).` }, 409);
+    }
+    try {
+      const out = await ctx.runAction(internal.cloudMachines.mintByoBootstrap, {
+        userId: session.userDocId as any,
+        machineType,
+        region,
+      });
+      return jsonResponse({ ok: true, ...out });
+    } catch (e) {
+      return jsonResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  }),
+});
+
+// POST /byo/provision-complete — the phone reports the Hetzner id/ip it just
+// created so the row can manage it later. The box itself also self-registers
+// as a device (via the baked session) and beacons phases over X-Machine-Token.
+http.route({
+  path: "/byo/provision-complete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    let body: { machineId?: string; hetznerServerId?: string; serverIp?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Bad body", 400);
+    }
+    if (!body.machineId || !body.hetznerServerId) {
+      return errorResponse("machineId + hetznerServerId required", 400);
+    }
+    // Ownership check: the row must belong to the caller.
+    const machine = await ctx.runQuery(api.cloudMachines.get, { machineId: body.machineId as any }).catch(() => null);
+    if (!machine || String(machine.userId) !== String(session.userDocId)) {
+      return errorResponse("Not found", 404);
+    }
+    await ctx.runMutation(internal.cloudMachines.setProvisioned, {
+      machineId: body.machineId as any,
+      hetznerServerId: body.hetznerServerId,
+      serverIp: body.serverIp ?? "",
+      hostname: body.serverIp ?? "",
+    });
+    return jsonResponse({ ok: true });
+  }),
+});
+
 /** POST /billing/yaver-cloud/provision — prepaid spin-up. Create a new
  *  managed box funded by the wallet (NO subscription). Balance-gated:
  *  402 if the wallet can't cover the safe reserve for this SKU. The
