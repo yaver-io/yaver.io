@@ -182,10 +182,24 @@ func opsCloudProvisionHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	// together, so a user can never create a real billing box they then
 	// can't stop from the app. Without it, every action is a safe
 	// dry-run preview (no real spend).
+	// Image selection: explicit imageId wins; otherwise prefer the cached
+	// per-account golden image (bake-once → fast boot); else ubuntu base.
+	imageID := strings.TrimSpace(p.ImageID)
+	imageSource := "explicit"
+	if imageID == "" {
+		if g := readGoldenImage("hetzner"); g != "" {
+			imageID = g
+			imageSource = "golden"
+		}
+	}
 	if !p.Confirm || !cloudStopStartLive() {
 		image := "ubuntu-22.04 (first-boot install)"
-		if strings.TrimSpace(p.ImageID) != "" {
-			image = "image " + p.ImageID + " (prebuilt, fast boot)"
+		if imageID != "" {
+			tag := "prebuilt, fast boot"
+			if imageSource == "golden" {
+				tag = "your baked golden image, fast boot"
+			}
+			image = fmt.Sprintf("image %s (%s)", imageID, tag)
 		}
 		clone := ""
 		if repoURL != "" {
@@ -205,7 +219,7 @@ func opsCloudProvisionHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	if err != nil {
 		return OpsResult{OK: false, Code: "manager_error", Error: err.Error()}
 	}
-	ip, id, perr := m.hetznerCreateServerCustom(token, name, plan, region, strings.TrimSpace(p.ImageID), repoURL)
+	ip, id, perr := m.hetznerCreateServerCustom(token, name, plan, region, imageID, repoURL)
 	if perr != nil {
 		return OpsResult{OK: false, Code: "provision_failed", Error: perr.Error()}
 	}
@@ -213,7 +227,7 @@ func opsCloudProvisionHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	// only — token never synced).
 	syncByoMachine("hetzner", id, "active", map[string]interface{}{
 		"name": name, "region": region, "plan": plan, "serverIp": ip,
-		"imageId": strings.TrimSpace(p.ImageID),
+		"imageId": imageID,
 	})
 	return OpsResult{OK: true, Initial: map[string]interface{}{
 		"provisioned": id, "ip": ip, "name": name, "plan": plan, "region": region,

@@ -137,10 +137,48 @@ func TestCloudProvision_SchemaHasNoCredentialField(t *testing.T) {
 	}
 }
 
+func TestGoldenImageCache_RoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if got := readGoldenImage("hetzner"); got != "" {
+		t.Fatalf("fresh cache should be empty, got %q", got)
+	}
+	if err := writeGoldenImage("hetzner", "12345"); err != nil {
+		t.Fatalf("writeGoldenImage: %v", err)
+	}
+	if got := readGoldenImage("hetzner"); got != "12345" {
+		t.Fatalf("want 12345, got %q", got)
+	}
+}
+
+func TestCloudBake_DryRunByDefault(t *testing.T) {
+	t.Setenv("YAVER_CLOUD_STOPSTART_LIVE", "")
+	res := opsCloudBakeHandler(OpsContext{}, json.RawMessage(`{"serverId":"4242","confirm":true}`))
+	mm, _ := res.Initial.(map[string]interface{})
+	if !res.OK || mm == nil || mm["dryRun"] != true {
+		t.Fatalf("bake must be dry-run without the live flag, got %+v", res)
+	}
+}
+
+// Bake-once: with a cached golden image, provision prefers it (fast boot)
+// instead of ubuntu — visible in the dry-run plan.
+func TestCloudProvision_PrefersGoldenImage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("YAVER_CLOUD_STOPSTART_LIVE", "")
+	if err := writeGoldenImage("hetzner", "99777"); err != nil {
+		t.Fatalf("seed golden: %v", err)
+	}
+	res := opsCloudProvisionHandler(OpsContext{}, json.RawMessage(`{"plan":"starter","confirm":true}`))
+	mm, _ := res.Initial.(map[string]interface{})
+	plan, _ := mm["plan"].(string)
+	if !strings.Contains(plan, "99777") || !strings.Contains(plan, "golden") {
+		t.Fatalf("provision should prefer the baked golden image 99777; plan=%q", plan)
+	}
+}
+
 // SECURITY: BYO mutate verbs are owner-only — a scoped guest (or any
 // non-owner) must not be able to spend the host's Hetzner.
 func TestByoVerbs_AreOwnerOnly(t *testing.T) {
-	for _, name := range []string{"cloud_provision", "cloud_snapshots"} {
+	for _, name := range []string{"cloud_provision", "cloud_snapshots", "cloud_bake", "cloud_reconcile"} {
 		opsRegistryMu.RLock()
 		spec, ok := opsRegistry[name]
 		opsRegistryMu.RUnlock()
