@@ -4149,6 +4149,45 @@ export class QuicClient {
     return data.initial ?? {};
   }
 
+  // Generic BYO ops dispatch helper (vault token stays on the agent).
+  private async byoOps(verb: string, payload: Record<string, unknown>): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verb, machine: 'local', payload }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data?.error || `${verb}: HTTP ${res.status}`);
+    return data.initial ?? {};
+  }
+
+  // Spin up a box on the user's OWN Hetzner account (BYO). confirm:true
+  // creates for real; the box self-installs + appears as a pending
+  // device to claim. Returns {provisioned,id,ip,name} or {dryRun,plan}.
+  cloudProvision(opts: { plan?: string; region?: string; imageId?: string; repoUrl?: string; name?: string; confirm?: boolean } = {}): Promise<any> {
+    return this.byoOps('cloud_provision', { confirm: true, ...opts });
+  }
+
+  // Stop a BYO box to halt hourly billing (snapshot then delete). Real
+  // delete needs YAVER_CLOUD_STOPSTART_LIVE=1 on the agent; otherwise a
+  // dry-run plan is returned. Returns {stopped,snapshotImageId} | {dryRun}.
+  cloudStopServer(serverId: string, label?: string): Promise<any> {
+    return this.byoOps('cloud_stop', { serverId, label, confirm: true });
+  }
+
+  // Bring a stopped BYO box back from its snapshot image.
+  cloudStartServer(snapshotImageId: string, name: string, plan?: string, region?: string): Promise<any> {
+    return this.byoOps('cloud_start', { snapshotImageId, name, plan, region, confirm: true });
+  }
+
+  // List snapshot images on the user's account (stopped boxes + recovery
+  // points) so the UI can offer restart.
+  async cloudSnapshots(): Promise<{ snapshots: any[] }> {
+    const r = await this.byoOps('cloud_snapshots', {});
+    return { snapshots: Array.isArray(r.snapshots) ? r.snapshots : [] };
+  }
+
   // ── Files (read-only project browser) ──
 
   async filesRoots(): Promise<{ roots: { id: string; name: string; path: string }[] }> {
