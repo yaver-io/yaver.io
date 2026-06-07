@@ -19,13 +19,52 @@ that can't be compiled or verified from the agent/CI environment.
   land together with the Apple entitlement + a native rebuild, or prebuild
   output changes in a build no one verified.
 
-**Activation checklist (on the Mac, when ready) — updated 2026-06-07:**
+**⚠️ ARCHITECTURAL BLOCKER discovered 2026-06-07 — @bacons/apple-targets does
+NOT compose with this repo's iOS project.** This repo **git-tracks**
+`mobile/ios/Yaver.xcodeproj/project.pbxproj` and ~20 hand-maintained
+`mobile/ios/Yaver/Yaver*.swift` panes (AppDelegate, YaverBundleLoader,
+YaverHTTPServer, the feedback/deploy/agents panes, …). The cold-rebuild flow
+regenerates `ios/` with `expo prebuild --clean` and then **`git checkout --
+mobile/ios/` restores the committed pbxproj** as the source of truth. But
+`@bacons/apple-targets` adds the `YaverMeshTunnel` target by *regenerating* the
+pbxproj during prebuild — and that regenerated pbxproj is exactly what the
+`git checkout` throws away (verified: target refs went 16 → 0 after the
+checkout). So the bacons-generated target never survives. The scaffold at
+`mobile/targets/yaver-mesh/` (expo-target.config.js + generated entitlements +
+Info.plist) is correct and reusable, but **the target must be added to the
+COMMITTED pbxproj, which bacons cannot do.**
 
-The iOS extension *target* is now scaffolded via **`@bacons/apple-targets`**
-(installed; supports `network-packet-tunnel`) at
+**Real path to finish iOS (multi-session native work):**
+1. Write a one-shot Node script using `xcode` (node-xcode) that adds the
+   `YaverMeshTunnel` app-extension target (product type
+   `com.apple.product-type.app-extension`, the packet-tunnel Info.plist +
+   `generated.entitlements`, an Embed App Extensions copy-files phase on the
+   app target, DEVELOPMENT_TEAM=5SJZ4KA39A) **directly to the committed
+   `mobile/ios/Yaver.xcodeproj/project.pbxproj`**, then COMMIT that pbxproj so
+   `git checkout` preserves it. (bacons stays only as the entitlements/Info.plist
+   generator; do NOT register it in `app.json`.)
+2. WireGuardKit (SPM, github.com/WireGuard/wireguard-apple, product
+   `WireGuardKit`) + its wireguard-go bridge → add to the new target (Xcode
+   Add-Package once, then it's in the committed pbxproj; the bridge needs Go).
+3. App-target App Group `group.io.yaver.mesh` + `appleTeamId` in app.json
+   (the latter is needed by any extension; harmless to add now).
+4. Build with `-allowProvisioningUpdates` (automatic signing may auto-register
+   the Network Extension capability; if Apple refuses, enable it once at
+   developer.apple.com → Identifiers → io.yaver.mobile → Capabilities).
+5. Verify on a real device.
+
+Note: this repo also already has an `expo-share-intent` ShareExtension target in
+the committed pbxproj — that target is the working template to mirror when
+hand-adding YaverMeshTunnel.
+
+---
+
+Earlier (now-superseded) staging note: the iOS extension *target* was scaffolded
+via **`@bacons/apple-targets`** at
 `mobile/targets/yaver-mesh/{expo-target.config.js,PacketTunnelProvider.swift}`.
 It is **STAGED, not active**: `@bacons/apple-targets` is intentionally NOT in
-`app.json` → `plugins`, so prebuild ignores it and the current build is green.
+`app.json` → `plugins` (and per the blocker above, registering it would not
+work anyway), so prebuild ignores it and the current build is green.
 
 Finish steps:
 1. **Apple Developer portal (GATE 1, account-level, cannot be automated):**
