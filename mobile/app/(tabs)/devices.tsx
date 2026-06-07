@@ -21,6 +21,7 @@ import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { chipPalette } from "../../src/lib/chipPalette";
 import { quicClient } from "../../src/lib/quic";
 import DeviceDetailsModal from "../../src/components/DeviceDetailsModal";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { submitPair, fetchPairInfo } from "../../src/lib/pairDevice";
 import {
@@ -1150,6 +1151,7 @@ export default function DevicesScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
+      <AppScreenHeader title="Devices" onBack={() => router.navigate("/(tabs)/more" as any)} />
       <View style={[styles.container, useMasterDetail ? { flexDirection: "row" } : null]}>
       <View style={useMasterDetail ? { width: 380, borderRightWidth: 1, borderRightColor: c.border } : { flex: 1 }}>
         {(activeDevice || anyPoolConnected) && effectiveConnectionStatus !== "disconnected" && (

@@ -10,7 +10,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type AgentGraphRun, type MachineInfo, type RunnerInfo } from "../../src/lib/quic";
@@ -18,6 +19,7 @@ import { describeConnectionStatus } from "../../src/lib/connection";
 
 export default function AgentModeScreen() {
   const c = useColors();
+  const router = useRouter();
   const { connectionStatus } = useDevice();
   const params = useLocalSearchParams<{ project?: string; path?: string }>();
   const isConnected = connectionStatus === "connected";
@@ -94,7 +96,8 @@ export default function AgentModeScreen() {
   }, [workDir, prompt, name, runner, template, maxParallel, selectedDevices, refresh]);
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["top"]}>
+    <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={[]}>
+      <AppScreenHeader title="Agent Mode" onBack={() => router.navigate("/(tabs)/more" as any)} />
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         contentContainerStyle={styles.content}

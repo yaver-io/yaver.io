@@ -41,6 +41,7 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { useRouter } from "expo-router";
+import { AppBackButton } from "../src/components/AppBackButton";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useDevice, type Device } from "../src/context/DeviceContext";
@@ -105,9 +106,7 @@ export default function GlassWorkspaceScreen(): React.ReactElement {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: PAL.border }]}>
-        <Pressable hitSlop={12} onPress={() => router.back()}>
-          <Text style={[styles.headerBtn, { color: PAL.muted }]}>‹</Text>
-        </Pressable>
+        <AppBackButton variant="chevron" color={PAL.muted} onPress={() => router.back()} />
         <View style={{ flex: 1, alignItems: "center" }}>
           <Text style={[styles.headerTitle, { color: PAL.fg }]} numberOfLines={1}>
             workspace · {deviceLabel}

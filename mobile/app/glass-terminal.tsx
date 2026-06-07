@@ -47,6 +47,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppBackButton } from "../src/components/AppBackButton";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useDevice, type Device } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
@@ -684,9 +685,7 @@ export default function GlassTerminalScreen() {
   return (
     <View style={[styles.root, { backgroundColor: PAL.bg, paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Pressable hitSlop={12} onPress={() => router.back()}>
-          <Text style={[styles.headerBtn, { color: PAL.muted }]}>‹</Text>
-        </Pressable>
+        <AppBackButton variant="chevron" color={PAL.muted} onPress={() => router.back()} />
         <Pressable
           hitSlop={8}
           onLongPress={() => mode === "shell" && setDevicePickerOpen(true)}

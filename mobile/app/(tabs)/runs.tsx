@@ -22,6 +22,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -43,6 +45,7 @@ type Tab = "specs" | "history" | "flake" | "alerts" | "devices" | "fixes" | "set
 
 export default function RunsScreen() {
   const c = useColors();
+  const router = useRouter();
   const tabletContent = useTabletContentStyle("wide");
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
@@ -154,6 +157,7 @@ export default function RunsScreen() {
   if (!isConnected) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+        <AppScreenHeader title="Local CI" onBack={() => router.navigate("/(tabs)/more" as any)} />
         <View style={styles.center}>
           <Text style={[styles.muted, { color: c.textMuted }]}>
             Connect to a device to use the local CI runner.
@@ -165,6 +169,7 @@ export default function RunsScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+      <AppScreenHeader title="Local CI" onBack={() => router.navigate("/(tabs)/more" as any)} />
       {/* Tabs — horizontally scrollable since we now have 7 */}
       <View style={[styles.tabBar, { borderColor: c.border }]}>
         <FlatList

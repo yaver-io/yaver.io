@@ -27,6 +27,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { AppBackButton } from "../src/components/AppBackButton";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useDevice } from "../src/context/DeviceContext";
@@ -109,9 +110,7 @@ export default function CloudOnboardingScreen(): React.ReactElement {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: PAL.border }]}>
-        <Pressable hitSlop={12} onPress={() => router.back()}>
-          <Text style={[styles.headerBtn, { color: PAL.muted }]}>‹</Text>
-        </Pressable>
+        <AppBackButton variant="chevron" color={PAL.muted} onPress={() => router.back()} />
         <Text style={[styles.headerTitle, { color: PAL.fg }]}>set up cloud box</Text>
         <View style={{ width: 30 }} />
       </View>

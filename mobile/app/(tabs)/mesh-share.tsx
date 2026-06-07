@@ -5,11 +5,14 @@
 import { useState } from "react";
 import { Alert, Pressable, ScrollView, Share, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useMesh } from "../../src/lib/useMesh";
 
 export default function MeshShareScreen() {
   const c = useColors();
+  const router = useRouter();
   const mesh = useMesh();
   const [supportLink, setSupportLink] = useState<string | null>(null);
 
@@ -19,7 +22,9 @@ export default function MeshShareScreen() {
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <AppScreenHeader title="Sharing" onBack={() => router.navigate("/(tabs)/more" as any)} />
+      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       {mesh.error ? (
         <View style={{ borderRadius: 14, borderWidth: 1, borderColor: "#ef444455", backgroundColor: "#ef444415", padding: 12 }}>
           <Text style={{ color: "#fca5a5", fontSize: 13 }}>{mesh.error}</Text>
@@ -100,6 +105,7 @@ export default function MeshShareScreen() {
           ))}
         </View>
       ) : null}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }

@@ -27,6 +27,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
@@ -60,6 +62,7 @@ function fmtDur(sec: number): string {
 
 export default function ScreenlogScreen() {
   const c = useColors();
+  const router = useRouter();
   const { activeDevice, devices } = useDevice();
   const { token } = useAuth();
 
@@ -218,6 +221,7 @@ export default function ScreenlogScreen() {
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["bottom"]}>
+      <AppScreenHeader title="Screen Monitor" onBack={() => router.navigate("/(tabs)/more" as any)} />
       <ScrollView
         contentContainerStyle={{ padding: spacing.md, gap: spacing.md }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textSecondary} />}
