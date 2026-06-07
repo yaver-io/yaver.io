@@ -38,6 +38,7 @@ import {
   type SourceFileEntry,
   UnsafeSourcePathError,
 } from "../../../src/lib/phoneSandboxSource";
+import { SandboxAiPanel } from "../../../src/components/SandboxAiPanel";
 
 const STARTER_FILE = "App.tsx";
 const STARTER_CONTENT = `// ${STARTER_FILE} — your phone-authored app entry point.
@@ -244,6 +245,28 @@ export default function PhoneProjectCodeScreen() {
     [openPath, slugStr, refreshFiles],
   );
 
+  // After the AI applies edits: refresh the tree, and if the open file was
+  // one of the changed paths, reload its buffer so the editor shows the new
+  // content (unless the user has unsaved local edits, which we don't clobber).
+  const onAiApplied = useCallback(
+    async (paths: string[]) => {
+      await refreshFiles();
+      if (openPath && paths.includes(openPath) && !dirty) {
+        try {
+          const content = await readSourceFile(slugStr, openPath);
+          setSavedContent(content);
+          setEditorContent(content);
+        } catch {
+          // file may have been deleted by the edit — drop the buffer.
+          setOpenPath(null);
+          setEditorContent("");
+          setSavedContent("");
+        }
+      }
+    },
+    [refreshFiles, openPath, dirty, slugStr],
+  );
+
   // Indent each row by its depth in the tree so a flat FlatList
   // still reads as a hierarchy without an explicit tree component.
   const indentFor = useCallback((relPath: string): number => {
@@ -357,6 +380,8 @@ export default function PhoneProjectCodeScreen() {
           </View>
         </View>
       ) : null}
+
+      <SandboxAiPanel slug={slugStr} openPath={openPath} onApplied={onAiApplied} />
 
       <View style={styles.body}>
         <View style={[styles.tree, { borderColor: c.border, backgroundColor: c.bgCard }]}>
