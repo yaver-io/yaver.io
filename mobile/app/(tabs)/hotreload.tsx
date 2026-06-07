@@ -7,6 +7,7 @@ import {
   NativeModules,
   Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   View,
@@ -162,7 +163,7 @@ export default function HotReloadScreen() {
         listGap: 14,
       }
     : null;
-  const { activeDevice, connectionStatus, devices, connectedDeviceIds } = useDevice();
+  const { activeDevice, connectionStatus, devices, connectedDeviceIds, refreshDevices } = useDevice();
   // Effective connected = focused-device alive OR any pool client live.
   // Used for the in-tab gating logic (showing project list vs. CTA)
   // so this tab no longer disagrees with Devices/Tasks about whether
@@ -207,6 +208,23 @@ export default function HotReloadScreen() {
   const [agentInfo, setAgentInfo] = useState<RemoteAgentInfo | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectsScanning, setProjectsScanning] = useState(false);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+
+  // Pull-to-refresh: re-scan projects on the box + re-poll devices, like the
+  // Tasks tab. The list itself updates from the existing poll loop; we just
+  // kick a fresh scan and show the spinner briefly.
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.allSettled([
+        quicClient.refreshMobileProjects(),
+        refreshDevices(),
+      ]);
+      if (connectionStatus === "connected") setProjectsScanning(true);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refreshDevices, connectionStatus]);
   const [scanStopping, setScanStopping] = useState(false);
   // Stalled scan detection: a healthy /projects/mobile scan settles in
   // 1-3s. If we're still "discovering" past ~10s, the remote agent is
@@ -1308,6 +1326,9 @@ export default function HotReloadScreen() {
           numColumns={projectCols}
           columnWrapperStyle={projectCols > 1 ? { gap: tabletCard?.listGap ?? 10 } : undefined}
           contentContainerStyle={[s.listContent, tabletContent]}
+          refreshControl={
+            <RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
+          }
           renderItem={({ item }) => {
             const isStarting = startingProject === item.name;
 
