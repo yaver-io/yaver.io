@@ -29,6 +29,7 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
 import { YaverAgentSettings } from "../../src/components/YaverAgentSettings";
+import BoxInitSection from "../../src/components/BoxInitSection";
 import CloudProvidersSection from "../../src/components/CloudProvidersSection";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, loadLocalSpeechConfig, saveLocalSpeechConfig, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
@@ -4838,6 +4839,10 @@ export default function SettingsScreen() {
               <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
 
               <YaverAgentSettings connected={connectionStatus === "connected" && !activeDevice?.isGuest} />
+
+              <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
+
+              <BoxInitSection c={c} token={token} />
 
               <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
 
