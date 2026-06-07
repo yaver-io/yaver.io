@@ -14,6 +14,7 @@ import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
 import { connectionManager } from "../lib/connectionManager";
 import { quicClient } from "../lib/quic";
 import { eligibleRemoteBoxDevices, versionPatchDistance } from "../lib/devicePicker";
+import { lastSeenLabel, probeMobileDeviceStatus } from "../lib/deviceStatus";
 
 interface Props {
   visible: boolean;
@@ -24,6 +25,7 @@ interface Props {
 export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: Props) {
   const c = useColors();
   const tabletContent = useTabletContentStyle("regular");
+  const deviceCtx = useDevice();
   const {
     devices,
     activeDevice,
@@ -33,7 +35,8 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     secondaryDeviceId,
     latestCliVersion,
     lastError,
-  } = useDevice();
+  } = deviceCtx;
+  const token = (deviceCtx as any).token as string | null;
 
   const connectedSet = React.useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
   const eligibleDevices = React.useMemo(
@@ -111,6 +114,35 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       }));
     }
   }, []);
+
+  // Active reachability probe for a box that Convex reports as DOWN. Unlike
+  // runPing (which only pings already-pooled clients), this walks relay →
+  // direct so the user can confirm a machine is actually up before
+  // committing to a switch. A reachable result flips the row to connectable.
+  const [offlineProbe, setOfflineProbe] = React.useState<
+    Record<string, { ok: boolean; line: string; busy?: boolean }>
+  >({});
+  const probeOffline = React.useCallback(
+    async (device: Device) => {
+      setOfflineProbe((p) => ({ ...p, [device.id]: { ok: false, line: "", busy: true } }));
+      try {
+        const r = await probeMobileDeviceStatus(
+          { id: device.id, host: (device as any).host, port: (device as any).port, lanIps: (device as any).lanIps },
+          token,
+          8000,
+        );
+        setOfflineProbe((p) => ({
+          ...p,
+          [device.id]: r.reachable
+            ? { ok: true, line: `reachable · ${r.path === "relay" ? "relay" : "direct"}` }
+            : { ok: false, line: "still unreachable" },
+        }));
+      } catch {
+        setOfflineProbe((p) => ({ ...p, [device.id]: { ok: false, line: "ping failed" } }));
+      }
+    },
+    [token],
+  );
 
   React.useEffect(() => {
     if (!visible) return;
@@ -385,6 +417,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                     : distance === 0
                       ? ` · yaver ${agentVer} · current`
                       : ` · yaver ${agentVer} · ${distance} behind`;
+                const probe = offlineProbe[device.id];
+                const reachableNow = !!probe?.ok;
+                const isDown = !connectedSet.has(device.id) && !device.online && !reachableNow;
                 const statusLine = connectedSet.has(device.id)
                   ? ping && ping.ok
                     ? `Connected · ${ping.rttMs}ms`
@@ -393,7 +428,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                       : "Connected · pinging…"
                   : device.online
                     ? "Live · tap to connect"
-                    : "Offline";
+                    : reachableNow
+                      ? `Reachable · ${probe?.line ?? ""} · tap to connect`
+                      : `Down · ${lastSeenLabel((device as any).lastSeen)}`;
                 const roleLabel =
                   device.id === primaryDeviceId
                     ? "Primary"
@@ -445,11 +482,47 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             <Text style={{ color: c.accent, fontSize: 10, fontWeight: "700" }}>{roleLabel}</Text>
                           </View>
                         ) : null}
-                        <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                        <Text
+                          style={{ color: isDown ? c.warn : c.textMuted, fontSize: 11, marginTop: 4 }}
+                        >
                           {statusLine}
                           {activeDevice?.id === device.id ? " · Focused" : ""}
                           {versionSuffix && !outdated ? versionSuffix : ""}
                         </Text>
+                        {isDown ? (
+                          <Pressable
+                            onPress={(e) => {
+                              // Probe reachability without triggering the row's
+                              // switch (offline boxes often have a stale Convex
+                              // flag but are actually reachable over relay).
+                              (e as any)?.stopPropagation?.();
+                              if (!probe?.busy) void probeOffline(device);
+                            }}
+                            style={({ pressed }) => ({
+                              alignSelf: "flex-start",
+                              marginTop: 8,
+                              paddingHorizontal: 12,
+                              paddingVertical: 6,
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: c.accent,
+                              backgroundColor: pressed ? c.accent + "22" : "transparent",
+                              flexDirection: "row",
+                              alignItems: "center",
+                              opacity: probe?.busy ? 0.5 : 1,
+                            })}
+                          >
+                            {probe?.busy ? <ActivityIndicator size="small" color={c.accent} /> : null}
+                            <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", marginLeft: probe?.busy ? 6 : 0 }}>
+                              {probe?.busy ? "Pinging…" : probe ? "Ping again" : "Ping"}
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                        {probe && !probe.ok && !probe.busy ? (
+                          <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 4 }}>
+                            {probe.line} — make sure it's powered on and running the agent
+                          </Text>
+                        ) : null}
                         {hermesReady === undefined ? (
                           <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
                             Checking Hermes reload prerequisites…
@@ -519,8 +592,14 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                           </Text>
                         ) : null}
                       </View>
-                      <Text style={{ color: selected ? c.accent : c.textMuted, fontSize: 12, fontWeight: "700" }}>
-                        {selected ? "SELECTED" : connectedSet.has(device.id) ? "CONNECTED" : "LIVE"}
+                      <Text style={{ color: selected ? c.accent : isDown ? c.warn : c.textMuted, fontSize: 12, fontWeight: "700" }}>
+                        {selected
+                          ? "SELECTED"
+                          : connectedSet.has(device.id)
+                            ? "CONNECTED"
+                            : isDown
+                              ? "DOWN"
+                              : "LIVE"}
                       </Text>
                     </View>
                   </Pressable>

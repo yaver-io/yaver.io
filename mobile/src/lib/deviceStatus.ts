@@ -19,6 +19,25 @@ export type MobileDeviceLifecycleState =
   | "ready-to-connect"
   | "connected";
 
+/** Human "last seen …" label from a heartbeat/last-signal epoch (ms).
+ * Used by device pickers to show DOWN machines honestly instead of
+ * implying they're reachable. Mirrors the relative-time formatting used
+ * by the Devices list and DeviceDetailsModal, with a "last seen" prefix
+ * so a device row reads "Down · last seen 12m ago". */
+export function lastSeenLabel(epochMs?: number): string {
+  if (!epochMs || epochMs <= 0) return "never connected";
+  const sec = Math.floor(Math.max(0, Date.now() - epochMs) / 1000);
+  if (sec < 60) return "last seen just now";
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `last seen ${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `last seen ${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `last seen ${d}d ago`;
+  const dt = new Date(epochMs);
+  return `last seen ${dt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+}
+
 type DeviceLike = {
   id: string;
   host: string;
