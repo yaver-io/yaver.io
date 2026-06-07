@@ -2536,6 +2536,53 @@ export class AgentClient {
     };
   }
 
+  // ── Netcapture (wire-observe & deep-analysis) ──────────────────────────
+
+  /** POST /netcapture/start — begin a network (tcpdump) or serial capture. */
+  async netcaptureStart(opts: {
+    kind?: "net" | "serial";
+    iface?: string;
+    filter?: string;
+    device?: string;
+    baud?: number;
+    decoder?: string;
+    capturePayload?: boolean;
+  }): Promise<{ ok: boolean; session: string; stream: string; warning?: string }> {
+    const res = await fetch(`${this.baseUrl}/netcapture/start`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    return res.json();
+  }
+
+  /** POST /netcapture/stop — stop a session, returns the final analysis. */
+  async netcaptureStop(session: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/netcapture/stop`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ session }),
+    });
+    return res.json();
+  }
+
+  /** GET /netcapture/analysis?session=… — full structured deep-analysis. */
+  async netcaptureAnalysis(session: string): Promise<any> {
+    const res = await fetch(
+      `${this.baseUrl}/netcapture/analysis?session=${encodeURIComponent(session)}`,
+      { headers: this.authHeaders },
+    );
+    return res.json();
+  }
+
+  /** GET /netcapture/status — list active capture sessions. */
+  async netcaptureStatus(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/netcapture/status`, {
+      headers: this.authHeaders,
+    });
+    return res.json();
+  }
+
   /** GET /autoinit/status?work_dir=… */
   async autoinitStatus(workDir: string): Promise<{
     done: boolean;

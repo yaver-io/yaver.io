@@ -25,6 +25,7 @@ import (
 	"github.com/yaver-io/agent/ghost"
 	"github.com/yaver-io/agent/machine"
 	"github.com/yaver-io/agent/mesh"
+	"github.com/yaver-io/agent/netcapture"
 )
 
 var currentLocalAgentPort atomic.Int64
@@ -137,6 +138,14 @@ type HTTPServer struct {
 	machineEngine  *machine.Engine
 	machineOnce    sync.Once
 	machineErr     error
+
+	// Netcapture (wire-observe & deep-analysis: tcpdump + serial RS232/RS485).
+	// Opt-in via --netcapture / config.NetcaptureEnabled. Engine created lazily
+	// on first netcapture verb. See ops_netcapture.go / package netcapture.
+	netcaptureEnabled bool
+	netcaptureEngine  *netcapture.Engine
+	netcaptureOnce    sync.Once
+	netcaptureErr     error
 
 	// Test app sessions
 	testAppSession       sync.Map // sessionID -> *TestAppSession
@@ -355,6 +364,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/schedules/", s.auth(s.handleScheduleByID))
 	mux.HandleFunc("/streams", s.auth(s.handleStreams))
 	mux.HandleFunc("/streams/", s.auth(s.handleStreamByName))
+
+	// Netcapture — wire-observe & deep-analysis (tcpdump + serial). Live events
+	// fan out over the existing /streams/netcapture:<session> SSE channel.
+	mux.HandleFunc("/netcapture/start", s.auth(s.handleNetcaptureStart))
+	mux.HandleFunc("/netcapture/stop", s.auth(s.handleNetcaptureStop))
+	mux.HandleFunc("/netcapture/status", s.auth(s.handleNetcaptureStatus))
+	mux.HandleFunc("/netcapture/analysis", s.auth(s.handleNetcaptureAnalysis))
+	mux.HandleFunc("/netcapture/feed", s.auth(s.handleNetcaptureFeed))
+	mux.HandleFunc("/netcapture/download", s.auth(s.handleNetcaptureDownload))
 	mux.HandleFunc("/autoideas/start", s.auth(s.handleAutoIdeasStart))
 	mux.HandleFunc("/autoideas/file", s.auth(s.handleAutoIdeasFile))
 	mux.HandleFunc("/autoinit/start", s.auth(s.handleAutoInitStart))

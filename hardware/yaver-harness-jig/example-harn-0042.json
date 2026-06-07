@@ -1,0 +1,35 @@
+{
+  "partNumber": "HARN-0042",
+  "rev": "A",
+  "board": { "tile": "200x200", "gridPitch": 25, "tagCell": [0, 0], "datum": "3-2-1-A" },
+  "connectors": [
+    {
+      "ref": "A", "family": "molex_megafit_2x3", "class": "housing",
+      "nest": "nest_grid", "gridCell": [2, 6], "rotDeg": 90, "pullSpecN": 30
+    },
+    {
+      "ref": "C", "family": "kf2edgk_3p", "class": "terminal_block",
+      "nest": "block_clamp", "gridCell": [2, 1], "rotDeg": 0, "termTorqueNmm": 400
+    }
+  ],
+  "fromTo": [
+    { "lead": "L01", "from": "A:1", "to": "C:1", "gauge": "20AWG", "color": "red",   "marker": "+5V" },
+    { "lead": "L02", "from": "A:2", "to": "C:2", "gauge": "20AWG", "color": "black", "marker": "GND" },
+    { "lead": "L03", "from": "A:3", "to": "C:3", "gauge": "22AWG", "color": "white", "marker": "SIG" }
+  ],
+  "guides": [
+    { "type": "comb", "gridCell": [2, 4], "slots": 3 },
+    { "type": "fork", "gridCell": [2, 3] }
+  ],
+  "ties": [
+    { "station": "T1", "gridCell": [2, 4], "tensionN": 80 }
+  ],
+  "tests": [
+    {
+      "type": "continuity",
+      "pinMap": { "0": "A:1", "1": "C:1", "2": "A:2", "3": "C:2", "4": "A:3", "5": "C:3" }
+    },
+    { "type": "pull" },
+    { "type": "mating", "maxN": 40 }
+  ]
+}

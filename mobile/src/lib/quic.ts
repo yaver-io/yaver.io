@@ -2274,6 +2274,74 @@ export class QuicClient {
     };
   }
 
+  // ── Netcapture (wire-observe & deep-analysis) ──────────────────────────
+
+  async netcaptureStart(
+    opts: { kind?: "net" | "serial"; iface?: string; filter?: string; device?: string; baud?: number; decoder?: string; capturePayload?: boolean },
+    target?: string,
+  ): Promise<{ ok: boolean; session: string; stream: string; warning?: string }> {
+    const base = this.peerEndpoint(target, "/netcapture/start");
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    return res.json();
+  }
+
+  async netcaptureStop(session: string, target?: string): Promise<any> {
+    const base = this.peerEndpoint(target, "/netcapture/stop");
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ session }),
+    });
+    return res.json();
+  }
+
+  async netcaptureAnalysisFor(session: string, target?: string): Promise<any> {
+    const base = this.peerEndpoint(target, `/netcapture/analysis?session=${encodeURIComponent(session)}`);
+    const res = await fetch(base, { headers: this.authHeaders });
+    return res.json();
+  }
+
+  /** SSE subscribe to a netcapture session's live decoded events (peer-aware). */
+  netcaptureStream(streamName: string, target: string | undefined, onEvent: (ev: any) => void): () => void {
+    const controller = new AbortController();
+    const url = this.peerEndpoint(target, `/streams/${encodeURIComponent(streamName)}`);
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          headers: { ...this.authHeaders, Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              onEvent(JSON.parse(line.slice(6)));
+            } catch {
+              // ignore malformed frame
+            }
+          }
+        }
+      } catch {
+        // aborted or network error
+      }
+    })();
+    return () => controller.abort();
+  }
+
   // ── Autoinit + Autoideas (cached project context + idea queue) ──
 
   /** GET /autoinit/status?work_dir=… */
@@ -7455,6 +7523,54 @@ export class QuicClient {
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
     }
+  }
+
+  /** callOpsOnDevice invokes an ops verb DIRECTLY on a specific device over the
+   *  relay, authenticated with the USER's bearer (this.token) — NOT via the
+   *  machine-targeted gateway proxy, which forwards the gateway's OWN agent
+   *  token and is rejected by a target owned under a different (pre-merge)
+   *  userId. Walking relays with the user bearer makes the target validate the
+   *  real signed-in user, so cross-device control (robot_* etc.) works through
+   *  any gateway. Mirrors factoryResetDeviceAuth's relay walk. */
+  async callOpsOnDevice(
+    deviceId: string,
+    verb: string,
+    payload: Record<string, unknown>,
+    timeoutMs = 120000,
+  ): Promise<{ ok?: boolean; error?: string; code?: string; initial?: any }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    if (!deviceId) return { ok: false, error: "no device selected" };
+    const userBearer = this.token;
+    const relayList = [...this.relayServers];
+    if (relayList.length === 0) return { ok: false, error: "no relay servers configured" };
+    const body = JSON.stringify({ verb, payload, machine: "local" });
+    let lastError = "no relay reached the device";
+    for (const relay of relayList) {
+      const url =
+        `${relay.httpUrl}/d/${deviceId}/ops` +
+        (relay.password ? `?__rp=${encodeURIComponent(relay.password)}` : "");
+      try {
+        const res = await this.fetchWithTimeout(
+          url,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${userBearer}`,
+              "Content-Type": "application/json",
+              "X-Client-Platform": Platform.OS,
+            },
+            body,
+          },
+          timeoutMs,
+        );
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) return data;
+        lastError = data?.error || `ops ${verb} failed: ${res.status}`;
+      } catch (e: any) {
+        lastError = e?.message || String(e);
+      }
+    }
+    return { ok: false, error: lastError };
   }
 
   /** Factory-reset a remote device's agent auth. Mirrors the web
