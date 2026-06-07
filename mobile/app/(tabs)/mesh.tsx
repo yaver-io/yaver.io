@@ -16,8 +16,10 @@ import { CONVEX_SITE_URL } from "../../src/_core/constants";
 import { useMesh } from "../../src/lib/useMesh";
 import {
   enableMeshOnDevice,
+  meshEnablePhaseLabel,
   meshStatusForDevice,
   type MeshDeviceStatus,
+  type MeshEnablePhase,
 } from "../../src/lib/meshControl";
 import { connectionManager } from "../../src/lib/connectionManager";
 import {
@@ -34,7 +36,7 @@ import { ConnectHero } from "../../src/components/mesh/ConnectHero";
 import { MeshMachineRow } from "../../src/components/mesh/MeshMachineRow";
 import { ChevronRightIcon, SearchIcon } from "../../src/components/mesh/MeshIcons";
 
-type EnableAllState = { done: number; total: number; current: string } | null;
+type EnableAllState = { done: number; total: number; current: string; phase?: MeshEnablePhase } | null;
 
 export default function MeshHomeScreen() {
   const c = useColors();
@@ -52,6 +54,9 @@ export default function MeshHomeScreen() {
   // and refined by live GET /mesh/status probes against each online box.
   const [statusById, setStatusById] = useState<Record<string, MeshDeviceStatus>>({});
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  // Current enable phase per in-flight device, so each row narrates progress
+  // ("Updating agent…" → "Bringing mesh up…") instead of a silent spinner.
+  const [phaseById, setPhaseById] = useState<Record<string, MeshEnablePhase>>({});
   const [enableAll, setEnableAll] = useState<EnableAllState>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -139,12 +144,16 @@ export default function MeshHomeScreen() {
   // Enable mesh on a single box: warm the P2P client, stage an agent update,
   // bring mesh up. Returns true on success so the enable-all loop can tally.
   const enableOne = useCallback(
-    async (d: Device): Promise<boolean> => {
+    async (d: Device, onPhase?: (p: MeshEnablePhase) => void): Promise<boolean> => {
       if (!token) return false;
       setBusyIds((prev) => new Set(prev).add(d.id));
+      setPhaseById((prev) => ({ ...prev, [d.id]: "updating" }));
       try {
         connectionManager.clientFor(d.id); // warm the parallel pool (best-effort)
-        const r = await enableMeshOnDevice(d, token);
+        const r = await enableMeshOnDevice(d, token, (p) => {
+          setPhaseById((prev) => ({ ...prev, [d.id]: p }));
+          onPhase?.(p);
+        });
         setStatusById((prev) => ({ ...prev, [d.id]: { enabled: true, meshIPv4: r.meshIPv4 } }));
         probedRef.current.set(d.id, Date.now());
         setNotice(
@@ -162,6 +171,11 @@ export default function MeshHomeScreen() {
         setBusyIds((prev) => {
           const n = new Set(prev);
           n.delete(d.id);
+          return n;
+        });
+        setPhaseById((prev) => {
+          const n = { ...prev };
+          delete n[d.id];
           return n;
         });
       }
@@ -190,8 +204,8 @@ export default function MeshHomeScreen() {
     let failed = 0;
     for (let i = 0; i < targets.length; i++) {
       const d = targets[i];
-      setEnableAll({ done: i, total: targets.length, current: d.name });
-      const ok = await enableOne(d);
+      setEnableAll({ done: i, total: targets.length, current: d.name, phase: "updating" });
+      const ok = await enableOne(d, (p) => setEnableAll((s) => (s ? { ...s, phase: p } : s)));
       ok ? enabled++ : failed++;
     }
     setEnableAll(null);
@@ -234,6 +248,7 @@ export default function MeshHomeScreen() {
       meshIPv4={meshIpFor(d)}
       joinedPeer={joinedById.get(d.id)}
       busy={busyIds.has(d.id)}
+      phase={phaseById[d.id]}
       onEnable={() => void handleEnableOne(d)}
       onOpen={() => openNode(d.id)}
     />
@@ -291,8 +306,8 @@ export default function MeshHomeScreen() {
             {enableAll ? (
               <>
                 <ActivityIndicator size="small" color="#34d399" />
-                <Text style={{ color: "#34d399", fontSize: 14, fontWeight: "700" }}>
-                  Enabling {enableAll.done + 1}/{enableAll.total} — {enableAll.current}…
+                <Text style={{ color: "#34d399", fontSize: 14, fontWeight: "700" }} numberOfLines={1}>
+                  {enableAll.done + 1}/{enableAll.total} · {enableAll.current} — {meshEnablePhaseLabel(enableAll.phase)}
                 </Text>
               </>
             ) : (

@@ -32,6 +32,22 @@ export type MeshEnableResult = {
   stagedVersion?: string;
 };
 
+/** The two back-to-back remote calls an enable runs through. Surfaced to the UI
+ *  so the user sees "what's happening" instead of a silent ~55s spinner. */
+export type MeshEnablePhase = "updating" | "bringing-up";
+
+/** User-facing label for a phase (and the generic fallback when none is set). */
+export function meshEnablePhaseLabel(phase?: MeshEnablePhase): string {
+  switch (phase) {
+    case "updating":
+      return "Updating agent…";
+    case "bringing-up":
+      return "Bringing mesh up…";
+    default:
+      return "Enabling…";
+  }
+}
+
 type DeviceRef = { id: string; host?: string; port?: number };
 
 const STATUS_TIMEOUT_MS = 5000;
@@ -67,16 +83,19 @@ export async function meshStatusForDevice(
 export async function enableMeshOnDevice(
   device: DeviceRef,
   token: string | null,
+  onPhase?: (phase: MeshEnablePhase) => void,
 ): Promise<MeshEnableResult> {
   const ctx = deviceAgentContext(device, token);
   if (!ctx) throw new Error("unreachable");
 
   // 1. Best-effort agent self-update — stage only, no restart. Never blocks the
   //    mesh bring-up: a failed/slow update still leaves mesh enable to proceed.
+  onPhase?.("updating");
   const stagedVersion = await stageAgentUpdate(ctx);
 
   // 2. Bring mesh up. The agent ensures its keypair, registers with the control
   //    plane, and starts the data plane. A dataPlaneWarning is non-fatal.
+  onPhase?.("bringing-up");
   const res = await fetch(`${ctx.baseUrl}/mesh/up`, {
     method: "POST",
     headers: { ...ctx.headers, "Content-Type": "application/json" },
