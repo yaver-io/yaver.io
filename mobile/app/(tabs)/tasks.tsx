@@ -56,7 +56,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 import { Badge } from "../../src/components/Badge";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
-import { YaverAgentTasksHint } from "../../src/components/YaverAgentTasksHint";
 import {
   runYaverAgent,
   loadYaverAgentLocalConfig,
@@ -3979,7 +3978,10 @@ export default function TasksScreen() {
         <FlatList
           data={displayTasks}
           keyExtractor={(item) => item.id}
-          alwaysBounceVertical
+          // Only bounce when there's a real list. In the empty / no-machine
+          // state bouncing lets the centered hero be dragged under the top
+          // banner (reads as broken); the empty UI has its own Refresh link.
+          alwaysBounceVertical={displayTasks.length > 0}
           // Tablet portrait: 2-col grid for created tasks. Tablet
           // landscape: stays single column because the right pane
           // already shows the selected chat — a narrow 2-col grid
@@ -4018,16 +4020,7 @@ export default function TasksScreen() {
                 </Text>
               </View>
             ) : devices.length === 0 ? (
-              <View style={s.emptyList}>
-                <YaverAgentTasksHint
-                  hasZeroDevices
-                  primarySet={!!primaryDeviceId}
-                  onSuggestion={(prompt) => {
-                    setNewTaskText(prompt);
-                    setShowNewTask(true);
-                  }}
-                  onOpenSettings={() => taskRouter.push("/(tabs)/settings" as any)}
-                />
+              <View style={s.discoverEmpty}>
                 <Text style={[s.discoverIcon, { color: c.textMuted }]}>{"\u2318"}</Text>
                 <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Start Coding</Text>
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8, marginBottom: 20 }]}>
@@ -5905,8 +5898,11 @@ const s = StyleSheet.create({
 
   // List
   listContent: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 120 },
-  listContentEmpty: { flex: 1 },
+  listContentEmpty: { flexGrow: 1 },
   emptyList: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
+  // Discover/zero-device empty state: grow + scroll instead of flex:1 center,
+  // so the (tall) content never clips off the top under the connection banner.
+  discoverEmpty: { flexGrow: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 24, paddingVertical: 28 },
   // Sticky header for the disconnected device picker. Doesn't scroll
   // even when the user has 5+ devices, so "Not connected · Pick one of
   // your N devices" is always visible without scrolling up.
