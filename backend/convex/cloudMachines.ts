@@ -1204,6 +1204,23 @@ export const provision = internalAction({
       ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
       : buildManagedCloudInit(bootstrapSpec);
 
+    // P3 fast boot: when a prebuilt Yaver golden snapshot id is
+    // configured (our managed Hetzner account), boot from it instead of
+    // ubuntu-24.04 so the box comes up with everything pre-installed —
+    // seconds instead of a 3–5 min first-boot build. cloud-init still
+    // runs for per-box token injection + device registration. Per-arch
+    // (the snapshot must match the server arch); numeric Hetzner image
+    // id. Unset ⇒ byte-identical legacy behaviour (ubuntu-24.04).
+    const bootArch = (specDef.arch as string) === "arm64" ? "ARM64" : "AMD64";
+    const goldenImageId = (
+      process.env[`YAVER_CLOUD_IMAGE_ID_${bootArch}`] ||
+      process.env.YAVER_CLOUD_IMAGE_ID ||
+      ""
+    ).trim();
+    const bootImage: string | number = goldenImageId
+      ? (/^\d+$/.test(goldenImageId) ? Number(goldenImageId) : goldenImageId)
+      : "ubuntu-24.04";
+
     try {
       // ── 1. Hetzner server ───────────────────────────────────────
       const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
@@ -1223,7 +1240,7 @@ export const provision = internalAction({
             machine.machineType === "cpu" && process.env.YAVER_CLOUD_CPU_TYPE
               ? process.env.YAVER_CLOUD_CPU_TYPE
               : specDef.hetznerType,
-          image: "ubuntu-24.04",
+          image: bootImage,
           location,
           labels: {
             service: "yaver-cloud-machine",
