@@ -29,6 +29,10 @@ class MainApplication : Application(), ReactApplication {
               add(YaverInfoPackage())
               add(YaverBundleLoaderPackage())
               add(YaverShakeDetectorPackage())
+              // Dogfood "improve Yaver with Yaver": native screenshot
+              // auto-catch (ScreenCaptureCallback on API 34+, MediaStore
+              // observer fallback). JS side: src/lib/dogfoodCapture.ts.
+              add(YaverDogfoodPackage())
               // PC-in-glasses: BT-keyboard sink router. Native module
               // forwards hardware key events to JS; the host activity
               // hands the event to dispatchKey(...) BEFORE the normal
