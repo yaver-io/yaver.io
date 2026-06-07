@@ -183,9 +183,15 @@ export default function ManagedCloudCard({
   };
 
   const spinUp = (machineType: "cpu" | "gpu") => {
+    // The running estimate the wallet reports tracks a CPU box; don't show it
+    // for GPU (GPU bills at a higher rate). Keep GPU copy rate-agnostic.
+    const rateLine =
+      machineType === "cpu"
+        ? `billed from your prepaid balance (~${money(balance?.estimatedHourlyCents)}/hr running)`
+        : "billed from your prepaid balance at the GPU rate (higher than CPU)";
     Alert.alert(
       "Spin up a box?",
-      `Provisions a new ${machineType.toUpperCase()} cloud box, billed from your prepaid balance (~${money(balance?.estimatedHourlyCents)}/hr running). You can pause it anytime — paused costs ~€0.50/mo.`,
+      `Provisions a new ${machineType.toUpperCase()} cloud box, ${rateLine}. You can pause it anytime — paused costs ~€0.50/mo.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -297,6 +303,26 @@ export default function ManagedCloudCard({
           ) : (
             <Text style={{ color: "#059669", fontSize: 13, fontWeight: "700" }}>
               ＋ Spin up CPU box
+            </Text>
+          )}
+        </Pressable>
+        <Pressable
+          disabled={busy !== null}
+          onPress={() => spinUp("gpu")}
+          style={{
+            opacity: busy ? 0.5 : 1,
+            borderWidth: 1,
+            borderColor: "#7c3aed",
+            borderRadius: 8,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+          }}
+        >
+          {busy === "spinup:gpu" ? (
+            <ActivityIndicator size="small" color="#7c3aed" />
+          ) : (
+            <Text style={{ color: "#7c3aed", fontSize: 13, fontWeight: "700" }}>
+              ＋ Spin up GPU box
             </Text>
           )}
         </Pressable>
