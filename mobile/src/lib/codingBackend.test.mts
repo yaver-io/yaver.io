@@ -27,20 +27,24 @@ test("backendMeta resolves and rejects unknown", () => {
   assert.throws(() => backendMeta("nope" as any));
 });
 
-test("auto prefers on-device, then subscription, then anthropic, then openai, then glm", () => {
+test("auto prefers on-device, then GLM, then anthropic, then openai (NO subscription)", () => {
   assert.equal(resolveAutoBackend({ ...NONE, localModelReady: true, anthropicKey: true }), "local");
-  // subscription (free plan) OUTRANKS the metered BYO Claude key.
-  assert.equal(resolveAutoBackend({ ...NONE, claudeSubscription: true, anthropicKey: true }), "subscription");
+  // GLM is the cheap compliant cloud default.
+  assert.equal(resolveAutoBackend({ ...NONE, glmKey: true, anthropicKey: true }), "glm");
   assert.equal(resolveAutoBackend({ ...NONE, anthropicKey: true, openaiKey: true }), "anthropic");
-  assert.equal(resolveAutoBackend({ ...NONE, openaiKey: true, glmKey: true }), "openai");
-  assert.equal(resolveAutoBackend({ ...NONE, glmKey: true }), "glm");
+  assert.equal(resolveAutoBackend({ ...NONE, openaiKey: true }), "openai");
+  // A mirrored plan token alone does NOT enable the in-app loop (compliance).
+  assert.equal(resolveAutoBackend({ ...NONE, claudeSubscription: true }), null);
   assert.equal(resolveAutoBackend(NONE), null);
 });
 
-test("subscription is usable when a mirrored plan token is present", () => {
-  assert.equal(backendUsable("subscription", { ...NONE, claudeSubscription: true }), true);
+test("subscription is NEVER usable in the in-app loop (CLI-only, compliance)", () => {
+  // Even with a mirrored plan token present, the in-app loop can't use it.
+  assert.equal(backendUsable("subscription", { ...NONE, claudeSubscription: true }), false);
   assert.equal(backendUsable("subscription", NONE), false);
-  assert.equal(backendMeta("subscription").requiresKey, undefined); // no BYO key
+  // It's also never auto-selected and never appears in usableBackends.
+  assert.equal(usableBackends({ ...NONE, claudeSubscription: true }).includes("subscription"), false);
+  assert.equal(resolveBackend("subscription", { ...NONE, claudeSubscription: true, glmKey: true }).id, "glm");
 });
 
 test("backendUsable + usableBackends reflect availability", () => {

@@ -22,6 +22,7 @@ const NO_BACKEND: CodingBackendAvailability = {
   glmKey: false,
 };
 const PLAN: CodingBackendAvailability = { ...NO_BACKEND, claudeSubscription: true };
+const GLM: CodingBackendAvailability = { ...NO_BACKEND, glmKey: true };
 const LOCAL: CodingBackendAvailability = { ...NO_BACKEND, localModelReady: true };
 
 function env(p: Partial<CodingEnv>): CodingEnv {
@@ -53,11 +54,18 @@ test("sandbox on Android honours the rootfs runner + a forced opencode override"
   assert.deepEqual(oc.engine, { kind: "cli-on-device", runner: "opencode" });
 });
 
-test("sandbox on iOS falls back to the Hermes loop on the chosen backend", () => {
-  const s = resolveCodingSession("sandbox", env({ platform: "ios", backend: PLAN }));
-  assert.deepEqual(s.engine, { kind: "hermes", backend: "subscription" });
+test("sandbox on iOS falls back to the Hermes loop on a BYO backend (GLM)", () => {
+  const s = resolveCodingSession("sandbox", env({ platform: "ios", backend: GLM }));
+  assert.deepEqual(s.engine, { kind: "hermes", backend: "glm" });
   assert.equal(s.target.kind, "phone");
   assert.ok(!isCliSession(s));
+});
+
+test("COMPLIANCE: a plan token alone never enables the in-app loop (iOS)", () => {
+  // Subscription is CLI-only; on iOS there's no CLI, so PLAN-only = needs setup.
+  const s = resolveCodingSession("sandbox", env({ platform: "ios", backend: PLAN }));
+  assert.notEqual((s.engine as any).backend, "subscription");
+  assert.match(s.reason, /set one up/);
 });
 
 test("sandbox with no backend at all surfaces a null-ish hermes (UI prompts setup)", () => {
@@ -70,10 +78,10 @@ test("Android sandbox can be forced to the IN-APP Hermes loop (no proot)", () =>
   // The user's ask: Android runs Hermes in-app too, dodging proot/backgrounding.
   const s = resolveCodingSession(
     "sandbox",
-    env({ platform: "android", onDeviceCliReady: true, backend: PLAN }),
+    env({ platform: "android", onDeviceCliReady: true, backend: GLM }),
     { onDeviceEngine: "hermes" },
   );
-  assert.deepEqual(s.engine, { kind: "hermes", backend: "subscription" });
+  assert.deepEqual(s.engine, { kind: "hermes", backend: "glm" });
   assert.equal(s.target.kind, "phone");
 });
 
@@ -100,9 +108,9 @@ test("Android sandbox with no rootfs uses in-app Hermes even when 'cli' is force
 test("project on a reachable box defaults to Hermes-only-remote — box stays auth-free", () => {
   const s = resolveCodingSession(
     "project",
-    env({ boxDeviceId: "box-1", boxRunnerReady: false, backend: PLAN }),
+    env({ boxDeviceId: "box-1", boxRunnerReady: false, backend: GLM }),
   );
-  assert.deepEqual(s.engine, { kind: "hermes", backend: "subscription" });
+  assert.deepEqual(s.engine, { kind: "hermes", backend: "glm" });
   assert.deepEqual(s.target, { kind: "box", deviceId: "box-1" });
   assert.equal(s.boxAuthFree, true);
   assert.equal(sessionEndpointDeviceId(s), "box-1");
@@ -160,8 +168,8 @@ test("project with no box on Android runs the on-device CLI", () => {
 });
 
 test("project with no box on iOS uses the Hermes loop + reach-for-a-machine framing", () => {
-  const s = resolveCodingSession("project", env({ platform: "ios", boxDeviceId: null, backend: PLAN }));
-  assert.deepEqual(s.engine, { kind: "hermes", backend: "subscription" });
+  const s = resolveCodingSession("project", env({ platform: "ios", boxDeviceId: null, backend: GLM }));
+  assert.deepEqual(s.engine, { kind: "hermes", backend: "glm" });
   assert.match(s.reason, /reaches for a machine/);
 });
 
@@ -175,8 +183,9 @@ test("offline box is treated as unreachable", () => {
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-test("phoneCanDriveHermes reflects backend availability", () => {
+test("phoneCanDriveHermes reflects COMPLIANT backend availability (not the plan token)", () => {
   assert.equal(phoneCanDriveHermes(env({ backend: NO_BACKEND })), false);
-  assert.equal(phoneCanDriveHermes(env({ backend: PLAN })), true);
+  assert.equal(phoneCanDriveHermes(env({ backend: PLAN })), false); // subscription is CLI-only
+  assert.equal(phoneCanDriveHermes(env({ backend: GLM })), true);
   assert.equal(phoneCanDriveHermes(env({ backend: LOCAL })), true);
 });
