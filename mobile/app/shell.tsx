@@ -29,8 +29,9 @@ import { quicClient } from "../src/lib/quic";
 import { AppBackButton } from "../src/components/AppBackButton";
 import XtermView, { type XtermHandle } from "../src/components/XtermView";
 import { isTerminalMetaFrame, resizeFrame } from "../src/lib/xtermBridge";
-import { AGENT_LAUNCHERS, launchLine } from "../src/lib/agentLaunch";
+import { AGENT_LAUNCHERS, launchLine, closeLine, type AgentLaunch } from "../src/lib/agentLaunch";
 import { isWhisperReady, startRealtimeTranscribe } from "../src/lib/speech";
+import { OpenCodeConfigModal } from "../src/components/OpenCodeConfigModal";
 
 function buildTerminalWsUrl(baseUrl: string, token: string): string {
   const ws = baseUrl.replace(/^http/, "ws").replace(/\/+$/, "");
@@ -62,6 +63,10 @@ export default function ShellScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [sttAvailable] = useState(() => isWhisperReady());
+  // Which runner we believe is open in the PTY (best-effort: tracks what the
+  // toggle launched). Reset on disconnect since the PTY is gone.
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [opencodeCfgOpen, setOpencodeCfgOpen] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const xtermRef = useRef<XtermHandle | null>(null);
@@ -85,6 +90,7 @@ export default function ShellScreen() {
     ws.onopen = () => {
       if (cancelled) return;
       setStatus("open");
+      setRunningId(null); // fresh PTY — nothing running yet
       try {
         ws.send(resizeFrame(sizeRef.current.cols, sizeRef.current.rows));
       } catch {}
@@ -103,6 +109,7 @@ export default function ShellScreen() {
     ws.onerror = () => {
       if (cancelled) return;
       setStatus("error");
+      setRunningId(null);
       setError(
         `Couldn't reach the shell on ${activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name}. Make sure yaver is running on it.`,
       );
@@ -110,6 +117,7 @@ export default function ShellScreen() {
     ws.onclose = (e: WebSocketCloseEvent) => {
       if (cancelled) return;
       setStatus("closed");
+      setRunningId(null);
       if (e?.code && e.code !== 1000) {
         setError(
           `Shell closed${e.reason ? ` (${e.reason})` : ` (code ${e.code})`}. The agent may have restarted — tap Reconnect.`,
@@ -139,6 +147,22 @@ export default function ShellScreen() {
   }, []);
 
   const sendText = useCallback((text: string) => sendBytes(encodeUtf8(text)), [sendBytes]);
+
+  // Open/close toggle for a runner. Best-effort state: tapping an idle chip
+  // types the launch command; tapping the active chip types its `/exit`.
+  const toggleRunner = useCallback(
+    (l: AgentLaunch) => {
+      if (status !== "open") return;
+      if (runningId === l.id) {
+        sendText(closeLine(l));
+        setRunningId(null);
+      } else {
+        sendText(launchLine(l));
+        setRunningId(l.id);
+      }
+    },
+    [status, runningId, sendText],
+  );
 
   // ── XtermView wiring ─────────────────────────────────────────────
   const onTermData = useCallback((bytes: Uint8Array) => sendBytes(bytes), [sendBytes]);
@@ -281,17 +305,37 @@ export default function ShellScreen() {
         style={styles.launchBar}
         contentContainerStyle={{ gap: 8, paddingHorizontal: 10, alignItems: "center" }}
       >
-        {AGENT_LAUNCHERS.map((l) => (
-          <Pressable
-            key={l.id}
-            onPress={() => sendText(launchLine(l))}
-            disabled={status !== "open"}
-            style={[styles.launchBtn, status !== "open" && { opacity: 0.4 }]}
-            accessibilityLabel={l.hint}
-          >
-            <Text style={styles.launchText}>{l.label}</Text>
-          </Pressable>
-        ))}
+        {AGENT_LAUNCHERS.map((l) => {
+          const active = runningId === l.id;
+          return (
+            <View key={l.id} style={styles.launchGroup}>
+              <Pressable
+                onPress={() => toggleRunner(l)}
+                disabled={status !== "open"}
+                style={[
+                  styles.launchBtn,
+                  active && styles.launchBtnActive,
+                  l.id === "opencode" && styles.launchBtnGrouped,
+                  status !== "open" && { opacity: 0.4 },
+                ]}
+                accessibilityLabel={active ? `Exit ${l.label} (sends /exit)` : l.hint}
+              >
+                <Text style={[styles.launchText, active && styles.launchTextActive]}>
+                  {active ? `■ ${l.label}` : `▷ ${l.label}`}
+                </Text>
+              </Pressable>
+              {l.id === "opencode" ? (
+                <Pressable
+                  onPress={() => setOpencodeCfgOpen(true)}
+                  style={styles.gearBtn}
+                  accessibilityLabel="OpenCode provider + model settings (GLM key, thinking/doing model)"
+                >
+                  <Text style={styles.gearText}>⚙</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          );
+        })}
         <View style={styles.launchDivider} />
         <Pressable onPress={() => sendBytes(new Uint8Array([3]))} disabled={status !== "open"} style={[styles.ctrlBtn, status !== "open" && { opacity: 0.4 }]}>
           <Text style={styles.ctrlText}>^C</Text>
@@ -354,6 +398,15 @@ export default function ShellScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* First-class OpenCode config: set a provider (GLM / OpenRouter / Gemini)
+          + API key + thinking/doing models, persisted to the box's opencode.json
+          via /runner/opencode/config — then launch OpenCode from the toolbar. */}
+      <OpenCodeConfigModal
+        visible={opencodeCfgOpen}
+        onClose={() => setOpencodeCfgOpen(false)}
+        startInAddProvider
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -374,6 +427,7 @@ const styles = StyleSheet.create({
     borderTopColor: "#1f2937",
     backgroundColor: "#0e1117",
   },
+  launchGroup: { flexDirection: "row", alignItems: "center" },
   launchBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -382,7 +436,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(124,92,255,0.5)",
   },
+  // When grouped with the gear (OpenCode), square off the right edge so the
+  // chip + gear read as one control.
+  launchBtnGrouped: { borderTopRightRadius: 0, borderBottomRightRadius: 0 },
+  launchBtnActive: { backgroundColor: "#7c5cff", borderColor: "#7c5cff" },
   launchText: { color: "#c4b5fd", fontSize: 13, fontWeight: "700" },
+  launchTextActive: { color: "#ffffff" },
+  gearBtn: {
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
+    backgroundColor: "rgba(124,92,255,0.10)",
+    borderWidth: 1,
+    borderLeftWidth: 0,
+    borderColor: "rgba(124,92,255,0.5)",
+  },
+  gearText: { color: "#c4b5fd", fontSize: 13 },
   launchDivider: { width: 1, height: 24, backgroundColor: "#1f2937", marginHorizontal: 2 },
   ctrlBtn: {
     paddingHorizontal: 10,
