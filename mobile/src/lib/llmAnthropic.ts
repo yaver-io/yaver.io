@@ -24,7 +24,7 @@ const ANTHROPIC_BASE = "https://api.anthropic.com/v1";
  *  side sends. */
 const ANTHROPIC_VERSION = "2023-06-01";
 
-const APPLY_EDITS_TOOL = {
+export const APPLY_EDITS_TOOL = {
   name: "apply_edits",
   description:
     "Apply a set of file edits to the project's src/ tree. Use this to create, update, or delete files in response to the user's request.",
@@ -140,7 +140,7 @@ export function createAnthropicProvider(opts: AnthropicProviderOptions): LlmProv
 
 // ---- Prompt construction --------------------------------------------
 
-function buildSystemPrompt(req: EditFilesRequest): string {
+export function buildSystemPrompt(req: EditFilesRequest): string {
   const lines: string[] = [
     "You are an AI coding assistant editing a phone-authored project.",
     "The user is on their phone — there is no desktop, no shell, no terminal.",
@@ -169,7 +169,7 @@ function buildSystemPrompt(req: EditFilesRequest): string {
   return lines.join("\n");
 }
 
-function buildUserMessage(req: EditFilesRequest): string {
+export function buildUserMessage(req: EditFilesRequest): string {
   const parts: string[] = [];
   parts.push(`Request:\n${req.prompt.trim()}`);
   if (req.files.length === 0) {
@@ -201,7 +201,7 @@ interface AnthropicContentToolUse {
 
 type AnthropicContent = AnthropicContentText | AnthropicContentToolUse;
 
-interface AnthropicResponse {
+export interface AnthropicResponse {
   id: string;
   model: string;
   content: AnthropicContent[];
@@ -209,7 +209,7 @@ interface AnthropicResponse {
   stop_reason?: string;
 }
 
-function parseAnthropicResponse(body: AnthropicResponse): EditPlan {
+export function parseAnthropicResponse(body: AnthropicResponse): EditPlan {
   const toolUse = body.content.find(
     (c): c is AnthropicContentToolUse => c.type === "tool_use" && c.name === "apply_edits",
   );

@@ -13,8 +13,12 @@
 // machine, not the phone sandbox. It is intentionally NOT one of these
 // backends: these are the engines that touch the local sandbox tree.
 
-/** The concrete coding engines that produce an EditPlan for the local sandbox. */
-export type CodingBackendId = "local" | "anthropic" | "openai" | "glm";
+/** The concrete coding engines that produce an EditPlan for the local sandbox.
+ *  "subscription" = Claude on the user's Max/Pro PLAN via the mirrored OAuth
+ *  token (claudeSubscription.ts). It is NOT a BYO API key: it draws from the
+ *  flat-rate subscription at zero marginal cost, which is why iOS prefers it
+ *  over the metered "anthropic" key. */
+export type CodingBackendId = "local" | "subscription" | "anthropic" | "openai" | "glm";
 
 /** What the user has chosen. "auto" = let resolveAutoBackend pick per availability. */
 export type CodingBackendPref = "auto" | CodingBackendId;
@@ -39,10 +43,16 @@ export const CODING_BACKENDS: readonly CodingBackendMeta[] = [
     note: "Runs a downloaded coder model on this phone. Fully offline, no API key, no cloud.",
   },
   {
+    id: "subscription",
+    label: "Claude (your plan) — real CLI only",
+    kind: "cloud",
+    note: "Your Max/Pro plan token. Allowed ONLY via the genuine Claude Code CLI (Android proot or a paired box), never the in-app agent — using a plan token from a re-implemented client breaks Anthropic's terms. For standalone in-app coding, use GLM/BYO.",
+  },
+  {
     id: "anthropic",
     label: "Claude (BYO key)",
     kind: "cloud",
-    note: "Anthropic Claude via your own API key. Highest quality; needs network.",
+    note: "Anthropic Claude via your own API key. Metered — bills per token on top of any plan.",
     requiresKey: "anthropic",
   },
   {
@@ -71,16 +81,32 @@ export function backendMeta(id: CodingBackendId): CodingBackendMeta {
 export interface CodingBackendAvailability {
   /** A coder model is downloaded AND the native engine is linked (engineAvailable). */
   localModelReady: boolean;
+  /** A Claude subscription OAuth token (mirrored from desktop) is present. */
+  claudeSubscription: boolean;
   /** BYO keys present in the keychain. */
   anthropicKey: boolean;
   openaiKey: boolean;
   glmKey: boolean;
 }
 
+// COMPLIANCE — the subscription token is CLI-ONLY.
+// These backends power the IN-APP Hermes agent loop (they make LLM calls from
+// inside the app and produce an EditPlan). Using a Claude Max/Pro (or ChatGPT
+// Plus) SUBSCRIPTION token from a re-implemented client is against Anthropic's /
+// OpenAI's consumer terms and is detectable — it must NEVER drive the in-app
+// loop. The mirrored plan token is legitimate ONLY for the GENUINE CLI: the
+// Android proot `claude`/`codex`, or the real CLI on a paired box (Codex even
+// supports official "Sign in with ChatGPT" there). Those paths don't go through
+// codingBackend at all. So `subscription` is permanently NOT usable here; the
+// no-real-CLI case (iOS always, Android without proot) falls to BYO keys, GLM
+// first. See docs/phone-dev-environment-audit.md.
 export function backendUsable(id: CodingBackendId, av: CodingBackendAvailability): boolean {
   switch (id) {
     case "local":
       return av.localModelReady;
+    case "subscription":
+      // Hard policy gate: the in-app loop can't use the subscription mimic.
+      return false;
     case "anthropic":
       return av.anthropicKey;
     case "openai":
@@ -96,17 +122,20 @@ export function usableBackends(av: CodingBackendAvailability): CodingBackendId[]
 }
 
 /**
- * Auto-pick a backend. Policy (mirrors the local-first privacy stance of
- * brain.ts but for the *sandbox* which has no remote project context):
- *   1. On-device model if it's ready — private, free, offline.
- *   2. Otherwise the strongest available cloud key: Anthropic → OpenAI → GLM.
- *   3. null when nothing is configured (UI prompts the user to set one up).
+ * Auto-pick a backend for the IN-APP loop. NO subscription here (see the
+ * compliance note on backendUsable). Policy:
+ *   1. On-device model if it's ready — private, free, offline, fully compliant.
+ *   2. GLM — the cheap, compliant BYO cloud default (the "$0-ish standalone"
+ *      path; z.ai coding endpoint). Preferred cloud choice.
+ *   3. Other BYO metered keys the user configured: Anthropic → OpenAI.
+ *   4. null when nothing is configured (UI prompts the user to add a key, or to
+ *      pair a box / enable Android proot to use the real CLI on their plan).
  */
 export function resolveAutoBackend(av: CodingBackendAvailability): CodingBackendId | null {
   if (av.localModelReady) return "local";
+  if (av.glmKey) return "glm";
   if (av.anthropicKey) return "anthropic";
   if (av.openaiKey) return "openai";
-  if (av.glmKey) return "glm";
   return null;
 }
 

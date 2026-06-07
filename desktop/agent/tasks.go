@@ -1164,6 +1164,9 @@ func (tm *TaskManager) WarmUp() {
 		cmd.Env = append(os.Environ(), "PATH="+extraPaths+":"+existingPath)
 	}
 
+	// On Android, run the runner inside the proot rootfs (no-op elsewhere).
+	cmd = sandboxWrapCmd(cmd)
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		log.Printf("[warmup] Failed to create stdout pipe: %v", err)
@@ -1325,12 +1328,17 @@ func (tm *TaskManager) persist() {
 // CheckRunner verifies that the configured runner binary exists and is callable.
 // Returns nil if the runner is healthy, or an error with a user-friendly message.
 func (tm *TaskManager) CheckRunner() error {
-	// 1. Check if the binary exists in PATH
-	path, err := exec.LookPath(tm.runner.Command)
-	if err != nil {
-		return fmt.Errorf("%s not found in PATH — install it first (https://docs.anthropic.com/en/docs/claude-code)", tm.runner.Command)
+	// 1. Check if the binary exists in PATH.
+	// Under the Android proot sandbox the runner lives INSIDE the rootfs, not on
+	// the host PATH, so a host LookPath would always miss. Skip it and let the
+	// (sandbox-wrapped) version check below be the authority.
+	if _, active := sandboxConfigFromEnv(); !active {
+		path, err := exec.LookPath(tm.runner.Command)
+		if err != nil {
+			return fmt.Errorf("%s not found in PATH — install it first (https://docs.anthropic.com/en/docs/claude-code)", tm.runner.Command)
+		}
+		log.Printf("[runner-check] Found %s at %s", tm.runner.Command, path)
 	}
-	log.Printf("[runner-check] Found %s at %s", tm.runner.Command, path)
 
 	// 2. Quick version check to verify it's callable
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1346,6 +1354,10 @@ func (tm *TaskManager) CheckRunner() error {
 			"/usr/local/bin"
 		cmd.Env = append(os.Environ(), "PATH="+extraPaths+":"+existingPath)
 	}
+
+	// On Android, probe the runner inside the proot rootfs (no-op elsewhere) so
+	// CheckRunner sees the rootfs `claude`/`codex`/`opencode`, not a host PATH miss.
+	cmd = sandboxWrapCmd(cmd)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -2385,6 +2397,13 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			fmt.Sprintf("Launching task %s: %s", task.ID, task.Title),
 			map[string]interface{}{"runner": runner.RunnerID, "model": task.Model, "argCount": len(args)})
 
+		// On Android, run the task inside the proot rootfs (no-op elsewhere).
+		// Skipped in tmux mode (Android never takes that branch) so we don't
+		// proot-wrap a `tmux send-keys` invocation.
+		if len(tmuxEnvAdditions) == 0 {
+			cmd = sandboxWrapCmd(cmd)
+		}
+
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			cancel()
@@ -3412,6 +3431,9 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 
 	cmd := exec.CommandContext(ctx, runner.Command, args...)
 	cmd.Dir = tm.workDir
+
+	// On Android, run the forked runner inside the proot rootfs (no-op elsewhere).
+	cmd = sandboxWrapCmd(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

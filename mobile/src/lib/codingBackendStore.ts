@@ -27,8 +27,10 @@ import {
 } from "./codingBackend";
 import type { LlmProvider } from "./llmClient";
 import { createAnthropicProvider } from "./llmAnthropic";
+import { createClaudeSubscriptionProvider } from "./llmClaudeSubscription";
 import { createOpenAiProvider } from "./llmOpenAI";
 import { createLocalProvider } from "./llmLocal";
+import { hasSubscription } from "./subscriptionStore";
 import { engineAvailable, loadModel, type LoadedModel } from "./localAgent/engine";
 import { MODEL_REGISTRY, type ModelEntry } from "./localAgent/models";
 import { readDeviceCapability } from "./deviceCapability";
@@ -38,7 +40,7 @@ const FS = FileSystem as any;
 
 // ── Preference (which backend the user picked) ──────────────────────
 
-const VALID_PREFS = new Set<CodingBackendPref>(["auto", "local", "anthropic", "openai", "glm"]);
+const VALID_PREFS = new Set<CodingBackendPref>(["auto", "local", "subscription", "anthropic", "openai", "glm"]);
 
 export async function loadCodingBackendPref(): Promise<CodingBackendPref> {
   const raw = await getLocalSecret(LOCAL_KEYS.mobileCodingProvider);
@@ -98,16 +100,19 @@ export async function activeCoderModel(): Promise<ModelEntry | null> {
 // ── Availability snapshot ───────────────────────────────────────────
 
 export async function loadCodingAvailability(): Promise<CodingBackendAvailability> {
-  const [anthropic, openai, glm, coder] = await Promise.all([
+  const [anthropic, openai, glm, coder, subscription] = await Promise.all([
     getLocalSecret(LOCAL_KEYS.anthropicApiKey),
     getLocalSecret(LOCAL_KEYS.openAiApiKey),
     getLocalSecret(LOCAL_KEYS.glmApiKey),
     activeCoderModel(),
+    hasSubscription(),
   ]);
   return {
     // local is only "ready" when the native engine is linked AND a coder GGUF
     // is downloaded — otherwise the user must add a cloud key or download a model.
     localModelReady: engineAvailable() && coder !== null,
+    // Claude on the user's plan — free, full quality. Preferred over the metered key.
+    claudeSubscription: subscription,
     anthropicKey: !!anthropic?.trim(),
     openaiKey: !!openai?.trim(),
     glmKey: !!glm?.trim(),
@@ -165,6 +170,13 @@ export async function makeProvider(
   ctx: MakeProviderContext = {},
 ): Promise<LlmProvider | null> {
   switch (id) {
+    case "subscription": {
+      // No key lookup — the provider draws from the mirrored plan token at call
+      // time. Returns a provider unconditionally; if the token is missing the
+      // call throws with a "mirror from desktop" hint (resolveActiveBackend
+      // already gated usability on hasSubscription()).
+      return createClaudeSubscriptionProvider();
+    }
     case "anthropic": {
       const key = (await getLocalSecret(LOCAL_KEYS.anthropicApiKey))?.trim();
       return key ? createAnthropicProvider({ apiKey: key }) : null;

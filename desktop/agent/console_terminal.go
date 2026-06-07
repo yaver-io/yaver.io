@@ -97,6 +97,10 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		if cwd != "" {
 			cmd.Dir = cwd
 		}
+		// On Android the agent runs native but the shell must execute inside
+		// the proot Alpine rootfs so claude/codex/node resolve. No-op on every
+		// other platform (gated on YAVER_ANDROID_* env). See sandbox_proot.go.
+		cmd = sandboxWrapCmd(cmd)
 		ts, err = s.newTerminalSession(cmd, touchSession, hostShareSessionID, guestUserID, workspaceDir)
 		if err != nil {
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("pty start failed: "+err.Error()))

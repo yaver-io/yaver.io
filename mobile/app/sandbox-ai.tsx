@@ -226,6 +226,21 @@ export default function SandboxAiScreen() {
             );
           })}
 
+          {/* Git accounts — push/pull sandbox repos to GitHub/GitLab from the phone */}
+          <Text style={[styles.section, { color: c.textSecondary, marginTop: 18 }]}>SOURCE CONTROL</Text>
+          <View style={[styles.card, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+            <Text style={{ color: c.textPrimary, fontSize: 13 }}>
+              Connect GitHub, GitLab, or a self-hosted repo to push & pull your sandbox projects
+              directly from this phone — no dev box.
+            </Text>
+            <Pressable
+              onPress={() => router.push("/git-accounts")}
+              style={[styles.linkBtn, { borderColor: c.border }]}
+            >
+              <Text style={{ color: c.accent, fontWeight: "600" }}>Manage Git accounts →</Text>
+            </Pressable>
+          </View>
+
           <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 14, lineHeight: 16 }}>
             Keys are stored only in this device's keychain and used directly from the phone — they
             are never sent to Yaver's servers. On-device models run fully offline.

@@ -28,7 +28,11 @@ const FLAVOR_DEFAULTS: Record<OpenAiFlavor, { baseUrl: string; model: string; la
     label: "OpenAI",
   },
   glm: {
-    baseUrl: "https://api.z.ai/api/paas/v4",
+    // GLM Coding Plan endpoint (the cheap flat-rate subscription). A Coding-Plan
+    // key 429s ("Insufficient balance") on the general /api/paas/v4 endpoint;
+    // it's provisioned for /api/coding/paas/v4 instead. Pay-as-you-go (prepaid
+    // balance) keys also work here. Matches codingAgent/runner.ts.
+    baseUrl: "https://api.z.ai/api/coding/paas/v4",
     model: "glm-4.6",
     label: "GLM",
   },

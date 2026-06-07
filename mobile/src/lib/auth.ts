@@ -637,6 +637,13 @@ export const LOCAL_KEYS = {
   glmApiKey: `${LOCAL_KEY_PREFIX}glm_api_key`,
   anthropicApiKey: `${LOCAL_KEY_PREFIX}anthropic_api_key`,
   figmaAccessToken: `${LOCAL_KEY_PREFIX}figma_access_token`,
+  // Git provider PATs for pushing/cloning phone-local sandbox repos, directly
+  // from the phone (no dev box). GitHub kept under its original key for compat.
+  githubToken: `${LOCAL_KEY_PREFIX}github_token`,
+  gitlabToken: `${LOCAL_KEY_PREFIX}gitlab_token`,
+  bitbucketToken: `${LOCAL_KEY_PREFIX}bitbucket_token`,
+  // Generic/self-hosted git: JSON { host, username, token }.
+  gitGenericConfig: `${LOCAL_KEY_PREFIX}git_generic_config`,
   mobileCodingProvider: `${LOCAL_KEY_PREFIX}mobile_coding_provider`,
   relayPassword: `${LOCAL_KEY_PREFIX}relay_password`,
   relayUrl: `${LOCAL_KEY_PREFIX}relay_url`,
