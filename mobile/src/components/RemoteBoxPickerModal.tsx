@@ -325,7 +325,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   const pickedDeviceIsConnected = !!pickedDevice && connectedSet.has(pickedDevice.id);
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: c.bg }}>
         <AppScreenHeader
           title={switchSuccess ? "Connected" : switching ? "Switching" : "Remote Box"}
