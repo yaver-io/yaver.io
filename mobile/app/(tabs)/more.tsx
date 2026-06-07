@@ -3048,6 +3048,19 @@ export default function MoreScreen() {
           </Pressable>
         ) : null}
 
+        {/* Dogfood Yaver — improve Yaver with screenshots */}
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={() => router.navigate("/(tabs)/dogfood" as any)}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"🐕"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Dogfood Yaver</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Screenshot → fix Yaver itself</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+        </Pressable>
+
         {/* Quality Gates — navigate to dedicated screen */}
         {connected && (
           <Pressable

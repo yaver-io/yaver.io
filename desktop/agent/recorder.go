@@ -398,12 +398,29 @@ func (s *HTTPServer) handleClipPrivateDetail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	dir, _ := sessionDir(id)
-	full := filepath.Join(dir, parts[1])
-	if _, err := os.Stat(full); err != nil {
+	leaf := filepath.Clean(parts[1])
+	if leaf == "." || strings.HasPrefix(leaf, "..") || filepath.IsAbs(leaf) {
+		jsonError(w, http.StatusBadRequest, "invalid file")
+		return
+	}
+	full := filepath.Join(dir, leaf)
+	f, err := os.Open(full)
+	if err != nil {
 		jsonError(w, http.StatusNotFound, "file not found")
 		return
 	}
-	http.ServeFile(w, r, full)
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "stat file: "+err.Error())
+		return
+	}
+	if strings.HasSuffix(strings.ToLower(leaf), ".mp4") {
+		w.Header().Set("Content-Type", "video/mp4")
+	}
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Cache-Control", "private, max-age=86400, immutable")
+	http.ServeContent(w, r, full, st.ModTime(), f)
 }
 
 // handleClipDetail is the public playback endpoint — returns
