@@ -260,18 +260,55 @@ var mobileProjectCache struct {
 	scannedAt time.Time
 	scanning  bool
 	cancel    bool
+	// stats captures WHY a scan ended — so the mobile diagnostic can tell
+	// "scan found nothing" from "scan couldn't read your files (grant Full
+	// Disk Access)" from "scan ran out of time". Without this, a
+	// permission-blocked or runaway walk was indistinguishable from a
+	// genuinely empty machine.
+	stats mobileScanStats
 }
 
+// mobileScanStats summarises the last scan for diagnostics.
+type mobileScanStats struct {
+	PermDenied int           `json:"permDenied"` // dirs skipped due to EACCES/EPERM (macOS TCC)
+	TimedOut   bool          `json:"timedOut"`   // hit mobileScanTimeout before finishing
+	Elapsed    time.Duration `json:"-"`
+	ElapsedMs  int64         `json:"elapsedMs"`
+	Err        string        `json:"error,omitempty"`
+}
+
+// mobileScanTimeout bounds a single scan. The walk checks the deadline on
+// every directory so `scanning` ALWAYS resolves to false — a slow or
+// permission-blocked home-directory walk can no longer leave the mobile
+// "Discovering apps…" spinner running forever. 45s is generous for a
+// healthy machine (a normal scan settles in 1-3s) but caps the worst case.
+const mobileScanTimeout = 45 * time.Second
+
 var errStopMobileScan = errors.New("mobile project scan cancelled")
+var errMobileScanDeadline = errors.New("mobile project scan deadline exceeded")
 
 // scanMobileProjects walks workspace roots looking for mobile projects.
 // Detects: pubspec.yaml (Flutter), package.json with expo/react-native,
 // and Unity projects via ProjectSettings/ProjectVersion.txt.
 // Skips: node_modules, .git, build artifacts, system dirs, caches.
+// scanMobileProjects runs a scan with the default timeout, discarding
+// stats. Kept as the back-compat entry point for the many callers
+// (PrewarmMobileProjects, diagnose, repos_http, etc.) that just want the
+// project list.
 func scanMobileProjects() []MobileProject {
+	projects, _ := scanMobileProjectsWithDeadline(time.Now().Add(mobileScanTimeout))
+	return projects
+}
+
+// scanMobileProjectsWithDeadline is the real scanner. It stops early when
+// `deadline` passes (returning whatever it found so far + TimedOut=true)
+// and counts permission-denied directories instead of silently skipping
+// them, so callers can surface "grant Full Disk Access" on macOS.
+func scanMobileProjectsWithDeadline(deadline time.Time) ([]MobileProject, mobileScanStats) {
+	var stats mobileScanStats
 	roots := projectDiscoveryRoots()
 	if len(roots) == 0 {
-		return nil
+		return nil, stats
 	}
 
 	skipDirs := map[string]bool{
@@ -311,7 +348,20 @@ func scanMobileProjects() []MobileProject {
 			if cancelled {
 				return errStopMobileScan
 			}
+			// Hard deadline — guarantees `scanning` resolves even if a
+			// huge home dir or a hung network mount would otherwise walk
+			// forever. Cheap enough to check on every entry.
+			if !deadline.IsZero() && time.Now().After(deadline) {
+				return errMobileScanDeadline
+			}
 			if err != nil {
+				// Permission denied (macOS TCC / Full Disk Access not
+				// granted) is the single most common cause of an empty or
+				// stuck scan. Count it so the diagnostic can say so out
+				// loud instead of the walk silently swallowing it.
+				if os.IsPermission(err) {
+					stats.PermDenied++
+				}
 				return filepath.SkipDir
 			}
 
@@ -551,11 +601,58 @@ func scanMobileProjects() []MobileProject {
 		})
 		if errors.Is(err, errStopMobileScan) {
 			log.Printf("[mobile-scan] Scan cancelled while walking %s", root)
-			return projects
+			return projects, stats
+		}
+		if errors.Is(err, errMobileScanDeadline) {
+			stats.TimedOut = true
+			log.Printf("[mobile-scan] Scan hit deadline while walking %s (found %d so far, permDenied=%d)",
+				root, len(projects), stats.PermDenied)
+			return projects, stats
 		}
 	}
 
-	return projects
+	return projects, stats
+}
+
+// runMobileScan executes a single bounded scan and writes the result +
+// stats back into the cache. It is guarded so only one scan runs at a
+// time (concurrent callers no-op), and it ALWAYS clears `scanning` —
+// even on panic — so the mobile UI can never get stuck on the spinner.
+// Run it in a goroutine; HTTP handlers must never block on it.
+func runMobileScan(reason string) {
+	mobileProjectCache.mu.Lock()
+	if mobileProjectCache.scanning {
+		mobileProjectCache.mu.Unlock()
+		return
+	}
+	mobileProjectCache.cancel = false
+	mobileProjectCache.scanning = true
+	mobileProjectCache.mu.Unlock()
+
+	start := time.Now()
+	var projects []MobileProject
+	var stats mobileScanStats
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				stats.Err = fmt.Sprintf("scan panic: %v", rec)
+				log.Printf("[mobile-scan] panic during %s: %v", reason, rec)
+			}
+		}()
+		projects, stats = scanMobileProjectsWithDeadline(start.Add(mobileScanTimeout))
+	}()
+	stats.Elapsed = time.Since(start)
+	stats.ElapsedMs = stats.Elapsed.Milliseconds()
+
+	mobileProjectCache.mu.Lock()
+	mobileProjectCache.projects = projects
+	mobileProjectCache.scannedAt = time.Now()
+	mobileProjectCache.scanning = false
+	mobileProjectCache.stats = stats
+	mobileProjectCache.mu.Unlock()
+
+	log.Printf("[mobile-scan] %s: %d projects in %dms (permDenied=%d timedOut=%v)",
+		reason, len(projects), stats.ElapsedMs, stats.PermDenied, stats.TimedOut)
 }
 
 // dirSizeHuman returns a human-readable size of a directory (e.g. "42M").
@@ -918,12 +1015,12 @@ func prebuildExpoProject(p MobileProject) {
 // Reload list shows "Todo Kt" instead of "yaver-fixture-native-android".
 //   - Expo/RN: app.json → expo.name → top-level name → package.json
 //   - Flutter: AndroidManifest android:label (literal) → iOS Info.plist
-//             CFBundleDisplayName → pubspec.yaml `name:`
+//     CFBundleDisplayName → pubspec.yaml `name:`
 //   - Unity:   ProjectSettings/ProjectSettings.asset productName
 //   - Kotlin:  res/values/strings.xml `app_name` → settings.gradle
-//             rootProject.name
+//     rootProject.name
 //   - Swift:   <App>/Info.plist CFBundleDisplayName → CFBundleName →
-//             project.yml INFOPLIST_KEY_CFBundleDisplayName → project.yml `name:`
+//     project.yml INFOPLIST_KEY_CFBundleDisplayName → project.yml `name:`
 func parseAppName(dir, framework string) string {
 	switch framework {
 	case "expo", "react-native":
@@ -1265,18 +1362,7 @@ func (s *HTTPServer) handleProjectsByCapability(w http.ResponseWriter, r *http.R
 	// Honest empty-state for first-call: kick a scan and tell the
 	// caller it's still running so the UI can render a spinner.
 	if (projects == nil || len(projects) == 0) && time.Since(scannedAt) > 10*time.Minute {
-		go func() {
-			mobileProjectCache.mu.Lock()
-			mobileProjectCache.cancel = false
-			mobileProjectCache.scanning = true
-			mobileProjectCache.mu.Unlock()
-			scanned := scanMobileProjects()
-			mobileProjectCache.mu.Lock()
-			mobileProjectCache.projects = scanned
-			mobileProjectCache.scannedAt = time.Now()
-			mobileProjectCache.scanning = false
-			mobileProjectCache.mu.Unlock()
-		}()
+		go runMobileScan("by-capability cold-cache")
 	}
 	out := make([]MobileProject, 0, len(projects))
 	for _, p := range projects {
@@ -1328,24 +1414,9 @@ func mobileCapableProjects(in []MobileProject) []MobileProject {
 // 10 minutes; POST forces a re-scan.
 func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		// Force re-scan
-		go func() {
-			mobileProjectCache.mu.Lock()
-			mobileProjectCache.cancel = false
-			mobileProjectCache.scanning = true
-			mobileProjectCache.mu.Unlock()
-
-			projects := scanMobileProjects()
-
-			mobileProjectCache.mu.Lock()
-			mobileProjectCache.projects = projects
-			mobileProjectCache.scannedAt = time.Now()
-			mobileProjectCache.scanning = false
-			mobileProjectCache.mu.Unlock()
-
-			log.Printf("[mobile-scan] Found %d mobile projects", len(projects))
-		}()
-
+		// Force re-scan in the background — never block the request. The
+		// guard inside runMobileScan coalesces overlapping POSTs.
+		go runMobileScan("forced re-scan")
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"ok":      true,
 			"message": "scan started",
@@ -1377,60 +1448,46 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 	projects := mobileProjectCache.projects
 	scannedAt := mobileProjectCache.scannedAt
 	scanning := mobileProjectCache.scanning
+	stats := mobileProjectCache.stats
 	mobileProjectCache.mu.RUnlock()
 
 	if projects != nil && len(projects) > 0 && time.Since(scannedAt) < 10*time.Minute {
-		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":        true,
-			"projects":  mobileCapableProjects(projects),
-			"scannedAt": scannedAt.UTC().Format(time.RFC3339),
-			"scanning":  scanning,
-		})
+		jsonReply(w, http.StatusOK, mobileProjectsReply(mobileCapableProjects(projects), scannedAt, scanning, stats))
 		return
 	}
 
-	// No cache or stale — scan synchronously (first time), then cache
-	if projects == nil || len(projects) == 0 {
-		mobileProjectCache.mu.Lock()
-		mobileProjectCache.cancel = false
-		mobileProjectCache.scanning = true
-		mobileProjectCache.mu.Unlock()
-
-		scanned := scanMobileProjects()
-
-		mobileProjectCache.mu.Lock()
-		mobileProjectCache.projects = scanned
-		mobileProjectCache.scannedAt = time.Now()
-		mobileProjectCache.scanning = false
-		mobileProjectCache.mu.Unlock()
-
-		projects = scanned
-		scannedAt = time.Now()
-		log.Printf("[mobile-scan] Initial scan: found %d mobile projects", len(projects))
-	} else {
-		// Stale cache — return stale data but trigger background refresh
-		go func() {
-			mobileProjectCache.mu.Lock()
-			mobileProjectCache.cancel = false
-			mobileProjectCache.scanning = true
-			mobileProjectCache.mu.Unlock()
-
-			scanned := scanMobileProjects()
-
-			mobileProjectCache.mu.Lock()
-			mobileProjectCache.projects = scanned
-			mobileProjectCache.scannedAt = time.Now()
-			mobileProjectCache.scanning = false
-			mobileProjectCache.mu.Unlock()
-
-			log.Printf("[mobile-scan] Background refresh: found %d mobile projects", len(scanned))
-		}()
+	// No cache or stale — kick a BACKGROUND scan and return immediately with
+	// scanning=true. The HTTP request must never block on the filesystem
+	// walk (that was the request-level hang: a slow macOS home-dir scan with
+	// no timeout held the response open forever). The mobile UI polls
+	// /projects/mobile and renders results as soon as the scan settles.
+	if !scanning {
+		reason := "initial scan"
+		if len(projects) > 0 {
+			reason = "background refresh"
+		}
+		go runMobileScan(reason)
+		scanning = true
 	}
 
-	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":        true,
-		"projects":  mobileCapableProjects(projects),
-		"scannedAt": scannedAt.UTC().Format(time.RFC3339),
-		"scanning":  scanning,
-	})
+	jsonReply(w, http.StatusOK, mobileProjectsReply(mobileCapableProjects(projects), scannedAt, scanning, stats))
+}
+
+// mobileProjectsReply builds the GET /projects/mobile body, including the
+// scan diagnostics the mobile preflight reads to distinguish "empty
+// machine" from "permission-blocked" from "timed out".
+func mobileProjectsReply(projects []MobileProject, scannedAt time.Time, scanning bool, stats mobileScanStats) map[string]interface{} {
+	reply := map[string]interface{}{
+		"ok":         true,
+		"projects":   projects,
+		"scannedAt":  scannedAt.UTC().Format(time.RFC3339),
+		"scanning":   scanning,
+		"permDenied": stats.PermDenied,
+		"timedOut":   stats.TimedOut,
+		"scanMs":     stats.ElapsedMs,
+	}
+	if stats.Err != "" {
+		reply["scanError"] = stats.Err
+	}
+	return reply
 }
