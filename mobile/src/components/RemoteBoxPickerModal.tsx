@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../context/ThemeContext";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
@@ -24,6 +25,7 @@ interface Props {
 
 export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: Props) {
   const c = useColors();
+  const insets = useSafeAreaInsets();
   const tabletContent = useTabletContentStyle("regular");
   const deviceCtx = useDevice();
   const {
@@ -317,31 +319,33 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
             alignItems: "center",
             justifyContent: "space-between",
             paddingHorizontal: 16,
-            paddingTop: 14,
-            paddingBottom: 10,
+            paddingTop: Math.max(insets.top, 12) + 6,
+            paddingBottom: 12,
             borderBottomWidth: 1,
             borderBottomColor: c.border,
           }}
         >
           <Pressable
             onPress={onClose}
-            hitSlop={10}
+            hitSlop={12}
             style={({ pressed }) => ({
-              paddingHorizontal: 12,
-              paddingVertical: 7,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: c.border,
-              backgroundColor: pressed ? c.bgCard : "transparent",
-              opacity: pressed ? 0.85 : 1,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+              paddingLeft: 10,
+              paddingRight: 14,
+              paddingVertical: 8,
+              borderRadius: 999,
+              backgroundColor: pressed ? c.border : c.bgCard,
             })}
           >
-            <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
+            <Text style={{ color: c.textMuted, fontSize: 18, lineHeight: 18, marginTop: -1 }}>{"‹"}</Text>
+            <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>Cancel</Text>
           </Pressable>
-          <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "700" }}>
+          <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700" }}>
             {switching ? "Switching" : "Remote Box"}
           </Text>
-          <View style={{ width: 70 }} />
+          <View style={{ width: 88 }} />
         </View>
 
         {switching ? (
