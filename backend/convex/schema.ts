@@ -1162,6 +1162,13 @@ export default defineSchema({
     // debug key, not Convex, is how real logs are read). Cleared the
     // moment the box ticks a healthy phase. project_managed_cloud_onboarding_gap.
     provisionError: v.optional(v.string()),
+    // Which base image the box booted from: "golden" = a prebuilt Yaver
+    // snapshot (YAVER_CLOUD_IMAGE_ID_*, everything pre-installed, ~seconds
+    // to ready) vs "vanilla" = ubuntu-24.04 with a 3–5 min first-boot
+    // build. Set at provision time; drives the "⚡ fast boot" vs "first
+    // boot" hint on the device card so a slow vanilla-fallback is visible
+    // instead of looking like a hang. No secret/path — just an enum.
+    bootImageSource: v.optional(v.string()), // "golden" | "vanilla"
     // Has the user's runner OAuth (claude/codex/opencode subscription)
     // been pushed to this dedicated box? absent/false ⇒ device shows
     // "Unauthorized — Authorize runners" so the user triggers the

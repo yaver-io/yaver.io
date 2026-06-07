@@ -14,6 +14,9 @@ export interface ManagedCloudMachineSummary {
   // (project_managed_cloud_onboarding_gap).
   provisionPhase?: string | null;
   provisionProgress?: number | null;
+  /** "golden" = booted from a prebuilt snapshot (fast); "vanilla" =
+   *  ubuntu-24.04 first-boot build (~3-5 min). */
+  bootImageSource?: string | null;
   runnersAuthorized?: boolean;
   stoppedAt?: number | null;
   prepaidBalanceCents?: number | null;
