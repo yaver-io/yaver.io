@@ -2735,7 +2735,7 @@ export default function MoreScreen() {
   const handleHotReload = useCallback(() => router.navigate("/(tabs)/hotreload" as any), [router]);
   const handleDevices = useCallback(() => router.navigate("/(tabs)/devices" as any), [router]);
   const handleScreenlog = useCallback(() => router.navigate("/(tabs)/screenlog" as any), [router]);
-  const handleNetwork = useCallback(() => router.navigate("/(tabs)/network" as any), [router]);
+  const handleNetwork = useCallback(() => router.navigate("/(tabs)/mesh" as any), [router]);
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
@@ -2983,9 +2983,9 @@ export default function MoreScreen() {
               >
                 <Text style={[s.icon, { color: c.textMuted }]}>{"\u26F6"}</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={[s.label, { color: c.textPrimary }]}>Mesh</Text>
+                  <Text style={[s.label, { color: c.textPrimary }]}>Yaver Mesh</Text>
                   <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                    WireGuard overlay network & access rules
+                    WireGuard overlay \u00B7 exit nodes \u00B7 access
                   </Text>
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>

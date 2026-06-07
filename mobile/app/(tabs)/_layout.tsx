@@ -350,8 +350,24 @@ export default function TabLayout() {
         options={{ href: null, title: "Screen Monitor", headerShown: true, headerLeft: backToMore }}
       />
       <Tabs.Screen
-        name="network"
-        options={{ href: null, title: "Mesh", headerShown: true, headerLeft: backToMore }}
+        name="mesh"
+        options={{ href: null, title: "Yaver Mesh", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
+        name="mesh-node"
+        options={{ href: null, title: "Node", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
+        name="mesh-exit"
+        options={{ href: null, title: "Exit node", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
+        name="mesh-access"
+        options={{ href: null, title: "Access rules", headerShown: true, headerLeft: backToMore }}
+      />
+      <Tabs.Screen
+        name="mesh-share"
+        options={{ href: null, title: "Sharing", headerShown: true, headerLeft: backToMore }}
       />
       <Tabs.Screen
         name="robot"

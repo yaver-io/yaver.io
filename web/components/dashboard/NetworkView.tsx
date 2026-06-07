@@ -309,6 +309,14 @@ export default function NetworkView({ token }: { token: string | null }) {
                         exit node
                       </span>
                     )}
+                    {(p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0").length > 0 && (
+                      <span
+                        className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-200"
+                        title="Gateway (subnet router) — advertises the subnet routes below"
+                      >
+                        gateway · {(p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0").length}
+                      </span>
+                    )}
                     {(p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0").map((r) => (
                       <span key={r} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-200">
                         {r}

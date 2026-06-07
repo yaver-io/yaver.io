@@ -248,20 +248,33 @@ async function meshPeersForUser(ctx: any, userId: Id<"users">) {
       }
     }
 
-    // Resolve each node's device alias for MagicDNS (<alias>.mesh). The alias
-    // lives on the devices row, not meshNodes, so look it up by deviceId.
-    const aliasFor = async (deviceId: string): Promise<string | undefined> => {
+    // Resolve display/telemetry metadata from the device row (alias, platform,
+    // agent version). The meshNodes row holds only the WireGuard-relevant state;
+    // these fields live on `devices` and are ALREADY in Convex (read-only here,
+    // so no new sync path / no privacy-test change). Phone mesh nodes have no
+    // device row → meta is undefined and the fields are simply absent.
+    const deviceMetaFor = async (
+      deviceId: string
+    ): Promise<{ alias?: string; os?: string; clientVersion?: string }> => {
       const dev = await ctx.db
         .query("devices")
         .withIndex("by_deviceId", (q: any) => q.eq("deviceId", deviceId))
         .first();
-      return dev?.alias ?? dev?.name;
+      if (!dev) return {};
+      return { alias: dev.alias ?? dev.name, os: dev.platform, clientVersion: dev.agentVersion };
     };
 
-    const shape = async (n: any, scope: "owner" | "shared" | "peer") => ({
+    const shape = async (n: any, scope: "owner" | "shared" | "peer") => {
+      const meta = await deviceMetaFor(n.deviceId);
+      return {
       deviceId: n.deviceId,
       ownerUserId: n.userId, // for agent-side ACL "user" resolution
-      alias: await aliasFor(n.deviceId),
+      alias: meta.alias,
+      // MagicDNS name (<alias>.mesh) — the overlay's resolvable hostname,
+      // surfaced so the mobile/web node detail can show + copy it.
+      magicDns: meta.alias ? `${meta.alias}.mesh` : undefined,
+      os: meta.os,
+      clientVersion: meta.clientVersion,
       wgPublicKey: n.wgPublicKey,
       meshIPv4: n.meshIPv4,
       meshIPv6: n.meshIPv6,
@@ -278,7 +291,8 @@ async function meshPeersForUser(ctx: any, userId: Id<"users">) {
       wantUseExitNode: n.wantUseExitNode ?? "",
       wantRoutes: n.wantRoutes ?? [],
       desiredAt: n.desiredAt,
-    });
+      };
+    };
 
     return {
       peers: [
