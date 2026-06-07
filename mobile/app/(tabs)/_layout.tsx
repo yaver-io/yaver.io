@@ -245,20 +245,21 @@ export default function TabLayout() {
         headerTintColor: c.textPrimary,
         headerTitleStyle: { ...typography.navTitle, color: c.textPrimary },
         tabBarPosition: useLeftRail ? "left" : "bottom",
-        // Liquid Glass tab bar — iOS 26+ gets real glass, iOS 18-25
-        // BlurView, Android Material 3 surface (per spatial_constraints
-        // memory: don't port Liquid Glass to Android). Tab bar BG is
-        // transparent so the YaverGlass underlay shows through.
+        // Tab bar background — a clean, SOLID flat bar that matches the
+        // app background, restoring the pre-Liquid-Glass look.
         //
-        // borderRadius:0 is REQUIRED here. YaverGlass defaults to a
-        // 12pt corner radius (it's normally a floating card/sheet), but
-        // as a full-width tab-bar underlay that rounds the blur's
-        // corners against the black screen behind it — rendering an ugly
-        // floating rounded-rectangle "frame" instead of a clean
-        // edge-to-edge bar. Flatten the corners so it sits flush like a
-        // native iOS tab bar.
+        // We deliberately DON'T use the frosted BlurView here. On a
+        // pure-black dark UI, `systemChromeMaterialDark` renders as a
+        // washed-out GRAY material, which made the bar read as a
+        // distinct floating "box" against the black content — the ugly
+        // boundary the old plain bar never had. forceSolid drops to a
+        // solid fill (= tint = bgTabBar, which is the app bg in dark
+        // mode), so the bar blends flush with the screen. borderRadius:0
+        // keeps the corners square (YaverGlass defaults to a 12pt
+        // card radius, which drew a rounded-rectangle frame).
         tabBarBackground: () => (
           <YaverGlass
+            forceSolid
             style={[StyleSheet.absoluteFillObject, { borderRadius: 0 }] as any}
             tint={c.bgTabBar}
           />
