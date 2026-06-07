@@ -173,7 +173,7 @@ export function deriveMobileDeviceLifecycleState(args: {
   authExpired?: boolean;
   unreachable?: boolean;
 }): MobileDeviceLifecycleState {
-  const { device, probe, isConnected = false, authExpired = false, unreachable = false } = args;
+  const { device, probe, isConnected = false, authExpired = false } = args;
   // Auth state is independent of transport. Even when this mobile reached
   // the agent (isConnected=true), the agent's own yaver session can be
   // expired — manifests as 401 on subsequent requests (agentAuthExpired)
@@ -185,13 +185,19 @@ export function deriveMobileDeviceLifecycleState(args: {
   if (device.needsAuth) return "yaver-auth-expired";
   if (isConnected) return "connected";
   if (probe?.lifecycleState) return probe.lifecycleState;
+  // "ready-to-connect" must mean we have a *positive, recent* signal that the
+  // box can actually be reached: a live probe, a fresh Convex heartbeat
+  // (device.online ≤ HEARTBEAT_STALE_MS), live P2P presence, or a relay tunnel
+  // seen up in the last 90s. A `stale` peerState or a failed reachability probe
+  // (`unreachable`) are NOT live signals — they previously let a down box like
+  // magara render "READY · reachable" while a connect attempt timed out. Let
+  // those fall through to "offline" so the card shows the honest
+  // "No recent heartbeat" copy instead.
   if (
     probe?.reachable ||
     device.online ||
     device.peerState === "online" ||
-    device.peerState === "stale" ||
-    hasRecentLiveSignal(device) ||
-    unreachable
+    hasRecentLiveSignal(device)
   ) {
     return "ready-to-connect";
   }
