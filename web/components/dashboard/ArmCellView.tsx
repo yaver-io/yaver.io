@@ -15,12 +15,13 @@ type JointSpec = { name: string; type?: string; min: number; max: number; home?:
 type ArmInfo = { model?: string; vendor?: string; dof: number; joints: JointSpec[]; hasCartesian?: boolean; source?: string };
 type JointState = { name: string; position: number; unit?: string };
 type ArmStatus = { ok?: boolean; connected?: boolean; enabled?: boolean; estopped?: boolean; joints?: JointState[]; cameraOk?: boolean; error?: string };
-type ArmConfig = { driver?: string; addr?: string; camera?: string; info?: ArmInfo };
+type SimConfig = { engine?: string; model?: string; port?: number; python?: string; gui?: boolean };
+type ArmConfig = { driver?: string; addr?: string; camera?: string; info?: ArmInfo; sim?: SimConfig };
 type Program = { name: string; waypoints?: any[] };
 type Waypoint = { joints?: Record<string, number>; pose?: any; velPct?: number; verify?: string; label?: string };
-type RobotModel = { vendor: string; model: string; driver: string; transport: string; payloadKg?: number; reachMm?: number; info: ArmInfo; note?: string };
+type RobotModel = { vendor: string; model: string; driver: string; transport: string; payloadKg?: number; reachMm?: number; info: ArmInfo; note?: string; simSource?: string };
 
-const DRIVERS = ["fairino", "mycobot", "parol6", "generic_tcp", "generic_serial", "bridge"];
+const DRIVERS = ["sim", "fairino", "mycobot", "parol6", "generic_tcp", "generic_serial", "bridge"];
 const STEPS = [1, 5, 15, 45];
 const SPEEDS = [10, 30, 60, 100];
 
@@ -190,11 +191,16 @@ export default function ArmCellView({ devices, token }: { devices: Device[]; tok
       {/* identity + status */}
       <div className="flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900 p-4">
         <div>
-          <div className="font-semibold text-neutral-100">
-            {info?.vendor ? `${info.vendor} ${info?.model || ""}` : config?.driver || "arm"} · {info?.dof ?? "?"} DOF
+          <div className="flex items-center gap-2 font-semibold text-neutral-100">
+            <span>{info?.vendor ? `${info.vendor} ${info?.model || ""}` : config?.driver || "arm"} · {info?.dof ?? "?"} DOF</span>
+            {config?.driver === "sim" && <span className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white">SIM</span>}
           </div>
           <div className="text-xs text-neutral-400">
-            {status?.connected ? (status?.estopped ? "E-STOPPED" : status?.enabled ? "enabled" : "ready") : "offline"}
+            {config?.driver === "sim"
+              ? `simulator · ${config?.sim?.engine || "pybullet"}`
+              : status?.connected
+                ? status?.estopped ? "E-STOPPED" : status?.enabled ? "enabled" : "ready"
+                : "offline"}
             {info?.source ? ` · ${info.source}` : ""}
           </div>
         </div>
@@ -212,7 +218,12 @@ export default function ArmCellView({ devices, token }: { devices: Device[]; tok
             defaultValue=""
             onChange={(e) => {
               const m = models.find((x) => `${x.vendor}__${x.model}` === e.target.value);
-              if (m) setConfig((c) => ({ ...(c || {}), driver: m.driver, info: m.info, addr: c?.addr || (m.driver === "fairino" ? "192.168.58.2" : c?.addr || "") }));
+              if (!m) return;
+              if (m.driver === "sim") {
+                setConfig((c) => ({ ...(c || {}), driver: "sim", info: m.info, sim: { ...(c?.sim || {}), engine: "pybullet", model: m.simSource } }));
+              } else {
+                setConfig((c) => ({ ...(c || {}), driver: m.driver, info: m.info, addr: c?.addr || (m.driver === "fairino" ? "192.168.58.2" : c?.addr || "") }));
+              }
             }}
           >
             <option value="">— pick your robot (prefills DOF + joints) —</option>
@@ -294,6 +305,7 @@ export default function ArmCellView({ devices, token }: { devices: Device[]; tok
         <button className="rounded-md px-3 py-1.5 text-sm bg-amber-500 text-black" disabled={busy} onClick={() => run(() => callArm("arm_stop"))}>Stop</button>
         <button className="rounded-md px-3 py-1.5 text-sm bg-red-600 font-semibold text-white" disabled={busy} onClick={() => run(() => callArm("arm_estop"))}>E-STOP</button>
         {status?.estopped && <button className={btnAccent} disabled={busy} onClick={() => run(() => callArm("arm_reset"))}>Reset</button>}
+        {config?.driver === "sim" && <button className={btn} disabled={busy} onClick={() => run(() => callArm("sim_reset"))}>Reset sim</button>}
       </div>
 
       {/* learning mode */}

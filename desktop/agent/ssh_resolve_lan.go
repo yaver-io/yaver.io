@@ -20,6 +20,7 @@ package main
 import (
 	"net"
 	"strings"
+	"time"
 )
 
 // pickReachableLanIP returns the first candidate that is RFC1918,
@@ -50,6 +51,41 @@ func pickReachableLanIP(candidates []string) string {
 				return ip
 			}
 		}
+	}
+	return ""
+}
+
+// firstDialablePrivateIP returns the first RFC1918 candidate that
+// accepts a TCP connection on port within timeout. This is the bridge
+// for the case `pickReachableLanIP` can't see: a private LAN IP we do
+// NOT share a /24 with but can still reach through a route — a Tailscale
+// subnet router advertising 10.0.0.0/24, a WireGuard/utun tunnel, a
+// corporate VPN. Those make `ssh user@10.0.0.45` work by hand even
+// though 10.0.0.45 isn't on any local interface's subnet, so the SSH
+// resolver should prefer them over a public HTTP endpoint (not an ssh
+// host) or a relay PTY. Reachability-gated with a short dial so an
+// unreachable address costs ~timeout, never OpenSSH's 30 s connect hang.
+// Docker bridge gateways and loopback are skipped. Empty when none
+// answer — caller falls through to the existing Tailscale/public paths.
+func firstDialablePrivateIP(candidates []string, port string, timeout time.Duration) string {
+	for _, raw := range candidates {
+		ip := strings.TrimSpace(raw)
+		if ip == "" {
+			continue
+		}
+		parsed := net.ParseIP(ip).To4()
+		if parsed == nil || !isPrivateLanIPv4(parsed) {
+			continue
+		}
+		if isLikelyDockerBridgeIP(ip) {
+			continue
+		}
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, port), timeout)
+		if err != nil {
+			continue
+		}
+		_ = conn.Close()
+		return ip
 	}
 	return ""
 }

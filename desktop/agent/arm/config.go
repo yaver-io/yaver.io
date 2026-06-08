@@ -45,9 +45,28 @@ type Config struct {
 	StateParse       string            `json:"stateParse,omitempty"`
 	PoseParse        string            `json:"poseParse,omitempty"`
 
+	// Sim configures the headless simulator backend (Driver "sim"). The harness
+	// is a PyBullet process Yaver spawns; SimModel is its load token (see
+	// SimModels / SimSource: "builtin:arm6", "pybullet:<path>", "desc:<name>",
+	// "urdf:<path-or-url>"). The same arm_* verbs + the rendered-frame camera path
+	// drive it, so sim and hardware are interchangeable everywhere.
+	Sim SimConfig `json:"sim,omitempty"`
+
 	Label     string `json:"label,omitempty"`
 	UpdatedAt int64  `json:"updatedAt,omitempty"`
 }
+
+// SimConfig is the simulator-backend section of Config.
+type SimConfig struct {
+	Engine string `json:"engine,omitempty"` // "pybullet" (default) | "mujoco" (future seam)
+	Model  string `json:"model,omitempty"`  // load token, e.g. "builtin:arm6" / "desc:ur5e" / "urdf:/path|url"
+	Port   int    `json:"port,omitempty"`   // harness HTTP port (default 18092); 0 → default
+	Python string `json:"python,omitempty"` // python interpreter (default: python3 on PATH)
+	GUI    bool   `json:"gui,omitempty"`    // attach a desktop GUI window (dev only; default headless)
+}
+
+// SimDefaultPort is the harness HTTP port when Sim.Port is unset.
+const SimDefaultPort = 18092
 
 func (c *Config) Normalize() {
 	c.Driver = strings.ToLower(strings.TrimSpace(c.Driver))
@@ -60,11 +79,25 @@ func (c *Config) Normalize() {
 	if c.DefaultAccPct <= 0 || c.DefaultAccPct > 100 {
 		c.DefaultAccPct = 30
 	}
+	if c.Driver == "sim" {
+		if c.Sim.Engine == "" {
+			c.Sim.Engine = "pybullet"
+		}
+		if c.Sim.Model == "" {
+			c.Sim.Model = "builtin:arm6" // always-works, zero-download default
+		}
+		if c.Sim.Port <= 0 {
+			c.Sim.Port = SimDefaultPort
+		}
+	}
 	c.Info.Normalize()
 }
 
 // Enabled reports whether an arm cell is configured at all.
 func (c Config) Enabled() bool {
+	if c.Driver == "sim" && strings.TrimSpace(c.Sim.Model) != "" {
+		return true // a sim needs no addr/hardware — just a model to load
+	}
 	return strings.TrimSpace(c.Addr) != "" || len(c.Info.Joints) > 0
 }
 
