@@ -60,6 +60,13 @@ const DefaultWorkspaceDirName = "Workspace"
 // instead — that helper accepts a user override and falls back to
 // CWD when DefaultWorkspaceDir is unavailable.
 func DefaultWorkspaceDir() (string, error) {
+	// Explicit override wins (operator nodes / tests pin the project home).
+	if v := trimSpace(os.Getenv("YAVER_WORKSPACE_DIR")); v != "" {
+		if err := os.MkdirAll(v, 0o755); err != nil {
+			return "", fmt.Errorf("create %s: %w", v, err)
+		}
+		return v, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		// Managed-cloud boxes sometimes ship without HOME — the
