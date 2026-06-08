@@ -769,6 +769,9 @@ func runEphemeralRunner(ctx context.Context, reg CIRunnerRegistration, token, ru
 		store.Append(runID, "[ci] runner download/extract: "+err.Error())
 		return runnerOS, -1, err
 	}
+	// Teardown: scrub the runner's on-disk registration creds after the run so
+	// a later job on a shared box can't read them (operator-fleet gap C).
+	defer scrubGitHubRunnerCreds(runnerDir)
 
 	work, err := ciPerRunWorkDir(runID)
 	if err != nil {
@@ -829,14 +832,15 @@ func runGitHubRunnerInContainer(ctx context.Context, runnerDir, work string, cfg
 	}
 	// Quote the config args into a shell line; run config then run.sh inside.
 	script := "set -e; cd /runner; ./config.sh " + ciShellJoin(cfgArgs) + "; ./run.sh"
-	args := []string{
-		"run", "--rm",
-		"-v", runnerDir + ":/runner",
-		"-v", work + ":" + work,
+	args := []string{"run"}
+	args = append(args, ciDockerHardeningArgs()...) // gap-C: cap-drop, no-new-priv, pid/mem caps, jail net
+	args = append(args,
+		"-v", runnerDir+":/runner",
+		"-v", work+":"+work,
 		"-w", "/runner",
 		sandboxImage,
 		"sh", "-c", script,
-	}
+	)
 	cmd := exec.CommandContext(ctx, dockerPath, args...)
 	return streamCmdToRun(store, runID, cmd)
 }
@@ -938,14 +942,29 @@ func safeRunSuffix(runID string) string {
 
 // streamCmdToRun runs cmd, piping combined stdout+stderr line-by-line into the
 // run log via store.Append, and returns the exit code.
+//
+// Uses an os.Pipe (REAL fds), not io.Pipe, on purpose: with an io.Writer
+// stdout, cmd.Wait() blocks until every inherited fd closes — so a job that
+// spawns a background daemon would hang the runner for the daemon's whole
+// lifetime. With os.Pipe, cmd.Wait() returns when the MAIN process exits; we
+// then SIGKILL the whole process group (operator-fleet gap-C teardown: reap
+// orphaned daemons so nothing survives the run on a shared/operator box), which
+// also releases the inherited fd so the scanner reaches EOF.
 func streamCmdToRun(store *RunnerStore, runID string, cmd *exec.Cmd) (int, error) {
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-	if err := cmd.Start(); err != nil {
-		_ = pw.Close()
+	pr, pw, err := os.Pipe()
+	if err != nil {
 		return -1, err
 	}
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	setProcGroup(cmd) // own process group so the whole job subtree is reapable
+	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		_ = pr.Close()
+		return -1, err
+	}
+	_ = pw.Close() // we never write; the child holds its own dup'd copy
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -955,15 +974,22 @@ func streamCmdToRun(store *RunnerStore, runID string, cmd *exec.Cmd) (int, error
 		for sc.Scan() {
 			store.Append(runID, sc.Text())
 		}
+		_ = pr.Close()
 	}()
-	err := cmd.Wait()
-	_ = pw.Close()
+
+	waitErr := cmd.Wait() // returns when the MAIN process exits
+	// Reap the whole group: kills orphaned children (gap C) AND releases the
+	// inherited write fd so the scanner above hits EOF instead of hanging.
+	if cmd.Process != nil {
+		_ = killProcessGroup(cmd.Process.Pid, "KILL")
+	}
 	wg.Wait()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
+
+	if waitErr != nil {
+		if ee, ok := waitErr.(*exec.ExitError); ok {
 			return ee.ExitCode(), nil
 		}
-		return -1, err
+		return -1, waitErr
 	}
 	return 0, nil
 }

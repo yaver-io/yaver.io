@@ -420,13 +420,23 @@ guard pass; `npx convex codegen` = 0.
   pins `kind:"ci"`, debits the one wallet, dormant until live).
 - `schema.ts` — `managedUsage.wouldHaveCostUpstreamCents` (optional).
 
-**The remaining work to flip it on for a paying user:** (1) flip
-`YAVER_MANAGED_METER_LIVE` + surface the `ci` capability on the CapabilityShelf;
-(2) public/fork-PR support behind the full container jail + approval gate
-(operator gap C — the hardest, still open). Both GitHub and GitLab
-private-repo host/container paths are complete; the GitHub path is verified live
-on a real registered box (TestFlight/AAB-style deploy workflows run on the
-user's own hardware).
+**Gap-C teardown — per-run sandbox DONE** (`ci_jail.go` + `ci_pgroup`/exec
+helpers): every CI run now (1) runs in its own process group and SIGKILLs the
+whole group on exit so orphaned daemons can't survive on a shared box
+(`TestCIProcessGroupReaping`); (2) in container mode runs with `--cap-drop ALL
+--security-opt no-new-privileges --pids-limit --memory --rm`
+(`ciDockerHardeningArgs`); (3) wipes the per-run work dir + scrubs the runner's
+on-disk registration creds (`scrubGitHubRunnerCreds`). Also fixed a real hang:
+`streamCmdToRun` now uses an `os.Pipe` so a job spawning a background daemon
+doesn't block `cmd.Wait()` forever.
+
+**Remaining to flip on for a paying user:** (1) flip `YAVER_MANAGED_METER_LIVE`
++ surface the `ci` capability on the CapabilityShelf; (2) the HOST-LEVEL half of
+the network jail — the operator-fleet provisioning creates a `YAVER_CI_JAIL_NETWORK`
+docker network (relay-only egress, RFC1918 blocked) that CI containers already
+join when set; plus a fork-PR approval gate. Both GitHub and GitLab private-repo
+host/container paths are complete; the GitHub path is verified live on a real
+registered box.
 
 ### Earlier slice notes
 
