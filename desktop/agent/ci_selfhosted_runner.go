@@ -760,7 +760,8 @@ func isNumeric(s string) bool {
 func runEphemeralRunner(ctx context.Context, reg CIRunnerRegistration, token, runID string, store *RunnerStore) (string, int, error) {
 	runnerOS := normalizeRunnerOS(runtime.GOOS)
 	if reg.Provider == CIGitLab {
-		return runnerOS, -1, fmt.Errorf("gitlab-runner exec not yet wired (registration token minted ok); use a GitHub repo or run gitlab-runner out of band")
+		code, glErr := runGitLabRunner(ctx, reg, token, runID, store)
+		return runnerOS, code, glErr
 	}
 
 	runnerDir, err := ensureGitHubRunnerExtracted(ctx, githubRunnerVersion, store, runID)
