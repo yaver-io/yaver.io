@@ -13,12 +13,20 @@ package main
 // docs/yaver-public-compute-operator-fleet.md (the jail) +
 // docs/yaver-managed-cloud-ci-absorption.md.
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
-// ciJailNetwork is the operator-fleet jailed docker network name (relay-only
-// egress, RFC1918 blocked), or "" for the default bridge.
+// ciJailNetwork is the operator-fleet jailed docker network name (egress to
+// RFC1918 blocked), or "" for the default bridge. Reads the env override first,
+// then the marker written by `ci_jail_setup` (so the jail persists across agent
+// restarts without an env var).
 func ciJailNetwork() string {
-	return os.Getenv("YAVER_CI_JAIL_NETWORK")
+	if v := strings.TrimSpace(os.Getenv("YAVER_CI_JAIL_NETWORK")); v != "" {
+		return v
+	}
+	return readCIJailMarker()
 }
 
 func ciContainerPidsLimit() string {

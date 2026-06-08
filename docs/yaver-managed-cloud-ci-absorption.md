@@ -430,11 +430,19 @@ on-disk registration creds (`scrubGitHubRunnerCreds`). Also fixed a real hang:
 `streamCmdToRun` now uses an `os.Pipe` so a job spawning a background daemon
 doesn't block `cmd.Wait()` forever.
 
+**Network jail — BUILT** (`ci_jail_setup.go` + `ci_jail_setup`/`_status`/
+`_teardown` ops verbs): creates a dedicated docker bridge (`yaver-ci-jail`) and
+installs `DOCKER-USER` iptables rules that DROP jail-subnet → RFC1918 /
+link-local / CGNAT egress, so a jailed job can reach the public internet
+(npm/github) but **not the operator's LAN**. Persisted via a marker so container
+CI runs auto-join it. The docker-network lifecycle is verified live on macOS
+(`TestCIJailNetworkLifecycleLive`); the iptables firewall is Linux-only and not
+yet exercised on a real Linux box (the rule builders are unit-tested).
+
 **Remaining to flip on for a paying user:** (1) flip `YAVER_MANAGED_METER_LIVE`
-+ surface the `ci` capability on the CapabilityShelf; (2) the HOST-LEVEL half of
-the network jail — the operator-fleet provisioning creates a `YAVER_CI_JAIL_NETWORK`
-docker network (relay-only egress, RFC1918 blocked) that CI containers already
-join when set; plus a fork-PR approval gate. Both GitHub and GitLab private-repo
++ surface the `ci` capability on the CapabilityShelf (launch/billing call); (2)
+verify the iptables firewall on a real Linux operator box; (3) a fork-PR approval
+gate (needs webhook ingestion — Model 3). Both GitHub and GitLab private-repo
 host/container paths are complete; the GitHub path is verified live on a real
 registered box.
 
