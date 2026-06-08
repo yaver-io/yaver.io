@@ -171,23 +171,29 @@ func cleanTenantEnv(base []string) []string {
 // inference provider (if YAVER_GATEWAY_URL is set and a scoped token mints).
 // Non-operator boxes never call this (they keep normal behavior).
 func (s *HTTPServer) tenantRunnerBaseEnv(tenantUserID string) []string {
-	env := cleanTenantEnv(os.Environ())
+	return append(cleanTenantEnv(os.Environ()), s.gatewayInjectEnv(tenantUserID)...)
+}
+
+// gatewayInjectEnv returns ONLY the gateway inference-provider env vars for a
+// tenant (OPENAI_BASE_URL/API_BASE/API_KEY + YAVER_INFERENCE_GATEWAY), or an
+// empty slice if the bridge is off (no YAVER_GATEWAY_URL) or a scoped token
+// couldn't be minted. Used both to append to a clean env (terminal as the
+// yaver user) and to overlay via `env` when launching as a per-tenant OS
+// user (sudo resets the environment). Never includes the upstream key.
+func (s *HTTPServer) gatewayInjectEnv(tenantUserID string) []string {
 	gw := gatewayBaseURL()
 	if gw == "" {
-		return env // bridge off — clean env, no inference provider
+		return nil
 	}
 	tok := s.tenantGatewayToken(tenantUserID)
 	if tok == "" {
-		return env // mint failed — clean env, no provider (fail-closed, no key)
+		return nil // fail-closed: no token → no provider, never the host key
 	}
-	// OpenAI-compatible: clients post to <base>/chat/completions.
 	openaiBase := gw + "/v1"
-	env = append(env,
-		"OPENAI_BASE_URL="+openaiBase,
-		"OPENAI_API_BASE="+openaiBase,
-		"OPENAI_API_KEY="+tok,
-		// opencode/codex providers that read a generic base:
-		"YAVER_INFERENCE_GATEWAY="+gw,
-	)
-	return env
+	return []string{
+		"OPENAI_BASE_URL=" + openaiBase,
+		"OPENAI_API_BASE=" + openaiBase,
+		"OPENAI_API_KEY=" + tok,
+		"YAVER_INFERENCE_GATEWAY=" + gw,
+	}
 }
