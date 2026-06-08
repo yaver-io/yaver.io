@@ -77,6 +77,7 @@ export type ArmConfig = {
   label?: string;
 };
 export type ArmDriver = { driver: string; label: string; transport: string; defaultPort?: number; info?: ArmInfo; note?: string };
+export type RobotModel = { vendor: string; model: string; driver: string; transport: string; payloadKg?: number; reachMm?: number; info: ArmInfo; note?: string };
 export type Waypoint = {
   joints?: Record<string, number>;
   pose?: Pose;
@@ -139,6 +140,7 @@ async function armOps<T = any>(target: ArmTarget | undefined, verb: string, payl
 
 export const armClient = {
   drivers: (t: ArmTarget) => armOps<{ drivers: ArmDriver[] }>(t, "arm_drivers", {}, 15000),
+  models: (t: ArmTarget) => armOps<{ models: RobotModel[]; byVendor: Record<string, RobotModel[]> }>(t, "arm_models", {}, 15000),
   configGet: (t: ArmTarget) => armOps<{ config: ArmConfig; enabled: boolean }>(t, "arm_config_get", {}, 15000),
   configSet: (t: ArmTarget, config: ArmConfig) => armOps<{ config: ArmConfig; note?: string }>(t, "arm_config_set", config as any, 15000),
   describe: (t: ArmTarget) => armOps<{ info: ArmInfo }>(t, "arm_describe", {}, 20000),
