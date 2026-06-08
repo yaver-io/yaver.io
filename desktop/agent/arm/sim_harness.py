@@ -77,6 +77,7 @@ class Sim:
         self.joints = []        # list of dicts: idx,name,type,min,max,home,unit,maxVel,maxEffort
         self.enabled = True
         self.estopped = False
+        self._builtin_specs = None  # (name,min,max) per joint for the procedural arm
         self._load_plane()
 
     def _load_plane(self):
@@ -101,6 +102,7 @@ class Sim:
                 self.body = self._build_arm6()
                 name = "Generic 6-DOF (built-in)"
             else:
+                self._builtin_specs = None  # real URDFs carry their own joint names
                 self.body = p.loadURDF(
                     urdf_path, useFixedBase=True,
                     flags=p.URDF_USE_INERTIA_FROM_FILE,
@@ -170,6 +172,13 @@ class Sim:
         # alternate revolute axes so it looks like a real arm (z,y,y,y,z,y)
         axes = [[0, 0, 1], [0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 0, 1], [0, 1, 0]]
         jtypes = [p.JOINT_REVOLUTE] * n
+        # createMultiBody can't carry joint names/limits, and they must match the
+        # kinematic engine + the Go catalog (models_sim.go) so builtin:arm6 is the
+        # SAME arm on every engine. Pin them here and apply in _index_joints.
+        self._builtin_specs = [
+            ("J1", -170, 170), ("J2", -120, 120), ("J3", -160, 160),
+            ("J4", -170, 170), ("J5", -120, 120), ("J6", -175, 175),
+        ]
         base = p.createMultiBody(
             baseMass=0, baseCollisionShapeIndex=-1, baseVisualShapeIndex=-1,
             basePosition=[0, 0, 0.05],
@@ -192,14 +201,24 @@ class Sim:
             lower, upper = ji[8], ji[9]
             max_force, max_vel = ji[10], ji[11]
             prismatic = jtype == p.JOINT_PRISMATIC
-            if lower > upper:  # unlimited / continuous
+            # The procedural builtin arm has no names/limits from createMultiBody;
+            # apply the pinned spec so it matches the kinematic engine + catalog.
+            spec = None
+            if self._builtin_specs and len(self.joints) < len(self._builtin_specs):
+                spec = self._builtin_specs[len(self.joints)]
+            if spec is not None:
+                name, jmin, jmax = spec
+                jt, unit = "revolute", "deg"
+                lower, upper = jmin / RAD2DEG, jmax / RAD2DEG
+            elif lower > upper:  # unlimited / continuous
                 jmin, jmax, jt = (-0.8, 0.8, "prismatic") if prismatic else (-360.0, 360.0, "continuous")
                 lower, upper = None, None
+                unit = "mm" if prismatic else "deg"
             else:
                 scale = 1000.0 if prismatic else RAD2DEG
                 jmin, jmax = lower * scale, upper * scale
                 jt = "prismatic" if prismatic else "revolute"
-            unit = "mm" if prismatic else "deg"
+                unit = "mm" if prismatic else "deg"
             home = 0.0 if (jmin <= 0 <= jmax) else (jmin + jmax) / 2.0
             self.joints.append({
                 "idx": i, "name": name or ("J%d" % (len(self.joints) + 1)),
