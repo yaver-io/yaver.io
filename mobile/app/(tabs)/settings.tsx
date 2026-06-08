@@ -2054,6 +2054,24 @@ export default function SettingsScreen() {
               <Text style={[styles.aboutValue, { color: c.accent }]}>Configure ›</Text>
             </Pressable>
 
+            {Platform.OS === "android" && (
+              <>
+                <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+                <Pressable
+                  style={styles.aboutRow}
+                  onPress={() => router.push("/local-box")}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>This phone as a box</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Run a Linux userland on-device — terminal, coding agents & Hermes reload, no machine
+                    </Text>
+                  </View>
+                  <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
+                </Pressable>
+              </>
+            )}
+
             <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
 
             <Pressable

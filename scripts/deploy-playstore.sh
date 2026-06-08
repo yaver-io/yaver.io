@@ -96,6 +96,26 @@ fi
 sed -i '' "s/versionCode $CURRENT_VERSION_CODE/versionCode $NEW_VERSION_CODE/" "$GRADLE_FILE"
 echo "versionCode $CURRENT_VERSION_CODE -> $NEW_VERSION_CODE"
 
+# On-device sandbox payload: cross-compile the Go agent (+ proot when a source is
+# configured) into jniLibs so the shipped AAB can host the phone-as-Linux-box
+# (SandboxService → libyaver.so + proot rootfs). Skipped only when explicitly
+# opted out or when Go isn't on PATH (a vanilla APK still builds fine; the
+# on-device box just stays disabled). proot needs PROOT_SRC or YAVER_PROOT_URL —
+# without it the script ships agent-only and says so. cwd is mobile/android here.
+if [ "${YAVER_SKIP_SANDBOX:-0}" != "1" ]; then
+  if command -v go >/dev/null 2>&1; then
+    echo "Building on-device sandbox payload (jniLibs)..."
+    if ../../scripts/build-android-sandbox.sh; then
+      [ -f "app/src/main/jniLibs/.sandbox-payload.txt" ] && \
+        sed 's/^/  sandbox: /' "app/src/main/jniLibs/.sandbox-payload.txt" || true
+    else
+      echo "WARN: sandbox payload build failed — continuing without on-device agent." >&2
+    fi
+  else
+    echo "WARN: 'go' not found — skipping on-device sandbox payload (set YAVER_SKIP_SANDBOX=1 to silence)." >&2
+  fi
+fi
+
 # Build release AAB.
 # We deliberately do NOT `gradlew clean` here. A clean wipes every
 # react-native-<lib>/android/build/generated/source/codegen/jni/
