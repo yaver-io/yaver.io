@@ -23,6 +23,8 @@ import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
 import { submitEncryptedPair } from "../lib/encryptedPair";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
+import { localBoxDeviceIfRunning } from "../lib/sandboxControl";
+import { LOCAL_BOX_DEVICE_ID } from "../lib/localBox";
 import {
   fetchGuestHosts,
   acceptGuestInvitation as apiAcceptInvitation,
@@ -1065,7 +1067,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // (could still be LAN-only and not using the relay at all).
         // Best-effort: any failure leaves the list unchanged.
         const finalDevices = await applyRelayPresence(filtered);
-        setDevices(finalDevices);
+        // Surface this phone's own on-device agent (Android sandbox) as a
+        // selectable "This phone" box when it's running on loopback, so the
+        // box picker / terminal / runner toggles can target it like any
+        // remote machine. No-op (null) on iOS/web or when not started.
+        const localBox = await localBoxDeviceIfRunning();
+        const withLocalBox = localBox
+          ? [localBox, ...finalDevices.filter((d) => d.id !== LOCAL_BOX_DEVICE_ID)]
+          : finalDevices;
+        setDevices(withLocalBox);
       } else {
         appLog("warn", `/devices/list failed: ${devicesRes.status} via ${convexSiteUrl}`);
         // A 401/403 here means our bearer is stale/rotated/revoked — but

@@ -63,6 +63,14 @@ keys/
 *.keystore
 mobile/android/keystore.properties
 sdk/go/clib/libyaver.*
+
+# Android on-device sandbox payload — built at deploy time by
+# scripts/build-android-sandbox.sh, never committed (the Go agent is ~45 MB and
+# proot binaries are fetched/pinned). SandboxService loads them from jniLibs.
+mobile/android/app/src/main/jniLibs/*/libyaver.so
+mobile/android/app/src/main/jniLibs/*/libproot.so
+mobile/android/app/src/main/jniLibs/*/libproot-loader.so
+mobile/android/app/src/main/jniLibs/.sandbox-payload.txt
 sdk/python/__pycache__/
 __pycache__/
 desktop/agent/.yaver/
