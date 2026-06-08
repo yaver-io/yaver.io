@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { clipUrl } from "../../src/lib/vibePreview";
+import { isBundleLoaderAvailable } from "../../src/lib/bundleLoader";
 import { AuthenticatedVideoPlayer } from "../../src/components/AuthenticatedVideoPlayer";
 import {
   ActivityIndicator,
@@ -2567,14 +2568,14 @@ export default function TasksScreen() {
   // Push a fresh Hermes bundle to THIS phone from the connected dev
   // machine. Reuses quic.ts `reloadDevServer` (dev → bundle fallback) and
   // the pool's per-device client so a multi-target pick reloads from the
-  // box the user actually selected. Hermes bundle-loading is iOS-only
-  // today (no Android YaverBundleLoader), so we degrade visibly rather
-  // than firing a reload this phone can't consume.
+  // box the user actually selected. Needs the native YaverBundleLoader
+  // (iOS + Android); degrade visibly if this build lacks it rather than
+  // firing a reload this phone can't consume.
   const triggerHermesReload = async () => {
-    if (Platform.OS === "android") {
+    if (!isBundleLoaderAvailable()) {
       Alert.alert(
         "Reload unavailable",
-        "Live Hermes bundle reload is currently iOS-only. On Android, use the Reload tab's dev-server controls.",
+        "This build of Yaver can't mount guest bundles. Update Yaver to the latest version, or use the Reload tab's dev-server controls.",
       );
       return;
     }
@@ -4743,9 +4744,9 @@ export default function TasksScreen() {
                       <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
                     </Pressable>
                     {/* ⚡ Reload — one-tap Hermes bundle push to this phone
-                        from the selected machine. iOS-only (Android can't
-                        load the bundle), so hidden off-iOS. */}
-                    {isEffectivelyConnected && Platform.OS !== "android" && (
+                        from the selected machine. Needs the native bundle
+                        loader (iOS + Android); hidden on builds without it. */}
+                    {isEffectivelyConnected && isBundleLoaderAvailable() && (
                       <Pressable
                         style={({ pressed }) => [
                           s.composerActionButton,

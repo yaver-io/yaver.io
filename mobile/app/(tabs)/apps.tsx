@@ -26,7 +26,7 @@ import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
 import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
-import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
+import { getAvailableModules, isBundleLoaderAvailable, loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
@@ -1307,13 +1307,13 @@ export default function AppsScreen() {
       return;
     }
     // Loading a guest app inside the Yaver container needs the native
-    // YaverBundleLoader module, which only ships on iOS today. Stop here on
-    // Android with a clear explanation instead of building a bundle the phone
-    // can't load (which would surface as a confusing "native module" error).
-    if (Platform.OS === "android") {
+    // YaverBundleLoader module (iOS + Android). Guard on the capability so an
+    // old build / web preview without the module stops here instead of
+    // building a bundle it can't load (a confusing "native module" error).
+    if (!isBundleLoaderAvailable()) {
       Alert.alert(
-        "iOS-Only For Now",
-        "Loading apps inside Yaver is iOS-only today. Use an iPhone or iPad to open this app in Yaver — or run it directly on the dev machine. Android support is in progress.",
+        "Bundle Loader Unavailable",
+        "This build of Yaver can't mount guest bundles. Update Yaver to the latest version — or run the app directly on the dev machine.",
       );
       return;
     }
@@ -1446,9 +1446,7 @@ export default function AppsScreen() {
       } else if (lower.includes("hbc") || lower.includes("bytecode") || lower.includes("hermes")) {
         hint = "\n\nHermes bytecode version mismatch between the guest app and the selected Yaver host family. Align the guest runtime to a supported family and retry.";
       } else if (lower.includes("yaverbundleloader") || lower.includes("native module")) {
-        hint = (Platform.OS as string) === "android"
-          ? "\n\nLoading apps inside Yaver is iOS-only today — Android doesn't ship the native bundle loader yet. Use an iPhone or iPad, or run the app directly on the dev machine."
-          : "\n\nYaver's native bundle loader is missing — reinstall Yaver from the App Store.";
+        hint = "\n\nYaver's native bundle loader is missing from this build — update Yaver to the latest version, or run the app directly on the dev machine.";
       } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("timeout")) {
         hint = `\n\nYaver ${describeConnectionStatus(connectionStatus)}.`;
       }

@@ -8,7 +8,7 @@ import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { YaverGlass } from "../../src/components/YaverGlass";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
-import { loadApp } from "../../src/lib/bundleLoader";
+import { isBundleLoaderAvailable, loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
 import { typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
@@ -163,13 +163,13 @@ export default function TabLayout() {
 
       if (command === "reload_bundle" || command === "reload") {
         // Loading a guest bundle into the container needs the native
-        // YaverBundleLoader module, which only ships on iOS today. On Android
-        // surface a brief message (and report it back) instead of silently
-        // swallowing the "native module not available" throw below.
-        if (Platform.OS === "android") {
+        // YaverBundleLoader module (iOS + Android). Guard on the capability so
+        // a build / web preview without the module reports back cleanly
+        // instead of swallowing the "native module not available" throw below.
+        if (!isBundleLoaderAvailable()) {
           Alert.alert(
-            "iOS-Only For Now",
-            "Loading apps inside Yaver is iOS-only today. This Android device can't mount the requested bundle. Open it on an iPhone or iPad instead.",
+            "Bundle Loader Unavailable",
+            "This build of Yaver can't mount the requested bundle. Update Yaver to the latest version and try again.",
           );
           await quicClient.pushBlackBoxEvents(resolved.id, [{
             type: "state",

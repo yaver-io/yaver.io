@@ -7,13 +7,25 @@ const emitter = YaverBundleLoader
   ? new NativeEventEmitter(YaverBundleLoader)
   : null;
 
-// The native bundle loader only ships on iOS today. When it's missing we want
-// callers (and any UI that surfaces the raw message) to explain the platform
-// limitation rather than imply a broken install / reinstall.
+// The native bundle loader ships on iOS and Android (YaverBundleLoaderModule,
+// registered in MainApplication). It's absent only on web, or on an Android
+// build predating the module. Callers should prefer isBundleLoaderAvailable()
+// to gate UI; this message is the fallback when a load is attempted anyway.
 function bundleLoaderUnavailableMessage(): string {
-  return Platform.OS === "android"
-    ? "Loading apps inside Yaver is iOS-only today — this Android build doesn't include the bundle loader yet. Use an iPhone or iPad."
-    : "Yaver's bundle loader isn't available. Reinstall Yaver from the App Store and try again.";
+  return Platform.OS === "web"
+    ? "Loading apps inside Yaver isn't available in the web preview — use the iOS or Android app."
+    : "Yaver's bundle loader isn't available in this build. Update Yaver to the latest version and try again.";
+}
+
+/**
+ * True when the native YaverBundleLoader module is present, i.e. this build
+ * can mount a guest Hermes bundle. iOS + Android (≥ the build that shipped
+ * YaverBundleLoaderModule) → true; web / older builds → false. Use this to
+ * gate "Open in Yaver" / Hermes-reload UI instead of checking Platform.OS,
+ * so the capability — not the platform name — drives the decision.
+ */
+export function isBundleLoaderAvailable(): boolean {
+  return !!YaverBundleLoader;
 }
 
 export interface BundleLoadResult {
@@ -146,8 +158,8 @@ export function onBundleEvent(
  * persists, so toggling on a phone and rotating an iPad later
  * picks up the user's preference.
  *
- * iOS-only in v1; on Android the native module isn't yet wired,
- * so this resolves silently to `{ enabled: false }`.
+ * iOS-only in v1; on Android the native methods are stubbed to
+ * `{ enabled: false }` (no tablet phone-frame chrome yet).
  */
 export async function setPhoneFrame(enabled: boolean): Promise<{ enabled: boolean }> {
   if (!YaverBundleLoader?.setPhoneFrame) return { enabled: false };
