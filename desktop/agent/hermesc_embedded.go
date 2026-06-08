@@ -77,7 +77,12 @@ func embeddedHermescSummary() (string, error) {
 // e.g. the prewarmed system path used on linux/arm64 where the
 // embedded prebuilt is unavailable.
 func hermescSummaryAt(hermescBin string) (string, error) {
-	out, err := exec.Command(hermescBin, "--version").CombinedOutput()
+	// On Android the resolved hermesc is a rootfs-internal path (musl/arm64,
+	// bundled ICU via rpath) — run the --version probe inside proot so the
+	// doctor/capabilities summary reflects reality instead of failing to exec
+	// it natively under Bionic. No-op off-sandbox.
+	cmd := sandboxWrapBuildCmd(exec.Command(hermescBin, "--version"))
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("present but --version failed: %v", err)
 	}
