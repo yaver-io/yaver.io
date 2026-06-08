@@ -35,10 +35,19 @@ var (
 	robotOnce sync.Once
 	robotCtrl *robot.Controller
 	robotErr  error
+	// robotExtCam is set when the camera source is "external": the push buffer
+	// the box fills via robot_camera_push (its own camera over loopback).
+	robotExtCam *robot.ExternalCamera
 )
 
 func robotEnabled() bool {
-	return os.Getenv("YAVER_ROBOT_SERIAL") != "" || os.Getenv("YAVER_ROBOT_BRIDGE") != ""
+	// A camera-only box (vision/PLC monitoring, a phone pushing its own camera)
+	// is a valid cell with no motion backend — enable the verbs so robot_snapshot
+	// / robot_look / robot_camera_push answer, while motion verbs gate on profile.
+	return os.Getenv("YAVER_ROBOT_SERIAL") != "" ||
+		os.Getenv("YAVER_ROBOT_BRIDGE") != "" ||
+		os.Getenv("YAVER_ROBOT_CAMERA") != "" ||
+		robotConfigGet().Camera != ""
 }
 
 func robotEnvOr(k, def string) string {
@@ -75,7 +84,22 @@ func ensureRobot() (*robot.Controller, error) {
 		if camDev == "" {
 			camDev = os.Getenv("YAVER_ROBOT_CAMERA")
 		}
-		cam := robot.NewGstCamera(camDev) // "" → /dev/video0
+		// Camera source selection (generic across robotics + PLC/machinery):
+		//   "external" / "push" → a buffer the box fills over loopback (the
+		//       Android phone capturing its OWN camera — no /dev/video0 on Android);
+		//   http(s):// URL       → pull JPEG snapshots from a network camera
+		//       (IP cam, phone-as-webcam, a Fairino/PLC cell's camera);
+		//   else                 → local V4L2 via gst-launch ("" → /dev/video0).
+		var cam robot.Camera
+		switch {
+		case camDev == "external" || camDev == "push":
+			robotExtCam = robot.NewExternalCamera()
+			cam = robotExtCam
+		case strings.HasPrefix(camDev, "http://") || strings.HasPrefix(camDev, "https://"):
+			cam = robot.NewHTTPCamera(camDev)
+		default:
+			cam = robot.NewGstCamera(camDev) // "" → /dev/video0
+		}
 		var backend robot.Backend
 		dev := cfg.Serial
 		if dev == "" {
@@ -292,6 +316,9 @@ type robotPayload struct {
 	Name    string         `json:"name"`
 	Steps   []robot.Step   `json:"steps"`
 	Program *robot.Program `json:"program"`
+	// camera ingest / vision Q&A
+	Image  string `json:"image"`  // base64 JPEG or data: URL pushed into the external camera
+	Prompt string `json:"prompt"` // free-form question for robot_look
 }
 
 // robotStatusResult embeds Status (its fields stay top-level for back-compat)
@@ -454,6 +481,61 @@ func init() {
 			"image": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(jpg),
 			"bytes": len(jpg),
 		}}
+	})
+	reg("robot_camera_push", "Push a JPEG frame into the external camera buffer (the box's own camera feeds the verify loop / snapshot / stream over loopback)", func(c OpsContext, payload json.RawMessage) OpsResult {
+		if _, deny := robotForOps(); deny != nil {
+			return *deny
+		}
+		if robotExtCam == nil {
+			return OpsResult{OK: false, Code: "no_external_camera",
+				Error: `camera source is not "external"; set the robot camera to "external" (YAVER_ROBOT_CAMERA=external) so the box can push its own camera frames`}
+		}
+		p := parseRobot(payload)
+		raw := strings.TrimSpace(p.Image)
+		if raw == "" {
+			return OpsResult{OK: false, Code: "bad_payload", Error: "image (base64 JPEG or data: URL) required"}
+		}
+		if strings.HasPrefix(raw, "data:") {
+			if i := strings.Index(raw, ","); i >= 0 {
+				raw = raw[i+1:]
+			}
+		}
+		jpg, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: "image not valid base64: " + err.Error()}
+		}
+		if len(jpg) < 3 || jpg[0] != 0xFF || jpg[1] != 0xD8 || jpg[2] != 0xFF {
+			return OpsResult{OK: false, Code: "bad_payload", Error: "image is not a JPEG"}
+		}
+		robotExtCam.SetFrame(jpg)
+		return OpsResult{OK: true, Initial: map[string]any{"ok": true, "bytes": len(jpg), "ageMs": robotExtCam.AgeMs()}}
+	})
+	reg("robot_look", "Ask the vision model about the current camera frame (general inspect/fix Q&A); returns text + the frame", func(c OpsContext, payload json.RawMessage) OpsResult {
+		ctrl, deny := robotForOps()
+		if deny != nil {
+			return *deny
+		}
+		if ctrl.Camera == nil || !ctrl.Camera.Available() {
+			return OpsResult{OK: false, Code: "no_camera", Error: "no camera frame available"}
+		}
+		p := parseRobot(payload)
+		ctx, cancel := context.WithTimeout(c.Ctx, 95*time.Second)
+		defer cancel()
+		jpg, err := ctrl.Camera.Grab(ctx)
+		if err != nil {
+			return OpsResult{OK: false, Code: "no_camera", Error: err.Error()}
+		}
+		res := map[string]any{
+			"image": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(jpg),
+			"bytes": len(jpg),
+		}
+		answer, verr := robot.AskVision(ctx, ctrl.Vision, jpg, p.Prompt)
+		if verr != nil {
+			res["visionError"] = verr.Error()
+			return OpsResult{OK: false, Code: "no_vision", Error: verr.Error(), Initial: res}
+		}
+		res["answer"] = answer
+		return OpsResult{OK: true, Initial: res}
 	})
 
 	// --- motor / GPIO manipulation ---
