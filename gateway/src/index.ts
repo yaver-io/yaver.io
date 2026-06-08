@@ -180,6 +180,11 @@ export default {
     } catch {
       return json({ error: "bad json" }, 400);
     }
+    // Reject malformed requests BEFORE any upstream call or charge — a junk
+    // request must never cost the user a token.
+    if (!payload || !Array.isArray(payload.messages) || payload.messages.length === 0) {
+      return json({ error: "messages required" }, 400);
+    }
 
     // ── Ceilings ────────────────────────────────────────────────────
     const maxTok = num(env.MAX_TOKENS_PER_REQUEST, 4096);
