@@ -2130,6 +2130,14 @@ func runServe(args []string) {
 	builderPlatformsArg := fs.String("builder-platforms", "", "Advertise this agent as a builder for the listed platforms (e.g. ios,macos). Empty = not a builder.")
 	containerNetwork := fs.String("container-network", "", "Container network mode: host (default), bridge, none")
 	containerReadOnly := fs.Bool("container-read-only", false, "Read-only container root filesystem (only /workspace and /tmp writable)")
+	// Operator-fleet mode: this box is part of a Yaver-operated public
+	// compute fleet (docs/yaver-public-compute-operator-fleet.md). Implies
+	// multi-user + tenant containerization + the host-share reaper every
+	// cycle, and disables the paired-token owner fast-path (no foreign token
+	// is ever owner-equivalent). Pair with --relay-only on a home/office LAN.
+	operator := fs.Bool("operator", false, "Run as a Yaver public-compute fleet node (multi-tenant; tenants are scoped+containerized+auto-wiped; never owner-equivalent)")
+	relayOnly := fs.Bool("relay-only", false, "Bind direct HTTP/TLS listeners to loopback so the box is reachable only via the relay (recommended for operator nodes on a home/office LAN)")
+	containerizeTenants := fs.Bool("containerize-tenants", false, "Force every non-owner (tenant) task into a Docker container, fail-closed if Docker is unavailable (implied by --operator)")
 	fs.Parse(args)
 
 	// Install systemd service and exit
@@ -2361,6 +2369,15 @@ func runServe(args []string) {
 		}
 		if *containerReadOnly {
 			childArgs = append(childArgs, "--container-read-only")
+		}
+		if *operator {
+			childArgs = append(childArgs, "--operator")
+		}
+		if *relayOnly {
+			childArgs = append(childArgs, "--relay-only")
+		}
+		if *containerizeTenants {
+			childArgs = append(childArgs, "--containerize-tenants")
 		}
 
 		cmd := osexec.Command(execPath, childArgs...)
@@ -3111,9 +3128,18 @@ func runServe(args []string) {
 		log.Printf("Netcapture (wire-observe & deep-analysis) enabled")
 	}
 
-	// Container isolation (optional — requires Docker + yaver-sandbox image)
-	useContainerGuests := *containerizeGuests || cfg.ContainerizeGuests
+	// Container isolation (optional — requires Docker + yaver-sandbox image).
+	// Operator/fleet mode forces tenant containerization: a public box must
+	// never run a stranger's task on the host. Fail-closed below if Docker
+	// is unavailable in that mode.
+	tenantContainers := *containerizeTenants || *operator
+	useContainerGuests := *containerizeGuests || cfg.ContainerizeGuests || tenantContainers
 	useContainerHost := *containerizeHost || cfg.ContainerizeHost
+	if tenantContainers {
+		if cr := NewContainerRunner(); !cr.IsAvailable() {
+			log.Fatalf("[OPERATOR] --operator/--containerize-tenants requires Docker, but Docker is not available. Refusing to serve tenants on the host (fail-closed). Install Docker and retry.")
+		}
+	}
 	// Resolve network mode: CLI flag > config > default "host"
 	cNetwork := *containerNetwork
 	if cNetwork == "" {
@@ -3195,7 +3221,8 @@ func runServe(args []string) {
 	// Vibing pre-warm disabled — was running 5 LLM calls × 3 projects on every startup.
 	// Deep Shuffle is now on-demand only (user taps the dice button).
 	// Quick actions (no LLM) are generated on first /vibing request.
-	if *multiUser {
+	// Operator mode implies multi-user (a fleet box serves many tenants).
+	if *multiUser || *operator {
 		muMgr, err := NewMultiUserManager(MultiUserConfig{
 			TeamID:   *teamID,
 			MaxUsers: *maxUsers,
@@ -3206,6 +3233,14 @@ func runServe(args []string) {
 			httpServer.multiUserMgr = muMgr
 			log.Printf("Multi-user mode enabled (team=%q, maxUsers=%d, users=%d)", *teamID, *maxUsers, len(muMgr.ListUsers()))
 		}
+	}
+
+	// Operator-fleet posture: scoped+containerized+auto-wiped tenants; the
+	// paired-token owner fast-path is disabled (see httpserver.go auth).
+	httpServer.operatorMode = *operator
+	httpServer.relayOnly = *relayOnly
+	if *operator {
+		log.Printf("[OPERATOR] public-compute fleet node: tenants are scoped host-share sessions (containerized, auto-wiped); paired-token owner fast-path DISABLED; relay-only=%v", *relayOnly)
 	}
 
 	// Initialize vault (P2P encrypted key store). The early-boot path
@@ -7462,6 +7497,30 @@ func runSSHWrap(args []string) {
 		os.Exit(1)
 	}
 
+	// Remote Yaver agent offline? When the device row says the agent
+	// isn't heartbeating but we resolved a real ssh host (not the raw
+	// string the user typed), `yaver ssh` should still get a shell AND
+	// bring Yaver back up: connect over plain ssh and, if the agent is
+	// genuinely down on the box, run `yaver auth --headless` + `yaver
+	// serve` before dropping the user at a prompt. The remote script
+	// self-checks (`yaver status`), so this is a no-op when the Convex
+	// row is merely stale. Skipped when passthrough args are present
+	// (-L tunnels, remote commands, scp can't ride the recovery wrapper).
+	if resolvedDevice != nil && !resolvedDevice.IsOnline && len(passthrough) == 0 && host != hostPart {
+		name := strings.TrimSpace(resolvedDevice.Alias)
+		if name == "" {
+			name = strings.TrimSpace(resolvedDevice.Name)
+		}
+		if name == "" {
+			name = host
+		}
+		fmt.Fprintf(os.Stderr, "→ %s's Yaver agent looks offline — connecting over ssh and bringing it up\n", name)
+		if code := runSSHWithRemoteRecovery(sshPath, dest); code >= 0 {
+			os.Exit(code)
+		}
+		fmt.Fprintln(os.Stderr, "  recovery ssh couldn't start — falling back to a normal ssh")
+	}
+
 	exitCode, errSummary := runSSHCapturingAuthFailure(sshPath, dest, passthrough)
 	if exitCode == 0 {
 		return
@@ -7731,6 +7790,47 @@ func runSSHCapturingAuthFailure(sshPath, dest string, passthrough []string) (int
 	return exitCode, ""
 }
 
+// remoteYaverRecoveryScript runs on the far side when `yaver ssh
+// <device>` finds the device's agent offline. It is a no-op when Yaver
+// is already healthy; otherwise it runs the headless auth flow (prints a
+// short code + URL the user completes in any browser) and starts the
+// agent in the background, then always execs the user's login shell so
+// the session behaves like a normal interactive ssh. Pure POSIX sh so it
+// works on the minimal shells found on headless Linux boxes.
+const remoteYaverRecoveryScript = `
+if ! command -v yaver >/dev/null 2>&1; then
+  echo "[yaver] not installed here — install with: npm install -g yaver-cli"
+elif yaver status >/dev/null 2>&1; then
+  echo "[yaver] agent already healthy"
+else
+  echo "[yaver] agent offline — running 'yaver auth --headless'"
+  yaver auth --headless || echo "[yaver] auth skipped/failed"
+  echo "[yaver] starting agent in background (yaver serve)"
+  nohup yaver serve >"${TMPDIR:-/tmp}/yaver-serve.log" 2>&1 &
+fi
+exec "${SHELL:-/bin/sh}" -l
+`
+
+// runSSHWithRemoteRecovery opens an interactive ssh session that first
+// brings the remote Yaver agent back up (remoteYaverRecoveryScript) and
+// then hands the user a login shell. Returns the ssh exit code, or -1 if
+// ssh could not be started at all (caller falls back to a normal ssh).
+func runSSHWithRemoteRecovery(sshPath, dest string) int {
+	args := append([]string{"-t"}, sshArgsWithSurvivability(dest, []string{"sh", "-lc", remoteYaverRecoveryScript})...)
+	cmd := osexec.Command(sshPath, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*osexec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "ssh: %v\n", err)
+		return -1
+	}
+	return 0
+}
+
 // lastLinesBuffer keeps the last N bytes of stderr so we can sniff
 // for known failure patterns without buffering the whole stream.
 type lastLinesBuffer struct {
@@ -7889,6 +7989,22 @@ func resolveSSHHost(target string) string {
 			if isMeshOverlayIPv4(ip) {
 				return ip
 			}
+		}
+	}
+
+	// 2.6 Routable private IP we DON'T share a /24 with. This is the gap
+	//     that made `yaver ssh magara` fail while `ssh user@10.0.0.45`
+	//     worked by hand: the box advertises a private LAN IP reachable
+	//     only through a route (Tailscale subnet router, VPN, utun
+	//     tunnel), so pickReachableLanIP's same-/24 test misses it and we
+	//     used to fall through to a public HTTP endpoint that isn't an ssh
+	//     host. A reachable private IP is the best possible ssh target, so
+	//     it sits above Tailscale-by-hint and the public endpoints.
+	//     Reachability-gated (short dial) so an unreachable candidate
+	//     never costs OpenSSH's 30 s connect timeout.
+	if dev != nil {
+		if ip := firstDialablePrivateIP(dev.LocalIps, "22", 800*time.Millisecond); ip != "" {
+			return ip
 		}
 	}
 

@@ -40,8 +40,15 @@ type HTTPServer struct {
 	hostname       string
 	// operatorMode marks this box as part of a Yaver-operated public compute
 	// fleet (yaver serve --operator). Drives the host-share reaper every cycle
-	// so tenant slices are scrubbed promptly. Default false.
+	// so tenant slices are scrubbed promptly. Also disables the paired-token
+	// owner fast-path so a foreign token can never be owner-equivalent —
+	// every non-operator caller is a scoped host-share/guest tenant. Default
+	// false (normal single-owner behavior untouched).
 	operatorMode   bool
+	// relayOnly binds the direct HTTP/TLS listeners to loopback (127.0.0.1)
+	// instead of 0.0.0.0, so an operator box on a home/office LAN is reachable
+	// ONLY over the relay — never directly exposed to its LAN. Default false.
+	relayOnly      bool
 	taskMgr        *TaskManager
 	execMgr        *ExecManager
 	scheduler      *Scheduler
@@ -1316,8 +1323,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	handler := s.ipAllowlist(withCORS(mux))
 
+	// Operator boxes bind direct listeners to loopback so they're reachable
+	// only via the relay (never exposed on the operator's home/office LAN).
+	bindHost := "0.0.0.0"
+	if s.relayOnly {
+		bindHost = "127.0.0.1"
+	}
+
 	s.server = &http.Server{
-		Addr:              fmt.Sprintf("0.0.0.0:%d", s.port),
+		Addr:              fmt.Sprintf("%s:%d", bindHost, s.port),
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -1340,7 +1354,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 			MinVersion:   tls.VersionTLS12,
 		}
 		s.tlsServer = &http.Server{
-			Addr:              fmt.Sprintf("0.0.0.0:%d", s.tlsPort),
+			Addr:              fmt.Sprintf("%s:%d", bindHost, s.tlsPort),
 			Handler:           handler,
 			TLSConfig:         tlsCfg,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -1351,7 +1365,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 			if len(fpPreview) > 16 {
 				fpPreview = fpPreview[:16] + "..."
 			}
-			log.Printf("HTTPS server listening on 0.0.0.0:%d (fingerprint: %s)", s.tlsPort, fpPreview)
+			log.Printf("HTTPS server listening on %s:%d (fingerprint: %s)", bindHost, s.tlsPort, fpPreview)
 			if err := s.tlsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 				log.Printf("[TLS] HTTPS server error: %v", err)
 			}
@@ -1371,7 +1385,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// incidents Convex stream the mobile app already consumes.
 	go s.runnerAuthHealthLoop(ctx)
 
-	log.Printf("HTTP server listening on 0.0.0.0:%d", s.port)
+	log.Printf("HTTP server listening on %s:%d", bindHost, s.port)
 	if len(s.allowedCIDRs) > 0 {
 		cidrs := make([]string, len(s.allowedCIDRs))
 		for i, c := range s.allowedCIDRs {
@@ -1932,7 +1946,13 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 		// owner WITHOUT depending on Convex round-tripping. This
 		// lives *before* the Convex check so lag / outage on the
 		// auth broker can't lock out paired users.
-		if IsPairedToken(token) {
+		//
+		// OPERATOR MODE: this owner-equivalent fast-path is DISABLED.
+		// On a public fleet box the only owner is the operator
+		// principal; every other caller must be a scoped host-share /
+		// guest tenant, never owner-equivalent. Skipping the block
+		// lets the request fall through to allowGuest/allowHostShare.
+		if !s.operatorMode && IsPairedToken(token) {
 			TouchPairedToken(token)
 			// If multi-user mode is on, resolve the paired token
 			// to its own userId via Convex (best-effort; the cache
