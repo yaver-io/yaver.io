@@ -11652,6 +11652,54 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		body, _ := json.MarshalIndent(out, "", "  ")
 		return mcpToolResult(string(body))
 
+	// robot_camera — first-class image tool so a HOST Claude Code / Codex can
+	// SEE a remote cell's camera (the `ops` path flattens results to text, which
+	// would hide the image). Thin adapter over the robot_snapshot verb: it reuses
+	// the full ops mesh path (remote targeting + auth + relay) to fetch the frame
+	// as a data: URL, then re-wraps it as a VIEWABLE MCP image block on the host.
+	case "robot_camera":
+		var rcArgs struct {
+			Machine string `json:"machine"`
+		}
+		_ = json.Unmarshal(call.Arguments, &rcArgs)
+		machine := strings.TrimSpace(rcArgs.Machine)
+		if machine == "" {
+			machine = "local"
+		}
+		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
+		out := dispatchOps(octx, OpsRequest{Machine: machine, Verb: "robot_snapshot"})
+		if !out.OK {
+			msg := out.Error
+			if msg == "" {
+				msg = "robot_snapshot failed"
+			}
+			if out.Code != "" {
+				msg = out.Code + ": " + msg
+			}
+			return mcpToolError("robot_camera (" + machine + "): " + msg)
+		}
+		var dataURL string
+		if m, ok := out.Initial.(map[string]interface{}); ok {
+			if s, ok := m["image"].(string); ok {
+				dataURL = s
+			}
+		}
+		if dataURL == "" {
+			return mcpToolError("robot_camera (" + machine + "): snapshot returned no image")
+		}
+		b64 := dataURL
+		if strings.HasPrefix(b64, "data:") {
+			if i := strings.Index(b64, ","); i >= 0 {
+				b64 = b64[i+1:]
+			}
+		}
+		return map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": "Robot camera frame from " + machine + "."},
+				{"type": "image", "data": b64, "mimeType": "image/jpeg"},
+			},
+		}
+
 	case "ops_plan":
 		var req OpsRequest
 		if err := json.Unmarshal(call.Arguments, &req); err != nil {

@@ -125,6 +125,66 @@ func VerifyMotion(ctx context.Context, vc VisionConfig, before, after []byte, ex
 	return parseVerdict(out.Choices[0].Message.Content, expectation)
 }
 
+// AskVision sends a single image + a free-form prompt to the configured vision
+// model and returns the text answer. This is the general "camera as AI input"
+// path — inspect / understand / fix — distinct from VerifyMotion's strict
+// before/after move verdict. Same provider ladder, same creds, on-prem-capable.
+func AskVision(ctx context.Context, vc VisionConfig, image []byte, prompt string) (string, error) {
+	cfg, err := vc.resolve()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = "Describe what you see. Note anything wrong, misaligned, jammed, or obstructed."
+	}
+	content := []any{
+		map[string]any{"type": "text", "text": prompt},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": jpegDataURL(image)}},
+	}
+	body := map[string]any{
+		"model":       cfg.Model,
+		"temperature": 0,
+		"messages": []any{
+			map[string]any{"role": "user", "content": content},
+		},
+	}
+	buf, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, "POST", cfg.BaseURL+"/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("vision request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("vision decode failed: %w", err)
+	}
+	if out.Error != nil {
+		return "", fmt.Errorf("vision error: %s", out.Error.Message)
+	}
+	if len(out.Choices) == 0 {
+		return "", fmt.Errorf("vision returned no choices")
+	}
+	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+}
+
 func parseVerdict(s, expectation string) (Verdict, error) {
 	s = strings.TrimSpace(s)
 	if i := strings.Index(s, "{"); i >= 0 {

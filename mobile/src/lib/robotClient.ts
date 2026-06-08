@@ -240,6 +240,16 @@ export const robotClient = {
   estop: (t: RobotTarget) => robotOps<{ ok: boolean; estopped?: boolean }>(t, "robot_estop", {}, 15000),
   reset: (t: RobotTarget) => robotOps<{ ok: boolean }>(t, "robot_reset", {}, 15000),
   snapshot: (t: RobotTarget) => robotOps<{ ok?: boolean; image?: string; error?: string }>(t, "robot_snapshot", {}, 30000),
+  // Push a JPEG frame into the box's "external" camera buffer. Used when the box
+  // is a phone capturing its OWN camera (no /dev/video0 on Android) — typically
+  // targeted at 127.0.0.1 (the co-located agent). image = base64 or data: URL.
+  cameraPush: (t: RobotTarget, image: string) =>
+    robotOps<{ ok?: boolean; bytes?: number; ageMs?: number; error?: string }>(t, "robot_camera_push", { image }, 15000),
+  // Ask the box's OWN vision model about the current frame (on-device brain).
+  // For host-side reasoning instead, the desktop MCP tool `robot_camera` returns
+  // the frame as a viewable image to your Claude Code / Codex.
+  look: (t: RobotTarget, prompt?: string) =>
+    robotOps<{ ok?: boolean; answer?: string; image?: string; visionError?: string; error?: string }>(t, "robot_look", { prompt }, 95000),
 
   // --- screwdriver motor / GPIO ---
   rotate: (t: RobotTarget, turns: number, rpm: number, ccw: boolean) =>

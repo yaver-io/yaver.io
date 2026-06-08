@@ -2903,6 +2903,21 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{},
 			},
 		},
+		{
+			"name":        "robot_camera",
+			"description": "Capture the current frame from a robot/machine cell's camera and return it as a VIEWABLE image, so you (the host model) can SEE the workspace and do vision-in-the-loop robotics development: write code → move the robot (ops robot_move/robot_jog) → look → fix. Targets any device on the mesh via `machine` (e.g. an Android phone wired next to an Ender/Fairino). The cell needs a camera: local /dev/video0, an http(s):// snapshot URL, or an \"external\" push buffer the box fills with its OWN camera. For the box's on-device vision model instead, use ops verb robot_look.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"machine": map[string]interface{}{
+						"type":        "string",
+						"description": "Target cell: \"local\", \"primary\", or a deviceId / alias. Default \"local\".",
+						"default":     "local",
+					},
+				},
+				"additionalProperties": false,
+			},
+		},
 	}
 	tools = append(tools, opsTools...)
 
