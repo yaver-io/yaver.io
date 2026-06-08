@@ -797,6 +797,32 @@ export default defineSchema({
       voice:     v.optional(v.boolean()),
       llm:       v.optional(v.boolean()),
     })),
+    // Per-capability à-la-carte opt-in for the metered Yaver-managed
+    // services (distinct from `managed` above, which only picks WHO
+    // hosts a subsystem). This is the user's explicit "charge me to run
+    // this capability for me" switch, keyed to the managedUsage meter
+    // `kind` (see managedMeter.ts). Each is independent — a normie can
+    // enable `reload` alone, or `reload`+`backend`+`web`, etc. (the
+    // à-la-carte ladder, docs/yaver-normie-concierge-fair-metering.md).
+    //
+    // Effective REAL billing for a (user, kind) requires all three:
+    //   global meter flag (YAVER_MANAGED_METER_LIVE)
+    //   AND this per-user opt-in == true
+    //   AND wallet balance > 0
+    // Omitted/false → that capability stays dry-run (simulated) for this
+    // user even when the global flag is live (fail-closed per-user; the
+    // gate lives in managedMeter.recordManagedUsage). reload + agentBox
+    // both route through the COMPUTE meter (cloudLifecycle.ts), not
+    // managedMeter; they're tracked here for the cockpit ladder/UX, and
+    // gated on the compute side. Counter/label-only; no secrets.
+    managedServices: v.optional(v.object({
+      reload:    v.optional(v.boolean()),  // Hermes build-native on the pooled farm → compute
+      backend:   v.optional(v.boolean()),  // managed Convex proxy                   → backend
+      web:       v.optional(v.boolean()),  // managed Cloudflare proxy               → web
+      agentBox:  v.optional(v.boolean()),  // always-on Claude Code/Codex box        → compute
+      inference: v.optional(v.boolean()),  // Yaver gateway (only if no own AI key)  → inference
+      publish:   v.optional(v.boolean()),  // Mac-farm App Store / Play              → publish
+    })),
   }).index("by_userId", ["userId"]),
 
   aiRunners: defineTable({
@@ -1521,6 +1547,99 @@ export default defineSchema({
   })
     .index("by_host_guest_date", ["hostUserId", "guestUserId", "date"])
     .index("by_hostUserId_date", ["hostUserId", "date"]),
+
+  // ── Social graph ────────────────────────────────────────────────
+  // Reusable address book on top of the one-shot invite edges
+  // (guestInvitations / supportInvites / hostShareInvites). A mutual
+  // connection is modeled as two rows — one per perspective — written
+  // together on accept, the same directionality pattern used by
+  // guestAccess / infraAccessGrants. Carries NO sensitive data: ids,
+  // a display nickname, a source label, timestamps. Privacy-contract
+  // clean by construction.
+  connections: defineTable({
+    userId: v.id("users"),         // owner of this row's perspective
+    peerUserId: v.id("users"),     // the other person
+    status: v.union(
+      v.literal("pending"),        // request sent / received, not yet accepted
+      v.literal("accepted"),       // mutual connection live
+      v.literal("blocked"),        // this user blocked the peer
+    ),
+    direction: v.union(
+      v.literal("outgoing"),       // this user initiated the request
+      v.literal("incoming"),       // the peer initiated; this user must accept
+    ),
+    nickname: v.optional(v.string()),  // "Serhat (designer)" — display only
+    // How the edge was created: "email" | "username" | "support-link" |
+    // "project-invite" | "qr" | "manual" | "suggested". Non-secret label.
+    source: v.optional(v.string()),
+    createdAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+    blockedAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_peer", ["peerUserId"])
+    .index("by_user_peer", ["userId", "peerUserId"])
+    .index("by_user_status", ["userId", "status"]),
+
+  // ── Shared projects ─────────────────────────────────────────────
+  // A first-class collaboration object that binds {repo, host, roster,
+  // roles} into one thing you can "ask someone to join". A projectShare
+  // is a thin wrapper: accepting a membership MATERIALIZES an
+  // infraAccessGrant + allowedProjects + role-preset policy via the same
+  // path guests.accept uses. No new enforcement engine.
+  //
+  // Privacy: repoUrl is stored normalized to host/owner/repo (no embedded
+  // creds), slug is a human label NOT a filesystem path. No tokens, no
+  // file contents, no absolute paths.
+  projectShares: defineTable({
+    ownerUserId: v.id("users"),
+    slug: v.string(),                  // human label, e.g. "acme-app"
+    repoUrl: v.string(),               // normalized host/owner/repo
+    defaultBranch: v.optional(v.string()),
+    // Where collaborators' work runs.
+    hostKind: v.union(
+      v.literal("owner-device"),       // an online device the owner already has
+      v.literal("managed-cloud"),      // a Yaver-managed box (cloudMachines)
+    ),
+    hostDeviceId: v.optional(v.string()),          // when owner-device / provisioned cloud
+    hostMachineId: v.optional(v.id("cloudMachines")),
+    // Who funds managed compute when hostKind=managed-cloud.
+    payer: v.optional(v.union(v.literal("owner"), v.literal("invitee"))),
+    shareCode: v.string(),             // join-by-code (like inviteCode)
+    status: v.union(v.literal("active"), v.literal("archived")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_owner", ["ownerUserId"])
+    .index("by_shareCode", ["shareCode"]),
+
+  projectMemberships: defineTable({
+    shareId: v.id("projectShares"),
+    ownerUserId: v.id("users"),        // denormalized — the share owner
+    userId: v.optional(v.id("users")), // set when accepted / pre-set if invited by userId
+    invitedEmail: v.optional(v.string()), // when invited by email and not yet a user
+    role: v.union(
+      v.literal("owner"),
+      v.literal("dev"),
+      v.literal("normie"),
+      v.literal("viewer"),
+    ),
+    branch: v.optional(v.string()),    // per-collaborator feature branch, e.g. "yaver/serhat"
+    grantId: v.optional(v.id("infraAccessGrants")), // the materialized access edge
+    status: v.union(
+      v.literal("invited"),
+      v.literal("active"),
+      v.literal("revoked"),
+    ),
+    invitedAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_share", ["shareId"])
+    .index("by_user", ["userId"])
+    .index("by_share_user", ["shareId", "userId"])
+    .index("by_owner", ["ownerUserId"]),
 
   // SDK tokens — long-lived tokens for Feedback SDK (independent from CLI session tokens)
   sdkTokens: defineTable({

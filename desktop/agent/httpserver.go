@@ -936,6 +936,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/git/checkout", s.auth(s.handleGitCheckout))
 	mux.HandleFunc("/git/commit", s.auth(s.handleGitCommit))
 	mux.HandleFunc("/git/commit-push", s.auth(s.handleGitCommitPush))
+	mux.HandleFunc("/git/pull-request", s.auth(s.handleGitPullRequest))
+	mux.HandleFunc("/git/identity", s.auth(s.handleGitIdentity))
 	mux.HandleFunc("/git/push", s.auth(s.handleGitPush))
 	mux.HandleFunc("/git/pull", s.auth(s.handleGitPull))
 	mux.HandleFunc("/git/revert", s.auth(s.handleGitRevert))

@@ -475,6 +475,12 @@ for (const path of [
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage",
+  "/connections/request", "/connections/accept", "/connections/remove",
+  "/connections/block", "/connections/unblock", "/connections/nickname",
+  "/connections/list", "/connections/search", "/connections/suggested",
+  "/project-shares/create", "/project-shares/invite", "/project-shares/accept",
+  "/project-shares/list", "/project-shares/find-by-code", "/project-shares/set-role",
+  "/project-shares/revoke-member", "/project-shares/archive",
   "/host-share/create", "/host-share/invite", "/host-share/join",
   "/host-share/revoke", "/host-share/list", "/host-share/sessions",
   "/host-share/access", "/host-share/touch",
@@ -4304,6 +4310,93 @@ http.route({
   }),
 });
 
+// ── À-la-carte managed-service capability shelf ──────────────────────
+// The web/mobile "build cockpit" (docs/yaver-normie-concierge-fair-
+// metering.md). Each capability (Hermes reload, managed backend/web,
+// always-on agent box, inference gateway, App-Store publish) is an
+// independent per-user opt-in stored in userSettings.managedServices.
+// Open to ANY authed user — the normie must SEE the shelf from t=0,
+// before he has cloud access or any balance. Turning a switch on only
+// marks intent; REAL billing still requires the global meter flag +
+// wallet balance (the gate lives in managedMeter.recordManagedUsage).
+// Session-scoped: a client only ever reads/writes its own row.
+
+/** GET /managed/services — the caller's capability opt-in set. */
+http.route({
+  path: "/managed/services",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const out = await ctx.runQuery(internal.managedServices.getServicesForUser, {
+      userId: session.userDocId as any,
+    });
+    return jsonResponse({ ok: true, ...out });
+  }),
+});
+
+/** POST /managed/services — toggle ONE capability {service, enabled}. */
+http.route({
+  path: "/managed/services",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    let body: { service?: string; enabled?: boolean } = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Bad body", 400);
+    }
+    if (!body.service || typeof body.enabled !== "boolean") {
+      return errorResponse("service (string) and enabled (boolean) required", 400);
+    }
+    try {
+      const out = await ctx.runMutation(internal.managedServices.setServiceForUser, {
+        userId: session.userDocId as any,
+        service: body.service,
+        enabled: body.enabled,
+      });
+      return jsonResponse(out);
+    } catch (e) {
+      return errorResponse(e instanceof Error ? e.message : String(e), 400);
+    }
+  }),
+});
+
+/** GET /managed/cockpit?days=7 — wallet balance + enabled capabilities +
+ *  burn-rate / days-left estimate. One fetch powers the shelf header. */
+http.route({
+  path: "/managed/cockpit",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const days = Number(new URL(request.url).searchParams.get("days")) || undefined;
+    const out = await ctx.runQuery(internal.managedServices.cockpitSummaryForUser, {
+      userId: session.userDocId as any,
+      days,
+    });
+    return jsonResponse({ ok: true, ...out });
+  }),
+});
+
+/** GET /managed/burn?days=7 — honest per-capability spend breakdown. */
+http.route({
+  path: "/managed/burn",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const days = Number(new URL(request.url).searchParams.get("days")) || undefined;
+    const out = await ctx.runQuery(internal.managedServices.burnBreakdownForUser, {
+      userId: session.userDocId as any,
+      days,
+    });
+    return jsonResponse({ ok: true, ...out });
+  }),
+});
+
 /** GET /byo/machines — the user's bring-your-own cloud boxes' lifecycle
  *  state (alive/sleeping/deleted + timestamps). Available to ANY authed
  *  user (BYO is the free, run-on-your-own-account plane). Session-scoped:
@@ -5691,6 +5784,349 @@ http.route({
 
     const usage = await ctx.runQuery(api.guests.getGuestUsage, { tokenHash, date });
     return jsonResponse({ usage });
+  }),
+});
+
+// ── Connections (social graph) ──────────────────────────────────────
+
+const connectionsApi = (api as any).connections;
+
+/** Helper: extract bearer → tokenHash, or null. */
+async function bearerHash(request: Request): Promise<string | null> {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  return await sha256Hex(authHeader.slice(7));
+}
+
+/** POST /connections/request — send (or auto-accept) a connection request. */
+http.route({
+  path: "/connections/request",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    try {
+      const result = await ctx.runMutation(connectionsApi.request, {
+        tokenHash,
+        peerUserId: typeof body.peerUserId === "string" ? body.peerUserId : undefined,
+        peerEmail: typeof body.peerEmail === "string" ? body.peerEmail : undefined,
+        nickname: typeof body.nickname === "string" ? body.nickname : undefined,
+        source: typeof body.source === "string" ? body.source : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to send request", 400);
+    }
+  }),
+});
+
+/** POST /connections/accept — accept an incoming request. */
+http.route({
+  path: "/connections/accept",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.peerUserId) return errorResponse("peerUserId is required");
+    try {
+      await ctx.runMutation(connectionsApi.accept, { tokenHash, peerUserId: String(body.peerUserId) });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to accept", 400);
+    }
+  }),
+});
+
+/** POST /connections/remove — decline / cancel / unfriend. */
+http.route({
+  path: "/connections/remove",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.peerUserId) return errorResponse("peerUserId is required");
+    try {
+      await ctx.runMutation(connectionsApi.remove, { tokenHash, peerUserId: String(body.peerUserId) });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to remove", 400);
+    }
+  }),
+});
+
+/** POST /connections/block — block a peer. */
+http.route({
+  path: "/connections/block",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.peerUserId) return errorResponse("peerUserId is required");
+    try {
+      await ctx.runMutation(connectionsApi.block, { tokenHash, peerUserId: String(body.peerUserId) });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to block", 400);
+    }
+  }),
+});
+
+/** POST /connections/unblock — unblock a peer. */
+http.route({
+  path: "/connections/unblock",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.peerUserId) return errorResponse("peerUserId is required");
+    try {
+      await ctx.runMutation(connectionsApi.unblock, { tokenHash, peerUserId: String(body.peerUserId) });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to unblock", 400);
+    }
+  }),
+});
+
+/** POST /connections/nickname — set a private nickname. */
+http.route({
+  path: "/connections/nickname",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.peerUserId) return errorResponse("peerUserId is required");
+    try {
+      await ctx.runMutation(connectionsApi.setNickname, {
+        tokenHash,
+        peerUserId: String(body.peerUserId),
+        nickname: typeof body.nickname === "string" ? body.nickname : "",
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to set nickname", 400);
+    }
+  }),
+});
+
+/** GET /connections/list?status= — list my connections. */
+http.route({
+  path: "/connections/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status");
+    const result = await ctx.runQuery(connectionsApi.list, {
+      tokenHash,
+      status: status === "accepted" || status === "pending" || status === "blocked" ? status : undefined,
+    });
+    return jsonResponse(result);
+  }),
+});
+
+/** GET /connections/search?query= — find a user by userId or email. */
+http.route({
+  path: "/connections/search",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const url = new URL(request.url);
+    const query = url.searchParams.get("query") ?? "";
+    if (!query) return errorResponse("query is required");
+    const result = await ctx.runQuery(connectionsApi.search, { tokenHash, query });
+    if (!result) return errorResponse("User not found", 404);
+    return jsonResponse(result);
+  }),
+});
+
+/** GET /connections/suggested — people you already collaborate with. */
+http.route({
+  path: "/connections/suggested",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const suggestions = await ctx.runQuery(connectionsApi.suggested, { tokenHash });
+    return jsonResponse({ suggestions });
+  }),
+});
+
+// ── Project shares ──────────────────────────────────────────────────
+
+const projectSharesApi = (api as any).projectShares;
+
+/** POST /project-shares/create — create a shared project. Owner. */
+http.route({
+  path: "/project-shares/create",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    const hostKind = body.hostKind === "managed-cloud" ? "managed-cloud" : "owner-device";
+    try {
+      const result = await ctx.runMutation(projectSharesApi.create, {
+        tokenHash,
+        slug: String(body.slug ?? ""),
+        repoUrl: String(body.repoUrl ?? ""),
+        defaultBranch: typeof body.defaultBranch === "string" ? body.defaultBranch : undefined,
+        hostKind,
+        hostDeviceId: typeof body.hostDeviceId === "string" ? body.hostDeviceId : undefined,
+        hostMachineId: typeof body.hostMachineId === "string" ? body.hostMachineId : undefined,
+        payer: body.payer === "invitee" ? "invitee" : body.payer === "owner" ? "owner" : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to create project", 400);
+    }
+  }),
+});
+
+/** POST /project-shares/invite — invite a person to a project. Owner. */
+http.route({
+  path: "/project-shares/invite",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.shareId) return errorResponse("shareId is required");
+    const role = body.role === "dev" || body.role === "normie" || body.role === "viewer" ? body.role : undefined;
+    try {
+      const result = await ctx.runMutation(projectSharesApi.invite, {
+        tokenHash,
+        shareId: body.shareId,
+        peerUserId: typeof body.peerUserId === "string" ? body.peerUserId : undefined,
+        peerEmail: typeof body.peerEmail === "string" ? body.peerEmail : undefined,
+        role,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to invite", 400);
+    }
+  }),
+});
+
+/** POST /project-shares/accept — accept a project invite by code. */
+http.route({
+  path: "/project-shares/accept",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.shareCode) return errorResponse("shareCode is required");
+    try {
+      const result = await ctx.runMutation(projectSharesApi.accept, {
+        tokenHash,
+        shareCode: String(body.shareCode),
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to accept", 400);
+    }
+  }),
+});
+
+/** GET /project-shares/list — my owned + joined projects. */
+http.route({
+  path: "/project-shares/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const result = await ctx.runQuery(projectSharesApi.listMine, { tokenHash });
+    return jsonResponse(result);
+  }),
+});
+
+/** GET /project-shares/find-by-code?code= — preview before accepting. */
+http.route({
+  path: "/project-shares/find-by-code",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const url = new URL(request.url);
+    const code = url.searchParams.get("code") ?? "";
+    if (!code) return errorResponse("code is required");
+    const info = await ctx.runQuery(projectSharesApi.findByCode, { tokenHash, shareCode: code });
+    if (!info) return errorResponse("Project not found", 404);
+    return jsonResponse(info);
+  }),
+});
+
+/** POST /project-shares/set-role — change a member's role. Owner. */
+http.route({
+  path: "/project-shares/set-role",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.shareId || !body.memberUserId) return errorResponse("shareId and memberUserId are required");
+    const role = body.role === "dev" || body.role === "normie" || body.role === "viewer" ? body.role : null;
+    if (!role) return errorResponse("valid role is required");
+    try {
+      await ctx.runMutation(projectSharesApi.setRole, {
+        tokenHash,
+        shareId: body.shareId,
+        memberUserId: String(body.memberUserId),
+        role,
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to set role", 400);
+    }
+  }),
+});
+
+/** POST /project-shares/revoke-member — remove a member. Owner. */
+http.route({
+  path: "/project-shares/revoke-member",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.shareId || !body.memberUserId) return errorResponse("shareId and memberUserId are required");
+    try {
+      await ctx.runMutation(projectSharesApi.revokeMember, {
+        tokenHash,
+        shareId: body.shareId,
+        memberUserId: String(body.memberUserId),
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to revoke member", 400);
+    }
+  }),
+});
+
+/** POST /project-shares/archive — archive a project. Owner. */
+http.route({
+  path: "/project-shares/archive",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const tokenHash = await bearerHash(request);
+    if (!tokenHash) return errorResponse("Unauthorized", 401);
+    const body = await request.json();
+    if (!body.shareId) return errorResponse("shareId is required");
+    try {
+      await ctx.runMutation(projectSharesApi.archive, { tokenHash, shareId: body.shareId });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to archive", 400);
+    }
   }),
 });
 

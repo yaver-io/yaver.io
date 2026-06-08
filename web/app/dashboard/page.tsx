@@ -27,6 +27,7 @@ import OverviewView from "@/components/dashboard/OverviewView";
 import ExtrasView from "@/components/dashboard/ExtrasView";
 import ShareView from "@/components/dashboard/ShareView";
 import GuestsStatusView from "@/components/dashboard/GuestsStatusView";
+import CollabView from "@/components/dashboard/CollabView";
 import InfraView from "@/components/dashboard/InfraView";
 import ConnectivityView from "@/components/dashboard/ConnectivityView";
 import NetworkView from "@/components/dashboard/NetworkView";
@@ -50,6 +51,7 @@ import GitView from "@/components/dashboard/GitView";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE } from "@/components/dashboard/DevicesView";
 import BillingView from "@/components/dashboard/BillingView";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
+import { CapabilityShelf } from "@/components/dashboard/CapabilityShelf";
 import SettingsView from "@/components/dashboard/SettingsView";
 import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
 import webPkg from "../../package.json";
@@ -800,7 +802,7 @@ export default function DashboardPage() {
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud" | "build">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1882,6 +1884,7 @@ export default function DashboardPage() {
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
     { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
+    { id: "build", label: "Build", icon: "\uD83D\uDEE0\uFE0F" },
     { id: "cloud", label: "Cloud", icon: "\u2601\uFE0F" },
     { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
     { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
@@ -1903,6 +1906,7 @@ export default function DashboardPage() {
     { id: "extras", label: "Extras", icon: "\u2699\uFE0F" },
     { id: "share", label: "Share", icon: "\uD83D\uDCE3" },
     { id: "guests", label: "Guests", icon: "\uD83D\uDC65" },
+    { id: "collab", label: "People", icon: "\uD83E\uDD1D" },
     { id: "convex", label: "Convex", icon: "\u26A1" },
     { id: "storage", label: "Storage", icon: "\uD83D\uDCC2" },
     { id: "vault", label: "Vault", icon: "\uD83D\uDD12" },
@@ -1971,6 +1975,7 @@ export default function DashboardPage() {
           <nav className="flex flex-col gap-[2px]">
             {([
               { id: "devices",  label: "Devices",  icon: "💻" },
+              { id: "build",    label: "Build",    icon: "🛠️" },
               { id: "cloud",    label: "Cloud",    icon: "☁️" },
               { id: "chat",     label: "Chat",     icon: "💬" },
               { id: "projects", label: "Projects", icon: "📁" },
@@ -2675,6 +2680,19 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
           ) : activeTab === "billing" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><BillingView token={token} /></div>
+          ) : activeTab === "build" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
+              <h2 className="text-lg font-semibold text-surface-100">Build your app</h2>
+              <p className="mt-1 text-xs text-surface-500">
+                Your terminal (Claude Code / Codex) writes the code; Yaver does the
+                infra. Turn on only the capabilities you need — see it on your phone,
+                add a backend or website, or publish to the stores. Pay fairly from
+                one prepaid balance, or run it yourself for free.
+              </p>
+              <div className="mt-4">
+                <CapabilityShelf token={token} />
+              </div>
+            </div>
           ) : activeTab === "cloud" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <h2 className="text-lg font-semibold text-surface-100">Yaver Cloud</h2>
@@ -2686,6 +2704,8 @@ export default function DashboardPage() {
             </div>
           ) : activeTab === "guests" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><GuestsStatusView /></div>
+          ) : activeTab === "collab" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><CollabView /></div>
           ) : activeTab === "convex" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
           ) : activeTab === "security" ? (

@@ -2018,6 +2018,25 @@ export default function SettingsScreen() {
           );
         })()}
 
+        {/* People & shared projects */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Collaborate</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => router.push("/connections")}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>People & Projects</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Connect with people, share a repo, invite someone to code with you — your machine or Yaver Cloud
+                </Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
+            </Pressable>
+          </View>
+        </View>
+
         {/* Mobile Sandbox coding */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Sandbox</Text>
