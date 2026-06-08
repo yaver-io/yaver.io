@@ -237,7 +237,7 @@ export default function TermsOfServicePage() {
         </h2>
         <p>SIMKAB ELEKTRIK</p>
         <p>Yunus Emre Mah. Adalar Sokak No:12 Sancaktepe / Istanbul, Turkey</p>
-        <p>Email: <a href="mailto:kivanc.cakmak@simkab.com" className="text-indigo-400 hover:text-indigo-300">kivanc.cakmak@simkab.com</a></p>
+        <p>Email: <a href="mailto:kivanc.cakmak@simkab.com" className="text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">kivanc.cakmak@simkab.com</a></p>
 
         <div className="!mt-16 border-t border-surface-800 pt-6 text-xs text-surface-600">
           <p>SIMKAB ELEKTRIK &mdash; Yunus Emre Mah. Adalar Sokak No:12, Sancaktepe, Istanbul, Turkey</p>

@@ -35,9 +35,9 @@ function saveHistory(list: string[]) {
 }
 
 function statusColor(s: ExecSnapshot["status"]): string {
-  if (s === "running") return "bg-amber-900/40 text-amber-200";
-  if (s === "completed") return "bg-emerald-900/40 text-emerald-200";
-  return "bg-red-900/40 text-red-200";
+  if (s === "running") return "bg-amber-900/40 text-amber-700 dark:text-amber-200";
+  if (s === "completed") return "bg-emerald-900/40 text-emerald-700 dark:text-emerald-200";
+  return "bg-red-900/40 text-red-700 dark:text-red-200";
 }
 
 export default function ExecView() {
@@ -177,7 +177,7 @@ export default function ExecView() {
       </header>
 
       {err && (
-        <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200" role="alert">
+        <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-700 dark:text-red-200" role="alert">
           {err}
         </div>
       )}
@@ -263,7 +263,7 @@ export default function ExecView() {
             {execs.some((e) => e.status === "running") && (
               <button
                 type="button"
-                className="rounded bg-red-900/40 px-1.5 py-0.5 text-red-200 hover:bg-red-900/70"
+                className="rounded bg-red-900/40 px-1.5 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-900/70"
                 onClick={() => void killAllRunning()}
               >
                 Kill all
@@ -303,7 +303,7 @@ export default function ExecView() {
                 {selected.status === "running" && (
                   <button
                     type="button"
-                    className="ml-auto rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70"
+                    className="ml-auto rounded bg-red-900/40 px-2 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-900/70"
                     onClick={() => void kill(selected.id)}
                   >
                     Kill

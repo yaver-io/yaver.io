@@ -91,7 +91,7 @@ function StatusBar({
         {status.running ? "online" : status.error || "offline"}
       </span>
       <div className="flex-1" />
-      <button onClick={installHelper} className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30">
+      <button onClick={installHelper} className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30">
         Install yaver_admin.ts
       </button>
       {status.hint && <div className="w-full text-xs text-surface-500 mt-1">{status.hint}</div>}
@@ -155,7 +155,7 @@ function TablesPanel({ directory }: { directory: string }) {
           <button
             key={t.name || t.id}
             onClick={() => openTable(t.name)}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-mono ${selected === t.name ? "bg-indigo-500/20 text-indigo-300" : "bg-surface-900/50 text-surface-300 hover:bg-surface-800"}`}
+            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-mono ${selected === t.name ? "bg-indigo-500/20 text-indigo-700 dark:text-indigo-300" : "bg-surface-900/50 text-surface-300 hover:bg-surface-800"}`}
           >
             {t.name}
           </button>

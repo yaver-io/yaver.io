@@ -342,7 +342,7 @@ export function NetCaptureModal({
                 <button
                   onClick={stop}
                   disabled={busy}
-                  className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 hover:border-rose-400 disabled:opacity-50"
+                  className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-200 hover:border-rose-400 disabled:opacity-50"
                 >
                   Stop
                 </button>
@@ -350,7 +350,7 @@ export function NetCaptureModal({
                 <button
                   onClick={start}
                   disabled={busy}
-                  className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:border-emerald-400 disabled:opacity-50"
+                  className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-200 hover:border-emerald-400 disabled:opacity-50"
                 >
                   {busy ? "Starting…" : "Start capture"}
                 </button>
@@ -371,7 +371,7 @@ export function NetCaptureModal({
               <button
                 onClick={boxAutoconnect}
                 disabled={boxBusy !== ""}
-                className="rounded-md border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-200 hover:border-sky-400 disabled:opacity-50"
+                className="rounded-md border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-700 dark:text-sky-200 hover:border-sky-400 disabled:opacity-50"
                 title="Auto-resolve RS485 A/B polarity + termination and verify with a real Modbus read through the box."
               >
                 {boxBusy === "connect" ? "Connecting…" : "Connect to machine"}
@@ -445,7 +445,7 @@ export function NetCaptureModal({
                         <div>
                           <div className="mb-1 text-[10px] uppercase tracking-widest text-surface-500">Disconnect timeline</div>
                           {(analysis.disconnects || []).slice(-8).map((d, i) => (
-                            <div key={i} className="text-[11px] text-amber-300">
+                            <div key={i} className="text-[11px] text-amber-700 dark:text-amber-300">
                               {d.cause} · <span className="text-surface-500">{d.flow}</span>
                               {d.note ? ` (${d.note})` : ""}
                             </div>

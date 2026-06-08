@@ -321,9 +321,9 @@ function deviceAccessSummary(device: Pick<Device, "isGuest" | "sharedWithGuests"
 }
 
 function accessScopeTone(device: Pick<Device, "accessScope" | "isGuest">) {
-  if (device.accessScope === "shared-scoped") return "border-amber-500/40 bg-amber-500/10 text-amber-200";
-  if (device.accessScope === "shared-legacy") return "border-violet-500/40 bg-violet-500/10 text-violet-200";
-  if (device.isGuest) return "border-sky-500/40 bg-sky-500/10 text-sky-200";
+  if (device.accessScope === "shared-scoped") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  if (device.accessScope === "shared-legacy") return "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-200";
+  if (device.isGuest) return "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-200";
   return "";
 }
 
@@ -409,10 +409,10 @@ function DeviceAliasChip({
           }}
           placeholder="prod-mac"
           spellCheck={false}
-          className="w-28 rounded-full border border-emerald-500/40 bg-surface-950 px-2 py-0.5 font-mono text-[10px] text-emerald-200 outline-none focus:border-emerald-400"
+          className="w-28 rounded-full border border-emerald-500/40 bg-surface-950 px-2 py-0.5 font-mono text-[10px] text-emerald-700 dark:text-emerald-200 outline-none focus:border-emerald-400"
         />
         {error ? (
-          <span title={error} className="text-[10px] text-red-300/80">!</span>
+          <span title={error} className="text-[10px] text-red-700 dark:text-red-300/80">!</span>
         ) : null}
       </span>
     );
@@ -423,7 +423,7 @@ function DeviceAliasChip({
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="rounded-full border border-dashed border-surface-700 bg-transparent px-2 py-0.5 text-[10px] font-medium text-surface-400 hover:border-emerald-500/40 hover:text-emerald-200"
+        className="rounded-full border border-dashed border-surface-700 bg-transparent px-2 py-0.5 text-[10px] font-medium text-surface-400 hover:border-emerald-500/40 hover:text-emerald-700 dark:hover:text-emerald-200"
         title="Add a short alias (used by `yaver ssh <alias>`)"
       >
         + alias
@@ -435,7 +435,7 @@ function DeviceAliasChip({
     <button
       type="button"
       onClick={() => setEditing(true)}
-      className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-200 hover:border-emerald-400/60"
+      className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-700 dark:text-emerald-200 hover:border-emerald-400/60"
       title="Click to rename this alias"
     >
       @{device.alias}
@@ -536,7 +536,7 @@ function DeviceConnectCard({
                 onSaved={() => { if (onAliasSaved) onAliasSaved(); }}
               />
             ) : device.alias ? (
-              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 font-mono text-[10px] text-emerald-300/80">@{device.alias}</span>
+              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 font-mono text-[10px] text-emerald-700 dark:text-emerald-300/80">@{device.alias}</span>
             ) : null}
             <span className={`inline-flex h-2 w-2 rounded-full ${connectionError ? "bg-red-400" : isConnecting ? "bg-amber-400" : statusTone}`} />
             <span className="text-[11px] text-surface-400">
@@ -553,10 +553,10 @@ function DeviceConnectCard({
             {device.isGuest && device.hostName ? ` · from ${device.hostName}` : ""}
           </p>
           {!connectionError && lifecycleState !== "connected" ? (
-            <p className="mt-1 text-[11px] leading-5 text-amber-300/80">{reachability}</p>
+            <p className="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300/80">{reachability}</p>
           ) : null}
           {connectionError ? (
-            <p className="mt-1 text-[11px] text-red-300/80">{connectionError}</p>
+            <p className="mt-1 text-[11px] text-red-700 dark:text-red-300/80">{connectionError}</p>
           ) : null}
         </div>
       </div>
@@ -568,31 +568,31 @@ function DeviceConnectCard({
           </span>
         ) : null}
         {!device.isGuest && device.sharedWithGuests ? (
-          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
+          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700 dark:text-sky-200">
             Shared
           </span>
         ) : null}
         {device.deviceClass ? (
-          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
+          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700 dark:text-sky-200">
             {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
           </span>
         ) : null}
         {device.sessionBinding ? (
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
             device.sessionBinding === "dedicated"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-200"
           }`}>
             {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Session"}
           </span>
         ) : null}
         {isPrimary ? (
-          <span className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-200">
+          <span className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-indigo-700 dark:text-indigo-200">
             Primary
           </span>
         ) : null}
         {device.priorityMode === "spare-capacity" ? (
-          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-200">
+          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-700 dark:text-violet-200">
             Spare Capacity
           </span>
         ) : null}
@@ -608,14 +608,14 @@ function DeviceConnectCard({
           {shareSummary.projectLabel ? (
             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
               shareSummary.projectLabel === "All Resources"
-                ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
-                : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-200"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200"
             }`}>
               {shareSummary.projectLabel}
             </span>
           ) : null}
           {shareSummary.projectChips.map((project) => (
-            <span key={`${device.id}:project:${project}`} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-100">
+            <span key={`${device.id}:project:${project}`} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-100">
               {project}
             </span>
           ))}
@@ -624,11 +624,11 @@ function DeviceConnectCard({
 
       {shareSummary && shareSummary.guestChips.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200">
+          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-700 dark:text-sky-200">
             Shared With
           </span>
           {shareSummary.guestChips.map((guest) => (
-            <span key={`${device.id}:guest:${guest}`} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-100">
+            <span key={`${device.id}:guest:${guest}`} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-100">
               {guest}
             </span>
           ))}
@@ -642,11 +642,11 @@ function DeviceConnectCard({
 
       {shareSummary && shareSummary.runnerChips.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-200">
+          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-700 dark:text-violet-200">
             Agents
           </span>
           {shareSummary.runnerChips.map((runner) => (
-            <span key={`${device.id}:runner:${runner}`} className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-100">
+            <span key={`${device.id}:runner:${runner}`} className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-100">
               {runner}
             </span>
           ))}
@@ -666,8 +666,8 @@ function DeviceConnectCard({
           disabled={isConnecting}
           className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors ${
             isConnecting
-              ? "cursor-wait border border-amber-500/20 bg-amber-500/10 text-amber-200"
-              : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15"
+              ? "cursor-wait border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-200"
+              : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/15"
           }`}
         >
           {isConnecting ? "Connecting…" : lifecycleState === "connected" ? "Open Workspace" : lifecycleState === "bootstrap" ? "Reclaim & Connect" : lifecycleState === "yaver-auth-expired" ? "Re-auth & Connect" : "Connect"}
@@ -675,7 +675,7 @@ function DeviceConnectCard({
         {onOpenShell ? (
           <button
             onClick={onOpenShell}
-            className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/15"
+            className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-700 dark:text-cyan-200 hover:bg-cyan-500/15"
             title="Open a browser shell on this device (PTY over relay)"
           >
             <span aria-hidden className="mr-1">⌨</span>Shell
@@ -684,7 +684,7 @@ function DeviceConnectCard({
         {onOpenRemoteDesktop ? (
           <button
             onClick={onOpenRemoteDesktop}
-            className="rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/10 px-3 py-1.5 text-xs font-semibold text-fuchsia-200 hover:bg-fuchsia-500/15"
+            className="rounded-xl border border-fuchsia-500/30 bg-fuchsia-500/10 px-3 py-1.5 text-xs font-semibold text-fuchsia-700 dark:text-fuchsia-200 hover:bg-fuchsia-500/15"
             title="Open the live desktop (screen view + mouse/keyboard control) over relay"
           >
             <span aria-hidden className="mr-1">🖥</span>Desktop
@@ -693,7 +693,7 @@ function DeviceConnectCard({
         {canTogglePrimary && onTogglePrimary ? (
           <button
             onClick={onTogglePrimary}
-            className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/15"
+            className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/15"
           >
             {isPrimary ? "Unset Primary" : "Make Primary"}
           </button>
@@ -701,7 +701,7 @@ function DeviceConnectCard({
         {canToggleSecondary && onToggleSecondary && !isPrimary ? (
           <button
             onClick={onToggleSecondary}
-            className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-500/15"
+            className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-200 hover:bg-violet-500/15"
             title={isSecondary ? "Clear secondary slot" : "Mark this device as your fallback secondary machine"}
           >
             {isSecondary ? "Unset Secondary" : "Make Secondary"}
@@ -1830,7 +1830,7 @@ export default function DashboardPage() {
       <div className="text-center">
         <h2 className="text-lg font-semibold text-surface-100 mb-2">Sign in to continue</h2>
         {sessionExpired ? (
-          <p className="mb-4 text-sm text-amber-300/90">Your session expired — sign in again.</p>
+          <p className="mb-4 text-sm text-amber-700 dark:text-amber-300/90">Your session expired — sign in again.</p>
         ) : null}
         <a href="/auth?return=/dashboard" className="rounded-lg bg-surface-100 px-6 py-3 text-sm font-medium text-surface-900 hover:bg-surface-50">Sign In</a>
       </div>
@@ -2129,7 +2129,7 @@ export default function DashboardPage() {
                               local
                             </span>
                           ) : authed ? (
-                            <span className="ml-auto rounded-full border border-emerald-500/40 px-1.5 py-px text-[9px] uppercase tracking-wider text-emerald-300">
+                            <span className="ml-auto rounded-full border border-emerald-500/40 px-1.5 py-px text-[9px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                               ✓ signed in
                             </span>
                           ) : (
@@ -2145,7 +2145,7 @@ export default function DashboardPage() {
                       );
                     })()}
                     {connectedReauthMsg ? (
-                      <div className={`mt-1 text-[10px] leading-tight ${connectedReauthMsg.ok ? "text-emerald-300" : "text-red-300"}`}>
+                      <div className={`mt-1 text-[10px] leading-tight ${connectedReauthMsg.ok ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}`}>
                         {connectedReauthMsg.text}
                       </div>
                     ) : null}
@@ -2197,7 +2197,7 @@ export default function DashboardPage() {
                             <span className="shrink-0 text-[9px] text-indigo-400" title="Primary">&#9733;</span>
                           ) : null}
                           {d.isGuest ? (
-                            <span className="shrink-0 rounded bg-sky-500/15 px-1 text-[9px] uppercase text-sky-300">shared</span>
+                            <span className="shrink-0 rounded bg-sky-500/15 px-1 text-[9px] uppercase text-sky-700 dark:text-sky-300">shared</span>
                           ) : null}
                         </button>
                         {needsRecovery ? (
@@ -2207,8 +2207,8 @@ export default function DashboardPage() {
                             title={lifecycle === "bootstrap" ? "Device is in bootstrap mode — reclaim it from the browser" : "Agent session expired — re-auth via the browser"}
                             className={`mr-1 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide disabled:opacity-40 ${
                               lifecycle === "bootstrap"
-                                ? "bg-violet-500/20 text-violet-200 hover:bg-violet-500/30"
-                                : "bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
+                                ? "bg-violet-500/20 text-violet-700 dark:text-violet-200 hover:bg-violet-500/30"
+                                : "bg-amber-500/20 text-amber-700 dark:text-amber-200 hover:bg-amber-500/30"
                             }`}
                           >
                             {isReauthing ? "…" : lifecycle === "bootstrap" ? "Reclaim" : "Re-auth"}
@@ -2218,7 +2218,7 @@ export default function DashboardPage() {
                       {showReauthMsg ? (
                         <div
                           className={`px-2 pb-1 text-[10px] leading-tight ${
-                            reauthMsg!.ok ? "text-emerald-300" : "text-red-300"
+                            reauthMsg!.ok ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"
                           }`}
                         >
                           {reauthMsg!.text}
@@ -2238,7 +2238,7 @@ export default function DashboardPage() {
                 {dormantDevices.length > 0 ? (
                   <button
                     onClick={() => setActiveTab("devices")}
-                    className="w-full rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-left text-[10px] text-amber-200 hover:bg-amber-500/10"
+                    className="w-full rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-left text-[10px] text-amber-700 dark:text-amber-200 hover:bg-amber-500/10"
                     title="Open the Devices tab to reveal stale hidden devices"
                   >
                     {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden
@@ -2346,7 +2346,7 @@ export default function DashboardPage() {
                       setUserMenuOpen(false);
                       logout();
                     }}
-                    className="flex w-full items-center gap-2 border-t border-surface-800 px-3 py-2 text-left text-[12px] text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                    className="flex w-full items-center gap-2 border-t border-surface-800 px-3 py-2 text-left text-[12px] text-red-700 dark:text-red-300 hover:bg-red-500/10 hover:text-red-700 dark:hover:text-red-200"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -2409,7 +2409,7 @@ export default function DashboardPage() {
                                   <span className="text-surface-400 w-20 shrink-0 truncate">
                                     {d.path === "relay" ? `relay · ${d.relayId || "?"}` : "direct"}
                                   </span>
-                                  <span className={`shrink-0 ${d.authExpired ? "text-amber-300" : d.ok ? "text-emerald-300" : "text-red-300"}`}>
+                                  <span className={`shrink-0 ${d.authExpired ? "text-amber-700 dark:text-amber-300" : d.ok ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}`}>
                                     {d.authExpired ? "auth expired" : d.ok ? "ok" : d.status ? `HTTP ${d.status}` : (d.error || "error")}
                                   </span>
                                   {d.durationMs !== undefined ? (
@@ -2424,13 +2424,13 @@ export default function DashboardPage() {
                           <div className="mt-3 text-[10px] text-surface-500 space-y-1">
                             <div>
                               <span className="text-surface-400">Relays configured:</span>{" "}
-                              <span className={relayCount === 0 ? "text-red-300" : "text-surface-300"}>{relayCount}</span>
+                              <span className={relayCount === 0 ? "text-red-700 dark:text-red-300" : "text-surface-300"}>{relayCount}</span>
                               {relayCount > 0 && !anyRelayProbeTried ? (
-                                <span className="ml-2 text-amber-300">(no relay probe attempted — device has no deviceId?)</span>
+                                <span className="ml-2 text-amber-700 dark:text-amber-300">(no relay probe attempted — device has no deviceId?)</span>
                               ) : null}
                             </div>
                             {mixedContentLikely ? (
-                              <div className="text-amber-300">
+                              <div className="text-amber-700 dark:text-amber-300">
                                 Direct probe returned <code className="rounded bg-surface-900 px-1 font-mono">Load failed</code> because a browser on <code className="rounded bg-surface-900 px-1 font-mono">https://</code> can&apos;t fetch <code className="rounded bg-surface-900 px-1 font-mono">http://</code> LAN IPs (mixed content). The web path has to go through a relay.
                               </div>
                             ) : null}
@@ -2438,7 +2438,7 @@ export default function DashboardPage() {
 
                           {/* Re-auth — always offered on connection error. */}
                           <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-left">
-                            <p className="text-[11px] text-amber-300">
+                            <p className="text-[11px] text-amber-700 dark:text-amber-300">
                               {authExpired
                                 ? "Agent accepted the probe but its Convex session is stale. Hand your current session down to the box:"
                                 : "Try handing your current session down to the box — works even if the agent's own token is dead, as long as one relay can reach it:"}
@@ -2478,13 +2478,13 @@ export default function DashboardPage() {
                                   }
                                   setReauthing(false);
                                 }}
-                                className="flex-1 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
+                                className="flex-1 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
                               >
                                 {reauthing ? "Re-authing…" : relayCount === 0 ? "Re-auth (needs a relay)" : "Re-auth this device from web"}
                               </button>
                             </div>
                             {reauthMessage ? (
-                              <pre className={`mt-2 whitespace-pre-wrap break-words font-mono text-[10px] ${reauthMessage.kind === "ok" ? "text-emerald-300" : "text-red-300"}`}>
+                              <pre className={`mt-2 whitespace-pre-wrap break-words font-mono text-[10px] ${reauthMessage.kind === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}`}>
                                 {reauthMessage.text}
                               </pre>
                             ) : null}
@@ -2818,7 +2818,7 @@ export default function DashboardPage() {
                               setActiveTask(fresh);
                               setTasks((prev) => prev.map((t) => t.id === fresh.id ? fresh : t));
                             }}
-                            className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-400/15"
+                            className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-400/15"
                           >
                             Complete
                           </button>
@@ -2827,14 +2827,14 @@ export default function DashboardPage() {
                       </div>
                       <div ref={outputRef} className="flex-1 overflow-y-auto bg-surface-950 px-4 py-5">
                         {activeRunnerAuthIssue ? (
-                          <div className="mx-auto mb-4 max-w-3xl rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                          <div className="mx-auto mb-4 max-w-3xl rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-100">
                             <div className="font-medium">{runnerLabel(activeRunnerId)} needs sign-in on {connectedDevice?.name || "this machine"}</div>
-                            <div className="mt-1 text-xs leading-5 text-amber-200/80">{activeRunnerAuthIssue}</div>
+                            <div className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-200/80">{activeRunnerAuthIssue}</div>
                             {canStartBrowserRunnerAuth ? (
                               <button
                                 type="button"
                                 onClick={() => setChatRunnerAuthModal(activeRunnerRow!.id)}
-                                className="mt-3 rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-400/15"
+                                className="mt-3 rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-100 hover:bg-amber-400/15"
                               >
                                 Sign in to {runnerLabel(activeRunnerRow?.id)}
                               </button>
@@ -2852,7 +2852,7 @@ export default function DashboardPage() {
                               m.role === "user" ? (
                                 <div key={i} className="flex justify-end">
                                   <div className={`max-w-[80%] rounded-2xl rounded-br-sm px-3.5 py-2 text-[13px] text-white whitespace-pre-wrap break-words shadow-sm ${m.queued ? "bg-indigo-500/40 italic ring-1 ring-indigo-300/30" : "bg-indigo-500"}`}>
-                                    {m.queued ? <span className="mr-1.5 text-[10px] uppercase tracking-wide text-indigo-100/80">queued</span> : null}
+                                    {m.queued ? <span className="mr-1.5 text-[10px] uppercase tracking-wide text-indigo-800 dark:text-indigo-100/80">queued</span> : null}
                                     {m.text}
                                   </div>
                                 </div>
@@ -2941,19 +2941,19 @@ export default function DashboardPage() {
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-800 bg-surface-950/60 px-3 py-2 text-[11px] text-surface-400">
                           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                             <span className="text-surface-500">Agent</span>
-                            <span className="rounded-full border border-amber-400/30 bg-amber-400/5 px-2 py-0.5 text-amber-100">{runnerName}</span>
+                            <span className="rounded-full border border-amber-400/30 bg-amber-400/5 px-2 py-0.5 text-amber-800 dark:text-amber-100">{runnerName}</span>
                             {providerEntry ? (
                               <>
                                 <span className="text-surface-700">·</span>
-                                <span className="rounded-full border border-cyan-400/30 bg-cyan-400/5 px-2 py-0.5 text-cyan-100">{providerEntry.label}</span>
+                                <span className="rounded-full border border-cyan-400/30 bg-cyan-400/5 px-2 py-0.5 text-cyan-800 dark:text-cyan-100">{providerEntry.label}</span>
                               </>
                             ) : null}
                             <span className="text-surface-700">·</span>
-                            <span className="rounded-full border border-fuchsia-400/30 bg-fuchsia-400/5 px-2 py-0.5 text-fuchsia-100">{modelDisplay}</span>
+                            <span className="rounded-full border border-fuchsia-400/30 bg-fuchsia-400/5 px-2 py-0.5 text-fuchsia-800 dark:text-fuchsia-100">{modelDisplay}</span>
                             {modeDisplay ? (
                               <>
                                 <span className="text-surface-700">·</span>
-                                <span className="rounded-full border border-emerald-400/30 bg-emerald-400/5 px-2 py-0.5 text-emerald-100">{modeDisplay}</span>
+                                <span className="rounded-full border border-emerald-400/30 bg-emerald-400/5 px-2 py-0.5 text-emerald-800 dark:text-emerald-100">{modeDisplay}</span>
                               </>
                             ) : null}
                           </div>
@@ -2989,7 +2989,7 @@ export default function DashboardPage() {
                                       title={runner.error || runner.warning || runner.name}
                                       className={`rounded-full border px-2.5 py-1 transition ${
                                         active
-                                          ? "border-amber-400/60 bg-amber-400/10 text-amber-100"
+                                          ? "border-amber-400/60 bg-amber-400/10 text-amber-800 dark:text-amber-100"
                                           : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
                                       }`}
                                     >
@@ -3014,7 +3014,7 @@ export default function DashboardPage() {
                                       title={model.description || model.id}
                                       className={`rounded-full border px-2.5 py-1 transition ${
                                         active
-                                          ? "border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-100"
+                                          ? "border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-800 dark:text-fuchsia-100"
                                           : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
                                       }`}
                                     >
@@ -3147,7 +3147,7 @@ export default function DashboardPage() {
                                 title={p.blurb}
                                 className={`rounded-full border px-2.5 py-1 transition ${
                                   active
-                                    ? "border-cyan-400/60 bg-cyan-400/10 text-cyan-100"
+                                    ? "border-cyan-400/60 bg-cyan-400/10 text-cyan-800 dark:text-cyan-100"
                                     : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
                                 }`}
                               >
@@ -3170,7 +3170,7 @@ export default function DashboardPage() {
                                 title={m.hint || m.id}
                                 className={`rounded-full border px-2.5 py-1 transition ${
                                   active
-                                    ? "border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-100"
+                                    ? "border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-800 dark:text-fuchsia-100"
                                     : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
                                 }`}
                               >
@@ -3218,7 +3218,7 @@ export default function DashboardPage() {
                                   }
                                   className={`rounded-full border px-2.5 py-1 transition ${
                                     selectedOpenCodeMode === id
-                                      ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-100"
+                                      ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-800 dark:text-emerald-100"
                                       : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
                                   } ${!agent.isBuiltin && id !== "" ? "italic" : ""}`}
                                 >
@@ -3240,7 +3240,7 @@ export default function DashboardPage() {
                           if (!showInput) {
                             return (
                               <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-200">
+                                <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-200">
                                   ✓ {provider.keyEnv || "Key"} configured on this device
                                 </span>
                                 <button
@@ -3259,7 +3259,7 @@ export default function DashboardPage() {
                                   type="button"
                                   onClick={handleSaveOpenCode}
                                   disabled={opencodeSaving}
-                                  className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                                  className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-800 dark:text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
                                   title="Use this provider + model for the next task without changing the saved key."
                                 >
                                   {opencodeSaving ? "Saving…" : "Use this provider"}
@@ -3282,7 +3282,7 @@ export default function DashboardPage() {
                                 type="button"
                                 onClick={handleSaveOpenCode}
                                 disabled={opencodeSaving}
-                                className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                                className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-800 dark:text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
                               >
                                 {opencodeSaving ? "Saving…" : "Save key + use"}
                               </button>
@@ -3309,14 +3309,14 @@ export default function DashboardPage() {
                               type="button"
                               onClick={handleSaveOpenCode}
                               disabled={opencodeSaving}
-                              className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                              className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-800 dark:text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
                             >
                               {opencodeSaving ? "Saving…" : "Use Ollama"}
                             </button>
                           </div>
                         )}
                         {opencodeSaveMsg ? (
-                          <p className={`mt-2 text-[11px] ${opencodeSaveMsg.ok ? "text-emerald-300" : "text-amber-300"}`}>
+                          <p className={`mt-2 text-[11px] ${opencodeSaveMsg.ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
                             {opencodeSaveMsg.text}
                           </p>
                         ) : null}
@@ -3324,13 +3324,13 @@ export default function DashboardPage() {
                     );
                   })() : null}
                   {activeRunnerAuthIssue ? (
-                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-200">
                       <span>{runnerLabel(activeRunnerId)} on {connectedDevice?.name || "this machine"} is not authenticated.</span>
                       {canStartBrowserRunnerAuth ? (
                         <button
                           type="button"
                           onClick={() => setChatRunnerAuthModal(activeRunnerRow!.id)}
-                          className="ml-2 rounded-lg border border-amber-400/30 px-2.5 py-1 font-semibold text-amber-100 hover:bg-amber-400/10"
+                          className="ml-2 rounded-lg border border-amber-400/30 px-2.5 py-1 font-semibold text-amber-800 dark:text-amber-100 hover:bg-amber-400/10"
                         >
                           Sign in
                         </button>
@@ -3338,14 +3338,14 @@ export default function DashboardPage() {
                     </div>
                   ) : null}
                   {preferredSurfaceProjectPath ? (
-                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 px-3 py-2 text-[11px] text-fuchsia-100">
-                      <span className="font-semibold uppercase tracking-[0.18em] text-fuchsia-200/80">Repo</span>
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 px-3 py-2 text-[11px] text-fuchsia-800 dark:text-fuchsia-100">
+                      <span className="font-semibold uppercase tracking-[0.18em] text-fuchsia-700 dark:text-fuchsia-200/80">Repo</span>
                       <span className="font-mono text-fuchsia-50">{preferredSurfaceProjectPath}</span>
                     </div>
                   ) : null}
                   {agentQuestion && agentQuestion.taskId === activeTask?.id ? (
                     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-200/80">
                         Agent needs your input
                       </div>
                       <div className="mt-2 text-sm text-surface-100 whitespace-pre-wrap">
@@ -3420,14 +3420,14 @@ export default function DashboardPage() {
                         </div>
                       )}
                       {agentQuestion.vaultHint ? (
-                        <div className="mt-2 text-[11px] text-amber-200/70">
+                        <div className="mt-2 text-[11px] text-amber-700 dark:text-amber-200/70">
                           Hint: agent suggests vault entry <code className="font-mono">{agentQuestion.vaultHint}</code>. Look it up with <code className="font-mono">yaver vault get {agentQuestion.vaultHint}</code>.
                         </div>
                       ) : null}
                       <button
                         type="button"
                         onClick={() => setAgentQuestion(null)}
-                        className="mt-2 text-[11px] text-amber-200/60 hover:text-amber-100"
+                        className="mt-2 text-[11px] text-amber-700 dark:text-amber-200/60 hover:text-amber-800 dark:hover:text-amber-100"
                       >
                         Dismiss (the agent will time out and pick a default)
                       </button>
@@ -3649,7 +3649,7 @@ function RunnerAuthModal({
         </div>
 
         {startError ? (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
             <div className="mb-1 font-semibold">Couldn&apos;t start sign-in</div>
             {startError}
           </div>
@@ -3658,12 +3658,12 @@ function RunnerAuthModal({
             Starting the sign-in flow on the remote machine…
           </div>
         ) : session.status === "completed" ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-200">
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-700 dark:text-emerald-200">
             <div className="mb-1 font-semibold">Signed in</div>
-            <div className="text-xs text-emerald-300/80">{session.detail || "Auth stored on the remote machine."}</div>
+            <div className="text-xs text-emerald-700 dark:text-emerald-300/80">{session.detail || "Auth stored on the remote machine."}</div>
           </div>
         ) : session.status === "failed" || session.status === "cancelled" ? (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
             <div className="mb-1 font-semibold">{session.status === "cancelled" ? "Cancelled" : "Failed"}</div>
             <div>{session.error || session.detail || "The CLI exited before sign-in completed."}</div>
           </div>
@@ -3677,7 +3677,7 @@ function RunnerAuthModal({
                 href={session.openUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block truncate rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2.5 text-sm font-medium text-indigo-200 hover:bg-indigo-500/20"
+                className="block truncate rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2.5 text-sm font-medium text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/20"
               >
                 ↗ {session.openUrl}
               </a>
@@ -3748,13 +3748,13 @@ function RunnerAuthModal({
                         setSubmitting(false);
                       }
                     }}
-                    className="rounded-md border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-40"
+                    className="rounded-md border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-40"
                   >
                     {submitting ? "…" : "Submit"}
                   </button>
                 </div>
                 {submitError ? (
-                  <div className="mt-2 text-[11px] text-red-300">{submitError}</div>
+                  <div className="mt-2 text-[11px] text-red-700 dark:text-red-300">{submitError}</div>
                 ) : null}
               </div>
             ) : null}

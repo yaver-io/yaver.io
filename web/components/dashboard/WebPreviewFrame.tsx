@@ -122,7 +122,7 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
                 onClick={() => setViewport(v.id)}
                 className={`px-2.5 py-1 text-[11px] transition-colors first:rounded-l-md last:rounded-r-md ${
                   viewport === v.id
-                    ? "bg-indigo-500/20 text-indigo-200"
+                    ? "bg-indigo-500/20 text-indigo-700 dark:text-indigo-200"
                     : "text-surface-400 hover:bg-surface-800 hover:text-surface-200"
                 }`}
                 title={v.id === "fluid" ? "Fill container" : `${v.width}×${v.height}`}
@@ -211,9 +211,9 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-semibold text-red-200">{buildFailure.label}</p>
+                  <p className="text-[13px] font-semibold text-red-700 dark:text-red-200">{buildFailure.label}</p>
                   {buildFailure.error ? (
-                    <p className="mt-1 break-words font-mono text-[11px] leading-5 text-red-200/80">
+                    <p className="mt-1 break-words font-mono text-[11px] leading-5 text-red-700 dark:text-red-200/80">
                       {buildFailure.error}
                     </p>
                   ) : null}
@@ -221,14 +221,14 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
                 {buildFailure.onRetry ? (
                   <button
                     onClick={buildFailure.onRetry}
-                    className="flex-shrink-0 rounded border border-red-500/40 bg-red-500/10 px-3 py-1 text-[11px] font-medium text-red-200 hover:bg-red-500/20"
+                    className="flex-shrink-0 rounded border border-red-500/40 bg-red-500/10 px-3 py-1 text-[11px] font-medium text-red-700 dark:text-red-200 hover:bg-red-500/20"
                   >
                     {buildFailure.retryLabel || "Retry build"}
                   </button>
                 ) : null}
               </div>
               {buildFailure.tail ? (
-                <pre className="min-h-0 flex-1 overflow-auto rounded border border-red-500/20 bg-surface-950/80 px-3 py-2 font-mono text-[10px] leading-4 text-red-200/70 whitespace-pre">
+                <pre className="min-h-0 flex-1 overflow-auto rounded border border-red-500/20 bg-surface-950/80 px-3 py-2 font-mono text-[10px] leading-4 text-red-700 dark:text-red-200/70 whitespace-pre">
                   {buildFailure.tail}
                 </pre>
               ) : null}
@@ -293,7 +293,7 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
                 <button
                   onClick={notRenderableAction.onClick}
                   disabled={notRenderableAction.disabled}
-                  className="mt-2 rounded border border-emerald-500/40 bg-emerald-500/10 px-4 py-1.5 text-[12px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                  className="mt-2 rounded border border-emerald-500/40 bg-emerald-500/10 px-4 py-1.5 text-[12px] font-medium text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
                 >
                   {notRenderableAction.label}
                 </button>

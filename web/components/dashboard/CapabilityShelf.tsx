@@ -288,7 +288,7 @@ export function CapabilityShelf({ token }: { token: string | null }) {
       {nextStep && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-3">
           <div className="min-w-0">
-            <div className="text-xs font-medium text-indigo-300">Next: {nextStep.cta}</div>
+            <div className="text-xs font-medium text-indigo-700 dark:text-indigo-300">Next: {nextStep.cta}</div>
             <div className="mt-0.5 text-[11px] text-surface-400">{nextStep.why}</div>
           </div>
           <button

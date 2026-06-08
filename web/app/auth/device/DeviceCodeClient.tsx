@@ -286,7 +286,7 @@ export default function DeviceCodeClient({
       label: "Continue with GitLab",
       href: authUrlFor("gitlab"),
       primary: preferredProvider === "gitlab",
-      icon: <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/15 text-[10px] font-semibold text-orange-300">GL</span>,
+      icon: <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/15 text-[10px] font-semibold text-orange-700 dark:text-orange-300">GL</span>,
     },
   ];
   const orderedProviders = [...providers].sort((a, b) => Number(!!b.primary) - Number(!!a.primary));
@@ -411,7 +411,7 @@ export default function DeviceCodeClient({
               </p>
             </div>
             <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-5 py-5">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-300">
                 Code expired
               </div>
               <p className="mt-3 text-sm leading-relaxed text-surface-200">
@@ -446,7 +446,7 @@ export default function DeviceCodeClient({
               yaver<span className="font-normal text-surface-500">.io</span>
             </span>
             <div className="mx-auto mt-6 max-w-sm rounded-2xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-4 text-left">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-300">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700 dark:text-indigo-300">
                 Authorize Remote Machine
               </div>
               <p className="mt-2 text-sm text-surface-200">
@@ -487,13 +487,13 @@ export default function DeviceCodeClient({
                       </span>
                     )}
                     {deviceInfo.preferredProvider && (
-                      <span className="rounded-full border border-indigo-400/30 px-2 py-1 text-indigo-200">
+                      <span className="rounded-full border border-indigo-400/30 px-2 py-1 text-indigo-700 dark:text-indigo-200">
                         prefers {deviceInfo.preferredProvider}
                       </span>
                     )}
                   </div>
                   {deviceInfo.platform === "wsl1" && (
-                    <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                    <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
                       WSL1 detected. Yaver requires WSL2 for most mobile and React Native features.
                     </div>
                   )}
@@ -523,7 +523,7 @@ export default function DeviceCodeClient({
                 {passkeyLoading ? "Waiting for passkey…" : "Sign in with passkey"}
               </button>
               {passkeyError && (
-                <p className="text-xs text-rose-300" role="alert">{passkeyError}</p>
+                <p className="text-xs text-rose-700 dark:text-rose-300" role="alert">{passkeyError}</p>
               )}
             </div>
           )}
@@ -585,7 +585,7 @@ export default function DeviceCodeClient({
               Remote machine authorization
             </p>
           </div>
-          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-4 text-sm text-amber-200">
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-4 text-sm text-amber-700 dark:text-amber-200">
             {errorMsg || expiredCodeMessage}
           </div>
           {prefillCode ? (
@@ -709,7 +709,7 @@ function DeviceAuthorizedSuccess({ machineName }: { machineName: string | null }
         </p>
 
         <div className="mt-8 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-5">
-          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-300">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-700 dark:text-indigo-300">
             On this phone
           </div>
           <h3 className="mt-2 text-base font-semibold text-surface-50">

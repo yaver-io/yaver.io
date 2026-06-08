@@ -453,7 +453,7 @@ export default function PhoneProjectsView() {
       </div>
 
       {err ? (
-        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+        <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
           {err}
         </div>
       ) : null}
@@ -462,8 +462,8 @@ export default function PhoneProjectsView() {
         <div
           className={`rounded border p-3 text-sm ${
             notice.type === "ok"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-              : "border-red-500/30 bg-red-500/10 text-red-300"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+              : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
           }`}
         >
           {notice.text}
@@ -497,7 +497,7 @@ export default function PhoneProjectsView() {
             className="mt-1 w-full rounded border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
           />
           {importedBrief?.suggestedName && !name.trim() ? (
-            <div className="mt-2 text-xs text-emerald-300">
+            <div className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">
               Suggested name from import: {importedBrief.suggestedName}
             </div>
           ) : null}
@@ -533,16 +533,16 @@ export default function PhoneProjectsView() {
             className="mt-1 min-h-32 w-full rounded border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100"
           />
           {importedBrief ? (
-            <div className="mt-2 rounded border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-100">
+            <div className="mt-2 rounded border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-800 dark:text-indigo-100">
               <div className="font-medium">{importedBrief.sourceLabel}</div>
-              <div className="mt-1 text-indigo-200/80">
+              <div className="mt-1 text-indigo-700 dark:text-indigo-200/80">
                 {importedBrief.title || `${importedBrief.charCount} chars imported`}
               </div>
               <button
                 type="button"
                 onClick={() => void analyzeImportedConversation()}
                 disabled={analyzingImport}
-                className="mt-3 rounded border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-100 hover:bg-indigo-500/10 disabled:opacity-50"
+                className="mt-3 rounded border border-indigo-400/40 px-3 py-1.5 text-xs font-medium text-indigo-800 dark:text-indigo-100 hover:bg-indigo-500/10 disabled:opacity-50"
               >
                 {analyzingImport ? "Analyzing…" : "Analyze thread and generate technical plan"}
               </button>
@@ -631,7 +631,7 @@ export default function PhoneProjectsView() {
                   </button>
                   <button
                     onClick={() => void doDelete(selected.slug)}
-                    className="rounded border border-red-500/50 px-3 py-1.5 text-sm text-red-300 hover:bg-red-500/10"
+                    className="rounded border border-red-500/50 px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-500/10"
                   >
                     Delete
                   </button>
@@ -710,7 +710,7 @@ export default function PhoneProjectsView() {
                               <td className="px-2 py-2 text-right">
                                 <button
                                   onClick={() => void doDeleteRow(r.id ?? Object.values(r)[0])}
-                                  className="text-xs text-red-400 hover:text-red-300"
+                                  className="text-xs text-red-400 hover:text-red-700 dark:hover:text-red-300"
                                 >
                                   ×
                                 </button>
@@ -733,8 +733,8 @@ export default function PhoneProjectsView() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {/* [Your Dev Machine] */}
                   <div className="rounded-lg border-2 border-indigo-500 bg-indigo-500/10 p-4">
-                    <div className="text-base font-semibold text-indigo-100">Your Dev Machine</div>
-                    <div className="mt-0.5 text-xs text-indigo-200/70">
+                    <div className="text-base font-semibold text-indigo-800 dark:text-indigo-100">Your Dev Machine</div>
+                    <div className="mt-0.5 text-xs text-indigo-700 dark:text-indigo-200/70">
                       {selectedDevMachine
                         ? `→ ${selectedDevMachine.name} · via relay`
                         : "No dev machine online yet."}
@@ -764,7 +764,7 @@ export default function PhoneProjectsView() {
                         <button
                           disabled={deploying !== null || !selectedDevMachine}
                           onClick={() => void deployToBoth()}
-                          className="rounded border border-indigo-300/40 px-3 py-1.5 text-xs font-medium text-indigo-100 hover:bg-indigo-500/10 disabled:opacity-50"
+                          className="rounded border border-indigo-300/40 px-3 py-1.5 text-xs font-medium text-indigo-800 dark:text-indigo-100 hover:bg-indigo-500/10 disabled:opacity-50"
                         >
                           {deploying === "both" ? "Deploying Both…" : "Deploy Both →"}
                         </button>
@@ -773,8 +773,8 @@ export default function PhoneProjectsView() {
                   </div>
 
                   <div className="rounded-lg border-2 border-sky-500/40 bg-sky-500/10 p-4">
-                    <div className="text-base font-semibold text-sky-100">Your Mobile Device</div>
-                    <div className="mt-0.5 text-xs text-sky-200/70">
+                    <div className="text-base font-semibold text-sky-800 dark:text-sky-100">Your Mobile Device</div>
+                    <div className="mt-0.5 text-xs text-sky-700 dark:text-sky-200/70">
                       {selectedMobileDevice
                         ? `→ ${selectedMobileDevice.name} · relay peer`
                         : "No mobile device online yet."}
@@ -801,7 +801,7 @@ export default function PhoneProjectsView() {
                         </select>
                       ) : null}
                     </div>
-                    <div className="mt-3 text-[11px] leading-5 text-sky-100/80">
+                    <div className="mt-3 text-[11px] leading-5 text-sky-800 dark:text-sky-100/80">
                       Uses the same peer path as machine export: source agent `GET /phone/projects/export`, target mobile agent `POST /phone/projects/receive`.
                     </div>
                   </div>
@@ -816,7 +816,7 @@ export default function PhoneProjectsView() {
                         <button
                           disabled={deploying !== null}
                           onClick={() => void deployToCloud()}
-                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
                         >
                           {deploying === "yaver-cloud" ? "Deploying…" : "Deploy →"}
                         </button>
@@ -834,7 +834,7 @@ export default function PhoneProjectsView() {
                         <button
                           disabled={deploying !== null}
                           onClick={() => void deployToSelfHosted()}
-                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
                         >
                           {deploying === "custom" ? "Deploying…" : "Deploy →"}
                         </button>
@@ -852,7 +852,7 @@ export default function PhoneProjectsView() {
                         <button
                           disabled={deploying !== null}
                           onClick={() => void deployToSelfHostedAndCloud()}
-                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+                          className="rounded border border-indigo-500 px-3 py-1.5 text-xs font-medium text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
                         >
                           {deploying === "both" ? "Deploying Both…" : "Deploy Both →"}
                         </button>
@@ -866,7 +866,7 @@ export default function PhoneProjectsView() {
                     href={lastDeploy.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-3 block rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-200 hover:bg-emerald-500/15"
+                    className="mt-3 block rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/15"
                   >
                     ✓ Running on {lastDeploy.via} — <span className="underline">{lastDeploy.url}</span>
                   </a>

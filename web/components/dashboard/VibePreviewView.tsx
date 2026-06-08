@@ -206,7 +206,7 @@ export default function VibePreviewView() {
       </div>
 
       {error && (
-        <div className="px-4 py-2 bg-red-950/40 border-b border-red-800/40 text-red-200 text-sm">
+        <div className="px-4 py-2 bg-red-950/40 border-b border-red-800/40 text-red-700 dark:text-red-200 text-sm">
           {error}
         </div>
       )}
@@ -287,7 +287,7 @@ export default function VibePreviewView() {
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-2 text-[11px] font-mono">
             {recentEvents.map((ev, i) => (
-              <div key={i} className="text-emerald-300/80 truncate">
+              <div key={i} className="text-emerald-700 dark:text-emerald-300/80 truncate">
                 {ev.ts.slice(11, 19)} · {ev.type}
                 {ev.hash ? ` · ${ev.hash.slice(0, 6)}` : ""}
                 {ev.clipId ? ` · ${ev.clipId}` : ""}

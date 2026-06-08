@@ -213,19 +213,19 @@ export default function DomainsView({ token, userId }: { token: string; userId: 
                   <span className="text-sm text-surface-100">{d.domain}</span>
                   <span className="ml-2 text-[10px] uppercase tracking-wider text-surface-500">{d.targetType.replace("_", " ")}</span>
                   <span className={`ml-2 rounded px-1.5 py-[1px] text-[9px] uppercase tracking-wider ${
-                    d.status === "active" ? "bg-emerald-500/20 text-emerald-300" :
-                    d.status === "verified" ? "bg-sky-500/20 text-sky-300" :
-                    d.status === "error" ? "bg-red-500/20 text-red-300" :
-                    "bg-amber-500/20 text-amber-300"
+                    d.status === "active" ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" :
+                    d.status === "verified" ? "bg-sky-500/20 text-sky-700 dark:text-sky-300" :
+                    d.status === "error" ? "bg-red-500/20 text-red-700 dark:text-red-300" :
+                    "bg-amber-500/20 text-amber-700 dark:text-amber-300"
                   }`}>{d.status}</span>
                   {d.errorMessage && <span className="ml-2 text-[10px] text-red-400">{d.errorMessage}</span>}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => openInstructions(d)} className="text-[11px] text-indigo-400 hover:text-indigo-300">Records</button>
-                  <button onClick={() => verifyDomain(d)} disabled={verifying} className="text-[11px] text-sky-400 hover:text-sky-300 disabled:opacity-40">
+                  <button onClick={() => openInstructions(d)} className="text-[11px] text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">Records</button>
+                  <button onClick={() => verifyDomain(d)} disabled={verifying} className="text-[11px] text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 disabled:opacity-40">
                     {verifying && selected?._id === d._id ? "Checking…" : "Verify"}
                   </button>
-                  <button onClick={() => removeDomain(d)} className="text-[11px] text-red-400 hover:text-red-300">Remove</button>
+                  <button onClick={() => removeDomain(d)} className="text-[11px] text-red-400 hover:text-red-700 dark:hover:text-red-300">Remove</button>
                 </div>
               </li>
             ))}

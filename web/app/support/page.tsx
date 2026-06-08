@@ -357,8 +357,8 @@ export default function SupportPage() {
           role="alert"
           className={`mt-6 rounded border px-4 py-3 text-sm ${
             banner.kind === "err"
-              ? "border-red-500/30 bg-red-950/40 text-red-200"
-              : "border-emerald-500/30 bg-emerald-950/40 text-emerald-200"
+              ? "border-red-500/30 bg-red-950/40 text-red-700 dark:text-red-200"
+              : "border-emerald-500/30 bg-emerald-950/40 text-emerald-700 dark:text-emerald-200"
           }`}
         >
           {banner.text}
@@ -422,7 +422,7 @@ export default function SupportPage() {
               {terminalOutput || "(terminal connected, waiting for output)"}
             </pre>
             {terminalPrompt && (
-              <p className="mt-2 text-xs text-amber-300">
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
                 {terminalPrompt}
               </p>
             )}

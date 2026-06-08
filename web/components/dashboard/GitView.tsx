@@ -659,14 +659,14 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                                         disabled
                                           ? "cursor-not-allowed border-surface-800 bg-surface-950 text-surface-600"
                                           : isVibing
-                                            ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/15"
+                                            ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-800 dark:text-fuchsia-100 hover:bg-fuchsia-500/15"
                                           : isVibePrompt
-                                            ? "border-violet-500/30 bg-violet-500/10 text-violet-100 hover:bg-violet-500/15"
+                                            ? "border-violet-500/30 bg-violet-500/10 text-violet-800 dark:text-violet-100 hover:bg-violet-500/15"
                                           : surface === "builds"
-                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/15"
+                                            ? "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-100 hover:bg-amber-500/15"
                                             : surface === "web-reload"
-                                              ? "border-sky-500/30 bg-sky-500/10 text-sky-100 hover:bg-sky-500/15"
-                                              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/15"
+                                              ? "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-100 hover:bg-sky-500/15"
+                                              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-100 hover:bg-emerald-500/15"
                                       }`}
                                     >
                                       {label}
@@ -701,7 +701,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                                   onClick={() => void checkoutBranch(branch.name)}
                                   className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left ${
                                     branch.current
-                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-100"
                                       : "border-surface-800 bg-surface-950/70 text-surface-300 hover:border-surface-700"
                                   }`}
                                 >
@@ -739,7 +739,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                               <button
                                 onClick={() => void runGitAction("revert-head")}
                                 disabled={gitCommits.length === 0}
-                                className="w-full rounded-xl border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                                className="w-full rounded-xl border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-500/10 disabled:opacity-40"
                               >
                                 Revert Last Commit
                               </button>
@@ -865,7 +865,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                   key={`oauth-${p}`}
                   onClick={() => void startDeviceFlow(p)}
                   disabled={deviceFlowStarting !== null || (deviceFlow?.state === "pending" && deviceFlow?.provider === p)}
-                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:border-emerald-500/60 hover:bg-emerald-500/15 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-100 hover:border-emerald-500/60 hover:bg-emerald-500/15 disabled:opacity-50"
                 >
                   <ProviderIcon provider={p} className={`h-4 w-4 ${p === "gitlab" ? "text-warning" : ""}`} />
                   {deviceFlowStarting === p
@@ -935,11 +935,11 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                     </div>
                   </div>
                 ) : deviceFlow.state === "done" ? (
-                  <div className="mt-2 text-sm text-emerald-100">
+                  <div className="mt-2 text-sm text-emerald-800 dark:text-emerald-100">
                     ✓ Linked {deviceFlow.provider} as <span className="font-semibold">{deviceFlow.username}</span> on {targetLabel}.
                   </div>
                 ) : (
-                  <div className="mt-2 text-sm text-rose-100">
+                  <div className="mt-2 text-sm text-rose-800 dark:text-rose-100">
                     {deviceFlow.error || `Device Flow ended (${deviceFlow.state}). Start again to retry.`}
                   </div>
                 )}
@@ -1036,7 +1036,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                     </button>
                     <button
                       onClick={() => void removeProvider(provider.host)}
-                      className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-300 hover:bg-red-500/10"
+                      className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-700 dark:text-red-300 hover:bg-red-500/10"
                     >
                       Remove
                     </button>
@@ -1065,7 +1065,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                             </div>
                             <button
                               onClick={() => void cloneRemoteRepo(repo)}
-                              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-500/15"
+                              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-100 hover:bg-emerald-500/15"
                             >
                               Clone
                             </button>

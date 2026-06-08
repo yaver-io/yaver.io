@@ -255,8 +255,8 @@ export default function RemoteDesktopView() {
             disabled={busy}
             className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50 ${
               controlActive
-                ? "border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15"
-                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15"
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200 hover:bg-amber-500/15"
+                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/15"
             }`}
             title={controlActive ? "Stop controlling (back to view-only)" : "Enable mouse + keyboard control on this machine"}
           >
@@ -307,7 +307,7 @@ export default function RemoteDesktopView() {
       </div>
 
       {(error || status?.engineError) ? (
-        <div className="border-t border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+        <div className="border-t border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-200">
           {error || status?.engineError}
         </div>
       ) : null}

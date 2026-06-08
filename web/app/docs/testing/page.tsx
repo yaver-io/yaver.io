@@ -174,7 +174,7 @@ function Row({ name, what }: { name: string; what: string }) {
 
 function Code({ children }: { children: React.ReactNode }) {
   return (
-    <code className="rounded bg-surface-900 px-1.5 py-0.5 font-mono text-[12px] text-amber-200">
+    <code className="rounded bg-surface-900 px-1.5 py-0.5 font-mono text-[12px] text-amber-700 dark:text-amber-200">
       {children}
     </code>
   );

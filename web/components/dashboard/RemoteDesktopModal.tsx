@@ -85,18 +85,18 @@ export default function RemoteDesktopModal({
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-slate-300">
               {state === "needs-reauth" ? (
                 <>
-                  <div className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200">
+                  <div className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-200">
                     Reauth required
                   </div>
                   <p className="max-w-md text-[13px] leading-5">
                     The agent on{" "}
-                    <span className="font-mono text-amber-200">{device.alias ? `@${device.alias}` : device.name}</span>{" "}
+                    <span className="font-mono text-amber-700 dark:text-amber-200">{device.alias ? `@${device.alias}` : device.name}</span>{" "}
                     is reachable but its Yaver session expired. Re-pair before opening the screen.
                   </p>
                   {onOpenRescue ? (
                     <button
                       onClick={() => { onClose(); onOpenRescue(); }}
-                      className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/15"
+                      className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-200 hover:bg-amber-500/15"
                     >
                       Open Rescue
                     </button>
@@ -105,18 +105,18 @@ export default function RemoteDesktopModal({
               ) : state === "connecting" ? (
                 <p className="text-[13px]">
                   Connecting to{" "}
-                  <span className="font-mono text-cyan-300">{device.alias ? `@${device.alias}` : device.name}</span>{" "}
+                  <span className="font-mono text-cyan-700 dark:text-cyan-300">{device.alias ? `@${device.alias}` : device.name}</span>{" "}
                   before opening the screen…
                 </p>
               ) : (
                 <>
                   <p className="text-[13px]">
                     Remote Desktop needs an active agent connection to{" "}
-                    <span className="font-mono text-emerald-300">{device.alias ? `@${device.alias}` : device.name}</span>.
+                    <span className="font-mono text-emerald-700 dark:text-emerald-300">{device.alias ? `@${device.alias}` : device.name}</span>.
                   </p>
                   <button
                     onClick={onConnect}
-                    className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-500/15"
+                    className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[12px] font-semibold text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/15"
                   >
                     Connect &amp; open desktop
                   </button>

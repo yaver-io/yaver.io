@@ -197,7 +197,7 @@ export default function AddDevicePage() {
 
       {status.kind === "ok" ? (
         <div className="rounded-xl border border-emerald-700 bg-emerald-950/40 p-5 text-center">
-          <p className="text-lg font-semibold text-emerald-300">✓ You own this device</p>
+          <p className="text-lg font-semibold text-emerald-700 dark:text-emerald-300">✓ You own this device</p>
           <p className="mt-1 text-sm text-zinc-300">
             {status.model ? `${status.model} ` : ""}will appear in your devices and come online on its
             next boot.

@@ -1123,7 +1123,7 @@ export default function HomePage() {
       {/* ── Section 1: Hero — mobile-first feedback + AI debugging wedge ── */}
       <section className="px-6 pb-10 pt-20 md:pt-28">
         <div className="mx-auto max-w-5xl text-center">
-          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-300">
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             Open source, self-hosted, mobile first
           </div>
@@ -1535,7 +1535,7 @@ return (
                       Flash the Yaver Pi 5 dev-node image, pair it from the mobile app, and use it as an always-on economic hybrid node.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                      <Link href="/download#raspi" className="rounded-lg border border-emerald-700/60 px-2.5 py-1 text-emerald-300 hover:bg-emerald-950/40">
+                      <Link href="/download#raspi" className="rounded-lg border border-emerald-700/60 px-2.5 py-1 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-950/40">
                         Download image
                       </Link>
                       <Link href="/blog/yaver-pi-image" className="rounded-lg border border-surface-700 px-2.5 py-1 text-surface-300 hover:bg-surface-800/60">

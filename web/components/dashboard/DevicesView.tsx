@@ -681,7 +681,7 @@ function RunnerChipWithTest({
         {state.label}
         {local.kind === "ok" ? (
           <span
-            className="ml-1 text-[10px] text-emerald-300"
+            className="ml-1 text-[10px] text-emerald-700 dark:text-emerald-300"
             title={`Test passed in ${local.result.durationMs}ms${local.result.model ? ` (${local.result.model})` : ""}`}
           >
             ✓ {local.result.durationMs}ms
@@ -689,32 +689,32 @@ function RunnerChipWithTest({
         ) : null}
         {local.kind === "fail" ? (
           <span
-            className="ml-1 text-[10px] text-red-300"
+            className="ml-1 text-[10px] text-red-700 dark:text-red-300"
             title={local.result.error || "test failed"}
           >
             ✗ {local.result.probe || "failed"}
           </span>
         ) : null}
         {local.kind === "error" ? (
-          <span className="ml-1 text-[10px] text-red-300" title={local.message}>
+          <span className="ml-1 text-[10px] text-red-700 dark:text-red-300" title={local.message}>
             ✗ unreachable
           </span>
         ) : null}
         {local.kind === "installing" ? (
           <span
-            className="ml-1 text-[10px] text-amber-300"
+            className="ml-1 text-[10px] text-amber-700 dark:text-amber-300"
             title={local.lastLine || "installing…"}
           >
             ⟳ installing
           </span>
         ) : null}
         {local.kind === "install-ok" ? (
-          <span className="ml-1 text-[10px] text-emerald-300" title="install complete — sign in next">
+          <span className="ml-1 text-[10px] text-emerald-700 dark:text-emerald-300" title="install complete — sign in next">
             ✓ installed
           </span>
         ) : null}
         {local.kind === "install-fail" ? (
-          <span className="ml-1 text-[10px] text-red-300" title={local.message}>
+          <span className="ml-1 text-[10px] text-red-700 dark:text-red-300" title={local.message}>
             ✗ install failed
           </span>
         ) : null}
@@ -728,12 +728,12 @@ function RunnerChipWithTest({
           // landing zone whether the runner is installed or not.
           className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-60 ${
             local.kind === "install-ok"
-              ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-200"
+              ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
               : local.kind === "install-fail"
-                ? "border-red-400/60 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+                ? "border-red-400/60 bg-red-500/10 text-red-700 dark:text-red-200 hover:bg-red-500/20"
                 : local.kind === "installing"
-                  ? "border-amber-400/40 bg-amber-500/10 text-amber-200"
-                  : "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:border-sky-400/60 hover:text-sky-100"
+                  ? "border-amber-400/40 bg-amber-500/10 text-amber-700 dark:text-amber-200"
+                  : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200 hover:border-sky-400/60 hover:text-sky-800 dark:hover:text-sky-100"
           }`}
           title={`Install ${state.label} on ${device.name || "this device"} via npm — node runtime auto-provisions if missing.`}
         >
@@ -751,15 +751,15 @@ function RunnerChipWithTest({
           // visual identity to tell the chips apart in a row.
           className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-60 ${
             local.kind === "ok"
-              ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+              ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20"
               : local.kind === "fail" || local.kind === "error"
-                ? "border-red-400/60 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+                ? "border-red-400/60 bg-red-500/10 text-red-700 dark:text-red-200 hover:bg-red-500/20"
                 : local.kind === "running"
-                  ? "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                  ? "border-amber-400/40 bg-amber-500/10 text-amber-700 dark:text-amber-200"
                   : state.id === "codex"
-                    ? "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:border-sky-400/60 hover:text-sky-100"
+                    ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200 hover:border-sky-400/60 hover:text-sky-800 dark:hover:text-sky-100"
                     : state.id === "claude"
-                      ? "border-violet-500/30 bg-violet-500/10 text-violet-200 hover:border-violet-400/60 hover:text-violet-100"
+                      ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200 hover:border-violet-400/60 hover:text-violet-800 dark:hover:text-violet-100"
                       : "border-surface-700 bg-surface-950/60 text-surface-300 hover:border-surface-600 hover:text-surface-100"
           }`}
           title={
@@ -2383,7 +2383,7 @@ export default function DevicesView({
           {dormantDevices.length > 0 ? (
             <button
               onClick={() => setShowDormantDevices((value) => !value)}
-              className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/15"
+              className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-200 hover:bg-amber-500/15"
               title="Reveal stale devices with no recent agent signal and no usable public path"
             >
               {showDormantDevices ? "Hide stale devices" : `Show stale devices (${dormantDevices.length})`}
@@ -2420,7 +2420,7 @@ export default function DevicesView({
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
+                    <span className="rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700 dark:text-sky-300">
                       Yaver Managed Cloud
                     </span>
                     <span className="text-sm font-medium text-surface-100">
@@ -2432,14 +2432,14 @@ export default function DevicesView({
                     </span>
                   </div>
                   <span
-                    className={`text-xs font-medium ${failed ? "text-red-300" : "text-sky-300"}`}
+                    className={`text-xs font-medium ${failed ? "text-red-700 dark:text-red-300" : "text-sky-700 dark:text-sky-300"}`}
                   >
                     {failed ? "Setup failed" : "Setting up"}
                   </span>
                 </div>
                 {failed ? (
                   <div className="mt-2">
-                    <p className="text-xs text-red-300">
+                    <p className="text-xs text-red-700 dark:text-red-300">
                       {m.provisionError
                         ? m.provisionError
                         : "Provisioning failed before the agent came online."}
@@ -2482,7 +2482,7 @@ export default function DevicesView({
         <div className="card p-8 text-center">
           <p className="mb-2 text-sm text-surface-400">No devices registered.</p>
           {dormantDevices.length > 0 ? (
-            <p className="mb-3 text-xs text-amber-300">
+            <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
               {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden by default because they have no recent agent signal and no public path.
             </p>
           ) : null}
@@ -2507,14 +2507,14 @@ export default function DevicesView({
               <span>{hiddenCount} device{hiddenCount === 1 ? "" : "s"} hidden in this browser.</span>
               <button
                 onClick={() => unhideAll()}
-                className="text-indigo-400 hover:text-indigo-300"
+                className="text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
               >
                 Show all
               </button>
             </div>
           ) : null}
           {!showDormantDevices && dormantDevices.length > 0 ? (
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
               {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent agent signal and no usable relay/tunnel path.
             </div>
           ) : null}
@@ -3538,14 +3538,14 @@ function AgentUpdateModal({
           <button onClick={onClose} className="text-xl leading-none text-surface-500 hover:text-surface-200">×</button>
         </div>
         {error ? (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
             <div className="mb-1 font-semibold">Update failed</div>
             <div>{error}</div>
           </div>
         ) : done ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-200">
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-700 dark:text-emerald-200">
             <div className="mb-1 font-semibold">Updated</div>
-            <div className="text-xs text-emerald-300/80">
+            <div className="text-xs text-emerald-700 dark:text-emerald-300/80">
               {device.name} now reports v{confirmedVersion}.
             </div>
           </div>
@@ -3809,7 +3809,7 @@ function InlineSSHButton({
       className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold shadow-sm ${
         disabled || !sshHref
           ? "cursor-not-allowed border-surface-800 bg-surface-900/40 text-surface-500"
-          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-500/50 hover:bg-emerald-500/15"
+          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200 hover:border-emerald-500/50 hover:bg-emerald-500/15"
       }`}
       title={sshHref ? "Open your system SSH handler for this machine" : "No direct SSH host advertised by this device"}
     >
@@ -3981,13 +3981,13 @@ function FactoryResetAuthButton({ device }: { device: Device }) {
       <button
         onClick={onClick}
         disabled={busy}
-        className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-200 hover:border-rose-400 hover:text-rose-100 disabled:opacity-50"
+        className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-700 dark:text-rose-200 hover:border-rose-400 hover:text-rose-800 dark:hover:text-rose-100 disabled:opacity-50"
         title="Wipe the agent's local auth_token + device_id and put it back into bootstrap (pairing) mode. Use when the box has someone else's session and AUTH/recover can't fix it."
       >
         {busy ? "Resetting..." : "Reset Auth"}
       </button>
       {msg && (
-        <span className={`text-[10px] ${msg.startsWith("✓") ? "text-emerald-300" : "text-rose-300"}`}>
+        <span className={`text-[10px] ${msg.startsWith("✓") ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>
           {msg}
         </span>
       )}
@@ -4248,8 +4248,8 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
               {latestVersion ? (
                 <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
                   outdated
-                    ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200"
+                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
                 }`}>
                   {outdated ? `latest v${String(latestVersion).replace(/^v/i, "")} available` : `latest v${String(latestVersion).replace(/^v/i, "")}`}
                 </span>
@@ -4277,7 +4277,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           </div>
           <div className="flex flex-wrap gap-1.5">
             {(allRunners.length ? allRunners : allSharedRunners).map((r) => (
-              <span key={`rr:${device.id}:${r}`} className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-200">
+              <span key={`rr:${device.id}:${r}`} className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-700 dark:text-violet-200">
                 {formatRunnerChipLabel(r)}
               </span>
             ))}
@@ -4291,7 +4291,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           </div>
           <div className="flex flex-wrap gap-1.5">
             {allGuests.map((g) => (
-              <span key={`gg:${device.id}:${g}`} className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-sky-200">
+              <span key={`gg:${device.id}:${g}`} className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-sky-700 dark:text-sky-200">
                 {g}
               </span>
             ))}
@@ -4308,12 +4308,12 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
               {liveProjects.map((p) => (
                 <span
                   key={`avp:${device.id}:${p.name}`}
-                  className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-200"
+                  className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-700 dark:text-emerald-200"
                   title={[p.path, p.branch && `branch: ${p.branch}`, p.framework].filter(Boolean).join(" · ") || undefined}
                 >
                   {p.name}
                   {p.framework ? (
-                    <span className="text-[9px] font-normal normal-case text-emerald-300/70">
+                    <span className="text-[9px] font-normal normal-case text-emerald-700 dark:text-emerald-300/70">
                       {p.framework}
                     </span>
                   ) : null}
@@ -4327,7 +4327,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           ) : liveProjectsFailure ? (
             <div className="text-[11px] text-surface-600">
               <p>
-                <span className="font-semibold text-amber-300">{liveProjectsFailure.label}</span>
+                <span className="font-semibold text-amber-700 dark:text-amber-300">{liveProjectsFailure.label}</span>
                 {" — "}{liveProjectsFailure.detail}
               </p>
               {liveProjectsFailure.suggestedAction ? (
@@ -4346,13 +4346,13 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
             Shared projects
           </div>
           {device.sharesAllProjects ? (
-            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
+            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-200">
               All projects
             </span>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {(device.sharedProjects || []).map((p) => (
-                <span key={`pp:${device.id}:${p}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-200">
+                <span key={`pp:${device.id}:${p}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-700 dark:text-amber-200">
                   {p}
                 </span>
               ))}
@@ -4371,12 +4371,12 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
             {wirelessPhones.devices.map((d) => (
               <span
                 key={`wp:${device.id}:${d.udid}`}
-                className="inline-flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/5 px-1.5 py-0.5 text-[10px] tracking-wider text-emerald-200"
+                className="inline-flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/5 px-1.5 py-0.5 text-[10px] tracking-wider text-emerald-700 dark:text-emerald-200"
                 title={`${d.platform === "ios" ? "iPhone/iPad (xcrun devicectl)" : "Android (adb)"}\n${d.udid}${d.os ? `\nOS ${d.os}` : ""}`}
               >
                 <span className="font-semibold uppercase">{d.platform}</span>
-                <span className="text-emerald-100">{d.name || "(unknown)"}</span>
-                <span className="font-mono text-[9px] text-emerald-300/70">
+                <span className="text-emerald-800 dark:text-emerald-100">{d.name || "(unknown)"}</span>
+                <span className="font-mono text-[9px] text-emerald-700 dark:text-emerald-300/70">
                   {d.udid.length > 16 ? `${d.udid.slice(0, 14)}…` : d.udid}
                 </span>
               </span>
@@ -4399,7 +4399,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
       {runtimeFailure ? (
         <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-surface-300">
           <p>
-            <span className="font-semibold text-amber-300">{runtimeFailure.label}</span>
+            <span className="font-semibold text-amber-700 dark:text-amber-300">{runtimeFailure.label}</span>
             {" — "}{runtimeFailure.detail}
           </p>
           {runtimeFailure.suggestedAction ? (
@@ -4419,7 +4419,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
       <div className="mt-3 flex justify-end border-t border-surface-800/60 pt-2">
         <button
           onClick={() => hideDevice(device.id)}
-          className="text-[11px] text-surface-500 hover:text-red-300"
+          className="text-[11px] text-surface-500 hover:text-red-700 dark:hover:text-red-300"
           title="Hide this device from the list — local to this browser"
         >
           Hide this device
@@ -4562,7 +4562,7 @@ function RunnerAuthModal({
         </div>
 
         {startError ? (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
             <div className="font-semibold mb-1">Couldn't start sign-in</div>
             {startError}
           </div>
@@ -4571,12 +4571,12 @@ function RunnerAuthModal({
             Starting the sign-in flow on the remote machine…
           </div>
         ) : session.status === "completed" ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-200">
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-700 dark:text-emerald-200">
             <div className="font-semibold mb-1">✓ Signed in</div>
-            <div className="text-xs text-emerald-300/80">{session.detail || "Auth stored on the remote machine."}</div>
+            <div className="text-xs text-emerald-700 dark:text-emerald-300/80">{session.detail || "Auth stored on the remote machine."}</div>
           </div>
         ) : session.status === "failed" || session.status === "cancelled" ? (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-300">
             <div className="font-semibold mb-1">{session.status === "cancelled" ? "Cancelled" : "Failed"}</div>
             <div>{session.error || session.detail || "The CLI exited before sign-in completed."}</div>
           </div>
@@ -4590,7 +4590,7 @@ function RunnerAuthModal({
                 href={session.openUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block truncate rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2.5 text-sm font-medium text-indigo-200 hover:bg-indigo-500/20"
+                className="block truncate rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2.5 text-sm font-medium text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/20"
               >
                 ↗ {session.openUrl}
               </a>
@@ -4621,7 +4621,7 @@ function RunnerAuthModal({
                 flow auto-completes — no paste step. */}
             {runner === "claude" && session.openUrl && (
               <div className="space-y-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-indigo-300">
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
                   Paste the auth code from platform.claude.com
                 </div>
                 <input
@@ -4671,13 +4671,13 @@ function RunnerAuthModal({
                         setSubmitting(false);
                       }
                     }}
-                    className="shrink-0 rounded-md border border-indigo-400/40 bg-indigo-500/15 px-3 py-1 text-[11px] font-medium text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50"
+                    className="shrink-0 rounded-md border border-indigo-400/40 bg-indigo-500/15 px-3 py-1 text-[11px] font-medium text-indigo-800 dark:text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50"
                   >
                     {submitting ? "Submitting…" : "Submit code"}
                   </button>
                 </div>
                 {submitError ? (
-                  <p className="text-[10px] text-red-300">{submitError}</p>
+                  <p className="text-[10px] text-red-700 dark:text-red-300">{submitError}</p>
                 ) : null}
               </div>
             )}
@@ -4703,13 +4703,13 @@ class DeviceDetailsBoundary extends React.Component<{ device: Device; children: 
   render() {
     if (this.state.err) {
       return (
-        <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-200">
+        <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-700 dark:text-red-200">
           <div className="font-semibold">Details panel crashed</div>
-          <div className="mt-1 text-[11px] text-red-300/80">
+          <div className="mt-1 text-[11px] text-red-700 dark:text-red-300/80">
             Likely an agent → dashboard schema mismatch (agent v{this.props.device.agentVersion || "?"} vs dashboard 1.1.32+).
             Toggling Details closed this panel; the rest of the dashboard is fine. Browser console has the stack trace.
           </div>
-          <div className="mt-2 font-mono text-[10px] text-red-300/60 break-all">{String(this.state.err.message || this.state.err)}</div>
+          <div className="mt-2 font-mono text-[10px] text-red-700 dark:text-red-300/60 break-all">{String(this.state.err.message || this.state.err)}</div>
         </div>
       );
     }

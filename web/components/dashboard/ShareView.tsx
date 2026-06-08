@@ -65,7 +65,7 @@ export default function ShareView() {
         <div className="flex flex-wrap gap-2">
           {intents.map((i) => (
             <a key={i.label} href={i.href} target="_blank" rel="noreferrer"
-              className="px-3 py-2 text-sm rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30">
+              className="px-3 py-2 text-sm rounded-lg bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30">
               {i.label}
             </a>
           ))}
@@ -80,14 +80,14 @@ export default function ShareView() {
         <p className="text-xs text-surface-500 mb-2">Drop the snippet into your footer. Free forever — no account, no tracking.</p>
         <div className="flex items-center gap-3 bg-surface-900/50 border border-surface-800 rounded-lg p-3">
           <img src="/badge" alt="Built with Yaver" />
-          <button onClick={() => copy(badgeHTML)} className="ml-auto text-xs text-indigo-400 hover:text-indigo-300">Copy dark</button>
-          <button onClick={() => copy(badgeHTMLLight)} className="text-xs text-indigo-400 hover:text-indigo-300">Copy light</button>
+          <button onClick={() => copy(badgeHTML)} className="ml-auto text-xs text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">Copy dark</button>
+          <button onClick={() => copy(badgeHTMLLight)} className="text-xs text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">Copy light</button>
         </div>
         <pre className="mt-2 text-[10px] text-surface-500 font-mono bg-surface-900/50 border border-surface-800 rounded p-2 overflow-auto">{badgeHTML}</pre>
       </div>
 
       <div className="rounded-lg border border-indigo-500/40 bg-indigo-500/5 p-4 text-sm">
-        <div className="font-semibold text-indigo-300 mb-1">Tell a friend</div>
+        <div className="font-semibold text-indigo-700 dark:text-indigo-300 mb-1">Tell a friend</div>
         <p className="text-surface-300">Yaver is free for solo builders and always will be. The more people use it, the more features we can ship. Share your invite:</p>
         <div className="mt-3 flex gap-2">
           <input readOnly value="https://yaver.io" className="flex-1 rounded border border-surface-700 bg-surface-900 px-3 py-1.5 text-sm font-mono" />

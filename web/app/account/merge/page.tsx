@@ -135,7 +135,7 @@ function MergePage() {
   if (done) {
     return (
       <div className="mx-auto max-w-lg px-4 py-20 text-center">
-        <h1 className="text-xl font-semibold text-emerald-300">Accounts merged</h1>
+        <h1 className="text-xl font-semibold text-emerald-700 dark:text-emerald-300">Accounts merged</h1>
         <p className="mt-3 text-sm text-surface-300">
           <span className="text-surface-100">{done.mergedFrom}</span> has been merged into{" "}
           <span className="text-surface-100">{done.mergedInto}</span>. Sign in with any of{" "}
@@ -208,7 +208,7 @@ function MergePage() {
       {sourceToken && sourceEmail && (
         <>
           <div className="card mb-6 border-amber-500/30">
-            <p className="text-sm text-amber-200">
+            <p className="text-sm text-amber-700 dark:text-amber-200">
               <span className="font-medium">Heads up:</span> this deletes{" "}
               <span className="font-medium">{sourceEmail}</span> and moves all of its devices,
               linked providers, settings, and history onto <span className="font-medium">{status.targetEmail}</span>.
@@ -218,7 +218,7 @@ function MergePage() {
           <button
             onClick={handleConfirm}
             disabled={confirming}
-            className="w-full rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+            className="w-full rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-300 transition-colors hover:bg-red-500/10 disabled:opacity-50"
           >
             {confirming ? "Merging…" : `Merge ${sourceEmail} into ${status.targetEmail}`}
           </button>

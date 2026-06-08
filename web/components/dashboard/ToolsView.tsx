@@ -508,7 +508,7 @@ export default function ToolsView({ devices = [] }: Props) {
             onClick={() => setTarget(undefined)}
             className={`rounded-full px-3 py-1.5 text-xs font-semibold border ${
               !target
-                ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/40"
+                ? "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/40"
                 : "bg-surface-900 text-surface-300 border-surface-800 hover:border-surface-700"
             }`}
           >
@@ -520,7 +520,7 @@ export default function ToolsView({ devices = [] }: Props) {
               onClick={() => setTarget(p.id)}
               className={`rounded-full px-3 py-1.5 text-xs font-semibold border ${
                 target === p.id
-                  ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/40"
+                  ? "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/40"
                   : "bg-surface-900 text-surface-300 border-surface-800 hover:border-surface-700"
               }`}
             >
@@ -582,7 +582,7 @@ export default function ToolsView({ devices = [] }: Props) {
                     disabled={linked || linkingGitProvider !== null}
                     className={`rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-60 ${
                       linked
-                        ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                        ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                         : "border border-surface-700 bg-surface-950 text-surface-200 hover:border-surface-600"
                     }`}
                   >
@@ -591,7 +591,7 @@ export default function ToolsView({ devices = [] }: Props) {
                 );
               })}
             </div>
-            {gitLinkError ? <p className="text-sm text-rose-300">{gitLinkError}</p> : null}
+            {gitLinkError ? <p className="text-sm text-rose-700 dark:text-rose-300">{gitLinkError}</p> : null}
           </div>
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Step 2 · Populate owned live boxes</div>
@@ -611,7 +611,7 @@ export default function ToolsView({ devices = [] }: Props) {
                     ))}
                     className={`rounded-full px-3 py-1.5 text-xs font-semibold border ${
                       selected
-                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40"
                         : "bg-surface-900 text-surface-300 border-surface-800 hover:border-surface-700"
                     }`}
                   >
@@ -638,19 +638,19 @@ export default function ToolsView({ devices = [] }: Props) {
             <button
               onClick={() => void removeMachineOnboarding("github")}
               disabled={!!removingOnboardingProvider || onboardingTargets.length === 0}
-              className="rounded-xl border border-rose-500/40 px-4 py-2 text-sm font-semibold text-rose-300 disabled:opacity-50"
+              className="rounded-xl border border-rose-500/40 px-4 py-2 text-sm font-semibold text-rose-700 dark:text-rose-300 disabled:opacity-50"
             >
               {removingOnboardingProvider === "github" ? "Removing GitHub..." : "Remove GitHub"}
             </button>
             <button
               onClick={() => void removeMachineOnboarding("gitlab")}
               disabled={!!removingOnboardingProvider || onboardingTargets.length === 0}
-              className="rounded-xl border border-rose-500/40 px-4 py-2 text-sm font-semibold text-rose-300 disabled:opacity-50"
+              className="rounded-xl border border-rose-500/40 px-4 py-2 text-sm font-semibold text-rose-700 dark:text-rose-300 disabled:opacity-50"
             >
               {removingOnboardingProvider === "gitlab" ? "Removing GitLab..." : "Remove GitLab"}
             </button>
-            {onboardingResult && <span className="text-sm text-emerald-300">{onboardingResult}</span>}
-            {onboardingError && <span className="text-sm text-rose-300">{onboardingError}</span>}
+            {onboardingResult && <span className="text-sm text-emerald-700 dark:text-emerald-300">{onboardingResult}</span>}
+            {onboardingError && <span className="text-sm text-rose-700 dark:text-rose-300">{onboardingError}</span>}
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             {onboardingTargets.map((targetId) => {
@@ -666,7 +666,7 @@ export default function ToolsView({ devices = [] }: Props) {
                       <div key={`${targetId}:${row.id}`}>
                         <div className="flex items-center justify-between gap-3">
                           <span className="font-semibold text-surface-50">{row.name}</span>
-                          <span className={`text-xs font-semibold ${row.ready ? "text-emerald-300" : row.configured ? "text-amber-300" : "text-surface-500"}`}>
+                          <span className={`text-xs font-semibold ${row.ready ? "text-emerald-700 dark:text-emerald-300" : row.configured ? "text-amber-700 dark:text-amber-300" : "text-surface-500"}`}>
                             {row.ready ? "Ready" : row.configured ? "Partial" : "Missing"}
                           </span>
                         </div>
@@ -710,7 +710,7 @@ export default function ToolsView({ devices = [] }: Props) {
                         <span
                           className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
                             entry.installed
-                              ? "bg-emerald-500/15 text-emerald-300"
+                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                               : "bg-surface-800 text-surface-400"
                           }`}
                         >
@@ -758,10 +758,10 @@ export default function ToolsView({ devices = [] }: Props) {
         <div className="grid gap-3">
           {runnerIncidents.length > 0 && (
             <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3">
-              <div className="text-sm font-semibold text-rose-200">Runner blockers</div>
+              <div className="text-sm font-semibold text-rose-700 dark:text-rose-200">Runner blockers</div>
               <div className="mt-2 space-y-2">
                 {runnerIncidents.slice(0, 3).map((incident) => (
-                  <p key={incident.id} className="text-xs text-rose-100">
+                  <p key={incident.id} className="text-xs text-rose-800 dark:text-rose-100">
                     <span className="font-semibold">{incident.title}.</span> {incident.userMessage}
                   </p>
                 ))}
@@ -846,8 +846,8 @@ export default function ToolsView({ devices = [] }: Props) {
         {(runnerAuthResult || authError || browserAuthError) && (
           <div className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
             authError || browserAuthError
-              ? "border-red-500/30 bg-red-500/10 text-red-300"
-              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
           }`}>
             {authError || browserAuthError || runnerAuthResult}
           </div>
@@ -883,10 +883,10 @@ export default function ToolsView({ devices = [] }: Props) {
               (e.g. user is mid-edit and hasn't saved both halves yet). */}
           {openCodeConfig?.diagnostics && openCodeConfig.diagnostics.length > 0 ? (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-200">
                 ⚠ Configuration issues
               </div>
-              <ul className="space-y-1 text-xs text-amber-100">
+              <ul className="space-y-1 text-xs text-amber-800 dark:text-amber-100">
                 {openCodeConfig.diagnostics.map((d, i) => (
                   <li key={i}>• {d}</li>
                 ))}
@@ -913,7 +913,7 @@ export default function ToolsView({ devices = [] }: Props) {
                     onClick={() => setOpenCodeConfigDraft((s) => ({ ...s, model: model.id }))}
                     className={`rounded-full border px-3 py-1.5 text-xs ${
                       openCodeConfigDraft.model === model.id
-                        ? "border-indigo-500/50 bg-indigo-500/15 text-indigo-300"
+                        ? "border-indigo-500/50 bg-indigo-500/15 text-indigo-700 dark:text-indigo-300"
                         : "border-surface-700 bg-surface-950 text-surface-300"
                     }`}
                     title={model.provider || model.source || ""}
@@ -988,8 +988,8 @@ export default function ToolsView({ devices = [] }: Props) {
             >
               {savingOpenCodeConfig ? "Saving..." : "Save OpenCode config"}
             </button>
-            {openCodeConfigResult ? <span className="text-sm text-emerald-300">{openCodeConfigResult}</span> : null}
-            {openCodeConfigError ? <span className="text-sm text-rose-300">{openCodeConfigError}</span> : null}
+            {openCodeConfigResult ? <span className="text-sm text-emerald-700 dark:text-emerald-300">{openCodeConfigResult}</span> : null}
+            {openCodeConfigError ? <span className="text-sm text-rose-700 dark:text-rose-300">{openCodeConfigError}</span> : null}
           </div>
         </div>
       </section>
@@ -1019,12 +1019,12 @@ export default function ToolsView({ devices = [] }: Props) {
                 <div className="flex items-center gap-2">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
                     browserAuthSession.status === "completed"
-                      ? "bg-emerald-500/15 text-emerald-300"
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                       : browserAuthSession.status === "failed"
-                        ? "bg-red-500/15 text-red-300"
+                        ? "bg-red-500/15 text-red-700 dark:text-red-300"
                         : browserAuthSession.status === "cancelled"
                           ? "bg-surface-800 text-surface-400"
-                          : "bg-amber-500/15 text-amber-300"
+                          : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                   }`}>
                     {browserAuthSession.status.toUpperCase()}
                   </span>
@@ -1032,10 +1032,10 @@ export default function ToolsView({ devices = [] }: Props) {
                 </div>
                 <p className="mt-2 text-sm text-surface-300">{browserAuthSession.detail || "Waiting for the remote CLI to emit the auth link..."}</p>
                 {browserAuthSession.error ? (
-                  <p className="mt-2 text-sm text-red-300">{browserAuthSession.error}</p>
+                  <p className="mt-2 text-sm text-red-700 dark:text-red-300">{browserAuthSession.error}</p>
                 ) : null}
                 {browserAuthSession.authConfigured ? (
-                  <p className="mt-2 text-sm text-emerald-300">
+                  <p className="mt-2 text-sm text-emerald-700 dark:text-emerald-300">
                     Remote auth detected{browserAuthSession.authSource ? ` via ${browserAuthSession.authSource}` : ""}.
                   </p>
                 ) : null}
@@ -1089,7 +1089,7 @@ export default function ToolsView({ devices = [] }: Props) {
                 {browserAuthSession.status !== "completed" && browserAuthSession.status !== "failed" && browserAuthSession.status !== "cancelled" ? (
                   <button
                     onClick={() => void cancelBrowserAuth()}
-                    className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10"
+                    className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-700 dark:text-red-300 hover:bg-red-500/10"
                   >
                     Cancel remote auth
                   </button>
@@ -1164,7 +1164,7 @@ function ProviderCard({
             finally { setSaving(false); }
           }}
           disabled={!dirty || saving || deleting}
-          className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
+          className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
         >
           {saving ? "…" : "Save"}
         </button>
@@ -1181,7 +1181,7 @@ function ProviderCard({
             finally { setDeleting(false); }
           }}
           disabled={saving || deleting}
-          className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/20 disabled:opacity-40"
+          className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-200 hover:bg-rose-500/20 disabled:opacity-40"
           title={`Delete provider "${provider.id}"`}
         >
           {deleting ? "…" : "Delete"}
@@ -1329,7 +1329,7 @@ function AddProviderForm({
             }
           } finally { setSaving(false); }
         }}
-        className="md:col-span-2 rounded border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-40"
+        className="md:col-span-2 rounded border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-40"
       >
         {saving ? "Saving…" : "Add provider"}
       </button>
@@ -1373,8 +1373,8 @@ function labelForRunner(runner: "claude" | "codex" | "opencode") {
 
 function runnerStatusTone(status?: RunnerAuthStatusRow) {
   if (!status?.installed) return "bg-surface-800 text-surface-400";
-  if (status.ready) return "bg-emerald-500/15 text-emerald-300";
-  return "bg-amber-500/15 text-amber-300";
+  if (status.ready) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
+  return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
 }
 
 function RunnerAuthCard({

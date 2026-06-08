@@ -638,7 +638,7 @@ export default function RobotCellView({ devices, token }: { devices: Device[]; t
       <div className={`${card} space-y-3`}>
         <div className="flex items-center justify-between">
           <span className="font-semibold text-surface-100">Teach &amp; Repeat</span>
-          <button onClick={() => setRecording((r) => !r)} className={recording ? "rounded-lg border border-rose-600 bg-rose-600/20 px-3 py-2 text-sm font-semibold text-rose-300" : btn}>
+          <button onClick={() => setRecording((r) => !r)} className={recording ? "rounded-lg border border-rose-600 bg-rose-600/20 px-3 py-2 text-sm font-semibold text-rose-700 dark:text-rose-300" : btn}>
             {recording ? "● Recording" : "Record"}
           </button>
         </div>

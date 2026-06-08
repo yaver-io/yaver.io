@@ -1208,7 +1208,7 @@ export default function PreviewPane({
         {onTriggerReauth ? (
           <button
             onClick={() => onTriggerReauth(primaryRunner || "claude")}
-            className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20"
+            className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-200 hover:bg-amber-500/20"
             title={`Open the ${primaryRunner || "claude"} browser sign-in flow on the host. After you sign in the device reconnects automatically.`}
           >
             Sign in to {primaryRunner || "claude"} &amp; reconnect
@@ -1216,7 +1216,7 @@ export default function PreviewPane({
         ) : onReconnect ? (
           <button
             onClick={() => void onReconnect()}
-            className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
+            className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-700 dark:text-amber-200 hover:bg-amber-500/20"
           >
             Try reconnect
           </button>
@@ -1224,7 +1224,7 @@ export default function PreviewPane({
         {onSwitchAgent && (
           <button
             onClick={() => onSwitchAgent()}
-            className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+            className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20"
             title="Pick a different runner. Cloud agents (Claude / Codex) trigger the browser sign-in flow; local agents (Ollama / Aider+Qwen) start immediately."
           >
             Switch agent
@@ -1291,7 +1291,7 @@ export default function PreviewPane({
       <button
         onClick={() => void handleReconnect()}
         disabled={recovering}
-        className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+        className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
       >
         {recovering ? "Reconnecting…" : "Force reconnect"}
       </button>
@@ -1326,7 +1326,7 @@ export default function PreviewPane({
           {devStatus?.running ? devStatus.workDir || previewFrameUrl : "no dev server running"}
         </span>
         {devStatus?.running ? (
-          <span className="text-[10px] text-sky-300">
+          <span className="text-[10px] text-sky-700 dark:text-sky-300">
             {devStatus.targetDeviceName || selectedPreviewTarget?.name || "current"}
           </span>
         ) : null}
@@ -1408,13 +1408,13 @@ export default function PreviewPane({
       )}
 
       {previewError ? (
-        <div className="flex items-start gap-2 border-b border-red-500/20 bg-red-500/5 px-3 py-1.5 text-[10px] text-red-300">
+        <div className="flex items-start gap-2 border-b border-red-500/20 bg-red-500/5 px-3 py-1.5 text-[10px] text-red-700 dark:text-red-300">
           <span className="font-mono">preview error:</span>
           <span className="flex-1 truncate">{previewError}</span>
           <button
             onClick={() => void handleReconnect()}
             disabled={recovering}
-            className="shrink-0 rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-red-200 hover:bg-red-500/20 disabled:opacity-50"
+            className="shrink-0 rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-500/20 disabled:opacity-50"
           >
             {recovering ? "…" : "Recover"}
           </button>
@@ -1478,7 +1478,7 @@ export default function PreviewPane({
               onClick={() => setOrientation("portrait")}
               className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
                 orientation === "portrait"
-                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                  ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                   : "border-surface-800 text-surface-500 hover:text-surface-300"
               }`}
               title="Portrait"
@@ -1489,7 +1489,7 @@ export default function PreviewPane({
               onClick={() => setOrientation("landscape")}
               className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
                 orientation === "landscape"
-                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                  ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                   : "border-surface-800 text-surface-500 hover:text-surface-300"
               }`}
               title="Landscape"
@@ -1509,7 +1509,7 @@ export default function PreviewPane({
           <div className="flex h-full min-h-0 flex-col">
             <div className="border-b border-surface-800 px-3 py-2">
               <div className="flex items-baseline justify-between gap-2">
-                <div className="text-[10px] uppercase tracking-widest text-emerald-300">Vibing</div>
+                <div className="text-[10px] uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Vibing</div>
                 {(() => {
                   // Pick the runner the agent will hand the next task to:
                   // prefer one explicitly marked active, else the default,
@@ -1552,7 +1552,7 @@ export default function PreviewPane({
             <div className="flex-1 min-h-0 overflow-auto px-3 py-2">
               {activeTaskStream ? (
                 <div className="grid gap-2">
-                  <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-sky-300">
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-sky-700 dark:text-sky-300">
                     <span>Task stream · {activeTaskStream.status}</span>
                     <span className="max-w-[52%] truncate text-right normal-case tracking-normal text-surface-500" title={activeTaskStream.title}>
                       {activeTaskStream.title}
@@ -1610,7 +1610,7 @@ export default function PreviewPane({
                   type="button"
                   onClick={() => void handleSendPrompt()}
                   disabled={!composer.trim() || sending}
-                  className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30"
+                  className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30"
                 >
                   {sending ? "…" : "Send"}
                 </button>
@@ -1664,14 +1664,14 @@ export default function PreviewPane({
                     />
                   </div>
                   {devProgress.stage ? (
-                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/80" title={devProgress.stage}>
+                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-700 dark:text-emerald-200/80" title={devProgress.stage}>
                       {devProgress.stage}
                     </p>
                   ) : null}
                 </div>
               ) : null}
               {(recovering || recoveryLog.length > 0) ? (
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-700 dark:text-amber-200/80">
                   {recoveryLog.length === 0 ? (
                     <span className="text-surface-600">(starting…)</span>
                   ) : (
@@ -1859,7 +1859,7 @@ function EmptyPhoneState({
       </div>
 
       {startError ? (
-        <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300">
+        <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">
           {startError}
         </div>
       ) : null}
@@ -1872,15 +1872,15 @@ function EmptyPhoneState({
           </div>
         </div>
       ) : hasNoProjects ? (
-        <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-[11px] text-amber-200/90 leading-relaxed">
-          <div className="font-semibold text-amber-200">No projects visible yet.</div>
-          <div className="mt-1 text-amber-200/70">
+        <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-[11px] text-amber-700 dark:text-amber-200/90 leading-relaxed">
+          <div className="font-semibold text-amber-700 dark:text-amber-200">No projects visible yet.</div>
+          <div className="mt-1 text-amber-700 dark:text-amber-200/70">
             The agent didn't return any RN / Expo / Flutter / Next.js / Vite project. Common reasons:
           </div>
-          <ul className="mt-1.5 list-disc pl-4 text-amber-200/80 space-y-0.5">
+          <ul className="mt-1.5 list-disc pl-4 text-amber-700 dark:text-amber-200/80 space-y-0.5">
             <li>The device isn't paired yet (sidebar may show "needs auth"). Pair it first.</li>
-            <li>The agent's <code className="rounded bg-surface-900 px-1 text-amber-100">workDir</code> doesn't include a recognised mobile/web project.</li>
-            <li>Start one manually with <code className="rounded bg-surface-900 px-1 text-amber-100">yaver dev start</code> from a shell on the device.</li>
+            <li>The agent's <code className="rounded bg-surface-900 px-1 text-amber-800 dark:text-amber-100">workDir</code> doesn't include a recognised mobile/web project.</li>
+            <li>Start one manually with <code className="rounded bg-surface-900 px-1 text-amber-800 dark:text-amber-100">yaver dev start</code> from a shell on the device.</li>
           </ul>
         </div>
       ) : (
@@ -1897,7 +1897,7 @@ function EmptyPhoneState({
                 disabled={startingPath === p.path}
                 className={`flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-left transition-all ${
                   startingPath === p.path
-                    ? "cursor-wait border-amber-500/40 bg-amber-500/10 text-amber-200"
+                    ? "cursor-wait border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200"
                     : p.path === preferredProjectPath
                       ? "border-emerald-500/35 bg-emerald-500/10 hover:border-emerald-400/50"
                       : "border-surface-800 bg-surface-900/60 hover:border-emerald-500/40 hover:bg-emerald-500/5"
@@ -2054,7 +2054,7 @@ function ConsoleStatusHeader({
               <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/60" />
               <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-400" />
             </span>
-            <span className="text-emerald-300">agent live</span>
+            <span className="text-emerald-700 dark:text-emerald-300">agent live</span>
           </span>
           <span className="text-surface-500">
             beat <span style={fixedWidth(5)}>#{lastBeat.beatNumber}</span>{" "}
@@ -2124,7 +2124,7 @@ function ConsoleStatusHeader({
                 <span className="text-surface-300">{label}</span>
                 <span className="text-surface-600">{phaseLabel}</span>
                 {isExact ? (
-                  <span className="font-mono text-emerald-300" style={fixedWidth(5)}>{pctDisplay}%</span>
+                  <span className="font-mono text-emerald-700 dark:text-emerald-300" style={fixedWidth(5)}>{pctDisplay}%</span>
                 ) : (
                   <span className="text-surface-600 italic">working…</span>
                 )}
@@ -2254,16 +2254,16 @@ function formatHeartbeatUptime(seconds: number): string {
 function consoleLineClass(line: string): string {
   const lower = line.toLowerCase();
   if (line.startsWith("[error]") || /\b(error|failed|fatal|✗)\b/i.test(lower)) {
-    return "text-red-300";
+    return "text-red-700 dark:text-red-300";
   }
   if (/\bwarn(ing)?\b/i.test(lower)) {
-    return "text-amber-300";
+    return "text-amber-700 dark:text-amber-300";
   }
   if (/\b(ready|✓|listening on|accepting|reload|started)\b/i.test(lower)) {
-    return "text-emerald-300";
+    return "text-emerald-700 dark:text-emerald-300";
   }
   if (line.startsWith("[super-host") || line.includes("hermesc") || line.startsWith("[dev:")) {
-    return "text-indigo-300";
+    return "text-indigo-700 dark:text-indigo-300";
   }
   if (line.startsWith(":keep-alive")) {
     return "text-surface-700"; // SSE keepalives — barely visible

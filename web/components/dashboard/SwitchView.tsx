@@ -28,10 +28,10 @@ type SwitchState = {
 };
 
 const complexityColors: Record<string, string> = {
-  trivial: "bg-emerald-500/20 text-emerald-300",
-  easy: "bg-sky-500/20 text-sky-300",
-  medium: "bg-amber-500/20 text-amber-300",
-  hard: "bg-red-500/20 text-red-300",
+  trivial: "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300",
+  easy: "bg-sky-500/20 text-sky-700 dark:text-sky-300",
+  medium: "bg-amber-500/20 text-amber-700 dark:text-amber-300",
+  hard: "bg-red-500/20 text-red-700 dark:text-red-300",
 };
 
 const statusColors: Record<string, string> = {
@@ -148,7 +148,7 @@ export default function SwitchView() {
       </div>
 
       {actionMsg && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{actionMsg}</div>
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{actionMsg}</div>
       )}
 
       {current && <CurrentPlan current={current} running={running} onRun={run} onClose={() => setCurrent(null)} />}
@@ -168,7 +168,7 @@ export default function SwitchView() {
             <div className="space-y-2 text-sm text-surface-300 bg-surface-900/50 border border-surface-800 rounded-lg p-3">
               <div className="font-semibold text-xs uppercase text-surface-500">This will:</div>
               {migrateModal.id === "convex-cloud" && <>
-                <div>1. Run <code className="text-indigo-300">npx convex deploy</code> to create/link your cloud project</div>
+                <div>1. Run <code className="text-indigo-700 dark:text-indigo-300">npx convex deploy</code> to create/link your cloud project</div>
                 <div>2. Capture <code>CONVEX_URL</code> + <code>CONVEX_DEPLOYMENT</code> into <code>.env.local</code></div>
                 <div>3. Push functions + schema</div>
                 {migrateData && <div>4. Stream-export local data → import to cloud</div>}
@@ -255,9 +255,9 @@ export default function SwitchView() {
               <span className="font-mono text-surface-300 truncate flex-1">{s.fromBackend || "?"} → {s.to}</span>
               <span className={`text-xs ${statusColors[s.status] || "text-surface-500"}`}>{s.status}</span>
               <span className="text-xs text-surface-500">{s.createdAt?.slice(0, 16)}</span>
-              <button onClick={() => setCurrent(s)} className="text-xs text-indigo-400 hover:text-indigo-300">View</button>
+              <button onClick={() => setCurrent(s)} className="text-xs text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">View</button>
               {s.status === "done" && (
-                <button onClick={() => rollback(s.id)} className="text-xs text-red-400 hover:text-red-300">Rollback</button>
+                <button onClick={() => rollback(s.id)} className="text-xs text-red-400 hover:text-red-700 dark:hover:text-red-300">Rollback</button>
               )}
             </div>
           ))}
@@ -280,7 +280,7 @@ function CurrentPlan({ current, running, onRun, onClose }: { current: SwitchStat
 
       {current.complexity === "hard" && current.rewritePrompt && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-900/10 p-3 text-xs">
-          <div className="font-semibold text-amber-300 mb-1">Paradigm switch — AI rewrite required</div>
+          <div className="font-semibold text-amber-700 dark:text-amber-300 mb-1">Paradigm switch — AI rewrite required</div>
           <div className="text-surface-400">
             Yaver can't auto-translate between these paradigms (SQL ↔ Convex, etc.). Running this switch emits a rewrite prompt to <code>.yaver/switches/{current.id}_rewrite.md</code> for your AI coding agent.
           </div>

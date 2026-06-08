@@ -1377,7 +1377,7 @@ export function WebReloadView({
                 <button
                   onClick={() => void handleSwitchProject()}
                   disabled={starting}
-                  className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                  className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
                   title={`Stop ${devStatus?.workDir?.split("/").slice(-1)[0] || "current"} and start ${selectedProject.name}`}
                 >
                   {starting ? "Switching…" : `Switch to ${selectedProject.name}`}
@@ -1386,7 +1386,7 @@ export function WebReloadView({
               <button
                 onClick={handleStop}
                 disabled={stopState === "stopping"}
-                className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/20 disabled:opacity-60 disabled:cursor-wait"
+                className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] text-red-700 dark:text-red-200 hover:bg-red-500/20 disabled:opacity-60 disabled:cursor-wait"
                 title="Stop serving this preview, cancel any in-flight Hermes build, and clear stale incidents"
               >
                 {stopState === "stopping" ? (
@@ -1404,7 +1404,7 @@ export function WebReloadView({
               <button
                 onClick={handleStart}
                 disabled={(!selectedApp && !selectedProject) || starting || needsAuth}
-                className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
               >
                 {starting ? "Starting…" : selectedApp ? `Start ${selectedApp}` : selectedProject ? `Start ${selectedProject.name}` : "Pick a project"}
               </button>
@@ -1416,7 +1416,7 @@ export function WebReloadView({
                 <button
                   onClick={handleStop}
                   disabled={stopState === "stopping"}
-                  className="rounded border border-red-500/40 bg-red-500/5 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/15 disabled:opacity-60 disabled:cursor-wait"
+                  className="rounded border border-red-500/40 bg-red-500/5 px-2.5 py-1 text-[11px] text-red-700 dark:text-red-200 hover:bg-red-500/15 disabled:opacity-60 disabled:cursor-wait"
                   title="Force-stop any dev server the agent might still be running"
                 >
                   {stopState === "stopping" ? "Stopping…" : "Force Stop"}
@@ -1436,8 +1436,8 @@ export function WebReloadView({
         <div
           className={`flex items-start gap-2 rounded-md border px-3 py-2 text-[11px] ${
             stopState === "stopped"
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-              : "border-red-500/50 bg-red-500/10 text-red-200"
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+              : "border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-200"
           }`}
           role="status"
         >
@@ -1458,7 +1458,7 @@ export function WebReloadView({
       )}
 
       {needsAuth && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+        <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-200">
           <span className="flex-1">
             Agent session expired on this device — sign in on the host to restart Web Reload.
           </span>
@@ -1474,7 +1474,7 @@ export function WebReloadView({
       )}
 
       {!needsAuth && statusError && (
-        <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
+        <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-200">
           {statusHttp ? `Dev status unreachable (HTTP ${statusHttp}): ` : "Dev status unreachable: "}
           {statusError}
         </div>
@@ -1483,28 +1483,28 @@ export function WebReloadView({
       {relayRepairMsg && (
         <div className={`rounded-md border px-3 py-2 text-[11px] ${
           relayRepairState === "failed"
-            ? "border-red-500/40 bg-red-500/5 text-red-200"
+            ? "border-red-500/40 bg-red-500/5 text-red-700 dark:text-red-200"
             : relayRepairState === "repaired"
-              ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200"
-              : "border-amber-500/40 bg-amber-500/5 text-amber-200"
+              ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-200"
+              : "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-200"
         }`}>
           {relayRepairMsg}
         </div>
       )}
 
       {startError && (
-        <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
+        <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-200">
           {startError}
         </div>
       )}
 
       {previewError && (
-        <div className="flex items-center gap-2 rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
+        <div className="flex items-center gap-2 rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-200">
           <span className="flex-1 truncate">{previewError}</span>
           {onRepairRelay && /invalid relay password/i.test(previewError) && (
             <button
               onClick={() => void repairRelayThenReconnect("manual")}
-              className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200 hover:bg-amber-500/20"
+              className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-200 hover:bg-amber-500/20"
             >
               Repair now
             </button>
@@ -1542,14 +1542,14 @@ export function WebReloadView({
                     />
                   </div>
                   {recoveryProgress.stage ? (
-                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/80" title={recoveryProgress.stage}>
+                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-700 dark:text-emerald-200/80" title={recoveryProgress.stage}>
                       {recoveryProgress.stage}
                     </p>
                   ) : null}
                 </div>
               ) : null}
               {(recovering || recoveryLog.length > 0) ? (
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-700 dark:text-amber-200/80">
                   {recoveryLog.length === 0 ? (
                     <span className="text-surface-600">(starting…)</span>
                   ) : (
@@ -1679,7 +1679,7 @@ export function WebReloadView({
             }
           />
           {webPreviewError ? (
-            <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-[11px] text-red-200">
+            <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-[11px] text-red-700 dark:text-red-200">
               Expo Web preview failed: {webPreviewError}
             </div>
           ) : null}
@@ -1696,13 +1696,13 @@ export function WebReloadView({
               {staticBundleState === "idle" ? (
                 <button
                   onClick={() => void handleBuildStaticBundle()}
-                  className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/20"
+                  className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-700 dark:text-sky-200 hover:bg-sky-500/20"
                   title="Compile a static web bundle (expo export -p web) and load it into the iframe via /dev/web-bundle/. Doesn't depend on the sibling Expo Web process being alive — survives agent restarts cleanly."
                 >
                   Build & render static bundle
                 </button>
               ) : staticBundleState === "building" ? (
-                <span className="text-amber-200">
+                <span className="text-amber-700 dark:text-amber-200">
                   Building… {staticBundleTransport?.phase ? `· ${staticBundleTransport.phase}` : ""}
                   {staticBundleTransport && staticBundleTransport.total > 0
                     ? ` · ${staticBundleTransport.pct.toFixed(1)}%`
@@ -1710,7 +1710,7 @@ export function WebReloadView({
                 </span>
               ) : staticBundleState === "ready" ? (
                 <>
-                  <span className="text-emerald-200">
+                  <span className="text-emerald-700 dark:text-emerald-200">
                     Ready · {((staticBundleInfo?.size || 0) / 1024).toFixed(0)} KB · {staticBundleInfo?.fileCount || 0} files
                     {staticBundleTransport?.phase === "delivered" ? " · delivered" : ""}
                   </span>
@@ -1725,7 +1725,7 @@ export function WebReloadView({
                   </button>
                   <button
                     onClick={() => void handleBuildStaticBundle()}
-                    className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200 hover:bg-sky-500/20"
+                    className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-700 dark:text-sky-200 hover:bg-sky-500/20"
                     title="Re-export and re-render"
                   >
                     Rebuild
@@ -1733,10 +1733,10 @@ export function WebReloadView({
                 </>
               ) : (
                 <>
-                  <span className="text-red-300">Build failed: {staticBundleError || "unknown"}</span>
+                  <span className="text-red-700 dark:text-red-300">Build failed: {staticBundleError || "unknown"}</span>
                   <button
                     onClick={() => void handleBuildStaticBundle()}
-                    className="ml-auto rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200 hover:bg-sky-500/20"
+                    className="ml-auto rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-700 dark:text-sky-200 hover:bg-sky-500/20"
                   >
                     Retry
                   </button>
@@ -1745,12 +1745,12 @@ export function WebReloadView({
             </div>
           ) : null}
           {devStatus?.webPort ? (
-            <div className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-[11px] text-emerald-200">
+            <div className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-200">
               <span className="font-mono">expo --web · :{devStatus.webPort}</span>
               <span className="text-surface-500">(Metro on :{devStatus.port} is untouched)</span>
               <button
                 onClick={() => void handleStopWebPreview()}
-                className="ml-auto rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/20"
+                className="ml-auto rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-700 dark:text-red-200 hover:bg-red-500/20"
                 title="Stop the sibling Expo Web process. Metro keeps serving Hermes bundles to the phone."
               >
                 Stop web preview
@@ -1818,7 +1818,7 @@ export function WebReloadView({
                   {(useProjectFallback ? projects.length : apps.length) || 0}
                 </span>
                 {(selectedProject?.name || selectedApp || activeProject?.name) ? (
-                  <span className="truncate normal-case tracking-normal text-[10px] text-indigo-300/80">
+                  <span className="truncate normal-case tracking-normal text-[10px] text-indigo-700 dark:text-indigo-300/80">
                     · {selectedProject?.name || selectedApp || activeProject?.name}
                   </span>
                 ) : null}
@@ -1889,9 +1889,9 @@ export function WebReloadView({
                   )}
                 </div>
                 {runnerNeedsAuth ? (
-                  <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-100">
+                  <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-800 dark:text-amber-100">
                     <div className="font-semibold">{runnerAuthLabel} isn&apos;t signed in on this machine.</div>
-                    <div className="mt-1 text-amber-100/80">
+                    <div className="mt-1 text-amber-800 dark:text-amber-100/80">
                       Vibe tasks would spawn <span className="font-mono">{runnerAuthState?.runnerId}</span> and crash immediately
                       with no auth. Sign in once and the runner sticks.
                     </div>
@@ -1919,7 +1919,7 @@ export function WebReloadView({
                     <button
                       onClick={() => void handleCommitPush()}
                       disabled={committing || (!selectedProject && !activeProject && !selectedProjectPath && !devStatus?.workDir)}
-                      className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-wait"
+                      className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-wait"
                       title={
                         runnerNeedsAuth || !runnerAuthState?.runnerId
                           ? "Stage + commit + push. On rebase conflict, sign in a coding agent first to delegate."
@@ -2077,7 +2077,7 @@ function ScannedProjectSelector({
   return (
     <div className="space-y-2">
       {workspaceError ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-200/80">
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-700 dark:text-amber-200/80">
           {workspaceError}
         </div>
       ) : null}
@@ -2098,11 +2098,11 @@ function ScannedProjectSelector({
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className={`truncate text-xs font-medium ${isSelected ? "text-indigo-200" : "text-surface-100"}`}>
+                  <span className={`truncate text-xs font-medium ${isSelected ? "text-indigo-700 dark:text-indigo-200" : "text-surface-100"}`}>
                     {project.name}
                   </span>
                   {isActive ? (
-                    <span className="flex items-center gap-1 text-[10px] text-emerald-300">
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-300">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                       running
                     </span>

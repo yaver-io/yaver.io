@@ -24,7 +24,7 @@ export default function AutoBootManual() {
           Yaver as a system service, OAuth that survives reboots, auto-updates,
           and project discovery.
         </p>
-        <div className="mb-12 rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+        <div className="mb-12 rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-100">
           This guide is for native macOS, native Linux, and Windows. WSL is supported for Yaver
           development flows and Hermes reload, but not as the primary always-on auto-boot target:
           Yaver does not install a native systemd auto-start service inside WSL. It can install a
@@ -327,7 +327,7 @@ export default function AutoBootManual() {
           </p>
 
           <div className="mt-4 rounded-lg border border-yellow-800/40 bg-yellow-900/10 p-4">
-            <h4 className="mb-2 text-sm font-semibold text-yellow-300/90">
+            <h4 className="mb-2 text-sm font-semibold text-yellow-700 dark:text-yellow-300/90">
               Watch out: dead CMOS battery
             </h4>
             <p className="mb-2 text-sm text-surface-400">

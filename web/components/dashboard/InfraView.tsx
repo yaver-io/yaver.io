@@ -111,7 +111,7 @@ export default function InfraView() {
   }
 
   if (!summary) {
-    return <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">{error || "Infra unavailable"}</div>;
+    return <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">{error || "Infra unavailable"}</div>;
   }
 
   return (
@@ -126,8 +126,8 @@ export default function InfraView() {
           <p className="mt-1 text-sm text-surface-400">{summary.machine.platform} {summary.machine.arch ? `· ${summary.machine.arch}` : ""}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => powerAction("agent_shutdown")} disabled={powerBusy !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Stop agent</button>
-          <button onClick={() => powerAction("host_reboot")} disabled={powerBusy !== null || !summary.capabilities.hostReboot} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300 hover:bg-red-500/20 disabled:opacity-50">Reboot host</button>
+          <button onClick={() => powerAction("agent_shutdown")} disabled={powerBusy !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Stop agent</button>
+          <button onClick={() => powerAction("host_reboot")} disabled={powerBusy !== null || !summary.capabilities.hostReboot} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300 hover:bg-red-500/20 disabled:opacity-50">Reboot host</button>
         </div>
       </div>
 
@@ -152,7 +152,7 @@ export default function InfraView() {
                 <p className="mt-1 text-xs text-surface-500">{svc.image || "binary service"} {svc.port ? `· port ${svc.port}` : ""} {svc.memory ? `· ${svc.memory}` : ""}</p>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => serviceAction(svc.name, svc.running ? "restart" : "start")} disabled={busyService !== null} className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-300 disabled:opacity-50">{svc.running ? "Restart" : "Start"}</button>
+                <button onClick={() => serviceAction(svc.name, svc.running ? "restart" : "start")} disabled={busyService !== null} className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-700 dark:text-indigo-300 disabled:opacity-50">{svc.running ? "Restart" : "Start"}</button>
                 <button onClick={() => serviceAction(svc.name, "stop")} disabled={busyService !== null || !svc.running} className="rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-xs font-medium text-surface-300 disabled:opacity-50">Stop</button>
               </div>
             </div>
@@ -187,18 +187,18 @@ export default function InfraView() {
             />
           </div>
           <div className="mt-3 rounded-2xl border border-surface-800 bg-surface-950/60 p-4 text-sm text-surface-400">
-            Docker: <span className={summary.sandbox.docker ? "text-emerald-300" : "text-red-300"}>{summary.sandbox.docker ? "available" : "not found"}</span>
+            Docker: <span className={summary.sandbox.docker ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>{summary.sandbox.docker ? "available" : "not found"}</span>
             {summary.sandbox.recommendedReason ? ` · ${summary.sandbox.recommendedReason}` : ""}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button onClick={() => sandboxQuickstart("guests")} disabled={sandboxBusy !== null || !summary.sandbox.docker} className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 disabled:opacity-50">Enable guest isolation</button>
-            <button onClick={() => sandboxQuickstart("host")} disabled={sandboxBusy !== null || !summary.sandbox.docker} className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-sm text-indigo-300 disabled:opacity-50">Containerize all tasks</button>
+            <button onClick={() => sandboxQuickstart("guests")} disabled={sandboxBusy !== null || !summary.sandbox.docker} className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300 disabled:opacity-50">Enable guest isolation</button>
+            <button onClick={() => sandboxQuickstart("host")} disabled={sandboxBusy !== null || !summary.sandbox.docker} className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-sm text-indigo-700 dark:text-indigo-300 disabled:opacity-50">Containerize all tasks</button>
             {!summary.sandbox.imageReady && summary.sandbox.docker && (
               <button onClick={buildSandbox} disabled={sandboxBusy !== null} className="rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-300 disabled:opacity-50">Build image</button>
             )}
           </div>
           {sandboxMsg && (
-            <div className={`mt-3 text-sm ${sandboxMsg.type === "ok" ? "text-emerald-300" : "text-red-300"}`}>
+            <div className={`mt-3 text-sm ${sandboxMsg.type === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}`}>
               {sandboxMsg.text}
             </div>
           )}

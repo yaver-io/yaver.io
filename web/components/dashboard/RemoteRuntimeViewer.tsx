@@ -400,7 +400,7 @@ export default function RemoteRuntimeViewer({
           {session.targetLabel} · {session.deviceId || "attaching"} ·{" "}
           {dims ? `${dims.width}×${dims.height}` : "—"} · {transportLabel}
         </div>
-        <div className={`text-xs ${connected ? "text-emerald-300" : "text-amber-300"}`}>
+        <div className={`text-xs ${connected ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
           {connected ? "Connected" : "Connecting"}
         </div>
       </div>
@@ -469,7 +469,7 @@ export default function RemoteRuntimeViewer({
             void sendControl({ action: "text", text: payload });
             setTextInput("");
           }}
-          className="px-3 py-2 rounded-md bg-sky-500/15 text-sky-200 text-xs hover:bg-sky-500/25"
+          className="px-3 py-2 rounded-md bg-sky-500/15 text-sky-700 dark:text-sky-200 text-xs hover:bg-sky-500/25"
         >
           Type
         </button>

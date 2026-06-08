@@ -81,7 +81,7 @@ export default function OverviewView({
   }
 
   if (error) return (
-    <div className="p-4 text-sm text-red-300 bg-red-900/20 border border-red-500/30 rounded">
+    <div className="p-4 text-sm text-red-700 dark:text-red-300 bg-red-900/20 border border-red-500/30 rounded">
       <div>Couldn&apos;t load your overview. Try again in a moment.</div>
       <div className="mt-1 text-xs text-red-400/70 break-words">{error}</div>
     </div>
@@ -177,7 +177,7 @@ function Card({ label, value, sub, tone }: { label: string; value: number | stri
 function QuickBtn({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button onClick={onClick}
-      className="px-3 py-2 text-sm rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30">
+      className="px-3 py-2 text-sm rounded-lg bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30">
       {label}
     </button>
   );

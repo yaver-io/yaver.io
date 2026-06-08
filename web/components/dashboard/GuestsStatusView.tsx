@@ -506,7 +506,7 @@ export default function GuestsStatusView() {
               {user.email ? (
                 <button
                   onClick={() => copy(user.email)}
-                  className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300"
+                  className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-700 dark:text-indigo-300"
                 >
                   Copy email
                 </button>
@@ -545,12 +545,12 @@ export default function GuestsStatusView() {
           />
 
           {inviteKind === "user-id" && inviteLookup && (
-            <div className="text-xs text-emerald-300">
+            <div className="text-xs text-emerald-700 dark:text-emerald-300">
               {inviteLookup.fullName} · {inviteLookup.email}
             </div>
           )}
           {inviteKind === "user-id" && inviteLookupErr && (
-            <div className="text-xs text-red-300">{inviteLookupErr}</div>
+            <div className="text-xs text-red-700 dark:text-red-300">{inviteLookupErr}</div>
           )}
 
           <div className="space-y-2">
@@ -626,7 +626,7 @@ export default function GuestsStatusView() {
                   type="button"
                   onClick={() => void loadInviteProjects()}
                   disabled={inviteProjectsLoading}
-                  className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300 disabled:opacity-40"
+                  className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-700 dark:text-indigo-300 disabled:opacity-40"
                 >
                   {inviteProjectsLoading
                     ? "Loading projects…"
@@ -639,7 +639,7 @@ export default function GuestsStatusView() {
                 ) : null}
               </div>
               {inviteProjectsError ? (
-                <div className={`text-xs ${inviteProjectChoices.length > 0 ? "text-amber-300" : "text-red-300"}`}>
+                <div className={`text-xs ${inviteProjectChoices.length > 0 ? "text-amber-700 dark:text-amber-300" : "text-red-700 dark:text-red-300"}`}>
                   {inviteProjectsError}
                 </div>
               ) : (
@@ -656,7 +656,7 @@ export default function GuestsStatusView() {
                       onClick={() => toggleProject(project)}
                       className={`border px-2 py-1 text-xs ${
                         inviteProjects.includes(project)
-                          ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
+                          ? "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-200"
                           : "border-surface-700 bg-surface-950 text-surface-400"
                       }`}
                     >
@@ -685,7 +685,7 @@ export default function GuestsStatusView() {
 
         {lastInvite && (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
-            <div className="text-[10px] uppercase tracking-wider text-emerald-300">Latest invite</div>
+            <div className="text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Latest invite</div>
             <div className="mt-1 text-sm text-surface-200">{lastInvite.target}</div>
             <div className="mt-1 text-xs text-surface-500">scope: {lastInvite.scope}</div>
             <div className="mt-3 font-mono text-3xl font-semibold tracking-[0.3em] text-surface-50">{lastInvite.code}</div>
@@ -695,7 +695,7 @@ export default function GuestsStatusView() {
               </button>
               <button
                 onClick={() => copy(`Your Yaver invite code: ${lastInvite.code}`)}
-                className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-300"
+                className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-700 dark:text-indigo-300"
               >
                 Copy Message
               </button>
@@ -725,12 +725,12 @@ export default function GuestsStatusView() {
             type="button"
             onClick={() => void handlePreviewJoin()}
             disabled={busy === "preview" || !joinCode.trim()}
-            className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-sm text-indigo-300 disabled:opacity-40"
+            className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-sm text-indigo-700 dark:text-indigo-300 disabled:opacity-40"
           >
             {busy === "preview" ? "Checking…" : "Preview"}
           </button>
         </div>
-        {joinPreviewErr && <div className="mt-3 text-sm text-red-300">{joinPreviewErr}</div>}
+        {joinPreviewErr && <div className="mt-3 text-sm text-red-700 dark:text-red-300">{joinPreviewErr}</div>}
         {joinPreview && (
           <div className="mt-4 space-y-3 border border-surface-800 bg-surface-950/60 p-3">
             <div>
@@ -754,7 +754,7 @@ export default function GuestsStatusView() {
                     <span
                       className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
                         device.proposed
-                          ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-300"
+                          ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300"
                           : "border-surface-700 bg-surface-900 text-surface-500"
                       }`}
                     >
@@ -789,7 +789,7 @@ export default function GuestsStatusView() {
         )}
       </section>
 
-      {err && <div className="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{err}</div>}
+      {err && <div className="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-200">{err}</div>}
       {loading && <div className="text-sm text-surface-500">Loading…</div>}
 
       {/* Guests I'm hosting */}
@@ -811,7 +811,7 @@ export default function GuestsStatusView() {
                       </span>
                       <StatusBadge status={g.status} />
                       {g.invitedByUserId && (
-                        <span className="rounded bg-indigo-500/10 border border-indigo-500/40 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">
+                        <span className="rounded bg-indigo-500/10 border border-indigo-500/40 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300">
                           BY USER ID
                         </span>
                       )}
@@ -845,7 +845,7 @@ export default function GuestsStatusView() {
                     type="button"
                     onClick={() => void handleRevoke(g)}
                     disabled={busy === `revoke:${g.email || g.userId}`}
-                    className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] text-red-200 disabled:opacity-40"
+                    className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] text-red-700 dark:text-red-200 disabled:opacity-40"
                   >
                     Revoke
                   </button>
@@ -876,7 +876,7 @@ export default function GuestsStatusView() {
                             disabled={!!policyNote || busy === `policy:${g.email}`}
                             className={`border px-2 py-1 text-xs disabled:opacity-40 ${
                               current === scope
-                                ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
+                                ? "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-200"
                                 : "border-surface-700 bg-surface-950 text-surface-400"
                             }`}
                           >
@@ -911,7 +911,7 @@ export default function GuestsStatusView() {
                                 }}
                                 className={`border px-2 py-1 text-xs disabled:opacity-40 ${
                                   selected
-                                    ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
+                                    ? "border-indigo-500 bg-indigo-500/15 text-indigo-700 dark:text-indigo-200"
                                     : "border-surface-700 bg-surface-950 text-surface-400"
                                 }`}
                               >

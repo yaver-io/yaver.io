@@ -115,13 +115,13 @@ export default function CompanyAIOptionsView() {
       <div className="p-6">
         <h2 className="text-lg font-semibold text-surface-100">Company AI</h2>
         <p className="mt-2 text-sm text-surface-400">Create or join a team before configuring company AI runtimes.</p>
-        {message ? <p className="mt-3 text-xs text-amber-300">{message}</p> : null}
+        {message ? <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{message}</p> : null}
       </div>
     );
   }
 
   if (!options) {
-    return <div className="p-6 text-sm text-amber-300">{message || "No company AI options available."}</div>;
+    return <div className="p-6 text-sm text-amber-700 dark:text-amber-300">{message || "No company AI options available."}</div>;
   }
 
   return (
@@ -146,14 +146,14 @@ export default function CompanyAIOptionsView() {
           <button
             onClick={save}
             disabled={!canEdit || saving}
-            className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-40"
+            className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-800 dark:text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-40"
           >
             {saving ? "Saving..." : "Save"}
           </button>
         </div>
       </div>
 
-      {message ? <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">{message}</div> : null}
+      {message ? <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">{message}</div> : null}
       {!canEdit ? (
         <div className="mb-4 rounded-lg border border-surface-800 bg-surface-900/60 px-3 py-2 text-xs text-surface-400">
           You are {role || "a member"} of {selectedTeam?.name || teamId}. Only team admins can edit these options.
@@ -231,7 +231,7 @@ export default function CompanyAIOptionsView() {
                     next.runners.allowedRunners = [...set];
                     if (!set.has(next.runners.defaultRunner)) next.runners.defaultRunner = [...set][0] || runner;
                   })}
-                  className={`rounded-full border px-3 py-1 text-xs ${active ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-100" : "border-surface-700 text-surface-400"}`}
+                  className={`rounded-full border px-3 py-1 text-xs ${active ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-800 dark:text-cyan-100" : "border-surface-700 text-surface-400"}`}
                 >
                   {runner}
                 </button>

@@ -237,7 +237,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
               className={`shrink-0 rounded border px-2.5 py-1 text-xs font-semibold disabled:opacity-40 ${
                 active
                   ? "border-violet-400 bg-violet-500 text-white hover:bg-violet-600"
-                  : "border-violet-400/50 bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
+                  : "border-violet-400/50 bg-violet-500/15 text-violet-700 dark:text-violet-200 hover:bg-violet-500/25"
               }`}
             >
               {active ? `■ ${l.label}` : `▷ ${l.label}`}
@@ -260,7 +260,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
             className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold disabled:opacity-40 ${
               dictating
                 ? "border-emerald-400 bg-emerald-400 text-black"
-                : "border-emerald-400/50 bg-white/5 text-emerald-300 hover:bg-emerald-500/15"
+                : "border-emerald-400/50 bg-white/5 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/15"
             }`}
           >
             {dictating ? "● rec" : "🎙"}
@@ -271,13 +271,13 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
         <div ref={ref} className="h-full w-full p-2" />
       {(status === "closed" || status === "error") ? (
         <div className="pointer-events-none absolute inset-0 flex items-end justify-center pb-3">
-          <div className="pointer-events-auto rounded border border-amber-500/40 bg-black/80 px-3 py-2 text-xs text-amber-200 shadow-lg backdrop-blur">
+          <div className="pointer-events-auto rounded border border-amber-500/40 bg-black/80 px-3 py-2 text-xs text-amber-700 dark:text-amber-200 shadow-lg backdrop-blur">
             <span className="mr-2">
               Terminal disconnected{closeReason ? ` — ${closeReason}` : ""}.
             </span>
             <button
               onClick={reconnect}
-              className="rounded border border-amber-400 bg-amber-500/20 px-2 py-0.5 font-semibold text-amber-100 hover:bg-amber-500/30"
+              className="rounded border border-amber-400 bg-amber-500/20 px-2 py-0.5 font-semibold text-amber-800 dark:text-amber-100 hover:bg-amber-500/30"
             >
               Reconnect
             </button>

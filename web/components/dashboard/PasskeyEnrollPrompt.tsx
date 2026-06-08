@@ -202,7 +202,7 @@ export function PasskeysCard() {
               <button
                 onClick={() => void remove(pk.credentialId)}
                 disabled={removingId === pk.credentialId}
-                className="ml-3 shrink-0 rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-300 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30"
+                className="ml-3 shrink-0 rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-300 transition-colors hover:border-red-500/40 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-30"
               >
                 {removingId === pk.credentialId ? "…" : "Remove"}
               </button>
@@ -211,13 +211,13 @@ export function PasskeysCard() {
         </div>
       )}
 
-      {error && <p className="mb-3 text-xs text-amber-300">{error}</p>}
+      {error && <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">{error}</p>}
 
       <button
         type="button"
         onClick={enrol}
         disabled={busy}
-        className="w-full rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-4 py-3 text-sm font-medium text-cyan-200 transition-colors hover:bg-cyan-500/10 disabled:opacity-50"
+        className="w-full rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-4 py-3 text-sm font-medium text-cyan-700 dark:text-cyan-200 transition-colors hover:bg-cyan-500/10 disabled:opacity-50"
       >
         {busy ? "Saving…" : "Add passkey"}
       </button>

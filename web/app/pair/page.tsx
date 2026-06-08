@@ -325,12 +325,12 @@ export default function PairPage() {
             />
             {probeBusy && <p className="mt-2 text-xs text-surface-500">Probing…</p>}
             {probe && probe.ok && (
-              <p className="mt-2 text-xs text-emerald-300">
+              <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">
                 ✓ Session is open on {probe.hostname || "the agent"}.
               </p>
             )}
             {probe && !probe.ok && (
-              <p className="mt-2 text-xs text-amber-300">
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
                 {probe.error}. If the URL is correct, the pair window may have expired — restart{" "}
                 <code className="rounded bg-surface-900 px-1 py-0.5">yaver auth pair</code> on the
                 target.
@@ -350,10 +350,10 @@ export default function PairPage() {
               role="alert"
               className={`mt-6 rounded border px-4 py-3 text-sm ${
                 banner.kind === "err"
-                  ? "border-red-500/30 bg-red-950/40 text-red-200"
+                  ? "border-red-500/30 bg-red-950/40 text-red-700 dark:text-red-200"
                   : banner.kind === "ok"
-                  ? "border-emerald-500/30 bg-emerald-950/40 text-emerald-200"
-                  : "border-indigo-500/30 bg-indigo-950/40 text-indigo-200"
+                  ? "border-emerald-500/30 bg-emerald-950/40 text-emerald-700 dark:text-emerald-200"
+                  : "border-indigo-500/30 bg-indigo-950/40 text-indigo-700 dark:text-indigo-200"
               }`}
             >
               {banner.text}

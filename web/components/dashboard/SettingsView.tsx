@@ -83,7 +83,7 @@ function AuthProviderIcon({
 function StatusIcon({ primary }: { primary: boolean }) {
   if (primary) {
     return (
-      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-4 w-4 text-emerald-300">
+      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-4 w-4 text-emerald-700 dark:text-emerald-300">
         <path d="m9.05 2.93-1.1 2.24a1 1 0 0 1-.75.55l-2.47.36c-.82.12-1.15 1.13-.56 1.7l1.79 1.75c.25.24.36.6.3.94l-.42 2.46c-.14.82.72 1.45 1.45 1.07L10 14.9l2.21 1.16c.73.38 1.59-.25 1.45-1.07l-.42-2.46a1 1 0 0 1 .3-.94l1.79-1.75c.59-.57.26-1.58-.56-1.7l-2.47-.36a1 1 0 0 1-.75-.55l-1.1-2.24c-.37-.76-1.46-.76-1.83 0Z" />
       </svg>
     );
@@ -410,7 +410,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
                 <div key={`${identity.provider}:${identity.email || "none"}`} className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-900/60 px-3 py-2">
                   <div className="flex items-center gap-3">
                     <span className={`flex h-9 w-9 items-center justify-center rounded-full border border-surface-800 bg-surface-950 ${
-                      identity.provider === "gitlab" ? "text-orange-300" : "text-surface-200"
+                      identity.provider === "gitlab" ? "text-orange-700 dark:text-orange-300" : "text-surface-200"
                     }`}>
                       <AuthProviderIcon provider={identity.provider} className="h-4 w-4" />
                     </span>
@@ -420,7 +420,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
                         <span
                           className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] ${
                             identity.isPrimary
-                              ? "border-emerald-500/30 text-emerald-300"
+                              ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
                               : "border-surface-700 text-surface-400"
                           }`}
                           title={identity.isPrimary ? "Primary sign-in method" : "Linked sign-in method"}
@@ -437,7 +437,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
                       onClick={() => unlinkProvider(identity.provider)}
                       disabled={!canUnlink || unlinkingProvider === identity.provider}
                       title={canUnlink ? `Remove ${identity.provider} from this account` : "Cannot unlink — this is your only sign-in method"}
-                      className="rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-300 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-30"
+                      className="rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-300 transition-colors hover:border-red-500/40 hover:text-red-700 dark:hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-30"
                     >
                       {unlinkingProvider === identity.provider ? "…" : "Unlink"}
                     </button>
@@ -448,7 +448,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
           )}
         </div>
         {unlinkSuccess && (
-          <p className="mb-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-300">
+          <p className="mb-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
             {unlinkSuccess}
           </p>
         )}
@@ -520,7 +520,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
               </p>
               <button
                 onClick={cancelMerge}
-                className="rounded-full border border-surface-700 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-300 hover:border-red-500/40 hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                className="rounded-full border border-surface-700 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-300 hover:border-red-500/40 hover:text-red-700 dark:hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500/40"
               >
                 Cancel
               </button>
@@ -637,7 +637,7 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
           href="https://yaver.io/docs/yaver-protocol#dogfooding-yaver-from-yaver"
           target="_blank"
           rel="noreferrer"
-          className="inline-block rounded-md border border-sky-500/30 px-3 py-1.5 text-xs text-sky-300 transition-colors hover:bg-sky-500/10"
+          className="inline-block rounded-md border border-sky-500/30 px-3 py-1.5 text-xs text-sky-700 dark:text-sky-300 transition-colors hover:bg-sky-500/10"
           data-testid="dogfood-docs-link"
         >
           Dogfooding docs →

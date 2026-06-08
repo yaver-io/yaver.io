@@ -111,7 +111,7 @@ function VerifyEmailContent() {
         {status === "error" ? (
           <>
             <h1 className="mb-3 text-xl font-semibold text-surface-50">Verification failed</h1>
-            <p className="mb-6 text-sm text-rose-300">{errorMessage}</p>
+            <p className="mb-6 text-sm text-rose-700 dark:text-rose-300">{errorMessage}</p>
             <Link href="/auth" className="inline-block rounded-lg bg-surface-50 px-6 py-3 text-sm font-medium text-surface-950 transition-colors hover:bg-surface-200">
               Sign in
             </Link>
