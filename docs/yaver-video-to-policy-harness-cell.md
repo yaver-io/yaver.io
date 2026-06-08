@@ -187,6 +187,16 @@ pybullet isn't installed — so the dry-run runs on any box (dev Mac, CI). pybul
 remains the high-fidelity engine for contact-rich work; install it (or run on the
 Linux box) for real physics. Run it: `SIM_E2E=1 go test ./arm/ -run TestSimPolicyE2E -v`.
 
+**Real PyBullet, on a fresh Linux box (2026-06-08).** Spun up a throwaway Hetzner
+box, `pip install pybullet` (built from source — no cp312 wheel), ran the same
+harness with `--engine pybullet` + the reference policy server, and drove the
+observe→act→execute loop against actual physics: `engine=pybullet`, joints
+`J1..J6` with catalog limits, loop converged to `J1=29.66 J2=-20.06` for goal
+`30/-20`, `done=true` — note the non-exact settle (real dynamics) vs the kinematic
+engine's exact value. Box deleted immediately after. This surfaced + fixed a real
+bug: `createMultiBody` gave the builtin arm auto-named, limitless joints; pinned
+to `J1..J6` + catalog limits so builtin:arm6 is the same arm on every engine.
+
 ## Gaps / next (honest)
 
 - **`yaver_policy_server.py`** — shipped as a **reference** proportional-control
