@@ -712,6 +712,22 @@ function DeviceConnectCard({
   );
 }
 
+// Tabs whose views call the local agent over a live connection. When the
+// agent isn't connected these would otherwise leak the raw
+// "AgentClient is not connected. Call connect() first." string from
+// agent-client's assertConnected(); instead we render the shared connect
+// guidance panel (the same device-picker the chat tab uses). Tabs that work
+// without a connected agent (devices, connect, network/Mesh — Convex-direct,
+// billing, cloud, build, settings, security, home, domains, share, guests,
+// collab, company-ai, infra) and the self-gating preview tabs (vibe, webview,
+// preview, web-reload) are intentionally excluded.
+const CONNECTION_REQUIRED_TABS = new Set<string>([
+  "chat", "projects", "vault", "storage", "ops", "git", "data", "convex",
+  "schedules", "apikeys", "exec", "companion", "builds", "quality", "observ",
+  "screenlog", "extras", "accounts", "switch", "tools", "phone", "health",
+  "todos",
+]);
+
 export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, sessionExpired, logout } = useAuth();
@@ -1977,6 +1993,7 @@ export default function DashboardPage() {
               { id: "devices",  label: "Devices",  icon: "💻" },
               { id: "build",    label: "Build",    icon: "🛠️" },
               { id: "cloud",    label: "Cloud",    icon: "☁️" },
+              { id: "network",  label: "Mesh",     icon: "🕸️" },
               { id: "chat",     label: "Chat",     icon: "💬" },
               { id: "projects", label: "Projects", icon: "📁" },
               { id: "git",      label: "Git",      icon: "⎇" },
@@ -2362,11 +2379,16 @@ export default function DashboardPage() {
         </div>
 
         <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-hidden">
-          {!isConnected && activeTab === "chat" ? (
+          {!isConnected && CONNECTION_REQUIRED_TABS.has(activeTab) ? (
             <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
               <div className="mx-auto w-full max-w-[1680px]">
                 <div className="mb-6 text-center">
-                  <h2 className="mb-2 text-lg font-semibold text-surface-100">Workspace</h2>
+                  <h2 className="mb-2 text-lg font-semibold text-surface-100">
+                    {(() => {
+                      const label = tabs.find((t) => t.id === activeTab)?.label;
+                      return label ? `Connect a device to use ${label}` : "Connect a device";
+                    })()}
+                  </h2>
                 {connState === "connecting" ? (
                   <div className="flex flex-col items-center gap-3">
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-amber-400" />
