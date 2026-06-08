@@ -25,7 +25,7 @@ import {
   type OperationState,
 } from "../../src/lib/quic";
 import { connectionManager } from "../../src/lib/connectionManager";
-import { isBundleLoaded, loadAppIfChanged, onBundleEvent, setPhoneFrame } from "../../src/lib/bundleLoader";
+import { isBundleLoaded, isBundleLoaderAvailable, loadAppIfChanged, onBundleEvent, setPhoneFrame } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
@@ -512,13 +512,13 @@ export default function HotReloadScreen() {
 
   const handleOpen = useCallback(async () => {
     // Loading a guest app inside the Yaver container needs the native
-    // YaverBundleLoader module, which only ships on iOS today. Stop here on
-    // Android with a clear explanation rather than building a bundle the
-    // phone can't mount.
-    if (Platform.OS === "android") {
+    // YaverBundleLoader module (iOS + Android). Guard on the capability,
+    // not the platform, so an old build / web preview without the module
+    // fails fast instead of building a bundle it can't mount.
+    if (!isBundleLoaderAvailable()) {
       Alert.alert(
-        "iOS-Only For Now",
-        "Loading apps inside Yaver is iOS-only today. Use an iPhone or iPad to open this app in Yaver. Android support is in progress.",
+        "Bundle Loader Unavailable",
+        "This build of Yaver can't mount guest bundles. Update Yaver to the latest version and try again.",
       );
       return;
     }
