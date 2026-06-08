@@ -63,11 +63,11 @@ func (m *CloudDeployManager) hetznerCreateServerCustom(token, name, plan, region
 	}
 	userData := cloudBootstrapScript()
 	if repoURL != "" {
-		// Clone into ~/Workspace/<repo> (git auto-names the dir from the
-		// URL) — projects live under Workspace, never loose in / or the
-		// home root. Shallow + first-boot.
+		// Clone into the non-root yaver user's $HOME/Workspace/<repo> (git
+		// auto-names the dir from the URL) — projects live under Workspace,
+		// owned by yaver, NOT root (docs §4a/§4b). Shallow + first-boot.
 		userData += fmt.Sprintf(
-			"\n# Yaver: shallow-clone the user's repo into ~/Workspace on first boot\nmkdir -p /root/Workspace && git -C /root/Workspace clone --depth 1 %s || echo '[yaver] repo clone skipped'\n",
+			"\n# Yaver: shallow-clone the user's repo into the yaver user's ~/Workspace on first boot\ninstall -d -o yaver -g yaver -m 0755 /home/yaver/Workspace && sudo -u yaver git -C /home/yaver/Workspace clone --depth 1 %s || echo '[yaver] repo clone skipped'\n",
 			shellQuote(repoURL),
 		)
 	}

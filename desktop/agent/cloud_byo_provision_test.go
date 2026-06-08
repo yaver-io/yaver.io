@@ -59,8 +59,12 @@ func TestHetznerCreateServerCustom_ImageAndRepoClone(t *testing.T) {
 	// Repo must be shallow-cloned on first boot. shellQuote leaves a
 	// clean URL bare (it quotes only when metacharacters are present);
 	// injection is blocked upstream by gitURLRe + quote-when-needed.
-	if !strings.Contains(gotUserData, "git -C /root/Workspace clone --depth 1 https://github.com/acme/app.git") {
-		t.Fatalf("user_data missing the ~/Workspace shallow clone; got:\n%s", gotUserData)
+	if !strings.Contains(gotUserData, "git -C /home/yaver/Workspace clone --depth 1 https://github.com/acme/app.git") {
+		t.Fatalf("user_data missing the yaver-user ~/Workspace shallow clone; got:\n%s", gotUserData)
+	}
+	// Must NOT clone as root into /root/Workspace.
+	if strings.Contains(gotUserData, "/root/Workspace") {
+		t.Fatalf("clone must target the non-root yaver user's Workspace, not /root; got:\n%s", gotUserData)
 	}
 }
 
