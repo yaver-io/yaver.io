@@ -2138,6 +2138,7 @@ func runServe(args []string) {
 	operator := fs.Bool("operator", false, "Run as a Yaver public-compute fleet node (multi-tenant; tenants are scoped+containerized+auto-wiped; never owner-equivalent)")
 	relayOnly := fs.Bool("relay-only", false, "Bind direct HTTP/TLS listeners to loopback so the box is reachable only via the relay (recommended for operator nodes on a home/office LAN)")
 	containerizeTenants := fs.Bool("containerize-tenants", false, "Force every non-owner (tenant) task into a Docker container, fail-closed if Docker is unavailable (implied by --operator)")
+	allowRoot := fs.Bool("allow-root", false, "Permit --operator to run as root (NOT recommended; an operator node should run as an unprivileged user so a tenant escape never lands on root)")
 	fs.Parse(args)
 
 	// Install systemd service and exit
@@ -2378,6 +2379,9 @@ func runServe(args []string) {
 		}
 		if *containerizeTenants {
 			childArgs = append(childArgs, "--containerize-tenants")
+		}
+		if *allowRoot {
+			childArgs = append(childArgs, "--allow-root")
 		}
 
 		cmd := osexec.Command(execPath, childArgs...)
@@ -3126,6 +3130,21 @@ func runServe(args []string) {
 	httpServer.netcaptureEnabled = *netcaptureFlag || cfg.NetcaptureEnabled
 	if httpServer.netcaptureEnabled {
 		log.Printf("Netcapture (wire-observe & deep-analysis) enabled")
+	}
+
+	// Non-root guard: an operator/fleet node must run as an unprivileged
+	// user so a tenant who escapes a container lands on a normal uid, not
+	// root (docs §4a). Fail-closed on euid==0 unless --allow-root is given.
+	if *operator && os.Geteuid() == 0 && !*allowRoot {
+		log.Fatalf("[OPERATOR] refusing to run as root. An operator node must run as an unprivileged user (e.g. a dedicated 'yaver' system user) so a tenant escape never lands on root. Re-run as a non-root user, or pass --allow-root to override (NOT recommended).")
+	}
+
+	// Ensure the canonical project home ($HOME/Workspace) exists — the one
+	// place projects live across every surface (docs §4b). Best-effort.
+	if root, err := EnsureWorkspaceRoot(); err != nil {
+		log.Printf("[WORKSPACE] could not create workspace root: %v", err)
+	} else {
+		log.Printf("[WORKSPACE] project home: %s", root)
 	}
 
 	// Container isolation (optional — requires Docker + yaver-sandbox image).
