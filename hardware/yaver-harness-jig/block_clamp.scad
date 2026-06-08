@@ -1,11 +1,11 @@
-// Yaver Terminal-Block Nest (Megaradar / Klemsan 5.08 pluggable) — parametric
+// Yaver Terminal-Block Nest (5.08mm pluggable terminal block) — parametric
 // OpenSCAD. Holds an N-pin 5.08mm pluggable terminal-block PLUG so a robot can
 // land a ferruled wire in each cage and drive the M2.5 screw to torque.
-// docs/yaver-arkel-terminal-block-cell.md.
+// docs/yaver-arm-served-harness-cell.md.
 //
 //   PART = "nest"  -> printable nest (gridded baseplate + plug cradle)
 //
-// Geometry of the real part (Megaradar 5.08 female pluggable, rising-cage):
+// Geometry of the real part (5.08mm female pluggable terminal block, rising-cage):
 //   - wire enters the FRONT (cage mouths, +Y face) horizontally
 //   - M2.5 screw driven from the TOP (+Z)
 // So this nest opens BOTH faces: cage funnels on the front, screw windows on top.

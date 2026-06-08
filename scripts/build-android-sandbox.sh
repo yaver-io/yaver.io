@@ -19,20 +19,40 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENT_DIR="$REPO_ROOT/desktop/agent"
-JNI_DIR="$REPO_ROOT/mobile/android/app/src/main/jniLibs/arm64-v8a"
+
+# ABI selects the target jniLibs dir + Go GOARCH. Default arm64-v8a (real
+# phones); x86_64 covers Android emulators / redroid (the magara closed loop),
+# so the on-device sandbox is buildable + testable WITHOUT a physical device.
+ABI="${ABI:-arm64-v8a}"
+case "$ABI" in
+  arm64-v8a) GOARCH=arm64 ;;
+  x86_64)    GOARCH=amd64 ;;
+  *) echo "unsupported ABI: $ABI (use arm64-v8a or x86_64)" >&2; exit 2 ;;
+esac
+JNI_DIR="$REPO_ROOT/mobile/android/app/src/main/jniLibs/$ABI"
 mkdir -p "$JNI_DIR"
 
-echo "==> Cross-compiling Go agent for android/arm64"
-# CGO off → fully self-contained, no NDK needed for the agent itself.
-# -checklinkname=0 is REQUIRED: github.com/wlynxg/anet (network-interface
-#   enumeration) uses //go:linkname against net.zoneCache, which the Go 1.26
-#   linker rejects by default on GOOS=android. Verified building 2026-06-08.
-# -s -w strips debug info (65 MB → ~45 MB).
-( cd "$AGENT_DIR" && \
-  CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
-    go build -trimpath -ldflags="-checklinkname=0 -s -w" \
-      -o "$JNI_DIR/libyaver.so" . )
-echo "    libyaver.so: $(du -h "$JNI_DIR/libyaver.so" | cut -f1)"
+echo "==> Cross-compiling Go agent for android/$GOARCH (ABI=$ABI)"
+# -checklinkname=0 is REQUIRED: github.com/wlynxg/anet uses //go:linkname
+#   against net.zoneCache, which the Go 1.26 linker rejects on GOOS=android.
+# -s -w strips debug info.
+# arm64: CGO off → self-contained, no NDK. amd64: GOOS=android/amd64 REQUIRES
+#   external (cgo) linking, so it needs the NDK x86_64 clang as CC (verified
+#   2026-06-08 — CGO_ENABLED=0 GOARCH=amd64 fails "requires external linking").
+if [[ "$GOARCH" == "arm64" ]]; then
+  ( cd "$AGENT_DIR" && \
+    CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
+      go build -trimpath -ldflags="-checklinkname=0 -s -w" -o "$JNI_DIR/libyaver.so" . )
+else
+  NDK_DIR="${ANDROID_NDK_HOME:-$(ls -d "$HOME/Library/Android/sdk/ndk/"*/ 2>/dev/null | sort -V | tail -1)}"
+  HOST_TAG="$(uname | tr '[:upper:]' '[:lower:]')-x86_64"
+  CC_X86="${NDK_DIR}toolchains/llvm/prebuilt/${HOST_TAG}/bin/x86_64-linux-android24-clang"
+  [[ -x "$CC_X86" ]] || { echo "NDK x86_64 clang not found ($CC_X86) — set ANDROID_NDK_HOME" >&2; exit 1; }
+  ( cd "$AGENT_DIR" && \
+    CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC="$CC_X86" \
+      go build -trimpath -ldflags="-checklinkname=0 -s -w" -o "$JNI_DIR/libyaver.so" . )
+fi
+echo "    libyaver.so ($ABI): $(du -h "$JNI_DIR/libyaver.so" | cut -f1)"
 
 # --- proot + loader -------------------------------------------------------
 # proot for Android is a userspace ptrace chroot (no root). The canonical arm64
@@ -49,7 +69,13 @@ echo "    libyaver.so: $(du -h "$JNI_DIR/libyaver.so" | cut -f1)"
 #                      verified against YAVER_PROOT_SHA256 when set.
 # If neither yields a proot we ship agent-only (control-plane; runners need
 # proot+rootfs, so the on-device box stays disabled until proot is in).
-PROOT_SRC="${PROOT_SRC:-$REPO_ROOT/out/android-proot}"
+# proot source dir is ABI-aware: arm64 → out/android-proot (build-android-proot-arm64.sh),
+# x86_64 → out/android-proot-x86_64 (build-android-proot-x86_64.sh).
+if [[ "$ABI" == "x86_64" ]]; then
+  PROOT_SRC="${PROOT_SRC:-$REPO_ROOT/out/android-proot-x86_64}"
+else
+  PROOT_SRC="${PROOT_SRC:-$REPO_ROOT/out/android-proot}"
+fi
 YAVER_PROOT_URL="${YAVER_PROOT_URL:-}"
 YAVER_PROOT_SHA256="${YAVER_PROOT_SHA256:-}"
 PROOT_OK=0

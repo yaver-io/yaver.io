@@ -1649,7 +1649,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
                   <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
                     {device.needsAuth
                       ? "The agent on this box is reachable but its Yaver session expired (or never claimed). Claim it back to your account over relay — agent identity, projects, and vault stay intact."
-                      : "Convex hasn't seen a heartbeat from this box recently. If the agent is still up on its public endpoint, this opens a one-time browser sign-in that re-authorizes it without SSH and without wiping the machine. If the box is fully down, reach for `yaver primary auth` from your laptop or `yaver ssh primary` first."}
+                      : "Convex hasn't seen a heartbeat from this box recently. If the agent is still up, this opens a one-time browser sign-in that re-authorizes it over the relay. If the box is fully down, this first asks an online device you're signed into to SSH in and restart Yaver, waits for it to come back, then re-auths over the relay — no laptop needed (it needs another online device to do the SSH for you)."}
                   </Text>
                   <OwnerClaimAuthRow device={device} />
                   <View style={{ height: 14 }} />

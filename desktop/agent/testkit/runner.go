@@ -154,6 +154,8 @@ func runOnce(ctx context.Context, spec *Spec, opts RunOptions) *Result {
 		runWebSpec(ctx, spec, opts, res)
 	case TargetAndroidEmu:
 		runAndroidSpec(ctx, spec, opts, res, false)
+	case TargetAndroidRedroid:
+		runRedroidSpec(ctx, spec, opts, res)
 	case TargetIOSSim:
 		runIOSSpec(ctx, spec, opts, res, false)
 	case TargetDevice:

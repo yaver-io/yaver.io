@@ -40,6 +40,12 @@ const MARKUP_BY_KIND: Record<string, number> = {
                 // providerCostCents is 0 when CI ran on the user's own box or
                 // the operator fleet → charged 0 (free), still logged for the
                 // savings ledger. See docs/yaver-managed-cloud-ci-absorption.md.
+  studio: 1.6,  // Store-asset generation (screenshots / preview & permission
+                // videos). COGS = farm/build/render minutes; the value is "no
+                // Mac, no Fastlane, no device". Modest markup — a screenshot SaaS
+                // anchor (~$15-40/mo) makes even 1.6x COGS read as nearly free.
+                // A run on the owner's OWN runner reports providerCostCents 0 →
+                // charged 0 (free), still logged. See docs/yaver-store-asset-studio.md.
 };
 
 export function managedMarkup(kind: string): number {

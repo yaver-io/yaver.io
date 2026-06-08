@@ -1,0 +1,16 @@
+# Deterministic spec (testkit) on the android-redroid target — Android-in-Docker
+# via the Studio surface, no adb/AVD, no KVM. Set redroid.base to attach to a
+# warm Yaver Base Image (built with `yaver studio base build`) instead of cold
+# booting. The `url` slot carries the package to launch (mobile convention).
+name: yaver launches to home
+target: android-redroid
+url: io.yaver.mobile
+redroid:
+  container: yaver-qa
+  # base: 2026-06-09-1        # uncomment to restore a warm base instead of cold boot
+  # host_workdir: /var/lib/yaver/qa-data   # required for an ssh_host runner
+  # ssh_host: user@on-prem-box             # omit to run on the local farm box
+steps:
+  - goto: /                  # launch the package
+  - sleep_ms: 4000
+  - assert.text: "io.yaver"  # a cheap smoke assertion; replace with a real on-screen label

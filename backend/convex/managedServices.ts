@@ -36,6 +36,7 @@ export const MANAGED_SERVICE_KEYS = [
   "agentBox",
   "inference",
   "publish",
+  "studio",
 ] as const;
 export type ManagedServiceKey = (typeof MANAGED_SERVICE_KEYS)[number];
 
@@ -48,6 +49,10 @@ const SERVICE_TO_METER_KIND: Record<ManagedServiceKey, string> = {
   agentBox: "compute",
   inference: "inference",
   publish: "publish",
+  // Store Studio (screenshots / preview & permission videos) — its own ledger
+  // line so the cockpit shows Studio spend distinctly. Billed on farm/build/
+  // render minutes; a run on the owner's OWN runner costs 0 (free BYO exit).
+  studio: "studio",
 };
 
 function isServiceKey(s: string): s is ManagedServiceKey {

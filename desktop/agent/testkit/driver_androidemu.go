@@ -125,6 +125,10 @@ func (d *AndroidEmuDriver) Install(ctx context.Context, deviceID string) error {
 	return nil
 }
 
+// SetPackage overrides the package to launch (a `goto: <pkg>` step). Part of the
+// androidDriver interface so the redroid backend can be swapped in.
+func (d *AndroidEmuDriver) SetPackage(pkg string) { d.Package = pkg }
+
 // Launch starts the app via `monkey` (the simplest way to launch
 // without knowing the activity name). Falls back to explicit
 // activity if d.Activity is set.

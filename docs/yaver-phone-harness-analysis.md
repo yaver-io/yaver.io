@@ -197,7 +197,7 @@ its cable.
    sensor pigtails + USB isolator) + the printed screwdriver mount. A bag that
    turns *any* Ender-3 + *any* second-hand phone into a camera-verified robot cell.
 2. **The application (the work):** assembling **electrical wire harnesses** —
-   the robot drives the M2.5 rising-cage screws on terminal blocks (Megaradar
+   the robot drives the M2.5 rising-cage screws on terminal blocks (pluggable-terminal-block
    SBDK 5.08, the klemens job). The cell *is* a wire-harness station; the kit
    *is* a wire harness. Both meanings ship together.
 

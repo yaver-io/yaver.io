@@ -1,0 +1,11 @@
+# Suite defaults for the app-test agent. NOTE: documentation today — qa_run reads
+# its parameters from the ops payload / CLI flags, not this file yet (keeping the
+# code the source of truth). It records the intended defaults in one place.
+package: io.yaver.mobile
+target: android-redroid          # specs run on redroid; flows drive the same surface
+base: ""                         # a Yaver Base Image version (see `yaver studio base ls`); "" = cold boot
+mode: catch                      # catch (report bugs) | fix (catch→patch→reload→re-verify; draft-PR only)
+flows_dir: yaver-tests/flows
+specs_dir: yaver-tests/specs
+# host_workdir / ssh_host: set when the redroid host is an on-prem box rather than
+# the local farm box (defaults under ~/.yaver for the local runner).

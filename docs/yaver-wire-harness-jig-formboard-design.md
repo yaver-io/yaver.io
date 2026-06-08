@@ -82,7 +82,7 @@ each insertion is precisely where Yaver's loop earns its keep.
 >   plastic housing until a **retention lance clicks**. Insertion is axial,
 >   click is a force signature, retention is a pull-force spec.
 > - **B. Ferrule/stripped wire → screw or spring terminal block** (KF2EDGK /
->   Phoenix / Megaradar SBDK 5.08, the family already in
+>   Phoenix / pluggable-terminal-block SBDK 5.08, the family already in
 >   `hardware/yaver-connector-box`): wire end is *landed* in the cage, then the
 >   **block clamps it** (screw torque or spring-lever push). Insertion is
 >   axial-into-cage, retention is screw torque (you already do torque
@@ -527,7 +527,7 @@ self-reconfiguring + active nests) are the follow-on once that's real.
 
 ## 11. Real machinery inventory + the TWO robot roles
 
-Grounded in the Simkab shop (Talos ERP + machine specs). The robotics job is
+Grounded in the the-partner-ERP shop (Talos ERP + machine specs). The robotics job is
 **not just assembly** — it's also **tending the existing semi-auto crimpers** so
 they run lights-out. Two roles, one robot stack.
 
@@ -575,7 +575,7 @@ a magazine + an arm** — *no new crimping machine bought.*
   drop to the kit rack — a tending island.
 
 This removes the operators on ops **2 (splice/join crimp)** and **3 (the
-non-RKES ferrule/terminal crimp)** and produces a clean, sequenced kit.
+off-machine ferrule/terminal crimp)** and produces a clean, sequenced kit.
 
 ### 11.3 Robot role B — harness assembly (the rest of this doc)
 
@@ -584,7 +584,7 @@ insert (op 2 contacts), terminal-block screw (op 4, reuse `screw.go`), heat-shri
 place+heat (op 5), **form/route/tie (op 7 — the #1 sink)**, mate-to-tester (op 8),
 GPU-vision (op 9). Cartesian does the linear work (present / tie / heat-gun /
 pick-to-light); Fairino does the dexterous work (insert / screw / mate). See
-[thesis §11.2](yaver-harness-automation-thesis.md) for the op→robot map and §1–10
+thesis §11.2 for the op→robot map and §1–10
 above for the fixtures.
 
 ### 11.4 The whole cell
