@@ -18,6 +18,7 @@ type ArmStatus = { ok?: boolean; connected?: boolean; enabled?: boolean; estoppe
 type ArmConfig = { driver?: string; addr?: string; camera?: string; info?: ArmInfo };
 type Program = { name: string; waypoints?: any[] };
 type Waypoint = { joints?: Record<string, number>; pose?: any; velPct?: number; verify?: string; label?: string };
+type RobotModel = { vendor: string; model: string; driver: string; transport: string; payloadKg?: number; reachMm?: number; info: ArmInfo; note?: string };
 
 const DRIVERS = ["fairino", "mycobot", "parol6", "generic_tcp", "generic_serial", "bridge"];
 const STEPS = [1, 5, 15, 45];
@@ -31,6 +32,7 @@ export default function ArmCellView({ devices, token }: { devices: Device[]; tok
   const [joints, setJoints] = useState<JointState[]>([]);
   const [frame, setFrame] = useState<string | null>(null);
   const [programs, setPrograms] = useState<Program[]>([]);
+  const [models, setModels] = useState<RobotModel[]>([]);
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const [progName, setProgName] = useState("");
   const [step, setStep] = useState(15);
@@ -102,6 +104,8 @@ export default function ArmCellView({ devices, token }: { devices: Device[]; tok
       if (d?.info) setInfo(d.info);
       const pl = await callArm("arm_program_list");
       if (pl?.programs) setPrograms(pl.programs);
+      const m = await callArm("arm_models");
+      if (m?.models) setModels(m.models);
       refresh();
     })();
   }, [deviceId]); // eslint-disable-line
@@ -202,6 +206,22 @@ export default function ArmCellView({ devices, token }: { devices: Device[]; tok
 
       {showSetup && (
         <div className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+          <div className="text-sm font-semibold text-neutral-200">Robot model</div>
+          <select
+            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100"
+            defaultValue=""
+            onChange={(e) => {
+              const m = models.find((x) => `${x.vendor}__${x.model}` === e.target.value);
+              if (m) setConfig((c) => ({ ...(c || {}), driver: m.driver, info: m.info, addr: c?.addr || (m.driver === "fairino" ? "192.168.58.2" : c?.addr || "") }));
+            }}
+          >
+            <option value="">— pick your robot (prefills DOF + joints) —</option>
+            {models.map((m) => (
+              <option key={`${m.vendor}__${m.model}`} value={`${m.vendor}__${m.model}`}>
+                {m.vendor} {m.model} · {m.info.dof} DOF{m.payloadKg ? ` · ${m.payloadKg}kg` : ""}{m.reachMm ? ` · ${m.reachMm}mm` : ""}
+              </option>
+            ))}
+          </select>
           <div className="text-sm font-semibold text-neutral-200">Driver</div>
           <div className="flex flex-wrap gap-2">
             {DRIVERS.map((dv) => (

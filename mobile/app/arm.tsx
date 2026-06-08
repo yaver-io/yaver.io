@@ -19,6 +19,7 @@ import {
   type ArmStatus,
   type ArmTarget,
   type JointState,
+  type RobotModel,
   type VerifyMode,
   type Waypoint,
 } from "../src/lib/armClient";
@@ -46,6 +47,7 @@ export default function ArmScreen() {
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const [progName, setProgName] = useState("");
   const [programs, setPrograms] = useState<ArmProgram[]>([]);
+  const [models, setModels] = useState<RobotModel[]>([]);
   const [showSetup, setShowSetup] = useState(false);
   const liveRef = useRef(true);
 
@@ -88,6 +90,8 @@ export default function ArmScreen() {
         if (d?.info) setInfo(d.info);
         const pl = await armClient.programList(t);
         if (pl?.programs) setPrograms(pl.programs);
+        const m = await armClient.models(t);
+        if (m?.models) setModels(m.models);
       } catch {}
       refresh();
     })();
@@ -212,6 +216,38 @@ export default function ArmScreen() {
 
         {showSetup && (
           <View style={card}>
+            {models.length > 0 && (
+              <>
+                <Text style={h}>Your robot model</Text>
+                <Text style={[label, { marginTop: -4, marginBottom: 8 }]}>Pick one to prefill DOF + joints</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    {models.map((m) => {
+                      const picked = config?.driver === m.driver && config?.info?.model === m.info.model;
+                      return (
+                        <Pressable
+                          key={`${m.vendor}-${m.model}`}
+                          onPress={() =>
+                            setConfig((cfg) => ({
+                              ...(cfg || { info: { dof: 0, joints: [] } }),
+                              driver: m.driver,
+                              info: m.info,
+                              addr: cfg?.addr || (m.driver === "fairino" ? "192.168.58.2" : cfg?.addr || ""),
+                            }))
+                          }
+                          style={[btn(picked ? c.accent : c.bgCardElevated), { minWidth: 120 }]}
+                        >
+                          <Text style={{ color: picked ? c.textInverse : c.textPrimary, fontWeight: "700", fontSize: 12 }}>{m.model}</Text>
+                          <Text style={{ color: picked ? c.textInverse : c.textMuted, fontSize: 10 }}>
+                            {m.vendor} · {m.info.dof}DOF{m.payloadKg ? ` · ${m.payloadKg}kg` : ""}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              </>
+            )}
             <Text style={h}>Driver</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {DRIVERS.map((dv) => (

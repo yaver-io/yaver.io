@@ -225,6 +225,12 @@ func init() {
 	reg("arm_drivers", "List supported arm drivers (Fairino / myCobot / PAROL6 / generic) + default joint tables for the UI", func(c OpsContext, _ json.RawMessage) OpsResult {
 		return OpsResult{OK: true, Initial: map[string]any{"drivers": armDriverCatalog()}}
 	})
+	reg("arm_models", "Catalog of known robot models (Fairino FR-series, Elephant myCobot family, Source-Robotics PAROL6) with DOF/joints/payload/reach — pick one to prefill the config", func(c OpsContext, _ json.RawMessage) OpsResult {
+		return OpsResult{OK: true, Initial: map[string]any{
+			"models":   arm.RobotModels(),
+			"byVendor": arm.RobotModelsByVendor(),
+		}}
+	})
 	reg("arm_config_get", "Get this arm cell's config (driver, addr, DOF/joints, camera)", func(c OpsContext, _ json.RawMessage) OpsResult {
 		cfg := armConfigGet()
 		return OpsResult{OK: true, Initial: map[string]any{"config": cfg, "enabled": armEnabled()}}
