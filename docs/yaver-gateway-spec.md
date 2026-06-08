@@ -104,11 +104,15 @@ upstream changing terms or pricing.
   cost exceeds the wallet balance.
 - **Wallet floor** — `recordManagedUsage` clamps balance at 0 and returns
   `suspend`; the gateway 402s the next request.
-- **TODO (per-hour cap + sub-cent carry):** add a Durable Object per user
-  to (a) rate-limit cents/hour and (b) carry fractional-cent remainders so
-  many tiny requests aren't each ceil-rounded up. The current skeleton
-  meters per-request (acceptable for MVP, slightly over-charges sub-cent
-  calls — i.e. pro-margin, not a leak).
+- **Per-hour cap + sub-cent carry — BUILT** (`gateway/src/limiter.ts`,
+  `UserMeter` Durable Object). (a) Rolling 1h per-user COGS cap
+  (`MAX_CENTS_PER_HOUR`) → 429 on exceed, bounding a runaway loop even
+  with a flush wallet. (b) Fractional-cent carry: accumulates raw COGS and
+  forwards only WHOLE cents to Convex, so many sub-cent calls aren't
+  ceil-overcharged. Graceful: with no `USER_METER` binding the gateway
+  falls back to per-request `ceil` metering (still works, slightly
+  pro-margin). Covered by `limiter.test.ts` (7 tests) +
+  `pricing.test.ts` (8 tests).
 
 ## Privacy
 
@@ -126,6 +130,8 @@ counters + non-secret labels only.
 |---|---|
 | `gateway/src/index.ts` | Worker: authorize → ceilings → route → stream/tee → meter |
 | `gateway/src/pricing.ts` | routing chains + per-model COGS + cost calc |
+| `gateway/src/limiter.ts` | `UserMeter` DO: per-hour cap + sub-cent carry |
+| `gateway/src/*.test.ts` | pricing (8) + limiter (7) node:tests |
 | `gateway/wrangler.toml` | Worker config; `CONVEX_URL` + ceiling vars |
 | `gateway/package.json` / `tsconfig.json` | build/typecheck |
 | `backend/convex/gatewaySecret.ts` | `GATEWAY_SHARED_SECRET` verify (mirrors cronSecret) |
@@ -143,5 +149,5 @@ counters + non-secret labels only.
 6. Phone: add "managed" mode in `sandboxBinding.ts` (baseURL=gateway,
    apiKey=session token).
 7. Flip `YAVER_MANAGED_METER_LIVE=true` (Convex) to leave dry-run.
-8. Add the Durable-Object per-hour cap + sub-cent carry before opening
-   beyond private preview.
+8. (Done) Per-hour cap + sub-cent carry ship in `limiter.ts`; set
+   `MAX_CENTS_PER_HOUR` in `wrangler.toml` to tune the cap.
