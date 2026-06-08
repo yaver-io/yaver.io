@@ -52,10 +52,26 @@ function json(data: unknown, status = 200): Response {
 
 // ── Convex trust-boundary calls ─────────────────────────────────────
 
+// Per-user limits returned by Convex /gateway/authorize. Operator-set and
+// user-immutable (gatewayPolicy table). 0 = "fall back to the env default".
+type GwLimits = {
+  maxTokensPerRequest: number;
+  maxCentsPerRequest: number;
+  hourlyCapCents: number;
+  dailyCapCents: number;
+  spentTodayCents: number;
+};
+
 async function authorize(
   env: Env,
   bearer: string,
-): Promise<{ userId: string; balanceCents: number; allow: boolean } | null> {
+): Promise<{
+  userId: string;
+  balanceCents: number;
+  allow: boolean;
+  reason?: string;
+  limits?: GwLimits;
+} | null> {
   const r = await fetch(`${env.CONVEX_URL}/gateway/authorize`, {
     method: "POST",
     headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
@@ -187,8 +203,17 @@ export default {
     }
 
     // ── Ceilings ────────────────────────────────────────────────────
-    const maxTok = num(env.MAX_TOKENS_PER_REQUEST, 4096);
-    const maxCents = num(env.MAX_CENTS_PER_REQUEST, 50);
+    // Per-user limits (operator-set, user-immutable) win over the env
+    // defaults; 0/unset → fall back to env. The user cannot raise these.
+    const lim = session.limits;
+    const maxTok =
+      lim && lim.maxTokensPerRequest > 0
+        ? lim.maxTokensPerRequest
+        : num(env.MAX_TOKENS_PER_REQUEST, 4096);
+    const maxCents =
+      lim && lim.maxCentsPerRequest > 0
+        ? lim.maxCentsPerRequest
+        : num(env.MAX_CENTS_PER_REQUEST, 50);
     payload.max_tokens = Math.min(payload.max_tokens ?? maxTok, maxTok);
 
     const chain = resolveRoute(payload.model);
@@ -204,7 +229,8 @@ export default {
     // Rolling per-user hourly cap (Durable Object; no-op if unbound). Bounds a
     // runaway loop even when the wallet is flush. Estimate ~ worst-case cents.
     const estCents = Math.ceil(Math.min(worst, maxCents));
-    const cap = await meterCheck(env, session.userId, estCents);
+    const userHourlyCap = lim && lim.hourlyCapCents > 0 ? lim.hourlyCapCents : 0;
+    const cap = await meterCheck(env, session.userId, estCents, userHourlyCap);
     if (!cap.allow) {
       return json({ error: "rate_limited", remainingCents: cap.remaining }, 429);
     }

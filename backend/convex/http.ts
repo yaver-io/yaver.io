@@ -483,6 +483,8 @@ for (const path of [
   "/managed/burn",
   "/managed/services",
   "/byo/machines",
+  "/gateway/policy", "/gateway/policy/set",
+  "/gateway/token/mint", "/gateway/token/revoke", "/gateway/token/rotate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage",
@@ -6531,20 +6533,222 @@ http.route({
   path: "/gateway/authorize",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    const session = await authenticateRequest(ctx, request);
-    if (!session) return errorResponse("Unauthorized", 401);
-    if (!cloudAccessAllowed(session.email, session.userDocId)) {
-      return errorResponse("Yaver Premium is private-preview only on this account", 403);
+    // Two ways to authenticate to the gateway:
+    //   1. A scoped gateway token (operator-minted, inference-only) — the
+    //      safe key path for free-tier tenants. Resolves to a userId but
+    //      grants NOTHING outside the gateway.
+    //   2. A normal Yaver session token (owner/phone) — existing behavior,
+    //      still gated by cloudAccessAllowed.
+    const authHeader = request.headers.get("Authorization") ?? "";
+    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    if (!bearer) return errorResponse("Unauthorized", 401);
+
+    let userId: string | null = null;
+    let scoped = false;
+    const tokHash = await sha256Hex(bearer);
+    const gw = await ctx.runQuery(internal.gatewayTokens.resolveInternal, { tokenHash: tokHash });
+    if (gw) {
+      userId = gw.userId;
+      scoped = true;
+    } else {
+      const session = await authenticateRequest(ctx, request);
+      if (!session) return errorResponse("Unauthorized", 401);
+      // Session path keeps the private-preview gate; the scoped-token path
+      // does not (the operator minting the token IS the authorization).
+      if (!cloudAccessAllowed(session.email, session.userDocId)) {
+        return errorResponse("Yaver Premium is private-preview only on this account", 403);
+      }
+      userId = session.userDocId as any;
     }
+
     const wallet = await ctx.runQuery(internal.cloudLifecycle.getWallet, {
-      userId: session.userDocId as any,
+      userId: userId as any,
     });
+    // Per-user limits — operator-set, user-immutable (gatewayPolicy).
+    const pol = await ctx.runQuery(internal.gatewayPolicy.getAuthContext, {
+      userId: userId as any,
+    });
+
+    const dailyExceeded =
+      (pol.dailyCapCents ?? 0) > 0 && pol.spentTodayCents >= (pol.dailyCapCents ?? 0);
+    const allow = pol.enabled && wallet.balanceCents > 0 && !dailyExceeded;
+
     return jsonResponse({
       ok: true,
-      userId: session.userDocId,
+      userId,
+      scoped,
       balanceCents: wallet.balanceCents,
-      allow: wallet.balanceCents > 0,
+      allow,
+      // Reason helps the Worker/log distinguish a deny cause (non-secret).
+      reason: !pol.enabled
+        ? "disabled"
+        : wallet.balanceCents <= 0
+          ? "insufficient_balance"
+          : dailyExceeded
+            ? "daily_cap"
+            : "ok",
+      // Per-user ceilings the Worker enforces (0 = fall back to env default).
+      limits: {
+        maxTokensPerRequest: pol.maxTokensPerRequest ?? 0,
+        maxCentsPerRequest: pol.maxCentsPerRequest ?? 0,
+        hourlyCapCents: pol.hourlyCapCents ?? 0,
+        dailyCapCents: pol.dailyCapCents ?? 0,
+        spentTodayCents: pol.spentTodayCents,
+      },
     });
+  }),
+});
+
+// ── Yaver Gateway: operator-only management (policy + scoped tokens) ──
+// All gated by isOwner (ownerAllowlist env). A tenant has NO route here —
+// they cannot read/raise their own caps or mint themselves a token.
+
+/** POST /gateway/policy/set — operator sets a user's limits. Body:
+ *  { targetUserId, enabled?, dailyCapCents?, hourlyCapCents?,
+ *    maxTokensPerRequest?, maxCentsPerRequest?, freeGrantCents?, note? } */
+http.route({
+  path: "/gateway/policy/set",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
+    let body: any = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Bad JSON", 400);
+    }
+    if (!body.targetUserId) return errorResponse("targetUserId required", 400);
+    const res = await ctx.runMutation(internal.gatewayPolicy.setPolicyInternal, {
+      userId: body.targetUserId as any,
+      enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+      dailyCapCents: typeof body.dailyCapCents === "number" ? body.dailyCapCents : undefined,
+      hourlyCapCents: typeof body.hourlyCapCents === "number" ? body.hourlyCapCents : undefined,
+      maxTokensPerRequest:
+        typeof body.maxTokensPerRequest === "number" ? body.maxTokensPerRequest : undefined,
+      maxCentsPerRequest:
+        typeof body.maxCentsPerRequest === "number" ? body.maxCentsPerRequest : undefined,
+      freeGrantCents: typeof body.freeGrantCents === "number" ? body.freeGrantCents : undefined,
+      note: typeof body.note === "string" ? body.note : undefined,
+      setBy: String(session.userDocId),
+    });
+    return jsonResponse(res);
+  }),
+});
+
+/** GET /gateway/policy?userId= — operator reads a user's policy. */
+http.route({
+  path: "/gateway/policy",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
+    const target = new URL(request.url).searchParams.get("userId");
+    if (!target) return errorResponse("userId required", 400);
+    const policy = await ctx.runQuery(internal.gatewayPolicy.getPolicyInternal, {
+      userId: target as any,
+    });
+    const tokens = await ctx.runQuery(internal.gatewayTokens.listForUserInternal, {
+      userId: target as any,
+    });
+    return jsonResponse({ ok: true, policy, tokens });
+  }),
+});
+
+/** POST /gateway/token/mint — operator mints a scoped inference token for a
+ *  user. Returns the RAW token ONCE (only the hash is stored). Body:
+ *  { targetUserId, label?, expiresAt? } */
+http.route({
+  path: "/gateway/token/mint",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
+    let body: any = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Bad JSON", 400);
+    }
+    if (!body.targetUserId) return errorResponse("targetUserId required", 400);
+    // Raw token: 32 random bytes, prefixed so it's recognizable in logs/env.
+    const buf = new Uint8Array(32);
+    crypto.getRandomValues(buf);
+    const raw =
+      "ygw_" + Array.from(buf).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const tokenHash = await sha256Hex(raw);
+    const res = await ctx.runMutation(internal.gatewayTokens.mintInternal, {
+      userId: body.targetUserId as any,
+      tokenHash,
+      scope: "inference",
+      label: typeof body.label === "string" ? body.label : undefined,
+      createdBy: String(session.userDocId),
+      expiresAt: typeof body.expiresAt === "number" ? body.expiresAt : undefined,
+    });
+    // raw is returned ONCE — the operator stores it (it's the OPENAI_API_KEY
+    // they bake into the tenant's runner). It is never retrievable again.
+    return jsonResponse({ ...res, token: raw });
+  }),
+});
+
+/** POST /gateway/token/revoke — operator revokes one token by id. */
+http.route({
+  path: "/gateway/token/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
+    let body: any = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Bad JSON", 400);
+    }
+    if (!body.tokenId) return errorResponse("tokenId required", 400);
+    const res = await ctx.runMutation(internal.gatewayTokens.revokeInternal, {
+      tokenId: body.tokenId as any,
+    });
+    return jsonResponse(res);
+  }),
+});
+
+/** POST /gateway/token/rotate — key rotation as a protection mechanism:
+ *  revoke ALL of a user's existing tokens and mint a fresh one. Body:
+ *  { targetUserId, label? } → returns the new raw token once. */
+http.route({
+  path: "/gateway/token/rotate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isOwner(session.email, session.userDocId)) return errorResponse("Operator only", 403);
+    let body: any = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Bad JSON", 400);
+    }
+    if (!body.targetUserId) return errorResponse("targetUserId required", 400);
+    await ctx.runMutation(internal.gatewayTokens.revokeAllForUserInternal, {
+      userId: body.targetUserId as any,
+    });
+    const buf = new Uint8Array(32);
+    crypto.getRandomValues(buf);
+    const raw =
+      "ygw_" + Array.from(buf).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const tokenHash = await sha256Hex(raw);
+    const res = await ctx.runMutation(internal.gatewayTokens.mintInternal, {
+      userId: body.targetUserId as any,
+      tokenHash,
+      scope: "inference",
+      label: typeof body.label === "string" ? body.label : "rotated",
+      createdBy: String(session.userDocId),
+    });
+    return jsonResponse({ ...res, token: raw, rotated: true });
   }),
 });
 
