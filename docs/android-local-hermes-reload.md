@@ -322,12 +322,11 @@ it (`YaverBundleValidator.kt:120-164`: `BC_VERSION_MISMATCH`,
        (`hermescSummaryAt`) — would mis-report on android-sandbox; polish later.
      - Edited shared `sandbox_proot.go` with user's OK to manage parallel-session
        collisions.
-   - **P1c — build + ship the binary** — run
-     `scripts/build-hermesc-alpine-arm64.sh` (needs Docker+buildx; arm64 box is
-     fastest), bake the output into the rootfs at `/usr/local/libexec/yaver/
-     hermesc` (or publish as a `yaver-models` asset), pin its sha256.
-   - **Then** verify `/dev/build-native` against `127.0.0.1:18080` end-to-end on
-     a physical device.
+   - **P1c — build the binary + rootfs** — *built + locally verified 2026-06-08
+     (commits 39c862a1, 2e6214ab).* See §11 for the full artifact report. hermesc
+     produces BC-version-96 HBC; the 38 MB rootfs runs node+hermesc when extracted.
+     **Pending (needs explicit go + device):** publish the tarballs as
+     `yaver-models` assets and wire enablement (see §11).
 3. **P2 — Close the loop**: trigger local build + `loadAppIfChanged()` from
    coding-agent / task / feedback completion (§3).
 4. **P3 — Android screenshot capture** native module (feedback visual) (§4).
@@ -342,9 +341,64 @@ it (`YaverBundleValidator.kt:120-164`: `BC_VERSION_MISMATCH`,
 
 - Confirm `YaverBundleLoaderModule.kt` is actually registered in the running
   build (package + `getJSBundleFile` wiring) on a physical device — none of
-  this has executed on real hardware yet.
-- Confirm the baked Alpine rootfs asset exists on the `yaver-models` release
-  (the rootfs itself was listed as not-yet-published in
-  `docs/coding-agent-on-device.md`).
-- Decide hermesc cross-build host (CI vs local) and pin to current container BC
-  version.
+  this has executed on real hardware yet. (Source is registered:
+  `MainApplication.kt:30`.)
+- Decide hermesc cross-build host (CI vs local) — DONE, built locally (§11).
+
+---
+
+## 11. Built artifacts + remaining wiring (2026-06-08 overnight)
+
+Both build tools are committed and their outputs were built + verified on the
+dev Mac (Docker, native arm64 — **no Hetzner spend**). Artifacts live under
+`out/` (gitignored), not published.
+
+### hermesc — `scripts/build-hermesc-alpine-arm64.sh` (commit 39c862a1)
+- musl/arm64, **HBC bytecode version 96** (matches the container; RN 0.81).
+- Self-contained: bundles its ICU trio + libstdc++ + libgcc_s next to the binary
+  with a baked rpath of `/usr/local/libexec/yaver`, so it's decoupled from the
+  rootfs's own ICU/toolchain versions.
+- Verified in a bare Alpine 3.20 (≠ its 3.17 build base, no `apk add`): runs and
+  compiles JS→HBC, output header magic `0x1F1903C1` + version `96`.
+- Hard-won build facts: Alpine **3.17** (musl 1.2.3 keeps the LFS64 aliases
+  LLVH needs; 3.18+ dropped `lseek64`) + `-D_LARGEFILE64_SOURCE`; **dynamic, not
+  -static** (Alpine's `libicudata.a` is a 1.3 KB stub); `HERMES_UNICODE_LITE`
+  does **not** bypass the ICU requirement in this ref.
+
+### rootfs — `scripts/build-android-rootfs-alpine-arm64.sh` (commit 2e6214ab)
+- The `yaver-rootfs-alpine-arm64` asset (node 20 + npm + git + ripgrep + bash +
+  hermesc baked at `/usr/local/libexec/yaver/`), **38 MB** gz, lean base.
+- **Built sha256 `131aa5685838300afb789c82fc7f4f2eff324f8e8b352199b612167fd0ef2b57`,
+  version `2026-06-08-1`.**
+- Verified: extracted exactly as `RootfsInstaller.kt` would, chroot'd in, ran
+  `node v20.15.1` + hermesc JS→HBC (magic+BC96). Full on-device build path proven
+  (chroot ≈ proot).
+- **Coding CLIs (claude/codex/opencode) NOT in this rootfs** — they install but
+  expose no bin on musl/arm64 (separate cli-on-device problem). The hermes-reload
+  path needs only node+hermesc, so this base is sufficient for it; cli-on-device
+  needs a follow-up (likely fetch the platform binaries / fix bin linking).
+
+### THE blocker that's bigger than hermesc: enablement is UI-orphaned
+`installRootfs` / `startSandbox` (`mobile/src/lib/sandboxControl.ts`) have **no
+callers anywhere in the app** — nothing triggers rootfs download/extract or
+starts the sandbox. So even with a published rootfs + working hermesc, a user
+can't turn the on-device sandbox on. This mirrors the iOS repo-coding
+UI-orphan pattern. **The real next build** is an enablement surface (settings/
+onboarding) that:
+1. calls `installRootfs(url, sha256, version)` with a progress UI, using the
+   pinned sha/version above and the published asset URL;
+2. calls `startSandbox(token)` → registers `__this_phone__` (`localBox.ts`);
+3. surfaces status. Then the reload/tasks/feedback flows that already route to
+   the local box (`codingExecution.ts`) light up.
+
+### Exact remaining steps (need explicit go + a physical Android device)
+1. **Publish assets**: create `kivanccakmak/yaver-models` (doesn't exist yet),
+   `gh release upload` both tarballs. (gh is authed with `repo`/`write:packages`.)
+   Outward-facing — left for an explicit go.
+2. **Wire enablement UI** (above), pinning sha `131aa568…` / version
+   `2026-06-08-1` / the asset URL.
+3. **Device-verify** the whole chain: enable sandbox → `/dev/build-native`
+   against `127.0.0.1:18080` builds HBC in-proot → `loadAppIfChanged` mounts it.
+4. **P1b polish**: wrap the corepack/global-tool setup + the `hermescSummaryAt`
+   `--version` doctor probe (would mis-report on android-sandbox).
+5. Then **P2** (reload-after-edit), **P3** (Android screenshot capture).
