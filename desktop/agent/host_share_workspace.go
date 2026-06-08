@@ -133,6 +133,79 @@ func (m *HostShareWorkspaceManager) EnsureWorkspace(sessionID string) (*HostShar
 	return ws, nil
 }
 
+// DeleteWorkspace removes a tenant's entire workspace tree (repo + metadata)
+// for the given session. Idempotent: a missing dir is success. This is the
+// "removable allocation" wipe — on session end/revoke/expiry the tenant's
+// code and data must leave the operator's disk, both for the tenant's
+// privacy and to prevent cross-tenant residue when the box is reused.
+func (m *HostShareWorkspaceManager) DeleteWorkspace(sessionID string) error {
+	if m == nil {
+		return fmt.Errorf("workspace manager unavailable")
+	}
+	rootDir, _, _, err := m.workspacePaths(sessionID)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := os.RemoveAll(rootDir); err != nil {
+		return fmt.Errorf("remove workspace %s: %w", sessionID, err)
+	}
+	return nil
+}
+
+// listSessionDirsLocked returns the sanitized session-dir names that
+// currently exist under the workspaces base dir. Caller holds m.mu.
+func (m *HostShareWorkspaceManager) listSessionDirsLocked() ([]string, error) {
+	entries, err := os.ReadDir(m.baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
+}
+
+// ReapExcept deletes every on-disk workspace whose sanitized session id is
+// NOT in keepSanitized. Returns the sanitized dir names removed. Used by the
+// host-share reaper to scrub workspaces of sessions that have ended/been
+// revoked while the agent wasn't holding a live terminal for them.
+func (m *HostShareWorkspaceManager) ReapExcept(keepSanitized map[string]bool) ([]string, error) {
+	if m == nil {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	names, err := m.listSessionDirsLocked()
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	for _, name := range names {
+		if keepSanitized[name] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(m.baseDir, name)); err != nil {
+			return removed, fmt.Errorf("reap workspace %s: %w", name, err)
+		}
+		removed = append(removed, name)
+	}
+	return removed, nil
+}
+
+// SanitizeSessionID exposes the same dir-name normalization used internally,
+// so callers (the reaper) can build a keep-set keyed by dir name.
+func (m *HostShareWorkspaceManager) SanitizeSessionID(sessionID string) string {
+	return sanitizeHostShareSessionID(sessionID)
+}
+
 func (m *HostShareWorkspaceManager) GetWorkspace(sessionID string) (*HostShareWorkspace, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

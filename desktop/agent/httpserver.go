@@ -38,6 +38,10 @@ type HTTPServer struct {
 	deviceID       string
 	convexURL      string
 	hostname       string
+	// operatorMode marks this box as part of a Yaver-operated public compute
+	// fleet (yaver serve --operator). Drives the host-share reaper every cycle
+	// so tenant slices are scrubbed promptly. Default false.
+	operatorMode   bool
 	taskMgr        *TaskManager
 	execMgr        *ExecManager
 	scheduler      *Scheduler
@@ -1717,6 +1721,9 @@ func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 				s.guestConfigMgr.UpdateConfigs(cfgs)
 			}
 		}
+		// Removable-allocation teardown: hard-kill + wipe any host-share slice
+		// no longer active (revoked/ended/expired). Cheap no-op on normal boxes.
+		s.runHostShareReap()
 	}
 	fetchOnce()
 
