@@ -46,6 +46,26 @@ function todayUTC(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
+// Per-user à-la-carte gate. The global YAVER_MANAGED_METER_LIVE flag is
+// the platform-wide kill switch; this is the per-user opt-in ON TOP of
+// it. A user only incurs REAL (non-dryRun) charges for a meter kind they
+// have explicitly turned on via userSettings.managedServices (the
+// capability shelf — docs/yaver-normie-concierge-fair-metering.md). The
+// reseller meters route 1:1 to a service key (inference→inference,
+// backend→backend, web→web, publish→publish); anything else is treated
+// as not-opted-in and stays simulated. This is defense-in-depth: even if
+// a gateway/proxy caller passes dryRun:false, a user who never enabled
+// the capability is never billed for real.
+async function userOptedIntoKind(ctx: any, userId: string, kind: string): Promise<boolean> {
+  const settings = await ctx.db
+    .query("userSettings")
+    .withIndex("by_userId", (q: any) => q.eq("userId", userId))
+    .first();
+  const svc = settings?.managedServices as Record<string, boolean> | undefined;
+  if (!svc) return false;
+  return svc[kind] === true;
+}
+
 // Local wallet row helper. The canonical wallet owner is
 // cloudLifecycle.ts (ensureWalletRow); this is an intentional inline
 // copy so managedMeter stays import-independent of that module. Same
@@ -96,7 +116,12 @@ export const recordManagedUsage = internalMutation({
     ctx,
     { userId, kind, provider, unit, quantity, providerCostCents, model, ref, dryRun },
   ): Promise<{ balanceCents: number; suspend: boolean; charged: number }> => {
-    const sim = dryRun !== false; // default true (no real spend posture)
+    // dryRun unless BOTH the caller asked for a real charge (dryRun:false)
+    // AND the user has opted this capability in. Per-user opt-in is the
+    // à-la-carte gate on top of the global YAVER_MANAGED_METER_LIVE flag
+    // (which the calling gateway/proxy already consulted to decide dryRun).
+    const optedIn = await userOptedIntoKind(ctx, userId, kind);
+    const sim = dryRun !== false || !optedIn; // default true (no real spend posture)
     const cost = Math.max(0, Math.ceil(providerCostCents));
     if (cost <= 0 && quantity <= 0) {
       const w0 = await ensureWalletRow(ctx, userId);
