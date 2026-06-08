@@ -289,9 +289,93 @@ function RunnerAuthCTA({
   );
 }
 
-export function ManagedCloudPanel({ token }: { token: string | null | undefined }) {
+// Slim one-line summary for the Devices index. The full buy/manage
+// flow now lives on its own Cloud page (so it doesn't pollute the
+// Devices list and has room to grow into the paid surface) — this just
+// shows machine count + balance and links there.
+export function ManagedCloudSummary({
+  token,
+  onOpen,
+}: {
+  token: string | null | undefined;
+  onOpen: () => void;
+}) {
+  const [access, setAccess] = useState<boolean | null>(null);
+  const [count, setCount] = useState(0);
+  const [active, setActive] = useState(0);
+  const [balanceCents, setBalanceCents] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/subscription`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!alive) return;
+        setAccess(data?.cloudAccess === true || data?.cloudPreviewOwner === true);
+        const ms = Array.isArray(data?.machines) ? data.machines : [];
+        const live = ms.filter((m: ManagedMachine) => m.status !== "stopped");
+        setCount(live.length);
+        setActive(live.filter((m: ManagedMachine) => m.status === "active").length);
+      } catch {
+        /* non-fatal */
+      }
+      try {
+        const b = await fetch(`${CONVEX_URL}/billing/yaver-cloud/balance`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (b.ok && alive) {
+          const j = await b.json().catch(() => ({}));
+          setBalanceCents(typeof j?.balanceCents === "number" ? j.balanceCents : null);
+        }
+      } catch {
+        /* non-fatal */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
+  if (!token || access !== true) return null;
+  const money = typeof balanceCents === "number" ? `$${(balanceCents / 100).toFixed(2)}` : null;
+
+  return (
+    <button
+      onClick={onOpen}
+      className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/60 px-4 py-3 text-left text-sm font-semibold text-slate-700 transition-colors hover:border-sky-500/50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.6)] dark:text-surface-200"
+    >
+      <span className="flex flex-wrap items-center gap-2">
+        <span>☁ Yaver Cloud</span>
+        {count > 0 ? (
+          <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold text-sky-600 dark:text-sky-300">
+            {count} machine{count === 1 ? "" : "s"}
+            {active > 0 ? ` · ${active} active` : ""}
+          </span>
+        ) : (
+          <span className="text-xs font-normal text-slate-400">rent a managed box</span>
+        )}
+      </span>
+      <span className="flex items-center gap-2 text-xs font-normal text-slate-500 dark:text-surface-400">
+        {money ? <span>{money}</span> : null}
+        <span className="opacity-60">→</span>
+      </span>
+    </button>
+  );
+}
+
+export function ManagedCloudPanel({
+  token,
+  standalone,
+}: {
+  token: string | null | undefined;
+  standalone?: boolean;
+}) {
   const [machines, setMachines] = useState<ManagedMachine[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(standalone ?? false);
   // Owner-only private preview. Server (/subscription cloudPreviewOwner
   // = isCloudPreviewUser allowlist) is the source of truth — never a
   // hardcoded name. null = unknown (render nothing, don't flash the
@@ -311,8 +395,13 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [machineType, setMachineType] = useState("cpu");
+  // CPU is the only shipped tier. GPU / KVM-emulator / iOS-Mac aren't
+  // implemented, so there's no machine-type picker on the index — the
+  // full catalog (when those land) lives on a dedicated checkout page,
+  // not inline here. Kept as a const so buy()/provision still send it.
+  const machineType = "cpu";
   const [region, setRegion] = useState("eu");
+  const [showAdopt, setShowAdopt] = useState(false);
 
   async function buy() {
     setBusy(true);
@@ -514,31 +603,44 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   const money = (cents: number | null) =>
     typeof cents === "number" ? `$${(cents / 100).toFixed(2)}` : "—";
 
+  const cloudCount = liveMachines.length;
+
   return (
     <div className="mt-4 rounded-xl border border-slate-300 bg-white/60 p-4 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.6)]">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between text-left text-sm font-semibold text-slate-700 dark:text-surface-200"
+        className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-slate-700 dark:text-surface-200"
       >
-        <span>☁ Managed cloud — buy / adopt</span>
-        <span className="text-xs opacity-60">{open ? "▾" : "▸"}</span>
+        <span className="flex flex-wrap items-center gap-2">
+          <span>☁ Yaver Cloud</span>
+          {cloudCount > 0 ? (
+            <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold text-sky-600 dark:text-sky-300">
+              {cloudCount} machine{cloudCount === 1 ? "" : "s"}
+              {active > 0 ? ` · ${active} active` : ""}
+              {paused > 0 ? ` · ${paused} paused` : ""}
+              {provisioning > 0 ? ` · ${provisioning} starting` : ""}
+            </span>
+          ) : (
+            <span className="text-xs font-normal text-slate-400">rent a managed box</span>
+          )}
+        </span>
+        <span className="flex items-center gap-2 text-xs font-normal text-slate-500 dark:text-surface-400">
+          <span>{money(balanceCents)}</span>
+          <span className="opacity-60">{open ? "▾" : "▸"}</span>
+        </span>
       </button>
 
       {open ? (
         <div className="mt-3 space-y-3">
           <p className="text-xs text-slate-500 dark:text-surface-400">
-            Boxes here are <b>managed</b> (provisioned/adopted by Yaver) — each
-            device card shows a <b>Yaver Cloud</b> badge. Every other device is{" "}
-            <b>self-hosted</b> (your own cloud box or hardware). Adopt imitates a
-            managed purchase for an existing box. To remove a box, use the{" "}
-            <b>♻ Delete box</b> button on its row below — it snapshots, then
-            decommissions the cloud resource and stops billing.
+            Managed boxes provisioned by Yaver, billed from prepaid credit. Your
+            self-hosted devices are listed below.
           </p>
 
           {/* Prepaid wallet — OpenAI-style credit. Top up on the web
               (no app-store billing); spend it on compute. */}
           <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-bold text-slate-800 dark:text-surface-100">
                 {money(balanceCents)}
               </span>
@@ -552,111 +654,94 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                   Low balance
                 </span>
               ) : null}
+              <span className="ml-auto flex flex-wrap gap-1.5">
+                {(packs.length
+                  ? packs
+                  : [
+                      { id: "p10", cents: 1000, label: "$10" },
+                      { id: "p25", cents: 2500, label: "$25" },
+                      { id: "p50", cents: 5000, label: "$50" },
+                    ]
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    disabled={busy}
+                    onClick={() => void addCredit(p.id)}
+                    className="rounded border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-[11px] font-semibold text-sky-700 disabled:opacity-50 dark:text-sky-300"
+                  >
+                    + {p.label}
+                  </button>
+                ))}
+              </span>
             </div>
-            <p className="mb-1.5 text-[11px] text-slate-500 dark:text-surface-400">Add credit</p>
-            <div className="flex flex-wrap gap-2">
-              {(packs.length
-                ? packs
-                : [
-                    { id: "p10", cents: 1000, label: "$10" },
-                    { id: "p25", cents: 2500, label: "$25" },
-                    { id: "p50", cents: 5000, label: "$50" },
-                    { id: "p100", cents: 10000, label: "$100" },
-                  ]
-              ).map((p) => (
-                <button
-                  key={p.id}
-                  disabled={busy}
-                  onClick={() => void addCredit(p.id)}
-                  className="rounded-md border border-sky-500/50 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-700 disabled:opacity-50 dark:text-sky-300"
-                >
-                  + {p.label}
-                </button>
-              ))}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-slate-500 dark:text-surface-400">Spin up a CPU box</span>
+              <span className="flex gap-1">
+                {["eu", "us"].map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRegion(r)}
+                    className={`rounded border px-2 py-0.5 text-[11px] font-semibold uppercase ${
+                      region === r
+                        ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                        : "border-slate-300 text-slate-500 dark:border-surface-700 dark:text-surface-400"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </span>
               <button
                 disabled={busy}
                 onClick={() => post("/billing/yaver-cloud/provision", { machineType, region })}
-                className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+                className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
               >
                 {busy ? "…" : "Spin up (prepaid)"}
               </button>
+              {owner ? (
+                <button
+                  disabled={busy}
+                  onClick={() => void buy()}
+                  className="rounded-md border border-slate-300 px-3 py-1 text-xs font-semibold disabled:opacity-50 dark:border-surface-700"
+                  title="Subscription checkout (owner/dev path)"
+                >
+                  {busy ? "…" : "Buy → subscription"}
+                </button>
+              ) : null}
             </div>
             <p className="mt-1.5 text-[10px] text-slate-400">
-              Opens a secure checkout; credit is added when payment clears. Spin
-              up bills from your balance — no subscription.
+              Bills from your balance — no subscription. GPU, emulator and iOS
+              tiers are coming soon.
             </p>
           </div>
 
-          {/* Subscription buy + adopt are owner/dev paths (server still
-              owner-gates them); prepaid is the public front door above. */}
+          {/* Adopt is an owner/dev path — tucked behind a toggle so it
+              doesn't clutter the index for everyone else. */}
           {owner ? (
-          <>
-          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
-            <p className="mb-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-              Buy a managed box (subscription)
-            </p>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="text-[11px] text-slate-500 dark:text-surface-400">
-                Machine
-                <select
-                  value={machineType}
-                  onChange={(e) => setMachineType(e.target.value)}
-                  className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
+            showAdopt ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={adoptId}
+                  onChange={(e) => setAdoptId(e.target.value)}
+                  placeholder="Existing cloud resource id to adopt"
+                  className="flex-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
+                />
+                <button
+                  disabled={busy || adoptId.trim() === ""}
+                  onClick={() => post("/billing/yaver-cloud/dev-adopt", { hetznerServerId: adoptId.trim() })}
+                  className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-50 dark:border-surface-700"
                 >
-                  <option value="cpu">CPU — React Native/Hermes + web + deploy (default)</option>
-                  <option value="gpu" disabled>GPU — AI / Ollama — coming soon</option>
-                  <option value="kvm" disabled>Flutter/Kotlin emulator — coming soon</option>
-                  <option value="ios" disabled>iOS (Mac) — coming soon</option>
-                </select>
-              </label>
-              <label className="text-[11px] text-slate-500 dark:text-surface-400">
-                Region
-                <select
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
-                >
-                  <option value="eu">eu</option>
-                  <option value="us">us</option>
-                </select>
-              </label>
+                  {busy ? "…" : "Adopt"}
+                </button>
+              </div>
+            ) : (
               <button
-                disabled={busy}
-                onClick={() => void buy()}
-                className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+                onClick={() => setShowAdopt(true)}
+                className="text-[11px] font-medium text-slate-500 underline-offset-2 hover:underline dark:text-surface-400"
               >
-                {busy ? "…" : "Buy → checkout"}
+                Adopt an existing cloud box →
               </button>
-            </div>
-            <p className="mt-1.5 text-[10px] text-slate-400">
-              Opens LemonSqueezy; the box auto-provisions on payment. Private
-              preview — non-owner accounts get a 403 until launch.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              value={adoptId}
-              onChange={(e) => setAdoptId(e.target.value)}
-              placeholder="Existing cloud resource id to adopt"
-              className="flex-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
-            />
-            <button
-              disabled={busy || adoptId.trim() === ""}
-              onClick={() => post("/billing/yaver-cloud/dev-adopt", { hetznerServerId: adoptId.trim() })}
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-50 dark:border-surface-700"
-            >
-              {busy ? "…" : "Adopt as managed"}
-            </button>
-          </div>
-          </>
-          ) : null}
-
-          {machines.length > 0 ? (
-            <p className="text-[11px] text-slate-500 dark:text-surface-400">
-              {active} active · {paused} paused · {provisioning} provisioning
-              {provisioning > 0 ? " — auto-refreshing every 8s, your box appears here when ready" : ""}
-            </p>
+            )
           ) : null}
 
           <div className="space-y-2">

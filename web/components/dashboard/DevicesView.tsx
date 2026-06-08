@@ -6,7 +6,7 @@ import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import { NetCaptureModal } from "./NetCaptureModal";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
-import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
+import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
@@ -819,6 +819,8 @@ interface DevicesViewProps {
   activeWorkspaceDeviceId?: string | null;
   /** Count of devices hidden via the Hide button — surfaced for the "show all" link. */
   hiddenCount?: number;
+  /** Navigate to the dedicated Yaver Cloud page (slim summary card links here). */
+  onNavigateCloud?: () => void;
 }
 
 interface DeviceRuntimeInfo {
@@ -2274,6 +2276,7 @@ export default function DevicesView({
   onCloseWorkspace,
   activeWorkspaceDeviceId = null,
   hiddenCount = 0,
+  onNavigateCloud,
 }: DevicesViewProps) {
   const agentConnectionState = useAgentConnectionState();
   const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
@@ -2515,7 +2518,9 @@ export default function DevicesView({
               {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent agent signal and no usable relay/tunnel path.
             </div>
           ) : null}
-          <ManagedCloudPanel token={token} />
+          {onNavigateCloud ? (
+            <ManagedCloudSummary token={token} onOpen={onNavigateCloud} />
+          ) : null}
           {renderedDevices.map((device) => {
             const shareSummary = deviceShareSummary(device);
             const isActiveWorkspace = activeWorkspaceDeviceId === device.id;

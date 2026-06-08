@@ -49,6 +49,7 @@ import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE } from "@/components/dashboard/DevicesView";
 import BillingView from "@/components/dashboard/BillingView";
+import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
 import SettingsView from "@/components/dashboard/SettingsView";
 import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
 import webPkg from "../../package.json";
@@ -799,7 +800,7 @@ export default function DashboardPage() {
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1881,6 +1882,7 @@ export default function DashboardPage() {
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
     { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
+    { id: "cloud", label: "Cloud", icon: "\u2601\uFE0F" },
     { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
     { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
     { id: "vibe", label: "Vibe", icon: "\u2328\uFE0F" },
@@ -1969,6 +1971,7 @@ export default function DashboardPage() {
           <nav className="flex flex-col gap-[2px]">
             {([
               { id: "devices",  label: "Devices",  icon: "💻" },
+              { id: "cloud",    label: "Cloud",    icon: "☁️" },
               { id: "chat",     label: "Chat",     icon: "💬" },
               { id: "projects", label: "Projects", icon: "📁" },
               { id: "git",      label: "Git",      icon: "⎇" },
@@ -2672,6 +2675,15 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
           ) : activeTab === "billing" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><BillingView token={token} /></div>
+          ) : activeTab === "cloud" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
+              <h2 className="text-lg font-semibold text-surface-100">Yaver Cloud</h2>
+              <p className="mt-1 text-xs text-surface-500">
+                Managed boxes provisioned by Yaver, billed from prepaid credit.
+                Top up, spin up, and manage your cloud machines here.
+              </p>
+              <ManagedCloudPanel token={token} standalone />
+            </div>
           ) : activeTab === "guests" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><GuestsStatusView /></div>
           ) : activeTab === "convex" ? (
@@ -2734,6 +2746,7 @@ export default function DashboardPage() {
                 onCloseWorkspace={disconnect}
                 activeWorkspaceDeviceId={connectedDevice?.id ?? null}
                 hiddenCount={hiddenIds.size}
+                onNavigateCloud={() => setActiveTab("cloud")}
               />
             </div>
           ) : activeTab === "git" ? (
