@@ -25,7 +25,7 @@ import {
 } from "../src/lib/armClient";
 
 const STEPS = [1, 5, 15, 45];
-const DRIVERS = ["fairino", "mycobot", "parol6", "generic_tcp", "generic_serial", "bridge"];
+const DRIVERS = ["sim", "fairino", "mycobot", "parol6", "generic_tcp", "generic_serial", "bridge"];
 
 export default function ArmScreen() {
   const c = useColors();
@@ -200,12 +200,27 @@ export default function ArmScreen() {
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         {/* identity + status */}
         <View style={[card, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
-          <View>
-            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>
-              {info?.vendor ? `${info.vendor} ${info?.model || ""}` : config?.driver || "arm"} · {info?.dof ?? "?"} DOF
-            </Text>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ color: c.textPrimary, fontWeight: "700" }}>
+                {info?.vendor ? `${info.vendor} ${info?.model || ""}` : config?.driver || "arm"} · {info?.dof ?? "?"} DOF
+              </Text>
+              {config?.driver === "sim" && (
+                <View style={{ backgroundColor: c.accent, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                  <Text style={{ color: c.textInverse, fontSize: 10, fontWeight: "800" }}>SIM</Text>
+                </View>
+              )}
+            </View>
             <Text style={{ color: c.textMuted, fontSize: 12 }}>
-              {status?.connected ? (status?.estopped ? "E-STOPPED" : status?.enabled ? "enabled" : "ready") : "offline"}
+              {config?.driver === "sim"
+                ? `simulator · ${config?.sim?.engine || "pybullet"}`
+                : status?.connected
+                  ? status?.estopped
+                    ? "E-STOPPED"
+                    : status?.enabled
+                      ? "enabled"
+                      : "ready"
+                  : "offline"}
               {info?.source ? ` · ${info.source}` : ""}
             </Text>
           </View>
@@ -223,7 +238,10 @@ export default function ArmScreen() {
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
                   <View style={{ flexDirection: "row", gap: 8 }}>
                     {models.map((m) => {
-                      const picked = config?.driver === m.driver && config?.info?.model === m.info.model;
+                      const isSim = m.driver === "sim";
+                      const picked = isSim
+                        ? config?.driver === "sim" && config?.sim?.model === m.simSource
+                        : config?.driver === m.driver && config?.info?.model === m.info.model;
                       return (
                         <Pressable
                           key={`${m.vendor}-${m.model}`}
@@ -232,12 +250,15 @@ export default function ArmScreen() {
                               ...(cfg || { info: { dof: 0, joints: [] } }),
                               driver: m.driver,
                               info: m.info,
-                              addr: cfg?.addr || (m.driver === "fairino" ? "192.168.58.2" : cfg?.addr || ""),
+                              addr: isSim ? cfg?.addr || "" : cfg?.addr || (m.driver === "fairino" ? "192.168.58.2" : cfg?.addr || ""),
+                              ...(isSim ? { sim: { ...(cfg?.sim || {}), engine: "pybullet", model: m.simSource } } : {}),
                             }))
                           }
-                          style={[btn(picked ? c.accent : c.bgCardElevated), { minWidth: 120 }]}
+                          style={[btn(picked ? c.accent : c.bgCardElevated), { minWidth: 120, borderWidth: isSim ? 1 : 0, borderColor: c.accent }]}
                         >
-                          <Text style={{ color: picked ? c.textInverse : c.textPrimary, fontWeight: "700", fontSize: 12 }}>{m.model}</Text>
+                          <Text style={{ color: picked ? c.textInverse : c.textPrimary, fontWeight: "700", fontSize: 12 }}>
+                            {isSim ? "🖥 " : ""}{m.model}
+                          </Text>
                           <Text style={{ color: picked ? c.textInverse : c.textMuted, fontSize: 10 }}>
                             {m.vendor} · {m.info.dof}DOF{m.payloadKg ? ` · ${m.payloadKg}kg` : ""}
                           </Text>
@@ -368,6 +389,11 @@ export default function ArmScreen() {
           {status?.estopped && (
             <Pressable disabled={busy} onPress={() => { const t = target(); if (t) run(() => armClient.reset(t)); }} style={btn(c.accent)}>
               <Text style={{ color: c.textInverse }}>Reset</Text>
+            </Pressable>
+          )}
+          {config?.driver === "sim" && (
+            <Pressable disabled={busy} onPress={() => { const t = target(); if (t) run(() => armClient.simReset(t)); }} style={btn(c.bgCardElevated)}>
+              <Text style={{ color: c.textPrimary }}>Reset sim</Text>
             </Pressable>
           )}
         </View>

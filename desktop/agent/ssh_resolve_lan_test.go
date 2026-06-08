@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"testing"
+	"time"
 )
 
 func TestIsPrivateLanIPv4(t *testing.T) {
@@ -100,15 +101,15 @@ func TestSameIPv4Slash24(t *testing.T) {
 func TestPickReachableLanIP_RejectsNonLanCandidates(t *testing.T) {
 	// All of these should be rejected even on a host with active LAN.
 	for _, bad := range []string{
-		"100.64.0.5",   // Tailscale CGNAT
+		"100.64.0.5",    // Tailscale CGNAT
 		"100.89.155.25", // Tailscale CGNAT (the regression IP)
-		"8.8.8.8",      // public
-		"127.0.0.1",    // loopback
-		"::1",          // ipv6 loopback
-		"169.254.1.1",  // link-local
-		"",             // empty
-		"garbage",      // unparseable
-		"172.17.0.1",   // docker bridge default
+		"8.8.8.8",       // public
+		"127.0.0.1",     // loopback
+		"::1",           // ipv6 loopback
+		"169.254.1.1",   // link-local
+		"",              // empty
+		"garbage",       // unparseable
+		"172.17.0.1",    // docker bridge default
 	} {
 		if got := pickReachableLanIP([]string{bad}); got != "" {
 			t.Errorf("pickReachableLanIP(%q) = %q, want \"\"", bad, got)
@@ -155,6 +156,43 @@ func TestTailscaleStateLabel(t *testing.T) {
 	}
 	if got := tailscaleStateLabel(false); got == "" {
 		t.Fatalf("tailscaleStateLabel(false) returned empty label")
+	}
+}
+
+func TestFirstDialablePrivateIP_FiltersAndUnreachable(t *testing.T) {
+	// Non-private and bogus candidates are skipped; an unreachable
+	// private IP returns "" within the timeout budget rather than
+	// blocking. 192.0.2.1 is TEST-NET-1 (RFC5737) but not RFC1918, so
+	// it's filtered before any dial — keeps the test fast and offline.
+	got := firstDialablePrivateIP(
+		[]string{"", "not-an-ip", "8.8.8.8", "192.0.2.1", "172.17.0.1"},
+		"22", 200*time.Millisecond,
+	)
+	if got != "" {
+		t.Fatalf("firstDialablePrivateIP returned %q; want \"\" (all candidates non-private/docker/bogus)", got)
+	}
+}
+
+func TestFirstDialablePrivateIP_ReachableWins(t *testing.T) {
+	// Bind a real listener on a private interface IP (no mocks). When
+	// the machine has no RFC1918 interface (some CI runners), skip.
+	locals, err := localInterfacePrivateIPv4s()
+	if err != nil || len(locals) == 0 {
+		t.Skip("no RFC1918 interface available to bind a listener")
+	}
+	ip := locals[0].String()
+	ln, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
+	if err != nil {
+		t.Skipf("cannot bind listener on %s: %v", ip, err)
+	}
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	// A dead private IP first, then the live one — proves we keep
+	// probing past an unreachable candidate and return the reachable one.
+	got := firstDialablePrivateIP([]string{"10.255.255.1", ip}, port, 300*time.Millisecond)
+	if got != ip {
+		t.Fatalf("firstDialablePrivateIP = %q; want reachable %q", got, ip)
 	}
 }
 

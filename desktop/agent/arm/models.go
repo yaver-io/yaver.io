@@ -20,6 +20,12 @@ type RobotModel struct {
 	ReachMm   float64 `json:"reachMm,omitempty"`
 	Info      ArmInfo `json:"info"`              // DOF + joint table to prefill
 	Note      string  `json:"note,omitempty"`
+
+	// SimSource is set only on SIMULATOR models (Driver "sim"): the token the
+	// PyBullet/MuJoCo harness uses to load the robot — "builtin:arm6" (procedural,
+	// no asset), "pybullet:<path>" (bundled pybullet_data), "desc:<name>"
+	// (robot_descriptions.py), or "urdf:<path-or-url>". Empty on hardware models.
+	SimSource string `json:"simSource,omitempty"`
 }
 
 // revolute builds an N-joint revolute table from symmetric ±limit degrees (or a

@@ -151,6 +151,8 @@ func ensureArm() (*arm.Controller, error) {
 			backend = arm.NewBridgeArmBackend(cfg, "")
 		case "parol6":
 			backend = arm.NewBridgeArmBackend(cfg, "http://127.0.0.1:5056")
+		case "sim":
+			backend = arm.NewSimBackend(cfg)
 		default: // generic_tcp / generic_serial / generic
 			backend, err = arm.NewGenericArmBackend(cfg)
 		}
@@ -158,7 +160,14 @@ func ensureArm() (*arm.Controller, error) {
 			armErr = err
 			return
 		}
-		armCtrl = arm.NewController(backend, armCamera(cfg), robot.VisionConfig{}, cfg)
+		// The sim renders its own frames; unless the user pinned a real camera,
+		// point the camera at the harness so arm_snapshot / arm_look / verify show
+		// the simulation through the exact same path as a hardware webcam.
+		cam := armCamera(cfg)
+		if sb, ok := backend.(*arm.SimBackend); ok && cam == nil {
+			cam = robot.NewHTTPCamera(sb.FrameURL())
+		}
+		armCtrl = arm.NewController(backend, cam, robot.VisionConfig{}, cfg)
 	})
 	return armCtrl, armErr
 }
@@ -194,6 +203,10 @@ type armPayload struct {
 	Label   string             `json:"label"`
 	Cmd     string             `json:"cmd"`
 	Prompt  string             `json:"prompt"`
+	// force/contact (insert / seat / pull-test)
+	Dir         string  `json:"dir"`         // TCP axis "z" / "-z" for a guarded compliant move
+	ForceLimitN float64 `json:"forceLimitN"` // stop when |force on dir| reaches this (N)
+	MaxDistMm   float64 `json:"maxDistMm"`   // give up after this much travel (mm)
 }
 
 func parseArm(p json.RawMessage) armPayload {
@@ -214,6 +227,7 @@ func armDriverCatalog() []map[string]any {
 		{"driver": "generic_tcp", "label": "Generic line-protocol (TCP)", "transport": "tcp"},
 		{"driver": "generic_serial", "label": "Generic line-protocol (serial)", "transport": "serial"},
 		{"driver": "bridge", "label": "Custom JSON bridge", "transport": "http"},
+		{"driver": "sim", "label": "Simulator (PyBullet, no hardware)", "transport": "sim", "note": "headless physics sim — jog/teach/repeat and SEE the arm move with no robot. pip install pybullet numpy pillow"},
 	}
 }
 
@@ -225,10 +239,15 @@ func init() {
 	reg("arm_drivers", "List supported arm drivers (Fairino / myCobot / PAROL6 / generic) + default joint tables for the UI", func(c OpsContext, _ json.RawMessage) OpsResult {
 		return OpsResult{OK: true, Initial: map[string]any{"drivers": armDriverCatalog()}}
 	})
-	reg("arm_models", "Catalog of known robot models (Fairino FR-series, Elephant myCobot family, Source-Robotics PAROL6) with DOF/joints/payload/reach — pick one to prefill the config", func(c OpsContext, _ json.RawMessage) OpsResult {
+	reg("arm_models", "Catalog of known robot models (Fairino, Elephant myCobot, PAROL6, plus a Simulator group) with DOF/joints/payload/reach — pick one to prefill the config", func(c OpsContext, _ json.RawMessage) OpsResult {
+		// Hardware models + the simulator catalog in one list so the UI model
+		// picker shows a "Simulator" vendor group alongside real robots.
+		models := append(arm.RobotModels(), arm.SimModels()...)
+		byVendor := arm.RobotModelsByVendor()
+		byVendor[arm.SimVendor] = arm.SimModels()
 		return OpsResult{OK: true, Initial: map[string]any{
-			"models":   arm.RobotModels(),
-			"byVendor": arm.RobotModelsByVendor(),
+			"models":   models,
+			"byVendor": byVendor,
 		}}
 	})
 	reg("arm_config_get", "Get this arm cell's config (driver, addr, DOF/joints, camera)", func(c OpsContext, _ json.RawMessage) OpsResult {
@@ -345,6 +364,35 @@ func init() {
 		}
 		ctrl.Reset()
 		return OpsResult{OK: true, Initial: map[string]any{"estopped": false}}
+	})
+
+	// --- force / contact (insert, seat-to-backstop, pull-test) ---
+	reg("arm_wrench", "Read the TCP force/torque (wrist F/T) — ErrNoForce on arms without a sensor", func(c OpsContext, _ json.RawMessage) OpsResult {
+		ctrl, deny := armForOps()
+		if deny != nil {
+			return *deny
+		}
+		w, err := ctrl.Wrench(c.Ctx)
+		if err != nil {
+			code := "backend"
+			if err == arm.ErrNoForce {
+				code = "no_force"
+			}
+			return OpsResult{OK: false, Code: code, Error: err.Error()}
+		}
+		return OpsResult{OK: true, Initial: map[string]any{"wrench": w}}
+	})
+	reg("arm_force_move", "Guarded compliant move along a TCP axis {dir:\"z\"|\"-z\", forceLimitN, maxDistMm} — insert/seat-to-backstop, or pull-test on a -axis. Stops on contact or travel; bounds-checked + e-stop gated", func(c OpsContext, payload json.RawMessage) OpsResult {
+		ctrl, deny := armForOps()
+		if deny != nil {
+			return *deny
+		}
+		p := parseArm(payload)
+		if strings.TrimSpace(p.Dir) == "" {
+			return OpsResult{OK: false, Code: "bad_payload", Error: "dir required (e.g. \"z\" to insert, \"-z\" to pull)"}
+		}
+		fr := ctrl.ForceMove(c.Ctx, arm.Axis6(p.Dir), p.ForceLimitN, p.MaxDistMm, p.VelPct)
+		return OpsResult{OK: fr.OK, Code: fr.Code, Error: fr.Error, Initial: fr}
 	})
 
 	// --- learning mode: hand-guide + teach-and-repeat ---

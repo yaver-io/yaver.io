@@ -64,6 +64,13 @@ export type ArmMoveResult = {
   frames?: { before?: string; after?: string };
   tookMs?: number;
 };
+export type SimConfig = {
+  engine?: "pybullet" | "mujoco";
+  model?: string; // load token: "builtin:arm6" | "pybullet:.." | "desc:ur5e" | "urdf:<path|url>"
+  port?: number;
+  python?: string;
+  gui?: boolean;
+};
 export type ArmConfig = {
   driver?: string;
   addr?: string;
@@ -74,10 +81,12 @@ export type ArmConfig = {
   defaultVelPct?: number;
   defaultAccPct?: number;
   camera?: string;
+  sim?: SimConfig;
   label?: string;
 };
 export type ArmDriver = { driver: string; label: string; transport: string; defaultPort?: number; info?: ArmInfo; note?: string };
-export type RobotModel = { vendor: string; model: string; driver: string; transport: string; payloadKg?: number; reachMm?: number; info: ArmInfo; note?: string };
+export type RobotModel = { vendor: string; model: string; driver: string; transport: string; payloadKg?: number; reachMm?: number; info: ArmInfo; note?: string; simSource?: string };
+export type SimStatus = { isSim: boolean; engine?: string; model?: string; port?: number; frameUrl?: string; info?: ArmInfo };
 export type Waypoint = {
   joints?: Record<string, number>;
   pose?: Pose;
@@ -171,4 +180,9 @@ export const armClient = {
   // camera (shared box eye)
   snapshot: (t: ArmTarget) => armOps<{ ok?: boolean; image?: string; error?: string }>(t, "arm_snapshot", {}, 30000),
   look: (t: ArmTarget, prompt?: string) => armOps<{ ok?: boolean; answer?: string; image?: string; error?: string }>(t, "arm_look", { prompt }, 95000),
+  // simulator (driver "sim") — the rest of the arm_* verbs drive it unchanged
+  simModels: (t: ArmTarget) => armOps<{ models: RobotModel[] }>(t, "sim_models", {}, 15000),
+  simStatus: (t: ArmTarget) => armOps<SimStatus>(t, "sim_status", {}, 15000),
+  simLoad: (t: ArmTarget, model: string) => armOps<{ ok?: boolean; info?: ArmInfo; model?: string; error?: string }>(t, "sim_load", { model }, 90000),
+  simReset: (t: ArmTarget) => armOps<{ ok?: boolean; reset?: boolean; error?: string }>(t, "sim_reset", {}, 30000),
 };
