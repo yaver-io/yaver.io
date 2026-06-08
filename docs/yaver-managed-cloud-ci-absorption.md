@@ -388,12 +388,17 @@ guard pass; `npx convex codegen` = 0.
   - **SEAM 1** `mintRunnerRegistrationToken` → `githubRegistrationTokenURL`
     (repo/org/GHES) + `fetchRegistrationToken` (real POST, token via
     `detectGitHubToken`/`detectGitLabToken`). GitLab needs a numeric project_id
-    (honest error otherwise); gitlab-runner *exec* is the one remaining TODO.
-  - **SEAM 2** `runEphemeralRunner` → `githubRunnerDownloadURL` +
-    `ensureGitHubRunnerExtracted` (download+untar once) + `ghRunnerConfigArgs`
-    (`--ephemeral --unattended`) + host-mode (`runGitHubRunnerOnHost`) and
-    container-mode (`runGitHubRunnerInContainer`, mounts the runner into the
-    sandbox image) + per-run work dir wiped on return (teardown).
+    (honest error otherwise).
+  - **SEAM 2** `runEphemeralRunner` — both providers wired:
+    - **GitHub** → `githubRunnerDownloadURL` + `ensureGitHubRunnerExtracted`
+      (download+untar once) + `ghRunnerConfigArgs` (`--ephemeral --unattended`) +
+      host-mode (`runGitHubRunnerOnHost`) and container-mode
+      (`runGitHubRunnerInContainer`, mounts the runner into the sandbox image).
+    - **GitLab** (`ci_gitlab_runner.go`) → `gitlabRunnerDownloadURL` +
+      `ensureGitLabRunner` (download the binary once) + `gitlabRunnerRunArgs`
+      (`run-single --max-builds 1` — GitLab's one-shot ≈ GitHub `--ephemeral`);
+      host→`shell` executor, container→`docker` (default `alpine:latest`).
+    - per-run work dir wiped on return (teardown).
   - `CIManager` singleton (Register/Unregister/ResumeAll/Status) + per-reg
     `CISupervisor` ephemeral loop, sharing the HTTPServer `RunnerStore` so CI
     runs surface in the Runs tab.
@@ -415,11 +420,13 @@ guard pass; `npx convex codegen` = 0.
   pins `kind:"ci"`, debits the one wallet, dormant until live).
 - `schema.ts` — `managedUsage.wouldHaveCostUpstreamCents` (optional).
 
-**The remaining work to flip it on for a paying user:** (1) `gitlab-runner`
-exec path; (2) flip `YAVER_MANAGED_METER_LIVE` + surface the `ci` capability on
-the CapabilityShelf; (3) public/fork-PR support behind the full container jail +
-approval gate (operator gap C). The GitHub private-repo host/container path is
-complete and runnable on a real registered box today.
+**The remaining work to flip it on for a paying user:** (1) flip
+`YAVER_MANAGED_METER_LIVE` + surface the `ci` capability on the CapabilityShelf;
+(2) public/fork-PR support behind the full container jail + approval gate
+(operator gap C — the hardest, still open). Both GitHub and GitLab
+private-repo host/container paths are complete; the GitHub path is verified live
+on a real registered box (TestFlight/AAB-style deploy workflows run on the
+user's own hardware).
 
 ### Earlier slice notes
 
