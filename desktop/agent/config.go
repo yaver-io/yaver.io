@@ -33,6 +33,15 @@ type Config struct {
 	PreviousAuthTokens []string            `json:"previous_auth_tokens,omitempty"`
 	DeviceID           string              `json:"device_id,omitempty"`
 	ConvexSiteURL      string              `json:"convex_site_url,omitempty"`
+	// SSHTargets is a LOCAL device book so `yaver ssh <name>` works even
+	// when the agent isn't signed in (no Convex device lookup) or the box
+	// is offline. Maps a name/alias → how to reach it over plain SSH
+	// (user@host:port + optional identity file). Auto-populated (host only)
+	// from the account's device rows when authed, and user-editable via
+	// `yaver ssh add <name> <user@host[:port]> [--identity <key>]`.
+	// Passwords are NOT stored here in plaintext — use an SSH key /
+	// ssh-agent (identity_file), the secure path magara already uses.
+	SSHTargets []SSHTarget `json:"ssh_targets,omitempty"`
 	WebBaseURL         string              `json:"web_base_url,omitempty"`
 	TLSCert            string              `json:"tls_cert,omitempty"`
 	TLSKey             string              `json:"tls_key,omitempty"`
