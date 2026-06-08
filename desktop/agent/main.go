@@ -2929,6 +2929,11 @@ func runServe(args []string) {
 	// Start heartbeat loop (needs httpServer for authExpired flag)
 	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr, httpServer)
 
+	// Resume any self-hosted CI runners (managed-cloud CI absorption) so a
+	// registered runner survives an agent restart. No-ops when no CI runner
+	// is registered. See docs/yaver-managed-cloud-ci-absorption.md.
+	go resumeCIRunnersOnBoot(ctx, httpServer.ensureRunnerStore())
+
 	// Zero-touch post-claim: if this box self-credentialed via a provision
 	// seed, bring up its baked workload (yaver.provision.yaml `setup`) once.
 	// No-ops on a normal (non-provisioned) install. See provision_postclaim.go.
@@ -7409,6 +7414,11 @@ func runAlias(args []string) {
 // runSSHWrap (not runSSH) because multiregion_orchestrate.go already
 // owns runSSH for the sshpass-based provisioning helper.
 func runSSHWrap(args []string) {
+	// Device-book management: `yaver ssh add|ls|rm …`. Handled before
+	// target resolution so it works offline / unauthenticated.
+	if runSSHTargetSubcommand(args) {
+		return
+	}
 	// Bare `yaver ssh` (no target) and `yaver ssh primary` both resolve
 	// to userSettings.primaryDeviceId (the same value `yaver primary`
 	// surfaces). `yaver ssh secondary` resolves the secondary slot the
@@ -7481,6 +7491,30 @@ func runSSHWrap(args []string) {
 		host = resolvedDevice.Name
 	}
 	if host == "" {
+		// Local device book fallback — works offline / not signed in, the
+		// case the account path above can't handle. `yaver ssh magara` →
+		// `ssh -i <key> kivi@10.0.0.45` straight from local config.
+		if cfg, err := LoadConfig(); err == nil && cfg != nil {
+			if t := lookupSSHTarget(cfg, hostPart); t != nil && strings.TrimSpace(t.Host) != "" {
+				tcopy := *t
+				if user != "" {
+					tcopy.User = user // explicit user@ overrides the book
+				}
+				if sshPath, perr := osexec.LookPath("ssh"); perr == nil {
+					argv := sshArgsFor(&tcopy, sshPath, passthrough)
+					cmd := osexec.Command(argv[0], argv[1:]...)
+					cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+					if runErr := cmd.Run(); runErr != nil {
+						if ee, ok := runErr.(*osexec.ExitError); ok {
+							os.Exit(ee.ExitCode())
+						}
+						fmt.Fprintf(os.Stderr, "ssh: %v\n", runErr)
+						os.Exit(1)
+					}
+					return
+				}
+			}
+		}
 		// No direct/Tailscale/mesh route. For a relay-only box (a headless
 		// zero-touch Pi behind CGNAT), real OpenSSH has nothing to dial —
 		// but the agent is still reachable over the relay/public HTTP
