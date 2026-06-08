@@ -42,23 +42,48 @@ func resolveHermesc(workDir string) (string, error) {
 	return buildProjectHermesc(workDir)
 }
 
-// findSystemHermesc returns a path to a hermesc installed at a
-// well-known system location, or "" if none exists / is runnable.
-// Currently only checked on Linux — macOS and Windows go through
-// the embedded-prebuilt path.
+// systemHermescPaths are the well-known locations a yaver-managed hermesc is
+// pre-warmed at. On Linux servers/CI these are absolute host paths populated by
+// ci/remote/bootstrap.sh; inside the Android sandbox they're paths INSIDE the
+// proot rootfs (see findSystemHermesc). yaver-managed files — not hand-edited.
+var systemHermescPaths = []string{
+	"/usr/local/libexec/yaver/hermesc",
+	"/opt/yaver/bin/hermesc",
+}
+
+// findSystemHermesc returns a path to a hermesc installed at a well-known
+// location, or "" if none exists / is runnable.
+//
+//   - Linux servers/CI: absolute host paths, probed with --version.
+//   - Android on-device sandbox (GOOS=android, YAVER_ANDROID_ROOTFS set): the
+//     prewarmed musl/arm64 hermesc lives INSIDE the Alpine rootfs (built by
+//     scripts/build-hermesc-alpine-arm64.sh, shipped with the rootfs). The
+//     agent runs native (Bionic) and execs hermesc proot-wrapped, so we stat
+//     the rootfs-prefixed host path but return the rootfs-INTERNAL path. We
+//     check existence+type only — an arm64/musl binary can't be --version
+//     probed natively under Bionic.
+//
+// NOTE: the rootfs-internal path returned in the sandbox case only resolves
+// once the hermesc exec is proot-wrapped (sandboxWrapCmd) and its bundle I/O
+// lives under a rootfs-visible path — wired in P1b of
+// docs/android-local-hermes-reload.md.
+//
+// macOS/Windows go through the embedded-prebuilt path, not here.
 func findSystemHermesc() string {
+	if cfg, ok := sandboxConfigFromEnv(); ok {
+		for _, inner := range systemHermescPaths {
+			host := filepath.Join(cfg.Rootfs, strings.TrimPrefix(inner, "/"))
+			if fi, err := os.Stat(host); err == nil && !fi.IsDir() {
+				_ = os.Chmod(host, 0o755)
+				return inner // rootfs-internal; exec must be proot-wrapped
+			}
+		}
+		return ""
+	}
 	if runtime.GOOS != "linux" {
 		return ""
 	}
-	candidates := []string{
-		// Populated by ci/remote/bootstrap.sh on the Hetzner test box
-		// and, eventually, by any customer installer that knows how to
-		// pre-warm this path. Ownership-wise this is a yaver-managed
-		// file, not something the user should hand-edit.
-		"/usr/local/libexec/yaver/hermesc",
-		"/opt/yaver/bin/hermesc",
-	}
-	for _, p := range candidates {
+	for _, p := range systemHermescPaths {
 		if _, err := os.Stat(p); err == nil && hermescBinaryRunnable(p) {
 			return p
 		}

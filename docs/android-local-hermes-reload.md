@@ -49,12 +49,26 @@ and returns the same response shape.
 Real HBC is required on-device (see §1a for why source-JS does **not** work).
 The compiler artifact is the one genuine blocker.
 
-**Decision: ship a pinned `aarch64-linux-gnu` hermesc as a `yaver-models`
-release asset**, dropped at `/usr/local/libexec/yaver/hermesc` so
-`findSystemHermesc()` (`desktop/agent/hermesc_resolver.go:53-66`) finds it
-first. ~20 MB. **Pinned to the container's Hermes bytecode version**
-(`YaverSDKManifest.hermesBytecodeVersion`) and rebuilt whenever the container's
-Hermes bumps.
+**Decision: ship a pinned aarch64 hermesc as a `yaver-models` release asset**,
+dropped at `/usr/local/libexec/yaver/hermesc` so `findSystemHermesc()`
+(`desktop/agent/hermesc_resolver.go`) finds it first. ~20 MB. **Pinned to the
+container's Hermes bytecode version** (`YaverSDKManifest.hermesBytecodeVersion`)
+and rebuilt whenever the container's Hermes bumps.
+
+**Confirmed during P1: the rootfs is Alpine = musl libc, not glibc.** Meta's
+prebuilt linux hermesc is glibc-linked → it can't run in the rootfs. The binary
+must be **musl-linked**, which the build script gets for free by compiling
+*inside* Alpine arm64. The container is RN 0.81.5 / Expo 54, Hermes ref
+`hermes-2025-07-07-RNv0.81.0-e0fc67142ec0763c6b6153ca2bf96df815539782` (read
+from `mobile/node_modules/react-native/sdks/.hermesversion`) — the build MUST
+use that exact facebook/hermes commit or the BC version won't match.
+
+Build tooling: **`scripts/build-hermesc-alpine-arm64.sh`** (committed) —
+`docker buildx --platform linux/arm64`, builds the `hermesc` target inside
+Alpine, exports just the stripped binary, prints sha256. Runs on any Docker+
+buildx host (native on Apple Silicon / the Hetzner arm64 box; QEMU-emulated on
+x86). **This is the bottleneck artifact — still needs to be run + the output
+baked into the rootfs / published as a `yaver-models` asset.**
 
 Why not the alternatives:
 - Embed in `libyaver.so` (`//go:embed linux/arm64` in
@@ -65,6 +79,48 @@ Why not the alternatives:
   `cmake/gcc/g++/python3` baked in (~300 MB), 1-2 min first-run stall, thermal.
 - Dev-Hermes container (run source JS, no hermesc) — bloats the app binary and
   diverges the store build from a normal release build. Rejected.
+
+### 1c. LOCKED-IN-PROGRESS — on-device build execution & binding model (the P1b fork)
+
+Confirmed by reading the code during P1, and **the real core of on-device
+build**: the build execs are not sandbox-wired, and there is no project→rootfs
+binding.
+
+- `/dev/build-native` execs Metro (`bundleCommand`, `devserver_http.go:3080/3097`),
+  the dep installs (`devserver_http.go:840-935`), and hermesc
+  (`devserver_http.go:3296`) **WITHOUT** `sandboxWrapCmd`. Only the PTY
+  (`console_terminal.go:103`) and task runners (`tasks.go:1168/1360/2404/3436`)
+  are wrapped. So on Android these build steps run natively under Bionic (no
+  node, no hermesc) and fail.
+- `sandboxWrapCmd`/`buildProotArgv` (`sandbox_proot.go`) treat `cmd.Dir` as a
+  path **INSIDE** the rootfs (`-w workDir`). There is **no bind of an Android-fs
+  project dir into the rootfs anywhere.** Task runners set `cmd.Dir =
+  tm.workDir` and wrap — i.e. the current model assumes the project already
+  lives at a rootfs-internal path (e.g. `/root/...`). The on-device coding flow,
+  however, stores project files on the **Android fs** (isomorphic-git over
+  expo-file-system: `documentDirectory/phone-projects/<slug>`). These two have
+  never been reconciled — none of it has run on a physical device.
+
+**The fork:** how do Metro/hermesc (running inside proot) see the phone-edited
+project + write build artifacts?
+
+**Recommended model — bind the host workDir + a shared tmp into the rootfs:**
+generalize `sandboxWrapCmd` so that when `cmd.Dir` is an existing **host** path
+(native fs), it adds `-b <hostDir>:/workspace -w /workspace` instead of treating
+`cmd.Dir` as rootfs-internal; and bind a shared build tmp
+(`-b <hostTmp>:/tmp/yaver-build`) so hermesc's input JS bundle + output HBC live
+on a path visible both to the native agent (which writes/reads them) and to the
+proot'd hermesc. Heuristic keeps it backward-compatible: an existing native dir
+→ bind at `/workspace`; otherwise → existing `-w <rootfs-internal>` behavior
+(PTY/`/root` unaffected). This unifies tasks + build under one rule.
+
+Alternatives considered: (b) clone/copy the project into the rootfs before build
+(double storage, sync headaches); (c) store all phone-local projects inside the
+rootfs from creation (couples the JS coding flow to the sandbox lifecycle).
+Bind-host-dir is the least invasive and matches how desktop already mounts the
+project. **CAUTION:** `sandbox_proot.go` is shared with the on-device CLI/task
+path — a parallel session may own active on-device sandbox work; coordinate
+before changing the wrap semantics.
 
 ### 1a. Why source-JS is NOT an escape hatch (correction)
 
@@ -237,9 +293,24 @@ it (`YaverBundleValidator.kt:120-164`: `BC_VERSION_MISMATCH`,
      a device. This is the remote-build → Android-load path; proves the loader
      before P1 touches on-device compile. Note: `apps.tsx:1717`
      `handleDirectBuild` stays iOS-only (Xcode USB install) — correct.
-2. **P1 — arm64 hermesc (Option A)**: cross-build, ship as `yaver-models`
-   asset, wire `findSystemHermesc()` rootfs path. Verify `/dev/build-native`
-   against `127.0.0.1:18080` end-to-end.
+2. **P1 — local on-device compile.** Split into:
+   - **P1a — sandbox-aware hermesc resolution** — *code-complete 2026-06-08.*
+     `findSystemHermesc()` now locates the prewarmed musl/arm64 hermesc inside
+     the rootfs when the sandbox is active (env-gated, not GOOS), returning the
+     rootfs-internal path; existence+type check only (no native --version probe
+     under Bionic). 4 unit tests, `go build`/`go test` green. Inert until P1b
+     wraps the exec — but no regression (android already failed).
+   - **P1b — exec-wrap + binding model** (§1c) — *the fork, NOT yet done.* Wrap
+     the `/dev/build-native` execs (installs, Metro, hermesc) with
+     `sandboxWrapCmd`; implement bind-host-workDir + shared-tmp so proot'd
+     Metro/hermesc see the phone-edited project and the bundle I/O. Touches the
+     shared `sandbox_proot.go` — coordinate with any parallel sandbox session.
+   - **P1c — build + ship the binary** — run
+     `scripts/build-hermesc-alpine-arm64.sh` (needs Docker+buildx; arm64 box is
+     fastest), bake the output into the rootfs at `/usr/local/libexec/yaver/
+     hermesc` (or publish as a `yaver-models` asset), pin its sha256.
+   - **Then** verify `/dev/build-native` against `127.0.0.1:18080` end-to-end on
+     a physical device.
 3. **P2 — Close the loop**: trigger local build + `loadAppIfChanged()` from
    coding-agent / task / feedback completion (§3).
 4. **P3 — Android screenshot capture** native module (feedback visual) (§4).
