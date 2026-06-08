@@ -25,6 +25,27 @@ import (
 //   - snapshot: reuses the same pixel-diff path because Android's
 //     adb screencap and simctl's screenshot both return PNG.
 
+// androidDriver is the lifecycle + UI vocabulary the mobile phase runner needs
+// from an Android backend. Both *AndroidEmuDriver (real AVD/device via adb) and
+// *redroidAndroidDriver (Android-in-Docker via the Studio surface) satisfy it,
+// so the android-emu and android-redroid targets share ONE step vocabulary and
+// ONE selector engine over two backends (docs/yaver-ai-app-test-agent.md §15).
+type androidDriver interface {
+	Available() error
+	Boot(ctx context.Context) (string, error)
+	Install(ctx context.Context, deviceID string) error
+	Shutdown(ctx context.Context, deviceID string) error
+	Launch(ctx context.Context, deviceID string) error
+	SetPackage(pkg string)
+	TapBySelector(ctx context.Context, deviceID, selector string) error
+	FillBySelector(ctx context.Context, deviceID, selector, text string) error
+	AssertVisibleBySelector(ctx context.Context, deviceID, selector string) error
+	DumpAndroidUI(ctx context.Context, deviceID string) ([]byte, error)
+	Screenshot(ctx context.Context, deviceID, outPath string) error
+}
+
+var _ androidDriver = (*AndroidEmuDriver)(nil)
+
 func runAndroidSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result, isRealDevice bool) {
 	drv := &AndroidEmuDriver{
 		AVD:     spec.URL, // re-use the URL field as AVD name when emulator
@@ -56,6 +77,42 @@ func runAndroidSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Resul
 	}
 
 	// Install the APK if the spec provided one.
+	if spec.App != "" {
+		if err := drv.Install(ctx, deviceID); err != nil {
+			res.Err = fmt.Errorf("install apk: %w", err)
+			return
+		}
+	}
+
+	artifactDir := artifactDirFor(spec, opts)
+	_ = os.MkdirAll(artifactDir, 0o755)
+
+	runMobilePhase(ctx, spec, opts, res, "setup", spec.Setup, artifactDir, drv, nil, deviceID)
+	runMobilePhase(ctx, spec, opts, res, "step", spec.Steps, artifactDir, drv, nil, deviceID)
+	runMobilePhase(ctx, spec, opts, res, "teardown", spec.Teardown, artifactDir, drv, nil, deviceID)
+}
+
+// runRedroidSpec drives an android-redroid spec: it brings up the Studio redroid
+// surface (cold boot, or restore a warm Yaver Base Image when redroid.base is
+// set), installs the APK, then runs the SAME mobile phases the android-emu
+// target uses — only the backend differs.
+func runRedroidSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
+	drv, err := newRedroidAndroidDriver(spec)
+	if err != nil {
+		res.Err = err
+		return
+	}
+	if err := drv.Available(); err != nil {
+		res.Err = err
+		return
+	}
+	deviceID, err := drv.Boot(ctx)
+	if err != nil {
+		res.Err = fmt.Errorf("redroid boot: %w", err)
+		return
+	}
+	defer func() { _ = drv.Shutdown(context.Background(), deviceID) }()
+
 	if spec.App != "" {
 		if err := drv.Install(ctx, deviceID); err != nil {
 			res.Err = fmt.Errorf("install apk: %w", err)
@@ -150,7 +207,7 @@ func runMobilePhase(
 	phase string,
 	steps []Step,
 	artifactDir string,
-	android *AndroidEmuDriver,
+	android androidDriver,
 	ios *IOSSimDriver,
 	deviceID string,
 ) bool {
@@ -193,7 +250,7 @@ func executeMobileStep(
 	ctx context.Context,
 	spec *Spec,
 	step Step,
-	android *AndroidEmuDriver,
+	android androidDriver,
 	ios *IOSSimDriver,
 	deviceID string,
 ) error {
@@ -207,7 +264,7 @@ func executeMobileStep(
 		}
 		if android != nil {
 			if launchID != "" {
-				android.Package = launchID
+				android.SetPackage(launchID)
 			}
 			return android.Launch(ctx, deviceID)
 		}
@@ -306,7 +363,7 @@ func executeMobileStep(
 	return nil
 }
 
-func captureMobileScreenshot(ctx context.Context, android *AndroidEmuDriver, ios *IOSSimDriver, deviceID, outPath string) error {
+func captureMobileScreenshot(ctx context.Context, android androidDriver, ios *IOSSimDriver, deviceID, outPath string) error {
 	if android != nil {
 		return android.Screenshot(ctx, deviceID, outPath)
 	}

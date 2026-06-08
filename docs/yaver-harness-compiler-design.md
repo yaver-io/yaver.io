@@ -1,7 +1,7 @@
 # Yaver — the Harness Compiler (the moat)
 
 **Status:** design, 2026-06-06, branch `feat/yaver-robot-cell`. Design-only.
-**Why it's the moat:** [yaver-harness-automation-thesis](yaver-harness-automation-thesis.md) §2,§7.
+**Why it's the moat:** yaver-harness-automation-thesis §2,§7.
 **Inputs/outputs touch:** [`harness-recipe.schema.json`](../hardware/yaver-harness-jig/harness-recipe.schema.json),
 [`formboard.scad`/`nest_grid.scad`](../hardware/yaver-harness-jig/),
 `desktop/agent/robot/` (`Program`, `Controller`, `VerifyMotion`),

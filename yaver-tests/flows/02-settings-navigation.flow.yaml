@@ -1,0 +1,14 @@
+# A self-contained flow that works on ANY Android (drives the built-in Settings
+# app) — handy for proving the agent on a bare redroid surface with no app
+# installed. The agent navigates by vision (redroid's uiautomator is unreliable,
+# so the brain falls back to screenshot+coordinates).
+name: settings-navigation
+goal: >
+  Open the device Settings, navigate into the "Network & internet" (or "Network")
+  section, then go back to the top-level Settings list. Stop when you are back at
+  the main Settings screen.
+package: com.android.settings
+expectations:
+  - The Android Settings UI is shown (a scrollable list of settings categories), not a crash or blank screen.
+  - No error dialog, "isn't responding" (ANR), or red error overlay is visible.
+max_steps: 10

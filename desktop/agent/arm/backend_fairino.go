@@ -213,6 +213,97 @@ func (b *FairinoBackend) Raw(ctx context.Context, cmd string) (string, error) {
 	return v.Str + fmt.Sprint(v.Floats()), nil
 }
 
+// --- force/contact (optional ForceBackend) ---
+
+// Wrench reads the TCP force/torque. NEEDS-HARDWARE-VERIFY: method name +
+// element order vary by firmware; GetActualTCPForce returns [Fx,Fy,Fz,Tx,Ty,Tz]
+// (often with a leading error code, handled by fairinoData).
+func (b *FairinoBackend) Wrench(ctx context.Context) (Wrench, error) {
+	v, err := b.rpc.call(ctx, "GetActualTCPForce", 0)
+	if err != nil {
+		return Wrench{}, err
+	}
+	d := fairinoData(v, 6)
+	if len(d) < 6 {
+		return Wrench{}, ErrNoForce
+	}
+	return Wrench{Fx: d[0], Fy: d[1], Fz: d[2], Tx: d[3], Ty: d[4], Tz: d[5]}, nil
+}
+
+// ForceMove does a software-guarded incremental compliant move: step along the
+// TCP axis, polling the wrench, stopping on contact (|force| ≥ limitN) or after
+// maxDistMm. It is deterministic and bounded (the Controller validated the
+// limits). NEEDS-HARDWARE-VERIFY: on a real FR controller prefer the native
+// admittance / FT_Control move for a true closed force loop; this incremental
+// MoveL approach is the portable, honest fallback (speed is not a constraint in
+// the harness cell). Translational axes only.
+func (b *FairinoBackend) ForceMove(ctx context.Context, dir Axis6, limitN, maxDistMm float64, velPct int) (ForceResult, error) {
+	axis, sign, err := ParseAxis6(dir)
+	if err != nil {
+		return ForceResult{Code: "bad_payload"}, err
+	}
+	const stepMm = 0.5
+	travelled, peak := 0.0, 0.0
+	seated := false
+	for travelled < maxDistMm {
+		select {
+		case <-ctx.Done():
+			return ForceResult{Code: "ctx", TravelMm: travelled, PeakForceN: peak}, ctx.Err()
+		default:
+		}
+		if w, werr := b.Wrench(ctx); werr == nil {
+			f := axisForceAbs(w, axis)
+			if f > peak {
+				peak = f
+			}
+			if f >= limitN {
+				seated = true
+				break
+			}
+		}
+		p, perr := b.Pose(ctx)
+		if perr != nil {
+			return ForceResult{Code: "no_cartesian", TravelMm: travelled, PeakForceN: peak}, perr
+		}
+		switch axis {
+		case 0:
+			p.X += sign * stepMm
+		case 1:
+			p.Y += sign * stepMm
+		case 2:
+			p.Z += sign * stepMm
+		}
+		if merr := b.MoveLinear(ctx, p, velPct, velPct); merr != nil {
+			return ForceResult{Code: "backend", TravelMm: travelled, PeakForceN: peak}, merr
+		}
+		travelled += stepMm
+	}
+	res := ForceResult{OK: true, Seated: seated, PeakForceN: peak, TravelMm: travelled}
+	if w, werr := b.Wrench(ctx); werr == nil {
+		res.Wrench = &w
+	}
+	if p, perr := b.Pose(ctx); perr == nil {
+		res.Pose = &p
+	}
+	return res, nil
+}
+
+func axisForceAbs(w Wrench, axis int) float64 {
+	var f float64
+	switch axis {
+	case 0:
+		f = w.Fx
+	case 1:
+		f = w.Fy
+	case 2:
+		f = w.Fz
+	}
+	if f < 0 {
+		return -f
+	}
+	return f
+}
+
 // fairinoData normalizes a getter reply to the data slice: Fairino getters often
 // prefix an error code, so a reply of length dof+1 has its first element dropped.
 func fairinoData(v xmlrpcValue, dof int) []float64 {

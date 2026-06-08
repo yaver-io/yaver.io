@@ -53,6 +53,8 @@ import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForD
 import BillingView from "@/components/dashboard/BillingView";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
 import { CapabilityShelf } from "@/components/dashboard/CapabilityShelf";
+import StudioPanel from "@/components/dashboard/StudioPanel";
+import QAPanel from "@/components/dashboard/QAPanel";
 import SettingsView from "@/components/dashboard/SettingsView";
 import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
 import webPkg from "../../package.json";
@@ -2715,6 +2717,12 @@ export default function DashboardPage() {
               </p>
               <div className="mt-4">
                 <CapabilityShelf token={token} />
+              </div>
+              <div className="mt-6">
+                <StudioPanel />
+              </div>
+              <div className="mt-6">
+                <QAPanel />
               </div>
             </div>
           ) : activeTab === "cloud" ? (

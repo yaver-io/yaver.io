@@ -2486,7 +2486,42 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, error: msg };
     }
 
-    const lifecycleProbe = await probeMobileDeviceStatus(device, token, 3500).catch(() => null);
+    let lifecycleProbe = await probeMobileDeviceStatus(device, token, 3500).catch(() => null);
+
+    // Fully offline? The box's agent process is down, so neither the
+    // safe-layer /auth/recover nor a direct /info probe can reach it —
+    // every transport candidate just times out. Before giving up,
+    // delegate a regular SSH recovery to an online peer: ask the
+    // currently-connected agent to `yaver ssh <target>` into the box and
+    // restart Yaver (the watchdog peer-recovery path). That ssh now
+    // resolves the box's reachable LAN/tunnel route, so a phone — which
+    // can't ssh itself — gets the "regular ssh" recovery for free. Once
+    // the box heartbeats again we fall straight through to the normal
+    // safe-layer re-auth cascade below (which is the `yaver auth
+    // --headless` equivalent over the agent transport). No-op when no
+    // online peer is connected (nothing can ssh on our behalf) or when
+    // the box was reachable all along.
+    if (!lifecycleProbe?.reachable) {
+      const peer = await quicClient
+        .recoverPeer(device.id)
+        .catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
+      if (peer.ok) {
+        appLog("info", `Asked an online peer to SSH-recover ${device.name}: ${peer.outcome}`);
+        // Poll for the restarted agent to come back online (~24s budget).
+        for (let i = 0; i < 8; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const reprobe = await probeMobileDeviceStatus(device, token, 3500).catch(() => null);
+          if (reprobe?.reachable) {
+            lifecycleProbe = reprobe;
+            appLog("info", `${device.name} back online after peer SSH-recovery — continuing re-auth`);
+            break;
+          }
+        }
+      } else {
+        appLog("warn", `Peer SSH-recovery unavailable for ${device.name}: ${(peer as { error?: string }).error}`);
+      }
+    }
+
     const lifecycleState = lifecycleProbe?.lifecycleState;
     const shouldTryBootstrap =
       lifecycleState === "bootstrap" || (!lifecycleState && device.needsAuth === true);

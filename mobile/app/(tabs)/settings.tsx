@@ -2054,6 +2054,34 @@ export default function SettingsScreen() {
               <Text style={[styles.aboutValue, { color: c.accent }]}>Configure ›</Text>
             </Pressable>
 
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => router.push("/studio")}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Store Studio</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  App Store / Play assets — permission-justification videos & prose for your app
+                </Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
+            </Pressable>
+
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => router.push("/qa")}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>App-Test Agent</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Drive your app on redroid, catch bugs (red box / crash / ANR) — catch-only or fix
+                </Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
+            </Pressable>
+
             {Platform.OS === "android" && (
               <>
                 <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />

@@ -34,10 +34,11 @@ import (
 type Target string
 
 const (
-	TargetWeb        Target = "web"         // headless / headful Chromium via CDP (chromedp)
-	TargetIOSSim     Target = "ios-sim"     // iOS Simulator via simctl + WebDriverAgent (M5)
-	TargetAndroidEmu Target = "android-emu" // Android Emulator via emulator + UIAutomator2 (M5)
-	TargetDevice     Target = "device"      // Physical device (M5)
+	TargetWeb            Target = "web"             // headless / headful Chromium via CDP (chromedp)
+	TargetIOSSim         Target = "ios-sim"         // iOS Simulator via simctl + WebDriverAgent (M5)
+	TargetAndroidEmu     Target = "android-emu"     // Android Emulator via emulator + UIAutomator2 (M5)
+	TargetAndroidRedroid Target = "android-redroid" // Android-in-Docker via the Studio redroid surface (no adb/AVD, no KVM)
+	TargetDevice         Target = "device"          // Physical device (M5)
 )
 
 // Spec is one yaver-tests/*.test.yaml file.
@@ -53,6 +54,12 @@ type Spec struct {
 
 	// App is the path to a built .app/.apk for mobile targets (M5+).
 	App string `yaml:"app,omitempty"`
+
+	// Redroid configures the android-redroid target (Android-in-Docker via the
+	// Studio capture surface — no adb, no emulator, no KVM). Only read when
+	// Target == android-redroid. Optional: dirs default under ~/.yaver on a
+	// local farm box.
+	Redroid *RedroidSpec `yaml:"redroid,omitempty"`
 
 	// Viewport sets the browser viewport for web targets. Optional.
 	Viewport *Viewport `yaml:"viewport,omitempty"`
@@ -108,6 +115,22 @@ type Spec struct {
 type Viewport struct {
 	Width  int `yaml:"width"`
 	Height int `yaml:"height"`
+}
+
+// RedroidSpec parameterizes the android-redroid target. The surface runs on a
+// Docker host reached through the Studio runner seam: the local farm box
+// (default) or an on-prem host (ssh_host). Set `base` to restore a warm Yaver
+// Base Image instead of cold-booting — the fast path.
+type RedroidSpec struct {
+	Image       string `yaml:"image,omitempty"`        // redroid image; default redroid 13
+	HostWorkDir string `yaml:"host_workdir,omitempty"` // /data bind-mount on the surface host (ssh: required)
+	SSHHost     string `yaml:"ssh_host,omitempty"`     // on-prem host; empty = local farm box
+	SSHOpts     string `yaml:"ssh_opts,omitempty"`     // extra ssh/scp options
+	Container   string `yaml:"container,omitempty"`    // container name; default yaver-qa
+	Base        string `yaml:"base,omitempty"`         // restore this Yaver Base Image version instead of cold boot
+	SnapshotDir string `yaml:"snapshot_dir,omitempty"` // base snapshot store (used with base)
+	Package     string `yaml:"package,omitempty"`      // app package id to launch; default from url
+	Activity    string `yaml:"activity,omitempty"`     // optional explicit launch activity
 }
 
 // ArtifactsConfig controls failure capture. By default we screenshot on
@@ -457,8 +480,9 @@ func sortPaths(paths []string) {
 
 // Validate returns an error if the spec is malformed.
 func (s *Spec) Validate() error {
-	if s.Target != TargetWeb && s.Target != TargetIOSSim && s.Target != TargetAndroidEmu && s.Target != TargetDevice {
-		return fmt.Errorf("unknown target %q (supported today: web)", s.Target)
+	if s.Target != TargetWeb && s.Target != TargetIOSSim && s.Target != TargetAndroidEmu &&
+		s.Target != TargetAndroidRedroid && s.Target != TargetDevice {
+		return fmt.Errorf("unknown target %q (supported: web, ios-sim, android-emu, android-redroid, device)", s.Target)
 	}
 	if s.Target == TargetWeb && s.URL == "" {
 		// We allow URL-less specs if every Goto is absolute, but flag the

@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 
-type ServiceKey = "reload" | "backend" | "web" | "agentBox" | "inference" | "publish";
+type ServiceKey = "reload" | "backend" | "web" | "agentBox" | "inference" | "publish" | "studio";
 
 type Capability = {
   key: ServiceKey;
@@ -30,7 +30,7 @@ type Capability = {
   // The infra noun we're hiding — shown only as a tiny "replaces …" tag
   // so a curious user can connect the dots, never as the headline.
   replaces: string;
-  meterKind: "compute" | "backend" | "web" | "inference" | "publish";
+  meterKind: "compute" | "backend" | "web" | "inference" | "publish" | "studio";
 };
 
 // Ladder order: cheapest hook first → hero last. This is the order the
@@ -89,6 +89,15 @@ const CAPABILITIES: Capability[] = [
     priceHint: "per release",
     replaces: "Mac + Apple/Google",
     meterKind: "publish",
+  },
+  {
+    key: "studio",
+    icon: "🎬",
+    title: "Store Studio (screenshots & videos)",
+    blurb: "Generate App Store / Play screenshots, preview videos, and permission-justification videos for your app — no Mac, no Fastlane, no spare device.",
+    priceHint: "metered per run · free on your own box",
+    replaces: "Fastlane + a screenshot SaaS + a device",
+    meterKind: "studio",
   },
 ];
 

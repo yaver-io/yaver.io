@@ -225,8 +225,8 @@ customer's own agent subscription.
   }],
   "machinery": [{                            // "learn how machinery is used"
     "machine":"CST18D crimp line",
-    "observed_use":"operator loads applicator RKES-27, runs 48 cycles, inspects every 12th",
-    "params":{"applicator":"RKES-27","cycle_target":48,"qc_interval":12},
+    "observed_use":"operator loads applicator a crimp applicator, runs 48 cycles, inspects every 12th",
+    "params":{"applicator":"a crimp applicator","cycle_target":48,"qc_interval":12},
     "evidence_frames":[...]
   }]
 }

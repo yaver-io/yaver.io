@@ -32,19 +32,19 @@ var currentLocalAgentPort atomic.Int64
 
 // HTTPServer serves the V1 HTTP API for mobile clients over Tailscale.
 type HTTPServer struct {
-	port           int
-	token          string
-	ownerUserID    string
-	deviceID       string
-	convexURL      string
-	hostname       string
+	port        int
+	token       string
+	ownerUserID string
+	deviceID    string
+	convexURL   string
+	hostname    string
 	// operatorMode marks this box as part of a Yaver-operated public compute
 	// fleet (yaver serve --operator). Drives the host-share reaper every cycle
 	// so tenant slices are scrubbed promptly. Also disables the paired-token
 	// owner fast-path so a foreign token can never be owner-equivalent —
 	// every non-operator caller is a scoped host-share/guest tenant. Default
 	// false (normal single-owner behavior untouched).
-	operatorMode   bool
+	operatorMode bool
 	// relayOnly binds the direct HTTP/TLS listeners to loopback (127.0.0.1)
 	// instead of 0.0.0.0, so an operator box on a home/office LAN is reachable
 	// ONLY over the relay — never directly exposed to its LAN. Default false.
@@ -772,6 +772,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/feedback/", s.authSDK(s.handleFeedbackByID))
 	// On-device App Store screenshot upload (Engine 2) — SDK-accessible.
 	mux.HandleFunc("/shots/upload", s.authSDK(s.handleShotsUpload))
+	mux.HandleFunc("/studio/permission-prose", s.auth(s.handleStudioPermissionProse))
+	mux.HandleFunc("/studio/jobs", s.auth(s.handleStudioJobStart))
+	mux.HandleFunc("/studio/jobs/", s.auth(s.handleStudioJobStatus))
 
 	// Design references (web UI captures from the browser extension) —
 	// distinct store, same auth tier as feedback so SDK tokens can list

@@ -451,6 +451,10 @@ func main() {
 		runPublish(os.Args[2:])
 	case "shots":
 		runShots(os.Args[2:])
+	case "studio":
+		runStudio(os.Args[2:])
+	case "qa":
+		runQA(os.Args[2:])
 	case "release":
 		runRelease(os.Args[2:])
 	case "monitor":

@@ -1,0 +1,13 @@
+# Agentic flow — the LLM brain drives toward `goal`, the oracle bank watches for
+# red boxes / crashes / ANRs / blank screens after every action, and the VLM
+# judges each `expectations` line on the final screen. No scripted steps: the
+# agent figures out the taps from the live view hierarchy.
+name: launch-and-home
+goal: >
+  Launch the Yaver app and reach the main home screen with its bottom tab bar.
+  If a sign-in screen appears, stop (do not enter credentials on a shared run).
+package: io.yaver.mobile
+expectations:
+  - The main app UI is visible (a bottom tab bar or a primary screen), not a crash or blank page.
+  - No error overlay, red box, or "something went wrong" message is shown.
+max_steps: 10
