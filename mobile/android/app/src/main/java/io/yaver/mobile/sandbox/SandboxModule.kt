@@ -71,11 +71,14 @@ class SandboxModule(private val ctx: ReactApplicationContext) :
         ev.putDouble("total", p.total.toDouble())
         emit("YaverSandboxProgress", ev)
       }
-      if (ok) promise.resolve(true) else promise.reject("install_failed", "rootfs install failed (see logcat $name)")
+      if (ok) promise.resolve(true) else promise.reject("install_failed", "rootfs install failed (see logcat $logTag)")
     }.apply { isDaemon = true }.start()
   }
 
-  private val name get() = "YaverSandbox"
+  // Renamed from `name` — a `val name` synthesizes getName(), which clashes
+  // with the required `override fun getName()` (JVM signature collision) and
+  // fails compileReleaseKotlin on newer Kotlin.
+  private val logTag get() = "YaverSandbox"
 
   private fun emit(event: String, payload: WritableMap) {
     if (!ctx.hasActiveReactInstance()) return
