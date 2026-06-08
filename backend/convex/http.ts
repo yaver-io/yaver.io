@@ -6067,6 +6067,85 @@ http.route({
   }),
 });
 
+// ── Yaver Gateway (inference arbitrage) trust boundary ──────────────
+// The gateway (Cloudflare Worker / relay) holds upstream provider keys
+// server-side and resells per-token inference into the prepaid wallet.
+// Two routes: /gateway/authorize (user bearer → userId + balance, so the
+// gateway never sees a key — "the wallet IS the key") and /gateway/meter
+// (gateway-secret → debit). Both fail-closed pre-launch. See
+// docs/yaver-gateway-spec.md and managedMeter.ts.
+
+/** POST /gateway/authorize — resolve a user's bearer session token to
+ *  {userId, balanceCents, allow} before the gateway streams inference.
+ *  Inference floor = any positive balance; per-request + per-hour
+ *  ceilings (gateway-side) bound a single burst. No snapshot reserve
+ *  (that's a compute-box concern, not tokens). */
+http.route({
+  path: "/gateway/authorize",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!cloudAccessAllowed(session.email, session.userDocId)) {
+      return errorResponse("Yaver Premium is private-preview only on this account", 403);
+    }
+    const wallet = await ctx.runQuery(internal.cloudLifecycle.getWallet, {
+      userId: session.userDocId as any,
+    });
+    return jsonResponse({
+      ok: true,
+      userId: session.userDocId,
+      balanceCents: wallet.balanceCents,
+      allow: wallet.balanceCents > 0,
+    });
+  }),
+});
+
+/** POST /gateway/meter — gateway-authenticated (GATEWAY_SHARED_SECRET).
+ *  The gateway reports RAW upstream token cost (providerCostCents); Convex
+ *  applies markup(kind) and debits the wallet via recordManagedUsage. The
+ *  body asserts an arbitrary userId + cost, so it must be gateway-secret
+ *  authed, never user-bearer. Body: { userId, kind, provider, model, unit,
+ *  quantity, providerCostCents, ref? }. */
+http.route({
+  path: "/gateway/meter",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    const authHeader = req.headers.get("authorization") ?? "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const check = await ctx.runAction(internal.gatewaySecret.verify, { token });
+    if (!check.secretConfigured) return errorResponse("GATEWAY_SHARED_SECRET not set", 500);
+    if (!check.ok) return errorResponse("Unauthorized", 401);
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return errorResponse("Bad JSON", 400);
+    }
+    const { userId, kind, provider, unit, quantity, providerCostCents, model, ref, dryRun } =
+      body ?? {};
+    if (!userId || typeof providerCostCents !== "number") {
+      return errorResponse("Missing userId or providerCostCents", 400);
+    }
+    const result = await ctx.runMutation(internal.managedMeter.recordManagedUsage, {
+      userId: userId as any,
+      kind: String(kind ?? "inference"),
+      provider: String(provider ?? "unknown"),
+      unit: String(unit ?? "token"),
+      quantity: Number(quantity ?? 0),
+      providerCostCents,
+      model: model ? String(model) : undefined,
+      ref: ref ? String(ref) : undefined,
+      // Gateway may force dryRun; otherwise inherit the global launch flag.
+      dryRun:
+        typeof dryRun === "boolean"
+          ? dryRun
+          : !parseBooleanEnv(process.env.YAVER_MANAGED_METER_LIVE, false),
+    });
+    return jsonResponse({ ok: true, ...result });
+  }),
+});
+
 // External cron runner — Hetzner systemd timers POST { name } here instead
 // of using Convex built-in crons. Bearer auth via CRON_TRIGGER_SECRET env
 // (verified through internal.cronSecret.verify for httpAction-runtime parity).

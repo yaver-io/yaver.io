@@ -1735,6 +1735,35 @@ export default defineSchema({
   }).index("by_user", ["userId", "createdAt"])
     .index("by_order", ["orderId"]),
 
+  // ── Generic managed-resource meter (one wallet, many meters) ───────
+  // The compute meter (creditUsage above) is SKU-specific and predates
+  // this. As Yaver Premium resells more of the stack — inference tokens
+  // (GLM/OpenRouter gateway), managed backend (Convex proxy), managed
+  // web (Cloudflare proxy), publish (Mac-farm builds + ASC/Play upload)
+  // — each new meter would otherwise need its own table. Instead they
+  // all append here and debit the SAME prepaidCredits wallet. `kind`
+  // discriminates the meter; `provider`/`unit`/`model`/`ref` are plain
+  // NON-SECRET labels (same class as cloudMachines.serverId) so the row
+  // stays counter/id/timestamp-only. chargedCents = providerCostCents x
+  // markup(kind) — the arbitrage spread, env-tunable per kind. dryRun
+  // mirrors the compute meter's fail-closed launch posture.
+  // Owned by managedMeter.ts. Privacy: pinned by convex_privacy_test.go.
+  managedUsage: defineTable({
+    userId: v.id("users"),
+    kind: v.string(),                 // "inference"|"backend"|"web"|"publish"|"compute"
+    provider: v.string(),             // "zai"|"openrouter"|"convex"|"cloudflare"|"macfarm"|...
+    unit: v.string(),                 // "token"|"request"|"read"|"gb"|"build-min"|...
+    quantity: v.number(),             // units metered this row
+    providerCostCents: v.number(),    // raw upstream COGS (cents)
+    chargedCents: v.number(),         // user-facing after markup(kind)
+    model: v.optional(v.string()),    // inference model label (non-secret)
+    ref: v.optional(v.string()),      // resource id (deployment/build) — non-secret
+    date: v.string(),                 // "YYYY-MM-DD" (UTC)
+    dryRun: v.boolean(),              // true = simulated, no real spend
+    createdAt: v.number(),
+  }).index("by_user_date", ["userId", "date"])
+    .index("by_user_kind", ["userId", "kind", "createdAt"]),
+
   // BYO (bring-your-own) cloud boxes the user runs on THEIR OWN provider
   // account (Hetzner/DigitalOcean) via their vault token — Yaver's wallet
   // is NOT involved (they pay the provider directly). Lifecycle
