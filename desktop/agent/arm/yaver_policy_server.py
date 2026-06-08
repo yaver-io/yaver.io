@@ -33,6 +33,62 @@ STEP = 8.0          # max deg moved per action
 CHUNK = 5           # actions per inference (the "action chunk")
 TOL = 1.0           # done when every goal joint is within this many deg
 
+# trained-policy mode (set when --checkpoint is given)
+POLICY = None        # a lerobot policy (e.g. ACTPolicy)
+JOINTS = []          # joint name order for the action vector
+TORCH = None         # lazy torch handle
+PRE = POST = None    # lerobot pre/post-processor pipelines (normalization etc.)
+DEVICE = None
+PREDICT_ACTION = None
+_NP = None
+
+
+def _load_checkpoint(path, joints):
+    """Load a trained LeRobot policy (ACT) + its processor pipelines, exactly as
+    lerobot's own inference does. Lazy imports so the reference proportional
+    policy stays stdlib-only."""
+    global POLICY, JOINTS, TORCH, PRE, POST, DEVICE, PREDICT_ACTION, _NP
+    import torch
+    import numpy as np
+    from lerobot.policies.act.modeling_act import ACTPolicy
+    from lerobot.policies.factory import make_pre_post_processors
+    from lerobot.utils.control_utils import predict_action
+    TORCH, _NP, PREDICT_ACTION = torch, np, predict_action
+    DEVICE = torch.device("cpu")
+    POLICY = ACTPolicy.from_pretrained(path)
+    POLICY.eval()
+    POLICY.reset()
+    PRE, POST = make_pre_post_processors(POLICY.config, pretrained_path=path)
+    JOINTS = joints
+    print("policy: loaded ACT checkpoint %s (joints=%s)" % (path, joints), file=sys.stderr)
+
+
+def _decode_image_np(images):
+    """images: {name: 'data:image/jpeg;base64,...'} -> uint8 (H,W,C) numpy
+    (lerobot's prepare_observation_for_inference does the /255 + CHW + batch)."""
+    import base64, io
+    from PIL import Image
+    dataurl = next(iter(images.values()))
+    b64 = dataurl.split(",", 1)[1] if "," in dataurl else dataurl
+    return _NP.array(Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB"))
+
+
+def predict_policy(images, state, prompt):
+    """Run the trained policy via lerobot's canonical predict_action: raw obs ->
+    pre-process -> select_action -> post-process -> one action (joint targets).
+    ACT manages its own chunk queue internally; we return a 1-action chunk per
+    call and let RunPolicy re-observe each step."""
+    joints = dict(state.get("joints") or {})
+    obs = {
+        "observation.state": _NP.array([joints.get(j, 0.0) for j in JOINTS], dtype=_NP.float32),
+        "observation.images.main": _decode_image_np(images),
+    }
+    action = PREDICT_ACTION(obs, POLICY, DEVICE, PRE, POST, use_amp=False, task=prompt or "")
+    a = action.detach().cpu().squeeze().tolist()
+    if not isinstance(a, list):
+        a = [a]
+    return {"actions": [{"joints": {JOINTS[i]: round(float(v), 4) for i, v in enumerate(a)}}], "done": False}
+
 
 def predict(state, prompt):
     """obs → action chunk. Replace with a LeRobot policy for real inference."""
@@ -77,16 +133,25 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": False, "error": "not found"}, 404)
 
     def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(n) if n > 0 else b"{}"
+        if self.path == "/reset":
+            if POLICY is not None:
+                POLICY.reset()
+            return self._json({"ok": True})
         if self.path != "/act":
             return self._json({"ok": False, "error": "not found"}, 404)
-        n = int(self.headers.get("Content-Length", 0) or 0)
         try:
-            obs = json.loads(self.rfile.read(n) or b"{}")
+            obs = json.loads(body or b"{}")
         except Exception as e:
             return self._json({"ok": False, "error": "bad obs: %s" % e}, 400)
         try:
+            if POLICY is not None:
+                return self._json(predict_policy(obs.get("images") or {}, obs.get("state") or {}, obs.get("prompt")))
             return self._json(predict(obs.get("state") or {}, obs.get("prompt")))
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return self._json({"ok": False, "error": str(e)}, 500)
 
 
@@ -98,12 +163,20 @@ def main():
     ap.add_argument("--step", type=float, default=8.0)
     ap.add_argument("--chunk", type=int, default=5)
     ap.add_argument("--tol", type=float, default=1.0)
+    ap.add_argument("--checkpoint", default="", help="path to a trained LeRobot policy dir (ACT) — serves the real model")
+    ap.add_argument("--joints", default="", help="comma joint order for the action vector (required with --checkpoint)")
     args = ap.parse_args()
     if args.goal.strip():
         GOAL = json.loads(args.goal)
     STEP, CHUNK, TOL = args.step, args.chunk, args.tol
+    if args.checkpoint:
+        joints = [j.strip() for j in args.joints.split(",") if j.strip()]
+        _load_checkpoint(args.checkpoint, joints)
+        mode = "ACT checkpoint %s" % args.checkpoint
+    else:
+        mode = "reference goal=%s" % (GOAL or "home")
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print("policy: reference server on 127.0.0.1:%d goal=%s" % (args.port, GOAL or "home"), file=sys.stderr)
+    print("policy: server on 127.0.0.1:%d (%s)" % (args.port, mode), file=sys.stderr)
     srv.serve_forever()
 
 

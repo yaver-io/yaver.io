@@ -197,11 +197,41 @@ engine's exact value. Box deleted immediately after. This surfaced + fixed a rea
 bug: `createMultiBody` gave the builtin arm auto-named, limitless joints; pinned
 to `J1..J6` + catalog limits so builtin:arm6 is the same arm on every engine.
 
+## The full train → serve → run pipeline (built + verified 2026-06-08)
+
+The reference policy server is no longer the only path — the **real LeRobot
+training + serving loop** is wired and proven end-to-end on CPU:
+
+1. **Generate demos** — `yaver_sim_demo_gen.py` drives the sim through a scripted
+   task (random start → fixed target) and records episodes in the DemoRecorder
+   layout. (On hardware: `arm_demo_start/stop` records real free-drive/teleop
+   demos in the same format instead.)
+2. **Export** — `yaver_lerobot_export.py` converts episodes → a `LeRobotDataset`
+   (action[t] = state[t+1], the teleop convention).
+3. **Train** — `lerobot-train --policy.type=act --dataset.root=… --steps=… ` (rent
+   a GPU for a real run; CPU works for a smoke run).
+4. **Serve** — `yaver_policy_server.py --checkpoint <dir>/pretrained_model
+   --joints J1,…` loads the ACT checkpoint via lerobot's `make_pre_post_processors`
+   + `predict_action` and serves the `/act` contract.
+5. **Run** — `policy_run` / `Controller.RunPolicy` drives the arm through the
+   safety gate against that served model.
+
+**Verified** (lerobot 0.5.1, ACT, 80-step CPU smoke train on 18 sim episodes):
+the trained checkpoint served and, through Go `RunPolicy` + the safety gate,
+drove the sim arm from `J1=10 → 25` toward the learned target `~30` over 30
+safety-gated steps (`TestSimPolicyTrained`, gated on `SIM_E2E=1` +
+`YAVER_POLICY_URL`). The model is intentionally undertrained (a plumbing proof) —
+note the safety gate **correctly refused** the checkpoint's oversized first jump
+from a far start, exactly its job against an erratic model. A real model needs
+real demos + a proper GPU training run; the machinery is identical.
+
 ## Gaps / next (honest)
 
-- **`yaver_policy_server.py`** — shipped as a **reference** proportional-control
-  policy (stdlib, runs anywhere). Replace `predict()` with a LeRobot/ACT/π0
-  checkpoint for real inference (the swap is ~5 lines, documented in the file).
+- **`yaver_policy_server.py`** — ships BOTH a stdlib **reference** proportional
+  policy AND a real **`--checkpoint` ACT mode** (lerobot). Diffusion Policy /
+  SmolVLA / π0 load the same way (swap the policy class).
+- **Quality**: the verified model is an 80-step CPU smoke train. A usable policy
+  needs hundreds of real demos + a GPU training run (rent per-hour).
 - **True streaming execution.** `RunPolicy` executes a chunk as sequential
   blocking moves (correct/safe on cobot+sim). 50 Hz open-loop streaming needs a
   streaming `Backend` method (`SetTargetStream`) + a local action buffer — the
