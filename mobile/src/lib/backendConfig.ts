@@ -10,6 +10,12 @@ const REFRESH_TTL_MS = 15 * 60 * 1000;
 
 let currentConvexSiteUrl = normalizeOrigin(DEFAULT_CONVEX_SITE_URL) || DEFAULT_CONVEX_SITE_URL;
 let currentWebBaseUrl = normalizeOrigin(DEFAULT_WEB_BASE_URL) || DEFAULT_WEB_BASE_URL;
+// Yaver Gateway (captive-OpenRouter inference proxy) origin. Empty until the
+// hosted config (/api/mobile-config) advertises it post-deploy, so an older
+// binary discovers the Worker without a rebuild — same story as convexSiteUrl.
+// Managed-mode coding stays disabled while empty (fail-safe). A device-local
+// override (LOCAL_KEYS.gatewayUrl) takes priority for testing pre-rollout.
+let currentGatewayUrl = "";
 let lastRefreshAt = 0;
 
 function normalizeOrigin(value: string | null | undefined): string | null {
@@ -26,9 +32,13 @@ function normalizeOrigin(value: string | null | undefined): string | null {
   }
 }
 
-function applyConfig(next: { convexSiteUrl?: string; webBaseUrl?: string }, source: string) {
+function applyConfig(
+  next: { convexSiteUrl?: string; webBaseUrl?: string; gatewayUrl?: string },
+  source: string,
+) {
   const nextConvex = normalizeOrigin(next.convexSiteUrl);
   const nextWeb = normalizeOrigin(next.webBaseUrl);
+  const nextGateway = normalizeOrigin(next.gatewayUrl);
   let changed = false;
 
   if (nextConvex && nextConvex !== currentConvexSiteUrl) {
@@ -39,11 +49,15 @@ function applyConfig(next: { convexSiteUrl?: string; webBaseUrl?: string }, sour
     currentWebBaseUrl = nextWeb;
     changed = true;
   }
+  if (nextGateway && nextGateway !== currentGatewayUrl) {
+    currentGatewayUrl = nextGateway;
+    changed = true;
+  }
 
   if (changed) {
     appLog(
       "info",
-      `[backend-config] ${source}: convex=${currentConvexSiteUrl} web=${currentWebBaseUrl}`,
+      `[backend-config] ${source}: convex=${currentConvexSiteUrl} web=${currentWebBaseUrl} gateway=${currentGatewayUrl || "(unset)"}`,
     );
   }
 }
@@ -56,6 +70,11 @@ export function getWebBaseUrlSync(): string {
   return currentWebBaseUrl;
 }
 
+/** Yaver Gateway origin, or "" when not advertised yet (managed mode off). */
+export function getGatewayUrlSync(): string {
+  return currentGatewayUrl;
+}
+
 export async function hydrateBackendConfigFromCache(): Promise<void> {
   try {
     const raw = await AsyncStorage.getItem(BACKEND_CONFIG_KEY);
@@ -63,6 +82,7 @@ export async function hydrateBackendConfigFromCache(): Promise<void> {
     const parsed = JSON.parse(raw) as {
       convexSiteUrl?: string;
       webBaseUrl?: string;
+      gatewayUrl?: string;
       refreshedAt?: number;
     };
     applyConfig(parsed, "cache");
@@ -94,6 +114,7 @@ export async function refreshHostedBackendConfig(force: boolean = false): Promis
     const data = (await res.json()) as {
       convexSiteUrl?: string;
       webBaseUrl?: string;
+      gatewayUrl?: string;
       generatedAt?: string;
     };
     applyConfig(data, "remote");
@@ -103,6 +124,7 @@ export async function refreshHostedBackendConfig(force: boolean = false): Promis
       JSON.stringify({
         convexSiteUrl: currentConvexSiteUrl,
         webBaseUrl: currentWebBaseUrl,
+        gatewayUrl: currentGatewayUrl,
         refreshedAt: lastRefreshAt,
         generatedAt: data.generatedAt,
       }),

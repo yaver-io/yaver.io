@@ -660,6 +660,14 @@ export const LOCAL_KEYS = {
   // transits Convex or any relay — same on-device-only posture as the
   // BYO API keys above.
   hetznerToken: `${LOCAL_KEY_PREFIX}hetzner_token`,
+  // Yaver Premium MANAGED coding: when "1", the agentic coding loop talks to
+  // the Yaver Gateway (captive OpenRouter) authed by the user's session token
+  // instead of a BYO model key — Yaver holds the upstream key, meters tokens
+  // into the prepaid wallet. Off by default (free/BYO path unchanged).
+  managedCoding: `${LOCAL_KEY_PREFIX}managed_coding`,
+  // Device-local override for the gateway origin, used to point at the
+  // deployed Worker for testing before /api/mobile-config advertises it.
+  gatewayUrl: `${LOCAL_KEY_PREFIX}gateway_url`,
 } as const;
 
 export async function getLocalSecret(key: string): Promise<string | null> {
@@ -690,6 +698,17 @@ export async function getKeyStoragePreference(): Promise<KeyStorage> {
 
 export async function saveKeyStoragePreference(pref: KeyStorage): Promise<void> {
   await SecureStore.setItemAsync(`${LOCAL_KEY_PREFIX}storage_pref`, pref);
+}
+
+/** Whether Yaver Premium managed coding (gateway-routed inference, wallet-
+ *  metered) is enabled on this device. Defaults false → free/BYO path. */
+export async function getManagedCodingEnabled(): Promise<boolean> {
+  return (await getLocalSecret(LOCAL_KEYS.managedCoding)) === "1";
+}
+
+export async function setManagedCodingEnabled(on: boolean): Promise<void> {
+  if (on) await saveLocalSecret(LOCAL_KEYS.managedCoding, "1");
+  else await deleteLocalSecret(LOCAL_KEYS.managedCoding);
 }
 
 export type SpeechProvider = "on-device" | "openai" | "openrouter" | "deepgram" | "assemblyai";
