@@ -201,42 +201,46 @@ Implications baked into the design:
 > operator account before serve, and (c) to run as the `yaver` user. These
 > are the operator-onboarding follow-ups.
 
-### 4b. One `Workspace` convention — everywhere, per-tenant, non-overlapping
+### 4b. One `Workspace` convention — always `$HOME/Workspace`, per OS user
 
-Projects must live in a predictable **`Workspace`** directory in *every*
-runtime (fresh box, container, proot/Android rootfs, BYO clone), and two
-tenants must NEVER share one. Today this is inconsistent — BYO clones land in
-`/root/Workspace/<repo>` (root!), host-share uses
-`~/.yaver/host-share/workspaces/<sid>/repo`, the Android sandbox uses a proot
-rootfs path. Unify on:
+The model is the human's own layout: `/Users/kivanccakmak/Workspace` holding
+repos as siblings (`yaver.io`, `sfmg`, `talos`, …). The contract is simply:
 
-```
-<agent-home>/Workspace                     # the box owner/operator's own projects
-<agent-home>/tenants/<tenantUserId>/Workspace   # one per tenant, isolated, 0700
-```
-with `<agent-home> = /var/lib/yaver` for the non-root `yaver` user (§4a), or
-`$HOME/Workspace` on a personal dev box. Rules:
+> **Projects always live in `$HOME/Workspace/<repo>` — for whatever user owns
+> the runtime.** Same path on a Mac, a fresh Linux box, a container, the proot
+> rootfs, a cloud box. The coding agent never has to learn a box-specific path.
 
-- **Per-tenant, non-overlapping**: each tenant's projects live under their own
-  `tenants/<userId>/Workspace`, mode `0700`, owned by the agent user (or a
-  per-tenant uid in Phase 2). A tenant can never `cd` into another's tree.
-- **Container mount**: the tenant's `Workspace` is the *only* writable mount
-  (`-v <tenants/<id>/Workspace>:/workspace`), surfaced inside the container at
-  a stable `/workspace` (or `~/Workspace` via symlink) so the coding agent
-  always finds projects at one path regardless of host layout.
-- **rootfs / proot / Android**: the proot rootfs binds the same per-tenant
-  `Workspace` as `/workspace` inside the rootfs (extends the existing
-  `sandboxWrapCmd` workDir bind) — same path contract everywhere.
-- **Fresh boxes**: `buildManagedCloudInit` / bootstrap create
-  `/var/lib/yaver/Workspace` owned by `yaver` (NOT `/root/Workspace`), and
-  BYO `git clone` targets `<agent-home>/Workspace/<repo>`.
-- **Removable**: a tenant's `Workspace` *is* the unit the reaper wipes on
-  release (§Gap C) — `os.RemoveAll(tenants/<id>)` leaves zero residue, and
-  because trees never overlap, wiping one never touches another.
+Concretely, per runtime owner:
+- Personal dev box → `/Users/<you>/Workspace` (today's reality, unchanged).
+- Operator's own agent → `/var/lib/yaver/Workspace` (the non-root `yaver`
+  user's home, §4a) — **not** `/root/Workspace`.
+- **Each tenant → its own OS user** `yv-<shortId>` with home
+  `/home/yv-<shortId>` and projects in `/home/yv-<shortId>/Workspace`.
 
-Net: "your code is always in `Workspace`" is a single contract across
-personal boxes, operator-fleet tenants, cloud boxes, and the phone rootfs —
-and that same boundary is what makes allocations cleanly removable.
+**Per-tenant OS users are the unifier** — they deliver, in one move:
+- *Workspace*: `$HOME/Workspace` is automatically per-tenant and
+  non-overlapping (each user's own home, mode `0700`), mirroring `~/Workspace`
+  exactly.
+- *Non-root isolation* (§4a): a tenant runs as their own unprivileged uid, not
+  root and not the agent user — OS-level separation underneath the container.
+- *Removability* (Gap C): releasing a tenant = kill their procs + `userdel -r
+  yv-<id>` (or `os.RemoveAll(/home/yv-<id>)`) → home + Workspace gone, zero
+  residue, and because homes never overlap, wiping one never touches another.
+
+Path contract across rootfs cases:
+- **Container**: bind the tenant's `Workspace` as the only writable mount,
+  surfaced at the in-container user's `~/Workspace` (and `/workspace` symlink)
+  — same path inside as out.
+- **proot / Android rootfs**: bind the tenant `Workspace` to `~/Workspace`
+  inside the rootfs (extends the existing `sandboxWrapCmd` workDir bind).
+- **Fresh box / cloud-init / BYO clone**: create `$HOME/Workspace` for the
+  owning user and `git clone` into `$HOME/Workspace/<repo>` — never
+  `/root/Workspace` (today's gap in `buildManagedCloudInit`).
+
+Net: one sentence — *"your code is in `~/Workspace`"* — holds on every surface,
+and the same per-user boundary is what makes the slice non-root, isolated, and
+cleanly removable. (Per-tenant OS users were "Phase 2" before; the Workspace
+contract promotes them to the primary tenant model.)
 
 ---
 
@@ -290,9 +294,10 @@ fail-closed without Docker. 3. Network jail: `--relay-only` + bridge +
 egress block of RFC1918 except gateway. 4. Gateway-only inference with a
 scoped token. 5. Removable allocation: hard-kill + wipe on release (DONE).
 6. **Non-root**: the agent runs as the unprivileged `yaver` user; `--operator`
-fail-closes on euid==0 (unless `--allow-root`). (§4a) 7. **One `Workspace`
-contract**: projects live in a per-tenant, non-overlapping `Workspace` dir in
-every rootfs (box/container/proot), the unit the reaper wipes. (§4b)
+fail-closes on euid==0 (unless `--allow-root`). (§4a) 7. **`$HOME/Workspace`
+everywhere**: projects always live in `$HOME/Workspace/<repo>` for the runtime
+owner; each tenant is its own OS user (`yv-<id>`) so Workspace is per-tenant,
+non-overlapping, non-root, and removable in one `userdel -r`. (§4b)
 
 ---
 
