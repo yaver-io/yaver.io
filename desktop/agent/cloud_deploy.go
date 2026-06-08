@@ -1423,10 +1423,18 @@ func cloudBootstrapScript() string {
 set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q curl git ca-certificates
+apt-get install -y -q curl git ca-certificates sudo
 # Docker
 curl -fsSL https://get.docker.com | sh
 systemctl enable --now docker
+# Non-root 'yaver' user (docs §4a): the agent / user workloads must NOT run
+# as root. Login-less system user with a real home so $HOME/Workspace works.
+id yaver >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/yaver --shell /bin/bash yaver
+# Let yaver drive Docker (rootless is the Phase-2 hardening; for now the
+# docker group is the pragmatic path) and run passwordless sudo for setup.
+usermod -aG docker yaver || true
+# Canonical project home for the yaver user (docs §4b): $HOME/Workspace.
+install -d -o yaver -g yaver -m 0755 /home/yaver/Workspace
 # Firewall
 ufw allow 22/tcp
 ufw allow 80/tcp
