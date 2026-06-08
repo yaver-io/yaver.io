@@ -108,6 +108,7 @@ export default function HomeScreen() {
               <QuickBtn c={c} label="🚀 Deploy" onPress={() => router.navigate("/(tabs)/ops" as any)} />
               <QuickBtn c={c} label="🗄️ Data" onPress={() => router.navigate("/(tabs)/data" as any)} />
               <QuickBtn c={c} label="💻 Console" onPress={() => router.navigate("/(tabs)/console" as any)} />
+              <QuickBtn c={c} label="⚙️ CI" onPress={() => router.navigate("/ci" as any)} />
               <QuickBtn c={c} label="📦 Projects" onPress={() => router.navigate("/(tabs)/more" as any)} />
             </View>
 

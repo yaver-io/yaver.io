@@ -453,6 +453,44 @@ func TestVibePreviewClipPayload_isCounterOnly(t *testing.T) {
 	}
 }
 
+// TestCIUsageAgentPayload_isCounterOnly guards the self-hosted CI runner's
+// meter call (ci_selfhosted_runner.go defaultCIMeter →
+// managedMeter:recordCIUsageFromAgent). The payload bills CI minutes against
+// the prepaid wallet, so it must carry ONLY non-secret counters/labels — never
+// the repo path, the job log, the forge token, or the workspace dir. If a
+// future change stuffs any of those into the args, the forbidden-keys +
+// abs-path walkers fail.
+func TestCIUsageAgentPayload_isCounterOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	convexMutationRecorder(
+		"managedMeter:recordCIUsageFromAgent",
+		map[string]interface{}{
+			"deviceId":                   "test-device",
+			"provider":                   "yaver-cloud",
+			"unit":                       "cpu-min",
+			"quantity":                   12.5,
+			"providerCostCents":          1,
+			"wouldHaveCostUpstreamCents": 10,
+			"ref":                        "ci_abcdef0123456789",
+		},
+	)
+
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(*buf))
+	}
+	rec := (*buf)[0]
+	assertNoForbiddenFields(t, rec)
+	assertNoUsernameLeak(t, rec, "kivanccakmak-private-dir")
+	for k := range rec.Args {
+		switch k {
+		case "token", "repoPath", "workDir", "workspacePath", "log", "output", "secret":
+			t.Errorf("forbidden field %q must not be in CI usage payload", k)
+		}
+	}
+}
+
 // TestRemoteRuntimeSessionMetricsPayload_isCounterOnly is the
 // forward-looking guardrail for the eventual `recordRemoteRuntime
 // SessionMetrics` mutation (see docs/native-webrtc-web-streaming.md
@@ -648,7 +686,7 @@ func TestPrepaidWalletFields_AreNotConvexForbidden(t *testing.T) {
 		// kind/provider/unit/model/ref are NON-SECRET labels (same class
 		// as cloudMachines.serverId); quantity/cost/cents are counters.
 		"kind", "provider", "unit", "quantity", "providerCostCents",
-		"model", "ref",
+		"model", "ref", "wouldHaveCostUpstreamCents",
 	}
 	forbidden := map[string]bool{}
 	for _, k := range fieldsWeForbidInAnyConvexPayload {
