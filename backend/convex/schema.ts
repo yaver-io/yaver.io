@@ -1910,12 +1910,17 @@ export default defineSchema({
   // Owned by managedMeter.ts. Privacy: pinned by convex_privacy_test.go.
   managedUsage: defineTable({
     userId: v.id("users"),
-    kind: v.string(),                 // "inference"|"backend"|"web"|"publish"|"compute"
-    provider: v.string(),             // "zai"|"openrouter"|"convex"|"cloudflare"|"macfarm"|...
-    unit: v.string(),                 // "token"|"request"|"read"|"gb"|"build-min"|...
+    kind: v.string(),                 // "inference"|"backend"|"web"|"publish"|"compute"|"ci"
+    provider: v.string(),             // "zai"|"openrouter"|"convex"|"cloudflare"|"macfarm"|"yaver-cloud"|"self-hosted"|"operator-fleet"|...
+    unit: v.string(),                 // "token"|"request"|"read"|"gb"|"build-min"|"cpu-min"|"mac-min"|...
     quantity: v.number(),             // units metered this row
     providerCostCents: v.number(),    // raw upstream COGS (cents)
     chargedCents: v.number(),         // user-facing after markup(kind)
+    // What the user WOULD have paid the upstream SaaS for this same work —
+    // the "savings ledger" anchor. For ci: minutes x GitHub Actions per-min
+    // (linux $0.008 / macOS $0.08 / windows $0.016). Non-secret counter;
+    // savings = SUM(wouldHaveCostUpstreamCents) - SUM(chargedCents).
+    wouldHaveCostUpstreamCents: v.optional(v.number()),
     model: v.optional(v.string()),    // inference model label (non-secret)
     ref: v.optional(v.string()),      // resource id (deployment/build) — non-secret
     date: v.string(),                 // "YYYY-MM-DD" (UTC)

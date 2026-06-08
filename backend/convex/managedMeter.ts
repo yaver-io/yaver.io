@@ -20,8 +20,9 @@
 // (kind/provider/unit/model/ref). No token/key/path/output. Pinned by
 // desktop/agent/convex_privacy_test.go (TestManagedUsageFields_*).
 
-import { internalMutation } from "./_generated/server";
+import { internalMutation, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { resolveUser } from "./agentSync";
 
 // Markup over raw upstream COGS, per meter kind, env-overridable. The
 // inference spread is intentionally lighter than compute (2x) because
@@ -34,6 +35,11 @@ const MARKUP_BY_KIND: Record<string, number> = {
   web: 2,
   publish: 1.3, // build-minutes; thin — the value is the convenience
   compute: 2,   // parity with cloudLifecycle if compute ever routes here
+  ci: 2,        // CI minutes; COGS (Hetzner ~$0.00015/cpu-min) is so far below
+                // GitHub's $0.008 anchor that 2x still lands ~10-20x under GHA.
+                // providerCostCents is 0 when CI ran on the user's own box or
+                // the operator fleet → charged 0 (free), still logged for the
+                // savings ledger. See docs/yaver-managed-cloud-ci-absorption.md.
 };
 
 export function managedMarkup(kind: string): number {
@@ -100,6 +106,67 @@ async function ensureWalletRow(ctx: any, userId: string) {
 // cloudLifecycle.recordUsageAndDeduct (compute). Internal-only — the
 // edge gateway and proxies reach it via ctx.runMutation, never the
 // client.
+// applyManagedUsage is the shared insert+debit core. Both the internal meter
+// (gateway/proxy path) and the agent-callable CI meter funnel through it so the
+// markup spread + dryRun gate + wallet debit live in exactly one place.
+async function applyManagedUsage(
+  ctx: any,
+  p: {
+    userId: string;
+    kind: string;
+    provider: string;
+    unit: string;
+    quantity: number;
+    providerCostCents: number;
+    model?: string;
+    ref?: string;
+    wouldHaveCostUpstreamCents?: number;
+    dryRun?: boolean;
+  },
+): Promise<{ balanceCents: number; suspend: boolean; charged: number }> {
+  // dryRun unless BOTH the caller asked for a real charge (dryRun:false) AND
+  // the user has opted this capability in. Per-user opt-in is the à-la-carte
+  // gate on top of the global YAVER_MANAGED_METER_LIVE flag.
+  const optedIn = await userOptedIntoKind(ctx, p.userId, p.kind);
+  const sim = p.dryRun !== false || !optedIn; // default true (no real spend posture)
+  const cost = Math.max(0, Math.ceil(p.providerCostCents));
+  if (cost <= 0 && p.quantity <= 0) {
+    const w0 = await ensureWalletRow(ctx, p.userId);
+    return { balanceCents: w0.balanceCents, suspend: w0.balanceCents <= 0, charged: 0 };
+  }
+  const chargedCents = Math.ceil(cost * managedMarkup(p.kind));
+  const now = Date.now();
+
+  await ctx.db.insert("managedUsage", {
+    userId: p.userId,
+    kind: p.kind,
+    provider: p.provider,
+    unit: p.unit,
+    quantity: p.quantity,
+    providerCostCents: cost,
+    chargedCents,
+    model: p.model,
+    ref: p.ref,
+    ...(typeof p.wouldHaveCostUpstreamCents === "number" && p.wouldHaveCostUpstreamCents > 0
+      ? { wouldHaveCostUpstreamCents: Math.ceil(p.wouldHaveCostUpstreamCents) }
+      : {}),
+    date: todayUTC(now),
+    dryRun: sim,
+    createdAt: now,
+  });
+
+  const w = await ensureWalletRow(ctx, p.userId);
+  const newBalance = Math.max(0, w.balanceCents - chargedCents);
+  await ctx.db.patch(w._id, {
+    balanceCents: newBalance,
+    totalUsedCents: w.totalUsedCents + chargedCents,
+    lastMeteredAt: now,
+    updatedAt: now,
+  });
+
+  return { balanceCents: newBalance, suspend: newBalance <= 0, charged: chargedCents };
+}
+
 export const recordManagedUsage = internalMutation({
   args: {
     userId: v.id("users"),
@@ -110,50 +177,48 @@ export const recordManagedUsage = internalMutation({
     providerCostCents: v.number(),
     model: v.optional(v.string()),
     ref: v.optional(v.string()),
+    wouldHaveCostUpstreamCents: v.optional(v.number()),
     dryRun: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { userId, kind, provider, unit, quantity, providerCostCents, model, ref, dryRun },
+    args,
   ): Promise<{ balanceCents: number; suspend: boolean; charged: number }> => {
-    // dryRun unless BOTH the caller asked for a real charge (dryRun:false)
-    // AND the user has opted this capability in. Per-user opt-in is the
-    // à-la-carte gate on top of the global YAVER_MANAGED_METER_LIVE flag
-    // (which the calling gateway/proxy already consulted to decide dryRun).
-    const optedIn = await userOptedIntoKind(ctx, userId, kind);
-    const sim = dryRun !== false || !optedIn; // default true (no real spend posture)
-    const cost = Math.max(0, Math.ceil(providerCostCents));
-    if (cost <= 0 && quantity <= 0) {
-      const w0 = await ensureWalletRow(ctx, userId);
-      return { balanceCents: w0.balanceCents, suspend: w0.balanceCents <= 0, charged: 0 };
-    }
-    const chargedCents = Math.ceil(cost * managedMarkup(kind));
-    const now = Date.now();
+    return applyManagedUsage(ctx, args);
+  },
+});
 
-    await ctx.db.insert("managedUsage", {
+// recordCIUsageFromAgent — the agent-callable CI meter (kind hard-pinned to
+// "ci"). The self-hosted CI runner (ci_selfhosted_runner.go) posts one row per
+// completed job via convexSyncer.callMutation. The user is resolved from the
+// agent's authed session (same resolveUser path as agentSync), so the agent
+// never passes a userId. Stays simulated until YAVER_MANAGED_METER_LIVE + the
+// per-user `ci` capability opt-in. Privacy: all fields are non-secret counters/
+// labels (deviceId/provider/unit/quantity/cents/ref) — pinned by
+// convex_privacy_test.go.
+export const recordCIUsageFromAgent = mutation({
+  args: {
+    deviceId: v.optional(v.string()),
+    provider: v.string(), // "self-hosted" | "operator-fleet" | "yaver-cloud"
+    unit: v.string(),     // "cpu-min" | "mac-min"
+    quantity: v.number(),
+    providerCostCents: v.number(),
+    wouldHaveCostUpstreamCents: v.optional(v.number()),
+    ref: v.optional(v.string()),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args): Promise<{ balanceCents: number; suspend: boolean; charged: number }> => {
+    const userId = await resolveUser(ctx);
+    return applyManagedUsage(ctx, {
       userId,
-      kind,
-      provider,
-      unit,
-      quantity,
-      providerCostCents: cost,
-      chargedCents,
-      model,
-      ref,
-      date: todayUTC(now),
-      dryRun: sim,
-      createdAt: now,
+      kind: "ci",
+      provider: args.provider,
+      unit: args.unit,
+      quantity: args.quantity,
+      providerCostCents: args.providerCostCents,
+      wouldHaveCostUpstreamCents: args.wouldHaveCostUpstreamCents,
+      ref: args.ref,
+      dryRun: args.dryRun,
     });
-
-    const w = await ensureWalletRow(ctx, userId);
-    const newBalance = Math.max(0, w.balanceCents - chargedCents);
-    await ctx.db.patch(w._id, {
-      balanceCents: newBalance,
-      totalUsedCents: w.totalUsedCents + chargedCents,
-      lastMeteredAt: now,
-      updatedAt: now,
-    });
-
-    return { balanceCents: newBalance, suspend: newBalance <= 0, charged: chargedCents };
   },
 });
