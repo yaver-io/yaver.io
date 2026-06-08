@@ -89,22 +89,25 @@ func sandboxConfigFromEnv() (sandboxConfig, bool) {
 // buildProotArgv constructs the full argv that runs `inner` inside the proot
 // rootfs. `inner` is the original command + args (e.g. ["/bin/sh"] or
 // ["claude","-p","fix the bug"]). `workDir` is the cwd INSIDE the rootfs
-// ("" → /root). The returned slice is [proot, <proot flags>, ...inner].
+// ("" → /root). `extraBinds` are additional "host:guest" (or bare "host")
+// bind specs appended after the standard binds — used by the build path to
+// mount the project dir into the rootfs. The returned slice is
+// [proot, <proot flags>, ...inner].
 //
 // Pure function: no env reads, no side effects. Mirrors the proot-distro login
 // invocation Termux uses, trimmed to what the spike needs.
-func buildProotArgv(c sandboxConfig, inner []string, workDir string) []string {
+func buildProotArgv(c sandboxConfig, inner []string, workDir string, extraBinds ...string) []string {
 	if workDir == "" {
 		workDir = "/root"
 	}
 	argv := []string{
 		c.Proot,
-		"--kill-on-exit",   // reap the whole tree when proot dies
-		"--link2symlink",   // hardlink emulation for npm/git on a single-FS rootfs
-		"-r", c.Rootfs,     // new root
-		"-b", "/dev",       // bind host /dev (gives us /dev/ptmx, /dev/null, ...)
-		"-b", "/proc",      // node/git read /proc
-		"-b", "/sys",       // some tools stat /sys
+		"--kill-on-exit", // reap the whole tree when proot dies
+		"--link2symlink", // hardlink emulation for npm/git on a single-FS rootfs
+		"-r", c.Rootfs,   // new root
+		"-b", "/dev", // bind host /dev (gives us /dev/ptmx, /dev/null, ...)
+		"-b", "/proc", // node/git read /proc
+		"-b", "/sys", // some tools stat /sys
 		"-b", "/dev/urandom:/dev/random", // many phones lack a fast /dev/random
 	}
 	// Bind the host runner-cred dirs into /root so a mirrored / on-device login
@@ -116,9 +119,27 @@ func buildProotArgv(c sandboxConfig, inner []string, workDir string) []string {
 		host := filepath.Join(c.CredHome, rel)
 		argv = append(argv, "-b", host+":/root/"+rel)
 	}
+	for _, b := range extraBinds {
+		if strings.TrimSpace(b) == "" {
+			continue
+		}
+		argv = append(argv, "-b", b)
+	}
 	argv = append(argv, "-w", workDir) // cwd inside the rootfs
 	argv = append(argv, inner...)
 	return argv
+}
+
+// ensureSandboxCredDirs creates the runner cred dirs so proot's binds don't
+// fail on a missing host source (proot refuses a bind whose source is absent).
+// Best-effort — a failure just degrades that bind to on-device login.
+func ensureSandboxCredDirs(c sandboxConfig) {
+	if c.CredHome == "" {
+		return
+	}
+	for _, rel := range sandboxCredBindDirs {
+		_ = os.MkdirAll(filepath.Join(c.CredHome, rel), 0o700)
+	}
 }
 
 // sandboxEnv returns the environment to hand the proot process. It strips the
@@ -171,15 +192,7 @@ func sandboxWrapCmd(cmd *exec.Cmd) *exec.Cmd {
 	if !ok {
 		return cmd
 	}
-	// proot refuses a bind whose host source is missing; ensure the cred dirs
-	// exist before launch so the very first runner spawn (before any mirror)
-	// still starts. Best-effort: a failure here just means that bind is skipped
-	// by proot, which degrades to on-device login.
-	if cfg.CredHome != "" {
-		for _, rel := range sandboxCredBindDirs {
-			_ = os.MkdirAll(filepath.Join(cfg.CredHome, rel), 0o700)
-		}
-	}
+	ensureSandboxCredDirs(cfg)
 	inner := cmd.Args
 	if len(inner) == 0 {
 		inner = []string{cmd.Path}
@@ -192,4 +205,86 @@ func sandboxWrapCmd(cmd *exec.Cmd) *exec.Cmd {
 	cmd.Env = sandboxEnv(cfg, cmd.Env)
 	cmd.Dir = "" // proot runs from the agent's native cwd; -w sets the inner cwd
 	return cmd
+}
+
+// sandboxWrapBuildCmd is sandboxWrapCmd for BUILD subprocesses — Metro/Expo,
+// hermesc, and project dep installs invoked by /dev/build-native on Android.
+// No-op off-sandbox (same env gate as sandboxWrapCmd).
+//
+// It differs from sandboxWrapCmd in two ways the build needs:
+//
+//  1. Project binding. The build's cwd (cmd.Dir) is a HOST path on the Android
+//     fs (e.g. the phone-projects/<slug> tree). All build artifacts live under
+//     it (.yaver-build/main.jsbundle, the hermesc -out/tmp paths). We bind that
+//     dir into the rootfs at its OWN absolute path (-b dir:dir) and keep -w dir,
+//     so every absolute path the build already constructs resolves UNCHANGED
+//     inside proot — no path translation anywhere. (A rootfs-internal cmd.Dir
+//     like /root/... — which doesn't exist on the native fs — is left as a plain
+//     -w with no bind, matching sandboxWrapCmd.)
+//
+//  2. Env. The runner wrap installs a minimal rootfs env; the build needs the
+//     caller's NODE_OPTIONS / NODE_ENV / EXPO_* / baked-Convex vars preserved
+//     (sandboxBuildEnv), with only PATH/HOME/host-specific knobs overridden to
+//     the rootfs values so node/npx/expo resolve against the Alpine toolchain.
+func sandboxWrapBuildCmd(cmd *exec.Cmd) *exec.Cmd {
+	if cmd == nil {
+		return cmd
+	}
+	cfg, ok := sandboxConfigFromEnv()
+	if !ok {
+		return cmd
+	}
+	ensureSandboxCredDirs(cfg)
+	inner := cmd.Args
+	if len(inner) == 0 {
+		inner = []string{cmd.Path}
+	}
+	workDir := cmd.Dir
+	var binds []string
+	// Bind the project tree at its own path iff cmd.Dir is an existing host
+	// directory. proot auto-creates the mount point inside the rootfs.
+	if workDir != "" && filepath.IsAbs(workDir) {
+		if fi, err := os.Stat(workDir); err == nil && fi.IsDir() {
+			binds = append(binds, workDir+":"+workDir)
+		}
+	}
+	argv := buildProotArgv(cfg, inner, workDir, binds...)
+
+	cmd.Path = cfg.Proot
+	cmd.Args = argv
+	cmd.Env = sandboxBuildEnv(cfg, cmd.Env)
+	cmd.Dir = ""
+	return cmd
+}
+
+// sandboxBuildEnv layers the caller's build-relevant env on top of the minimal
+// rootfs env (sandboxEnv). The rootfs PATH/HOME/TERM/LANG/PROOT_* win (so node,
+// npx, expo resolve against the Alpine toolchain inside proot); everything else
+// the caller set — NODE_OPTIONS, NODE_ENV, EXPO_*, the baked Convex URL — is
+// carried through. Host-specific keys are dropped so they can't override the
+// rootfs values.
+func sandboxBuildEnv(c sandboxConfig, callerEnv []string) []string {
+	env := sandboxEnv(c, callerEnv)
+	seen := map[string]bool{}
+	for _, kv := range env {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			seen[kv[:i]] = true
+		}
+	}
+	for _, kv := range callerEnv {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		k := kv[:i]
+		// Skip keys the rootfs env already owns, plus host-specific knobs that
+		// must NOT leak into the rootfs (they'd point at Android paths).
+		if seen[k] || k == "PATH" || k == "HOME" || k == "PWD" || k == "TMPDIR" ||
+			strings.HasPrefix(k, "LD_") || strings.HasPrefix(k, "PROOT_") {
+			continue
+		}
+		env = append(env, kv)
+		seen[k] = true
+	}
+	return env
 }

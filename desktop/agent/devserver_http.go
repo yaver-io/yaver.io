@@ -939,6 +939,10 @@ func installProjectDependenciesTo(workDir string, prep projectPreparationStatus,
 	// when system Node is missing, so a fresh Linux box can install
 	// project deps after a phone-driven /install/mobile.
 	cmd.Env = augmentEnv(nil)
+	// On Android, run the install inside the proot rootfs so npm/yarn + the
+	// Alpine node resolve and node_modules lands in the (bound) project tree.
+	// No-op off-sandbox.
+	cmd = sandboxWrapBuildCmd(cmd)
 	// Capture a bounded tail of stdout+stderr in addition to the
 	// streaming tee, so a failure can return a useful error message
 	// instead of `exit status 254`. classifyInstallFailure looks for
@@ -3115,6 +3119,10 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		log.Printf("[super-host] hosted Convex baked into bundle: %s", convexEnv[0])
 	}
 
+	// On Android, run Metro/Expo inside the proot rootfs (binds workDir at its
+	// own path so node/npx + node_modules resolve; no-op off-sandbox).
+	cmd = sandboxWrapBuildCmd(cmd)
+
 	log.Printf("[super-host] bundling with command: %v", cmd.Args)
 	logW := &devLogWriter{prefix: "[super-host]"}
 	if s.devServerMgr != nil {
@@ -3295,6 +3303,10 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			hermesArgs = append(hermesArgs, tmpPath)
 			hermesCmd := exec.CommandContext(hermesCtx, hermescPath, hermesArgs...)
 			hermesCmd.Dir = workDir
+			// On Android, hermescPath is a rootfs-internal path and the bundle
+			// I/O lives under workDir — wrap so both resolve inside proot.
+			// No-op off-sandbox.
+			hermesCmd = sandboxWrapBuildCmd(hermesCmd)
 			hermesLogW := &devLogWriter{prefix: "[super-host:hermesc]"}
 			hermesCmd.Stdout = hermesLogW
 			hermesCmd.Stderr = hermesLogW
