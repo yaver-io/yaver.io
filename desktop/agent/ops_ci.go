@@ -13,6 +13,7 @@ package main
 // minted just-in-time from the box's own git creds and never persisted.
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 )
@@ -90,6 +91,36 @@ func init() {
 			"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
 		},
 		Handler:    opsCIWorkflowTargetsHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "ci_jail_setup",
+		Description: "Operator-fleet: create the CI network jail on THIS box — a dedicated docker bridge + DOCKER-USER iptables rules that block jailed CI jobs from reaching the LAN (RFC1918/link-local/CGNAT) while still allowing the public internet (npm/github). Linux-only firewall; container CI runs then auto-join it. See docs/yaver-public-compute-operator-fleet.md.",
+		Schema: map[string]interface{}{
+			"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
+		},
+		Handler:    opsCIJailSetupHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "ci_jail_status",
+		Description: "Report the CI network jail state on this box: whether the jail docker network exists + whether the egress firewall rules are active (linux).",
+		Schema: map[string]interface{}{
+			"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
+		},
+		Handler:    opsCIJailStatusHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "ci_jail_teardown",
+		Description: "Remove the CI network jail (firewall rules + docker network + marker) from this box.",
+		Schema: map[string]interface{}{
+			"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
+		},
+		Handler:    opsCIJailTeardownHandler,
 		Streaming:  false,
 		AllowGuest: false,
 	})
@@ -232,6 +263,34 @@ func opsCIWorkflowScaffoldHandler(_ OpsContext, payload json.RawMessage) OpsResu
 		"written": p.Write,
 		"hint":    "Commit this workflow, set the listed secrets in your repo (Settings → Secrets → Actions), register a runner with ci_runner_register, then push the tag — the build runs on your box.",
 	}}
+}
+
+func opsCIJailSetupHandler(_ OpsContext, _ json.RawMessage) OpsResult {
+	res, err := setupCIJail(context.Background())
+	if err != nil {
+		return OpsResult{OK: false, Code: "jail_setup_failed", Error: err.Error()}
+	}
+	return OpsResult{OK: true, Initial: res}
+}
+
+func opsCIJailStatusHandler(_ OpsContext, _ json.RawMessage) OpsResult {
+	ctx := context.Background()
+	subnet, _, err := ensureCIJailNetwork(ctx)
+	present := err == nil && subnet != ""
+	return OpsResult{OK: true, Initial: map[string]interface{}{
+		"network":        ciJailNetworkName,
+		"networkPresent": present,
+		"subnet":         subnet,
+		"firewallActive": present && ciJailFirewallActive(ctx, subnet),
+		"activeForRuns":  ciJailNetwork(),
+	}}
+}
+
+func opsCIJailTeardownHandler(_ OpsContext, _ json.RawMessage) OpsResult {
+	if err := teardownCIJail(context.Background()); err != nil {
+		return OpsResult{OK: false, Code: "jail_teardown_failed", Error: err.Error()}
+	}
+	return OpsResult{OK: true, Initial: map[string]interface{}{"removed": ciJailNetworkName}}
 }
 
 func opsCIWorkflowTargetsHandler(_ OpsContext, _ json.RawMessage) OpsResult {
