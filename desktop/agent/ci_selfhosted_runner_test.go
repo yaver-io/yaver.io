@@ -330,6 +330,23 @@ func TestGitlabExecutorFor(t *testing.T) {
 	}
 }
 
+func TestCIDockerHardeningArgs(t *testing.T) {
+	args := strings.Join(ciDockerHardeningArgs(), " ")
+	for _, want := range []string{"--rm", "--cap-drop ALL", "--security-opt no-new-privileges", "--pids-limit", "--memory"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("hardening args missing %q: %s", want, args)
+		}
+	}
+	if strings.Contains(args, "--network") {
+		t.Errorf("no jail network should be set by default: %s", args)
+	}
+	// When the operator-fleet jail network is configured, containers join it.
+	t.Setenv("YAVER_CI_JAIL_NETWORK", "yaver-ci-jail")
+	if !strings.Contains(strings.Join(ciDockerHardeningArgs(), " "), "--network yaver-ci-jail") {
+		t.Errorf("jail network not applied when YAVER_CI_JAIL_NETWORK set")
+	}
+}
+
 func TestCIMeterUnit(t *testing.T) {
 	if ciMeterUnit("macos") != "mac-min" {
 		t.Errorf("macos unit wrong")
