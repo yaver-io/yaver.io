@@ -26,10 +26,18 @@ export const ROUTES: Record<string, Upstream[]> = {
     {
       provider: "zai",
       model: "glm-4.6",
-      baseUrl: "https://api.z.ai/api/paas/v4",
+      // GLM Coding Plan endpoint (subscription, flat-rate). NOT the
+      // pay-as-you-go /api/paas/v4 (that bills a separate prepaid balance
+      // and returns 1113 "insufficient balance" for coding-plan keys).
+      // The coding plan is served from /api/coding/paas/v4 (OpenAI-compat).
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
       keyEnv: "ZAI_API_KEY",
-      inCentsPerM: 60,   // ~$0.60/M — PLACEHOLDER
-      outCentsPerM: 220, // ~$2.20/M — PLACEHOLDER
+      // Our real cost is the flat YEARLY plan fee, so these per-token rates
+      // are NOT money — they're the FAIR-USE BUDGET UNIT a free-tier tenant
+      // spends from their grant. Nominal GLM-4.6-ish rates so a tenant's
+      // small free grant ($1–2) depletes and throttles them. (PLACEHOLDER.)
+      inCentsPerM: 60,
+      outCentsPerM: 220,
     },
     {
       provider: "deepinfra",

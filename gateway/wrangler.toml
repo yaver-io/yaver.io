@@ -15,18 +15,20 @@ compatibility_date = "2024-11-01"
 
 [vars]
 # CONVEX_URL must point at the .convex.site HTTP host (NOT .convex.cloud).
-CONVEX_URL = "https://REPLACE-ME.convex.site"
+CONVEX_URL = "https://perceptive-minnow-557.eu-west-1.convex.site"
 MAX_TOKENS_PER_REQUEST = "4096"
 MAX_CENTS_PER_REQUEST = "50"
 # Rolling per-user hourly spend cap (COGS cents). "0" or unset = no cap.
 MAX_CENTS_PER_HOUR = "500"
 
-# Per-user meter (hourly cap + sub-cent carry). Optional: remove this
-# binding + migration and the gateway falls back to per-request metering.
-[[durable_objects.bindings]]
-name = "USER_METER"
-class_name = "UserMeter"
-
-[[migrations]]
-tag = "v1"
-new_classes = ["UserMeter"]
+# Per-user meter (hourly cap + sub-cent carry). Durable Objects need a
+# Workers Paid plan; the gateway falls back to per-request metering when
+# the USER_METER binding is absent (limiter.ts meterCheck → allow, ceil
+# carry). Re-enable on a paid plan by uncommenting + `wrangler deploy`.
+# [[durable_objects.bindings]]
+# name = "USER_METER"
+# class_name = "UserMeter"
+#
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["UserMeter"]
