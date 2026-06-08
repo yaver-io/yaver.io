@@ -77,10 +77,19 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		cmd := exec.Command(shell)
-		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		isHostShare := r.Header.Get("X-Yaver-HostShare") == "true"
+		// OPERATOR FLEET: a tenant's shell must NOT inherit the operator's
+		// environment (keys/tokens). Build a secret-stripped base env +
+		// the gateway inference provider (scoped per-tenant token). Every
+		// other path keeps the normal full host env.
+		if s.operatorMode && isHostShare {
+			cmd.Env = append(s.tenantRunnerBaseEnv(guestUserID), "TERM=xterm-256color")
+		} else {
+			cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		}
 		cwd := r.URL.Query().Get("cwd")
 		workspaceDir := ""
-		if r.Header.Get("X-Yaver-HostShare") == "true" {
+		if isHostShare {
 			cmd.Env = append(cmd.Env,
 				"YAVER_HOST_SHARE=1",
 				"YAVER_HOST_SHARE_SESSION_ID="+hostShareSessionID,
