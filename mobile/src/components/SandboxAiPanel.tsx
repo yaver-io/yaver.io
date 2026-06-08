@@ -44,7 +44,7 @@ import {
 import { runCodingAgent, type CodingAgentResult, type CodingToolCall } from "../lib/codingAgent/runner";
 import { CODING_TOOLS } from "../lib/codingAgent/sandboxTools";
 import { makeGitTools } from "../lib/codingAgent/gitTools";
-import { sandboxForSlug, gitForSlug, gitNetForSlug, loadGlmCodingConfig } from "../lib/codingAgent/sandboxBinding";
+import { sandboxForSlug, gitForSlug, gitNetForSlug, loadCodingConfig } from "../lib/codingAgent/sandboxBinding";
 import {
   ensureRepo,
   checkpointBefore,
@@ -195,9 +195,10 @@ export function SandboxAiPanel({ slug, openPath, onApplied }: Props) {
     setBeforeOid(null);
     setGitNote(null);
 
-    // Agent mode runs on GLM (the cheap coding-plan path). One key powers this
-    // and the quick-edit GLM backend.
-    const config = await loadGlmCodingConfig();
+    // Managed mode (Premium) routes through the Yaver Gateway authed by the
+    // session token; otherwise the BYO GLM key (one key powers this and the
+    // quick-edit GLM backend).
+    const config = await loadCodingConfig();
     if (!config) {
       router.push("/sandbox-ai");
       return;

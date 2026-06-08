@@ -40,7 +40,7 @@ import { cloneGitRepoToPhone } from "../src/lib/cloneToPhone";
 import { listPhoneProjects, type PhoneProject } from "../src/lib/phoneProjects";
 import { runAgenticCoding, gitContextForSlug } from "../src/lib/codingAgent/codingAgentRun";
 import { repoSandboxForSlug } from "../src/lib/codingAgent/repoSandbox";
-import { loadGlmCodingConfig } from "../src/lib/codingAgent/sandboxBinding";
+import { loadCodingConfig } from "../src/lib/codingAgent/sandboxBinding";
 import { isRepo, revertTo } from "../src/lib/codingAgent/sandboxGit";
 import type { CodingAgentProgress } from "../src/lib/codingAgent/runner";
 
@@ -172,9 +172,12 @@ export default function RepoCodingScreen() {
     const slug = selected;
     const p = prompt.trim();
     if (!slug || !p) return;
-    const config = await loadGlmCodingConfig();
+    const config = await loadCodingConfig();
     if (!config) {
-      Alert.alert("Add a GLM key", "The Yaver Agent runs on GLM. Paste a GLM API key above to enable it.");
+      Alert.alert(
+        "Add a GLM key",
+        "The Yaver Agent needs a GLM API key — or turn on Yaver-managed mode (uses your credit balance, no key needed).",
+      );
       return;
     }
     const net = (await gitHubNetFromStore(http)) ?? undefined; // lets the agent git_push if a token is set
