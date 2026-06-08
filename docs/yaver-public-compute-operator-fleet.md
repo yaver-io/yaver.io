@@ -143,6 +143,7 @@ the datacenter case. Non-negotiable before any stranger touches a box.
 | Threat | Control |
 |---|---|
 | Read operator files / `$HOME` / git creds | Container-only tenants, clean env, no host `$HOME` mount; operator box holds no personal vault/keys (operator identity). |
+| **Tenant escapes containment → lands on a root agent** | **The agent runs as a dedicated NON-root user** (`yaver` system account). A container escape or runner bug then lands on an unprivileged uid, not root — it can't read `/etc/shadow`, other users' homes, the docker socket, or rewrite system files. (See §4a.) |
 | Extract the GLM key | Gateway-only, Worker secret; tenant gets a scoped token. |
 | LAN pivot / box as attack relay | `--relay-only` + container `--network bridge` + **egress firewall blocking RFC1918** except the gateway; no inbound public ports. |
 | Cross-tenant residue | Per-tenant container, no shared caches, no host volume; **hard-kill + wipe on release (DONE)**; reaper cron. |
@@ -154,6 +155,88 @@ the datacenter case. Non-negotiable before any stranger touches a box.
 **Bidirectional key promise:** tenants don't bring keys (inference provided);
 a future BYO key goes into the gateway as a Worker secret or stays
 client-side — never an operator box's vault/env. Our GLM key is gateway-only.
+
+### 4a. Yaver runs as NON-root — everywhere, not just the fleet
+
+**Principle: `yaver serve` must never *require* root, and an operator node
+must never *run* as root.** The agent already warns loudly when launched as
+root (it stores state in `$HOME/.yaver`, binds only ports >1024, and needs no
+privileged syscalls for serve/auth/code/vault/wire). Root is opt-in and only
+for explicit acts (`--install-systemd`, `--install-launchd-daemon`, `yaver
+install <pkg>`, `yaver domain add`). For the public fleet this stops being a
+nicety and becomes a **hard isolation boundary**: a tenant who escapes a
+container or exploits a runner bug must land on an **unprivileged uid**, not
+root.
+
+Layered privilege model for an operator node (least → most isolated):
+1. **Agent user** — a dedicated, login-less `yaver` system user
+   (`useradd --system --home /var/lib/yaver --shell /usr/sbin/nologin yaver`).
+   Owns `~/.yaver`, the operator token, the relay creds. NOT root, NOT in the
+   `docker` group if rootless Docker is used (see #3).
+2. **Tenant slice** — runs in a container (default for `--operator`), so the
+   tenant is already namespaced off the agent user.
+3. **Container runtime** — prefer **rootless Docker / Podman** (or bubblewrap)
+   so even the container daemon isn't root; `--network bridge` + RFC1918
+   egress block (§4). Per-tenant uid mapping (userns-remap) is the Phase-2
+   hardening so two tenants can't share a uid.
+
+Implications baked into the design:
+- The systemd unit `yaver serve` installs for an operator node must set
+  `User=yaver` (+ `NoNewPrivileges=yes`, `ProtectSystem=strict`,
+  `ProtectHome=yes`, `PrivateTmp=yes`) — NOT run as root. The generic
+  `--install-systemd` path should grow an operator profile that does this.
+- Bootstrap scripts (`buildManagedCloudInit`, `ci/remote/bootstrap.sh`) must
+  create + drop to the `yaver` user, not bake `ExecStart=/usr/local/bin/yaver
+  serve` under root (today the cloud-init unit runs as root — a gap to fix
+  for fleet nodes).
+- If `--operator` detects euid==0, it should **refuse** (fail-closed) rather
+  than warn, unless an explicit `--allow-root` override is passed (the same
+  fail-closed philosophy as the Docker check).
+
+> Found live (2026-06-08 cpx12 test): a fresh `yaver serve` first-run prints
+> an interactive `host-share prepare` prompt and, with no relay path on the
+> account, falls back to a bootstrap pairing beacon binding `*:18080` — so a
+> headless operator node needs (a) a non-interactive serve (skip first-run
+> prompt / `--operator` implies it), (b) a relay path provisioned for the
+> operator account before serve, and (c) to run as the `yaver` user. These
+> are the operator-onboarding follow-ups.
+
+### 4b. One `Workspace` convention — everywhere, per-tenant, non-overlapping
+
+Projects must live in a predictable **`Workspace`** directory in *every*
+runtime (fresh box, container, proot/Android rootfs, BYO clone), and two
+tenants must NEVER share one. Today this is inconsistent — BYO clones land in
+`/root/Workspace/<repo>` (root!), host-share uses
+`~/.yaver/host-share/workspaces/<sid>/repo`, the Android sandbox uses a proot
+rootfs path. Unify on:
+
+```
+<agent-home>/Workspace                     # the box owner/operator's own projects
+<agent-home>/tenants/<tenantUserId>/Workspace   # one per tenant, isolated, 0700
+```
+with `<agent-home> = /var/lib/yaver` for the non-root `yaver` user (§4a), or
+`$HOME/Workspace` on a personal dev box. Rules:
+
+- **Per-tenant, non-overlapping**: each tenant's projects live under their own
+  `tenants/<userId>/Workspace`, mode `0700`, owned by the agent user (or a
+  per-tenant uid in Phase 2). A tenant can never `cd` into another's tree.
+- **Container mount**: the tenant's `Workspace` is the *only* writable mount
+  (`-v <tenants/<id>/Workspace>:/workspace`), surfaced inside the container at
+  a stable `/workspace` (or `~/Workspace` via symlink) so the coding agent
+  always finds projects at one path regardless of host layout.
+- **rootfs / proot / Android**: the proot rootfs binds the same per-tenant
+  `Workspace` as `/workspace` inside the rootfs (extends the existing
+  `sandboxWrapCmd` workDir bind) — same path contract everywhere.
+- **Fresh boxes**: `buildManagedCloudInit` / bootstrap create
+  `/var/lib/yaver/Workspace` owned by `yaver` (NOT `/root/Workspace`), and
+  BYO `git clone` targets `<agent-home>/Workspace/<repo>`.
+- **Removable**: a tenant's `Workspace` *is* the unit the reaper wipes on
+  release (§Gap C) — `os.RemoveAll(tenants/<id>)` leaves zero residue, and
+  because trees never overlap, wiping one never touches another.
+
+Net: "your code is always in `Workspace`" is a single contract across
+personal boxes, operator-fleet tenants, cloud boxes, and the phone rootfs —
+and that same boundary is what makes allocations cleanly removable.
 
 ---
 
@@ -206,6 +289,10 @@ reputation / waitlist gating.
 fail-closed without Docker. 3. Network jail: `--relay-only` + bridge +
 egress block of RFC1918 except gateway. 4. Gateway-only inference with a
 scoped token. 5. Removable allocation: hard-kill + wipe on release (DONE).
+6. **Non-root**: the agent runs as the unprivileged `yaver` user; `--operator`
+fail-closes on euid==0 (unless `--allow-root`). (§4a) 7. **One `Workspace`
+contract**: projects live in a per-tenant, non-overlapping `Workspace` dir in
+every rootfs (box/container/proot), the unit the reaper wipes. (§4b)
 
 ---
 
