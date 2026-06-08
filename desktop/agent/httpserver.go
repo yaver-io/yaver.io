@@ -11687,16 +11687,24 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			machine = "local"
 		}
 		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
-		out := dispatchOps(octx, OpsRequest{Machine: machine, Verb: "robot_snapshot"})
+		// Try the Cartesian cell's camera, then the arm cell's — both share the
+		// box's one eye, so whichever cell is configured answers.
+		var out OpsResult
+		lastMsg := "no camera"
+		for _, verb := range []string{"robot_snapshot", "arm_snapshot"} {
+			out = dispatchOps(octx, OpsRequest{Machine: machine, Verb: verb})
+			if out.OK {
+				break
+			}
+			if out.Error != "" {
+				lastMsg = out.Error
+				if out.Code != "" {
+					lastMsg = out.Code + ": " + out.Error
+				}
+			}
+		}
 		if !out.OK {
-			msg := out.Error
-			if msg == "" {
-				msg = "robot_snapshot failed"
-			}
-			if out.Code != "" {
-				msg = out.Code + ": " + msg
-			}
-			return mcpToolError("robot_camera (" + machine + "): " + msg)
+			return mcpToolError("robot_camera (" + machine + "): " + lastMsg)
 		}
 		var dataURL string
 		if m, ok := out.Initial.(map[string]interface{}); ok {
