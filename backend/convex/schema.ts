@@ -1854,6 +1854,47 @@ export default defineSchema({
   }).index("by_user", ["userId", "createdAt"])
     .index("by_order", ["orderId"]),
 
+  // ── Yaver Gateway: per-user limits (OPERATOR-set, user-IMMUTABLE) ───
+  // The free public-compute tier lends the operator's GLM key through the
+  // gateway. Per-user limits live HERE — in a table only the operator
+  // (ownerAllowlist) can write — NOT in userSettings (which the user can
+  // mutate). A tenant can never raise their own cap or re-enable a
+  // disabled account. Absent row = gateway defaults (env ceilings). All
+  // values are counters; no secrets. Read by /gateway/authorize.
+  gatewayPolicy: defineTable({
+    userId: v.id("users"),
+    enabled: v.boolean(),                  // false = hard-deny gateway
+    dailyCapCents: v.optional(v.number()), // 0/unset = no daily cap
+    hourlyCapCents: v.optional(v.number()),// per-user rolling-hour cap
+    maxTokensPerRequest: v.optional(v.number()),
+    maxCentsPerRequest: v.optional(v.number()),
+    freeGrantCents: v.optional(v.number()),// informational: granted trial credit
+    note: v.optional(v.string()),          // operator note (non-secret)
+    setBy: v.optional(v.string()),         // operator userId who set it
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
+  // ── Yaver Gateway: scoped inference-only tokens (OPERATOR-minted) ───
+  // A tenant's runner authenticates to the gateway with one of THESE, not
+  // a session token. Stored as a hash (raw shown once at mint). Scope is
+  // always "inference" today: a leaked token authorizes ONLY gateway
+  // inference for one user, within their gatewayPolicy caps — it cannot
+  // touch any other Yaver API. Rotatable + revocable by the operator
+  // (rotation = revoke old + mint new). Never user-mutable.
+  gatewayTokens: defineTable({
+    userId: v.id("users"),
+    tokenHash: v.string(),                 // sha256(raw); raw never stored
+    scope: v.string(),                     // "inference"
+    label: v.optional(v.string()),         // non-secret label (e.g. grant id)
+    createdBy: v.optional(v.string()),     // operator userId
+    createdAt: v.number(),
+    expiresAt: v.optional(v.number()),     // 0/unset = no expiry
+    revokedAt: v.optional(v.number()),     // set = dead
+    lastUsedAt: v.optional(v.number()),
+  }).index("by_hash", ["tokenHash"])
+    .index("by_user", ["userId", "createdAt"]),
+
   // ── Generic managed-resource meter (one wallet, many meters) ───────
   // The compute meter (creditUsage above) is SKU-specific and predates
   // this. As Yaver Premium resells more of the stack — inference tokens

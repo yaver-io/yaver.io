@@ -102,9 +102,11 @@ export async function meterCheck(
   env: MeterEnv,
   userId: string,
   estCents: number,
+  capCentsOverride: number = 0,
 ): Promise<{ allow: boolean; remaining: number | null }> {
   if (!env.USER_METER) return { allow: true, remaining: null };
-  const cap = Number(env.MAX_CENTS_PER_HOUR) || 0;
+  // Per-user cap (operator-set) wins over the global env cap when present.
+  const cap = capCentsOverride > 0 ? capCentsOverride : Number(env.MAX_CENTS_PER_HOUR) || 0;
   const res = await stub(env, userId).fetch("https://do/check", {
     method: "POST",
     body: JSON.stringify({ estCents, capCentsPerHour: cap }),
