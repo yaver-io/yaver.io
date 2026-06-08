@@ -3141,7 +3141,7 @@ func runServe(args []string) {
 
 	// Ensure the canonical project home ($HOME/Workspace) exists — the one
 	// place projects live across every surface (docs §4b). Best-effort.
-	if root, err := EnsureWorkspaceRoot(); err != nil {
+	if root, err := DefaultWorkspaceDir(); err != nil {
 		log.Printf("[WORKSPACE] could not create workspace root: %v", err)
 	} else {
 		log.Printf("[WORKSPACE] project home: %s", root)

@@ -6,19 +6,28 @@ import (
 	"testing"
 )
 
-func TestWorkspaceRootHonorsEnv(t *testing.T) {
-	t.Setenv("YAVER_WORKSPACE_DIR", "/custom/ws")
-	if got := WorkspaceRoot(); got != "/custom/ws" {
-		t.Fatalf("WorkspaceRoot env override: got %q", got)
+func TestDefaultWorkspaceDirHonorsEnv(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "custom-ws")
+	t.Setenv("YAVER_WORKSPACE_DIR", dir)
+	got, err := DefaultWorkspaceDir()
+	if err != nil {
+		t.Fatalf("DefaultWorkspaceDir: %v", err)
+	}
+	if got != dir {
+		t.Fatalf("env override: got %q want %q", got, dir)
 	}
 }
 
-func TestWorkspaceRootDefaultsToHomeWorkspace(t *testing.T) {
+func TestDefaultWorkspaceDirDefaultsToHomeWorkspace(t *testing.T) {
 	t.Setenv("YAVER_WORKSPACE_DIR", "")
-	t.Setenv("HOME", "/home/someuser")
-	got := WorkspaceRoot()
-	if got != "/home/someuser/Workspace" {
-		t.Fatalf("WorkspaceRoot default: got %q want /home/someuser/Workspace", got)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	got, err := DefaultWorkspaceDir()
+	if err != nil {
+		t.Fatalf("DefaultWorkspaceDir: %v", err)
+	}
+	if got != filepath.Join(home, "Workspace") {
+		t.Fatalf("default: got %q want %q", got, filepath.Join(home, "Workspace"))
 	}
 }
 
@@ -45,14 +54,15 @@ func TestTenantUserNameSafeAndDeterministic(t *testing.T) {
 }
 
 func TestTenantWorkspaceDirNonOverlapping(t *testing.T) {
-	t.Setenv("YAVER_WORKSPACE_DIR", "/ws")
+	ws := t.TempDir()
+	t.Setenv("YAVER_WORKSPACE_DIR", ws)
 	d1 := tenantWorkspaceDir("tenant-one")
 	d2 := tenantWorkspaceDir("tenant-two")
 	if d1 == d2 {
 		t.Fatalf("tenant dirs overlap: %q", d1)
 	}
 	// Fall-back form lives under the workspace root's .tenants and ends in Workspace.
-	if !strings.HasPrefix(d1, filepath.Join("/ws", ".tenants")) || !strings.HasSuffix(d1, "Workspace") {
+	if !strings.HasPrefix(d1, filepath.Join(ws, ".tenants")) || !strings.HasSuffix(d1, "Workspace") {
 		t.Fatalf("unexpected tenant dir shape: %q", d1)
 	}
 }
