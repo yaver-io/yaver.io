@@ -300,11 +300,28 @@ it (`YaverBundleValidator.kt:120-164`: `BC_VERSION_MISMATCH`,
      rootfs-internal path; existence+type check only (no native --version probe
      under Bionic). 4 unit tests, `go build`/`go test` green. Inert until P1b
      wraps the exec — but no regression (android already failed).
-   - **P1b — exec-wrap + binding model** (§1c) — *the fork, NOT yet done.* Wrap
-     the `/dev/build-native` execs (installs, Metro, hermesc) with
-     `sandboxWrapCmd`; implement bind-host-workDir + shared-tmp so proot'd
-     Metro/hermesc see the phone-edited project and the bundle I/O. Touches the
-     shared `sandbox_proot.go` — coordinate with any parallel sandbox session.
+   - **P1b — exec-wrap + binding model** (§1c) — *code-complete 2026-06-08,
+     pending on-device verification.* Chosen model: **bind the host project dir
+     into the rootfs at its OWN absolute path** (`-b workDir:workDir`, `-w
+     workDir`) — because all build artifacts already live under
+     `workDir/.yaver-build/` (`devserver_http.go:401/3273/3287`), every absolute
+     path the build constructs resolves UNCHANGED inside proot, zero path
+     translation. Done:
+     - `sandbox_proot.go`: `buildProotArgv` gained variadic `extraBinds`;
+       `sandboxWrapBuildCmd` (binds an existing-host-dir `cmd.Dir` at its own
+       path, leaves rootfs-internal dirs as plain `-w`); `sandboxBuildEnv`
+       (layers caller's NODE_OPTIONS/NODE_ENV/EXPO_*/Convex over the rootfs
+       PATH/HOME, drops host-specific keys); `ensureSandboxCredDirs` factored out.
+     - `devserver_http.go`: wrapped the 3 build execs — Metro/Expo
+       (`bundleCommand`), hermesc, and project dep install — with
+       `sandboxWrapBuildCmd` (no-op off-sandbox).
+     - 5 new unit tests, `go build`/`go test`/`go vet` green; desktop build path
+       unaffected (wrap is a no-op when the YAVER_ANDROID_* env is absent).
+     - **NOT wrapped** (deferred): the corepack/global-tool setup
+       (`devserver_http.go:840-852`) and the hermesc `--version` doctor probe
+       (`hermescSummaryAt`) — would mis-report on android-sandbox; polish later.
+     - Edited shared `sandbox_proot.go` with user's OK to manage parallel-session
+       collisions.
    - **P1c — build + ship the binary** — run
      `scripts/build-hermesc-alpine-arm64.sh` (needs Docker+buildx; arm64 box is
      fastest), bake the output into the rootfs at `/usr/local/libexec/yaver/
