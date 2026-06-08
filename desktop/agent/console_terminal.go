@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -76,18 +77,42 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			shell = "/bin/bash"
 		}
 
-		cmd := exec.Command(shell)
 		isHostShare := r.Header.Get("X-Yaver-HostShare") == "true"
-		// OPERATOR FLEET: a tenant's shell must NOT inherit the operator's
-		// environment (keys/tokens). Build a secret-stripped base env +
-		// the gateway inference provider (scoped per-tenant token). Every
-		// other path keeps the normal full host env.
-		if s.operatorMode && isHostShare {
+		cwd := r.URL.Query().Get("cwd")
+		var cmd *exec.Cmd
+		tenantOSUser := ""
+		switch {
+		case s.operatorMode && isHostShare && tenantOSUsersEnabled() && guestUserID != "":
+			// OPERATOR FLEET (primary isolation, docs §4b): run the tenant's
+			// shell AS their own unprivileged OS user (yv-<id>), in their
+			// $HOME/Workspace, with ONLY the gateway inference env overlaid.
+			// A tenant can't read the operator/yaver files or another
+			// tenant's home; the upstream key never appears (scoped token).
+			if name, home, err := ensureTenantOSUser(guestUserID); err == nil {
+				inject := append(s.gatewayInjectEnv(guestUserID), "TERM=xterm-256color")
+				argv := tenantShellArgv(name, shell, inject)
+				cmd = exec.Command(argv[0], argv[1:]...)
+				// Don't leak the agent's env into the sudo invocation; sudo
+				// resets anyway, and `env …` overlays what the tenant needs.
+				cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+				tenantOSUser = name
+				if strings.TrimSpace(cwd) == "" {
+					cwd = home + "/Workspace"
+				}
+			} else {
+				log.Printf("[OPERATOR] tenant OS user for %s unavailable (%v); falling back to scoped yaver shell", guestUserID, err)
+			}
+		case s.operatorMode && isHostShare:
+			// Fallback when OS users aren't available (non-Linux / no sudo):
+			// run as the yaver agent user but with a secret-stripped env +
+			// the gateway provider. Still never the host key.
+			cmd = exec.Command(shell)
 			cmd.Env = append(s.tenantRunnerBaseEnv(guestUserID), "TERM=xterm-256color")
-		} else {
+		}
+		if cmd == nil {
+			cmd = exec.Command(shell)
 			cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 		}
-		cwd := r.URL.Query().Get("cwd")
 		workspaceDir := ""
 		if isHostShare {
 			cmd.Env = append(cmd.Env,
@@ -95,7 +120,10 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				"YAVER_HOST_SHARE_SESSION_ID="+hostShareSessionID,
 				"YAVER_HOST_SHARE_GUEST_USER_ID="+guestUserID,
 			)
-			if s.hostShareWorkspaceMgr != nil && hostShareSessionID != "" {
+			// When the tenant runs as their own OS user, keep cwd at their
+			// $HOME/Workspace (set above) — don't redirect to the shared
+			// host-share workspace dir.
+			if tenantOSUser == "" && s.hostShareWorkspaceMgr != nil && hostShareSessionID != "" {
 				if ws, err := s.hostShareWorkspaceMgr.EnsureWorkspace(hostShareSessionID); err == nil && ws != nil && strings.TrimSpace(ws.RepoDir) != "" {
 					cwd = ws.RepoDir
 					workspaceDir = ws.RepoDir
