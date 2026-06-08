@@ -273,6 +273,63 @@ func TestScaffoldCIWorkflow(t *testing.T) {
 	}
 }
 
+func TestGitlabRunnerDownloadURL(t *testing.T) {
+	cases := []struct {
+		goos, goarch, wantSub string
+		wantErr               bool
+	}{
+		{"linux", "amd64", "gitlab-runner-linux-amd64", false},
+		{"darwin", "arm64", "gitlab-runner-darwin-arm64", false},
+		{"windows", "amd64", "gitlab-runner-windows-amd64.exe", false},
+		{"plan9", "amd64", "", true},
+		{"linux", "mips", "", true},
+	}
+	for _, c := range cases {
+		got, err := gitlabRunnerDownloadURL("latest", c.goos, c.goarch)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("expected error for %s/%s", c.goos, c.goarch)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s/%s: %v", c.goos, c.goarch, err)
+			continue
+		}
+		if !strings.HasSuffix(got, c.wantSub) {
+			t.Errorf("%s/%s url %q missing suffix %q", c.goos, c.goarch, got, c.wantSub)
+		}
+		if !strings.HasPrefix(got, "https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/") {
+			t.Errorf("unexpected base: %q", got)
+		}
+	}
+}
+
+func TestGitlabRunnerRunArgs(t *testing.T) {
+	shell := strings.Join(gitlabRunnerRunArgs("https://gitlab.com", "tok", "shell", "alpine:latest"), " ")
+	for _, want := range []string{"run-single", "--url https://gitlab.com", "--token tok", "--executor shell", "--max-builds 1"} {
+		if !strings.Contains(shell, want) {
+			t.Errorf("shell args missing %q: %s", want, shell)
+		}
+	}
+	if strings.Contains(shell, "--docker-image") {
+		t.Errorf("shell executor must not pass --docker-image: %s", shell)
+	}
+	docker := strings.Join(gitlabRunnerRunArgs("https://gitlab.com", "tok", "docker", "alpine:latest"), " ")
+	if !strings.Contains(docker, "--docker-image alpine:latest") {
+		t.Errorf("docker executor must pass --docker-image: %s", docker)
+	}
+}
+
+func TestGitlabExecutorFor(t *testing.T) {
+	if gitlabExecutorFor(CIIsolationContainer) != "docker" {
+		t.Errorf("container → docker")
+	}
+	if gitlabExecutorFor(CIIsolationHost) != "shell" {
+		t.Errorf("host → shell")
+	}
+}
+
 func TestCIMeterUnit(t *testing.T) {
 	if ciMeterUnit("macos") != "mac-min" {
 		t.Errorf("macos unit wrong")
