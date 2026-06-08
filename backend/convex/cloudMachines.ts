@@ -407,11 +407,12 @@ ${healthBeacon}`;
 
 export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
   const repoCloneSnippet = spec.repoUrl
-    ? `  # Optional starter repo clone
+    ? `  # Optional starter repo clone — into the non-root yaver user's
+    # $HOME/Workspace (docs §4b), owned by yaver, never root.
   - |
-    if [ ! -d /srv/yaver/workspace/.git ]; then
-      git clone ${shellSingleQuote(spec.repoUrl)} /srv/yaver/workspace || echo "[cloud-init] repo clone skipped"
-      chown -R root:root /srv/yaver/workspace
+    if [ ! -d /home/yaver/Workspace/.git ] && [ -z "$(ls -A /home/yaver/Workspace 2>/dev/null)" ]; then
+      sudo -u yaver git clone ${shellSingleQuote(spec.repoUrl)} /home/yaver/Workspace || echo "[cloud-init] repo clone skipped"
+      chown -R yaver:yaver /home/yaver/Workspace
     fi
 `
     : "";
@@ -538,17 +539,30 @@ runcmd:
   - ufw allow 4433/udp
   - ufw --force enable || true
 
-  # ── Managed Yaver agent bootstrap ─────────────────────────────
-  - mkdir -p /root/.yaver /srv/yaver/workspace /etc/yaver
+  # ── Managed Yaver agent bootstrap (NON-ROOT, docs §4a/§4b) ────────
+  # The agent runs as a dedicated unprivileged 'yaver' user so a tenant
+  # who escapes containment lands on a normal uid, not root. The TLS
+  # reconciler below stays a SEPARATE root unit (nginx/certbot need root);
+  # it only proxies to the agent on loopback:18080, so the agent's user
+  # is irrelevant to cert work.
+  - id yaver >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/yaver --shell /bin/bash yaver
+  - usermod -aG docker yaver || true
+  # Passwordless sudo for setup tasks the managed agent may need (package
+  # installs, service control) — the agent is trusted; the non-root win is
+  # that TENANT workloads never run as root.
+  - echo 'yaver ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/yaver && chmod 0440 /etc/sudoers.d/yaver
+  - install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
+  - install -d -o yaver -g yaver -m 0755 /home/yaver/Workspace
+  - mkdir -p /etc/yaver
   - |
-    cat > /root/.yaver/config.json <<'EOF'
+    cat > /home/yaver/.yaver/config.json <<'EOF'
     {
       "auth_token": ${jsonString(spec.userSessionToken)},
       "convex_site_url": ${jsonString(spec.convexSite)},
       "device_id": ${jsonString(spec.deviceId)}
     }
     EOF
-  - chmod 0600 /root/.yaver/config.json
+  - chown yaver:yaver /home/yaver/.yaver/config.json && chmod 0600 /home/yaver/.yaver/config.json
   - |
     cat > /etc/systemd/system/yaver-agent.service <<'EOF'
     [Unit]
@@ -558,9 +572,11 @@ runcmd:
 
     [Service]
     Type=simple
-    WorkingDirectory=/srv/yaver/workspace
-    Environment=HOME=/root
-    Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.cargo/bin:/usr/local/go/bin
+    User=yaver
+    Group=yaver
+    WorkingDirectory=/home/yaver/Workspace
+    Environment=HOME=/home/yaver
+    Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/yaver/.cargo/bin:/usr/local/go/bin
     Environment=YAVER_HOSTNAME=${jsonString(spec.hostname)}
     ExecStart=/usr/local/bin/yaver serve --debug --port 18080
     Restart=always
