@@ -20,16 +20,22 @@
 // is the alternative host if you'd rather keep it in-house.
 
 import { resolveRoute, costCents, type Upstream } from "./pricing";
+import { meterCheck, meterRecord, UserMeter } from "./limiter";
+
+// Durable Object class must be re-exported from the Worker entry module.
+export { UserMeter };
 
 export interface Env {
   CONVEX_URL: string;             // e.g. https://<deployment>.convex.site
   GATEWAY_SHARED_SECRET: string;  // matches Convex GATEWAY_SHARED_SECRET
   MAX_TOKENS_PER_REQUEST: string; // hard cap on completion tokens
   MAX_CENTS_PER_REQUEST: string;  // refuse if worst-case > this
+  MAX_CENTS_PER_HOUR?: string;    // rolling per-user hourly cap (0/unset = off)
+  USER_METER?: DurableObjectNamespace; // per-user cap + sub-cent carry (optional)
   // Upstream provider keys (referenced by Upstream.keyEnv):
   ZAI_API_KEY: string;
   DEEPINFRA_API_KEY: string;
-  [k: string]: string;
+  [k: string]: unknown;
 }
 
 function num(v: string | undefined, d: number): number {
@@ -99,6 +105,28 @@ function usageFromJson(obj: any): Usage | null {
   return { in: u.prompt_tokens ?? 0, out: u.completion_tokens ?? 0 };
 }
 
+// Carry-aware billing: accumulate raw fractional COGS in the user's DO and
+// only forward WHOLE cents to Convex (markup applied there). A request whose
+// COGS is still sub-cent after carry writes no ledger row this time — its cost
+// rides forward into the next emission. With no DO bound, meterRecord ceils.
+async function billUsage(
+  env: Env,
+  userId: string,
+  upstream: Upstream,
+  usage: { in: number; out: number },
+): Promise<void> {
+  const cost = costCents(upstream, usage.in, usage.out);
+  const bill = await meterRecord(env, userId, cost);
+  if (bill <= 0) return;
+  await meter(env, {
+    userId,
+    model: upstream.model,
+    provider: upstream.provider,
+    quantity: usage.in + usage.out,
+    providerCostCents: bill,
+  });
+}
+
 // ── Upstream call with fallback ─────────────────────────────────────
 
 async function callUpstream(
@@ -107,7 +135,7 @@ async function callUpstream(
   payload: any,
 ): Promise<{ res: Response; upstream: Upstream } | null> {
   for (const u of chain) {
-    const key = env[u.keyEnv];
+    const key = env[u.keyEnv] as string | undefined;
     if (!key) continue;
     try {
       const res = await fetch(`${u.baseUrl}/chat/completions`, {
@@ -168,6 +196,14 @@ export default {
       return json({ error: "insufficient_balance", balanceCents: session.balanceCents }, 402);
     }
 
+    // Rolling per-user hourly cap (Durable Object; no-op if unbound). Bounds a
+    // runaway loop even when the wallet is flush. Estimate ~ worst-case cents.
+    const estCents = Math.ceil(Math.min(worst, maxCents));
+    const cap = await meterCheck(env, session.userId, estCents);
+    if (!cap.allow) {
+      return json({ error: "rate_limited", remainingCents: cap.remaining }, 429);
+    }
+
     const stream = payload.stream === true;
     if (stream) {
       // Force a final usage chunk so we can meter exact tokens.
@@ -181,16 +217,7 @@ export default {
     if (!stream) {
       const obj = await up.res.json();
       const usage = usageFromJson(obj) ?? { in: 0, out: 0 };
-      const cost = costCents(up.upstream, usage.in, usage.out);
-      ctx.waitUntil(
-        meter(env, {
-          userId: session.userId,
-          model: up.upstream.model,
-          provider: up.upstream.provider,
-          quantity: usage.in + usage.out,
-          providerCostCents: cost,
-        }),
-      );
+      ctx.waitUntil(billUsage(env, session.userId, up.upstream, usage));
       return json(obj, up.res.status);
     }
 
@@ -223,14 +250,7 @@ export default {
             }
           }
         }
-        const cost = costCents(up.upstream, usage.in, usage.out);
-        await meter(env, {
-          userId: session.userId,
-          model: up.upstream.model,
-          provider: up.upstream.provider,
-          quantity: usage.in + usage.out,
-          providerCostCents: cost,
-        });
+        await billUsage(env, session.userId, up.upstream, usage);
       })(),
     );
 
