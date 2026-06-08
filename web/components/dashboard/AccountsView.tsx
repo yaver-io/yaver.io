@@ -205,11 +205,11 @@ export default function AccountsView() {
               {acct?.connected ? (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-emerald-400 flex-1">connected {acct.connectedAt?.slice(0, 10)}</span>
-                  <button onClick={() => disconnect(p.id)} className="text-xs text-red-400 hover:text-red-300">Disconnect</button>
+                  <button onClick={() => disconnect(p.id)} className="text-xs text-red-400 hover:text-red-700 dark:hover:text-red-300">Disconnect</button>
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
-                  <button onClick={() => openConnect(p)} className="px-2 py-1 text-xs rounded bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30">Connect</button>
+                  <button onClick={() => openConnect(p)} className="px-2 py-1 text-xs rounded bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30">Connect</button>
                   {p.tokenURL && <a href={p.tokenURL.startsWith("http") ? p.tokenURL : undefined} target="_blank" rel="noreferrer" className="text-xs text-surface-500 hover:text-surface-300 truncate">get token</a>}
                 </div>
               )}
@@ -224,7 +224,7 @@ export default function AccountsView() {
       <ByoCloudPanel />
 
       <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
-        <div className="text-xs font-medium uppercase tracking-wider text-red-300">Danger Zone</div>
+        <div className="text-xs font-medium uppercase tracking-wider text-red-700 dark:text-red-300">Danger Zone</div>
         <p className="mt-2 text-sm text-surface-400">
           Permanently remove Yaver from the connected host machine. This unregisters the device, removes auto-start, wipes <code className="text-surface-300">~/.yaver</code>, and stops the agent. Your repositories are not deleted.
         </p>
@@ -247,12 +247,12 @@ export default function AccountsView() {
                   s.status === "ok" ? "text-emerald-400 w-3" :
                   s.status === "error" ? "text-red-400 w-3" :
                   s.status === "skipped" ? "text-surface-500 w-3" :
-                  "text-amber-300 w-3"
+                  "text-amber-700 dark:text-amber-300 w-3"
                 }>
                   {s.status === "ok" ? "✓" : s.status === "error" ? "✗" : s.status === "skipped" ? "—" : "›"}
                 </span>
                 <span className="text-surface-400 min-w-[7rem]">{s.step}</span>
-                <span className={s.status === "error" ? "text-red-300 flex-1" : "text-surface-300 flex-1"}>
+                <span className={s.status === "error" ? "text-red-700 dark:text-red-300 flex-1" : "text-surface-300 flex-1"}>
                   {s.error ? s.error : s.detail}
                 </span>
               </div>
@@ -265,7 +265,7 @@ export default function AccountsView() {
         <button
           onClick={removeMachine}
           disabled={machineDeleteConfirm !== "delete my machine" || removingMachine || !agentClient.isConnected}
-          className="mt-3 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/10 disabled:opacity-30"
+          className="mt-3 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-700 dark:text-red-300 transition-colors hover:bg-red-500/10 disabled:opacity-30"
         >
           {removingMachine ? "Removing..." : agentClient.isConnected ? "Remove Yaver From This Host" : "Connect a machine first"}
         </button>

@@ -124,7 +124,7 @@ function TablesPanel({ directory, status }: { directory: string; status: { kind:
           <button
             key={t.name}
             onClick={() => openTable(t.name)}
-            className={`w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm font-mono ${selected === t.name ? "bg-indigo-500/20 text-indigo-300" : "bg-surface-900/50 text-surface-300 hover:bg-surface-800"}`}
+            className={`w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm font-mono ${selected === t.name ? "bg-indigo-500/20 text-indigo-700 dark:text-indigo-300" : "bg-surface-900/50 text-surface-300 hover:bg-surface-800"}`}
           >
             <span className="flex-1 truncate">{t.name}</span>
             {t.rowCount != null && <span className="text-xs text-surface-500">{t.rowCount}</span>}
@@ -144,7 +144,7 @@ function TablesPanel({ directory, status }: { directory: string; status: { kind:
                 <pre className="text-xs font-mono overflow-auto">{JSON.stringify(row, null, 2)}</pre>
                 <button
                   onClick={() => deleteRow(row)}
-                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 px-2 py-1 text-xs rounded bg-red-500/20 text-red-300 hover:bg-red-500/40"
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 px-2 py-1 text-xs rounded bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/40"
                 >
                   Delete
                 </button>
@@ -258,8 +258,8 @@ function CloudPanel({ directory }: { directory: string }) {
           <option value="azure">Azure (Azurite)</option>
           <option value="gcp">GCP (Firebase Emulators)</option>
         </select>
-        <button onClick={() => start()} className="px-3 py-2 text-sm rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">Start all</button>
-        <button onClick={() => stop()} className="px-3 py-2 text-sm rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30">Stop all</button>
+        <button onClick={() => start()} className="px-3 py-2 text-sm rounded-lg bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30">Start all</button>
+        <button onClick={() => stop()} className="px-3 py-2 text-sm rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30">Stop all</button>
       </div>
 
       <div className="space-y-1">

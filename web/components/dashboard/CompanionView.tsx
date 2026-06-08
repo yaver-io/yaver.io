@@ -17,12 +17,12 @@ import {
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === "proposed-missing-endpoint"
-      ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
       : status === "note"
         ? "bg-surface-800 text-foreground-muted border-border"
         : status === "failed"
-          ? "bg-red-500/15 text-red-300 border-red-500/30"
-          : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+          ? "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30"
+          : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30";
   return (
     <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] ${tone}`}>
       {status}
@@ -135,8 +135,8 @@ export default function CompanionView() {
         <div
           className={`rounded-lg border px-3 py-2 text-sm ${
             notice.type === "ok"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : "border-red-500/30 bg-red-500/10 text-red-300"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
           }`}
         >
           {notice.text}
@@ -202,7 +202,7 @@ export default function CompanionView() {
               </button>
             </div>
             <p className="text-[11px] text-foreground-muted">
-              Crons marked <span className="text-amber-300">proposed-missing-endpoint</span> aren&apos;t
+              Crons marked <span className="text-amber-700 dark:text-amber-300">proposed-missing-endpoint</span> aren&apos;t
               armed — they need you to create the endpoint first.
             </p>
           </div>
@@ -215,7 +215,7 @@ export default function CompanionView() {
         {loading ? (
           <p className="text-sm text-foreground-muted">Loading…</p>
         ) : err ? (
-          <p className="text-sm text-red-300">{err}</p>
+          <p className="text-sm text-red-700 dark:text-red-300">{err}</p>
         ) : projects.length === 0 ? (
           <p className="text-sm text-foreground-muted">No companions yet. Detect one above.</p>
         ) : (
@@ -240,7 +240,7 @@ export default function CompanionView() {
                     </button>
                     <button
                       onClick={() => disable(p.project)}
-                      className="rounded-md border border-red-500/30 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10"
+                      className="rounded-md border border-red-500/30 px-2 py-1 text-xs text-red-700 dark:text-red-300 hover:bg-red-500/10"
                     >
                       Disable
                     </button>
@@ -272,7 +272,7 @@ export default function CompanionView() {
                   </table>
                 )}
                 {s && s.warnings && s.warnings.length > 0 && (
-                  <ul className="mt-2 list-disc pl-5 text-[11px] text-amber-300">
+                  <ul className="mt-2 list-disc pl-5 text-[11px] text-amber-700 dark:text-amber-300">
                     {s.warnings.map((wn, i) => (
                       <li key={i}>{wn}</li>
                     ))}

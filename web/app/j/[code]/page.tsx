@@ -75,7 +75,7 @@ export default function SupportJoinPage({ params }: { params: Promise<{ code: st
             // eslint-disable-next-line @next/next/no-img-element
             <img src={info.inviter.avatarUrl} alt="" className="h-12 w-12 rounded-full" />
           ) : (
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
               {inviter.charAt(0).toUpperCase()}
             </div>
           )}
@@ -96,12 +96,12 @@ export default function SupportJoinPage({ params }: { params: Promise<{ code: st
             1 · Install &amp; connect
           </p>
           {os === "windows" && (
-            <p className="mb-2 text-xs text-amber-200/90">
+            <p className="mb-2 text-xs text-amber-700 dark:text-amber-200/90">
               On Windows, open <strong>WSL2</strong> (Ubuntu) and run this inside it.
             </p>
           )}
           <div className="flex items-center gap-2 rounded-xl border border-surface-800 bg-surface-950 p-3">
-            <code className="flex-1 break-all text-xs text-emerald-300">{installCmd}</code>
+            <code className="flex-1 break-all text-xs text-emerald-700 dark:text-emerald-300">{installCmd}</code>
             <button
               onClick={copy}
               className="shrink-0 rounded-lg border border-surface-700 px-3 py-1 text-xs text-surface-200 hover:bg-surface-800"

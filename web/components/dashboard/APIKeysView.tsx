@@ -139,7 +139,7 @@ export default function APIKeysView() {
 
       <section className="rounded border border-indigo-500/30 bg-indigo-500/5 p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-300">
+          <span className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
             Audit
           </span>
           <p className="text-sm text-surface-200">
@@ -149,14 +149,14 @@ export default function APIKeysView() {
       </section>
 
       {err && (
-        <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200" role="alert">
+        <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-700 dark:text-red-200" role="alert">
           {err}
         </div>
       )}
 
       {freshToken && (
         <div className="rounded border border-amber-500/40 bg-amber-950/30 p-3 text-sm">
-          <p className="font-semibold text-amber-200">
+          <p className="font-semibold text-amber-700 dark:text-amber-200">
             Copy {freshToken.label} — it will not be shown again.
           </p>
           <pre className="mt-2 overflow-x-auto rounded bg-black/40 p-2 font-mono text-xs">{freshToken.token}</pre>
@@ -241,7 +241,7 @@ export default function APIKeysView() {
               onClick={() => toggleScope(s)}
               className={`rounded border px-2 py-0.5 text-xs ${
                 scopes.includes(s)
-                  ? "border-indigo-500 bg-indigo-900/40 text-indigo-200"
+                  ? "border-indigo-500 bg-indigo-900/40 text-indigo-700 dark:text-indigo-200"
                   : "border-surface-700 bg-surface-900 text-surface-400 hover:text-surface-200"
               }`}
             >
@@ -302,12 +302,12 @@ export default function APIKeysView() {
                   {k.tokenHash.slice(0, 8)}
                 </span>
                 {k.disabled && (
-                  <span className="rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] text-red-200">disabled</span>
+                  <span className="rounded bg-red-900/40 px-1.5 py-0.5 text-[10px] text-red-700 dark:text-red-200">disabled</span>
                 )}
                 <span className="ml-auto flex gap-1 text-xs">
                   <button
                     type="button"
-                    className="rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70 disabled:opacity-40"
+                    className="rounded bg-red-900/40 px-2 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-900/70 disabled:opacity-40"
                     disabled={k.disabled}
                     onClick={() => void disable(k)}
                   >

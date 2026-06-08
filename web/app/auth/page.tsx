@@ -485,7 +485,7 @@ function AuthContent() {
           </span>
           {isDeviceAuth && (
             <div className="mx-auto mt-6 max-w-sm rounded-2xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-4 text-left">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-300">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700 dark:text-indigo-300">
                 Remote Device Authorization
               </div>
               <p className="mt-2 text-sm text-surface-200">
@@ -595,7 +595,7 @@ function AuthContent() {
             onClick={() => handleOAuth("gitlab")}
             className={`flex w-full items-center justify-center gap-3 border border-surface-700 bg-surface-900 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50 ${controlClass}`}
           >
-            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/15 text-[10px] font-semibold text-orange-300">GL</span>
+            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500/15 text-[10px] font-semibold text-orange-700 dark:text-orange-300">GL</span>
             Continue with GitLab
           </button>
 

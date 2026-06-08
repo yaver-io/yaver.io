@@ -46,7 +46,7 @@ export const ASSISTANT_MARKDOWN_COMPONENTS = {
     const text = Array.isArray(children) && typeof children[0] === "string" ? children[0] : (typeof children === "string" ? children : "");
     if (text.startsWith("$ ")) {
       return (
-        <code className="rounded bg-surface-900/70 px-1.5 py-0.5 font-mono text-[12px] text-cyan-200">
+        <code className="rounded bg-surface-900/70 px-1.5 py-0.5 font-mono text-[12px] text-cyan-700 dark:text-cyan-200">
           {children}
         </code>
       );
@@ -1233,7 +1233,7 @@ export default function VibeCodingView({
                 onClick={() => void onSelectDevice(device)}
                 className={`rounded-full border px-3 py-2 text-xs font-semibold ${
                   connectedDevice?.id === device.id
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-100"
                     : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
                 }`}
               >
@@ -1415,23 +1415,23 @@ export default function VibeCodingView({
                 </>
               ) : null}
               {selectedRunnerRow?.ready === false ? (
-                <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-100">
+                <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-800 dark:text-amber-100">
                   {selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`}
                 </div>
               ) : null}
               {selectedRunnerRow && (selectedRunnerRow.id === "claude" || selectedRunnerRow.id === "codex") && selectedRunnerRow.ready === false ? (
-                <div className="mt-3 rounded-2xl border border-sky-500/20 bg-sky-500/10 p-3 text-[11px] text-sky-100">
+                <div className="mt-3 rounded-2xl border border-sky-500/20 bg-sky-500/10 p-3 text-[11px] text-sky-800 dark:text-sky-100">
                   <div className="font-semibold">
                     {selectedRunnerRow.id === "claude" ? "Claude Code" : "OpenAI Codex"} sign-in is available from here.
                   </div>
-                  <div className="mt-1 leading-5 text-sky-100/80">
+                  <div className="mt-1 leading-5 text-sky-800 dark:text-sky-100/80">
                     Start the browser auth flow on the host, finish it in your browser, then this runner will become selectable for vibe coding.
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       onClick={() => void startSelectedRunnerSignIn()}
                       disabled={runnerAuthBusy}
-                      className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-100 hover:bg-sky-400/15 disabled:opacity-40"
+                      className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-800 dark:text-sky-100 hover:bg-sky-400/15 disabled:opacity-40"
                     >
                       {runnerAuthBusy ? "Opening sign-in…" : `Sign in to ${selectedRunnerRow.name}`}
                     </button>
@@ -1455,7 +1455,7 @@ export default function VibeCodingView({
                     </div>
                   ) : null}
                   {runnerAuthError ? (
-                    <div className="mt-2 text-[10px] text-rose-200">{runnerAuthError}</div>
+                    <div className="mt-2 text-[10px] text-rose-700 dark:text-rose-200">{runnerAuthError}</div>
                   ) : null}
                 </div>
               ) : null}
@@ -1505,7 +1505,7 @@ export default function VibeCodingView({
                     key={target.id}
                     onClick={() => void deploy(target.id)}
                     disabled={!selectedProject}
-                    className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
+                    className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
                   >
                     Deploy {target.name}
                   </button>
@@ -1522,8 +1522,8 @@ export default function VibeCodingView({
                       <span
                         className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
                           action.enabled
-                            ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
-                            : "border border-amber-500/20 bg-amber-500/10 text-amber-100"
+                            ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-100"
+                            : "border border-amber-500/20 bg-amber-500/10 text-amber-800 dark:text-amber-100"
                         }`}
                       >
                         {action.enabled ? "ready" : "check host"}
@@ -1535,7 +1535,7 @@ export default function VibeCodingView({
                         onClick={() => void launchDeployTask(action.kind)}
                         disabled={!selectedProject || !action.enabled}
                         title={!action.enabled ? action.readiness : undefined}
-                        className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Run with agent
                       </button>
@@ -1551,7 +1551,7 @@ export default function VibeCodingView({
                 ))}
               </div>
               {deployPreviewSummary?.warnings && deployPreviewSummary.warnings.length > 0 ? (
-                <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-100">
+                <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-800 dark:text-amber-100">
                   {deployPreviewSummary.warnings.slice(0, 3).map((warning) => (
                     <div key={warning}>{warning}</div>
                   ))}
@@ -1614,7 +1614,7 @@ export default function VibeCodingView({
                   <button
                     onClick={() => void runGitAction("revert-head")}
                     disabled={!selectedProject || gitCommits.length === 0}
-                    className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                    className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-700 dark:text-red-300 hover:bg-red-500/10 disabled:opacity-40"
                   >
                     Revert Last
                   </button>
@@ -1638,21 +1638,21 @@ export default function VibeCodingView({
                   <button
                     onClick={() => void launchWorkflowShortcut("sync")}
                     disabled={!selectedProject}
-                    className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/15 disabled:opacity-40"
+                    className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-800 dark:text-amber-100 hover:bg-amber-500/15 disabled:opacity-40"
                   >
                     Sync/Rebase Prompt
                   </button>
                   <button
                     onClick={() => void launchWorkflowShortcut("resolve")}
                     disabled={!selectedProject}
-                    className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/15 disabled:opacity-40"
+                    className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-800 dark:text-amber-100 hover:bg-amber-500/15 disabled:opacity-40"
                   >
                     Resolve Conflicts Prompt
                   </button>
                   <button
                     onClick={() => void launchWorkflowShortcut("ship")}
                     disabled={!selectedProject}
-                    className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
+                    className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-800 dark:text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
                   >
                     Commit/Push/Deploy Prompt
                   </button>
@@ -1781,7 +1781,7 @@ export default function VibeCodingView({
                           </button>
                           <button
                             onClick={() => void removeProvider(provider.host)}
-                            className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-300 hover:bg-red-500/10"
+                            className="rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] text-red-700 dark:text-red-300 hover:bg-red-500/10"
                           >
                             Remove
                           </button>
@@ -1880,12 +1880,12 @@ export default function VibeCodingView({
                 {!activeGraphRunId && activeTask?.videoStatus === "ready" && activeTask?.videoClipId ? (
                   <button
                     onClick={() => setActiveClipId(activeTask.videoClipId!)}
-                    className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                    className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
                   >
                     ▶ Watch demo
                   </button>
                 ) : activeTask?.videoStatus === "recording" || activeTask?.videoStatus === "queued" ? (
-                  <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
+                  <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
                     🎬 {activeTask.videoStatus}…
                   </span>
                 ) : null}
@@ -1912,7 +1912,7 @@ export default function VibeCodingView({
                   ))}
                   {showLiveOutput ? (
                     <div className="max-w-[92%] rounded-2xl border border-amber-500/20 bg-[#14110a] px-4 py-3 text-surface-200">
-                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-300">
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-700 dark:text-amber-300">
                         {activeTask?.status === "running" ? "Live output" : "Agent output"}
                       </div>
                       <div className="text-[13px] leading-6 break-words [&_pre]:whitespace-pre-wrap">
@@ -2259,8 +2259,8 @@ function MiniPill({ children }: { children: ReactNode }) {
 
 const GRAPH_NODE_VISUAL: Record<string, { icon: string; color: string }> = {
   pending: { icon: "○", color: "text-surface-500" },
-  running: { icon: "◐", color: "text-amber-300" },
-  completed: { icon: "✓", color: "text-emerald-300" },
+  running: { icon: "◐", color: "text-amber-700 dark:text-amber-300" },
+  completed: { icon: "✓", color: "text-emerald-700 dark:text-emerald-300" },
   failed: { icon: "✕", color: "text-red-400" },
   blocked: { icon: "⊘", color: "text-surface-500" },
   stopped: { icon: "■", color: "text-surface-400" },
@@ -2310,7 +2310,7 @@ function DeepAskGraphPanel({ run, liveOutput }: { run: AgentGraphRun | null; liv
       })}
       {finalAnswer ? (
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
             Final answer (cross-checked)
           </div>
           <div className="text-[13px] leading-6 text-surface-100 break-words [&_pre]:whitespace-pre-wrap">

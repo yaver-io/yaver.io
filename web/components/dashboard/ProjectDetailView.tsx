@@ -78,7 +78,7 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3">
-        <button onClick={onClose} className="text-sm text-indigo-400 hover:text-indigo-300">← Projects</button>
+        <button onClick={onClose} className="text-sm text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">← Projects</button>
         <h2 className="text-xl font-semibold text-surface-100 flex-1 truncate font-mono">{slug}</h2>
       </div>
       <div className="text-xs text-surface-500 font-mono truncate">{directory}</div>
@@ -101,7 +101,7 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
       </div>
 
       {actionMsg && (
-        <div className={`text-sm rounded-lg border px-3 py-2 ${actionMsg.type === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-300"}`}>
+        <div className={`text-sm rounded-lg border px-3 py-2 ${actionMsg.type === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"}`}>
           {actionMsg.text}
         </div>
       )}
@@ -145,7 +145,7 @@ export default function ProjectDetailView({ directory, onClose }: { directory: s
               } catch (e) {
                 showMsg("error", cleanErr(e, "Couldn't restore — the agent may be unreachable."));
               }
-            }} className="text-xs text-emerald-400 hover:text-emerald-300">Restore</button>
+            }} className="text-xs text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300">Restore</button>
           </Row>
         ))}
       </Section>
@@ -199,8 +199,8 @@ function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex items-center gap-2 bg-surface-900/50 border border-surface-800 rounded-lg p-2 text-sm">{children}</div>;
 }
 function Tag({ tone, children }: { tone: "ok" | "fail" | "muted"; children: React.ReactNode }) {
-  const cls = tone === "ok" ? "bg-emerald-500/20 text-emerald-300"
-    : tone === "fail" ? "bg-red-500/20 text-red-300"
+  const cls = tone === "ok" ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+    : tone === "fail" ? "bg-red-500/20 text-red-700 dark:text-red-300"
     : "bg-surface-800 text-surface-400";
   return <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold ${cls}`}>{children}</span>;
 }

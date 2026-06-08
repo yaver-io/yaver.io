@@ -27,9 +27,9 @@ export function WebAppSelector({ apps, selectedApp, activeApp, onSelect, loading
   if (error) {
     return (
       <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-3 text-[11px]">
-        <p className="font-medium text-amber-300">No workspace manifest</p>
-        <p className="mt-1 text-amber-200/70">{error}</p>
-        <p className="mt-2 text-amber-200/50">
+        <p className="font-medium text-amber-700 dark:text-amber-300">No workspace manifest</p>
+        <p className="mt-1 text-amber-700 dark:text-amber-200/70">{error}</p>
+        <p className="mt-2 text-amber-700 dark:text-amber-200/50">
           Create <code className="rounded bg-amber-500/10 px-1 py-0.5">yaver.workspace.yaml</code> at
           the repo root, or run <code className="rounded bg-amber-500/10 px-1 py-0.5">yaver workspace init --scaffold</code> on
           the remote machine.
@@ -67,11 +67,11 @@ export function WebAppSelector({ apps, selectedApp, activeApp, onSelect, loading
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className={`truncate text-xs font-medium ${isSelected ? "text-indigo-200" : "text-surface-100"}`}>
+                <span className={`truncate text-xs font-medium ${isSelected ? "text-indigo-700 dark:text-indigo-200" : "text-surface-100"}`}>
                   {app.name}
                 </span>
                 {isActive && (
-                  <span className="flex items-center gap-1 text-[10px] text-emerald-300">
+                  <span className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                     running
                   </span>
@@ -95,7 +95,7 @@ export function WebAppSelector({ apps, selectedApp, activeApp, onSelect, loading
             {app.kind && (
               <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase tracking-widest ${
                 app.kind === "web"
-                  ? "bg-emerald-500/10 text-emerald-300"
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                   : "bg-surface-800 text-surface-400"
               }`}>
                 {app.kind}

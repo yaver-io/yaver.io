@@ -72,7 +72,7 @@ export default function LicensingPage() {
               </li>
               <li>
                 <strong className="text-surface-200">No</strong> — it runs as a network service →{" "}
-                <span className="rounded bg-indigo-500/10 px-2 py-0.5 text-xs font-medium text-indigo-300">FSL-1.1-Apache-2.0</span>
+                <span className="rounded bg-indigo-500/10 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">FSL-1.1-Apache-2.0</span>
               </li>
             </ul>
           </section>

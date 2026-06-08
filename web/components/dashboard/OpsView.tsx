@@ -120,11 +120,11 @@ function Deploy({ directory }: { directory: string }) {
         {list.map((d) => (
           <div key={d.id} className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 text-sm">
             <div className="flex items-center gap-2">
-              <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase ${d.status === "success" ? "bg-emerald-500/20 text-emerald-300" : d.status === "failed" ? "bg-red-500/20 text-red-300" : d.status === "rolled-back" ? "bg-amber-500/20 text-amber-300" : "bg-surface-800 text-surface-400"}`}>{d.status}</span>
+              <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase ${d.status === "success" ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : d.status === "failed" ? "bg-red-500/20 text-red-700 dark:text-red-300" : d.status === "rolled-back" ? "bg-amber-500/20 text-amber-700 dark:text-amber-300" : "bg-surface-800 text-surface-400"}`}>{d.status}</span>
               <span className="font-mono text-surface-400 text-xs">{d.commit?.slice(0, 8)}</span>
               <span className="flex-1 truncate">{d.message || "(no message)"}</span>
               <span className="text-xs text-surface-500">{d.duration}</span>
-              {d.status === "success" && <button onClick={() => rollback(d.id)} className="text-xs text-amber-400 hover:text-amber-300">Rollback</button>}
+              {d.status === "success" && <button onClick={() => rollback(d.id)} className="text-xs text-amber-400 hover:text-amber-700 dark:hover:text-amber-300">Rollback</button>}
             </div>
           </div>
         ))}
@@ -146,17 +146,17 @@ function PreviewModal({ preview, onConfirm, onClose }: { preview: any; onConfirm
         </div>
 
         {p.warnings?.length > 0 && (
-          <div className={`rounded-lg border p-3 text-xs space-y-1 ${hasBlockers ? "border-amber-500/40 bg-amber-500/10 text-amber-200" : "border-surface-700 bg-surface-900 text-surface-300"}`}>
+          <div className={`rounded-lg border p-3 text-xs space-y-1 ${hasBlockers ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200" : "border-surface-700 bg-surface-900 text-surface-300"}`}>
             {p.warnings.map((w: string, i: number) => <div key={i}>⚠️ {w}</div>)}
           </div>
         )}
 
         <div className="space-y-2 text-sm">
           <Row label="Branch" value={p.branch || "(not a git repo)"} />
-          {p.lastCommit && <Row label="Last commit" value={<span><code className="text-indigo-300">{p.lastCommit}</code> {p.lastMessage}</span>} />}
+          {p.lastCommit && <Row label="Last commit" value={<span><code className="text-indigo-700 dark:text-indigo-300">{p.lastCommit}</code> {p.lastMessage}</span>} />}
           <Row label="Ahead / behind" value={`${p.ahead || 0} ahead · ${p.behind || 0} behind`} />
           <Row label="Uncommitted" value={p.dirty ? `${p.dirtyFiles.length} file(s) — will NOT deploy` : "clean"} />
-          <Row label="Active env" value={<span className={p.activeEnv === "production" ? "text-red-300" : ""}>{p.activeEnv}</span>} />
+          <Row label="Active env" value={<span className={p.activeEnv === "production" ? "text-red-700 dark:text-red-300" : ""}>{p.activeEnv}</span>} />
           <Row label="CI gate" value={p.ciConfigured ? `${p.ciSteps} step(s) · onFail=${p.ciOnFail}` : "not configured"} />
           <Row label="DB migrations" value={p.migrator ? `${p.migrator} (${p.migratorCmd})` : "none detected"} />
           <Row label="Healthcheck" value={p.healthcheck ? `${p.healthcheck}${p.healthInferred ? " (auto-inferred)" : ""}` : "none"} />
@@ -258,8 +258,8 @@ function Backups({ directory }: { directory: string }) {
             <span className="text-xs text-surface-500">{b.backend}</span>
             <span className="flex-1 truncate text-[10px] font-mono text-surface-600">{b.path}</span>
             <span className="text-xs text-surface-500">{fmtBytes(b.size)}</span>
-            <button onClick={() => restore(b.id)} className="text-xs text-emerald-400 hover:text-emerald-300">Restore</button>
-            <button onClick={() => del(b.id)} className="text-xs text-red-400 hover:text-red-300">Delete</button>
+            <button onClick={() => restore(b.id)} className="text-xs text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300">Restore</button>
+            <button onClick={() => del(b.id)} className="text-xs text-red-400 hover:text-red-700 dark:hover:text-red-300">Delete</button>
           </div>
         ))}
       </div>
@@ -310,7 +310,7 @@ function Domains() {
             <span className="text-surface-500">→</span>
             <span className="font-mono flex-1 text-surface-300">{r.upstream || r.static}</span>
             <span className={`text-[10px] ${r.enabled ? "text-emerald-400" : "text-surface-500"}`}>{r.enabled ? "ACTIVE" : "DISABLED"}</span>
-            <button onClick={() => remove(r.domain)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+            <button onClick={() => remove(r.domain)} className="text-xs text-red-400 hover:text-red-700 dark:hover:text-red-300">Remove</button>
           </div>
         ))}
       </div>
@@ -379,10 +379,10 @@ function Errors() {
         {groups.map((g) => (
           <div key={g.fingerprint} className={`bg-surface-900/50 border rounded-lg p-3 text-sm ${g.resolved ? "border-surface-800 opacity-50" : "border-surface-800"}`}>
             <div className="flex items-center gap-2">
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300">{g.count}</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-700 dark:text-red-300">{g.count}</span>
               <span className="flex-1 truncate font-mono">{g.message}</span>
               <span className="text-[10px] text-surface-500">{g.lastSeen?.slice(0, 19)}</span>
-              <button onClick={() => resolve(g.fingerprint, !g.resolved)} className="text-xs text-indigo-400 hover:text-indigo-300">{g.resolved ? "Unresolve" : "Resolve"}</button>
+              <button onClick={() => resolve(g.fingerprint, !g.resolved)} className="text-xs text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">{g.resolved ? "Unresolve" : "Resolve"}</button>
             </div>
             {g.lastStack && <pre className="text-[10px] text-surface-500 mt-1 line-clamp-3">{g.lastStack}</pre>}
           </div>
@@ -470,7 +470,7 @@ function Uptime() {
             <span className="font-mono flex-1 truncate">{m.name || m.url}</span>
             <span className="text-xs text-surface-500">{m.lastLatencyMs}ms</span>
             <span className="text-xs text-surface-500">{m.lastCheck?.slice(11, 19)}</span>
-            <button onClick={() => remove(m.id)} className="text-xs text-red-400 hover:text-red-300">×</button>
+            <button onClick={() => remove(m.id)} className="text-xs text-red-400 hover:text-red-700 dark:hover:text-red-300">×</button>
           </div>
         ))}
       </div>

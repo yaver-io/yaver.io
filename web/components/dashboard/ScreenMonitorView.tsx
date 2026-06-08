@@ -161,15 +161,15 @@ export default function ScreenMonitorView() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setLive((v) => !v)} className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md ${live ? "bg-rose-500/15 text-rose-300 hover:bg-rose-500/25" : "bg-sky-500/15 text-sky-300 hover:bg-sky-500/25"}`}>
+            <button onClick={() => setLive((v) => !v)} className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md ${live ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 hover:bg-rose-500/25" : "bg-sky-500/15 text-sky-700 dark:text-sky-300 hover:bg-sky-500/25"}`}>
               <span className={`w-2 h-2 rounded-full ${live ? "bg-rose-400 animate-pulse" : "bg-sky-400"}`} /> {live ? "Live" : "Live view"}
             </button>
             {running ? (
-              <button onClick={stop} disabled={busy} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 disabled:opacity-50">
+              <button onClick={stop} disabled={busy} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 hover:bg-rose-500/25 disabled:opacity-50">
                 <StopIcon /> Stop
               </button>
             ) : (
-              <button onClick={start} disabled={busy || drivers?.available === false} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-50">
+              <button onClick={start} disabled={busy || drivers?.available === false} className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-50">
                 <RecordIcon /> Start recording
               </button>
             )}

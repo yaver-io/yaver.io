@@ -35,7 +35,7 @@ export default function StorageView() {
               type="button"
               onClick={() => setTab(t)}
               className={`rounded px-2 py-1 ${
-                tab === t ? "bg-indigo-900/60 text-indigo-100" : "bg-surface-900 text-surface-400 hover:text-surface-100"
+                tab === t ? "bg-indigo-900/60 text-indigo-800 dark:text-indigo-100" : "bg-surface-900 text-surface-400 hover:text-surface-100"
               }`}
             >
               {t === "files" ? "Project files" : t === "shared" ? "Shared (NAS)" : "Blobs"}
@@ -134,7 +134,7 @@ function FilesTab() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      {err && <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200">{err}</div>}
+      {err && <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-700 dark:text-red-200">{err}</div>}
       <div className="flex items-center gap-2 text-xs text-surface-400">
         <select
           className="rounded border border-surface-700 bg-surface-900 px-2 py-1 text-sm"
@@ -290,7 +290,7 @@ function SharedTab() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      {err && <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200">{err}</div>}
+      {err && <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-700 dark:text-red-200">{err}</div>}
       {loading && <p className="text-sm text-surface-400">Loading profiles…</p>}
       {!loading && profiles.length === 0 && (
         <div className="rounded border border-surface-700 bg-surface-950/30 p-3 text-sm text-surface-400">
@@ -516,7 +516,7 @@ function BlobsTab() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      {err && <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200">{err}</div>}
+      {err && <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-700 dark:text-red-200">{err}</div>}
       <div className="flex flex-wrap items-center gap-2 rounded border border-surface-700 bg-surface-950/30 p-2 text-xs">
         <input
           type="text"
@@ -583,7 +583,7 @@ function BlobsTab() {
             {selected.size > 0 && (
               <button
                 type="button"
-                className="ml-auto rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70"
+                className="ml-auto rounded bg-red-900/40 px-2 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-900/70"
                 onClick={() => void removeSelected()}
               >
                 Delete {selected.size}
@@ -592,8 +592,8 @@ function BlobsTab() {
           </div>
           {sharing && (
             <div className="rounded border border-indigo-500/40 bg-indigo-950/30 p-3 text-sm">
-              <p className="text-indigo-200">
-                Signed URL for <code className="text-indigo-100">{sharing.key}</code> — expires in {sharing.expiresIn}s
+              <p className="text-indigo-700 dark:text-indigo-200">
+                Signed URL for <code className="text-indigo-800 dark:text-indigo-100">{sharing.key}</code> — expires in {sharing.expiresIn}s
               </p>
               <div className="mt-2 flex gap-2">
                 <input
@@ -629,7 +629,7 @@ function BlobsTab() {
                 key={sec}
                 type="button"
                 className={`rounded px-2 py-0.5 ${
-                  ttlSec === sec ? "bg-indigo-900/60 text-indigo-100" : "bg-surface-900 hover:text-surface-200"
+                  ttlSec === sec ? "bg-indigo-900/60 text-indigo-800 dark:text-indigo-100" : "bg-surface-900 hover:text-surface-200"
                 }`}
                 onClick={() => setTtlSec(sec)}
               >
@@ -648,7 +648,7 @@ function BlobsTab() {
                 />
                 <button
                   type="button"
-                  className="flex-1 truncate text-left font-mono hover:text-indigo-300"
+                  className="flex-1 truncate text-left font-mono hover:text-indigo-700 dark:hover:text-indigo-300"
                   onClick={() => void download(k.key)}
                   title="Click to download"
                 >
@@ -668,7 +668,7 @@ function BlobsTab() {
                   <button
                     type="button"
                     onClick={() => void remove(k.key)}
-                    className="rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70"
+                    className="rounded bg-red-900/40 px-2 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-900/70"
                   >
                     Delete
                   </button>
@@ -681,7 +681,7 @@ function BlobsTab() {
                   type="button"
                   onClick={() => void loadMoreKeys()}
                   disabled={loadingMore}
-                  className="rounded bg-indigo-900/40 px-3 py-1 text-xs text-indigo-200 hover:bg-indigo-900/60 disabled:opacity-40"
+                  className="rounded bg-indigo-900/40 px-3 py-1 text-xs text-indigo-700 dark:text-indigo-200 hover:bg-indigo-900/60 disabled:opacity-40"
                 >
                   {loadingMore ? "Loading…" : "Load more"}
                 </button>

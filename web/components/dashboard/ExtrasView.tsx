@@ -73,7 +73,7 @@ function CIPanel({ dir }: { dir: string }) {
         {runs.map((r) => (
           <div key={r.id} className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 text-sm">
             <div className="flex items-center gap-2">
-              <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase ${r.status === "passed" ? "bg-emerald-500/20 text-emerald-300" : "bg-red-500/20 text-red-300"}`}>{r.status}</span>
+              <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase ${r.status === "passed" ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : "bg-red-500/20 text-red-700 dark:text-red-300"}`}>{r.status}</span>
               <span className="flex-1 text-xs text-surface-500">{r.trigger}</span>
               <span className="text-xs text-surface-500">{r.startedAt?.slice(0, 19)}</span>
             </div>
@@ -105,10 +105,10 @@ function CIPanel({ dir }: { dir: string }) {
                 <div key={i} className="flex gap-2">
                   <input value={s.name} onChange={(e) => { const steps = [...cfg.steps]; steps[i].name = e.target.value; setCfg({ ...cfg, steps }); }} placeholder="name" className="rounded border border-surface-700 bg-surface-900 px-2 py-1 text-xs font-mono w-32" />
                   <input value={s.run} onChange={(e) => { const steps = [...cfg.steps]; steps[i].run = e.target.value; setCfg({ ...cfg, steps }); }} placeholder="shell command" className="flex-1 rounded border border-surface-700 bg-surface-900 px-2 py-1 text-xs font-mono" />
-                  <button onClick={() => { const steps = cfg.steps.filter((_: any, j: number) => j !== i); setCfg({ ...cfg, steps }); }} className="text-red-400 hover:text-red-300">×</button>
+                  <button onClick={() => { const steps = cfg.steps.filter((_: any, j: number) => j !== i); setCfg({ ...cfg, steps }); }} className="text-red-400 hover:text-red-700 dark:hover:text-red-300">×</button>
                 </div>
               ))}
-              <button onClick={() => setCfg({ ...cfg, steps: [...(cfg.steps || []), { name: "", run: "" }] })} className="text-xs text-indigo-400 hover:text-indigo-300">+ step</button>
+              <button onClick={() => setCfg({ ...cfg, steps: [...(cfg.steps || []), { name: "", run: "" }] })} className="text-xs text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">+ step</button>
             </div>
             <div className="flex gap-2 pt-2">
               <button onClick={saveCfg} className="px-4 py-2 text-sm rounded bg-indigo-500 text-white hover:bg-indigo-400">Save</button>
@@ -152,11 +152,11 @@ function AlertsPanel() {
       <div className="space-y-1">
         {list.map((a) => (
           <div key={a.id} className="flex items-center gap-3 bg-surface-900/50 border border-surface-800 rounded-lg p-2 text-sm">
-            <span className="tag bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded text-[10px]">{a.metric}</span>
+            <span className="tag bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded text-[10px]">{a.metric}</span>
             <span className="flex-1 font-mono">{a.label || `${a.metric} ≥ ${a.threshold}%`}</span>
             <span className="text-xs text-surface-500">{a.durationSecs}s</span>
             {a.lastFiredAt && <span className="text-xs text-red-400">fired {a.lastFiredAt.slice(0, 16)}</span>}
-            <button onClick={() => rem(a.id)} className="text-xs text-red-400 hover:text-red-300">×</button>
+            <button onClick={() => rem(a.id)} className="text-xs text-red-400 hover:text-red-700 dark:hover:text-red-300">×</button>
           </div>
         ))}
       </div>
@@ -177,7 +177,7 @@ function MetricsPanel() {
       <div className="flex gap-2">
         {["15m", "1h", "6h", "24h", "7d"].map((w) => (
           <button key={w} onClick={() => setWindow(w)}
-            className={`px-2 py-1 text-xs rounded ${window === w ? "bg-indigo-500/30 text-indigo-300" : "bg-surface-800 text-surface-400"}`}>{w}</button>
+            className={`px-2 py-1 text-xs rounded ${window === w ? "bg-indigo-500/30 text-indigo-700 dark:text-indigo-300" : "bg-surface-800 text-surface-400"}`}>{w}</button>
         ))}
       </div>
       <MetricChart title="CPU %" points={cpuPoints} color="#818cf8" samples={samples.map(s => s.cpuPct)} />
@@ -220,7 +220,7 @@ function EncryptionPanel({ dir }: { dir: string }) {
         <div className="flex items-center gap-3">
           <span className={`w-3 h-3 rounded-full ${enabled ? "bg-emerald-400" : "bg-surface-600"}`} />
           <span className="font-semibold text-sm flex-1">Backup encryption at rest</span>
-          <button onClick={toggle} className={`px-3 py-1 text-xs rounded ${enabled ? "bg-red-500/20 text-red-300" : "bg-emerald-500/20 text-emerald-300"}`}>
+          <button onClick={toggle} className={`px-3 py-1 text-xs rounded ${enabled ? "bg-red-500/20 text-red-700 dark:text-red-300" : "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"}`}>
             {enabled ? "Disable" : "Enable"}
           </button>
         </div>

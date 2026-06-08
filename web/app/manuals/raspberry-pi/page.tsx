@@ -26,9 +26,9 @@ export default function RaspberryPiManual() {
           power-save knob that gets in the way of an always-reachable device.
         </p>
 
-        <div className="mb-12 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+        <div className="mb-12 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-800 dark:text-emerald-100">
           <p className="font-semibold">What you get at the end</p>
-          <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-emerald-100/90">
+          <ul className="mt-2 space-y-1 text-[13px] leading-relaxed text-emerald-800 dark:text-emerald-100/90">
             <li>&#8226; Headless Pi visible to the phone over LAN beacon + relay</li>
             <li>&#8226; React Native / Expo projects hot-reload onto the phone in under 2s</li>
             <li>&#8226; First Metro bundle on a Pi 4: ~30&ndash;60s; reloads after that are instant</li>

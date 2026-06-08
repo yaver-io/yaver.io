@@ -205,7 +205,7 @@ export default function ConnectivityView({
               Choose one transport model per account, but keep in mind that local machine setup still runs through the connected agent. The web dashboard can save defaults and show status; it cannot install tunnel software by itself.
             </p>
           </div>
-          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-200">
             Recommended now: <span className="font-semibold">{recommended}</span>
           </div>
         </div>
@@ -219,18 +219,18 @@ export default function ConnectivityView({
         </div>
 
         {!capabilitySnapshot?.targets?.["web-preview"]?.enabled && capabilitySnapshot?.targets?.["web-preview"]?.reason ? (
-          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
             <div className="font-medium">Preview blocked</div>
             <div className="mt-1">{capabilitySnapshot.targets["web-preview"].reason}</div>
             {capabilitySnapshot.targets["web-preview"].suggestedAction ? (
-              <div className="mt-1 text-xs text-amber-100/80">{capabilitySnapshot.targets["web-preview"].suggestedAction}</div>
+              <div className="mt-1 text-xs text-amber-800 dark:text-amber-100/80">{capabilitySnapshot.targets["web-preview"].suggestedAction}</div>
             ) : null}
           </div>
         ) : null}
 
         {connectivityIncidents.length > 0 ? (
           <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-red-200">Current connectivity blockers</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-red-700 dark:text-red-200">Current connectivity blockers</div>
             <div className="mt-3 space-y-3">
               {connectivityIncidents.map((incident) => (
                 <div key={incident.id} className="rounded-xl border border-red-500/20 bg-surface-950/40 p-3">
@@ -258,7 +258,7 @@ export default function ConnectivityView({
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Last connect attempts</div>
               {summary ? (
                 <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/5 p-3">
-                  <div className="text-sm font-semibold text-amber-200">{summary.label}</div>
+                  <div className="text-sm font-semibold text-amber-700 dark:text-amber-200">{summary.label}</div>
                   <div className="mt-1 text-xs text-surface-300">{summary.detail}</div>
                   {summary.suggestedAction ? (
                     <div className="mt-1 text-xs text-surface-500">{summary.suggestedAction}</div>
@@ -276,10 +276,10 @@ export default function ConnectivityView({
                       </span>
                       <span className="flex-1">
                         {diag.ok ? (
-                          <span className="text-emerald-300">ok</span>
+                          <span className="text-emerald-700 dark:text-emerald-300">ok</span>
                         ) : classified ? (
                           <>
-                            <span className="text-amber-200">{classified.label}</span>
+                            <span className="text-amber-700 dark:text-amber-200">{classified.label}</span>
                             {classified.raw && classified.raw !== classified.label ? (
                               <span className="ml-1 text-surface-600">({classified.raw})</span>
                             ) : null}
@@ -308,13 +308,13 @@ export default function ConnectivityView({
           </div>
 
           {ownerDevices.length > 1 && (settings.relayUrl || settings.tunnelUrl) ? (
-            <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
               You have {ownerDevices.length} owner devices. Account-level relay and tunnel defaults are ambiguous across multiple machines; prefer per-device agent config for Cloudflare endpoints.
             </div>
           ) : null}
 
           {message ? (
-            <div className={`mb-4 rounded-2xl border p-3 text-sm ${message.type === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-200"}`}>
+            <div className={`mb-4 rounded-2xl border p-3 text-sm ${message.type === "ok" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200" : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-200"}`}>
               {message.text}
             </div>
           ) : null}
@@ -423,7 +423,7 @@ export default function ConnectivityView({
                       <div className="font-medium text-surface-100">{connectedDevice.name}</div>
                       <div className="text-xs text-surface-500">{connectedDevice.platform} · {connectedDevice.host}:{connectedDevice.port}</div>
                     </div>
-                    <span className={`rounded-full px-2 py-1 text-[11px] ${connState === "connected" ? "bg-emerald-500/10 text-emerald-200" : "bg-surface-800 text-surface-400"}`}>
+                    <span className={`rounded-full px-2 py-1 text-[11px] ${connState === "connected" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-200" : "bg-surface-800 text-surface-400"}`}>
                       {connState}
                     </span>
                   </div>
@@ -487,7 +487,7 @@ function StatusRow({ label, value, tone }: { label: string; value: string; tone:
   return (
     <div className="flex items-center justify-between gap-3 rounded-2xl border border-surface-800 bg-surface-950/60 px-4 py-3">
       <span className="text-sm text-surface-400">{label}</span>
-      <span className={tone === "ok" ? "text-sm font-medium text-emerald-300" : "text-sm text-surface-500"}>{value}</span>
+      <span className={tone === "ok" ? "text-sm font-medium text-emerald-700 dark:text-emerald-300" : "text-sm text-surface-500"}>{value}</span>
     </div>
   );
 }

@@ -545,7 +545,7 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
                     </button>
                     <button
                       type="button"
-                      className="rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70"
+                      className="rounded bg-red-900/40 px-2 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-900/70"
                       onClick={() => void remove(e.name)}
                     >
                       Delete

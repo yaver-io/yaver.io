@@ -67,10 +67,10 @@ export default function EnvironmentSwitcher({ directory, onSwitch }: { directory
     n === "local" ? "🟢" : n === "staging" ? "☁️" : n === "production" ? "🚀" : "📦";
   const colorFor = (n: string, isActive: boolean) => {
     if (!isActive) return "bg-surface-900/50 border-surface-800 text-surface-400 hover:border-surface-600";
-    if (n === "local") return "bg-emerald-500/20 border-emerald-500/40 text-emerald-300";
-    if (n === "staging") return "bg-sky-500/20 border-sky-500/40 text-sky-300";
-    if (n === "production") return "bg-red-500/20 border-red-500/40 text-red-300";
-    return "bg-indigo-500/20 border-indigo-500/40 text-indigo-300";
+    if (n === "local") return "bg-emerald-500/20 border-emerald-500/40 text-emerald-700 dark:text-emerald-300";
+    if (n === "staging") return "bg-sky-500/20 border-sky-500/40 text-sky-700 dark:text-sky-300";
+    if (n === "production") return "bg-red-500/20 border-red-500/40 text-red-700 dark:text-red-300";
+    return "bg-indigo-500/20 border-indigo-500/40 text-indigo-700 dark:text-indigo-300";
   };
 
   return (
@@ -88,7 +88,7 @@ export default function EnvironmentSwitcher({ directory, onSwitch }: { directory
             </button>
           ))}
         </div>
-        <button onClick={addEnv} className="text-xs text-indigo-400 hover:text-indigo-300">+ add</button>
+        <button onClick={addEnv} className="text-xs text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">+ add</button>
       </div>
       <div className="text-[10px] text-surface-500">
         Switching replaces <code>.env.local</code> with <code>.yaver/envs/{active}.env</code>.

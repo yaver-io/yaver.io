@@ -13,15 +13,15 @@ type ScheduleMode = "once" | "cron" | "interval";
 function statusColor(s: ScheduledTask["status"]) {
   switch (s) {
     case "running":
-      return "bg-amber-900/40 text-amber-200";
+      return "bg-amber-900/40 text-amber-700 dark:text-amber-200";
     case "completed":
-      return "bg-emerald-900/40 text-emerald-200";
+      return "bg-emerald-900/40 text-emerald-700 dark:text-emerald-200";
     case "failed":
-      return "bg-red-900/40 text-red-200";
+      return "bg-red-900/40 text-red-700 dark:text-red-200";
     case "paused":
       return "bg-surface-800 text-surface-400";
     default:
-      return "bg-indigo-900/40 text-indigo-200";
+      return "bg-indigo-900/40 text-indigo-700 dark:text-indigo-200";
   }
 }
 
@@ -126,7 +126,7 @@ export default function SchedulesView() {
       </header>
 
       {err && (
-        <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200" role="alert">
+        <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-700 dark:text-red-200" role="alert">
           {err}
         </div>
       )}
@@ -161,7 +161,7 @@ export default function SchedulesView() {
               type="button"
               onClick={() => setMode(m)}
               className={`rounded px-2 py-1 ${
-                mode === m ? "bg-indigo-900/60 text-indigo-100" : "bg-surface-900 text-surface-400 hover:text-surface-100"
+                mode === m ? "bg-indigo-900/60 text-indigo-800 dark:text-indigo-100" : "bg-surface-900 text-surface-400 hover:text-surface-100"
               }`}
             >
               {m === "cron" ? "Cron" : m === "once" ? "Run at" : "Every N min"}
@@ -226,7 +226,7 @@ export default function SchedulesView() {
                 <span className="ml-auto flex gap-1 text-xs">
                   <button
                     type="button"
-                    className="rounded bg-emerald-900/40 px-2 py-0.5 text-emerald-200 hover:bg-emerald-900/70"
+                    className="rounded bg-emerald-900/40 px-2 py-0.5 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-900/70"
                     onClick={() => void runNow(s)}
                     title="Fire now without altering cadence"
                   >
@@ -241,7 +241,7 @@ export default function SchedulesView() {
                   </button>
                   <button
                     type="button"
-                    className="rounded bg-red-900/40 px-2 py-0.5 text-red-200 hover:bg-red-900/70"
+                    className="rounded bg-red-900/40 px-2 py-0.5 text-red-700 dark:text-red-200 hover:bg-red-900/70"
                     onClick={() => void remove(s.id, s.title)}
                   >
                     Delete
@@ -278,9 +278,9 @@ export default function SchedulesView() {
                       {[...s.history].reverse().slice(0, 20).map((h) => {
                         const statusCls =
                           h.status === "completed" || h.status === "finished"
-                            ? "text-emerald-300"
+                            ? "text-emerald-700 dark:text-emerald-300"
                             : h.status === "failed"
-                              ? "text-red-300"
+                              ? "text-red-700 dark:text-red-300"
                               : "text-surface-400";
                         const dur = h.durationMs
                           ? h.durationMs > 1000

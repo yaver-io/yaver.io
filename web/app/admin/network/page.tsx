@@ -77,7 +77,7 @@ export default function AdminNetworkPage() {
       key: "ip",
       header: "Overlay IP",
       sort: (a, b) => a.meshIPv4.localeCompare(b.meshIPv4),
-      render: (n) => <code className="text-[12px] text-emerald-300">{n.meshIPv4}</code>,
+      render: (n) => <code className="text-[12px] text-emerald-700 dark:text-emerald-300">{n.meshIPv4}</code>,
     },
     {
       key: "owner",
@@ -122,7 +122,7 @@ export default function AdminNetworkPage() {
       }
     >
       {error ? (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{error}</div>
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-200">{error}</div>
       ) : null}
 
       <div className="mb-4 flex items-center gap-3">

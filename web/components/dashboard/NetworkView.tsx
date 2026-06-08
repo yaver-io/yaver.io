@@ -248,7 +248,7 @@ export default function NetworkView({ token }: { token: string | null }) {
       </header>
 
       {error && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-200">
           {error}
         </div>
       )}
@@ -295,30 +295,30 @@ export default function NetworkView({ token }: { token: string | null }) {
                       title={p.online ? "online" : "offline"}
                     />
                     <span className="font-medium text-surface-100">{p.alias || p.deviceId}</span>
-                    <code className="rounded bg-surface-900 px-2 py-0.5 text-xs text-emerald-300">
+                    <code className="rounded bg-surface-900 px-2 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
                       {p.meshIPv4 || "—"}
                     </code>
                     {p.alias && <code className="text-xs text-surface-500">{meshDnsName(p.alias)}</code>}
                     {p.accessScope === "shared" && (
-                      <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-200">
+                      <span className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-700 dark:text-violet-200">
                         shared to you
                       </span>
                     )}
                     {advertisingExit && (
-                      <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-200">
+                      <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-200">
                         exit node
                       </span>
                     )}
                     {(p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0").length > 0 && (
                       <span
-                        className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-200"
+                        className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-700 dark:text-cyan-200"
                         title="Gateway (subnet router) — advertises the subnet routes below"
                       >
                         gateway · {(p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0").length}
                       </span>
                     )}
                     {(p.advertisedRoutes ?? []).filter((r) => r !== "0.0.0.0/0").map((r) => (
-                      <span key={r} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-200">
+                      <span key={r} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-700 dark:text-sky-200">
                         {r}
                       </span>
                     ))}
@@ -379,7 +379,7 @@ export default function NetworkView({ token }: { token: string | null }) {
                         onClick={toggleTailnetBridge}
                         className={`rounded-full border px-3 py-1 text-[11px] ${
                           bridgingTailnet
-                            ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-200"
+                            ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-700 dark:text-cyan-200"
                             : "border-surface-700 bg-surface-950 text-surface-400 hover:text-surface-200"
                         }`}
                         title="If this node is also on a Tailscale tailnet, bridge it so mesh peers can reach Tailnet hosts (advertises 100.64.0.0/10)"
@@ -388,7 +388,7 @@ export default function NetworkView({ token }: { token: string | null }) {
                       </button>
                       <button
                         onClick={() => void saveNodeConfig(p.deviceId, { wantEnabled: false })}
-                        className="ml-auto rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-[11px] text-red-200 hover:bg-red-500/20"
+                        className="ml-auto rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-[11px] text-red-700 dark:text-red-200 hover:bg-red-500/20"
                         title="Tell this node to leave the mesh"
                       >
                         Disable
@@ -414,20 +414,20 @@ export default function NetworkView({ token }: { token: string | null }) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => void createSupportLink(false, false)}
-            className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-500/20"
+            className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20"
           >
             Create view-only link
           </button>
           <button
             onClick={() => void createSupportLink(true, true)}
-            className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-500/20"
+            className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-200 hover:bg-amber-500/20"
           >
             Create full-support link
           </button>
         </div>
         {supportLink && (
           <div className="mt-3 flex items-center gap-2 rounded-xl border border-surface-800 bg-surface-950 p-3">
-            <code className="flex-1 break-all text-xs text-emerald-300">{supportLink}</code>
+            <code className="flex-1 break-all text-xs text-emerald-700 dark:text-emerald-300">{supportLink}</code>
             <button
               onClick={() => {
                 navigator.clipboard?.writeText(supportLink);
@@ -449,9 +449,9 @@ export default function NetworkView({ token }: { token: string | null }) {
                   <div key={c.grantId} className="flex items-center gap-2 text-xs text-surface-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                     {c.counterpartName}
-                    {c.allowDesktopControl && <span className="text-amber-300">· desktop</span>}
+                    {c.allowDesktopControl && <span className="text-amber-700 dark:text-amber-300">· desktop</span>}
                     <span className="text-surface-500">{c.expiresAt ? "· time-boxed" : "· until revoked"}</span>
-                    <button onClick={() => void revokeSupportGrant(c.grantId)} className="ml-auto text-surface-500 hover:text-red-300">
+                    <button onClick={() => void revokeSupportGrant(c.grantId)} className="ml-auto text-surface-500 hover:text-red-700 dark:hover:text-red-300">
                       end
                     </button>
                   </div>
@@ -460,12 +460,12 @@ export default function NetworkView({ token }: { token: string | null }) {
             )}
             {supportedBy.length > 0 && (
               <div>
-                <p className="mb-1 text-[11px] uppercase tracking-wide text-rose-300/80">Who can access your machines</p>
+                <p className="mb-1 text-[11px] uppercase tracking-wide text-rose-700 dark:text-rose-300/80">Who can access your machines</p>
                 {supportedBy.map((c) => (
                   <div key={c.grantId} className="flex items-center gap-2 text-xs text-surface-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
                     {c.counterpartName}
-                    <button onClick={() => void revokeSupportGrant(c.grantId)} className="ml-auto rounded border border-rose-500/30 px-2 text-rose-200 hover:bg-rose-500/10">
+                    <button onClick={() => void revokeSupportGrant(c.grantId)} className="ml-auto rounded border border-rose-500/30 px-2 text-rose-700 dark:text-rose-200 hover:bg-rose-500/10">
                       revoke
                     </button>
                   </div>
@@ -484,7 +484,7 @@ export default function NetworkView({ token }: { token: string | null }) {
           <button
             onClick={addRule}
             disabled={saving}
-            className="flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+            className="flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-700 dark:text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
           >
             <Icon path={ICON_PLUS} className="h-3.5 w-3.5" /> Add rule
           </button>
@@ -536,7 +536,7 @@ export default function NetworkView({ token }: { token: string | null }) {
                 </select>
                 <button
                   onClick={() => removeRule(i)}
-                  className="ml-auto text-surface-500 hover:text-red-300"
+                  className="ml-auto text-surface-500 hover:text-red-700 dark:hover:text-red-300"
                   title="Remove rule"
                 >
                   <Icon path={ICON_TRASH} className="h-4 w-4" />

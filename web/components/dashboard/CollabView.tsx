@@ -77,7 +77,7 @@ function Avatar({ name }: { name: string }) {
 function Banner({ msg }: { msg: { type: "ok" | "error"; text: string } | null }) {
   if (!msg) return null;
   return (
-    <div className={`rounded-md px-3 py-2 text-xs ${msg.type === "ok" ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"}`}>
+    <div className={`rounded-md px-3 py-2 text-xs ${msg.type === "ok" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-red-500/10 text-red-700 dark:text-red-300"}`}>
       {msg.text}
     </div>
   );
@@ -163,7 +163,7 @@ function PeopleSection({ token }: { token: string }) {
         <Group title={`Requests (${data.incoming.length})`}>
           {data.incoming.map((c) => (
             <Row key={c.peerUserId} c={c}>
-              <button onClick={() => act(() => acceptConnection(token, c.peerUserId), "Connected!")} disabled={busy} className="rounded-md bg-emerald-500/15 p-1.5 text-emerald-300 hover:bg-emerald-500/25" title="Accept">
+              <button onClick={() => act(() => acceptConnection(token, c.peerUserId), "Connected!")} disabled={busy} className="rounded-md bg-emerald-500/15 p-1.5 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25" title="Accept">
                 <Icon path={I.check} />
               </button>
               <button onClick={() => act(() => removeConnection(token, c.peerUserId), "Declined.")} disabled={busy} className="rounded-md bg-surface-800 p-1.5 text-surface-400 hover:text-surface-200" title="Decline">
@@ -178,7 +178,7 @@ function PeopleSection({ token }: { token: string }) {
         {data.accepted.map((c) => (
           <Row key={c.peerUserId} c={c}>
             <button onClick={() => act(() => removeConnection(token, c.peerUserId), "Removed.")} disabled={busy} className="rounded-md bg-surface-800 px-2 py-1 text-xs text-surface-400 hover:text-surface-200">Remove</button>
-            <button onClick={() => act(() => blockConnection(token, c.peerUserId), "Blocked.")} disabled={busy} className="rounded-md bg-surface-800 px-2 py-1 text-xs text-surface-500 hover:text-red-300">Block</button>
+            <button onClick={() => act(() => blockConnection(token, c.peerUserId), "Blocked.")} disabled={busy} className="rounded-md bg-surface-800 px-2 py-1 text-xs text-surface-500 hover:text-red-700 dark:hover:text-red-300">Block</button>
           </Row>
         ))}
       </Group>
@@ -494,7 +494,7 @@ function OwnedProjectCard({
                 </select>
               )}
               {m.userId && (
-                <button onClick={() => act(() => revokeProjectMember(token, share.shareId, m.userId), "Removed.")} disabled={busy} className="rounded-md bg-surface-800 p-1.5 text-surface-500 hover:text-red-300" title="Remove">
+                <button onClick={() => act(() => revokeProjectMember(token, share.shareId, m.userId), "Removed.")} disabled={busy} className="rounded-md bg-surface-800 p-1.5 text-surface-500 hover:text-red-700 dark:hover:text-red-300" title="Remove">
                   <Icon path={I.x} />
                 </button>
               )}
@@ -504,7 +504,7 @@ function OwnedProjectCard({
       )}
 
       <div className="flex justify-end">
-        <button onClick={() => act(() => archiveProjectShare(token, share.shareId), "Project archived.")} disabled={busy} className="text-xs text-surface-600 hover:text-red-300">Archive project</button>
+        <button onClick={() => act(() => archiveProjectShare(token, share.shareId), "Project archived.")} disabled={busy} className="text-xs text-surface-600 hover:text-red-700 dark:hover:text-red-300">Archive project</button>
       </div>
     </div>
   );

@@ -317,7 +317,7 @@ export default function ProjectsView({
               onClick={() => onSelectPreviewTarget(null)}
               className={`px-2.5 py-1 text-[11px] rounded-md border ${
                 !selectedPreviewTarget
-                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                  ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                   : "border-surface-800 text-surface-500 hover:border-surface-700 hover:text-surface-300"
               }`}
             >
@@ -329,7 +329,7 @@ export default function ProjectsView({
                 onClick={() => onSelectPreviewTarget(device.id)}
                 className={`px-2.5 py-1 text-[11px] rounded-md border ${
                   selectedPreviewTarget?.id === device.id
-                    ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                    ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                     : "border-surface-800 text-surface-500 hover:border-surface-700 hover:text-surface-300"
                 }`}
                 title={device.edgeProfile ? `max ${device.edgeProfile.maxModelClass}` : "mobile worker"}
@@ -523,7 +523,7 @@ export default function ProjectsView({
                   ) : null}
                 </div>
                 {remoteCaps.feedbackSdkCompatible ? (
-                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-100">
+                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-800 dark:text-emerald-100">
                     Feedback SDK: {remoteCaps.feedbackSdkNote || "compatible"}
                     {remoteCaps.feedbackControlProtocol ? ` · protocol ${remoteCaps.feedbackControlProtocol}` : ""}
                   </div>
@@ -541,28 +541,28 @@ export default function ProjectsView({
                         <button
                           disabled={!target.enabled}
                           onClick={() => void createRemoteRuntimeSession(target.id)}
-                          className={`px-3 py-1 text-xs rounded-md ${target.enabled ? "bg-amber-500/10 text-amber-300 hover:bg-amber-500/20" : "bg-surface-800 text-surface-500 cursor-not-allowed"}`}
+                          className={`px-3 py-1 text-xs rounded-md ${target.enabled ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20" : "bg-surface-800 text-surface-500 cursor-not-allowed"}`}
                         >
                           {target.enabled ? "Create Session" : "Unavailable"}
                         </button>
                       </div>
-                      {target.reason ? <div className="mt-2 text-xs text-rose-300">{target.reason}</div> : null}
+                      {target.reason ? <div className="mt-2 text-xs text-rose-700 dark:text-rose-300">{target.reason}</div> : null}
                     </div>
                   ))}
                 </div>
                 {remoteSession ? (
-                  <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-100 space-y-2">
+                  <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-800 dark:text-sky-100 space-y-2">
                     <div>
                       Session <span className="font-mono">{remoteSession.id}</span> · {remoteSession.status}
                       {remoteSession.lastCommand ? ` · ${remoteSession.lastCommand}` : ""}
                       {remoteSession.transportMode ? ` · ${remoteSession.transportMode}` : ""}
                     </div>
-                    {remoteSession.note ? <div className="text-sky-200/80">{remoteSession.note}</div> : null}
+                    {remoteSession.note ? <div className="text-sky-700 dark:text-sky-200/80">{remoteSession.note}</div> : null}
                     <div className="flex items-center gap-2">
-                      <button onClick={() => void triggerRemoteRuntimeFeedback()} className="px-3 py-1 text-xs rounded-md bg-sky-500/15 text-sky-200 hover:bg-sky-500/25">
+                      <button onClick={() => void triggerRemoteRuntimeFeedback()} className="px-3 py-1 text-xs rounded-md bg-sky-500/15 text-sky-700 dark:text-sky-200 hover:bg-sky-500/25">
                         Trigger Feedback
                       </button>
-                      <button onClick={() => void closeRemoteRuntimeSession()} className="px-3 py-1 text-xs rounded-md bg-rose-500/15 text-rose-200 hover:bg-rose-500/25">
+                      <button onClick={() => void closeRemoteRuntimeSession()} className="px-3 py-1 text-xs rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-200 hover:bg-rose-500/25">
                         Close Session
                       </button>
                     </div>
@@ -571,12 +571,12 @@ export default function ProjectsView({
                 ) : null}
               </div>
             ) : (
-              <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-200">
+              <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-700 dark:text-rose-200">
                 {remoteSessionNote || "Could not load remote runtime capabilities."}
               </div>
             )}
             {remoteSessionNote && remoteCaps ? (
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100">
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-100">
                 {remoteSessionNote}
               </div>
             ) : null}

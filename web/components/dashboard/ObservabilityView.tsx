@@ -43,7 +43,7 @@ function Schema({ directory }: { directory: string }) {
         <div className="space-y-2">
           {(data.tables || []).map((t: any) => (
             <div key={t.name} className="bg-surface-900/50 border border-surface-800 rounded-lg p-3">
-              <div className="text-sm font-semibold font-mono text-indigo-300">{t.name}</div>
+              <div className="text-sm font-semibold font-mono text-indigo-700 dark:text-indigo-300">{t.name}</div>
               <div className="mt-1 space-y-0.5">
                 {(t.columns || []).map((c: any, i: number) => (
                   <div key={i} className="text-xs font-mono text-surface-400 flex gap-2">
@@ -196,7 +196,7 @@ function Storage({ directory }: { directory: string }) {
                   <div className="mt-1 text-[11px] text-surface-500 truncate">{p.resolvedLocation || p.endpoint || p.remote || p.path}</div>
                   <div className="text-[10px] text-surface-600 truncate">{p.status}{p.containerMountMode && p.containerMountMode !== "none" ? ` · container:${p.containerMountMode}` : ""}</div>
                 </button>
-                <button onClick={() => removeProfile(p.id)} className="mt-2 text-[10px] text-red-400 hover:text-red-300">Delete</button>
+                <button onClick={() => removeProfile(p.id)} className="mt-2 text-[10px] text-red-400 hover:text-red-700 dark:hover:text-red-300">Delete</button>
               </div>
             ))}
           </div>
@@ -311,7 +311,7 @@ function Storage({ directory }: { directory: string }) {
             {searchHits.map((hit: any, i: number) => (
               <div key={`${hit.profileId}-${hit.path}-${i}`} className="rounded-lg border border-surface-800 bg-surface-900/50 p-2 text-xs">
                 <div className="flex gap-2">
-                  <span className="text-indigo-300">{hit.profileName}</span>
+                  <span className="text-indigo-700 dark:text-indigo-300">{hit.profileName}</span>
                   <span className="text-surface-500">{hit.matchType}</span>
                   <span className="ml-auto text-surface-500">{fmtBytes(hit.size || 0)}</span>
                 </div>
@@ -337,7 +337,7 @@ function Jobs({ directory }: { directory: string }) {
       {(data.jobs || []).map((j: any, i: number) => (
         <div key={i} className="bg-surface-900/50 border border-surface-800 rounded-lg p-2 text-xs">
           <div className="flex gap-2">
-            <span className="font-mono text-indigo-300">{j.name}</span>
+            <span className="font-mono text-indigo-700 dark:text-indigo-300">{j.name}</span>
             <span className="text-surface-500">{j.kind}</span>
             {j.schedule && <span className="text-surface-400 font-mono">{j.schedule}</span>}
             {j.status && <span className="ml-auto text-surface-500">{j.status}</span>}
@@ -395,7 +395,7 @@ function Cost({ directory }: { directory: string }) {
       <div className="space-y-1">
         {ests.map((e: any) => (
           <div key={e.target} className="flex items-center gap-3 bg-surface-900/50 border border-surface-800 rounded-lg p-2 text-sm">
-            <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase ${e.freeTierOk ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}`}>{e.tier}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase ${e.freeTierOk ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/20 text-amber-700 dark:text-amber-300"}`}>{e.tier}</span>
             <span className="flex-1 font-mono text-surface-200">{e.label}</span>
             <span className="text-surface-300 font-mono">${e.monthly.toFixed(2)}/mo</span>
           </div>

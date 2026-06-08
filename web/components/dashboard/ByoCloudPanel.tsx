@@ -75,7 +75,7 @@ export default function ByoCloudPanel() {
           <p className="text-xs text-surface-500">Run on your own account — you pay Hetzner directly. Stop to halt billing; start from a snapshot anytime.</p>
         </div>
         <button onClick={() => void loadServers()} disabled={!!busy}
-          className="rounded-md border border-sky-500/40 px-3 py-1.5 text-xs font-semibold text-sky-300 disabled:opacity-50">
+          className="rounded-md border border-sky-500/40 px-3 py-1.5 text-xs font-semibold text-sky-700 dark:text-sky-300 disabled:opacity-50">
           {busy === "servers" ? "…" : servers === null ? "Load" : "Refresh"}
         </button>
       </div>
@@ -98,7 +98,7 @@ export default function ByoCloudPanel() {
           className="flex-1 min-w-[180px] rounded border border-surface-700 bg-surface-900 px-2 py-1 text-xs font-mono" />
         <button disabled={!!busy}
           onClick={() => act("spinup", () => agentClient.callOps("cloud_provision", { plan, region, repoUrl: repoUrl.trim() || undefined, confirm: true }), "Box spinning up — it self-installs + appears as a device to claim.")}
-          className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 disabled:opacity-50">
+          className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 disabled:opacity-50">
           {busy === "spinup" ? "…" : "Spin up"}
         </button>
       </div>
@@ -114,7 +114,7 @@ export default function ByoCloudPanel() {
             <div key={id(s)} className="flex items-center gap-2 text-xs">
               <span className="flex-1 font-mono text-surface-400 truncate">{nm(s)} · {String(s.status ?? s.Status ?? "?")} · {String(s.ip ?? s.IP ?? "")}</span>
               <button disabled={!!busy} onClick={() => act(`bake:${id(s)}`, () => agentClient.callOps("cloud_bake", { serverId: id(s), confirm: true }), "Baked golden image — new boxes boot fast.")}
-                className="text-sky-300 font-semibold disabled:opacity-50">{busy === `bake:${id(s)}` ? "…" : "Bake"}</button>
+                className="text-sky-700 dark:text-sky-300 font-semibold disabled:opacity-50">{busy === `bake:${id(s)}` ? "…" : "Bake"}</button>
               <button disabled={!!busy} onClick={() => act(`stop:${id(s)}`, () => agentClient.callOps("cloud_stop", { serverId: id(s), confirm: true }), "Stopped — snapshot kept, billing halted.")}
                 className="text-amber-400 font-semibold disabled:opacity-50">{busy === `stop:${id(s)}` ? "…" : "Stop"}</button>
               <button disabled={!!busy} onClick={() => { if (confirm(`Delete ${nm(s)} permanently?`)) void act(`rm:${id(s)}`, () => agentClient.callOps("cloud_destroy", { serverId: id(s), confirm: true }), "Deleted."); }}

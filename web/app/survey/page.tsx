@@ -54,7 +54,7 @@ function ChoiceButton({
       onClick={onClick}
       className={`rounded-xl border px-3 py-2 text-sm transition-colors ${
         active
-          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-100"
           : "border-surface-800 bg-surface-900 text-surface-300 hover:border-surface-700 hover:text-surface-100"
       }`}
     >
@@ -174,7 +174,7 @@ export default function SurveyPage() {
       <section className="lg:w-[28rem]">
         <div className="rounded-3xl border border-surface-800 bg-surface-950/90 p-6 shadow-2xl shadow-black/20">
           <div className="mb-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Finish Setup</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Finish Setup</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-surface-50">
               {surveyDoneWithoutMachine ? "No machine connected yet" : "Tell us a bit about you"}
             </h1>
@@ -260,7 +260,7 @@ export default function SurveyPage() {
               </div>
 
               {error ? (
-                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
                   {error}
                 </div>
               ) : null}
@@ -279,7 +279,7 @@ export default function SurveyPage() {
               </div>
             </form>
           ) : (
-            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-4 text-sm text-amber-100">
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-4 text-sm text-amber-800 dark:text-amber-100">
               Survey saved. The next step is connecting at least one machine to this account.
             </div>
           )}
@@ -313,7 +313,7 @@ export default function SurveyPage() {
           {!hasMachine ? (
             <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
               <div className="rounded-2xl border border-surface-800 bg-surface-900/80 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Quick Start</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">Quick Start</p>
                 <div className="mt-4 space-y-3 text-sm text-surface-300">
                   <div>
                     <div className="text-xs uppercase tracking-[0.16em] text-surface-500">1. Install</div>
@@ -331,8 +331,8 @@ export default function SurveyPage() {
               </div>
 
               <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">If Auth Already Ran</p>
-                <p className="mt-3 text-sm leading-6 text-amber-100/90">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-200">If Auth Already Ran</p>
+                <p className="mt-3 text-sm leading-6 text-amber-800 dark:text-amber-100/90">
                   If browser OAuth already succeeded on the machine but it still does not appear here, clear stale local auth and sign in again.
                 </p>
                 <code className="mt-4 block rounded-xl bg-surface-950 px-3 py-2 text-[13px] text-surface-100">yaver auth factory-reset</code>
@@ -340,7 +340,7 @@ export default function SurveyPage() {
                   <Link href="/download" className="rounded-xl border border-surface-700 bg-surface-950 px-4 py-2 text-sm font-medium text-surface-100 hover:border-surface-600">
                     Download Yaver
                   </Link>
-                  <Link href="/manuals/cli-setup" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-100 hover:bg-amber-500/15">
+                  <Link href="/manuals/cli-setup" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-800 dark:text-amber-100 hover:bg-amber-500/15">
                     CLI setup guide
                   </Link>
                 </div>
