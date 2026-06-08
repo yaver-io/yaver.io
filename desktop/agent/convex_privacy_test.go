@@ -643,6 +643,12 @@ func TestPrepaidWalletFields_AreNotConvexForbidden(t *testing.T) {
 		// orderId). Counter/id/timestamp only — orderId is a payment
 		// provider order reference, not a secret.
 		"orderId", "source", "packId", "amountCents",
+		// managedUsage (generic reseller meter; managedMeter.ts). The
+		// inference/backend/web/publish meters all debit the same wallet.
+		// kind/provider/unit/model/ref are NON-SECRET labels (same class
+		// as cloudMachines.serverId); quantity/cost/cents are counters.
+		"kind", "provider", "unit", "quantity", "providerCostCents",
+		"model", "ref",
 	}
 	forbidden := map[string]bool{}
 	for _, k := range fieldsWeForbidInAnyConvexPayload {
