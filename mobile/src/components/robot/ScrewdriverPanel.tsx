@@ -16,6 +16,7 @@ export function ScrewdriverPanel({
   onTool,
   onRotate,
   onGpio,
+  onScrewHome,
 }: {
   c: any;
   disabled?: boolean;
@@ -25,6 +26,7 @@ export function ScrewdriverPanel({
   onTool?: (on: boolean) => void;
   onRotate: (turns: number, rpm: number, ccw: boolean) => void;
   onGpio?: (pin: number, value: number) => void;
+  onScrewHome?: (pecks?: number) => void;
 }) {
   const [turns, setTurns] = useState(1);
   const [rpm, setRpm] = useState(300);
@@ -77,6 +79,24 @@ export function ScrewdriverPanel({
           <Text style={{ color: c.accent, fontWeight: "800" }}>Loosen ⟲ {turns}</Text>
         </Pressable>
       </View>
+
+      {/* düz (slotted) — spin while creeping Z to catch the slot (yuva), then drive to torque */}
+      {onScrewHome && (
+        <View style={{ borderTopColor: c.borderSubtle, borderTopWidth: 1, paddingTop: 10, gap: 8 }}>
+          <Text style={{ color: c.tabInactive, fontSize: 12, fontWeight: "700" }}>DÜZ (SLOTTED) — find slot then drive</Text>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <Pressable onPress={() => onScrewHome(1)} disabled={disabled} style={{ flex: 1, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", backgroundColor: c.accent, borderRadius: 12, paddingVertical: 14, opacity: disabled ? 0.5 : 1 }}>
+              <Ionicons name="locate" size={18} color="#fff" />
+              <Text style={{ color: "#fff", fontWeight: "800" }}>Slot home</Text>
+            </Pressable>
+            <Pressable onPress={() => onScrewHome(3)} disabled={disabled} style={{ flex: 1, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", borderColor: c.accent, borderWidth: 1, borderRadius: 12, paddingVertical: 14, opacity: disabled ? 0.5 : 1 }}>
+              <Ionicons name="repeat" size={18} color={c.accent} />
+              <Text style={{ color: c.accent, fontWeight: "800" }}>Pecked ×3</Text>
+            </Pressable>
+          </View>
+          <Text style={{ color: c.tabInactive, fontSize: 11 }}>Torque sensor confirms it caught (yakaladı) — seated at target.</Text>
+        </View>
+      )}
 
       {/* advanced GPIO */}
       {hasGpio && onGpio && (
