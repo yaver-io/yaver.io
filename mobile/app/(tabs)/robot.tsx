@@ -272,6 +272,9 @@ export default function RobotScreen() {
   const setTarget = (nmm: number) => patchConfig({ targetTorqueNmm: nmm });
   const testScrew = () =>
     run(() => robotClient.screw(buildTarget(deviceId)!, { verify }) as any, recording ? screwStepAtCurrent() : undefined);
+  // düz (slotted) slot-find + drive: spin while creeping Z to catch the yuva, then seat to torque
+  const screwHome = (pecks: number = 1) =>
+    run(() => robotClient.screwHome(buildTarget(deviceId)!, { verify, pecks }) as any, recording ? screwStepAtCurrent() : undefined);
 
   // record a move-to-here + screw step (one fastening point in the program)
   const screwStepAtCurrent = (): RobotStep | undefined => {
@@ -544,6 +547,7 @@ export default function RobotScreen() {
           onTool={hasTool ? tool : undefined}
           onRotate={rotate}
           onGpio={hasGpio ? gpio : undefined}
+          onScrewHome={hasTool ? screwHome : undefined}
         />
       )}
 

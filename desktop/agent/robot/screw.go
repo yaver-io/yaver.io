@@ -20,6 +20,17 @@ type ScrewParams struct {
 	TimeoutSec      int     // abort the plunge after this long
 	AtCurrent       bool    // skip XY travel — plunge at the current X/Y (linear-rail indexer:
 	//                         the rail already positioned the klemens under a fixed screwdriver)
+	// Slotted (düz) slot-find: a flat blade has no self-centering recess like a
+	// yıldız/Phillips bit, so the bit must SPIN (tool stays on) while creeping Z
+	// down SeekMm at SeekFeed to let the blade cam INTO the single slot (yuva)
+	// before the torque plunge; SeekDwellMs guarantees ≥1 revolution at contact;
+	// Pecks re-tries the plunge from the seek start to clear a stubborn slot.
+	// Slotted=false → classic single drive (behaviour unchanged).
+	Slotted     bool    // düz slot-find mode
+	SeekMm      float64 // creep-down distance while finding the slot (mm)
+	SeekFeed    int     // slow feed during the seek (mm/min)
+	SeekDwellMs int     // dwell at the seek floor so the blade sweeps into the slot
+	Pecks       int     // plunge attempts (1 = no peck); each re-plunges from the seek start
 }
 
 // ScrewResult is the torque-closed-loop verdict: did the screw seat AT torque,
@@ -109,32 +120,70 @@ func (c *Controller) DriveScrew(ctx context.Context, p ScrewParams, verifyMode, 
 	}
 	_ = c.Companion.Zero(ctx)
 
-	// 3) Slow stepped plunge, polling torque each step.
 	deadline := time.Now().Add(time.Duration(p.TimeoutSec) * time.Second)
 	seated := false
 	var measured float64
 	steps := 0
-	z := p.Zapproach
-	for z > p.Zmax && time.Now().Before(deadline) {
-		z -= p.Step
-		if z < p.Zmax {
-			z = p.Zmax
+
+	// 2b) SLOTTED (düz) SEEK: spin (tool already on) while creeping Z down SeekMm
+	// so the flat blade cams INTO the slot (yuva) before the torque plunge. The
+	// companion torque is the capture ("yakaladı") signal — a rise means caught.
+	zStart := p.Zapproach
+	if p.Slotted && p.SeekMm > 0 {
+		seekFeed := p.SeekFeed
+		if seekFeed <= 0 {
+			seekFeed = 40
 		}
-		steps++
-		if r := c.Move(ctx, nil, nil, &z, p.Feed, "off", ""); !r.OK {
+		zSeek := p.Zapproach - p.SeekMm
+		if zSeek < p.Zmax {
+			zSeek = p.Zmax
+		}
+		if r := c.Move(ctx, nil, nil, &zSeek, seekFeed, "off", ""); !r.OK {
 			_ = toolOn(false)
 			return ScrewResult{Code: r.Code, Error: r.Error}
 		}
-		sr, err := c.Companion.Sense(ctx)
-		if err == nil {
-			measured = sr.TorqueNmm
-			if sr.TorqueNmm >= p.TargetTorqueNmm {
-				seated = true
+		_ = c.Backend.WaitMoves(ctx)
+		if p.SeekDwellMs > 0 {
+			time.Sleep(time.Duration(p.SeekDwellMs) * time.Millisecond)
+		}
+		zStart = zSeek // continue the torque plunge from where the blade caught
+	}
+
+	// 3) Slow stepped plunge, polling torque each step. Pecks re-plunge from
+	// zStart to clear a stubborn slot; classic drive uses one pass (Pecks≤1).
+	pecks := p.Pecks
+	if pecks < 1 {
+		pecks = 1
+	}
+	z := zStart
+	for peck := 0; peck < pecks && !seated && time.Now().Before(deadline); peck++ {
+		z = zStart
+		for z > p.Zmax && time.Now().Before(deadline) {
+			z -= p.Step
+			if z < p.Zmax {
+				z = p.Zmax
+			}
+			steps++
+			if r := c.Move(ctx, nil, nil, &z, p.Feed, "off", ""); !r.OK {
+				_ = toolOn(false)
+				return ScrewResult{Code: r.Code, Error: r.Error}
+			}
+			sr, err := c.Companion.Sense(ctx)
+			if err == nil {
+				measured = sr.TorqueNmm
+				if sr.TorqueNmm >= p.TargetTorqueNmm {
+					seated = true
+					break
+				}
+			}
+			if z <= p.Zmax {
 				break
 			}
 		}
-		if z <= p.Zmax {
-			break
+		if !seated && peck < pecks-1 { // peck: lift back to the seek start, clear, re-find
+			_ = c.Move(ctx, nil, nil, &zStart, p.Feed, "off", "")
+			_ = c.Backend.WaitMoves(ctx)
+			time.Sleep(150 * time.Millisecond)
 		}
 	}
 

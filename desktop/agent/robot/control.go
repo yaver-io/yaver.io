@@ -339,6 +339,34 @@ func (c *Controller) ScrewHome(ctx context.Context, x, y, target float64, atCurr
 	return c.DriveScrew(ctx, p, verifyMode, "drive the terminal-block screw home to the target torque")
 }
 
+// ScrewHomeSlot is ScrewHome for a DÜZ (slotted) screw: the bit SPINS while
+// creeping Z down to FIND the slot (yuva) — a flat blade can't self-centre like
+// a yıldız/Phillips bit — then drives HOME to the seat torque. The companion
+// torque rise is the capture ("yakaladı") signal. seek*/pecks ≤ 0 use sane
+// defaults (2 mm seek @ 40 mm/min, 500 ms dwell, 1 peck).
+func (c *Controller) ScrewHomeSlot(ctx context.Context, x, y, target float64, atCurrent bool, verifyMode string, seekMm float64, seekFeed, seekDwellMs, pecks int) ScrewResult {
+	p := c.screwParamsFromCalibration(x, y, 0, 0, target)
+	p.AtCurrent = atCurrent
+	p.Slotted = true
+	if seekMm <= 0 {
+		seekMm = 2
+	}
+	p.SeekMm = seekMm
+	if seekFeed <= 0 {
+		seekFeed = 40
+	}
+	p.SeekFeed = seekFeed
+	if seekDwellMs <= 0 {
+		seekDwellMs = 500
+	}
+	p.SeekDwellMs = seekDwellMs
+	if pecks < 1 {
+		pecks = 1
+	}
+	p.Pecks = pecks
+	return c.DriveScrew(ctx, p, verifyMode, "find the düz (slotted) screw slot, then drive it home to the target torque")
+}
+
 // Torque reads the companion's current force/torque (live readout). Errors when
 // no companion sensor is configured.
 func (c *Controller) Torque(ctx context.Context) (SenseReading, error) {

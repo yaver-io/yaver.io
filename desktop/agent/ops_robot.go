@@ -312,6 +312,11 @@ type robotPayload struct {
 	Line     string  `json:"line"`
 	// screw / torque
 	Target float64 `json:"targetTorqueNmm"`
+	// slotted (düz) slot-find
+	SeekMm      float64 `json:"seekMm"`
+	SeekFeed    int     `json:"seekFeed"`
+	SeekDwellMs int     `json:"seekDwellMs"`
+	Pecks       int     `json:"pecks"`
 	// teach / programs
 	Name    string         `json:"name"`
 	Steps   []robot.Step   `json:"steps"`
@@ -593,6 +598,22 @@ func init() {
 			x, y = *p.X, *p.Y
 		}
 		return OpsResult{OK: true, Initial: ctrl.ScrewHome(c.Ctx, x, y, p.Target, atCurrent, p.Verify)}
+	})
+	reg("robot_screw_home", "Find a DÜZ (slotted) screw slot by spinning while creeping Z down (yuva ara/yakala), then drive HOME to torque — terminal blocks", func(c OpsContext, payload json.RawMessage) OpsResult {
+		ctrl, deny := robotForOps()
+		if deny != nil {
+			return *deny
+		}
+		if g := robotGate(robot.ModuleTool); g != nil {
+			return *g
+		}
+		p := parseRobot(payload)
+		atCurrent := p.X == nil || p.Y == nil
+		var x, y float64
+		if !atCurrent {
+			x, y = *p.X, *p.Y
+		}
+		return OpsResult{OK: true, Initial: ctrl.ScrewHomeSlot(c.Ctx, x, y, p.Target, atCurrent, p.Verify, p.SeekMm, p.SeekFeed, p.SeekDwellMs, p.Pecks)}
 	})
 	reg("robot_power", "Power the machine PSU on/off (M80/M81) — needs PSU-control wiring", func(c OpsContext, payload json.RawMessage) OpsResult {
 		ctrl, deny := robotForOps()

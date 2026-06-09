@@ -265,6 +265,10 @@ export const robotClient = {
   torque: (t: RobotTarget) => robotOps<SenseReading>(t, "robot_torque", {}, 10000),
   screw: (t: RobotTarget, opts?: { x?: number; y?: number; targetTorqueNmm?: number; verify?: VerifyMode }) =>
     robotOps<RobotScrewResult>(t, "robot_screw", { ...(opts || {}) }, 120000),
+  // düz (slotted) slot-find: spin while creeping Z down to catch the yuva, then
+  // drive to torque. seekMm/seekFeed/seekDwellMs/pecks default server-side.
+  screwHome: (t: RobotTarget, opts?: { x?: number; y?: number; targetTorqueNmm?: number; seekMm?: number; seekFeed?: number; seekDwellMs?: number; pecks?: number; verify?: VerifyMode }) =>
+    robotOps<RobotScrewResult>(t, "robot_screw_home", { ...(opts || {}) }, 120000),
 
   // --- profiles / config (vault-backed) ---
   profiles: (t: RobotTarget) => robotOps<{ profiles: ProfileOption[] }>(t, "robot_profiles", {}, 15000),
