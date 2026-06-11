@@ -72,7 +72,7 @@ func init() {
 		})
 
 	reg("qa_run",
-		"Run the agentic app-test suite: drive each yaver-tests/flows/*.flow.yaml flow with the LLM brain on a redroid surface and report bugs the oracle bank catches (catch-only). {package, apk?, flowsDir?, mode: catch|fix, base? (warm Yaver Base Image), sshHost?, hostWorkDir?}. Long-running — returns a jobId; poll studio_job_status, then qa_report for the structured report card.",
+		"Run the agentic app-test suite: drive each yaver-tests/flows/*.flow.yaml flow with the LLM brain on a redroid surface and report bugs the oracle bank catches (catch-only). {package, apk?, flowsDir?, mode: catch|fix, base? (warm Yaver Base Image), sshHost?, hostWorkDir?, testAccount? (\"ephemeral\" mints+injects+deletes a throwaway account for {{email}}/{{password}}/{{fullName}} placeholders), convexUrl?}. Long-running — returns a jobId; poll studio_job_status, then qa_report for the structured report card.",
 		func(c OpsContext, payload json.RawMessage) OpsResult {
 			var req qaRunRequest
 			if len(payload) > 0 {

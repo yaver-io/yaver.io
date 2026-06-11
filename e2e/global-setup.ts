@@ -84,8 +84,14 @@ export function rememberTestUser(user: TestUser): void {
   } catch {
     users = [];
   }
-  if (!users.some((u) => u.token === user.token || u.email === user.email)) {
+  // Upsert by email: a test that re-mints a session (e.g. after logout
+  // invalidates the original token) must replace the stale token so teardown
+  // can still delete the account. Push when the email is new.
+  const idx = users.findIndex((u) => u.email === user.email);
+  if (idx === -1) {
     users.push(user);
+  } else {
+    users[idx] = { ...users[idx], ...user };
   }
   writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }

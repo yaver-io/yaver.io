@@ -25,6 +25,13 @@ type qaRunRequest struct {
 	FlowsDir string `json:"flowsDir"` // dir of *.flow.yaml (default ./yaver-tests/flows)
 	Mode     string `json:"mode"`     // "catch" (default) | "fix"
 
+	// TestAccount, when "ephemeral", makes the runner mint a randomized
+	// throwaway account and substitute {{email}}/{{password}}/{{fullName}} into
+	// every flow before driving — then delete it on teardown. This is what lets
+	// signup/onboarding flows run unattended without credentials in the repo.
+	TestAccount string `json:"testAccount"` // "" | "ephemeral"
+	ConvexURL   string `json:"convexUrl"`   // override; else signed-in config, else default
+
 	// surface placement (mirrors studioBaseRequest)
 	Base        string `json:"base"`        // restore this Yaver Base Image instead of cold boot
 	Image       string `json:"image"`       // redroid image
@@ -74,6 +81,20 @@ func (m *studioJobManager) startQARun(req qaRunRequest) (*studioJob, error) {
 		return nil, fmt.Errorf("package (and usually apk) required")
 	}
 
+	// Ephemeral credential injection: mint a throwaway account synchronously so a
+	// failure surfaces before the long-running job starts, then template it into
+	// every flow. The account is deleted in the goroutine's defer.
+	convexURL := resolveQAConvexURL(req.ConvexURL)
+	var testAccount *qaTestAccount
+	if strings.EqualFold(strings.TrimSpace(req.TestAccount), "ephemeral") {
+		acct, err := createEphemeralQAAccount(context.Background(), convexURL)
+		if err != nil {
+			return nil, fmt.Errorf("create ephemeral test account: %w", err)
+		}
+		applyTestAccountTemplate(flows, acct)
+		testAccount = acct
+	}
+
 	job := m.newJob("qa-run", "")
 	go func() {
 		defer func() {
@@ -81,9 +102,24 @@ func (m *studioJobManager) startQARun(req qaRunRequest) (*studioJob, error) {
 				m.fail(job, fmt.Sprintf("panic: %v", r))
 			}
 		}()
+		if testAccount != nil {
+			defer func() {
+				if err := testAccount.delete(context.WithoutCancel(context.Background()), convexURL); err != nil {
+					job.log("", "warning: could not delete ephemeral test account: "+err.Error())
+				} else {
+					job.log("", "deleted ephemeral test account "+testAccount.Email)
+				}
+			}()
+		}
 		job.mu.Lock()
 		job.State = studioRunning
 		job.mu.Unlock()
+
+		if testAccount != nil {
+			job.log("", "using ephemeral test account "+testAccount.Email)
+		} else if flowsReferenceTestAccount(flows) {
+			job.log("", "warning: a flow references {{email}}/{{password}} but testAccount!=\"ephemeral\" — placeholders left unsubstituted")
+		}
 
 		ctx := context.Background()
 		cfg, err := qaConfigFromRequest(ctx, req, flows, func(l string) { job.log("", l) })
