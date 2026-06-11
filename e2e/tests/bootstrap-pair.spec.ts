@@ -21,7 +21,8 @@ import { join } from "path";
 
 const CONVEX =
   process.env.E2E_CONVEX_URL ||
-  "https://shocking-echidna-394.eu-west-1.convex.site";
+  process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||
+  "https://perceptive-minnow-557.eu-west-1.convex.site";
 
 interface TestUser {
   token: string;

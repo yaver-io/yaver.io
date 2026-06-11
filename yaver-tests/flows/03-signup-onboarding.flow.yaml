@@ -1,0 +1,19 @@
+# Agentic native-app signup/onboarding flow scaffold.
+#
+# Do not hardcode credentials here. The redroid QA runner does not yet support
+# secret/template injection in flow YAML, so this flow tells the agent to use a
+# throwaway account supplied by the run harness and to stop if none is present.
+name: signup-onboarding
+goal: >
+  Exercise the first-run signup/onboarding path in the Yaver Android app with a
+  throwaway test account provided by the run harness. Create the account, reach
+  the first authenticated screen, verify the app does not crash or show an error
+  overlay, then sign out if the UI exposes a safe sign-out control. If no
+  throwaway credentials are visible to the harness, stop and report that the
+  signup flow needs credential injection rather than entering real credentials.
+package: io.yaver.mobile
+expectations:
+  - A new test account can move past signup into an authenticated or onboarding screen.
+  - The app never shows a crash, ANR, red box, blank screen, or generic error overlay during signup.
+  - The flow does not persist or expose real credentials; only harness-supplied throwaway data is used.
+max_steps: 18

@@ -4,8 +4,9 @@ import { test, expect } from "@playwright/test";
  * Sign-in flow smoke test using the dummy user created in `global-setup.ts`.
  *
  * The test navigates to /auth, fills the email/password form, and asserts
- * that a successful sign-in lands on /dashboard with the auth token
- * persisted in localStorage — exactly what the production auth flow does.
+ * that a successful sign-in lands on the first authenticated route with the
+ * auth token persisted in localStorage — exactly what the production auth flow
+ * does. Fresh users with no registered machine may land on /survey first.
  */
 test.describe("auth flow (dummy user)", () => {
   test("sign in redirects to /dashboard", async ({ page }) => {
@@ -23,7 +24,7 @@ test.describe("auth flow (dummy user)", () => {
     await page.getByPlaceholder("Password").fill(password!);
     await page.getByRole("button", { name: /^sign in$/i }).click();
 
-    await page.waitForURL(/\/dashboard/, { timeout: 15_000 });
+    await page.waitForURL(/\/(survey|dashboard)(?:$|\?)/, { timeout: 15_000 });
 
     const token = await page.evaluate(() =>
       localStorage.getItem("yaver_auth_token"),

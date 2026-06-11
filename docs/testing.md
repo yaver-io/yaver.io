@@ -75,9 +75,15 @@ cd e2e
 npm install
 npx playwright install --with-deps chromium    # first run only
 npm test                                       # boots Next dev server, runs in headless Chromium
+npx playwright test tests/signup-onboarding.spec.ts
 ```
 
 Tests live in `e2e/tests/`. CI: `.github/workflows/e2e.yml`.
+
+The auth/signup suite creates randomized `@yaver.test` accounts against the
+configured Convex site and deletes them in test cleanup plus global teardown.
+It covers UI signup, frontend validation, duplicate-email handling,
+signup→logout→signin, token persistence, and `/auth/validate`.
 
 ### Selenium (Yaver Protocol consumer)
 
@@ -87,6 +93,19 @@ Tests live in `e2e/tests/`. CI: `.github/workflows/e2e.yml`.
 - Bundling progress UI renders OR iframe swaps to Expo Web
 
 This test injects a localStorage token but doesn't establish a Convex session — useful for catching regressions in dashboard rendering, less useful for proving the full auth+device flow. The localhost-on-box smoke tests are the source of truth for protocol correctness.
+
+There is also a local Selenium smoke for the web signup path:
+
+```bash
+cd e2e
+python3 -m pip install selenium==4.21.0
+python3 selenium/signup-onboarding.selenium.py
+```
+
+It mirrors the core UI signup assertion with Selenium Manager and deletes the
+throwaway account after validating the minted token. Keep Playwright as the
+deep browser suite; use Selenium for WebDriver compatibility and external
+runner parity.
 
 ## Workflow invocation cheat sheet
 

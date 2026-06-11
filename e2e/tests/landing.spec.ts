@@ -28,12 +28,10 @@ test.describe("landing page", () => {
     await page.goto("/");
 
     await expect(page).toHaveTitle(/Yaver/i);
-    // The landing h1 is split across two lines via <br>. Keep the
-    // assertion aligned with the current mobile-first feedback wedge.
     const hero = page.getByRole("heading", { level: 1 });
     await expect(hero).toBeVisible();
-    await expect(hero).toContainText(/Turn mobile feedback into/i);
-    await expect(hero).toContainText(/AI-ready fixes/i);
+    await expect(hero).toContainText(/AI writes code in seconds/i);
+    await expect(hero).toContainText(/The loop around it still takes hours/i);
 
     expect(errors, `console errors on /: ${errors.join(" | ")}`).toEqual([]);
   });

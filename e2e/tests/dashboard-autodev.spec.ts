@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-test.describe("dashboard autodev workbench", () => {
+// This spec targeted the removed Console → Autodev dashboard workbench. Keep the
+// mock as a reference for the old endpoint contract, but do not run it until a
+// current autodev UI surface exists again.
+test.describe.skip("dashboard autodev workbench", () => {
   test("renders live autodev session and idea selection without raw JSON", async ({ page }) => {
     let loops = [
       {
