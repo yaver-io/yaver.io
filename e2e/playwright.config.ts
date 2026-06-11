@@ -8,8 +8,13 @@ import { defineConfig, devices } from "@playwright/test";
  * (e.g. a PR preview or `https://yaver.io`) and the `webServer` block will
  * be skipped.
  */
-const baseURL = process.env.E2E_BASE_URL || "http://127.0.0.1:3000";
+const localPort = process.env.E2E_PORT || "3217";
+const baseURL = process.env.E2E_BASE_URL || `http://127.0.0.1:${localPort}`;
 const useLocalServer = !process.env.E2E_BASE_URL;
+const convexURL =
+  process.env.E2E_CONVEX_URL ||
+  process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||
+  "https://perceptive-minnow-557.eu-west-1.convex.site";
 
 export default defineConfig({
   testDir: "./tests",
@@ -39,8 +44,8 @@ export default defineConfig({
   ],
   webServer: useLocalServer
     ? {
-        command: "npm --prefix ../web run dev -- --port 3000 --hostname 127.0.0.1",
-        url: "http://127.0.0.1:3000",
+        command: `NEXT_PUBLIC_CONVEX_SITE_URL=${convexURL} npm --prefix ../web run dev -- --port ${localPort} --hostname 127.0.0.1`,
+        url: `http://127.0.0.1:${localPort}`,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         stdout: "pipe",

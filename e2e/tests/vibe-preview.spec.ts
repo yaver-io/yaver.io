@@ -164,7 +164,7 @@ test.describe("vibe preview dashboard tab", () => {
     await page.getByRole("button", { name: /vibe preview/i }).first().click();
 
     // Inputs default to localhost:3000 — fill a project + Start.
-    const projectInput = page.getByPlaceholder("project name");
+    const projectInput = page.getByRole("textbox", { name: /project name/i });
     await projectInput.fill("e2e-web");
     await page.getByRole("button", { name: /start preview/i }).click();
 
@@ -174,12 +174,12 @@ test.describe("vibe preview dashboard tab", () => {
     // The Record button is visible + clickable. Don't actually trigger
     // a recording — the agent-side simctl/adb path is exercised in the
     // Go integration test, not here.
-    await expect(page.getByRole("button", { name: /● record/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^record$/i })).toBeVisible();
 
     // Sanity: the empty-state text should have flipped to "Waiting for
     // first frame…" or the frame img should be present once the SSE
     // event arrives.
-    const emptyOrFrame = page.getByText(/waiting for first frame|vibe preview frame/i);
+    const emptyOrFrame = page.getByText(/waiting for the first frame|vibe preview frame/i);
     await expect(emptyOrFrame).toBeVisible({ timeout: 5_000 });
   });
 });

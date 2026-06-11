@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 
 /**
@@ -18,7 +18,8 @@ import { dirname, join } from "path";
 
 const CONVEX_URL =
   process.env.E2E_CONVEX_URL ||
-  "https://shocking-echidna-394.eu-west-1.convex.site";
+  process.env.NEXT_PUBLIC_CONVEX_SITE_URL ||
+  "https://perceptive-minnow-557.eu-west-1.convex.site";
 
 export interface TestUser {
   email: string;
@@ -29,6 +30,7 @@ export interface TestUser {
 }
 
 const STATE_FILE = join(__dirname, ".playwright", "test-user.json");
+const USERS_FILE = join(__dirname, ".playwright", "test-users.json");
 
 async function createDummyUser(): Promise<TestUser> {
   const id = randomUUID();
@@ -69,6 +71,21 @@ export default async function globalSetup(): Promise<void> {
 
   mkdirSync(dirname(STATE_FILE), { recursive: true });
   writeFileSync(STATE_FILE, JSON.stringify(user, null, 2));
+  writeFileSync(USERS_FILE, JSON.stringify([user], null, 2));
 
   console.log(`[e2e setup] Created dummy user ${user.email}`);
+}
+
+export function rememberTestUser(user: TestUser): void {
+  mkdirSync(dirname(USERS_FILE), { recursive: true });
+  let users: TestUser[] = [];
+  try {
+    users = JSON.parse(readFileSync(USERS_FILE, "utf8")) as TestUser[];
+  } catch {
+    users = [];
+  }
+  if (!users.some((u) => u.token === user.token || u.email === user.email)) {
+    users.push(user);
+  }
+  writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
