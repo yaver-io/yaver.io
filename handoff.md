@@ -1,7 +1,9 @@
 # Yaver Test Coverage Handoff
 
 Status: 2026-06-12. This handoff reflects the code after the signup E2E work in
-`4cd6087f` plus this document. As always in this repo, code wins over docs.
+`4cd6087f`, plus a follow-up pass adding TOTP, passkey, account-security, and
+Selenium sign-in browser coverage and redroid QA ephemeral credential
+injection. As always in this repo, code wins over docs.
 
 ## What Is Covered Now
 
@@ -46,6 +48,24 @@ Current web coverage:
   - fills current `Project name` field;
   - starts a preview;
   - verifies stop/record/live-waiting UI.
+- Two-factor (TOTP) login (`totp-2fa.spec.ts`):
+  - enrolls TOTP via `/auth/totp/setup` + `/auth/totp/enable`;
+  - derives codes in-test with a dependency-free RFC 6238 generator
+    (`e2e/lib/totp.ts`) that mirrors the backend (SHA-1 / 6 digits / 30s);
+  - password login now routes to the `/auth/totp` verify step;
+  - a valid code completes login and mints a session;
+  - a wrong code is rejected and no session is minted;
+  - a recovery code also completes the step;
+  - 2FA can be disabled and login no longer requires a code.
+- Passkey / WebAuthn (`passkey.spec.ts`):
+  - CDP virtual authenticator with a resident key;
+  - passkey signup mints a session, then passkey login signs back in;
+  - self-skips when the origin is not in the backend allowlist (see below).
+- Account security (`account-security.spec.ts`):
+  - change-password updates the password used to sign in (old fails, new works);
+  - change-password rejects a wrong current password;
+  - logout invalidates the session token (`/auth/validate` → 401);
+  - logout-all invalidates every session for the account.
 
 Verification run:
 
@@ -55,7 +75,20 @@ npx tsc --noEmit
 CI=1 npx playwright test --project=chromium --workers=1 --retries=0
 ```
 
-Last local result: 18 passed, 2 skipped.
+The passkey spec self-skips on the default `127.0.0.1:3217` server because the
+backend WebAuthn allowlist only accepts `yaver.io`, `localhost:3000`, and
+`localhost:3001` (plus `WEBAUTHN_EXTRA_ORIGINS`). To run it, serve the web app
+on an allowlisted origin:
+
+```bash
+npm --prefix web run dev -- --port 3001 --hostname 127.0.0.1
+E2E_BASE_URL=http://localhost:3001 \
+  npx playwright test passkey.spec.ts --project=chromium
+```
+
+Last local result: TOTP + account-security + the pre-existing specs pass; the
+TOTP enroll test can need one retry on the very first cold compile of the
+`/auth/totp` route (CI retries absorb it).
 
 Skipped:
 
@@ -67,9 +100,11 @@ Skipped:
 
 ### Selenium / WebDriver
 
-Location: `e2e/selenium/signup-onboarding.selenium.py`
+Location:
+- `e2e/selenium/signup-onboarding.selenium.py` — UI signup smoke.
+- `e2e/selenium/signin.selenium.py` — UI sign-in smoke (companion).
 
-Coverage:
+Signup smoke coverage:
 
 - Opens `/auth` in Chrome through Selenium Manager.
 - Switches to email signup.
@@ -78,6 +113,14 @@ Coverage:
 - Reads `yaver_auth_token` from localStorage.
 - Calls `/auth/validate`.
 - Deletes the throwaway account.
+
+Sign-in smoke coverage:
+
+- API-creates a throwaway account (no UI), then drives the *sign-in* form.
+- Verifies redirect, the persisted `yaver_auth_token`, and `/auth/validate`.
+- Deletes the throwaway account.
+
+Together they cover both halves of the email auth flow under WebDriver.
 
 Run:
 
@@ -149,27 +192,31 @@ Current redroid infrastructure:
 
 ### Auth / Signup Gaps
 
+Now covered (see Web Browser E2E above):
+
+- Passkey signup/login with a virtual WebAuthn authenticator.
+- TOTP setup and TOTP-required login in browser E2E (+ recovery code + disable).
+- Change-password (success + wrong current password).
+- Logout / logout-all session invalidation.
+
 Not covered yet:
 
 - OAuth provider signup/login end-to-end for Apple, GitHub, GitLab, Google,
   Microsoft.
-- Passkey signup/login with virtual WebAuthn.
 - Email verification flow.
 - Forgot-password/reset-password flow.
-- TOTP setup and TOTP-required login in browser E2E.
 - Account merge/linking flows.
 - OAuth duplicate-email linking.
 - Rate-limit and abuse protection behavior.
-- Full logout endpoint/session invalidation behavior.
 
 Can be covered:
 
-- Passkeys can be covered with Playwright virtual authenticators.
 - Password reset can be covered if the test backend exposes a safe test email
-  token capture endpoint or local mail sink.
-- TOTP can be covered using the existing setup endpoint plus a test OTP
-  generator.
+  token capture endpoint or local mail sink. (The reset token is emailed, not
+  returned, so it needs a mail sink or a test-only capture endpoint.)
 - OAuth can be covered with provider sandboxes or a local OIDC test provider.
+  There is already a `/auth/test/oauth-signin` hook gated on `TEST_MODE_ENABLED`
+  — enabling it on a test deploy unlocks unattended OAuth E2E.
 
 Hard/not worth covering in normal PR CI:
 
@@ -209,19 +256,29 @@ Not covered unattended yet:
 - Native push/Hermes app-insert signup edge cases.
 - Cross-device pairing after signup from the mobile app UI.
 
-Why:
+Credential injection — DONE (`qa_run { testAccount: "ephemeral" }`):
 
-- `qa_flow.go` currently loads only `name`, `goal`, `package`,
-  `expectations`, and `max_steps`.
-- Flow YAML has no safe secret/template injection yet.
-- Hardcoding credentials in tracked YAML is not allowed.
+- `desktop/agent/qa_testaccount.go` mints a randomized
+  `e2e-redroid-*@yaver.test` account against Convex, substitutes
+  `{{email}}` / `{{password}}` / `{{fullName}}` placeholders into every flow's
+  goal + expectations in-memory, and deletes the account when the run finishes.
+- `desktop/agent/qa_jobs.go` (`qaRunRequest.TestAccount` / `.ConvexURL`) wires
+  this into `startQARun`: the account is created synchronously (so a bad config
+  fails fast) and torn down in the job goroutine's defer. Unit-tested in
+  `qa_testaccount_test.go` (templating, placeholder detection, URL resolution).
+- `yaver-tests/flows/03-signup-onboarding.flow.yaml` now uses the placeholders
+  and is unattended when run with `testAccount: "ephemeral"`. Without it, the
+  placeholders stay literal and the brain is told to stop and report rather than
+  type real credentials. A `flowsReferenceTestAccount` guard logs a warning if a
+  flow uses placeholders but `testAccount` wasn't set.
 
-What should be added next:
+Still needs a device/redroid + model lane to exercise end to end (the Go side
+builds and unit-tests pass; the live drive is hardware-gated).
 
-- `qa_run { testAccount: "ephemeral" }` or equivalent.
-- The runner creates a randomized account, exposes only generated values to the
-  local QA brain, and deletes the account at run end.
-- Then `03-signup-onboarding.flow.yaml` can become fully unattended.
+Still not covered unattended:
+
+- Native logout/re-login, OAuth/passkey, permission prompts, Hermes app-insert
+  signup edge cases, cross-device pairing from the mobile UI.
 
 ### Selenium Gaps
 
@@ -244,15 +301,28 @@ Can be covered:
 
 ## Recommended Next Work
 
-1. Add Playwright virtual-WebAuthn tests for passkey signup/login.
-2. Add password reset E2E with a local/test mail capture path.
-3. Add TOTP setup and TOTP login tests.
-4. Add QA credential injection for redroid flows.
-5. Convert `03-signup-onboarding.flow.yaml` from scaffold to unattended native
-   redroid test.
-6. Replace the skipped Autodev dashboard spec with a current UI target, or
+Done in this pass:
+
+- ~~Add Playwright virtual-WebAuthn tests for passkey signup/login.~~ →
+  `passkey.spec.ts` (runs on an allowlisted origin).
+- ~~Add TOTP setup and TOTP login tests.~~ → `totp-2fa.spec.ts` + `lib/totp.ts`.
+- ~~Add QA credential injection for redroid flows.~~ → `qa_testaccount.go`,
+  `qaRunRequest.TestAccount`.
+- ~~Convert `03-signup-onboarding.flow.yaml` to unattended.~~ → uses
+  `{{email}}`/`{{password}}`/`{{fullName}}` placeholders.
+- Also added: change-password + logout/logout-all E2E, Selenium sign-in smoke.
+
+Still open:
+
+1. Add password reset E2E with a local/test mail capture path (token is emailed,
+   not returned).
+2. Drive the unattended redroid signup flow on real hardware + a model lane
+   (Go side is built and unit-tested; the live run is hardware-gated).
+3. Wire `/auth/test/oauth-signin` (gated on `TEST_MODE_ENABLED`) into an OAuth
+   E2E on a test deploy.
+4. Replace the skipped Autodev dashboard spec with a current UI target, or
    delete it if Autodev is no longer product surface.
-7. Add a nightly browser matrix for Chromium/Firefox/WebKit and mobile
+5. Add a nightly browser matrix for Chromium/Firefox/WebKit and mobile
    viewport. Keep PR CI on Chromium for speed.
 
 ## Commands To Reproduce
@@ -271,6 +341,35 @@ Signup-only Playwright:
 ```bash
 cd e2e
 CI=1 npx playwright test tests/signup-onboarding.spec.ts --project=chromium --workers=1 --retries=0
+```
+
+TOTP / account-security Playwright:
+
+```bash
+cd e2e
+CI=1 npx playwright test totp-2fa.spec.ts account-security.spec.ts --project=chromium --workers=1
+```
+
+Passkey Playwright (allowlisted origin required):
+
+```bash
+npm --prefix web run dev -- --port 3001 --hostname 127.0.0.1   # one shell
+cd e2e
+E2E_BASE_URL=http://localhost:3001 npx playwright test passkey.spec.ts --project=chromium
+```
+
+Selenium sign-in smoke:
+
+```bash
+E2E_BASE_URL=http://127.0.0.1:3217 \
+E2E_CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site \
+  python3 e2e/selenium/signin.selenium.py
+```
+
+Redroid agentic QA, unattended signup (ephemeral account injection):
+
+```bash
+yaver ops qa_run '{"package":"io.yaver.mobile","base":"<version>","flowsDir":"yaver-tests/flows","mode":"catch","testAccount":"ephemeral"}'
 ```
 
 Selenium signup smoke:
