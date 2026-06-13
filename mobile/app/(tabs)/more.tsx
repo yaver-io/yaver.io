@@ -2736,6 +2736,7 @@ export default function MoreScreen() {
   const handleDevices = useCallback(() => router.navigate("/(tabs)/devices" as any), [router]);
   const handleScreenlog = useCallback(() => router.navigate("/(tabs)/screenlog" as any), [router]);
   const handleNetwork = useCallback(() => router.navigate("/(tabs)/mesh" as any), [router]);
+  const handleConnection = useCallback(() => router.navigate("/connection" as any), [router]);
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
@@ -2930,6 +2931,20 @@ export default function MoreScreen() {
             <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Preferences</Text>
           </Pressable>
         </View>
+
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={handleConnection}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"🌐"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>Connection / Network</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+              Internet, DNS, IP, WiFi, LAN {"·"} phone + runner diagnostics
+            </Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+        </Pressable>
 
         {!connected ? (
           <View style={[s.emptyStateCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
