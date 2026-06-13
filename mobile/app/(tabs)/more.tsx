@@ -2740,6 +2740,7 @@ export default function MoreScreen() {
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
+  const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
 
@@ -3054,6 +3055,23 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Circuit Simulator</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"SPICE/KiCad/EPLAN \u2014 simulate, ERC, view waveforms"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Screw Cell \u2014 shop-floor analytics from the robotic screw cell:
+                KPIs, daily fail-rate trend, flagged production orders, worst
+                blocks, recent runs. Box-reachable, so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleScrewCell}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83d\udd29"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Screw Cell</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Fail-rate trend, flagged orders, worst blocks, recent runs"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
