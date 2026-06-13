@@ -2738,6 +2738,8 @@ export default function MoreScreen() {
   const handleNetwork = useCallback(() => router.navigate("/(tabs)/mesh" as any), [router]);
   const handleConnection = useCallback(() => router.navigate("/connection" as any), [router]);
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
+  const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
+  const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
 
@@ -3018,6 +3020,40 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Robot Cell</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"Jog the Ender-3 screwdriver robot \u2014 camera-validated moves"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* 3D Printer cell \u2014 Bambu over the LAN (discover/status/camera/control)
+                + remote OpenSCAD CAD. Reachable via the host box on the printer's
+                LAN, so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handlePrinter}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83d\udda8\ufe0f"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>3D Printer</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Bambu Lab \u2014 discover, watch the chamber, control + remote CAD"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Circuit Simulator cell \u2014 import SPICE/KiCad/EPLAN, simulate
+                (built-in MNA or ngspice), ERC, view waveforms. Box-reachable, so
+                always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleCircuit}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\u26a1"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Circuit Simulator</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"SPICE/KiCad/EPLAN \u2014 simulate, ERC, view waveforms"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>

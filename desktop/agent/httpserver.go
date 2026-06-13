@@ -11734,6 +11734,67 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			},
 		}
 
+	// circuit_plot — first-class image tool so a HOST model can SEE a simulated
+	// waveform (the `ops` path flattens results to text, hiding the picture).
+	// Thin adapter over the circuit_plot verb: reuses the full ops mesh path
+	// (remote targeting + auth + relay) to render the PNG, then re-wraps it as a
+	// VIEWABLE MCP image block on the host.
+	case "circuit_plot":
+		var cpArgs struct {
+			Machine string   `json:"machine"`
+			Type    string   `json:"type"`
+			Signals []string `json:"signals"`
+		}
+		_ = json.Unmarshal(call.Arguments, &cpArgs)
+		machine := strings.TrimSpace(cpArgs.Machine)
+		if machine == "" {
+			machine = "local"
+		}
+		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
+		payload, _ := json.Marshal(map[string]interface{}{"type": cpArgs.Type, "signals": cpArgs.Signals})
+		out := dispatchOps(octx, OpsRequest{Machine: machine, Verb: "circuit_plot", Payload: payload})
+		if !out.OK {
+			msg := out.Error
+			if out.Code != "" {
+				msg = out.Code + ": " + out.Error
+			}
+			return mcpToolError("circuit_plot (" + machine + "): " + msg)
+		}
+		var dataURL, analysis string
+		var signals []interface{}
+		if m, ok := out.Initial.(map[string]interface{}); ok {
+			if s, ok := m["image"].(string); ok {
+				dataURL = s
+			}
+			analysis, _ = m["analysis"].(string)
+			signals, _ = m["signals"].([]interface{})
+		}
+		if dataURL == "" {
+			return mcpToolError("circuit_plot (" + machine + "): no image produced")
+		}
+		b64 := dataURL
+		if strings.HasPrefix(b64, "data:") {
+			if i := strings.Index(b64, ","); i >= 0 {
+				b64 = b64[i+1:]
+			}
+		}
+		caption := "Circuit " + analysis + " waveform from " + machine + "."
+		if len(signals) > 0 {
+			parts := make([]string, 0, len(signals))
+			for _, s := range signals {
+				if str, ok := s.(string); ok {
+					parts = append(parts, str)
+				}
+			}
+			caption += " Traces: " + strings.Join(parts, ", ") + "."
+		}
+		return map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": caption},
+				{"type": "image", "data": b64, "mimeType": "image/png"},
+			},
+		}
+
 	case "ops_plan":
 		var req OpsRequest
 		if err := json.Unmarshal(call.Arguments, &req); err != nil {
