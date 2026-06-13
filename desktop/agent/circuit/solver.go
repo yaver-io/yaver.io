@@ -359,9 +359,12 @@ func (s *solver) stampElement(A [][]float64, z []float64, e Element, inductorsAs
 		}
 		// DC/op: open — no stamp.
 	case KindInductor:
-		if inductorsAsShort {
-			bi := s.branchIdx[e.Name]
-			s.stampVoltageBranch(A, z, s.idx(e.Nodes[0]), s.idx(e.Nodes[1]), bi, 0)
+		if inductorsAsShort || e.Value <= 0 {
+			// DC/op semantics, and degenerate L≤0, behave as a wire (0 V source).
+			bi, ok := s.branchIdx[e.Name]
+			if ok {
+				s.stampVoltageBranch(A, z, s.idx(e.Nodes[0]), s.idx(e.Nodes[1]), bi, 0)
+			}
 		} else {
 			geq := h / e.Value
 			stampG(A, s.idx(e.Nodes[0]), s.idx(e.Nodes[1]), geq)
@@ -524,8 +527,10 @@ func (s *solver) tran(ctx context.Context, a Analysis) (SimResult, error) {
 			case KindCapacitor:
 				capPrev[e.Name] = nodeV(x, s.idx(e.Nodes[0])) - nodeV(x, s.idx(e.Nodes[1]))
 			case KindInductor:
-				vp := nodeV(x, s.idx(e.Nodes[0])) - nodeV(x, s.idx(e.Nodes[1]))
-				indPrev[e.Name] = h/e.Value*vp + indPrev[e.Name]
+				if e.Value > 0 {
+					vp := nodeV(x, s.idx(e.Nodes[0])) - nodeV(x, s.idx(e.Nodes[1]))
+					indPrev[e.Name] = h/e.Value*vp + indPrev[e.Name]
+				}
 			}
 		}
 	}
