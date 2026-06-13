@@ -2919,6 +2919,30 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"additionalProperties": false,
 			},
 		},
+		{
+			"name":        "circuit_plot",
+			"description": "Simulate the loaded electrical circuit and return the waveform as a VIEWABLE PNG, so you (the host model) can SEE the response and do circuit design in the loop: edit the netlist (ops circuit_import) → simulate → look at the curve → fix. Import a SPICE/KiCad/EPLAN design first via ops verb circuit_import. Picks the analysis from `type` (op→transient, tran, ac for a Bode plot, dc sweep); `signals` filters which node traces to draw. For raw numbers instead of a picture use ops verbs circuit_simulate / circuit_measure / circuit_erc. Targets any mesh device via `machine`.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"machine": map[string]interface{}{
+						"type":        "string",
+						"description": "Target cell: \"local\", \"primary\", or a deviceId / alias. Default \"local\".",
+						"default":     "local",
+					},
+					"type": map[string]interface{}{
+						"type":        "string",
+						"description": "Analysis: \"tran\" (time), \"ac\" (Bode), \"dc\" (sweep). Default transient.",
+					},
+					"signals": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Optional signal names to plot, e.g. [\"V(out)\"]. Default: all node traces.",
+					},
+				},
+				"additionalProperties": false,
+			},
+		},
 	}
 	tools = append(tools, opsTools...)
 

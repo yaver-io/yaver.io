@@ -566,6 +566,7 @@ matters.
 | Managed toggle | `desktop/agent/managed*.go`; `backend/convex/userSettings.ts` |
 | `ops` MCP grand-tool | `desktop/agent/ops*.go` — single MCP tool, 20 verbs |
 | Remote Desktop (screen view + mouse/kbd control) | `desktop/agent/remotedesktop*.go` (`/rd/status`,`/rd/policy`,`/rd/stream` MJPEG,`/rd/frame.jpg`,`/rd/input`); reuses `ghost/` engine + `ghost_stream.go`. Runtime consent policy (control opt-in), NOT the `--ghost` flag. Web `RemoteDesktopView.tsx`/`RemoteDesktopModal.tsx`; mobile `app/remote-desktop.tsx` (iOS-safe snapshot-poll, MJPEG only on web). Fullscreen on shell + remote view both surfaces. |
+| Circuit simulator cell | `desktop/agent/circuit/` (dep-free pure-Go MNA solver op/dc/tran/ac + ngspice pass-through; SPICE/KiCad/EPLAN import; generic ERC; PNG plot) + `ops_circuit.go` (`circuit_*` verbs) + `circuit_plot` first-class MCP image tool (`mcp_tools.go`/`httpserver.go`). Web `CircuitCellView.tsx` @ `/dashboard/circuit`; mobile `circuit.tsx` + `circuitClient.ts`. Netlists = vault-local, never Convex. Doc `docs/yaver-circuit-simulator.md`. |
 
 ## Local development
 
