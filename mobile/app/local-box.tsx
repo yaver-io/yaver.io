@@ -164,7 +164,7 @@ export default function LocalBoxScreen() {
           <Banner c={c} tone="warn"
             text="proot isn't bundled, so coding runners can't run on-device yet. Rebuild with PROOT_SRC or YAVER_PROOT_URL set so build-android-sandbox.sh includes it." />
         )}
-        {agentPresent && prootPresent && !ROOTFS_PUBLISHED && (
+        {agentPresent && prootPresent && !ROOTFS_PUBLISHED && !rootfsInstalled && (
           <Banner c={c} tone="warn"
             text="The Linux rootfs hasn't been published yet. Run scripts/build-android-rootfs-alpine-arm64.sh then scripts/publish-android-rootfs.sh, and flip ROOTFS_PUBLISHED in sandboxRootfsManifest.ts." />
         )}

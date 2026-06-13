@@ -97,11 +97,25 @@ export async function startSandbox(token: string): Promise<LocalBoxProbe> {
     throw new Error("on-device agent did not come up on 127.0.0.1:18080 (check logcat YaverSandbox)");
   }
 
-  await connectionManager.ensureConnected(LOCAL_BOX_DEVICE_ID, {
-    host: "127.0.0.1",
-    port: 18080,
-    token,
-  });
+  // Best-effort: the box is up + the FGS notification is posted, so "Start"
+  // has succeeded from the user's POV. Wiring it into connectionManager can
+  // still be pending when the loopback agent is in bootstrap mode (waiting to
+  // be paired from the device picker) — don't let that block the Start UI on a
+  // spinner forever. Pairing/connection completes via the box picker.
+  try {
+    await Promise.race([
+      connectionManager.ensureConnected(LOCAL_BOX_DEVICE_ID, {
+        host: "127.0.0.1",
+        port: 18080,
+        token,
+      }),
+      delay(8000).then(() => {
+        throw new Error("loopback connect pending");
+      }),
+    ]);
+  } catch {
+    // box is running; pair it from the device picker ("This phone" → needs auth)
+  }
   return probe;
 }
 
