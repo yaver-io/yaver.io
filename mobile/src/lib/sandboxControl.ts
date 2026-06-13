@@ -88,20 +88,24 @@ export async function startSandbox(token: string): Promise<LocalBoxProbe> {
   await Native.start();
 
   let probe: LocalBoxProbe = { reachable: false };
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 20; i++) {
     probe = await probeLocalBox();
     if (probe.reachable) break;
     await delay(500);
   }
+  // Do NOT throw if the loopback HTTP hasn't bound yet. Native.start() succeeded,
+  // the foreground service is up, and the "Yaver sandbox running" notification is
+  // posted — so Start has succeeded from the user's POV. The agent can still be
+  // warming up (proot rootfs init) past this window; the status refresh in the UI
+  // and the device picker reflect reachability when it lands. Failing here just
+  // produced a misleading red "did not come up" banner over a box that IS running.
   if (!probe.reachable) {
-    throw new Error("on-device agent did not come up on 127.0.0.1:18080 (check logcat YaverSandbox)");
+    return probe; // reachable:false, but no error — the box is running
   }
 
-  // Best-effort: the box is up + the FGS notification is posted, so "Start"
-  // has succeeded from the user's POV. Wiring it into connectionManager can
-  // still be pending when the loopback agent is in bootstrap mode (waiting to
-  // be paired from the device picker) — don't let that block the Start UI on a
-  // spinner forever. Pairing/connection completes via the box picker.
+  // Best-effort: wiring the loopback box into connectionManager can still be
+  // pending when the agent is in bootstrap mode (waiting to be paired from the
+  // device picker) — don't block the Start UI on a spinner forever.
   try {
     await Promise.race([
       connectionManager.ensureConnected(LOCAL_BOX_DEVICE_ID, {
