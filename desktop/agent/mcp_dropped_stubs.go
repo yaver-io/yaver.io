@@ -72,7 +72,6 @@ func mcpNobetciEczaneFallback(args ...interface{}) interface{} { return droppedM
 func mcpOpenURL(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpPasswordGen(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpPlacesSearch(args ...interface{}) interface{} { return droppedMCPStub(args...) }
-func mcpPublicIP(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpQRCode(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpRestaurants(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpRunShortcut(args ...interface{}) interface{} { return droppedMCPStub(args...) }
@@ -84,7 +83,6 @@ func mcpShellyStatus(args ...interface{}) interface{} { return droppedMCPStub(ar
 func mcpSiteCheck(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpSonosControl(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpSonosDiscover(args ...interface{}) interface{} { return droppedMCPStub(args...) }
-func mcpSpeedTest(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpStockPrice(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpSubnet(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpTasmotaControl(args ...interface{}) interface{} { return droppedMCPStub(args...) }
@@ -95,5 +93,4 @@ func mcpVolume(args ...interface{}) interface{} { return droppedMCPStub(args...)
 func mcpWakeOnLAN(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpWeather(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpWhois(args ...interface{}) interface{} { return droppedMCPStub(args...) }
-func mcpWiFiInfo(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpWorldClock(args ...interface{}) interface{} { return droppedMCPStub(args...) }
