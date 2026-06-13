@@ -49,8 +49,10 @@ export default function CircuitScreen() {
   const [erc, setErc] = useState<ERCReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   const liveRef = useRef(true);
+  const lastImported = useRef("");
 
   const target = useCallback((): CircuitTarget | undefined => {
     if (!deviceId) return undefined;
@@ -76,9 +78,34 @@ export default function CircuitScreen() {
     if (cfg?.info) setInfo(cfg.info);
     if ((cfg?.info?.elementCount ?? 0) > 0) {
       const ex = await circuitClient.exportNetlist(t, "spice");
-      if (ex?.spice && ex.spice.trim()) setNetlist(ex.spice);
+      if (ex?.spice && ex.spice.trim()) {
+        setNetlist(ex.spice);
+        lastImported.current = ex.spice;
+      }
     }
   }, [target]);
+
+  // syncNetlist pushes the editor text to the box if it changed, so Run/ERC
+  // always reflect what's on screen. Returns CircuitInfo or null on error.
+  const syncNetlist = useCallback(async (): Promise<CircuitInfo | null> => {
+    const t = target();
+    if (!t) {
+      setErr("pick a device first");
+      return null;
+    }
+    if (netlist === lastImported.current && info) return info;
+    const r = await circuitClient.importNetlist(t, netlist, "auto");
+    if ((r as any)?.ok === false) {
+      setErr((r as any).error || "import failed");
+      return null;
+    }
+    if (r?.info) {
+      setInfo(r.info);
+      lastImported.current = netlist;
+      return r.info;
+    }
+    return null;
+  }, [target, netlist, info]);
 
   useEffect(() => {
     if (deviceId) load();
@@ -103,49 +130,60 @@ export default function CircuitScreen() {
   }, [analysis]);
 
   const doImport = useCallback(async () => {
-    const t = target();
-    if (!t) return setMsg("pick a device first");
     setBusy(true);
     setMsg(null);
-    const r = await circuitClient.importNetlist(t, netlist, "auto");
+    setErr(null);
+    lastImported.current = "";
+    const i = await syncNetlist();
     setBusy(false);
-    if ((r as any)?.ok === false) return setMsg((r as any).error || "import failed");
-    if (r?.info) {
-      setInfo(r.info);
-      setMsg(`Imported ${r.info.elementCount} elements · ${r.info.nodeCount} nets`);
-    }
-  }, [target, netlist]);
+    if (i) setMsg(`Imported ${i.elementCount} elements · ${i.nodeCount} nets`);
+  }, [syncNetlist]);
 
   const doSimulate = useCallback(async () => {
     const t = target();
-    if (!t) return setMsg("pick a device first");
+    if (!t) return setErr("pick a device first");
     setBusy(true);
     setMsg(null);
+    setErr(null);
+    const i = await syncNetlist();
+    if (!i) return setBusy(false);
+    if (!i.hasGround) {
+      setBusy(false);
+      return setErr("No ground node (0) — the circuit has no voltage reference.");
+    }
+    if (analysis !== "op" && !i.simulatable) {
+      setBusy(false);
+      return setErr("Connection list (KiCad/EPLAN) — run ERC, not a simulation.");
+    }
     if (analysis === "op") {
       const r = await circuitClient.measure(t);
       setBusy(false);
-      if ((r as any)?.ok === false) return setMsg((r as any).error || "sim failed");
-      setSim({ analysis: "op", signals: [], samples: [], nodeVoltages: r.nodeVoltages, engine: r.engine });
+      if ((r as any)?.ok === false) return setErr((r as any).error || "sim failed");
+      setSim({ analysis: "op", signals: [], samples: [], nodeVoltages: r.nodeVoltages, branchCurrents: r.branchCurrents, engine: r.engine });
+      setMsg(`operating point · ${r.engine}`);
       return;
     }
     const r = await circuitClient.simulate(t, analysisPayload());
     setBusy(false);
-    if ((r as any)?.ok === false) return setMsg((r as any).error || "sim failed");
+    if ((r as any)?.ok === false) return setErr((r as any).error || "sim failed");
     if (r?.result) {
       setSim(r.result);
       setMsg(`${r.result.samples?.length ?? 0} samples · ${r.result.engine}`);
     }
-  }, [target, analysis, analysisPayload]);
+  }, [target, syncNetlist, analysis, analysisPayload]);
 
   const doErc = useCallback(async () => {
     const t = target();
-    if (!t) return setMsg("pick a device first");
+    if (!t) return setErr("pick a device first");
     setBusy(true);
     setMsg(null);
+    setErr(null);
+    const i = await syncNetlist();
+    if (!i) return setBusy(false);
     const r = await circuitClient.erc(t);
     setBusy(false);
     if (r?.report) setErc(r.report);
-  }, [target]);
+  }, [target, syncNetlist]);
 
   const setEng = useCallback(
     async (eng: string) => {
@@ -231,7 +269,7 @@ export default function CircuitScreen() {
             </View>
             <View style={[s.row, { marginTop: 8 }]}>
               <Pressable onPress={doSimulate} disabled={busy} style={[s.btn, { backgroundColor: "#1f9d55", flex: 1 }]}>
-                <Text style={[s.btnText, { color: "#fff", textAlign: "center" }]}>{busy ? "Running…" : "Simulate"}</Text>
+                <Text style={[s.btnText, { color: "#fff", textAlign: "center" }]}>{busy ? "Running…" : "▶ Run"}</Text>
               </Pressable>
               <Pressable onPress={doErc} disabled={busy} style={[s.btn, { backgroundColor: "#b7791f" }]}>
                 <Text style={[s.btnText, { color: "#fff" }]}>ERC</Text>
@@ -239,7 +277,13 @@ export default function CircuitScreen() {
             </View>
 
             {busy && <ActivityIndicator color={ACCENT} style={{ marginTop: 12 }} />}
-            {msg && <Text style={[s.muted, { marginTop: 10 }]}>{msg}</Text>}
+            {err ? (
+              <View style={s.errBox}>
+                <Text style={s.errText}>{err}</Text>
+              </View>
+            ) : (
+              msg && <Text style={[s.muted, { marginTop: 10 }]}>{msg}</Text>
+            )}
 
             {sim && sim.samples?.length > 0 && (
               <View style={s.card}>
@@ -259,6 +303,13 @@ export default function CircuitScreen() {
                     <Text style={s.kvVal}>{fmt(v)} V</Text>
                   </View>
                 ))}
+                {sim.branchCurrents &&
+                  Object.entries(sim.branchCurrents).map(([n, i]) => (
+                    <View key={n} style={s.kv}>
+                      <Text style={s.kvKey}>I({n})</Text>
+                      <Text style={[s.kvVal, { color: "#e6b450" }]}>{fmt(i)} A</Text>
+                    </View>
+                  ))}
               </View>
             )}
 
@@ -324,5 +375,7 @@ function makeStyles(c: any) {
     kvKey: { color: c.textMuted, fontFamily: "Menlo", fontSize: 12 },
     kvVal: { color: "#9be3a8", fontFamily: "Menlo", fontSize: 12 },
     finding: { fontSize: 12, marginBottom: 4, lineHeight: 16 },
+    errBox: { marginTop: 10, borderRadius: 8, borderWidth: 1, borderColor: "#e2555566", backgroundColor: "#e2555518", padding: 10 },
+    errText: { color: "#f3a3a3", fontSize: 13, lineHeight: 18 },
   });
 }
