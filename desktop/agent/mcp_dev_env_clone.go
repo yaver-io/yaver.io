@@ -46,6 +46,26 @@ func devEnvironmentCloneMCPTools() []map[string]interface{} {
 	}
 	return []map[string]interface{}{
 		{
+			"name":        "remote_dev_prepare",
+			"description": "One-shot remote/self-hosted dev setup: clone or update a repo on an owned Yaver device, set that repo as the target's yaver-code workdir, optionally install mobile dependencies, and return next MCP actions for browser/mobile testing. This is the preferred flow when a user says to develop on Magara or another self-hosted machine instead of the local computer.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"targetDeviceId":        map[string]interface{}{"type": "string", "description": "Target owned Yaver device id/name/alias. Defaults to primary when omitted."},
+					"repoUrl":               map[string]interface{}{"type": "string", "description": "Git repo URL. Defaults to the current MCP cwd's origin when inferable."},
+					"branch":                map[string]interface{}{"type": "string", "description": "Branch to clone/checkout. Defaults to current branch when inferable."},
+					"dir":                   map[string]interface{}{"type": "string", "description": "Target directory on the remote machine. Defaults to the target agent's repo clone policy."},
+					"installMissing":        map[string]interface{}{"type": "boolean", "description": "Install missing common toolchain pieces on target before clone. Default false for lightweight setup."},
+					"includeGitCredentials": map[string]interface{}{"type": "boolean", "description": "P2P-transfer local git clone credentials to target. Default false; public repos do not need it."},
+					"configureCode":         map[string]interface{}{"type": "boolean", "description": "Set cloned repo as target's yaver-code workdir. Default true."},
+					"prepareMobile":         map[string]interface{}{"type": "boolean", "description": "Run mobile_project_prepare on the target after clone. Default false."},
+					"mobileDirectory":       map[string]interface{}{"type": "string", "description": "Directory for mobile_project_prepare. Defaults to the cloned repo path."},
+					"verify":                map[string]interface{}{"type": "boolean", "description": "Verify target capabilities/runners after setup. Default true."},
+					"dryRun":                map[string]interface{}{"type": "boolean", "description": "Plan and return actions without applying changes."},
+				},
+			},
+		},
+		{
 			"name":        "dev_environment_clone_plan",
 			"description": "Plan cloning a coding-focused Yaver dev environment to an existing Yaver device, SSH host, or managed-cloud target. No side effects.",
 			"inputSchema": map[string]interface{}{"type": "object", "properties": props},
@@ -71,6 +91,8 @@ func devEnvironmentCloneMCPTools() []map[string]interface{} {
 
 func dispatchDevEnvironmentCloneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bool, interface{}) {
 	switch name {
+	case "remote_dev_prepare":
+		return true, mcpToolJSON(runRemoteDevPrepareMCP(s, arguments))
 	case "dev_environment_clone_plan":
 		var req DevEnvironmentCloneRequest
 		if err := json.Unmarshal(arguments, &req); err != nil {

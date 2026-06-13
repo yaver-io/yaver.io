@@ -964,6 +964,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/repos/credentials", s.auth(s.handleRepoCredentials))
 	mux.HandleFunc("/repos/credentials/", s.auth(s.handleRepoCredentialByHost))
 
+	// Mobile project prep/build endpoints used by MCP cross-device proxying.
+	mux.HandleFunc("/mobile/project/status", s.auth(s.handleMobileProjectStatus))
+	mux.HandleFunc("/mobile/project/prepare", s.auth(s.handleMobileProjectPrepare))
+	mux.HandleFunc("/mobile/project/build", s.auth(s.handleMobileProjectBuild))
+
 	// Phone-driven dependency installer — `yaver install <tool>` over HTTP.
 	// Output streams to /streams/install:<tool>. Owner-auth only (runs
 	// shell commands and downloads runtimes into ~/.yaver/runtimes).
@@ -7228,13 +7233,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	// --- Exec ---
 	case "exec_command":
 		var args struct {
-			Command string `json:"command"`
-			WorkDir string `json:"work_dir"`
-			Timeout int    `json:"timeout"`
+			DeviceID string `json:"device_id"`
+			Command  string `json:"command"`
+			WorkDir  string `json:"work_dir"`
+			Timeout  int    `json:"timeout"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.Command == "" {
 			return mcpToolError("command is required")
+		}
+		if strings.TrimSpace(args.DeviceID) != "" {
+			return mcpRemoteExecCommand(args.DeviceID, args.Command, args.WorkDir, args.Timeout)
 		}
 		if s.execMgr == nil {
 			return mcpToolError("exec is not enabled on this agent")
@@ -7252,17 +7261,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 		}
 		snapshot := sess.Snapshot()
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Exit code: %v\n", snapshot["exitCode"]))
-		if stdout, ok := snapshot["stdout"].(string); ok && stdout != "" {
-			sb.WriteString("\n--- stdout ---\n")
-			sb.WriteString(stdout)
-		}
-		if stderr, ok := snapshot["stderr"].(string); ok && stderr != "" {
-			sb.WriteString("\n--- stderr ---\n")
-			sb.WriteString(stderr)
-		}
-		return mcpToolResult(sb.String())
+		return mcpToolResult(formatExecSnapshot(snapshot))
 
 	case "schedule_task":
 		var args struct {
@@ -7613,38 +7612,40 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mcpDepsList(args.Directory, args.Manager))
 	case "mobile_project_status":
 		var args struct {
+			DeviceID  string `json:"device_id"`
 			Directory string `json:"directory"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		if strings.TrimSpace(args.Directory) == "" {
-			args.Directory = s.taskMgr.workDir
+		if strings.TrimSpace(args.DeviceID) != "" {
+			out, err := proxyToDeviceJSON(context.Background(), "mobile_project_status", strings.TrimSpace(args.DeviceID), http.MethodPost, "/mobile/project/status", map[string]any{"directory": args.Directory})
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("mobile_project_status: %v", err))
+			}
+			return mcpToolJSON(out)
 		}
-		return mcpToolJSON(mobileProjectStatus(args.Directory))
+		out, err := s.mobileProjectStatusPayload(args.Directory)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("mobile_project_status: %v", err))
+		}
+		return mcpToolJSON(out)
 	case "mobile_project_prepare":
 		var args struct {
+			DeviceID  string `json:"device_id"`
 			Directory string `json:"directory"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		if strings.TrimSpace(args.Directory) == "" {
-			args.Directory = s.taskMgr.workDir
+		if strings.TrimSpace(args.DeviceID) != "" {
+			out, err := proxyToDeviceJSON(context.Background(), "mobile_project_prepare", strings.TrimSpace(args.DeviceID), http.MethodPost, "/mobile/project/prepare", map[string]any{"directory": args.Directory})
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("mobile_project_prepare: %v", err))
+			}
+			return mcpToolJSON(out)
 		}
-		manifest, err := readProjectPackageManifest(args.Directory)
+		out, err := s.mobileProjectPreparePayload(args.Directory)
 		if err != nil {
-			return mcpToolError(fmt.Sprintf("package.json missing or invalid: %v", err))
+			return mcpToolError(err.Error())
 		}
-		prep := detectProjectPreparation(args.Directory, manifest)
-		if len(prep.MissingTools) > 0 {
-			return mcpToolJSON(mobileProjectStatus(args.Directory))
-		}
-		if prep.NeedsDependencyInstall {
-			if !prep.CanAutoInstallDependencies {
-				return mcpToolJSON(mobileProjectStatus(args.Directory))
-			}
-			if err := installProjectDependencies(args.Directory, prep); err != nil {
-				return mcpToolError(fmt.Sprintf("dependency install failed: %v", err))
-			}
-		}
-		return mcpToolJSON(mobileProjectStatus(args.Directory))
+		return mcpToolJSON(out)
 	case "mobile_hermes_doctor":
 		var args mobileHermesDoctorInput
 		json.Unmarshal(call.Arguments, &args)
@@ -7654,18 +7655,20 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mobileHermesDoctor(args))
 	case "mobile_project_build":
 		var args struct {
+			DeviceID  string `json:"device_id"`
 			Directory string `json:"directory"`
 			Framework string `json:"framework"`
 			Platform  string `json:"platform"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		if strings.TrimSpace(args.Directory) == "" {
-			args.Directory = s.taskMgr.workDir
+		if strings.TrimSpace(args.DeviceID) != "" {
+			out, err := proxyToDeviceJSON(context.Background(), "mobile_project_build", strings.TrimSpace(args.DeviceID), http.MethodPost, "/mobile/project/build", map[string]any{"directory": args.Directory, "framework": args.Framework, "platform": args.Platform})
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("mobile_project_build: %v", err))
+			}
+			return mcpToolJSON(out)
 		}
-		if strings.TrimSpace(args.Platform) == "" {
-			args.Platform = "ios"
-		}
-		result, err := s.buildNativeBundleForProject(args.Directory, args.Framework, args.Platform)
+		result, err := s.mobileProjectBuildPayload(args.Directory, args.Framework, args.Platform)
 		if err != nil {
 			return mcpToolError(err.Error())
 		}
