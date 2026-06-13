@@ -27,7 +27,14 @@ type CircuitInfo = {
 type EngineCap = { engine: string; available: boolean; analyses: string[]; elements: string[]; nonlinear?: boolean; note?: string };
 type ERCFinding = { rule: string; severity: string; net?: string; element?: string; message: string };
 type ERCReport = { findings?: ERCFinding[]; errors: number; warnings: number; ok: boolean };
-type SimResult = { analysis: string; signals: string[]; samples: number[][]; nodeVoltages?: Record<string, number>; engine: string };
+type SimResult = {
+  analysis: string;
+  signals: string[];
+  samples: number[][];
+  nodeVoltages?: Record<string, number>;
+  branchCurrents?: Record<string, number>;
+  engine: string;
+};
 
 const ANALYSES = ["op", "tran", "ac", "dc"] as const;
 const EXAMPLE = `* RC low-pass example
@@ -53,7 +60,9 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
   const [erc, setErc] = useState<ERCReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [showInspect, setShowInspect] = useState(false);
+  const lastImported = useRef<string>("");
 
   const clientRef = useRef<AgentClient | null>(null);
   const connectedTo = useRef("");
@@ -108,7 +117,10 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
       if (cfg?.engine) setEngine(cfg.engine);
       if (cfg?.info) setInfo(cfg.info);
       const ex = await call("circuit_export", { format: "spice" });
-      if (ex?.spice && ex.spice.trim() && (ex.info?.elementCount ?? cfg?.info?.elementCount ?? 0) > 0) setNetlist(ex.spice);
+      if (ex?.spice && ex.spice.trim() && (ex.info?.elementCount ?? cfg?.info?.elementCount ?? 0) > 0) {
+        setNetlist(ex.spice);
+        lastImported.current = ex.spice; // device already has this loaded
+      }
     })();
   }, [deviceId]); // eslint-disable-line
 
@@ -120,44 +132,75 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
     return { type: "op" };
   }, [analysis, tstop, fstart, fstop, sweepSrc, sweep]);
 
+  // syncNetlist pushes the editor's current text to the device if it differs
+  // from what was last loaded, so Run/ERC always reflect what's on screen.
+  // Returns the imported CircuitInfo, or null on parse error (msg already set).
+  const syncNetlist = useCallback(async (): Promise<CircuitInfo | null> => {
+    if (netlist === lastImported.current && info) return info;
+    const r = await call("circuit_import", { format, text: netlist });
+    if (r?.ok === false) {
+      setErr(r.error || "import failed");
+      return null;
+    }
+    if (r?.info) {
+      setInfo(r.info);
+      lastImported.current = netlist;
+      return r.info;
+    }
+    return null;
+  }, [call, format, netlist, info]);
+
   const doImport = useCallback(async () => {
     setBusy(true);
     setMsg(null);
-    const r = await call("circuit_import", { format, text: netlist });
+    setErr(null);
+    lastImported.current = ""; // force re-import
+    const i = await syncNetlist();
     setBusy(false);
-    if (r?.ok === false) return setMsg(r.error || "import failed");
-    if (r?.info) {
-      setInfo(r.info);
-      setMsg(`Imported ${r.info.elementCount} elements, ${r.info.nodeCount} nets`);
-    }
-  }, [call, format, netlist]);
+    if (i) setMsg(`Imported ${i.elementCount} elements, ${i.nodeCount} nets`);
+  }, [syncNetlist]);
 
   const doSimulate = useCallback(async () => {
     setBusy(true);
     setMsg(null);
+    setErr(null);
+    const i = await syncNetlist();
+    if (!i) return setBusy(false);
+    if (!i.hasGround) {
+      setBusy(false);
+      return setErr("No ground node (0). Add a connection to node 0 — the circuit has no voltage reference.");
+    }
+    if (analysis !== "op" && !i.simulatable) {
+      setBusy(false);
+      return setErr("This is a connection list (KiCad multi-pin / EPLAN). Run ERC instead of a simulation.");
+    }
     if (analysis === "op") {
       const r = await call("circuit_measure");
       setBusy(false);
-      if (r?.ok === false) return setMsg(r.error || "sim failed");
-      setSim({ analysis: "op", signals: [], samples: [], nodeVoltages: r.nodeVoltages, engine: r.engine });
+      if (r?.ok === false) return setErr(r.error || "sim failed");
+      setSim({ analysis: "op", signals: [], samples: [], nodeVoltages: r.nodeVoltages, branchCurrents: r.branchCurrents, engine: r.engine });
+      setMsg(`operating point · ${r.engine}`);
       return;
     }
     const r = await call("circuit_simulate", analysisPayload());
     setBusy(false);
-    if (r?.ok === false) return setMsg(r.error || "sim failed");
+    if (r?.ok === false) return setErr(r.error || "sim failed");
     if (r?.result) {
       setSim(r.result);
       setMsg(`${r.result.samples?.length ?? 0} samples · ${r.result.engine}`);
     }
-  }, [call, analysis, analysisPayload]);
+  }, [call, syncNetlist, analysis, analysisPayload]);
 
   const doErc = useCallback(async () => {
     setBusy(true);
     setMsg(null);
+    setErr(null);
+    const i = await syncNetlist();
+    if (!i) return setBusy(false);
     const r = await call("circuit_erc");
     setBusy(false);
     if (r?.report) setErc(r.report);
-  }, [call]);
+  }, [call, syncNetlist]);
 
   const setEngineCfg = useCallback(
     async (eng: string) => {
@@ -275,7 +318,7 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
               </div>
               <div className="ml-auto flex gap-2">
                 <button onClick={doSimulate} disabled={busy} className={`${btn} bg-emerald-500/80 text-black hover:bg-emerald-400`}>
-                  {busy ? "Running…" : "Simulate"}
+                  {busy ? "Running…" : "▶ Run"}
                 </button>
                 <button onClick={doErc} disabled={busy} className={`${btn} bg-amber-500/80 text-black hover:bg-amber-400`}>
                   ERC
@@ -284,7 +327,10 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
             </div>
           </div>
 
-          {msg && <p className="text-sm text-white/70">{msg}</p>}
+          {err && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">{err}</div>
+          )}
+          {!err && msg && <p className="text-sm text-white/60">{msg}</p>}
 
           {sim && sim.samples?.length > 0 && (
             <div className={card}>
@@ -292,9 +338,42 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
                 <span className="text-sm font-medium">
                   {sim.analysis.toUpperCase()} {sim.analysis === "ac" ? "(Bode magnitude)" : ""}
                 </span>
-                <span className="text-xs text-white/40">{sim.engine}</span>
+                <span className="text-xs text-white/40">
+                  {sim.samples.length} pts · {sim.engine}
+                </span>
               </div>
               <WaveformChart result={sim} />
+              {(() => {
+                const stats = signalStats(sim);
+                if (stats.length === 0) return null;
+                const unit = sim.analysis === "ac" ? "dB" : "V";
+                return (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full font-mono text-xs">
+                      <thead className="text-white/40">
+                        <tr className="text-left">
+                          <th className="pb-1 font-normal">signal</th>
+                          <th className="pb-1 text-right font-normal">min ({unit})</th>
+                          <th className="pb-1 text-right font-normal">max ({unit})</th>
+                          <th className="pb-1 text-right font-normal">{sim.analysis === "tran" ? "final" : "last"}</th>
+                          <th className="pb-1 text-right font-normal">pk-pk</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stats.map((s) => (
+                          <tr key={s.name} className="text-white/80">
+                            <td className="text-sky-300">{s.name}</td>
+                            <td className="text-right">{fmt(s.min)}</td>
+                            <td className="text-right">{fmt(s.max)}</td>
+                            <td className="text-right">{fmt(s.last)}</td>
+                            <td className="text-right text-white/50">{fmt(s.max - s.min)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -309,6 +388,16 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
                   </div>
                 ))}
               </div>
+              {sim.branchCurrents && Object.keys(sim.branchCurrents).length > 0 && (
+                <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 border-t border-white/10 pt-2 font-mono text-xs sm:grid-cols-3">
+                  {Object.entries(sim.branchCurrents).map(([n, i]) => (
+                    <div key={n} className="flex justify-between">
+                      <span className="text-white/50">I({n})</span>
+                      <span className="text-amber-200">{fmt(i)} A</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -371,6 +460,26 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
       )}
     </div>
   );
+}
+
+function signalStats(sim: SimResult): { name: string; min: number; max: number; last: number }[] {
+  const out: { name: string; min: number; max: number; last: number }[] = [];
+  for (let c = 1; c < sim.signals.length; c++) {
+    const name = sim.signals[c];
+    if (sim.analysis === "ac" && name.endsWith("deg")) continue;
+    let min = Infinity,
+      max = -Infinity,
+      last = NaN;
+    for (const row of sim.samples) {
+      const v = row[c];
+      if (!Number.isFinite(v)) continue;
+      min = Math.min(min, v);
+      max = Math.max(max, v);
+      last = v;
+    }
+    if (Number.isFinite(min)) out.push({ name, min, max, last });
+  }
+  return out;
 }
 
 function sevColor(s: string) {
