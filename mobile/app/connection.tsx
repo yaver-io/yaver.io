@@ -26,6 +26,8 @@ type RunnerNet = {
   ping?: string;
   dns?: string;
   publicIp?: string;
+  wifi?: string;
+  speed?: string;
   error?: string;
 };
 
@@ -72,18 +74,22 @@ export default function ConnectionScreen() {
     if (connected && quicClient.baseUrl) {
       const rn: RunnerNet = {};
       try {
-        const [ifaces, route, ping, dns, pub] = await Promise.all([
+        const [ifaces, route, ping, dns, pub, wifi, speed] = await Promise.all([
           callMcpDirect("network_interfaces", {}),
           callMcpDirect("ip_route", {}),
           callMcpDirect("ping", { host: "1.1.1.1", count: 3 }),
           callMcpDirect("dns_lookup", { host: "cloudflare.com", type: "A" }),
-          callMcpDirect("curl_timings", { url: "https://1.1.1.1/cdn-cgi/trace" }).catch(() => null),
+          callMcpDirect("public_ip", {}),
+          callMcpDirect("wifi_info", {}),
+          callMcpDirect("speed_test", {}),
         ]);
         rn.interfaces = toText(ifaces);
         rn.route = toText(route);
         rn.ping = toText(ping);
         rn.dns = toText(dns);
-        if (pub) rn.publicIp = toText(pub);
+        rn.publicIp = toText(pub);
+        rn.wifi = toText(wifi);
+        rn.speed = toText(speed);
       } catch (e: any) {
         rn.error = e?.message ?? String(e);
       }
@@ -263,9 +269,11 @@ export default function ConnectionScreen() {
                   <Text style={{ fontSize: 13, color: c.error, paddingVertical: 8 }}>{runner.error}</Text>
                 ) : (
                   <>
+                    {runner.publicIp && <Row label="Public IP" value={runner.publicIp} />}
+                    {runner.speed && (<><Text style={[s.subhead, { color: c.textMuted }]}>SPEED TEST</Text><Mono text={runner.speed} /></>)}
+                    {runner.wifi && (<><Text style={[s.subhead, { color: c.textMuted }]}>WIFI</Text><Mono text={runner.wifi} /></>)}
                     {runner.ping && (<><Text style={[s.subhead, { color: c.textMuted }]}>PING 1.1.1.1</Text><Mono text={runner.ping} /></>)}
                     {runner.dns && (<><Text style={[s.subhead, { color: c.textMuted }]}>DNS cloudflare.com</Text><Mono text={runner.dns} /></>)}
-                    {runner.publicIp && (<><Text style={[s.subhead, { color: c.textMuted }]}>PUBLIC IP / TRACE</Text><Mono text={runner.publicIp} /></>)}
                     {runner.interfaces && (<><Text style={[s.subhead, { color: c.textMuted }]}>INTERFACES</Text><Mono text={runner.interfaces} /></>)}
                     {runner.route && (<><Text style={[s.subhead, { color: c.textMuted }]}>ROUTES</Text><Mono text={runner.route} /></>)}
                   </>
