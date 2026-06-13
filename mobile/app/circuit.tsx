@@ -6,9 +6,10 @@
 // Transport mirrors the printer/arm cells: LAN-first, relay fallback, your
 // bearer. Netlists stay on the box vault — never on Convex.
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
+import { WaveformChart } from "../src/components/WaveformChart";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import {
@@ -44,7 +45,6 @@ export default function CircuitScreen() {
   const [info, setInfo] = useState<CircuitInfo | null>(null);
   const [netlist, setNetlist] = useState(EXAMPLE);
   const [analysis, setAnalysis] = useState<Analysis["type"]>("tran");
-  const [plot, setPlot] = useState<string | null>(null);
   const [sim, setSim] = useState<SimResult | null>(null);
   const [erc, setErc] = useState<ERCReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -121,7 +121,6 @@ export default function CircuitScreen() {
     if (!t) return setMsg("pick a device first");
     setBusy(true);
     setMsg(null);
-    setPlot(null);
     if (analysis === "op") {
       const r = await circuitClient.measure(t);
       setBusy(false);
@@ -130,11 +129,12 @@ export default function CircuitScreen() {
       return;
     }
     const r = await circuitClient.simulate(t, analysisPayload());
-    if (r?.result) setSim(r.result);
-    const p = await circuitClient.plot(t, analysisPayload());
     setBusy(false);
-    if ((p as any)?.ok === false) return setMsg((p as any).error || "plot failed");
-    if (p?.image) setPlot(p.image);
+    if ((r as any)?.ok === false) return setMsg((r as any).error || "sim failed");
+    if (r?.result) {
+      setSim(r.result);
+      setMsg(`${r.result.samples?.length ?? 0} samples · ${r.result.engine}`);
+    }
   }, [target, analysis, analysisPayload]);
 
   const doErc = useCallback(async () => {
@@ -241,7 +241,14 @@ export default function CircuitScreen() {
             {busy && <ActivityIndicator color={ACCENT} style={{ marginTop: 12 }} />}
             {msg && <Text style={[s.muted, { marginTop: 10 }]}>{msg}</Text>}
 
-            {plot && <Image source={{ uri: plot }} style={s.plot} resizeMode="contain" />}
+            {sim && sim.samples?.length > 0 && (
+              <View style={s.card}>
+                <Text style={s.cardTitle}>
+                  {sim.analysis.toUpperCase()} {sim.analysis === "ac" ? "(Bode)" : ""} · {sim.engine}
+                </Text>
+                <WaveformChart result={sim} />
+              </View>
+            )}
 
             {sim?.nodeVoltages && (
               <View style={s.card}>
@@ -311,7 +318,6 @@ function makeStyles(c: any) {
       borderColor: c.border,
       marginBottom: 8,
     },
-    plot: { width: "100%", height: 230, marginTop: 14, borderRadius: 8, backgroundColor: "#12141a" },
     card: { backgroundColor: c.bgCard, borderRadius: 10, borderWidth: 1, borderColor: c.border, padding: 12, marginTop: 14 },
     cardTitle: { color: c.textPrimary, fontWeight: "700", fontSize: 14, marginBottom: 8 },
     kv: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 },

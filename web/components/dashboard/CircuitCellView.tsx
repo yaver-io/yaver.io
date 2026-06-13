@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentClient, agentClient } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
+import WaveformChart from "@/components/dashboard/WaveformChart";
 
 type Net = { name: string; connCount: number; domainV?: number; isGround?: boolean };
 type ElementInfo = { name: string; kind: string; nodes: string[]; value?: number; display?: string };
@@ -48,11 +49,11 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
   const [fstop, setFstop] = useState("100k");
   const [sweepSrc, setSweepSrc] = useState("V1");
   const [sweep, setSweep] = useState({ start: "0", stop: "5", step: "0.1" });
-  const [plot, setPlot] = useState<string | null>(null);
   const [sim, setSim] = useState<SimResult | null>(null);
   const [erc, setErc] = useState<ERCReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [showInspect, setShowInspect] = useState(false);
 
   const clientRef = useRef<AgentClient | null>(null);
   const connectedTo = useRef("");
@@ -134,7 +135,6 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
   const doSimulate = useCallback(async () => {
     setBusy(true);
     setMsg(null);
-    setPlot(null);
     if (analysis === "op") {
       const r = await call("circuit_measure");
       setBusy(false);
@@ -143,11 +143,12 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
       return;
     }
     const r = await call("circuit_simulate", analysisPayload());
-    if (r?.result) setSim(r.result);
-    const p = await call("circuit_plot", analysisPayload());
     setBusy(false);
-    if (p?.ok === false) return setMsg(p.error || "plot failed");
-    if (p?.image) setPlot(p.image);
+    if (r?.ok === false) return setMsg(r.error || "sim failed");
+    if (r?.result) {
+      setSim(r.result);
+      setMsg(`${r.result.samples?.length ?? 0} samples · ${r.result.engine}`);
+    }
   }, [call, analysis, analysisPayload]);
 
   const doErc = useCallback(async () => {
@@ -285,10 +286,15 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
 
           {msg && <p className="text-sm text-white/70">{msg}</p>}
 
-          {plot && (
+          {sim && sim.samples?.length > 0 && (
             <div className={card}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={plot} alt="circuit waveform" className="w-full rounded-lg" />
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium">
+                  {sim.analysis.toUpperCase()} {sim.analysis === "ac" ? "(Bode magnitude)" : ""}
+                </span>
+                <span className="text-xs text-white/40">{sim.engine}</span>
+              </div>
+              <WaveformChart result={sim} />
             </div>
           )}
 
@@ -303,6 +309,43 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {info && (info.elements?.length ?? 0) > 0 && (
+            <div className={card}>
+              <button onClick={() => setShowInspect((v) => !v)} className="flex w-full items-center justify-between text-sm font-medium">
+                <span>Inspector — {info.elementCount} elements, {info.nodeCount} nets</span>
+                <span className="text-white/40">{showInspect ? "▾" : "▸"}</span>
+              </button>
+              {showInspect && (
+                <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="mb-1 text-xs uppercase tracking-wide text-white/40">Elements</p>
+                    <div className="space-y-0.5 font-mono text-xs">
+                      {(info.elements || []).map((el) => (
+                        <div key={el.name} className="flex items-center gap-2">
+                          <span className="w-12 text-emerald-300">{el.name}</span>
+                          <span className="text-white/40">{el.nodes.join("–")}</span>
+                          <span className="ml-auto text-white/70">{el.display || ""}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs uppercase tracking-wide text-white/40">Nets</p>
+                    <div className="space-y-0.5 font-mono text-xs">
+                      {(info.nets || []).map((n) => (
+                        <div key={n.name} className="flex items-center gap-2">
+                          <span className={n.isGround ? "text-white/40" : "text-sky-300"}>{n.name}</span>
+                          <span className="text-white/30">×{n.connCount}</span>
+                          {n.domainV ? <span className="ml-auto text-amber-300">{n.domainV}V</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
