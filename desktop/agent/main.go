@@ -2236,7 +2236,14 @@ func runServe(args []string) {
 	// user can close the terminal and the box stays reachable.
 	bootstrapCfg, bootstrapErr := LoadConfig()
 	if needsBootstrap(bootstrapCfg, bootstrapErr) {
-		if !*debug {
+		// On Android the SandboxService supervises THIS process and holds the
+		// foreground "Yaver sandbox running" notification. Forking the bootstrap
+		// server to the background makes the parent exit → the service sees
+		// running=false (drops the FGS + shows "Agent running: stopped") and the
+		// in-app probe races the re-exec. Stay foreground under the sandbox
+		// (same as --debug); SandboxService.START_STICKY is our supervisor.
+		androidSandbox := os.Getenv("YAVER_ANDROID_CRED_HOME") != ""
+		if !*debug && !androidSandbox {
 			if forkBootstrapToBackground(*httpPort, *workDir) {
 				return
 			}
@@ -2300,8 +2307,11 @@ func runServe(args []string) {
 		}
 	}
 
-	// If not debug mode, fork into background
-	if !*debug {
+	// If not debug mode, fork into background — but NOT under the Android
+	// SandboxService, which supervises this process + owns the foreground
+	// notification (forking would make it see the agent "stopped" and drop
+	// the FGS). Stay foreground there, like --debug.
+	if !*debug && os.Getenv("YAVER_ANDROID_CRED_HOME") == "" {
 		// Re-exec ourselves with an internal flag
 		execPath, err := os.Executable()
 		if err != nil {
