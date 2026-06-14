@@ -50,9 +50,29 @@ const (
 	// the vault. If the friend opts UP to terminal at consent time, the
 	// grant is recorded as scope "full" instead (AI tasks); desktop control
 	// is a separate allowDesktopControl flag. So this tier is read-only.
-	GuestScopeSupport       = "support"
+	GuestScopeSupport = "support"
+	// GuestScopeCircuit — capability credential for the hosted circuit
+	// simulator service. An external product (Talos, OCPP) gets a token at
+	// this scope so it can drive ONE resource — the circuit cell — over /ops,
+	// and reach NOTHING else: no code, no tasks, no exec, no vault, no other
+	// verb family. The path allow-list below only opens /ops (+ info/health);
+	// the verb-level gate in ops.go (capabilityScopeVerbPrefix) then narrows
+	// /ops to circuit_* verbs only. This is how Yaver exposes a resource as an
+	// isolated service to other apps without lending them the owner's box.
+	GuestScopeCircuit       = "circuit"
 	guestScopeDefaultLegacy = GuestScopeFull
 )
+
+// guestCircuitAllowedPrefixes is the entire HTTP surface a circuit-scoped
+// service credential can touch. Just the ops endpoint (verb-gated to circuit_*
+// downstream) plus the discovery probes. No /tasks, /dev, /files, /deploy,
+// /vault, /repos — none of it.
+var guestCircuitAllowedPrefixes = []string{
+	"/ops",
+	"/ops/plan",
+	"/info",
+	"/health",
+}
 
 // guestFullAllowedPrefixes is the classic teammate access surface.
 // Kept in sync with the documented table in CLAUDE.md. Host-only endpoints
@@ -189,6 +209,8 @@ func guestScopeOrDefault(s string) string {
 		return GuestScopeDeploy
 	case GuestScopeSupport:
 		return GuestScopeSupport
+	case GuestScopeCircuit:
+		return GuestScopeCircuit
 	case GuestScopeFull:
 		return GuestScopeFull
 	default:
@@ -215,6 +237,8 @@ func isGuestAllowedPathForScope(path, scope string) bool {
 		list = guestDeployAllowedPrefixes
 	case GuestScopeSupport:
 		list = guestSupportAllowedPrefixes
+	case GuestScopeCircuit:
+		list = guestCircuitAllowedPrefixes
 	}
 	if path == "" {
 		path = "/"

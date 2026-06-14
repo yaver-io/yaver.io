@@ -71,6 +71,51 @@ type OpsContext struct {
 	// workspace / tooling session) — derived from the request's auth.
 	// Verbs can refuse based on caller role.
 	Caller string
+	// Scope is the guest-scope of a non-owner caller (the X-Yaver-GuestScope
+	// header: "full", "deploy", "circuit", …). Empty for owners. Capability
+	// scopes (see isCapabilityScope) restrict a guest to ONE verb family —
+	// e.g. a "circuit" token can ONLY invoke circuit_* verbs, nothing else.
+	Scope string
+}
+
+// capabilityScopeVerbPrefix maps a capability guest-scope to the single verb
+// family it unlocks. A token with one of these scopes is an ISOLATED service
+// credential: it can reach the named verbs and NOTHING else on the box (no
+// exec, no vault, no AI tasks) — even verbs marked AllowGuest are denied. This
+// is how Yaver lets an external product (Talos, OCPP) drive one resource (the
+// circuit simulator) without exposing the rest of the owner's machine.
+var capabilityScopeVerbPrefix = map[string]string{
+	"circuit": "circuit_",
+}
+
+// isCapabilityScope reports whether a guest-scope is a single-capability
+// service credential (allowlist of exactly one verb family) rather than a
+// broad tier like "full"/"deploy".
+func isCapabilityScope(scope string) bool {
+	_, ok := capabilityScopeVerbPrefix[strings.TrimSpace(scope)]
+	return ok
+}
+
+// firstCapabilityScope returns the first capability scope present in an SDK
+// token's scopes (e.g. "circuit"), or "" if none. Used by the auth middleware
+// to demote a capability token to a scoped guest so the per-verb gate applies.
+func firstCapabilityScope(scopes []string) string {
+	for _, s := range scopes {
+		if isCapabilityScope(s) {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
+// guestVerbAllowed decides whether a guest caller may invoke verb. Capability
+// scopes are a strict allowlist (only their verb family); all other guest
+// tiers fall back to the per-verb AllowGuest flag.
+func guestVerbAllowed(scope, verb string, spec opsVerbSpec) bool {
+	if prefix, ok := capabilityScopeVerbPrefix[strings.TrimSpace(scope)]; ok {
+		return strings.HasPrefix(verb, prefix)
+	}
+	return spec.AllowGuest
 }
 
 // VerbHandler is the contract a verb implementation satisfies.
@@ -159,11 +204,11 @@ func dispatchOps(octx OpsContext, req OpsRequest) (res OpsResult) {
 				Error: fmt.Sprintf("unknown verb %q; call ops_verbs to list available verbs", req.Verb),
 			}
 		}
-		if !spec.AllowGuest {
+		if !guestVerbAllowed(octx.Scope, req.Verb, spec) {
 			return OpsResult{
 				OK:    false,
 				Code:  "unauthorized",
-				Error: fmt.Sprintf("verb %q is owner-only; guest sessions cannot invoke it", req.Verb),
+				Error: fmt.Sprintf("verb %q is not permitted for this scoped session", req.Verb),
 			}
 		}
 		// Guests cannot use machine aliases that resolve via the host's
@@ -272,11 +317,11 @@ func dispatchOps(octx OpsContext, req OpsRequest) (res OpsResult) {
 		}
 	}
 
-	if octx.Caller == "guest" && !spec.AllowGuest {
+	if octx.Caller == "guest" && !guestVerbAllowed(octx.Scope, req.Verb, spec) {
 		return OpsResult{
 			OK:    false,
 			Code:  "unauthorized",
-			Error: fmt.Sprintf("verb %q is owner-only; guest sessions cannot invoke it", req.Verb),
+			Error: fmt.Sprintf("verb %q is not permitted for this scoped session", req.Verb),
 		}
 	}
 

@@ -17,6 +17,7 @@ import {
   getCircuitDeviceId,
   setCircuitDeviceId,
   type Analysis,
+  type CircuitDesignSummary,
   type CircuitInfo,
   type CircuitTarget,
   type EngineCap,
@@ -40,6 +41,9 @@ export default function CircuitScreen() {
   const devices = (deviceCtx as any).devices as any[];
 
   const [deviceId, setDeviceId] = useState("");
+  const [design, setDesign] = useState(""); // "" = default slot
+  const [designs, setDesigns] = useState<CircuitDesignSummary[]>([]);
+  const [newDesign, setNewDesign] = useState("");
   const [engines, setEngines] = useState<EngineCap[]>([]);
   const [engine, setEngine] = useState("auto");
   const [info, setInfo] = useState<CircuitInfo | null>(null);
@@ -70,20 +74,26 @@ export default function CircuitScreen() {
   const load = useCallback(async () => {
     const t = target();
     if (!t) return;
-    const e = await circuitClient.engines(t);
+    const e = await circuitClient.engines(t, design);
     if (e?.engines) setEngines(e.engines);
     if (e?.active) setEngine(e.active);
-    const cfg = await circuitClient.configGet(t);
+    const ds = await circuitClient.designs(t);
+    if (ds?.designs) setDesigns(ds.designs);
+    const cfg = await circuitClient.configGet(t, design);
     if (cfg?.engine) setEngine(cfg.engine);
     if (cfg?.info) setInfo(cfg.info);
+    setSim(null);
+    setErc(null);
     if ((cfg?.info?.elementCount ?? 0) > 0) {
-      const ex = await circuitClient.exportNetlist(t, "spice");
+      const ex = await circuitClient.exportNetlist(t, "spice", design);
       if (ex?.spice && ex.spice.trim()) {
         setNetlist(ex.spice);
         lastImported.current = ex.spice;
       }
+    } else {
+      lastImported.current = "";
     }
-  }, [target]);
+  }, [target, design]);
 
   // syncNetlist pushes the editor text to the box if it changed, so Run/ERC
   // always reflect what's on screen. Returns CircuitInfo or null on error.
@@ -94,7 +104,7 @@ export default function CircuitScreen() {
       return null;
     }
     if (netlist === lastImported.current && info) return info;
-    const r = await circuitClient.importNetlist(t, netlist, "auto");
+    const r = await circuitClient.importNetlist(t, netlist, "auto", design);
     if ((r as any)?.ok === false) {
       setErr((r as any).error || "import failed");
       return null;
@@ -105,7 +115,7 @@ export default function CircuitScreen() {
       return r.info;
     }
     return null;
-  }, [target, netlist, info]);
+  }, [target, netlist, info, design]);
 
   useEffect(() => {
     if (deviceId) load();
@@ -156,21 +166,21 @@ export default function CircuitScreen() {
       return setErr("Connection list (KiCad/EPLAN) — run ERC, not a simulation.");
     }
     if (analysis === "op") {
-      const r = await circuitClient.measure(t);
+      const r = await circuitClient.measure(t, design);
       setBusy(false);
       if ((r as any)?.ok === false) return setErr((r as any).error || "sim failed");
       setSim({ analysis: "op", signals: [], samples: [], nodeVoltages: r.nodeVoltages, branchCurrents: r.branchCurrents, engine: r.engine });
       setMsg(`operating point · ${r.engine}`);
       return;
     }
-    const r = await circuitClient.simulate(t, analysisPayload());
+    const r = await circuitClient.simulate(t, analysisPayload(), design);
     setBusy(false);
     if ((r as any)?.ok === false) return setErr((r as any).error || "sim failed");
     if (r?.result) {
       setSim(r.result);
       setMsg(`${r.result.samples?.length ?? 0} samples · ${r.result.engine}`);
     }
-  }, [target, syncNetlist, analysis, analysisPayload]);
+  }, [target, syncNetlist, analysis, analysisPayload, design]);
 
   const doErc = useCallback(async () => {
     const t = target();
@@ -180,19 +190,37 @@ export default function CircuitScreen() {
     setErr(null);
     const i = await syncNetlist();
     if (!i) return setBusy(false);
-    const r = await circuitClient.erc(t);
+    const r = await circuitClient.erc(t, design);
     setBusy(false);
     if (r?.report) setErc(r.report);
-  }, [target, syncNetlist]);
+  }, [target, syncNetlist, design]);
 
   const setEng = useCallback(
     async (eng: string) => {
       setEngine(eng);
       const t = target();
-      if (t) await circuitClient.configSet(t, { engine: eng });
+      if (t) await circuitClient.configSet(t, { engine: eng }, design);
     },
-    [target],
+    [target, design],
   );
+
+  // pickDesign switches the active netlist slot and reloads it from the box.
+  const pickDesign = useCallback((id: string) => {
+    setNetlist("");
+    lastImported.current = "";
+    setInfo(null);
+    setDesign(id);
+  }, []);
+
+  const createDesign = useCallback(() => {
+    const id = newDesign.trim().toLowerCase();
+    if (!id) return;
+    setNewDesign("");
+    if (!designs.some((x) => x.design === id)) {
+      setDesigns((d) => [...d, { design: id }]);
+    }
+    pickDesign(id);
+  }, [newDesign, designs, pickDesign]);
 
   const s = makeStyles(c);
 
@@ -217,6 +245,37 @@ export default function CircuitScreen() {
 
         {deviceId ? (
           <>
+            {/* design slot — one box holds many designs (Talos panels, OCPP revs…) */}
+            <Text style={s.label}>Design</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+              {[{ design: "", title: "default" } as CircuitDesignSummary, ...designs.filter((x) => x.design && x.design !== "default")].map((dg) => {
+                const sel = design === dg.design || (design === "" && dg.design === "");
+                const labelTxt = dg.design === "" ? "default" : dg.design;
+                return (
+                  <Pressable key={dg.design || "default"} onPress={() => pickDesign(dg.design)} style={[s.chip, sel && { backgroundColor: ACCENT, borderColor: ACCENT }]}>
+                    <Text style={[s.chipText, sel && { color: "#fff" }]}>
+                      {labelTxt}
+                      {typeof dg.elements === "number" && dg.elements > 0 ? ` · ${dg.elements}` : ""}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <View style={[s.row, { marginBottom: 12 }]}>
+              <TextInput
+                value={newDesign}
+                onChangeText={setNewDesign}
+                placeholder="new design id (e.g. panel-1)"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[s.code, { minHeight: 0, flex: 1, color: c.textPrimary, fontFamily: undefined, marginBottom: 0 }]}
+              />
+              <Pressable onPress={createDesign} style={[s.btn, { backgroundColor: "#2d6fd6" }]}>
+                <Text style={[s.btnText, { color: "#fff" }]}>＋ New</Text>
+              </Pressable>
+            </View>
+
             {/* engine */}
             <Text style={s.label}>Engine</Text>
             <View style={s.row}>

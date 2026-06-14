@@ -455,8 +455,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// /ops           — POST {machine, verb, payload} -> {ok, streamId?, initial?, error?, code?}
 	// /ops/plan      — POST {machine, verb, payload} -> execution plan without side effects
 	// /ops/verbs     — GET list of registered verbs + their payload schemas
-	mux.HandleFunc("/ops", s.auth(s.handleOps))
-	mux.HandleFunc("/ops/plan", s.auth(s.handleOpsPlan))
+	// authSDKOrGuest (not plain auth): owner/agent tokens pass through unchanged,
+	// but capability-scoped SDK tokens (e.g. scopes:["circuit"]) are also accepted
+	// — validated, CIDR-checked, then demoted to a scoped guest so the per-verb
+	// gate in dispatchOps restricts them to their verb family. This is what lets
+	// an external product (Talos/OCPP) drive ONLY the circuit cell over /ops.
+	mux.HandleFunc("/ops", s.authSDKOrGuest(s.handleOps))
+	mux.HandleFunc("/ops/plan", s.authSDKOrGuest(s.handleOpsPlan))
 	// Remote-view (RustDesk/AnyDesk/VNC) management — first-class in the agent.
 	mux.HandleFunc("/remoteview/providers", s.auth(s.handleRemoteViewProviders))
 	mux.HandleFunc("/remoteview/status", s.auth(s.handleRemoteViewStatus))
@@ -1468,6 +1473,12 @@ var scopePathPrefixes = map[string][]string{
 	"todolist":     {"/todolist"},
 	"guest-reload": {"/dev/reload", "/dev/reload-app", "/dev/status", "/dev/target", "/dev/events", "/dev/compatibility", "/unity/test", "/unity/build", "/unity/relaunch"},
 	"guest-vibing": {"/vibing"},
+	// circuit: isolated circuit-simulator service credential (Talos/OCPP).
+	// Opens only the ops endpoint + discovery; the verb-level gate in ops.go
+	// (capabilityScopeVerbPrefix) then restricts /ops to circuit_* verbs. Pair
+	// with delegatedGuestScope:"circuit" on the token so the caller is treated
+	// as a scoped guest (not the owner) when it reaches /ops.
+	"circuit": {"/ops", "/ops/plan", "/info", "/health"},
 	// runner-auth: lets the embedded Feedback SDK inspect runner state
 	// and complete either browser-style auth (codex / claude) or
 	// token-based setup (opencode) without a separate full-session UI.
@@ -1490,7 +1501,28 @@ func pathAllowedByScopes(path string, scopes []string) bool {
 }
 
 func (s *HTTPServer) applyDelegatedGuestSDKHeaders(w http.ResponseWriter, r *http.Request, info *cachedTokenInfo) bool {
-	if info == nil || strings.TrimSpace(info.delegatedGuestUserID) == "" {
+	if info == nil {
+		return true
+	}
+	// Capability tokens (scopes like "circuit") are isolated single-resource
+	// service credentials minted for another product (Talos, OCPP). They carry
+	// no delegatedGuest binding, but MUST still be demoted to a scoped guest so
+	// the per-verb gate (capabilityScopeVerbPrefix) applies — otherwise a valid
+	// SDK token would reach /ops AS THE OWNER and bypass the circuit allowlist.
+	// Stamp the guest identity straight from the capability scope, before the
+	// owner fall-through below.
+	if capScope := firstCapabilityScope(info.scopes); capScope != "" && strings.TrimSpace(info.delegatedGuestUserID) == "" {
+		if info.targetDeviceID != "" && strings.TrimSpace(info.targetDeviceID) != strings.TrimSpace(s.deviceID) {
+			jsonError(w, http.StatusForbidden, "SDK token is not valid for this device")
+			return false
+		}
+		stripGuestRequestHeaders(r)
+		r.Header.Set("X-Yaver-Guest", "true")
+		r.Header.Set("X-Yaver-GuestUserID", "svc:"+capScope)
+		r.Header.Set("X-Yaver-GuestScope", capScope)
+		return true
+	}
+	if strings.TrimSpace(info.delegatedGuestUserID) == "" {
 		return true
 	}
 	if info.targetDeviceID != "" && strings.TrimSpace(info.targetDeviceID) != strings.TrimSpace(s.deviceID) {

@@ -45,6 +45,7 @@ func (s *HTTPServer) handleOps(w http.ResponseWriter, r *http.Request) {
 		RequestHeaders: r.Header.Clone(),
 		ActorUserID:    strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")),
 		Caller:         caller,
+		Scope:          strings.TrimSpace(r.Header.Get("X-Yaver-GuestScope")),
 	}
 	out := dispatchOps(octx, req)
 
@@ -80,6 +81,7 @@ func (s *HTTPServer) handleOpsPlan(w http.ResponseWriter, r *http.Request) {
 		RequestHeaders: r.Header.Clone(),
 		ActorUserID:    strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")),
 		Caller:         caller,
+		Scope:          strings.TrimSpace(r.Header.Get("X-Yaver-GuestScope")),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(buildOpsExecutionPlan(octx, req))
