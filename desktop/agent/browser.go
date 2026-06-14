@@ -36,6 +36,10 @@ type BrowserSession struct {
 	LastUsedAt    time.Time `json:"lastUsedAt"`
 	CurrentURL    string    `json:"currentUrl"`
 	CurrentTitle  string    `json:"currentTitle"`
+	Interactive   bool      `json:"interactive"`
+	ProfileDir    string    `json:"profileDir,omitempty"`
+	ViewW         int       `json:"viewW,omitempty"`
+	ViewH         int       `json:"viewH,omitempty"`
 	allocCancel   context.CancelFunc
 	browserCtx    context.Context
 	browserCancel context.CancelFunc
