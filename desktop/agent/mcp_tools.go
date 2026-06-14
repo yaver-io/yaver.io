@@ -4113,6 +4113,72 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, browserTools...)
 
+	// --- Droid interactive (generic human-in-the-loop Android device control) ---
+	// Mirrors the browser_interactive_* tools but for a paired Android phone over
+	// adb: stream the screen + relay tap/text/key/swipe so a human can enter an
+	// SMS OTP / log in, after which automation drives the same device. GENERIC —
+	// no knowledge of any specific app.
+	droidTools := []map[string]interface{}{
+		{
+			"name":        "droid_status",
+			"description": "Status of the paired Android device for human-in-the-loop control: serial, screen width/height, focused activity, and the HTTP frame/input paths a remote UI uses. Returns {device:null} when no device is attached. Poll the focus/UI to detect when a human has finished logging in.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"device": map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"}},
+			},
+		},
+		{
+			"name":        "droid_frame",
+			"description": "Capture the current Android screen and return it as a base64 PNG image (via adb exec-out screencap). Use to see what the human/device is looking at.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"device": map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"}},
+			},
+		},
+		{
+			"name":        "droid_input",
+			"description": "Relay a single input event to the Android device via adb: tap (x,y), text (types a string), key (keyevent keycode, e.g. 66=ENTER/67=DEL/4=BACK), or swipe (x1,y1→x2,y2 over dur ms). Lets automation drive the device, or a human-built UI forward taps/keystrokes.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"type"},
+				"properties": map[string]interface{}{
+					"type":    map[string]interface{}{"type": "string", "enum": []string{"tap", "text", "key", "swipe"}},
+					"x":       map[string]interface{}{"type": "integer", "description": "tap X"},
+					"y":       map[string]interface{}{"type": "integer", "description": "tap Y"},
+					"text":    map[string]interface{}{"type": "string", "description": "text to type (spaces handled)"},
+					"keycode": map[string]interface{}{"type": "integer", "description": "Android keyevent code"},
+					"x1":      map[string]interface{}{"type": "integer", "description": "swipe start X"},
+					"y1":      map[string]interface{}{"type": "integer", "description": "swipe start Y"},
+					"x2":      map[string]interface{}{"type": "integer", "description": "swipe end X"},
+					"y2":      map[string]interface{}{"type": "integer", "description": "swipe end Y"},
+					"dur":     map[string]interface{}{"type": "integer", "description": "swipe duration ms (default 300)"},
+					"device":  map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"},
+				},
+			},
+		},
+		{
+			"name":        "droid_ui_texts",
+			"description": "Dump the current Android view hierarchy (uiautomator) and return the on-screen text values — useful for reading login fields / labels / OTP prompts without OCR.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"device": map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"}},
+			},
+		},
+		{
+			"name":        "droid_launch",
+			"description": "Launch an installed Android app whose package id contains the given substring, via its LAUNCHER intent (adb monkey). Returns the resolved package name.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"package"},
+				"properties": map[string]interface{}{
+					"package": map[string]interface{}{"type": "string", "description": "Package id or substring to match (e.g. 'misli')"},
+					"device":  map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"},
+				},
+			},
+		},
+	}
+	tools = append(tools, droidTools...)
+
 	// --- Vibe Preview ---
 	// Lets the AI runner check what its own visual change looked like
 	// after a kick — closes the loop "I edited the nav, did it land?"
