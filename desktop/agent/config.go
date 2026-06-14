@@ -76,6 +76,10 @@ type Config struct {
 	Exec                          *ExecConfig      `json:"exec,omitempty"`
 	Email                         *EmailConfig     `json:"email,omitempty"`
 	ACLPeers                      []ACLPeerConfig  `json:"acl_peers,omitempty"`
+	// ExternalMCPServers are user-registered remote MCP servers (e.g. a private
+	// yaver-bet on Hetzner). Their tools are namespaced "<name>__<tool>" and
+	// proxied through this agent so the mobile/web app can use them via Yaver.
+	ExternalMCPServers []ExternalMCPServer `json:"external_mcp_servers,omitempty"`
 	// Speech is the legacy voice config field. Kept parsable so older
 	// config.json files don't error out; new installs should use Voice.
 	Speech *SpeechConfig `json:"speech,omitempty"`

@@ -1328,6 +1328,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP
 	mux.HandleFunc("/mcp", s.auth(s.handleMCP))
+	// Manage user-registered external MCP servers (mcp_external.go).
+	mux.HandleFunc("/mcp/servers", s.auth(s.handleMCPServers))
 
 	handler := s.ipAllowlist(withCORS(mux))
 
@@ -15000,6 +15002,11 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		// Try workspace tools (services, proxy, dns, storage, mock, check, perf, db, preview, oauth, cloud, migrate, remote, scale, backend, platform, domain, site, form, seo, cms, template)
 		if result := s.handleWorkspaceMCPTool(call); result != nil {
+			return result
+		}
+		// User-registered external MCP servers — "<server>__<tool>" is proxied
+		// to the remote MCP (e.g. a private yaver-bet on Hetzner). mcp_external.go
+		if handled, result := dispatchExternalMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
 		return mcpToolError("unknown tool: " + call.Name)
