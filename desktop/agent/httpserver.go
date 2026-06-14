@@ -872,6 +872,20 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/browser/events", s.auth(s.handleBrowserEvents))
 	mux.HandleFunc("/browser/events/", s.auth(s.handleBrowserEvents))
 
+	// Interactive / human-in-the-loop co-browse (generic; streams JPEG frames + relays input)
+	mux.HandleFunc("/browser/interactive/start", s.auth(s.handleBrowserInteractiveStart))
+	mux.HandleFunc("/browser/interactive/frame/", s.auth(s.handleBrowserInteractiveFrame))
+	mux.HandleFunc("/browser/interactive/input/", s.auth(s.handleBrowserInteractiveInput))
+	mux.HandleFunc("/browser/interactive/status/", s.auth(s.handleBrowserInteractiveStatus))
+	mux.HandleFunc("/browser/interactive/stop/", s.auth(s.handleBrowserInteractiveStop))
+
+	// Interactive / human-in-the-loop Android device control (generic; PNG frames + adb input relay)
+	mux.HandleFunc("/droid/status", s.auth(s.handleDroidStatus))
+	mux.HandleFunc("/droid/frame", s.auth(s.handleDroidFrame))
+	mux.HandleFunc("/droid/input", s.auth(s.handleDroidInput))
+	mux.HandleFunc("/droid/ui", s.auth(s.handleDroidUI))
+	mux.HandleFunc("/droid/launch", s.auth(s.handleDroidLaunch))
+
 	// Projects (discovery + workdir switching + actions)
 	mux.HandleFunc("/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("/projects/refresh", s.auth(s.handleProjectsRefresh))
@@ -8227,6 +8241,124 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpADBScreenshot(args.Device))
 
+	// --- Droid interactive (generic human-in-the-loop Android control) ---
+	case "droid_status":
+		var args struct {
+			Device string `json:"device"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		serial := droidResolveDevice(args.Device)
+		if serial == "" {
+			return mcpToolJSON(map[string]interface{}{
+				"device":  nil,
+				"message": "No Android device attached. Pair one with wireless_setup_android / adb connect, then retry.",
+			})
+		}
+		wpx, hpx := droidSize(serial)
+		return mcpToolJSON(map[string]interface{}{
+			"device":     serial,
+			"w":          wpx,
+			"h":          hpx,
+			"focus":      droidFocus(serial),
+			"frame_path": "/droid/frame?device=" + serial,
+			"input_path": "/droid/input",
+			"message":    "A human can now drive this device via the frame/input paths; automation resumes on the same device afterward.",
+		})
+
+	case "droid_frame":
+		var args struct {
+			Device string `json:"device"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		serial := droidResolveDevice(args.Device)
+		if serial == "" {
+			return mcpToolError("droid_frame: no android device attached")
+		}
+		buf, err := droidFrame(serial)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("droid_frame: %v", err))
+		}
+		return map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": fmt.Sprintf("Screen of %s (%d bytes PNG)", serial, len(buf))},
+				{"type": "image", "data": base64.StdEncoding.EncodeToString(buf), "mimeType": "image/png"},
+			},
+		}
+
+	case "droid_input":
+		var args struct {
+			Type    string `json:"type"`
+			X       int    `json:"x"`
+			Y       int    `json:"y"`
+			Text    string `json:"text"`
+			Keycode int    `json:"keycode"`
+			X1      int    `json:"x1"`
+			Y1      int    `json:"y1"`
+			X2      int    `json:"x2"`
+			Y2      int    `json:"y2"`
+			Dur     int    `json:"dur"`
+			Device  string `json:"device"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		serial := droidResolveDevice(args.Device)
+		if serial == "" {
+			return mcpToolError("droid_input: no android device attached")
+		}
+		var derr error
+		switch args.Type {
+		case "tap":
+			derr = droidTap(serial, args.X, args.Y)
+		case "text":
+			derr = droidText(serial, args.Text)
+		case "key":
+			derr = droidKey(serial, args.Keycode)
+		case "swipe":
+			derr = droidSwipe(serial, args.X1, args.Y1, args.X2, args.Y2, args.Dur)
+		default:
+			return mcpToolError("droid_input: type must be one of tap|text|key|swipe")
+		}
+		if derr != nil {
+			return mcpToolError(fmt.Sprintf("droid_input: %v", derr))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "device": serial, "type": args.Type})
+
+	case "droid_ui_texts":
+		var args struct {
+			Device string `json:"device"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		serial := droidResolveDevice(args.Device)
+		if serial == "" {
+			return mcpToolError("droid_ui_texts: no android device attached")
+		}
+		texts, err := droidUITexts(serial)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("droid_ui_texts: %v", err))
+		}
+		if texts == nil {
+			texts = []string{}
+		}
+		return mcpToolJSON(map[string]interface{}{"device": serial, "texts": texts})
+
+	case "droid_launch":
+		var args struct {
+			Package string `json:"package"`
+			Device  string `json:"device"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.Package == "" {
+			return mcpToolError("droid_launch: package is required")
+		}
+		serial := droidResolveDevice(args.Device)
+		if serial == "" {
+			return mcpToolError("droid_launch: no android device attached")
+		}
+		pkg, err := droidLaunchPackage(serial, args.Package)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("droid_launch: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"device": serial, "package": pkg, "launched": true})
+
 	// --- Sonos ---
 	case "sonos_discover":
 		return mcpToolJSON(mcpSonosDiscover())
@@ -14040,6 +14172,97 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(fmt.Sprintf("browser_close: %v", err))
 		}
 		return mcpToolResult("Browser session closed.")
+
+	case "browser_interactive_start":
+		if s.browserMgr == nil {
+			s.browserMgr = NewBrowserManager()
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			URL       string `json:"url"`
+			Profile   string `json:"profile"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
+			Prefill   []struct {
+				Selector string `json:"selector"`
+				Value    string `json:"value"`
+			} `json:"prefill"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.URL == "" {
+			return mcpToolError("url is required")
+		}
+		if args.SessionID == "" {
+			args.SessionID = fmt.Sprintf("cobrowse-%d", time.Now().UnixMilli()%100000)
+		}
+		if args.Width <= 0 {
+			args.Width = 1280
+		}
+		if args.Height <= 0 {
+			args.Height = 800
+		}
+		profileDir := args.Profile
+		if profileDir == "" {
+			profileDir = profileDirFor(args.SessionID)
+		}
+		_ = os.MkdirAll(profileDir, 0o755)
+		if err := s.browserMgr.OpenInteractiveSession(args.SessionID, profileDir, args.Width, args.Height); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_start: %v", err))
+		}
+		if _, err := s.browserMgr.Navigate(args.SessionID, args.URL); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_start navigate: %v", err))
+		}
+		for _, p := range args.Prefill {
+			if p.Selector == "" {
+				continue
+			}
+			_ = s.browserMgr.Prefill(args.SessionID, p.Selector, p.Value)
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"session_id": args.SessionID,
+			"frame_path": "/browser/interactive/frame/" + args.SessionID,
+			"input_path": "/browser/interactive/input/" + args.SessionID,
+			"width":      args.Width,
+			"height":     args.Height,
+			"message":    "Interactive co-browse started. A human can now drive the browser via the frame/input paths; automation resumes on the same session afterward.",
+		})
+
+	case "browser_interactive_status":
+		if s.browserMgr == nil {
+			s.browserMgr = NewBrowserManager()
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		url, title, err := s.browserMgr.InteractiveStatus(args.SessionID)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_status: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"session_id": args.SessionID,
+			"url":        url,
+			"title":      title,
+		})
+
+	case "browser_interactive_stop":
+		if s.browserMgr == nil {
+			s.browserMgr = NewBrowserManager()
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		if err := s.browserMgr.CloseSession(args.SessionID); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_stop: %v", err))
+		}
+		return mcpToolResult("Interactive session stopped. Profile persisted on disk for future automation.")
 
 	case "browser_sessions":
 		if s.browserMgr == nil {
