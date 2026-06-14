@@ -635,6 +635,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Remote Desktop — owner-driven screen view + mouse/keyboard control from
 	// web/mobile. Runtime consent policy (remotedesktop.go); no --ghost needed.
+	// Peer-egress forward proxy: auth-gated (same-user only), opt-in, never an
+	// open proxy. See egress_proxy.go for the safety posture.
+	mux.HandleFunc("/egress/proxy", s.auth(s.handleEgressProxy))
 	mux.HandleFunc("/rd/status", s.auth(s.handleRemoteDesktopStatus))
 	mux.HandleFunc("/rd/policy", s.auth(s.handleRemoteDesktopPolicy))
 	mux.HandleFunc("/rd/stream", s.auth(s.handleRemoteDesktopStream))
@@ -14142,20 +14145,27 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		var args struct {
 			SessionID string `json:"session_id"`
 			Headful   bool   `json:"headful"`
+			ProxyURL  string `json:"proxy_url"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" {
 			args.SessionID = fmt.Sprintf("browser-%d", time.Now().UnixMilli()%100000)
 		}
-		if err := s.browserMgr.OpenSession(args.SessionID, args.Headful); err != nil {
+		if err := s.browserMgr.OpenSessionWithProxy(args.SessionID, args.Headful, args.ProxyURL); err != nil {
 			return mcpToolError(fmt.Sprintf("browser_open: %v", err))
 		}
-		return mcpToolJSON(map[string]interface{}{
+		resp := map[string]interface{}{
 			"session_id": args.SessionID,
 			"headful":    args.Headful,
 			"status":     "open",
 			"message":    "Browser session opened. Use browser_navigate to go to a URL.",
-		})
+		}
+		if args.ProxyURL != "" {
+			resp["egress"] = "proxy"
+			resp["proxy_url"] = redactProxyCreds(args.ProxyURL)
+			resp["message"] = "Browser session opened via proxy egress. Use browser_navigate to go to a URL."
+		}
+		return mcpToolJSON(resp)
 
 	case "browser_close":
 		if s.browserMgr == nil {

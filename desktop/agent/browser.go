@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,8 @@ type BrowserSession struct {
 	CurrentTitle  string    `json:"currentTitle"`
 	Interactive   bool      `json:"interactive"`
 	ProfileDir    string    `json:"profileDir,omitempty"`
+	ProxyURL      string    `json:"proxyUrl,omitempty"` // egress proxy, creds redacted
+	EgressIP      string    `json:"egressIp,omitempty"` // last observed egress IP for this vantage
 	ViewW         int       `json:"viewW,omitempty"`
 	ViewH         int       `json:"viewH,omitempty"`
 	allocCancel   context.CancelFunc
@@ -141,8 +144,21 @@ func (bm *BrowserManager) touch(s *BrowserSession) {
 	bm.mu.Unlock()
 }
 
-// OpenSession starts a new Chrome instance.
+// OpenSession starts a new Chrome instance with machine-native egress (no proxy).
 func (bm *BrowserManager) OpenSession(id string, headful bool) error {
+	return bm.OpenSessionWithProxy(id, headful, "")
+}
+
+// OpenSessionWithProxy starts a Chrome instance whose traffic egresses through
+// proxyURL (e.g. "http://127.0.0.1:8080", "socks5://10.0.0.2:1080"). An empty
+// proxyURL means machine-native egress, identical to OpenSession.
+//
+// The proxy is how a collector adopts a chosen vantage / egress identity: route
+// a collector on this machine out through a proxy or peer the user controls so
+// the source sees that egress. Yaver only routes through egress the user owns or
+// is entitled to use — never a rotating pool to defeat a block. See
+// docs/user-directed-data-collection-runtimes.md (Multi-Vantage / Egress).
+func (bm *BrowserManager) OpenSessionWithProxy(id string, headful bool, proxyURL string) error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
@@ -158,6 +174,9 @@ func (bm *BrowserManager) OpenSession(id string, headful bool) error {
 		chromedp.Flag("hide-scrollbars", !headful),
 		chromedp.WindowSize(1280, 900),
 	)
+	if proxyURL != "" {
+		allocOpts = append(allocOpts, chromedp.ProxyServer(proxyURL))
+	}
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
 	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
@@ -173,6 +192,7 @@ func (bm *BrowserManager) OpenSession(id string, headful bool) error {
 	bm.sessions[id] = &BrowserSession{
 		ID:            id,
 		Headful:       headful,
+		ProxyURL:      redactProxyCreds(proxyURL), // store redacted; raw is baked into the alloc
 		CreatedAt:     now,
 		LastUsedAt:    now,
 		allocCancel:   allocCancel,
@@ -180,13 +200,31 @@ func (bm *BrowserManager) OpenSession(id string, headful bool) error {
 		browserCancel: browserCancel,
 	}
 
+	msg := "session opened"
+	if proxyURL != "" {
+		msg = "session opened via proxy " + redactProxyCreds(proxyURL)
+	}
 	bm.emit(BrowserEvent{
 		Type:      "action",
 		SessionID: id,
-		Message:   "session opened",
+		Message:   msg,
 	})
 
 	return nil
+}
+
+// redactProxyCreds strips any user:pass@ userinfo from a proxy URL so it is safe
+// to log, emit as an event, or return over HTTP. Proxy credentials belong in the
+// vault, never in logs or session listings.
+func redactProxyCreds(proxyURL string) string {
+	if proxyURL == "" {
+		return ""
+	}
+	if u, err := url.Parse(proxyURL); err == nil && u.User != nil {
+		u.User = url.User("redacted")
+		return u.String()
+	}
+	return proxyURL
 }
 
 // CloseSession shuts down a browser instance.
@@ -226,9 +264,38 @@ func (bm *BrowserManager) ListSessions() []BrowserSession {
 			LastUsedAt:   s.LastUsedAt,
 			CurrentURL:   s.CurrentURL,
 			CurrentTitle: s.CurrentTitle,
+			ProxyURL:     s.ProxyURL, // already redacted at open time
+			EgressIP:     s.EgressIP,
 		})
 	}
 	return out
+}
+
+// CheckEgressIP navigates the session to an IP-echo endpoint and returns the
+// egress IP the source actually sees. When the session was opened with a proxy
+// this reflects the proxy's IP — i.e. the vantage's egress identity — which is
+// how Yaver reports "the egress it actually used". echoURL must return the
+// caller's IP as its response body (e.g. https://api.ipify.org). The result is
+// cached on the session as vantage metadata. The IP is provenance, not a
+// normalized data field — keep it out of collected rows.
+func (bm *BrowserManager) CheckEgressIP(id, echoURL string) (string, error) {
+	if echoURL == "" {
+		echoURL = "https://api.ipify.org"
+	}
+	if _, err := bm.Navigate(id, echoURL); err != nil {
+		return "", fmt.Errorf("egress check navigate: %w", err)
+	}
+	ip, err := bm.ExtractText(id, "body")
+	if err != nil {
+		return "", fmt.Errorf("egress check read: %w", err)
+	}
+	ip = strings.TrimSpace(ip)
+	if s, err := bm.getSession(id); err == nil {
+		bm.mu.Lock()
+		s.EgressIP = ip
+		bm.mu.Unlock()
+	}
+	return ip, nil
 }
 
 // captureState grabs a screenshot plus current URL and title.

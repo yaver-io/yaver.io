@@ -3886,12 +3886,13 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	browserTools := []map[string]interface{}{
 		{
 			"name":        "browser_open",
-			"description": "Open a new Chrome browser session on the dev machine. Returns a session_id to use in subsequent browser_* calls. Sessions persist across tool calls — cookies, auth state, and current URL survive between steps.",
+			"description": "Open a new Chrome browser session on the dev machine. Returns a session_id to use in subsequent browser_* calls. Sessions persist across tool calls — cookies, auth state, and current URL survive between steps. Pass proxy_url to egress through a chosen vantage (a proxy or peer the user is entitled to use); the source then sees that egress IP, not this machine's.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"session_id": map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
 					"headful":    map[string]interface{}{"type": "boolean", "description": "Show browser window visibly (default: false, headless)"},
+					"proxy_url":  map[string]interface{}{"type": "string", "description": "Egress proxy for this session's vantage, e.g. http://host:8080 or socks5://host:1080. Omit for machine-native egress. Only use proxies/peers the user owns or is entitled to; never to defeat a geo/IP block."},
 				},
 			},
 		},
