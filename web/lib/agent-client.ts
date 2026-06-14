@@ -1264,6 +1264,21 @@ type EventName = keyof EventMap;
 
 // ── Client ───────────────────────────────────────────────────────────
 
+export interface McpServer {
+  name: string;
+  url: string;
+  enabled: boolean;
+  hasAuth?: boolean;
+  toolCount?: number;
+}
+
+export interface McpServerInput {
+  name: string;
+  url: string;
+  auth_token?: string;
+  enabled?: boolean;
+}
+
 export class AgentClient {
   private host: string | null = null;
   private port: number | null = null;
@@ -1644,6 +1659,48 @@ export class AgentClient {
     if (!res.ok) throw new Error(`Failed to delete all: ${res.status}`);
     const data = await res.json();
     return data.deleted || 0;
+  }
+
+  // ── External MCP servers (desktop/agent/mcp_external.go) ──────────
+  // Register your own private MCPs or anyone's public ones; the agent merges
+  // their tools and forwards "<name>__<tool>" calls.
+
+  async listMcpServers(): Promise<McpServer[]> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/mcp/servers`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to list MCP servers: ${res.status}`);
+    const data = await res.json();
+    return (data.servers ?? []) as McpServer[];
+  }
+
+  async saveMcpServer(s: McpServerInput): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/mcp/servers`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(s),
+    });
+    if (!res.ok) throw new Error(`Failed to save MCP server: ${res.status}`);
+  }
+
+  async testMcpServer(s: McpServerInput): Promise<{ ok: boolean; toolCount?: number; error?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/mcp/servers?test=1`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(s),
+    });
+    if (!res.ok) throw new Error(`Test failed: ${res.status}`);
+    return res.json();
+  }
+
+  async deleteMcpServer(name: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/mcp/servers?name=${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to delete MCP server: ${res.status}`);
   }
 
   // ── Agent Info ────────────────────────────────────────────────────
