@@ -35,6 +35,7 @@ type SimResult = {
   branchCurrents?: Record<string, number>;
   engine: string;
 };
+type CircuitDesignSummary = { design: string; title?: string; elements?: number; simulatable?: boolean; engine?: string; updatedAt?: number };
 
 const ANALYSES = ["op", "tran", "ac", "dc"] as const;
 const EXAMPLE = `* RC low-pass example
@@ -45,6 +46,9 @@ C1 out 0 100n
 
 export default function CircuitCellView({ devices, token }: { devices: Device[]; token: string | null }) {
   const [deviceId, setDeviceId] = useState("");
+  const [design, setDesign] = useState(""); // "" = default slot
+  const [designs, setDesigns] = useState<CircuitDesignSummary[]>([]);
+  const [newDesign, setNewDesign] = useState("");
   const [engines, setEngines] = useState<EngineCap[]>([]);
   const [engine, setEngine] = useState("auto");
   const [info, setInfo] = useState<CircuitInfo | null>(null);
@@ -95,7 +99,9 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
       try {
         const client = await ensureClient(deviceId);
         if (!client) return { ok: false, error: "not connected" };
-        const res = await client.callOps(verb, payload);
+        // Inject the active design slot (S-2) unless the caller set one explicitly.
+        const body = design && (payload as any).design === undefined ? { ...payload, design } : payload;
+        const res = await client.callOps(verb, body);
         if (res?.ok === false) return { ok: false, code: res.code, error: res.error };
         return (res as any)?.initial ?? res;
       } catch (e: any) {
@@ -103,26 +109,47 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
         return { ok: false, error: e?.message || "failed" };
       }
     },
-    [deviceId, ensureClient],
+    [deviceId, ensureClient, design],
   );
 
-  // load engines + current config on device pick
+  // load engines + design list + current config on device/design change
   useEffect(() => {
     if (!deviceId) return;
     (async () => {
       const e = await call("circuit_engines");
       if (e?.engines) setEngines(e.engines);
       if (e?.active) setEngine(e.active);
+      const ds = await call("circuit_designs");
+      if (ds?.designs) setDesigns(ds.designs);
       const cfg = await call("circuit_config_get");
       if (cfg?.engine) setEngine(cfg.engine);
-      if (cfg?.info) setInfo(cfg.info);
+      setInfo(cfg?.info ?? null);
+      setSim(null);
+      setErc(null);
       const ex = await call("circuit_export", { format: "spice" });
       if (ex?.spice && ex.spice.trim() && (ex.info?.elementCount ?? cfg?.info?.elementCount ?? 0) > 0) {
         setNetlist(ex.spice);
         lastImported.current = ex.spice; // device already has this loaded
+      } else {
+        lastImported.current = "";
       }
     })();
-  }, [deviceId]); // eslint-disable-line
+  }, [deviceId, design]); // eslint-disable-line
+
+  const pickDesign = useCallback((id: string) => {
+    setNetlist("");
+    lastImported.current = "";
+    setInfo(null);
+    setDesign(id);
+  }, []);
+
+  const createDesign = useCallback(() => {
+    const id = newDesign.trim().toLowerCase();
+    if (!id) return;
+    setNewDesign("");
+    setDesigns((d) => (d.some((x) => x.design === id) ? d : [...d, { design: id }]));
+    pickDesign(id);
+  }, [newDesign, pickDesign]);
 
   const analysisPayload = useCallback(() => {
     if (analysis === "tran") return { type: "tran", tstop: parseEng(tstop) };
@@ -235,6 +262,53 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
 
       {deviceId && (
         <>
+          <div className={card}>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">Design</span>
+              {[{ design: "" } as CircuitDesignSummary, ...designs.filter((x) => x.design && x.design !== "default")].map((dg) => {
+                const sel = design === dg.design;
+                const labelTxt = dg.design === "" ? "default" : dg.design;
+                return (
+                  <button
+                    key={dg.design || "default"}
+                    onClick={() => pickDesign(dg.design)}
+                    className={`${btn} ${sel ? "bg-sky-500/80 text-black" : "bg-white/5 hover:bg-white/10"}`}
+                  >
+                    {labelTxt}
+                    {typeof dg.elements === "number" && dg.elements > 0 ? ` · ${dg.elements}` : ""}
+                  </button>
+                );
+              })}
+              {design !== "" && (
+                <button
+                  onClick={async () => {
+                    const id = design;
+                    const r = await call("circuit_design_delete", { design: id });
+                    if (r?.ok !== false) {
+                      setDesigns((d) => d.filter((x) => x.design !== id));
+                      pickDesign("");
+                    }
+                  }}
+                  className={`${btn} bg-rose-500/20 text-rose-300 hover:bg-rose-500/30`}
+                  title="Delete this design slot"
+                >
+                  ✕ delete
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                value={newDesign}
+                onChange={(e) => setNewDesign(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && createDesign()}
+                placeholder="new design id (e.g. panel-1, gridpilot-rev-c)"
+                className="flex-1 rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm"
+              />
+              <button onClick={createDesign} className={`${btn} bg-sky-600/80 text-white hover:bg-sky-600`}>＋ New</button>
+            </div>
+            <p className="mt-2 text-xs text-white/40">One sim node holds many designs — Talos panels, OCPP board revs… each persisted on the box, never on Convex.</p>
+          </div>
+
           <div className={card}>
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">Engine</span>

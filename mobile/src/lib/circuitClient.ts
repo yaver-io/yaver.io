@@ -52,6 +52,11 @@ export type SimResult = {
 export type ERCFinding = { rule: string; severity: "error" | "warning" | "info" | string; net?: string; element?: string; message: string };
 export type ERCReport = { findings?: ERCFinding[]; errors: number; warnings: number; ok: boolean };
 
+// A named netlist slot on the sim node (design slots / S-2). "" / "default" is
+// the legacy single slot; named slots let one box hold many designs.
+export type CircuitDesignSummary = { design: string; title?: string; elements?: number; simulatable?: boolean; engine?: string; updatedAt?: number };
+export type CircuitHealth = { ok?: boolean; design?: string; enabled?: boolean; elements?: number; simulatable?: boolean; engine?: string; engines?: EngineCap[]; designCount?: number };
+
 export async function getCircuitDeviceId(): Promise<string> {
   return (await AsyncStorage.getItem(CIRCUIT_DEVICE_KEY)) || "";
 }
@@ -98,19 +103,29 @@ async function circuitOps<T = any>(target: CircuitTarget | undefined, verb: stri
   return ((data as any)?.initial ?? data) as T;
 }
 
+// d() folds an optional design-slot id into a verb payload. Omitted/blank → the
+// default slot (back-compat).
+const d = (design: string | undefined, extra: Record<string, unknown> = {}) =>
+  design && design.trim() ? { design: design.trim(), ...extra } : extra;
+
 export const circuitClient = {
-  engines: (t: CircuitTarget) => circuitOps<{ engines: EngineCap[]; active: string }>(t, "circuit_engines", {}, 15000),
-  configGet: (t: CircuitTarget) => circuitOps<CircuitConfig>(t, "circuit_config_get", {}, 15000),
-  configSet: (t: CircuitTarget, cfg: Partial<CircuitConfig>) => circuitOps<{ engine: string }>(t, "circuit_config_set", cfg as any, 15000),
+  engines: (t: CircuitTarget, design?: string) => circuitOps<{ engines: EngineCap[]; active: string }>(t, "circuit_engines", d(design), 15000),
+  configGet: (t: CircuitTarget, design?: string) => circuitOps<CircuitConfig>(t, "circuit_config_get", d(design), 15000),
+  configSet: (t: CircuitTarget, cfg: Partial<CircuitConfig>, design?: string) => circuitOps<{ engine: string }>(t, "circuit_config_set", d(design, cfg as any), 15000),
 
-  importNetlist: (t: CircuitTarget, text: string, format = "auto") => circuitOps<{ info: CircuitInfo }>(t, "circuit_import", { text, format }, 30000),
-  exportNetlist: (t: CircuitTarget, format: "spice" | "json" = "spice") => circuitOps<{ format: string; spice?: string; netlist?: any }>(t, "circuit_export", { format }, 15000),
-  describe: (t: CircuitTarget) => circuitOps<{ info: CircuitInfo }>(t, "circuit_describe", {}, 15000),
+  importNetlist: (t: CircuitTarget, text: string, format = "auto", design?: string) => circuitOps<{ info: CircuitInfo }>(t, "circuit_import", d(design, { text, format }), 30000),
+  exportNetlist: (t: CircuitTarget, format: "spice" | "json" = "spice", design?: string) => circuitOps<{ format: string; spice?: string; netlist?: any }>(t, "circuit_export", d(design, { format }), 15000),
+  describe: (t: CircuitTarget, design?: string) => circuitOps<{ info: CircuitInfo }>(t, "circuit_describe", d(design), 15000),
 
-  simulate: (t: CircuitTarget, analysis: Analysis) => circuitOps<{ result: SimResult }>(t, "circuit_simulate", analysis as any, 60000),
-  measure: (t: CircuitTarget) => circuitOps<{ nodeVoltages: Record<string, number>; branchCurrents: Record<string, number>; engine: string }>(t, "circuit_measure", {}, 30000),
-  erc: (t: CircuitTarget) => circuitOps<{ report: ERCReport }>(t, "circuit_erc", {}, 20000),
-  setDomain: (t: CircuitTarget, net: string, volts: number) => circuitOps<{ net: string; volts: number }>(t, "circuit_set_domain", { net, volts }, 12000),
-  plot: (t: CircuitTarget, analysis: Analysis, signals?: string[]) =>
-    circuitOps<{ image?: string; analysis?: string; signals?: string[]; engine?: string; ok?: boolean; error?: string }>(t, "circuit_plot", { ...analysis, signals }, 60000),
+  simulate: (t: CircuitTarget, analysis: Analysis, design?: string) => circuitOps<{ result: SimResult }>(t, "circuit_simulate", d(design, analysis as any), 60000),
+  measure: (t: CircuitTarget, design?: string) => circuitOps<{ nodeVoltages: Record<string, number>; branchCurrents: Record<string, number>; engine: string }>(t, "circuit_measure", d(design), 30000),
+  erc: (t: CircuitTarget, design?: string) => circuitOps<{ report: ERCReport }>(t, "circuit_erc", d(design), 20000),
+  setDomain: (t: CircuitTarget, net: string, volts: number, design?: string) => circuitOps<{ net: string; volts: number }>(t, "circuit_set_domain", d(design, { net, volts }), 12000),
+  plot: (t: CircuitTarget, analysis: Analysis, signals?: string[], design?: string) =>
+    circuitOps<{ image?: string; analysis?: string; signals?: string[]; engine?: string; ok?: boolean; error?: string }>(t, "circuit_plot", d(design, { ...analysis, signals }), 60000),
+
+  // service primitives (S-2/S-3): list/delete design slots + node health.
+  designs: (t: CircuitTarget) => circuitOps<{ designs: CircuitDesignSummary[] }>(t, "circuit_designs", {}, 15000),
+  designDelete: (t: CircuitTarget, design: string) => circuitOps<{ design: string; deleted: boolean }>(t, "circuit_design_delete", { design }, 12000),
+  health: (t: CircuitTarget, design?: string) => circuitOps<CircuitHealth>(t, "circuit_health", d(design), 12000),
 };
