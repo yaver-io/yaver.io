@@ -4062,6 +4062,54 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				},
 			},
 		},
+		{
+			"name":        "browser_interactive_start",
+			"description": "Start a GENERIC human-in-the-loop co-browse: opens a headful browser with a persistent profile, navigates to a URL, and returns frame/input HTTP paths so a human can solve a captcha or log in remotely. Automation resumes on the SAME session (cookies/auth persist on disk) afterward. The remote UI polls frame_path for JPEG frames and POSTs {type:click|key|scroll,...} to input_path.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"url"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
+					"url":        map[string]interface{}{"type": "string", "description": "URL to open for the human to interact with"},
+					"profile":    map[string]interface{}{"type": "string", "description": "Persistent user-data-dir (default: ~/.yaver/browser-profiles/<session_id>)"},
+					"width":      map[string]interface{}{"type": "integer", "description": "Viewport width (default: 1280)"},
+					"height":     map[string]interface{}{"type": "integer", "description": "Viewport height (default: 800)"},
+					"prefill": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional fields to prefill before handing control to the human",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"selector": map[string]interface{}{"type": "string", "description": "CSS selector"},
+								"value":    map[string]interface{}{"type": "string", "description": "Value to type"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			"name":        "browser_interactive_status",
+			"description": "Get the current URL and title of an interactive co-browse session — poll this to detect when the human has finished logging in / solving the captcha.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Interactive session ID"},
+				},
+			},
+		},
+		{
+			"name":        "browser_interactive_stop",
+			"description": "Stop an interactive co-browse session. The on-disk profile (cookies/auth) persists so later automation can reuse it.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Interactive session ID"},
+				},
+			},
+		},
 	}
 	tools = append(tools, browserTools...)
 

@@ -872,6 +872,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/browser/events", s.auth(s.handleBrowserEvents))
 	mux.HandleFunc("/browser/events/", s.auth(s.handleBrowserEvents))
 
+	// Interactive / human-in-the-loop co-browse (generic; streams JPEG frames + relays input)
+	mux.HandleFunc("/browser/interactive/start", s.auth(s.handleBrowserInteractiveStart))
+	mux.HandleFunc("/browser/interactive/frame/", s.auth(s.handleBrowserInteractiveFrame))
+	mux.HandleFunc("/browser/interactive/input/", s.auth(s.handleBrowserInteractiveInput))
+	mux.HandleFunc("/browser/interactive/status/", s.auth(s.handleBrowserInteractiveStatus))
+	mux.HandleFunc("/browser/interactive/stop/", s.auth(s.handleBrowserInteractiveStop))
+
 	// Projects (discovery + workdir switching + actions)
 	mux.HandleFunc("/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("/projects/refresh", s.auth(s.handleProjectsRefresh))
@@ -14040,6 +14047,97 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(fmt.Sprintf("browser_close: %v", err))
 		}
 		return mcpToolResult("Browser session closed.")
+
+	case "browser_interactive_start":
+		if s.browserMgr == nil {
+			s.browserMgr = NewBrowserManager()
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+			URL       string `json:"url"`
+			Profile   string `json:"profile"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
+			Prefill   []struct {
+				Selector string `json:"selector"`
+				Value    string `json:"value"`
+			} `json:"prefill"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.URL == "" {
+			return mcpToolError("url is required")
+		}
+		if args.SessionID == "" {
+			args.SessionID = fmt.Sprintf("cobrowse-%d", time.Now().UnixMilli()%100000)
+		}
+		if args.Width <= 0 {
+			args.Width = 1280
+		}
+		if args.Height <= 0 {
+			args.Height = 800
+		}
+		profileDir := args.Profile
+		if profileDir == "" {
+			profileDir = profileDirFor(args.SessionID)
+		}
+		_ = os.MkdirAll(profileDir, 0o755)
+		if err := s.browserMgr.OpenInteractiveSession(args.SessionID, profileDir, args.Width, args.Height); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_start: %v", err))
+		}
+		if _, err := s.browserMgr.Navigate(args.SessionID, args.URL); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_start navigate: %v", err))
+		}
+		for _, p := range args.Prefill {
+			if p.Selector == "" {
+				continue
+			}
+			_ = s.browserMgr.Prefill(args.SessionID, p.Selector, p.Value)
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"session_id": args.SessionID,
+			"frame_path": "/browser/interactive/frame/" + args.SessionID,
+			"input_path": "/browser/interactive/input/" + args.SessionID,
+			"width":      args.Width,
+			"height":     args.Height,
+			"message":    "Interactive co-browse started. A human can now drive the browser via the frame/input paths; automation resumes on the same session afterward.",
+		})
+
+	case "browser_interactive_status":
+		if s.browserMgr == nil {
+			s.browserMgr = NewBrowserManager()
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		url, title, err := s.browserMgr.InteractiveStatus(args.SessionID)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_status: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"session_id": args.SessionID,
+			"url":        url,
+			"title":      title,
+		})
+
+	case "browser_interactive_stop":
+		if s.browserMgr == nil {
+			s.browserMgr = NewBrowserManager()
+		}
+		var args struct {
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.SessionID == "" {
+			return mcpToolError("session_id is required")
+		}
+		if err := s.browserMgr.CloseSession(args.SessionID); err != nil {
+			return mcpToolError(fmt.Sprintf("browser_interactive_stop: %v", err))
+		}
+		return mcpToolResult("Interactive session stopped. Profile persisted on disk for future automation.")
 
 	case "browser_sessions":
 		if s.browserMgr == nil {
