@@ -4239,6 +4239,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// DNS provisioning + Let's Encrypt — desktop/agent/dns_mcp.go
 	tools = append(tools, dnsMCPTools()...)
 
+	// User-registered external MCP servers (namespaced "<server>__<tool>"). These
+	// are fetched live (cached) so the mobile/web client and the LLM see them.
+	tools = append(tools, externalMCPToolDefs()...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}
