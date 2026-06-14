@@ -2737,6 +2737,7 @@ export default function MoreScreen() {
   const handleScreenlog = useCallback(() => router.navigate("/(tabs)/screenlog" as any), [router]);
   const handleNetwork = useCallback(() => router.navigate("/(tabs)/mesh" as any), [router]);
   const handleConnection = useCallback(() => router.navigate("/connection" as any), [router]);
+  const handleMcpServers = useCallback(() => router.navigate("/mcp-servers" as any), [router]);
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
@@ -2944,6 +2945,20 @@ export default function MoreScreen() {
             <Text style={[s.label, { color: c.textPrimary }]}>Connection / Network</Text>
             <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
               Internet, DNS, IP, WiFi, LAN {"·"} phone + runner diagnostics
+            </Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={handleMcpServers}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"🔌"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>MCP Servers</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+              Add your own or others' MCP servers {"·"} use their tools from Yaver
             </Text>
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
