@@ -5,6 +5,7 @@ import { CONVEX_URL } from "@/lib/constants";
 import { useDevices } from "@/lib/use-devices";
 import { PasskeysCard } from "./PasskeyEnrollPrompt";
 import YaverAgentSettings from "./YaverAgentSettings";
+import McpServersCard from "./McpServersCard";
 import { agentClient } from "@/lib/agent-client";
 import pkg from "../../package.json";
 
@@ -571,6 +572,8 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
 
       {/* Yaver Agent (control-plane LLM) provider config */}
       <YaverAgentSettings connected={agentClient.isConnected} />
+
+      <McpServersCard connected={agentClient.isConnected} />
 
       {/* Legal */}
       <div className="card mb-6">
