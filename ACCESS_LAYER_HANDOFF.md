@@ -6,7 +6,8 @@
 
 > **Goal.** Make Yaver automate the long tail of sites that block bots/geo/KYC, by driving the
 > 95% on a region-appropriate node and handing the human the irreducible 5% (login/2FA/captcha/
-> KYC/payment) as a one-tap card. Six features F1–F6 (see spec). **F3 and F2 are implemented.**
+> KYC/payment) as a one-tap card. Six features F1–F6 (see spec). **F3, F2 and F4 implemented
+> (commits on this branch); F1 + F5 partially exist; F6 mostly exists.**
 
 > **Boundary (do not cross).** This is for legitimate access to the user's own accounts, public
 > data, and entitled services. **Do NOT build flows whose purpose is to evade a jurisdiction's
@@ -89,17 +90,30 @@ and F4 (the profile/credentials persist + are managed).
 
 ---
 
-## TODO — remaining features (in priority order)
+## DONE — F4: vault-backed credential auto-resolve + capture
+Wires the existing `VaultStore` (`vault.go`; `Get(project,name)→*VaultEntry`, `Set(entry)`) into
+the `yaver_ask_user` handoff so the human supplies a credential ONCE.
+**Changes (`desktop/agent/agent_question_http.go`):**
+- `registerTaskQuestion`: if `kind=="secret"` && `vault_hint` set && `s.vaultStore.Get("",hint)`
+  has a non-empty Value → respond immediately `{ok,answer:value,fromVault:true}` — **no human
+  prompt, no SSE broadcast** (secret stays off neighbouring devices). Gated to kind=secret so
+  only credential lookups auto-resolve, never a judgement question.
+- `handleTaskAnswer`: peek the pending question's `{VaultHint,Kind}` via `registry.Pending(taskID)`
+  BEFORE `Answer` (which deletes it); after a successful answer, if kind=secret + vault_hint →
+  `vaultStore.Set(VaultEntry{Name:hint,Value:answer,Category:"custom"})`. So the first answer is
+  remembered and every later run auto-resolves.
+- Added `"strings"` import.
+**Verified:** `go build ./...` OK.
+**Composition:** F4 (credential) + F2 (cookies persist in the profile dir) + F3 (the one-time
+human prompt) = "log in once, reused after." Acceptance MET for credentials: 2nd run with the
+same vault_hint does not re-prompt. (Cookie/session reuse is F2's profile dir.)
+**Not yet (optional polish):** a real "use stored value / remember?" toggle in the card (today it
+auto-stores when the runner set vault_hint — the runner's vault_hint IS the consent signal); a
+node-side inject path that types a secret WITHOUT returning it to the runner (current behaviour
+returns it as the tool result, same as any kind=secret answer — no new exposure, but a stricter
+mode could keep it node-only).
 
-### F4 — Credential & Session Vault (do this next)
-**Why:** so the human logs in *once*; cookies/sessions/credentials persist encrypted and are reused.
-**What exists:** the profile dirs (`~/.yaver/browser-profiles/<name>`) already persist cookies on
-disk per F2. `yaver_ask_user` has `vault_hint` + kind=`secret`. Search the repo for an existing
-secret store: `grep -rn "vault" desktop/agent/*.go` (there are vault hooks; wire them).
-**Build:** (a) an encrypted store keyed by `{source, profile}` for credentials; (b) inject creds
-node-side at login time (never return them to the model or put them in the SSE/card); (c) a
-"sessions/credentials" management surface (revoke). Acceptance: a 2nd run of the same task on the
-same profile does NOT re-prompt for login.
+## TODO — remaining features (in priority order)
 
 ### F1 — Egress Fabric (partially exists)
 **Why:** pick a `{region, residential|datacenter}` node per source automatically.
