@@ -3886,12 +3886,13 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	browserTools := []map[string]interface{}{
 		{
 			"name":        "browser_open",
-			"description": "Open a new Chrome browser session on the dev machine. Returns a session_id to use in subsequent browser_* calls. Sessions persist across tool calls — cookies, auth state, and current URL survive between steps.",
+			"description": "Open a new Chrome browser session on the dev machine. Returns a session_id to use in subsequent browser_* calls. Sessions persist across tool calls — cookies, auth state, and current URL survive between steps. Pass proxy_url to egress through a chosen vantage (a proxy or peer the user is entitled to use); the source then sees that egress IP, not this machine's.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"session_id": map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
 					"headful":    map[string]interface{}{"type": "boolean", "description": "Show browser window visibly (default: false, headless)"},
+					"proxy_url":  map[string]interface{}{"type": "string", "description": "Egress proxy for this session's vantage, e.g. http://host:8080 or socks5://host:1080. Omit for machine-native egress. Only use proxies/peers the user owns or is entitled to; never to defeat a geo/IP block."},
 				},
 			},
 		},
@@ -4062,8 +4063,122 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				},
 			},
 		},
+		{
+			"name":        "browser_interactive_start",
+			"description": "Start a GENERIC human-in-the-loop co-browse: opens a headful browser with a persistent profile, navigates to a URL, and returns frame/input HTTP paths so a human can solve a captcha or log in remotely. Automation resumes on the SAME session (cookies/auth persist on disk) afterward. The remote UI polls frame_path for JPEG frames and POSTs {type:click|key|scroll,...} to input_path.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"url"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
+					"url":        map[string]interface{}{"type": "string", "description": "URL to open for the human to interact with"},
+					"profile":    map[string]interface{}{"type": "string", "description": "Persistent user-data-dir (default: ~/.yaver/browser-profiles/<session_id>)"},
+					"width":      map[string]interface{}{"type": "integer", "description": "Viewport width (default: 1280)"},
+					"height":     map[string]interface{}{"type": "integer", "description": "Viewport height (default: 800)"},
+					"prefill": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional fields to prefill before handing control to the human",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"selector": map[string]interface{}{"type": "string", "description": "CSS selector"},
+								"value":    map[string]interface{}{"type": "string", "description": "Value to type"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			"name":        "browser_interactive_status",
+			"description": "Get the current URL and title of an interactive co-browse session — poll this to detect when the human has finished logging in / solving the captcha.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Interactive session ID"},
+				},
+			},
+		},
+		{
+			"name":        "browser_interactive_stop",
+			"description": "Stop an interactive co-browse session. The on-disk profile (cookies/auth) persists so later automation can reuse it.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"session_id"},
+				"properties": map[string]interface{}{
+					"session_id": map[string]interface{}{"type": "string", "description": "Interactive session ID"},
+				},
+			},
+		},
 	}
 	tools = append(tools, browserTools...)
+
+	// --- Droid interactive (generic human-in-the-loop Android device control) ---
+	// Mirrors the browser_interactive_* tools but for a paired Android phone over
+	// adb: stream the screen + relay tap/text/key/swipe so a human can enter an
+	// SMS OTP / log in, after which automation drives the same device. GENERIC —
+	// no knowledge of any specific app.
+	droidTools := []map[string]interface{}{
+		{
+			"name":        "droid_status",
+			"description": "Status of the paired Android device for human-in-the-loop control: serial, screen width/height, focused activity, and the HTTP frame/input paths a remote UI uses. Returns {device:null} when no device is attached. Poll the focus/UI to detect when a human has finished logging in.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"device": map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"}},
+			},
+		},
+		{
+			"name":        "droid_frame",
+			"description": "Capture the current Android screen and return it as a base64 PNG image (via adb exec-out screencap). Use to see what the human/device is looking at.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"device": map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"}},
+			},
+		},
+		{
+			"name":        "droid_input",
+			"description": "Relay a single input event to the Android device via adb: tap (x,y), text (types a string), key (keyevent keycode, e.g. 66=ENTER/67=DEL/4=BACK), or swipe (x1,y1→x2,y2 over dur ms). Lets automation drive the device, or a human-built UI forward taps/keystrokes.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"type"},
+				"properties": map[string]interface{}{
+					"type":    map[string]interface{}{"type": "string", "enum": []string{"tap", "text", "key", "swipe"}},
+					"x":       map[string]interface{}{"type": "integer", "description": "tap X"},
+					"y":       map[string]interface{}{"type": "integer", "description": "tap Y"},
+					"text":    map[string]interface{}{"type": "string", "description": "text to type (spaces handled)"},
+					"keycode": map[string]interface{}{"type": "integer", "description": "Android keyevent code"},
+					"x1":      map[string]interface{}{"type": "integer", "description": "swipe start X"},
+					"y1":      map[string]interface{}{"type": "integer", "description": "swipe start Y"},
+					"x2":      map[string]interface{}{"type": "integer", "description": "swipe end X"},
+					"y2":      map[string]interface{}{"type": "integer", "description": "swipe end Y"},
+					"dur":     map[string]interface{}{"type": "integer", "description": "swipe duration ms (default 300)"},
+					"device":  map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"},
+				},
+			},
+		},
+		{
+			"name":        "droid_ui_texts",
+			"description": "Dump the current Android view hierarchy (uiautomator) and return the on-screen text values — useful for reading login fields / labels / OTP prompts without OCR.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{"device": map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"}},
+			},
+		},
+		{
+			"name":        "droid_launch",
+			"description": "Launch an installed Android app whose package id contains the given substring, via its LAUNCHER intent (adb monkey). Returns the resolved package name.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"package"},
+				"properties": map[string]interface{}{
+					"package": map[string]interface{}{"type": "string", "description": "Package id or substring to match (e.g. 'misli')"},
+					"device":  map[string]interface{}{"type": "string", "description": "adb serial (default: first attached device)"},
+				},
+			},
+		},
+	}
+	tools = append(tools, droidTools...)
 
 	// --- Vibe Preview ---
 	// Lets the AI runner check what its own visual change looked like

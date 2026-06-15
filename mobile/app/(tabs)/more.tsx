@@ -2741,6 +2741,7 @@ export default function MoreScreen() {
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
+  const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
   const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
@@ -3070,6 +3071,23 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Circuit Simulator</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"SPICE/KiCad/EPLAN \u2014 simulate, ERC, view waveforms"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Data Collection cell \u2014 multi-vantage egress, peer-egress lending,
+                per-vantage source health + blocks, cross-vantage diff. Box-reachable,
+                so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleDataCollection}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83c\udf10"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Data Collection</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Multi-vantage egress, source health, cross-vantage diff"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
