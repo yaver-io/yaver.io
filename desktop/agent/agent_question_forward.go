@@ -46,6 +46,8 @@ func forwardYaverAskUser(rawArgs json.RawMessage) interface{} {
 		Multi      bool     `json:"multi"`
 		VaultHint  string   `json:"vault_hint"`
 		TimeoutSec int      `json:"timeout_sec"`
+		Screenshot string   `json:"screenshot"` // F3 handoff: base64 PNG shown on the card
+		Step       string   `json:"step"`       // F3 handoff step type
 	}
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return mcpToolError("invalid arguments: " + err.Error())
@@ -71,6 +73,8 @@ func forwardYaverAskUser(rawArgs json.RawMessage) interface{} {
 		"multi":      args.Multi,
 		"vault_hint": args.VaultHint,
 		"timeoutSec": args.TimeoutSec,
+		"screenshot": args.Screenshot,
+		"step":       args.Step,
 	})
 
 	timeout := args.TimeoutSec

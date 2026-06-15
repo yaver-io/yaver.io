@@ -763,6 +763,8 @@ export default function DashboardPage() {
     kind: "text" | "choice" | "secret";
     choices?: string[];
     vaultHint?: string;
+    screenshot?: string; // F3 handoff: base64 PNG region
+    step?: string;       // F3 handoff step type
   } | null>(null);
   const [agentAnswerText, setAgentAnswerText] = useState("");
   const [submittingAgentAnswer, setSubmittingAgentAnswer] = useState(false);
@@ -3386,6 +3388,21 @@ export default function DashboardPage() {
                       <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-200/80">
                         Agent needs your input
                       </div>
+                      {agentQuestion.step ? (
+                        <div className="mt-2 inline-block rounded bg-surface-700/40 px-2 py-0.5 text-[10px] font-bold tracking-wide text-surface-300">
+                          {"⛳ " + String(agentQuestion.step).replace(/_/g, " ")}
+                        </div>
+                      ) : null}
+                      {agentQuestion.screenshot ? (
+                        // F3 handoff: show the relevant page region
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={"data:image/png;base64," + agentQuestion.screenshot}
+                          alt="page region needing your input"
+                          className="mt-2 w-full rounded-lg border border-surface-700/40 bg-black"
+                          style={{ maxHeight: 240, objectFit: "contain" }}
+                        />
+                      ) : null}
                       <div className="mt-2 text-sm text-surface-100 whitespace-pre-wrap">
                         {agentQuestion.prompt}
                       </div>
