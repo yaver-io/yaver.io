@@ -259,6 +259,11 @@ export default defineSchema({
     // the yaver SDK and selectDevices below. Privacy-safe: static
     // capability/affinity labels, never a path or secret.
     tags: v.optional(v.array(v.string())),
+    // Coarse egress region (eu|us|ap|na|sa|af|oc) — the region a source sees for
+    // this box's outbound traffic, for the multi-vantage device picker. Privacy:
+    // COARSE region only, never the egress IP (which stays local). Same class as
+    // cloudMachines.region; populated from the agent's cached egress identity.
+    geoRegion: v.optional(v.string()),
     platform: v.union(
       v.literal("macos"),
       v.literal("windows"),

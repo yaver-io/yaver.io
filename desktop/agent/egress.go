@@ -62,6 +62,19 @@ type egressCacheState struct {
 
 var egressCache egressCacheState
 
+// cachedEgressRegion returns this runtime's COARSE egress region (eu|us|ap|...)
+// ONLY if it is already cached — it never triggers a network probe, so it is
+// safe on the hot heartbeat path. Returns "" when unknown or opted out. Coarse
+// region only; the egress IP itself is NEVER published to Convex (privacy).
+func cachedEgressRegion() string {
+	egressCache.mu.Lock()
+	defer egressCache.mu.Unlock()
+	if egressCache.id.Source == "disabled" {
+		return ""
+	}
+	return egressCache.id.Region
+}
+
 // resetEgressCache clears the in-process egress identity cache. Test-only.
 func resetEgressCache() {
 	egressCache.mu.Lock()

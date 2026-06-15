@@ -179,6 +179,8 @@ type ListedDevice = {
   sharedRunners?: string[];
   sessionBinding?: "dedicated" | "legacy-shared";
   deviceClass?: "desktop" | "edge-mobile" | "server";
+  /** Coarse egress region (eu|us|ap|...) for the multi-vantage device picker. */
+  geoRegion?: string;
   publishCapabilities?: string[];
   edgeProfile?: Doc<"devices">["edgeProfile"];
   recoveryPosture?: Doc<"devices">["recoveryPosture"];
@@ -846,6 +848,9 @@ export const heartbeat = mutation({
     connectionPreferences: v.optional(v.array(connectionPreferenceValidator)),
     agentVersion: v.optional(v.string()),
     publishCapabilities: v.optional(v.array(v.string())),
+    // Coarse egress region (eu|us|ap|...) for the multi-vantage device picker.
+    // Region only — never the egress IP.
+    geoRegion: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -909,6 +914,9 @@ export const heartbeat = mutation({
     }
     if (args.deviceClass) {
       patch.deviceClass = args.deviceClass;
+    }
+    if (args.geoRegion !== undefined && args.geoRegion !== device.geoRegion) {
+      patch.geoRegion = args.geoRegion;
     }
     if (args.edgeProfile) {
       patch.edgeProfile = args.edgeProfile;
@@ -1205,6 +1213,7 @@ export const listMyDevices = query({
       ...summarizeShareRules(shareRulesByDeviceId.get(d.deviceId) || []),
       sessionBinding: dedicatedSessionDeviceIds.has(d.deviceId) ? "dedicated" as const : "legacy-shared" as const,
       deviceClass: d.deviceClass,
+      geoRegion: d.geoRegion,
       edgeProfile: d.edgeProfile,
       recoveryPosture: d.recoveryPosture,
     }));
@@ -1275,6 +1284,7 @@ export const listMyDevices = query({
           }]),
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
           deviceClass: d.deviceClass,
+      geoRegion: d.geoRegion,
           edgeProfile: d.edgeProfile,
           recoveryPosture: d.recoveryPosture,
           connectionPreferences: d.connectionPreferences,
@@ -1340,6 +1350,7 @@ export const listMyDevices = query({
           }]),
           sessionBinding: undefined as "dedicated" | "legacy-shared" | undefined,
           deviceClass: d.deviceClass,
+      geoRegion: d.geoRegion,
           edgeProfile: d.edgeProfile,
           recoveryPosture: d.recoveryPosture,
           connectionPreferences: d.connectionPreferences,
