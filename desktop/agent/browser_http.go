@@ -29,6 +29,7 @@ func (s *HTTPServer) handleBrowserSessions(w http.ResponseWriter, r *http.Reques
 		var req struct {
 			SessionID string `json:"session_id"`
 			Headful   bool   `json:"headful"`
+			ProxyURL  string `json:"proxy_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -37,7 +38,7 @@ func (s *HTTPServer) handleBrowserSessions(w http.ResponseWriter, r *http.Reques
 		if req.SessionID == "" {
 			req.SessionID = fmt.Sprintf("browser-%d", time.Now().UnixMilli()%100000)
 		}
-		if err := s.browserMgr.OpenSession(req.SessionID, req.Headful); err != nil {
+		if err := s.browserMgr.OpenSessionWithProxy(req.SessionID, req.Headful, req.ProxyURL); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 			return
 		}
@@ -46,6 +47,7 @@ func (s *HTTPServer) handleBrowserSessions(w http.ResponseWriter, r *http.Reques
 			"session_id": req.SessionID,
 			"headful":    req.Headful,
 			"status":     "open",
+			"proxy_url":  redactProxyCreds(req.ProxyURL),
 		})
 
 	default:

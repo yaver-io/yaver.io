@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1649,6 +1650,19 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	// target. macOS does both (Xcode + Gradle); Linux does Android only;
 	// iOS is Mac-only, forever. Static + privacy-safe.
 	payload["publishCapabilities"] = computePublishCapabilities()
+	// Coarse egress region (eu|us|ap|...) for the device picker — read from the
+	// cached egress identity ONLY (no network on the hot path). The egress IP is
+	// never sent; only the coarse region, same class as cloudMachines.region.
+	// When not yet cached, warm it in the background for the next heartbeat
+	// (respecting the disable_auto_public_ip opt-out via the loaded config).
+	if region := cachedEgressRegion(); region != "" {
+		payload["geoRegion"] = region
+	} else {
+		go func() {
+			cfg, _ := LoadConfig()
+			detectEgressIdentity(context.Background(), cfg, false)
+		}()
+	}
 	if recoveryPosture != nil {
 		payload["recoveryPosture"] = recoveryPosture
 	}

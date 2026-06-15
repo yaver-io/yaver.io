@@ -1955,6 +1955,7 @@ http.route({
       hardwareId: body.hardwareId || undefined,
       hardwareProfile: body.hardwareProfile || undefined,
       deviceClass: body.deviceClass || undefined,
+      geoRegion: typeof body.geoRegion === "string" ? body.geoRegion : undefined,
       edgeProfile: body.edgeProfile || undefined,
       recoveryPosture: body.recoveryPosture || undefined,
       agentVersion: typeof body.agentVersion === "string" ? body.agentVersion : undefined,
