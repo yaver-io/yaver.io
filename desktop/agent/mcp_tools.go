@@ -188,6 +188,19 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "access_policy_check",
+			"description": "F5 Access-Layer Policy Guard. Call BEFORE automating a gated source to check whether an {action} on a {source} is permitted from a {jurisdiction}. Returns {decision: allow|warn|block, reason, category}. It BLOCKS jurisdiction-illegal funding/betting (e.g. foreign sportsbooks from Turkey), WARNS on account actions (login/signup) in such jurisdictions, and ALLOWS public-data reading everywhere. Unknown sources => allow (it does not over-block legitimate automation). You MUST honor a 'block' (do not place/fund bets) and surface a 'warn' to the user. This is the boundary that keeps remote-hands legitimate.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"source", "action"},
+				"properties": map[string]interface{}{
+					"source":       map[string]interface{}{"type": "string", "description": "Domain or service name, e.g. 'betfair.com', 'misli.com', 'superbet.rs'."},
+					"action":       map[string]interface{}{"type": "string", "description": "data|read|observe|scrape (always allowed) | login|signup|register | bet|place_bet|deposit|withdraw (funding/placing)."},
+					"jurisdiction": map[string]interface{}{"type": "string", "description": "ISO-ish code for where the user physically is, e.g. 'TR','US','RS'. Omit if unknown (a gambling source + unknown jurisdiction returns 'warn')."},
+				},
+			},
+		},
+		{
 			"name":        "wire_detect",
 			"description": "List USB-cable-attached iPhones/iPads (xcrun devicectl, falls back to xctrace) plus Android devices (adb devices -l) on the agent's host machine. Skips simulators/emulators and WiFi-paired devices. Returns {devices:[{udid,name,platform,os}], count, hint}. Useful before calling wire_push to know which device IDs you can target. Same data the CLI's `yaver wire detect --json` returns.",
 			"inputSchema": map[string]interface{}{
