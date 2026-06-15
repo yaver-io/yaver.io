@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -90,6 +91,23 @@ func (s *HTTPServer) registerTaskQuestion(w http.ResponseWriter, r *http.Request
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
+	}
+	// F4 (Access Layer): if the runner asked for a credential by vault_hint and we already
+	// hold it, answer straight from the vault — no human prompt, no SSE broadcast (the secret
+	// stays off neighbouring devices). This is the "log in once, reused after" payoff: the
+	// human supplies the credential the first time (or via the Vault UI), and every later run
+	// auto-resolves. Gated to kind=secret so only credential lookups auto-resolve, never a
+	// value-judgement question. The runner receives the value exactly as a normal secret answer.
+	if body.Kind == "secret" && strings.TrimSpace(body.VaultHint) != "" && s.vaultStore != nil {
+		if entry, gerr := s.vaultStore.Get("", strings.TrimSpace(body.VaultHint)); gerr == nil && entry != nil && entry.Value != "" {
+			jsonReply(w, http.StatusOK, map[string]interface{}{
+				"ok":         true,
+				"questionId": "vault:" + strings.TrimSpace(body.VaultHint),
+				"answer":     entry.Value,
+				"fromVault":  true,
+			})
+			return
+		}
 	}
 	registered, answerCh, err := globalQuestionRegistry.Register(taskID, AgentQuestion{
 		Prompt:     body.Prompt,
@@ -192,6 +210,13 @@ func (s *HTTPServer) handleTaskAnswer(w http.ResponseWriter, r *http.Request, ta
 		jsonError(w, http.StatusBadRequest, "questionId required")
 		return
 	}
+	// F4 (Access Layer): capture the question's vault intent BEFORE Answer removes it, so we
+	// can remember a credential the human just typed. The runner setting vault_hint IS the
+	// intent signal that this answer is a reusable credential.
+	var rememberHint, rememberKind string
+	if pq, ok := globalQuestionRegistry.Pending(taskID); ok && pq.ID == body.QuestionID {
+		rememberHint, rememberKind = pq.VaultHint, pq.Kind
+	}
 	if err := globalQuestionRegistry.Answer(body.QuestionID, body.Answer); err != nil {
 		switch {
 		case errors.Is(err, errQuestionNotFound):
@@ -200,6 +225,15 @@ func (s *HTTPServer) handleTaskAnswer(w http.ResponseWriter, r *http.Request, ta
 			jsonError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
+	}
+	// F4: persist a freshly-supplied secret so every later run auto-resolves (see register handler).
+	if rememberKind == "secret" && strings.TrimSpace(rememberHint) != "" && s.vaultStore != nil && body.Answer != "" {
+		_ = s.vaultStore.Set(VaultEntry{
+			Name:     strings.TrimSpace(rememberHint),
+			Value:    body.Answer,
+			Category: "custom",
+			Notes:    "captured via yaver_ask_user handoff (F4)",
+		})
 	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
