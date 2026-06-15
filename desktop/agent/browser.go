@@ -159,6 +159,16 @@ func (bm *BrowserManager) OpenSession(id string, headful bool) error {
 // is entitled to use — never a rotating pool to defeat a block. See
 // docs/user-directed-data-collection-runtimes.md (Multi-Vantage / Egress).
 func (bm *BrowserManager) OpenSessionWithProxy(id string, headful bool, proxyURL string) error {
+	return bm.OpenSessionWithProfile(id, headful, proxyURL, "")
+}
+
+// OpenSessionWithProfile is OpenSessionWithProxy + a persistent profile dir (F2, Access Layer).
+// When profileDir != "", Chrome reuses that user-data-dir so Cloudflare clearance + login cookies
+// PERSIST across runs and are SHARED with a headful co-browse session on the same dir: the human
+// passes the challenge once (F3 handoff) in a visible window, then headless collectors ride the
+// saved clearance until it expires. Always sets anti-automation flags + a real desktop UA so a
+// headless session looks less like a bot. See YAVER_ACCESS_LAYER.md (F2/F3 compose).
+func (bm *BrowserManager) OpenSessionWithProfile(id string, headful bool, proxyURL, profileDir string) error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
@@ -172,8 +182,18 @@ func (bm *BrowserManager) OpenSessionWithProxy(id string, headful bool, proxyURL
 		chromedp.Flag("mute-audio", true),
 		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("hide-scrollbars", !headful),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"), // F2 anti-detect
+		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
 		chromedp.WindowSize(1280, 900),
 	)
+	if profileDir != "" {
+		// F2: persistent clearance/cookies; share this dir with the co-browse session so a
+		// human-solved Cloudflare challenge carries over to headless collection.
+		allocOpts = append(allocOpts, chromedp.UserDataDir(profileDir))
+		if cp := findChromePath(); cp != "" {
+			allocOpts = append(allocOpts, chromedp.ExecPath(cp))
+		}
+	}
 	if proxyURL != "" {
 		allocOpts = append(allocOpts, chromedp.ProxyServer(proxyURL))
 	}
@@ -192,6 +212,7 @@ func (bm *BrowserManager) OpenSessionWithProxy(id string, headful bool, proxyURL
 	bm.sessions[id] = &BrowserSession{
 		ID:            id,
 		Headful:       headful,
+		ProfileDir:    profileDir,
 		ProxyURL:      redactProxyCreds(proxyURL), // store redacted; raw is baked into the alloc
 		CreatedAt:     now,
 		LastUsedAt:    now,

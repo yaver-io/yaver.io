@@ -14146,12 +14146,25 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			SessionID string `json:"session_id"`
 			Headful   bool   `json:"headful"`
 			ProxyURL  string `json:"proxy_url"`
+			Profile   string `json:"profile"` // F2: persistent profile name/path (shares clearance with co-browse)
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.SessionID == "" {
 			args.SessionID = fmt.Sprintf("browser-%d", time.Now().UnixMilli()%100000)
 		}
-		if err := s.browserMgr.OpenSessionWithProxy(args.SessionID, args.Headful, args.ProxyURL); err != nil {
+		// F2: a persistent profile dir lets this (often headless) session reuse Cloudflare
+		// clearance + login cookies — and share them with a headful co-browse session on the
+		// same profile, so a human-solved challenge (F3) carries over to automated collection.
+		profileDir := ""
+		if p := strings.TrimSpace(args.Profile); p != "" {
+			if filepath.IsAbs(p) {
+				profileDir = p // exact dir — point at a co-browse session's dir to share clearance
+			} else {
+				profileDir = profileDirFor(p) // bare name -> ~/.yaver/browser-profiles/<name>; same name as a co-browse session => shared clearance
+			}
+			_ = os.MkdirAll(profileDir, 0o755)
+		}
+		if err := s.browserMgr.OpenSessionWithProfile(args.SessionID, args.Headful, args.ProxyURL, profileDir); err != nil {
 			return mcpToolError(fmt.Sprintf("browser_open: %v", err))
 		}
 		resp := map[string]interface{}{
@@ -14214,6 +14227,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		profileDir := args.Profile
 		if profileDir == "" {
 			profileDir = profileDirFor(args.SessionID)
+		} else if !filepath.IsAbs(profileDir) {
+			profileDir = profileDirFor(profileDir) // bare name -> shared dir (matches browser_open's profile resolution, so headless reuses this session's clearance)
 		}
 		_ = os.MkdirAll(profileDir, 0o755)
 		if err := s.browserMgr.OpenInteractiveSession(args.SessionID, profileDir, args.Width, args.Height); err != nil {
