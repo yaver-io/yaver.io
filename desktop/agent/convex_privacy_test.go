@@ -792,3 +792,55 @@ func TestCompanionUpsertPayloadHasNoConfidentialFields(t *testing.T) {
 		t.Fatalf("cron name not sanitized: %v", got)
 	}
 }
+
+// TestTaskPackagePayload_isBookkeepingOnly pins the Task Package sync seam
+// (package_sync.go). A package's sources/MCP bindings carry full URLs that may
+// embed query tokens, plus on-device secrets — NONE of that may reach Convex.
+// buildTaskPackagePayload must emit hostnames-only + slugs + counters.
+func TestTaskPackagePayload_isBookkeepingOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	p := &TaskPackage{
+		Metadata: PackageMeta{Name: "Serbia Odds!", Version: 2, Description: "watch public odds"},
+		Spec: PackageSpec{
+			Runtimes: []string{"mobile", "agent"},
+			Vantage:  PackageVantage{Geo: []string{"RS"}, Residential: true},
+			Schedule: PackageSchedule{Every: "10m"},
+			Consent:  PackageConsent{Summary: "fetch public pages", WillNot: []string{"login"}, DataShown: []string{"price"}},
+			Task: PackageTask{
+				Kind:    "collect",
+				Engines: []string{"webview", "mcp"},
+				Sources: []PackageSource{{ID: "s", URL: "https://odds.example.com/live?token=SECRET123&path=/Users/me/x"}},
+				MCP:     []PackageMCPBinding{{Name: "yaver-bet", URL: "https://mcp.example.com/mcp", AuthToken: "BEARER_SECRET", Tool: "rec"}},
+			},
+		},
+	}
+	payload := buildTaskPackagePayload("dev-1", p)
+
+	s := &convexSyncer{deviceID: "dev-1"}
+	s.callMutation("taskPackages:upsertPackage", payload)
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 recorded mutation, got %d", len(*buf))
+	}
+	for _, rec := range *buf {
+		assertNoForbiddenFields(t, rec)
+		assertNoAbsolutePaths(t, rec)
+	}
+
+	// Domains must be hostnames only — never the token, the full path, or scheme.
+	domains, _ := payload["domains"].([]string)
+	if len(domains) != 2 || domains[0] != "odds.example.com" || domains[1] != "mcp.example.com" {
+		t.Fatalf("domains must be hostnames only, got %v", domains)
+	}
+	for k, v := range payload {
+		if str, ok := v.(string); ok {
+			if strings.Contains(str, "SECRET123") || strings.Contains(str, "BEARER_SECRET") || strings.Contains(str, "token=") {
+				t.Errorf("payload field %q leaked a secret/token: %q", k, str)
+			}
+		}
+	}
+	if payload["name"] != "serbia-odds" {
+		t.Errorf("name not sanitized to a slug: %v", payload["name"])
+	}
+}
