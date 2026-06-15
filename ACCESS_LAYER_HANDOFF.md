@@ -1,13 +1,13 @@
 # Access Layer — implementation handoff (for the next agent)
 
-**Branch:** `access-layer-f3-handoff` (2 commits: F3, then F2). **Committed, NOT pushed.**
+**Where:** committed on **`main`** (F3, F2, F4, F5 + this doc). Local; push when ready for cloud agents.
 **Design spec:** `../yaver-bet/YAVER_ACCESS_LAYER.md` (the *why* + the 6-feature plan).
-**This doc:** the *what's done / what's next*, precise enough to continue without context.
+**This doc:** the *what's done / what's next*, precise enough for Codex to continue without context.
 
 > **Goal.** Make Yaver automate the long tail of sites that block bots/geo/KYC, by driving the
 > 95% on a region-appropriate node and handing the human the irreducible 5% (login/2FA/captcha/
-> KYC/payment) as a one-tap card. Six features F1–F6 (see spec). **F3, F2 and F4 implemented
-> (commits on this branch); F1 + F5 partially exist; F6 mostly exists.**
+> KYC/payment) as a one-tap card. Six features F1–F6 (see spec). **F3, F2, F4, F5 implemented on
+> `main`; F1 partially exists; F6 mostly exists. Remaining engineering = F1 + UI surfacing.**
 
 > **Boundary (do not cross).** This is for legitimate access to the user's own accounts, public
 > data, and entitled services. **Do NOT build flows whose purpose is to evade a jurisdiction's
@@ -113,6 +113,20 @@ node-side inject path that types a secret WITHOUT returning it to the runner (cu
 returns it as the tool result, same as any kind=secret answer — no new exposure, but a stricter
 mode could keep it node-only).
 
+## DONE — F5: Policy Guard
+The boundary that keeps remote-hands legitimate. `desktop/agent/access_policy.go`:
+`EvaluateAccessPolicy(source, action, jurisdiction) → {decision: allow|warn|block, reason, category}`.
+- Built-in rules: foreign sportsbooks (betfair/bet365/1xbet/pinnacle/…) BLOCK funding/betting from
+  TR + US; regional books (superbet/mozzart/…) BLOCK funding from TR; TR state-licensed
+  (misli/nesine/iddaa/…) ALLOW from TR. Read/observe/scrape = always allow (public data).
+  login/signup in a blocked jurisdiction = warn. Unknown source = allow (no over-blocking).
+- `~/.yaver/access-policy.json` (array of `{match,category,blocked_in,note}`) overrides/extends.
+- MCP tool `access_policy_check {source, action, jurisdiction}` + handler (httpserver.go, before
+  `browser_open`). Returns the decision. Agents MUST honor `block` and surface `warn`.
+- Tested: `access_policy_test.go` (8 cases) + `go build ./...` OK.
+**Use it:** call `access_policy_check` before any gated-source automation; on `block`, refuse
+(e.g. don't place a bet from a jurisdiction where it's illegal); `data` actions always pass.
+
 ## TODO — remaining features (in priority order)
 
 ### F1 — Egress Fabric (partially exists)
@@ -122,16 +136,14 @@ the mesh has region-tagged nodes. **Build:** a node/proxy registry tagged by reg
 per-source egress policy, and auto-selection (so "Misli → TR-residential" is declarative, not
 manual). Keep the existing policy note ("only egress the user owns; never to defeat a block").
 
-### F5 — Policy Guard (partially exists)
-**Why:** per-source × per-jurisdiction allow/deny; refuse illegal actions; steer to legitimate use.
-**What exists:** the yaver-bet MCP has `source_policy_check`; `proxy_url` descriptions carry the
-boundary note. **Build:** a policy table consulted BEFORE any task/handoff; red/amber/green badge
-per source in the UI; hard-refuse jurisdiction-illegal actions (the example to block: placing bets
-from a country where it's illegal — data-only is allowed).
-
 ### F6 — Task/async/mobile orchestration
 Mostly exists (tasks + SSE + the F3 cards). Polish: a "waiting on you" view aggregating pending
 handoffs across tasks.
+
+### UI surfacing (cross-cutting, do alongside)
+The agent-side F4/F5 are done but headless; the apps could surface them: a Vault "remember?"
+toggle on the secret card (F4), and an `access_policy_check` red/amber/green **badge** per source
+in the web/mobile UI (F5). Not required for the engine to work — polish.
 
 ---
 
