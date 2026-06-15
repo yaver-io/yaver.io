@@ -14137,6 +14137,22 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		_ = json.Unmarshal(rec.Body(), &payload)
 		return mcpToolJSON(payload)
 
+	// --- Access Layer (F5 Policy Guard) ---
+	case "access_policy_check":
+		var args struct {
+			Source       string `json:"source"`
+			Action       string `json:"action"`
+			Jurisdiction string `json:"jurisdiction"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Source) == "" {
+			return mcpToolError("source is required")
+		}
+		if strings.TrimSpace(args.Action) == "" {
+			args.Action = "data"
+		}
+		return mcpToolJSON(EvaluateAccessPolicy(args.Source, args.Action, args.Jurisdiction))
+
 	// --- Browser Automation ---
 	case "browser_open":
 		if s.browserMgr == nil {
