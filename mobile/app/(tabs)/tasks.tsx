@@ -1566,6 +1566,8 @@ export default function TasksScreen() {
     choices?: string[];
     multi?: boolean;
     vaultHint?: string;
+    screenshot?: string; // F3 handoff: base64 PNG of the relevant page region
+    step?: string;       // F3 handoff step type
   } | null>(null);
   const [agentAnswerText, setAgentAnswerText] = useState("");
   // Structured command-card models, keyed taskId → commandId. Fed by
@@ -2132,6 +2134,8 @@ export default function TasksScreen() {
             choices?: string[];
             multi?: boolean;
             vaultHint?: string;
+            screenshot?: string; // F3 handoff
+            step?: string;       // F3 handoff
           };
           setAgentQuestion(q);
           setAgentAnswerText("");
@@ -4341,6 +4345,21 @@ export default function TasksScreen() {
                     {agentQuestion.header}
                   </Text>
                 </View>
+              ) : null}
+              {agentQuestion?.step ? (
+                <View style={{ alignSelf: "flex-start", backgroundColor: c.textMuted + "22", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8 }}>
+                  <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.3 }}>
+                    {"⛳ " + String(agentQuestion.step).replace(/_/g, " ")}
+                  </Text>
+                </View>
+              ) : null}
+              {agentQuestion?.screenshot ? (
+                // F3 handoff: show the relevant page region so the human sees exactly what they're acting on
+                <Image
+                  source={{ uri: "data:image/png;base64," + agentQuestion.screenshot }}
+                  style={{ width: "100%", height: 200, borderRadius: 10, marginBottom: 12, backgroundColor: "#000" }}
+                  resizeMode="contain"
+                />
               ) : null}
               <Text style={{ color: c.textPrimary, fontSize: 16, lineHeight: 22, marginBottom: 16 }}>
                 {agentQuestion?.prompt}

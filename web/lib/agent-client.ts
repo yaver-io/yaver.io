@@ -2510,6 +2510,8 @@ export class AgentClient {
     kind: "text" | "choice" | "secret";
     choices?: string[];
     vaultHint?: string;
+    screenshot?: string; // F3 handoff: base64 PNG region
+    step?: string;       // F3 handoff step type
     createdAtMs: number;
     timeoutSec: number;
   } | null> {

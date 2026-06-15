@@ -84,6 +84,8 @@ func (s *HTTPServer) registerTaskQuestion(w http.ResponseWriter, r *http.Request
 		Multi      bool     `json:"multi"`
 		VaultHint  string   `json:"vault_hint"`
 		TimeoutSec int      `json:"timeoutSec"`
+		Screenshot string   `json:"screenshot"` // F3 handoff
+		Step       string   `json:"step"`       // F3 handoff
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -97,6 +99,8 @@ func (s *HTTPServer) registerTaskQuestion(w http.ResponseWriter, r *http.Request
 		Multi:      body.Multi,
 		VaultHint:  body.VaultHint,
 		TimeoutSec: body.TimeoutSec,
+		Screenshot: body.Screenshot,
+		Step:       body.Step,
 	})
 	if err != nil {
 		switch {

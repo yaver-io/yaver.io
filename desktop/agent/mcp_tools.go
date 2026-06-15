@@ -169,6 +169,15 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"type":        "string",
 						"description": "When asking for a credential, set to the vault entry name you'd ideally read instead. The mobile/web sheet renders a 'Use stored value' shortcut so the user doesn't have to retype. Combine with kind=secret.",
 					},
+					"screenshot": map[string]interface{}{
+						"type":        "string",
+						"description": "F3 handoff: base64 PNG of the relevant page region (e.g. from browser_screenshot) to show ABOVE the prompt so the human sees exactly what they're acting on — the login form, the 2FA field, the captcha. Crop to the relevant area; the surface renders it as an image card.",
+					},
+					"step": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"login", "two_factor", "captcha", "kyc_upload", "payment_confirm", "region_confirm", "tap_relay"},
+						"description": "F3 handoff step type — drives how the surface renders the card (e.g. two_factor => OTP keypad, payment_confirm => approve/deny, captcha => tap-on-image). Omit for a plain question. Pair with screenshot for a true human-in-the-loop handoff.",
+					},
 					"timeout_sec": map[string]interface{}{
 						"type":        "integer",
 						"minimum":     30,
