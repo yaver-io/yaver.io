@@ -3902,6 +3902,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"session_id": map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
 					"headful":    map[string]interface{}{"type": "boolean", "description": "Show browser window visibly (default: false, headless)"},
 					"proxy_url":  map[string]interface{}{"type": "string", "description": "Egress proxy for this session's vantage, e.g. http://host:8080 or socks5://host:1080. Omit for machine-native egress. Only use proxies/peers the user owns or is entitled to; never to defeat a geo/IP block."},
+					"profile":    map[string]interface{}{"type": "string", "description": "F2 persistent profile (name or absolute path). Reuses a user-data-dir so cookies + Cloudflare clearance PERSIST across runs. Pass the SAME profile name to browser_interactive_start: a human solves the challenge once in the visible co-browse window, then this (often headless) session reuses that saved clearance. Omit for a throwaway session."},
 				},
 			},
 		},
