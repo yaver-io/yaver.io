@@ -501,6 +501,7 @@ for (const path of [
   "/users/lookup",
   "/agent-rescue/queue", "/agent-rescue/list",
   "/publish-jobs/queue", "/publish-jobs/list",
+  "/packages/allocation", "/packages/accept", "/packages/shared",
 ]) {
   http.route({
     path,
@@ -7750,6 +7751,67 @@ http.route({
         Location: `${webBase}/auth#${finalParams.toString()}`,
       },
     });
+  }),
+});
+
+// ── Task Packages — runner share/accept (docs/yaver-task-packages.md) ──
+
+/** POST /packages/allocation — look up a shared Task Package by invite code,
+ *  for the runner's consent screen. Public (the code is the secret); returns
+ *  only consent-safe fields (package name, domains, schedule, willNot, dataShown). */
+http.route({
+  path: "/packages/allocation",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => null);
+    const code = typeof body?.code === "string" ? body.code.trim() : "";
+    if (!code) return errorResponse("need { code }", 400);
+    const alloc = await ctx.runQuery(api.taskPackages.allocationByCode, { code });
+    if (!alloc) return errorResponse("not found", 404);
+    return jsonResponse(alloc);
+  }),
+});
+
+/** POST /packages/accept — the runner accepts a shared package under consent.
+ *  Materializes the scoped grant + activates the allocation. Auth: Bearer. */
+http.route({
+  path: "/packages/accept",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => null);
+    if (!body?.code || !body?.deviceId) return errorResponse("need { code, deviceId }", 400);
+    try {
+      const out = await ctx.runMutation(api.taskPackages.acceptAllocation, {
+        tokenHash,
+        code: String(body.code),
+        deviceId: String(body.deviceId),
+        wifiOnly: typeof body.wifiOnly === "boolean" ? body.wifiOnly : undefined,
+        chargingOnly: typeof body.chargingOnly === "boolean" ? body.chargingOnly : undefined,
+      });
+      return jsonResponse({ ...out, ok: true });
+    } catch (e: any) {
+      return errorResponse(e?.message || "accept failed", 400);
+    }
+  }),
+});
+
+/** POST /packages/shared — list the packages shared WITH the caller (runner). */
+http.route({
+  path: "/packages/shared",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      const rows = await ctx.runQuery(api.taskPackages.sharedWithMe, { tokenHash });
+      return jsonResponse({ allocations: rows });
+    } catch (e: any) {
+      return errorResponse(e?.message || "list failed", 400);
+    }
   }),
 });
 

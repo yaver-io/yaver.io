@@ -38,6 +38,7 @@ import APIKeysView from "@/components/dashboard/APIKeysView";
 import StorageView from "@/components/dashboard/StorageView";
 import ArmCellView from "@/components/dashboard/ArmCellView";
 import SchedulesView from "@/components/dashboard/SchedulesView";
+import PackagesView from "@/components/dashboard/PackagesView";
 import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import VibePreviewView from "@/components/dashboard/VibePreviewView";
 import ExecView from "@/components/dashboard/ExecView";
@@ -821,7 +822,7 @@ export default function DashboardPage() {
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud" | "build" | "arm">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud" | "build" | "arm" | "packages">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1931,6 +1932,7 @@ export default function DashboardPage() {
     { id: "vault", label: "Vault", icon: "\uD83D\uDD12" },
     { id: "apikeys", label: "Yaver Tokens", icon: "\uD83D\uDD11" },
     { id: "schedules", label: "Schedules", icon: "\u23F0" },
+    { id: "packages", label: "Packages", icon: "\uD83D\uDCE6" },
     { id: "phone", label: "Phone Backend", icon: "\u26A1" },
     { id: "companion", label: "Companion", icon: "\u23F0" },
     { id: "vibe-preview", label: "Vibe Preview", icon: "\uD83C\uDFAC" },
@@ -2761,6 +2763,8 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><APIKeysView /></div>
           ) : activeTab === "schedules" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><SchedulesView /></div>
+          ) : activeTab === "packages" ? (
+            <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto overflow-y-auto"><PackagesView /></div>
           ) : activeTab === "phone" ? (
             <div className="flex-1 min-h-0 w-full max-w-6xl mx-auto overflow-auto p-4"><PhoneProjectsView /></div>
           ) : activeTab === "companion" ? (

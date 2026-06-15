@@ -63,6 +63,7 @@ import type * as shortcuts from "../shortcuts.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as support_link from "../support_link.js";
 import type * as survey from "../survey.js";
+import type * as taskPackages from "../taskPackages.js";
 import type * as teams from "../teams.js";
 import type * as totp from "../totp.js";
 import type * as userDomains from "../userDomains.js";
@@ -130,6 +131,7 @@ declare const fullApi: ApiFromModules<{
   subscriptions: typeof subscriptions;
   support_link: typeof support_link;
   survey: typeof survey;
+  taskPackages: typeof taskPackages;
   teams: typeof teams;
   totp: typeof totp;
   userDomains: typeof userDomains;

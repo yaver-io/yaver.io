@@ -2743,6 +2743,8 @@ export default function MoreScreen() {
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
   const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
   const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
+  const handlePackages = useCallback(() => router.navigate("/packages" as any), [router]);
+  const handlePackageAccept = useCallback(() => router.navigate("/package-accept" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
 
@@ -3088,6 +3090,40 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Data Collection</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"Multi-vantage egress, source health, cross-vantage diff"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Task Packages \u2014 author/run/share portable task-execution units
+                (collect or operate, fetch/MCP-over-MCP), allocate to a runner.
+                Box-reachable, so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handlePackages}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83d\udce6"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Task Packages</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Run, preflight-check, and share portable task packages"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Accept a shared task \u2014 the runner's consent screen: paste an
+                invite code (or open a deep link) to accept a package shared with
+                you and run it on your device. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handlePackageAccept}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83e\udd1d"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Accept a shared task</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Enter an invite code to help someone collect data"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>

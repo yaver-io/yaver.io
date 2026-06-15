@@ -2053,6 +2053,78 @@ export default defineSchema({
   }).index("by_user", ["userId"])
     .index("by_device_slug", ["deviceId", "slug"]),
 
+  /** Task Packages — shareable, portable cross-user task-execution units
+   *  (desktop/agent/package_*.go, docs/yaver-task-packages.md). Convex holds
+   *  BOOKKEEPING ONLY so an owner and a runner (often a DIFFERENT user) can
+   *  discover / share / track a package across devices: name, public hostnames
+   *  (for the consent screen), schedule intent, consent text, coarse counters.
+   *  NEVER the collector spec (selectors, full URLs w/ tokens), output
+   *  endpoints, secrets, IPs, or absolute paths — those resolve on-device
+   *  (collection_store is local). The agent builds the payload through
+   *  buildTaskPackagePayload, pinned by desktop/agent/convex_privacy_test.go. */
+  taskPackages: defineTable({
+    ownerUserId: v.id("users"),
+    deviceId: v.string(),          // owner box that published it
+    name: v.string(),              // sanitized slug
+    version: v.number(),
+    kind: v.string(),              // collect|probe|monitor|operate|agent
+    tier: v.string(),              // read_only | acting
+    description: v.optional(v.string()),
+    domains: v.array(v.string()),  // hostnames only, for consent
+    runtimes: v.array(v.string()), // mobile|agent|docker|worker
+    engines: v.array(v.string()),
+    vantageGeo: v.array(v.string()),
+    vantageResidential: v.boolean(),
+    schedule: v.optional(v.string()),
+    consentSummary: v.optional(v.string()),
+    willNot: v.array(v.string()),
+    dataShown: v.array(v.string()),
+    status: v.string(),            // draft | published | archived
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerUserId"])
+    .index("by_owner_name", ["ownerUserId", "name"])
+    .index("by_device_name", ["deviceId", "name"]),
+
+  /** A Task Package allocated to a runner (often a DIFFERENT user) + device +
+   *  target, under the runner's consent — the cross-user "share a task" object.
+   *  Acceptance materializes a scoped infraAccessGrants row (origin
+   *  "task-package") so the runner is recognized on the owner channel.
+   *  PRIVACY: counters + coarse country only; never collected rows or IPs. */
+  packageAllocations: defineTable({
+    packageId: v.id("taskPackages"),
+    packageName: v.string(),
+    ownerUserId: v.id("users"),
+    runnerUserId: v.optional(v.id("users")),  // set on accept
+    runnerEmail: v.optional(v.string()),      // invite-by-email before accept
+    runnerDeviceId: v.optional(v.string()),
+    target: v.string(),                       // mobile|agent|docker|worker
+    status: v.union(
+      v.literal("proposed"),
+      v.literal("accepted"),
+      v.literal("active"),
+      v.literal("paused"),
+      v.literal("revoked"),
+    ),
+    inviteCode: v.string(),
+    consentSummary: v.optional(v.string()),
+    consentAt: v.optional(v.number()),
+    wifiOnly: v.boolean(),
+    chargingOnly: v.boolean(),
+    expiresAt: v.optional(v.number()),
+    grantId: v.optional(v.id("infraAccessGrants")),
+    // counters — never collected data, never an IP:
+    lastRunAt: v.optional(v.number()),
+    runCount: v.number(),
+    blockCount: v.number(),
+    lastStatus: v.optional(v.string()),
+    lastCountry: v.optional(v.string()),      // coarse "RS"
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerUserId"])
+    .index("by_runner", ["runnerUserId"])
+    .index("by_package", ["packageId"])
+    .index("by_code", ["inviteCode"]),
+
   // GPU-rental orchestration bookkeeping (gpuRentals.ts, written by the
   // agent's gpu_rental_sync.go). Cross-device visibility of which dispatcher
   // box rented which burst GPU / bound which serverless inference, for the
