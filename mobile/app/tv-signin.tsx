@@ -59,7 +59,7 @@ export default function TVSignInScreen() {
         if (r.status === "authorized" && r.token) {
           clearInterval(id);
           await login(r.token);
-          router.replace("/(tabs)/tasks");
+          router.replace("/tv-home");
         } else if (r.status === "expired") {
           clearInterval(id);
           setStatus("expired");
@@ -73,7 +73,7 @@ export default function TVSignInScreen() {
   }, [start, login, begin]);
 
   useEffect(() => {
-    if (isAuthenticated) router.replace("/(tabs)/tasks");
+    if (isAuthenticated) router.replace("/tv-home");
   }, [isAuthenticated]);
 
   return (

@@ -20,6 +20,11 @@ export default function IndexScreen() {
     if (!surveyCompleted) {
       return <Redirect href="/survey" />;
     }
+    // On a TV the phone tab bar is cramped and not focus-friendly on a remote —
+    // route to the 10-foot lean-back launcher instead (app/tv-home.tsx).
+    if (Platform.isTV) {
+      return <Redirect href="/tv-home" />;
+    }
     return <Redirect href="/(tabs)/tasks" />;
   }
 
