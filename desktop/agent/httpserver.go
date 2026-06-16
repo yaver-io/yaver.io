@@ -15387,6 +15387,33 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(s.lemonMgr.Setup())
 
 	default:
+		// Personal Agent Gateway — per-capability dynamic tool (M-G6). A tool named
+		// gw_<connector>_<capability> resolves back to its raw (connector, capability)
+		// ids via the same sanitized-name lookup the tools list was built from, then
+		// dispatches through gatewayInvoke exactly like the static gateway_query case.
+		if strings.HasPrefix(call.Name, gatewayDynamicToolPrefix) {
+			reg, err := NewConnectorRegistry()
+			if err != nil {
+				return mcpToolJSON(map[string]interface{}{"error": err.Error()})
+			}
+			connectorID, capabilityID, ok := resolveGatewayDynamicTool(reg, call.Name)
+			if !ok {
+				return mcpToolError("no such capability: " + call.Name)
+			}
+			// The dynamic tool's inputSchema exposes flow params at the top level
+			// (gw_<conn>_<cap>{month:"…"}); also accept a nested {"params":{…}} for
+			// parity with gateway_query.
+			var nested struct {
+				Params map[string]string `json:"params"`
+			}
+			params := map[string]string{}
+			if err := json.Unmarshal(call.Arguments, &nested); err == nil && nested.Params != nil {
+				params = nested.Params
+			} else {
+				_ = json.Unmarshal(call.Arguments, &params)
+			}
+			return mcpToolJSON(mcpGatewayQuery(connectorID, capabilityID, params))
+		}
 		// Dev environment clone — orchestrates toolchain sync, repo clone, and coding-agent readiness.
 		if handled, result := dispatchDevEnvironmentCloneMCP(s, call.Name, call.Arguments); handled {
 			return result

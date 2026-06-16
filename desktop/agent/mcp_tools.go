@@ -1609,6 +1609,16 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, locationTools...)
 
+	// Personal Agent Gateway — per-capability dynamic tools (M-G6). Each wired
+	// connector's READ capabilities surface as their own gw_<connector>_<capability>
+	// tool on top of the static gateway_query dispatcher above, so a host AI sees
+	// "your apps as tools". The registry is loaded the same way gateway_query's deps
+	// are; if it can't load (e.g. not authed, no connectors) we append nothing —
+	// never error the whole tools list. gateway_dynamic_tools.go.
+	if reg, err := NewConnectorRegistry(); err == nil {
+		tools = append(tools, dynamicGatewayTools(reg)...)
+	}
+
 	// --- Daily Dev Tools ---
 	dailyTools := []map[string]interface{}{
 		{"name": "crypto_price", "description": "Get cryptocurrency prices (CoinGecko, free).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"coins": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Coin IDs (default: bitcoin, ethereum). Use: bitcoin, ethereum, solana, cardano, dogecoin, etc."}}}},
