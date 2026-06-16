@@ -8880,6 +8880,7 @@ type DeviceInfo struct {
 	QuicHost                  string   `json:"quicHost"`
 	LocalIps                  []string `json:"localIps,omitempty"`
 	PublicEndpoints           []string `json:"publicEndpoints,omitempty"`
+	GeoRegion                 string   `json:"geoRegion,omitempty"`
 	QuicPort                  int      `json:"quicPort"`
 	IsOnline                  bool     `json:"isOnline"`
 	IsGuest                   bool     `json:"isGuest,omitempty"`

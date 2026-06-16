@@ -31,6 +31,7 @@ type MachineInfo struct {
 	QuicPort       int                  `json:"quicPort,omitempty"`
 	CurrentWorkDir string               `json:"currentWorkDir,omitempty"`
 	Capabilities   *MachineCapabilities `json:"capabilities,omitempty"`
+	GeoRegion      string               `json:"geoRegion,omitempty"` // coarse egress region only: eu|us|ap|...
 
 	// Shared-infrastructure fields: when true, this machine is not owned by
 	// the current user but was shared with them via guest access on another
@@ -101,6 +102,7 @@ func listAllMachines(ctx context.Context) []MachineInfo {
 					IsOnline:                  d.IsOnline,
 					QuicHost:                  d.QuicHost,
 					QuicPort:                  d.QuicPort,
+					GeoRegion:                 d.GeoRegion,
 					Provider:                  providerFromHint(d.Platform, d.QuicHost),
 					IsShared:                  d.IsGuest,
 					HostName:                  d.HostName,
@@ -143,6 +145,7 @@ func selfMachine(ctx context.Context) MachineInfo {
 		Cost:           "$0",
 		CurrentWorkDir: localCurrentWorkDir(),
 		Capabilities:   detectMachineCapabilities(localCurrentWorkDir()),
+		GeoRegion:      cachedEgressRegion(),
 	}
 }
 

@@ -371,6 +371,43 @@ func (s *collectionStoreT) queryObservations(dataset, sourceID, vantageID string
 	return out
 }
 
+// sourceBlockedBefore reports whether any vantage has recorded a block/throttle
+// for a source matching name (by Name or BaseURL substring, either direction).
+// The planner uses it to STOP re-routing a flagged source through the same kind
+// of runtime — do no harm, never knock again from a blocked IP class.
+func (s *collectionStoreT) sourceBlockedBefore(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureLoaded()
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return false
+	}
+	ids := map[string]bool{}
+	for id, src := range s.Sources {
+		if src == nil {
+			continue
+		}
+		n, b := strings.ToLower(src.Name), strings.ToLower(src.BaseURL)
+		if (n != "" && (strings.Contains(n, name) || strings.Contains(name, n))) ||
+			(b != "" && (strings.Contains(b, name) || strings.Contains(name, b))) {
+			ids[id] = true
+		}
+	}
+	if len(ids) == 0 {
+		return false
+	}
+	for _, h := range s.Health {
+		if h == nil || !ids[h.SourceID] {
+			continue
+		}
+		if strings.HasPrefix(h.State, "blocked_") || h.State == "rate_limited" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *collectionStoreT) healthRows(sourceID string) []map[string]interface{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()

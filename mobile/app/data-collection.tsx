@@ -14,6 +14,7 @@ import {
   dataCollectionClient,
   getDataCollectionDeviceId,
   setDataCollectionDeviceId,
+  type CollectionPlan,
   type DataCollectionTarget,
   type Egress,
   type EgressProxyPolicy,
@@ -25,6 +26,18 @@ function stateColor(c: any, state?: string): string {
   if (!state) return c.textMuted;
   if (state === "healthy") return c.success;
   if (state.startsWith("blocked_") || state === "rate_limited") return c.error;
+  return c.warn;
+}
+
+function planStatusColor(c: any, status?: string): string {
+  if (status === "ready") return c.success;
+  if (status === "blocked" || status === "no_runtime") return c.error;
+  return c.warn; // warn | manual_required
+}
+
+function policyColor(c: any, decision?: string): string {
+  if (decision === "allow") return c.success;
+  if (decision === "block") return c.error;
   return c.warn;
 }
 
@@ -43,6 +56,13 @@ export default function DataCollectionScreen() {
   const [sourceId, setSourceId] = useState("");
   const [dataset, setDataset] = useState("");
   const [compare, setCompare] = useState<VantageCompare | null>(null);
+  const [planSource, setPlanSource] = useState("");
+  const [planAction, setPlanAction] = useState("data");
+  const [planJur, setPlanJur] = useState("");
+  const [planRegion, setPlanRegion] = useState("");
+  const [planBrowser, setPlanBrowser] = useState(false);
+  const [plan, setPlan] = useState<CollectionPlan | null>(null);
+  const [planIds, setPlanIds] = useState<{ sourceId?: string; vantageId?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -121,6 +141,59 @@ export default function DataCollectionScreen() {
     setCompare(r);
   }, [target, sourceId, dataset]);
 
+  const buildPlanReq = useCallback(
+    () => ({
+      source: planSource.trim(),
+      action: planAction.trim() || "data",
+      jurisdiction: planJur.trim() || undefined,
+      preferredRegion: planRegion.trim() || undefined,
+      needsBrowser: planBrowser || undefined,
+    }),
+    [planSource, planAction, planJur, planRegion, planBrowser],
+  );
+
+  const doPlan = useCallback(async () => {
+    const t = target();
+    if (!t) return;
+    if (!planSource.trim()) {
+      setErr("enter a source to plan, e.g. superbet.rs");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    setPlanIds(null);
+    const r = await dataCollectionClient.plan(t, buildPlanReq());
+    setBusy(false);
+    if (r?.plan) setPlan(r.plan); // a "blocked" verdict still carries a plan
+    if (!r?.plan) {
+      setErr((r as any)?.error || "plan failed");
+    }
+  }, [target, planSource, buildPlanReq]);
+
+  const doPlanApply = useCallback(async () => {
+    const t = target();
+    if (!t) return;
+    if (!planSource.trim()) {
+      setErr("enter a source first");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    const r = await dataCollectionClient.planApply(t, buildPlanReq());
+    setBusy(false);
+    if (r?.plan) setPlan(r.plan);
+    if (!r?.sourceId) {
+      setErr((r as any)?.error || "could not register source (policy block?)");
+      return;
+    }
+    setPlanIds({ sourceId: r.sourceId, vantageId: r.vantageId });
+    setSourceId(r.sourceId); // wire into cross-vantage compare
+    setMsg(`Registered source ${r.sourceId}${r.vantageId ? " · vantage " + r.vantageId : ""}`);
+    refresh();
+  }, [target, planSource, buildPlanReq, refresh]);
+
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <AppScreenHeader title="Data Collection · Vantages" onBack={() => router.back()} />
@@ -170,6 +243,109 @@ export default function DataCollectionScreen() {
             </View>
           </View>
         ) : null}
+
+        {/* plan a compliant collection route */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Plan a collection route</Text>
+          <Text style={[styles.muted, { marginBottom: 8 }]}>
+            Checks access policy + jurisdiction, then picks a compliant runtime/egress. Reading public data is allowed; funding or
+            placing bets from a jurisdiction where it&apos;s illegal is blocked. Never routes around a site block.
+          </Text>
+          <TextInput
+            value={planSource}
+            onChangeText={setPlanSource}
+            placeholder="source, e.g. superbet.rs"
+            placeholderTextColor={c.textMuted}
+            autoCapitalize="none"
+            style={styles.input}
+          />
+          <View style={[styles.row, { marginTop: 8 }]}>
+            <TextInput
+              value={planAction}
+              onChangeText={setPlanAction}
+              placeholder="action (data)"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              style={[styles.input, { flex: 1 }]}
+            />
+            <TextInput
+              value={planJur}
+              onChangeText={setPlanJur}
+              placeholder="jurisdiction (TR)"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="characters"
+              style={[styles.input, { flex: 1 }]}
+            />
+          </View>
+          <View style={[styles.row, { marginTop: 8 }]}>
+            <TextInput
+              value={planRegion}
+              onChangeText={setPlanRegion}
+              placeholder="region (eu/us/…)"
+              placeholderTextColor={c.textMuted}
+              autoCapitalize="none"
+              style={[styles.input, { flex: 1 }]}
+            />
+            <Pressable onPress={() => setPlanBrowser((v) => !v)} style={[styles.btn, planBrowser && { backgroundColor: c.accent, borderColor: c.accent }]}>
+              <Text style={{ color: planBrowser ? c.textInverse : c.textPrimary, fontSize: 13 }}>Browser {planBrowser ? "on" : "off"}</Text>
+            </Pressable>
+          </View>
+          <View style={[styles.row, { marginTop: 10 }]}>
+            <Pressable
+              onPress={doPlan}
+              disabled={!deviceId || busy}
+              style={[styles.btn, { backgroundColor: c.accent, borderColor: c.accent, opacity: !deviceId || busy ? 0.4 : 1 }]}
+            >
+              <Text style={{ color: c.textInverse, fontSize: 13 }}>Plan</Text>
+            </Pressable>
+            <Pressable
+              onPress={doPlanApply}
+              disabled={!deviceId || busy || plan?.status === "blocked"}
+              style={[styles.btn, { opacity: !deviceId || busy || plan?.status === "blocked" ? 0.4 : 1 }]}
+            >
+              <Text style={{ color: c.textPrimary, fontSize: 13 }}>Apply (register source)</Text>
+            </Pressable>
+          </View>
+          {plan ? (
+            <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={[styles.mono, { fontWeight: "700" }]}>
+                  {plan.source} · {plan.action}
+                </Text>
+                <Text style={[styles.mono, { color: planStatusColor(c, plan.status), fontWeight: "700" }]}>{(plan.status || "").toUpperCase()}</Text>
+              </View>
+              {plan.policy ? (
+                <Text style={[styles.mono, { color: policyColor(c, plan.policy.decision), marginTop: 6 }]}>
+                  policy: {plan.policy.decision}
+                  {plan.policy.reason ? ` — ${plan.policy.reason}` : ""}
+                </Text>
+              ) : null}
+              <Text style={[styles.mono, { marginTop: 6 }]}>
+                runtime: {plan.runtime || "—"}
+                {plan.collectorType ? ` (${plan.collectorType})` : ""}
+              </Text>
+              <Text style={styles.mono}>
+                egress: {plan.egressPolicy || "—"}
+                {plan.viaPeer ? ` via ${plan.viaPeer}` : ""}
+                {plan.preferredRegion ? ` · ${plan.preferredRegion}` : ""}
+              </Text>
+              {plan.machine ? (
+                <Text style={styles.mono}>
+                  machine: {plan.machine.name || plan.machine.deviceId || "—"}
+                  {plan.machine.geoRegion ? ` · ${plan.machine.geoRegion}` : ""}
+                </Text>
+              ) : null}
+              {plan.reason && !plan.policy?.reason ? <Text style={[styles.muted, { marginTop: 6 }]}>{plan.reason}</Text> : null}
+              {plan.nextActions?.length ? <Text style={[styles.muted, { marginTop: 6 }]}>next: {plan.nextActions.join(" → ")}</Text> : null}
+              {planIds?.sourceId ? (
+                <Text style={[styles.mono, { marginTop: 6, color: c.success }]}>
+                  registered: source {planIds.sourceId}
+                  {planIds.vantageId ? ` · vantage ${planIds.vantageId}` : ""}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
 
         {/* cross-vantage compare */}
         <View style={styles.card}>

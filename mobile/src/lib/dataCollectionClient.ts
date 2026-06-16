@@ -47,6 +47,38 @@ export type CompareRow = {
 };
 export type VantageCompare = { sourceId: string; dataset?: string; fields?: string[]; vantages?: CompareRow[] };
 export type EgressViaPeer = { bridge_id?: string; proxy_url?: string; peer_device?: string; peer_label?: string; peer_egress?: Egress };
+export type CollectionPlanRequest = {
+  source: string;
+  action?: string;
+  jurisdiction?: string;
+  preferredRegion?: string;
+  runtime?: "auto" | "yaver_managed_cloud" | "self_hosted" | "mobile_user_present" | "external_mcp_only" | string;
+  needsDurable?: boolean;
+  needsBrowser?: boolean;
+  needsAndroid?: boolean;
+  userPresentRequired?: boolean;
+  adapter?: string;
+  dataset?: string;
+};
+export type CollectionPlan = {
+  ok?: boolean;
+  status: "ready" | "warn" | "blocked" | "manual_required" | "no_runtime" | string;
+  source: string;
+  action: string;
+  jurisdiction?: string;
+  policy?: { decision: "allow" | "warn" | "block" | string; reason?: string; category?: string };
+  runtime?: string;
+  collectorType?: string;
+  egressPolicy?: string;
+  preferredRegion?: string;
+  machine?: { deviceId?: string; name?: string; provider?: string; geoRegion?: string; isLocal?: boolean; isOnline?: boolean };
+  viaPeer?: string;
+  adapter?: string;
+  accessState?: string;
+  nextActions?: string[];
+  reason?: string;
+};
+export type CollectionPlanResult = { plan: CollectionPlan; sourceId?: string; vantageId?: string; source?: any; vantage?: any };
 
 export async function getDataCollectionDeviceId(): Promise<string> {
   return (await AsyncStorage.getItem(DATA_COLLECTION_DEVICE_KEY)) || "";
@@ -87,16 +119,24 @@ async function collectionOps<T = any>(
   const hosts = [...(target.lanIps || []), ...(target.host ? [target.host] : [])].filter(Boolean);
   for (const h of hosts) {
     const data = await lanAttempt(h as string, port, body, timeoutMs);
-    if (data) {
-      if (data?.ok === false || (data?.error && data?.initial === undefined)) {
-        return { ok: false, code: data?.code, error: data?.error } as unknown as T;
-      }
-      return ((data as any)?.initial ?? data) as T;
-    }
+    if (data) return unwrapOps<T>(data);
   }
   const data = await quicClient.callOpsOnDevice(target.id, verb, payload, timeoutMs);
-  if (data?.ok === false) return { ok: false, code: (data as any)?.code, error: data?.error } as unknown as T;
-  return ((data as any)?.initial ?? data) as T;
+  return unwrapOps<T>(data);
+}
+
+// unwrapOps flattens an ops result. A verb that returns a structured payload
+// (e.g. a collection_plan verdict) carries it in `initial` — preserve that even
+// when ok===false, because a "blocked" plan is a valid verdict, not a transport
+// error. Callers still detect failure via the merged ok/error fields.
+function unwrapOps<T>(data: any): T {
+  const initial = (data as any)?.initial;
+  if (initial && typeof initial === "object") {
+    if (data?.ok === false) return { ...initial, ok: false, code: data?.code, error: data?.error } as unknown as T;
+    return initial as T;
+  }
+  if (data?.ok === false || data?.error) return { ok: false, code: data?.code, error: data?.error } as unknown as T;
+  return data as T;
 }
 
 export const dataCollectionClient = {
@@ -111,4 +151,8 @@ export const dataCollectionClient = {
   vantageCompare: (t: DataCollectionTarget, sourceId: string, dataset?: string) =>
     collectionOps<VantageCompare>(t, "collection_vantage_compare", dataset ? { sourceId, dataset } : { sourceId }, 20000),
   datasetQuery: (t: DataCollectionTarget, payload: Record<string, unknown>) => collectionOps<{ observations: any[]; count: number }>(t, "collection_dataset_query", payload, 20000),
+  plan: (t: DataCollectionTarget, payload: CollectionPlanRequest) =>
+    collectionOps<CollectionPlanResult>(t, "collection_plan", payload as Record<string, unknown>, 15000),
+  planApply: (t: DataCollectionTarget, payload: CollectionPlanRequest) =>
+    collectionOps<CollectionPlanResult>(t, "collection_plan_apply", payload as Record<string, unknown>, 15000),
 };
