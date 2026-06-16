@@ -470,6 +470,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Live ghost screen stream (Bambu-camera style) — proxied by the Talos web UI.
 	mux.HandleFunc("/ghost/stream", s.auth(s.handleGhostStream))
 	mux.HandleFunc("/ghost/frame.jpg", s.auth(s.handleGhostFrame))
+	// Capture card (home A/V source) — MJPEG stream + latest frame. Own
+	// non-protected sources only; HDCP-protected input is reported, not streamed.
+	mux.HandleFunc("/capture/stream", s.auth(s.handleCaptureStream))
+	mux.HandleFunc("/capture/frame.jpg", s.auth(s.handleCaptureFrame))
+	// Apple TV now-playing metadata SSE (delta push to phone / car / glass).
+	mux.HandleFunc("/appletv/nowplaying/stream", s.auth(s.handleAppleTVNowPlayingStream))
 	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
@@ -11914,6 +11920,42 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				{"type": "image", "data": b64, "mimeType": "image/jpeg"},
 			},
 		}
+
+	// appletv_now_playing — first-class image tool so a HOST model can SEE the
+	// now-playing artwork (the `ops` path flattens results to text, hiding the
+	// picture). Thin adapter over the appletv_now_playing verb: reuses the full
+	// ops mesh path (remote targeting + auth + relay) to fetch metadata + a
+	// data: artwork URL, then re-wraps the artwork as a VIEWABLE MCP image block.
+	case "appletv_now_playing":
+		var atArgs struct {
+			Machine string `json:"machine"`
+			Device  string `json:"device"`
+		}
+		_ = json.Unmarshal(call.Arguments, &atArgs)
+		machine := strings.TrimSpace(atArgs.Machine)
+		if machine == "" {
+			machine = "local"
+		}
+		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
+		payload, _ := json.Marshal(map[string]interface{}{"device": atArgs.Device})
+		out := dispatchOps(octx, OpsRequest{Machine: machine, Verb: "appletv_now_playing", Payload: payload})
+		if !out.OK {
+			return mcpToolError("appletv_now_playing (" + machine + "): " + out.Error)
+		}
+		meta, _ := json.MarshalIndent(out.Initial, "", "  ")
+		content := []map[string]interface{}{{"type": "text", "text": "Apple TV now playing:\n" + string(meta)}}
+		if m, ok := out.Initial.(map[string]interface{}); ok {
+			if art, ok := m["artwork"].(string); ok && strings.HasPrefix(art, "data:") {
+				mime := "image/jpeg"
+				b64 := art
+				if i := strings.Index(art, ";base64,"); i >= 0 {
+					mime = strings.TrimPrefix(art[:i], "data:")
+					b64 = art[i+len(";base64,"):]
+				}
+				content = append(content, map[string]interface{}{"type": "image", "data": b64, "mimeType": mime})
+			}
+		}
+		return map[string]interface{}{"content": content}
 
 	// circuit_plot — first-class image tool so a HOST model can SEE a simulated
 	// waveform (the `ops` path flattens results to text, hiding the picture).

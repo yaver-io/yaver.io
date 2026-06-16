@@ -86,6 +86,12 @@ type OpsContext struct {
 // circuit simulator) without exposing the rest of the owner's machine.
 var capabilityScopeVerbPrefix = map[string]string{
 	"circuit": "circuit_",
+	// "stream" isolates a guest token to ONLY the read-only stream_* viewer
+	// verbs — enumerate shareable streams + pull snapshot frames of a shared
+	// camera / capture card / Apple TV. No control, no exec, no vault. This is
+	// how a user lends a LIVE VIEW of one of their devices to a friend's
+	// account without exposing the rest of the box.
+	"stream": "stream_",
 }
 
 // isCapabilityScope reports whether a guest-scope is a single-capability

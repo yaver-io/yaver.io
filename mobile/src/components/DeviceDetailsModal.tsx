@@ -349,6 +349,28 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
         </Text>
       </Pressable>
       <Pressable
+        onPress={() => {
+          // Apple TV remote rides the active quicClient transport like Desktop.
+          if (!isActive) {
+            selectDevice(device).catch(() => {});
+          }
+          onClose();
+          setTimeout(() => { router.push("/appletv-remote"); }, 200);
+        }}
+        style={{
+          flexDirection: "row", alignItems: "center", gap: 6,
+          paddingHorizontal: 12, paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: isActive ? "rgba(2,132,199,0.12)" : "rgba(75,85,99,0.10)",
+          borderWidth: 1,
+          borderColor: isActive ? "rgba(2,132,199,0.45)" : c.border,
+        }}
+      >
+        <Text style={{ color: isActive ? "#7dd3fc" : c.textMuted, fontSize: 13, fontWeight: "700" }}>
+          📺  Apple TV
+        </Text>
+      </Pressable>
+      <Pressable
         onPress={async () => {
           try {
             await Clipboard.setStringAsync(sshCommand);

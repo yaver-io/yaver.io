@@ -433,6 +433,8 @@ func main() {
 		runSession(os.Args[2:])
 	case "vault":
 		runVault(os.Args[2:])
+	case "appletv":
+		runAppleTV(os.Args[2:])
 	case "runner":
 		runRunner(os.Args[2:])
 	case "runner-auth":
@@ -7015,6 +7017,39 @@ func runDoctor() {
 		} else {
 			pass(fmt.Sprintf("AC power, %d cores, load %.2f", hs.NumCPU, hs.LoadAvg1))
 		}
+	}
+
+	// Apple TV control + capture-card availability
+	fmt.Println("\n── Apple TV / Capture ──")
+	check("Python 3")
+	if py := findPython(); py != "" {
+		pass(py)
+		check("pyatv")
+		if pyatvImportable(py) {
+			pass("importable (Apple TV control ready)")
+		} else {
+			warning("not installed — run `pip3 install pyatv` to enable Apple TV control")
+		}
+	} else {
+		warning("not found — install Python 3 for Apple TV control")
+	}
+	check("ffmpeg")
+	if ffmpegPath() != "" {
+		pass(ffmpegPath() + " (capture card ready)")
+	} else {
+		warning("not found — install ffmpeg for capture-card streaming (Pi: sudo apt install ffmpeg)")
+	}
+	check("Capture devices")
+	if devs := captureDevices(); len(devs) > 0 {
+		pass(fmt.Sprintf("%d found", len(devs)))
+	} else {
+		warning("none (/dev/video*) — plug in a capture card, or this isn't the home Pi")
+	}
+	check("Paired Apple TVs")
+	if devs, err := appletvListDevices(); err == nil && len(devs) > 0 {
+		pass(fmt.Sprintf("%d paired", len(devs)))
+	} else {
+		warning("none — run `yaver appletv scan` then `yaver appletv pair <identifier>`")
 	}
 
 	// Summary

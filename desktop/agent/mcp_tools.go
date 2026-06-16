@@ -2948,6 +2948,25 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "appletv_now_playing",
+			"description": "Fetch the Apple TV's now-playing state and return the album/show ARTWORK as a VIEWABLE image plus the metadata (title/artist/app/state/position). Targets the Pi (or any mesh device) running the appletv engine via `machine`. For control (keys, transport, power, launch, pair) use the `ops` tool with the appletv_* verbs. Capturing the user's OWN non-protected HDMI source is a separate capability (ops capture_* verbs + /capture/stream).",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"machine": map[string]interface{}{
+						"type":        "string",
+						"description": "Target device running the Apple TV engine: \"local\", \"primary\", or a deviceId / alias. Default \"local\".",
+						"default":     "local",
+					},
+					"device": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional paired-Apple-TV identifier or name; default uses the configured default TV.",
+					},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
 			"name":        "circuit_plot",
 			"description": "Simulate the loaded electrical circuit and return the waveform as a VIEWABLE PNG, so you (the host model) can SEE the response and do circuit design in the loop: edit the netlist (ops circuit_import) → simulate → look at the curve → fix. Import a SPICE/KiCad/EPLAN design first via ops verb circuit_import. Picks the analysis from `type` (op→transient, tran, ac for a Bode plot, dc sweep); `signals` filters which node traces to draw. For raw numbers instead of a picture use ops verbs circuit_simulate / circuit_measure / circuit_erc. Targets any mesh device via `machine`.",
 			"inputSchema": map[string]interface{}{

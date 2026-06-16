@@ -1192,6 +1192,28 @@ export class QuicClient {
     return url;
   }
 
+  /** Authed snapshot URL for the home capture-card frame (own non-protected
+   *  source only; the agent returns 409 if the input is HDCP-protected). iOS
+   *  polls this single-JPEG endpoint; Android can use captureStreamUrl (MJPEG).
+   *  Token is promoted to a bearer by the agent; the relay validates ?__rp=. */
+  captureFrameUrl(): string {
+    let url = `${this.baseUrl}/capture/frame.jpg?token=${encodeURIComponent(this.token || "")}`;
+    if (this.activeRelayUrl && this.activeRelayPassword) {
+      url += `&__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
+  }
+
+  /** Authed MJPEG stream URL for the home capture card (Android / web; iOS uses
+   *  captureFrameUrl polling — WKWebView can't render multipart MJPEG). */
+  captureStreamUrl(): string {
+    let url = `${this.baseUrl}/capture/stream?token=${encodeURIComponent(this.token || "")}`;
+    if (this.activeRelayUrl && this.activeRelayPassword) {
+      url += `&__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
+  }
+
   /** Issue an authenticated agent HTTP request over THIS client's live
    *  transport — whatever connect() resolved (direct LAN, Tailscale, tunnel,
    *  or relay). When `targetDeviceId` is the device this client is attached to
