@@ -33,22 +33,24 @@ func init() {
 		Name:        "stream_broadcast",
 		Description: "Go LIVE to an RTMP endpoint (Twitch/YouTube/own server) from a source — capture/screen/scene/<pushed>. Payload {rtmpUrl, source?, fps?}. User-initiated egress; the stream key is never echoed back. WebRTC real-time is separate.",
 		Schema: atvSchema(map[string]interface{}{
-			"rtmpUrl": map[string]interface{}{"type": "string", "description": "rtmp(s)://host/app/streamkey"},
-			"source":  map[string]interface{}{"type": "string", "description": "capture|screen|scene|<pushed name> (default capture)"},
-			"fps":     map[string]interface{}{"type": "integer"},
-			"profile": map[string]interface{}{"type": "string", "description": "quality tier: source|high|balanced|saver (downscale+bitrate)"},
+			"rtmpUrl":     map[string]interface{}{"type": "string", "description": "rtmp(s)://host/app/streamkey"},
+			"source":      map[string]interface{}{"type": "string", "description": "capture|screen|scene|<pushed name> (default capture)"},
+			"fps":         map[string]interface{}{"type": "integer"},
+			"profile":     map[string]interface{}{"type": "string", "description": "quality tier: source|high|balanced|saver (downscale+bitrate)"},
+			"audioDevice": map[string]interface{}{"type": "string", "description": "ALSA capture device (hw:N,0) from audio_devices to mux AAC audio; omit for video-only"},
 		}),
 		Handler: func(c OpsContext, payload json.RawMessage) OpsResult {
 			var p struct {
-				RTMPUrl string `json:"rtmpUrl"`
-				Source  string `json:"source"`
-				FPS     int    `json:"fps"`
-				Profile string `json:"profile"`
+				RTMPUrl     string `json:"rtmpUrl"`
+				Source      string `json:"source"`
+				FPS         int    `json:"fps"`
+				Profile     string `json:"profile"`
+				AudioDevice string `json:"audioDevice"`
 			}
 			if err := json.Unmarshal(payload, &p); err != nil || strings.TrimSpace(p.RTMPUrl) == "" {
 				return OpsResult{OK: false, Code: "bad_payload", Error: "rtmpUrl required"}
 			}
-			if err := bcast.start(p.Source, p.RTMPUrl, p.FPS, p.Profile); err != nil {
+			if err := bcast.start(p.Source, p.RTMPUrl, p.FPS, p.Profile, p.AudioDevice); err != nil {
 				return OpsResult{OK: false, Code: "broadcast_failed", Error: err.Error()}
 			}
 			return OpsResult{OK: true, StreamID: "broadcast", Initial: bcast.status()}

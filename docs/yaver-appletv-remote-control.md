@@ -1025,6 +1025,26 @@ A single `StreamProfile` threaded through the existing encode points:
 
 ---
 
+## 11c. Audio + overview (2026-06-17)
+
+Streaming was video-only; watching a satellite feed / broadcasting needs sound.
+Shipped (agent):
+- **RTMP broadcast audio** — `stream_broadcast {audioDevice}` muxes AAC from an
+  ALSA capture device (a SEPARATE device from the v4l2 video, so no contention
+  with the capture stream): ffmpeg `-f mjpeg -i pipe:0 -f alsa -i hw:N,0 -c:v
+  libx264 -c:a aac -f flv`. Omit `audioDevice` → video-only (`-an`).
+- **`audio_devices`** verb — lists ALSA capture cards from `/proc/asound/cards`
+  (no dep) as `hw:N,0` for the user to pick.
+- **`stream_status`** verb — one-call overview of the whole plane (capture,
+  scene, broadcast, live WebRTC tiers, pushed sources, audio devices).
+
+**Remaining audio gap:** WebRTC / MJPEG audio. MJPEG can't carry audio at all;
+WebRTC audio needs a net-new pion **Opus** track (ffmpeg ALSA→Opus→RTP into a
+second TrackLocalStaticSample) — there's no existing Opus-track infra to reuse,
+and it's hardware-gated to verify. Designed, not built. For now: broadcast/RTMP
+carries audio; live WebRTC/MJPEG watching is video + (Apple TV) now-playing
+metadata.
+
 ## 11b. TURN enablement for remote WebRTC (no relay code change)
 
 WebRTC media needs a relay candidate when both peers are behind NAT (the home

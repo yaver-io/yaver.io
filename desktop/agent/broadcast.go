@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/url"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type broadcaster struct {
 	mu      sync.Mutex
 	on      bool
 	source  string
+	audio   bool
 	target  string // host only (key masked)
 	cancel  context.CancelFunc
 	cmd     *exec.Cmd
@@ -43,7 +45,7 @@ func maskRTMP(raw string) string {
 	return "rtmp://…"
 }
 
-func (b *broadcaster) start(source, rtmpURL string, fps int, profile string) error {
+func (b *broadcaster) start(source, rtmpURL string, fps int, profile, audioDevice string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.on {
@@ -70,11 +72,25 @@ func (b *broadcaster) start(source, rtmpURL string, fps int, profile string) err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// JPEG frames in on stdin → x264 → FLV/RTMP out.
+	// Video JPEG frames in on stdin (input 0); optional ALSA audio (input 1 —
+	// a SEPARATE device from the v4l2 video, so no contention with the capture
+	// stream) → x264 + AAC → FLV/RTMP.
+	audioDevice = strings.TrimSpace(audioDevice)
+	withAudio := audioDevice != "" && runtime.GOOS == "linux"
 	args := []string{
 		"-f", "mjpeg", "-framerate", fmt.Sprintf("%d", fps), "-i", "pipe:0",
+	}
+	if withAudio {
+		args = append(args, "-f", "alsa", "-i", audioDevice)
+	}
+	args = append(args,
 		"-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
 		"-pix_fmt", "yuv420p", "-g", fmt.Sprintf("%d", fps*2),
+	)
+	if withAudio {
+		args = append(args, "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "1:a:0")
+	} else {
+		args = append(args, "-an")
 	}
 	if hasProf && profile != "source" {
 		if prof.MaxWidth > 0 {
@@ -103,6 +119,7 @@ func (b *broadcaster) start(source, rtmpURL string, fps int, profile string) err
 	b.on = true
 	b.source = source
 	b.target = maskRTMP(rtmpURL)
+	b.audio = withAudio
 	b.lastErr = ""
 
 	// Feed loop: write the source's latest JPEG at the target fps.
@@ -160,6 +177,7 @@ func (b *broadcaster) status() map[string]interface{} {
 		"running": b.on,
 		"source":  b.source,
 		"target":  b.target, // host only; the stream key is never echoed
+		"audio":   b.audio,
 	}
 	if b.lastErr != "" {
 		st["error"] = b.lastErr
