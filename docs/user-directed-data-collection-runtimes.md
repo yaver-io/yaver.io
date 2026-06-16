@@ -132,6 +132,40 @@ The correct behavior is:
 pause -> show the user what happened -> request user-present action or stop
 ```
 
+## Do No Harm — Third-Party Abuse Posture
+
+This is the controlling principle, mirrored verbatim in `CLAUDE.md` (and
+`../yaver-bet/CLAUDE.md`): **Yaver lowers the user's own cost; it does not attack,
+overload, or abuse anyone else's infrastructure.** A datacenter IP hammering a
+third party gets the account suspended — and burdening them is wrong regardless.
+This is enforced in code, not just policy:
+
+1. **Honest identification.** Collectors identify truthfully and never spoof a
+   browser `User-Agent`/`Origin`/`Referer` to defeat bot detection. A site that
+   blocks an honest collector is saying "no", and we respect it. (Incident
+   2026-06-16: a betting feeder that impersonated a browser to scrape from a
+   Hetzner box drew an abuse warning — see `../yaver-bet/CLAUDE.md`.)
+2. **Back off and stop on a block.** A `403/429/451` triggers exponential
+   backoff, then a full stop — never a tighter loop and never an IP hop. Source
+   Health records the block as a finding (`blocked_geo`/`blocked_ip`/
+   `rate_limited`); it is never a signal to rotate around it.
+3. **Block-aware planner reroute (do-no-harm by construction).** Once a source
+   has been blocked from a **datacenter** vantage, `collection_plan` will not
+   re-route it through the same cloud IP class. It prefers the user's
+   **own-device / residential** runtime if one is online (re-points
+   `machine`/`runtime`, `egressPolicy: machine_native`); if none is, it emits
+   `nextActions: [prefer_residential_vantage, ask_user_present]` and downgrades
+   the plan to `warn` with a reason. Implemented in
+   `desktop/agent/collection_plan.go` (`isDatacenterMachine` /
+   `pickResidentialMachine` / `sourceBlockedBeforeFn`) over
+   `collectionStore.sourceBlockedBefore`; covered by
+   `collection_plan_test.go` (`TestCollectionPlanReroutesBlockedSourceToResidential`,
+   `…AdvisesUserPresentWhenNoResidential`).
+4. **Right resource, not the loudest one.** Prefer official/keyless APIs and
+   distributed own-device/residential vantages over a 24/7 scrape loop on one
+   shared cloud box. Peer-egress lends the user's OWN machines only (default-off,
+   same-user, RFC1918-blocked) — never an open relay, never ban/geo evasion.
+
 ## Runtime Model
 
 Yaver should treat all execution environments as "runtimes".

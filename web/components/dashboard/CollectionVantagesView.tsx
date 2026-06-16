@@ -43,6 +43,23 @@ type CompareRow = {
   values?: Record<string, unknown>;
 };
 type Compare = { sourceId: string; dataset?: string; fields?: string[]; vantages?: CompareRow[] };
+type Plan = {
+  ok?: boolean;
+  status: string;
+  source: string;
+  action: string;
+  jurisdiction?: string;
+  policy?: { decision?: string; reason?: string; category?: string };
+  runtime?: string;
+  collectorType?: string;
+  egressPolicy?: string;
+  preferredRegion?: string;
+  machine?: { deviceId?: string; name?: string; geoRegion?: string };
+  viaPeer?: string;
+  accessState?: string;
+  nextActions?: string[];
+  reason?: string;
+};
 
 const card = "rounded-xl border border-white/10 bg-white/[0.03] p-4";
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:opacity-40";
@@ -57,6 +74,18 @@ function stateColor(state?: string): string {
   return "text-amber-300";
 }
 
+function planStatusColor(status?: string): string {
+  if (status === "ready") return "text-emerald-300";
+  if (status === "blocked" || status === "no_runtime") return "text-rose-300";
+  return "text-amber-300"; // warn | manual_required
+}
+
+function policyColor(decision?: string): string {
+  if (decision === "allow") return "text-emerald-300";
+  if (decision === "block") return "text-rose-300";
+  return "text-amber-300";
+}
+
 export default function CollectionVantagesView({ devices, token }: { devices: Device[]; token: string | null }) {
   const [deviceId, setDeviceId] = useState("");
   const [egress, setEgress] = useState<Egress | null>(null);
@@ -66,6 +95,13 @@ export default function CollectionVantagesView({ devices, token }: { devices: De
   const [sourceId, setSourceId] = useState("");
   const [dataset, setDataset] = useState("");
   const [compare, setCompare] = useState<Compare | null>(null);
+  const [planSource, setPlanSource] = useState("");
+  const [planAction, setPlanAction] = useState("data");
+  const [planJur, setPlanJur] = useState("");
+  const [planRegion, setPlanRegion] = useState("");
+  const [planBrowser, setPlanBrowser] = useState(false);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [planIds, setPlanIds] = useState<{ sourceId?: string; vantageId?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -102,8 +138,15 @@ export default function CollectionVantagesView({ devices, token }: { devices: De
         const client = await ensureClient(deviceId);
         if (!client) return { ok: false, error: "not connected" };
         const res = await client.callOps(verb, payload);
+        const initial = (res as any)?.initial;
+        // A verb that returns a structured payload (e.g. a collection_plan verdict)
+        // carries it in `initial` — preserve it even when ok===false, because a
+        // "blocked" plan is a valid verdict, not a transport error.
+        if (initial && typeof initial === "object") {
+          return res?.ok === false ? { ...initial, ok: false, code: res.code, error: res.error } : initial;
+        }
         if (res?.ok === false) return { ok: false, code: res.code, error: res.error };
-        return (res as any)?.initial ?? res;
+        return res;
       } catch (e: any) {
         setMsg(e?.message || "connection failed");
         return { ok: false, error: e?.message || "failed" };
@@ -162,6 +205,53 @@ export default function CollectionVantagesView({ devices, token }: { devices: De
     }
     setCompare(r);
   }, [sourceId, dataset, call]);
+
+  const planPayload = useCallback(
+    () => ({
+      source: planSource.trim(),
+      action: planAction.trim() || "data",
+      jurisdiction: planJur.trim() || undefined,
+      preferredRegion: planRegion.trim() || undefined,
+      needsBrowser: planBrowser || undefined,
+    }),
+    [planSource, planAction, planJur, planRegion, planBrowser],
+  );
+
+  const doPlan = useCallback(async () => {
+    if (!planSource.trim()) {
+      setErr("enter a source to plan, e.g. superbet.rs");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    setPlanIds(null);
+    const r = await call("collection_plan", planPayload());
+    setBusy(false);
+    if (r?.plan) setPlan(r.plan); // a "blocked" verdict still carries a plan
+    if (!r?.plan) setErr(r?.error || "plan failed");
+  }, [planSource, planPayload, call]);
+
+  const doPlanApply = useCallback(async () => {
+    if (!planSource.trim()) {
+      setErr("enter a source first");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    const r = await call("collection_plan_apply", planPayload());
+    setBusy(false);
+    if (r?.plan) setPlan(r.plan);
+    if (!r?.sourceId) {
+      setErr(r?.error || "could not register source (policy block?)");
+      return;
+    }
+    setPlanIds({ sourceId: r.sourceId, vantageId: r.vantageId });
+    setSourceId(r.sourceId); // wire into cross-vantage compare
+    setMsg(`Registered source ${r.sourceId}${r.vantageId ? " · vantage " + r.vantageId : ""}`);
+    refresh();
+  }, [planSource, planPayload, call, refresh]);
 
   return (
     <div className="space-y-4">
@@ -236,6 +326,75 @@ export default function CollectionVantagesView({ devices, token }: { devices: De
           </div>
         </div>
       )}
+
+      {/* plan a compliant collection route */}
+      <div className={card}>
+        <h2 className="mb-2 text-sm font-semibold">Plan a collection route</h2>
+        <p className="mb-3 text-xs text-white/50">
+          Checks access policy + jurisdiction, then picks a compliant runtime/egress. Reading public data is allowed; funding or
+          placing bets from a jurisdiction where it&apos;s illegal is blocked. Never routes around a site block.
+        </p>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <input className={input} placeholder="source, e.g. superbet.rs" value={planSource} onChange={(e) => setPlanSource(e.target.value)} />
+          <input className={`${input} w-28`} placeholder="action (data)" value={planAction} onChange={(e) => setPlanAction(e.target.value)} />
+          <input className={`${input} w-28`} placeholder="jurisdiction" value={planJur} onChange={(e) => setPlanJur(e.target.value.toUpperCase())} />
+          <input className={`${input} w-24`} placeholder="region" value={planRegion} onChange={(e) => setPlanRegion(e.target.value)} />
+          <button
+            className={planBrowser ? `${btn} bg-emerald-500/80 text-black` : btnNeutral}
+            disabled={busy}
+            onClick={() => setPlanBrowser((v) => !v)}
+          >
+            Browser {planBrowser ? "on" : "off"}
+          </button>
+          <button className={btnAccent} disabled={!deviceId || busy} onClick={doPlan}>
+            Plan
+          </button>
+          <button className={btnNeutral} disabled={!deviceId || busy || plan?.status === "blocked"} onClick={doPlanApply}>
+            Apply (register source)
+          </button>
+        </div>
+        {plan ? (
+          <div className="space-y-1 border-t border-white/10 pt-3 font-mono text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold">
+                {plan.source} · {plan.action}
+              </span>
+              <span className={`font-semibold ${planStatusColor(plan.status)}`}>{(plan.status || "").toUpperCase()}</span>
+            </div>
+            {plan.policy && (
+              <div className={policyColor(plan.policy.decision)}>
+                policy: {plan.policy.decision}
+                {plan.policy.reason ? ` — ${plan.policy.reason}` : ""}
+              </div>
+            )}
+            <div className="text-white/70">
+              runtime: {plan.runtime || "—"}
+              {plan.collectorType ? ` (${plan.collectorType})` : ""}
+            </div>
+            <div className="text-white/70">
+              egress: {plan.egressPolicy || "—"}
+              {plan.viaPeer ? ` via ${plan.viaPeer}` : ""}
+              {plan.preferredRegion ? ` · ${plan.preferredRegion}` : ""}
+            </div>
+            {plan.machine && (
+              <div className="text-white/70">
+                machine: {plan.machine.name || plan.machine.deviceId || "—"}
+                {plan.machine.geoRegion ? ` · ${plan.machine.geoRegion}` : ""}
+              </div>
+            )}
+            {plan.reason && !plan.policy?.reason && <div className="text-white/50">{plan.reason}</div>}
+            {plan.nextActions?.length ? <div className="text-white/50">next: {plan.nextActions.join(" → ")}</div> : null}
+            {planIds?.sourceId && (
+              <div className="text-emerald-300">
+                registered: source {planIds.sourceId}
+                {planIds.vantageId ? ` · vantage ${planIds.vantageId}` : ""}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-white/40">No plan yet. Enter a source and Plan to see the allow/warn/block verdict + route.</p>
+        )}
+      </div>
 
       {/* cross-vantage compare */}
       <div className={card}>
