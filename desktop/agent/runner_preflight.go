@@ -34,8 +34,10 @@ type RunnerPreflightResult struct {
 // don't block a path we can't assess).
 func RunnerPreflightByID(runnerID, workDir string) RunnerPreflightResult {
 	id := normalizeRunnerID(runnerID)
-	if id == "" {
-		return RunnerPreflightResult{Fresh: true}
+	if id == "" || !runnerHasAuthModel(id) {
+		// Unknown / no-auth runners have nothing to pre-flight — the TaskManager
+		// handles them; we don't block a path we can't assess.
+		return RunnerPreflightResult{Runner: id, Fresh: true}
 	}
 	status := DetectRunnerRuntimeStatus(RunnerConfig{RunnerID: id}, workDir)
 	if status.AuthConfigured {
@@ -51,6 +53,17 @@ func RunnerPreflightByID(runnerID, workDir string) RunnerPreflightResult {
 		Action:      action,
 		Spoken:      "Your " + id + " login has expired. Re-authenticate with " + action + " to continue.",
 	}
+}
+
+// runnerHasAuthModel reports whether a runner authenticates (so a missing/expired
+// credential is a real pre-flight failure). Runners without an auth model are not
+// pre-flighted.
+func runnerHasAuthModel(id string) bool {
+	switch normalizeRunnerID(id) {
+	case "codex", "claude", "glm", "opencode":
+		return true
+	}
+	return false
 }
 
 // runnerReauthCommand returns the command that re-establishes a runner's auth.

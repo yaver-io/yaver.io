@@ -1,7 +1,9 @@
 # Yaver on the Wrist — Apple Watch & Wear OS as the Thinnest Voice Terminal
 
-*Design-only. 2026-06-17. No code written. Grounds every claim in code that
-exists today; flags net-new explicitly.*
+*2026-06-17. Phase P0/P0' spine BUILT (uncommitted) — see §11 Implementation
+status. The verifiable Go + TS layers compile and pass tests; the native
+watchOS/Wear apps are scaffolded on the `tvos/` precedent (device-built).
+Grounds every claim in code; flags what still needs a device.*
 
 ## 0. One-paragraph thesis
 
@@ -261,7 +263,59 @@ Phone-paired is not just a transport; it's a **division of labor**:
   Keychain, `appletvClient`-style LAN `/ops` + relay; `watch_push.go` for
   completion wake. Behind an explicit "works without your phone" toggle.
 
-## 10. Verdict
+## 10. Implementation status (2026-06-17 — BUILT, uncommitted)
+
+The phone-paired spine (P0/P0') plus the standalone agent endpoint (early P3)
+are built. Verified layers compile and pass tests; native apps are scaffolds
+that build on a device, exactly like `tvos/`.
+
+**Verified (Go + TS):**
+- `desktop/agent/viewport_prompt.go` — `wearable-watch`/`wearable-wear` surface
+  shape ("ONE short sentence, no code"); `tasks.go` doc + `viewport_prompt_test.go`.
+- `desktop/agent/watch_risk.go` — Go mirror of the phone risk gate +
+  one-sentence summarizer + read-code guard + complication-intent expansion.
+  `watch_risk_test.go` (7 tests) green in isolation.
+- `desktop/agent/watch_http.go` — standalone `POST /watch/turn` (non-blocking
+  dispatch, stateless base64 confirm token) + `GET /watch/result` poll; routes
+  registered `s.auth` in `httpserver.go` next to `/mobile/*`.
+- `mobile/src/lib/watchBridge.ts` — the phone-side bridge: wire-protocol v1
+  source of truth + `handleWatchTurn` reusing `carVoiceConfirm` (risk gate) and
+  `carVoiceCoding::dispatchAndSummarize` (the car loop, unchanged).
+  `watchBridge.test.mts` (11 tests) green.
+- `mobile/src/lib/watchEntry.ts` — the native-transport adapter bus
+  (`configure`/`deliver`/`sender`, `parseTurn` validation). `watchEntry.test.mts`
+  (5 tests) green. `tsc --noEmit` clean.
+
+> Note: the agent package does not fully `go build` right now because an
+> unrelated parallel session left an untracked `gateway_intent.go` that
+> redeclares `containsAny` against the committed `repos_http.go`. The watch
+> code has **zero** errors of its own (confirmed by isolating it); that
+> conflict is someone else's WIP to resolve, not part of this work.
+
+**Scaffolded (native, build on device — like `tvos/`):**
+- `watch/` — watchOS SwiftUI app (XcodeGen `project.yml`, bundle `io.yaver.watch`):
+  WCSession phone-paired primary + standalone LAN `AgentClient`/device-code auth.
+  `xcodegen generate` validated; `swiftc -parse` passes on SDK-independent files.
+- `wear/` — standalone Wear OS Compose project (`io.yaver.wear`): Wear Data Layer
+  primary + standalone LAN client.
+- `mobile/native-watch/ios/` (WCSession bridge), `mobile/native-wear/android/`
+  (Wear Data Layer module + listener service + ReactPackage), and
+  `mobile/plugins/withWatchBridge.js` (copies sources on prebuild) — the plugin
+  loads cleanly and is **deliberately unregistered** in `app.json` (same posture
+  as `withMeshTunnel.js`) until the native targets are built on a Mac/device.
+
+**Wire protocol v1** (one source of truth, mirrored 4×): `watchBridge.ts` ↔
+`watch_http.go` ↔ `WatchProtocol.swift` ↔ `WatchProtocol.kt`. Watch→server:
+`transcript` / `confirm{token,reply}` / `intent`. Server→watch: `ack` /
+`confirm-needed{token,prompt}` / `working` / `summary` / `error` / `handoff`.
+
+**Remaining to ship (need a Mac + paired devices):** add the watchOS companion
+target to the Xcode project and register `withWatchBridge.js`; build `wear/` and
+install on a paired watch; on-device pair test (Simulator/emulator
+WCSession/Data-Layer pairing is unreliable). Then P1 (complications + canned
+confirm), P2 (gateway CRUD once the ACT layer lands), P3 (relay + push-wake).
+
+## 11. Verdict
 
 Adding the watch is **mostly a client-shell exercise, not a systems exercise.**
 The hard parts — voice I/O, risk gating, one-sentence summarization, async

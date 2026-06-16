@@ -46,12 +46,12 @@ func redirectAudit(t *testing.T) {
 
 // fakeActAPI accepts a mutating request and records what it saw.
 type fakeActAPI struct {
-	srv        *httptest.Server
-	gotMethod  atomic.Value
-	gotIdem    atomic.Value
-	gotBody    atomic.Value
-	status     atomic.Int32 // 0 => 200
-	hits       atomic.Int32
+	srv       *httptest.Server
+	gotMethod atomic.Value
+	gotIdem   atomic.Value
+	gotBody   atomic.Value
+	status    atomic.Int32 // 0 => 200
+	hits      atomic.Int32
 }
 
 func newFakeActAPI() *fakeActAPI {
