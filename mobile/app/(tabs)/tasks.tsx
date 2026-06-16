@@ -179,6 +179,7 @@ function displayRunnerLabel(runnerId?: string | null): string {
   if (normalized === "claude") return "Claude Code";
   if (normalized === "codex") return "Codex";
   if (normalized === "opencode") return "OpenCode";
+  if (normalized === "glm") return "GLM (z.ai)";
   return normalized || "Selected agent";
 }
 
@@ -1832,7 +1833,7 @@ export default function TasksScreen() {
   // updates.
   useEffect(() => {
     if (availableRunners.length === 0) return;
-    const RUNNER_WL = new Set(["claude", "codex", "opencode"]);
+    const RUNNER_WL = new Set(["claude", "codex", "opencode", "glm"]);
     const installed = availableRunners.filter((runner) => runner.installed && RUNNER_WL.has(runner.id));
     if (installed.length === 0) return;
     const ready = installed.filter((runner) => runner.ready !== false);
@@ -4856,9 +4857,9 @@ export default function TasksScreen() {
               // this filtered by `r.installed`, which silently hid two
               // chips on a fresh box and made it look like Codex was the
               // only option.
-              const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
+              const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode", "glm"]);
               const byId = new Map(availableRunners.map((r) => [r.id, r]));
-              const installed = (["claude-code", "codex", "opencode"] as const).map((id) => {
+              const installed = (["claude-code", "codex", "opencode", "glm"] as const).map((id) => {
                 const existing = byId.get(id) ?? (id === "claude-code" ? byId.get("claude") : undefined);
                 if (existing) return { ...existing, id };
                 // Synthesize a stub row for runners the agent didn't
@@ -4866,10 +4867,11 @@ export default function TasksScreen() {
                 // surfaces via runnerAuthIssue / ready=false.
                 return {
                   id,
-                  name: id === "claude-code" ? "Claude Code" : id === "codex" ? "OpenAI Codex" : "OpenCode",
+                  name: id === "claude-code" ? "Claude Code" : id === "codex" ? "OpenAI Codex" : id === "glm" ? "GLM (z.ai)" : "OpenCode",
                   installed: false,
                   ready: false,
-                  supportsBrowserAuth: id !== "opencode",
+                  // opencode + glm authenticate via a stored key, not browser OAuth.
+                  supportsBrowserAuth: id !== "opencode" && id !== "glm",
                 } as typeof availableRunners[number];
               });
               // Keep the currently-selected runner visible even if it's
