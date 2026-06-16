@@ -22,6 +22,7 @@ export type TKFeature = {
   screenshots?: string[];
   framesDir?: string;
   clipPath?: string;
+  posterPath?: string;
 };
 
 export type TKReport = {
@@ -60,6 +61,7 @@ export type TKGrowPlan = {
   ledgerPath?: string;
   applied?: boolean;
   authorPrompt?: string;
+  taskId?: string;
 };
 
 export type TKRunArgs = {
@@ -130,9 +132,9 @@ export const testkitClient = {
   /** Fetch the feature-based highlight report once the job completes. */
   report: (t: TKTarget, jobId: string) => tkOps<TKReport>(t, "project_test_report", { jobId } as any, 15000),
 
-  /** Self-grow: get the author plan of uncovered Features for the runner. */
-  grow: (t: TKTarget, dir: string, apply = false) =>
-    tkOps<TKGrowPlan>(t, "project_test_grow", { dir, apply }, 30000),
+  /** Self-grow: plan uncovered Features and (author:true) dispatch the runner to write them. */
+  grow: (t: TKTarget, dir: string, opts?: { apply?: boolean; author?: boolean; runner?: string }) =>
+    tkOps<TKGrowPlan>(t, "project_test_grow", { dir, apply: opts?.apply, author: opts?.author, runner: opts?.runner }, 30000),
 
   /** Check the runner's test dependencies (ffmpeg/chromium/node/playwright/docker/redroid). */
   depsCheck: (t: TKTarget) =>
