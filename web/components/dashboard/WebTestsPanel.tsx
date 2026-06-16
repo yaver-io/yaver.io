@@ -21,6 +21,7 @@ type Feature = {
   failStep?: number;
   screenshots?: string[];
   clipPath?: string;
+  posterPath?: string;
 };
 type Report = {
   project?: string;
@@ -38,6 +39,7 @@ type GrowPlan = {
   uncovered?: { suggestedName: string; route: string; file: string }[];
   applied?: boolean;
   authorPrompt?: string;
+  taskId?: string;
 };
 
 export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string }) {
@@ -86,7 +88,7 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
   const doGrow = async () => {
     setBusy(true); setMsg(null);
     try {
-      const r = await agentClient.callOps("project_test_grow", { dir: dir || undefined, apply: true });
+      const r = await agentClient.callOps("project_test_grow", { dir: dir || undefined, apply: true, author: true });
       if ((r as any)?.error) setMsg((r as any).error);
       else setGrow((r.initial as GrowPlan) || null);
     } catch (e: any) { setMsg(String(e?.message || e)); }
@@ -177,7 +179,7 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
                 {f.target}{f.url ? " · " + f.url : ""} · {Math.round((f.durationMs ?? 0) / 100) / 10}s · {f.steps ?? 0} steps{f.screenshots?.length ? ` · ${f.screenshots.length} shots` : ""}
               </div>
               {f.error && <div className="text-xs text-orange-400 mt-1">step {f.failStep}: {f.error}</div>}
-              {f.clipPath && <div className="text-xs text-neutral-500 mt-1">▶ clip: {f.clipPath}</div>}
+              <WebFeatureMedia feature={f} jobId={job?.id} />
             </div>
           ))}
         </div>
@@ -187,11 +189,56 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
         <div className="rounded bg-neutral-900 border border-neutral-800 p-3 space-y-1">
           <div className="font-medium">🌱 Self-grow plan</div>
           <div className="text-xs text-neutral-400">{grow.coveredCount ?? 0} covered · {(grow.uncovered?.length ?? 0)} uncovered route(s){grow.applied ? " · ledger updated" : ""}</div>
+          {grow.taskId && <div className="text-xs text-green-400">🤖 runner authoring specs (task {grow.taskId})</div>}
           {(grow.uncovered || []).slice(0, 30).map((u, i) => (
             <div key={i} className="text-xs text-neutral-200">• {u.suggestedName} <span className="text-neutral-500">({u.route})</span></div>
           ))}
           <div className="text-xs text-neutral-500 mt-1">The Yaver runner authors these as new specs — no hand-written YAML.</div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// WebFeatureMedia shows a Feature's short success/fail evidence: a tiny poster
+// thumbnail (auto) and a tap-to-play highlight clip, both fetched base64 via
+// project_test_artifact. Kept lazy/cheap for weak links.
+function WebFeatureMedia({ feature, jobId }: { feature: Feature; jobId?: string }) {
+  const [poster, setPoster] = useState<string | null>(null);
+  const [clip, setClip] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const thumb = feature.posterPath || (feature.screenshots && feature.screenshots[feature.screenshots.length - 1]);
+    if (thumb && jobId) {
+      agentClient.callOps("project_test_artifact", { jobId, path: thumb }).then((r: any) => {
+        const a = r?.initial;
+        if (alive && a?.base64) setPoster(`data:${a.mimeType || "image/jpeg"};base64,${a.base64}`);
+      }).catch(() => {});
+    }
+    return () => { alive = false; };
+  }, [jobId, feature?.name]);
+
+  const playClip = async () => {
+    if (!feature.clipPath || !jobId) return;
+    setLoading(true);
+    try {
+      const r: any = await agentClient.callOps("project_test_artifact", { jobId, path: feature.clipPath });
+      const a = r?.initial;
+      if (a?.base64) setClip(`data:${a.mimeType || "video/mp4"};base64,${a.base64}`);
+    } catch { /* keep poster */ }
+    setLoading(false);
+  };
+
+  if (clip) return <video src={clip} controls autoPlay loop className="mt-2 w-full max-h-64 rounded bg-black" />;
+  return (
+    <div className="mt-2">
+      {poster && <img src={poster} alt="" className="w-full max-h-48 object-cover rounded" />}
+      {feature.clipPath && (
+        <button onClick={playClip} disabled={loading} className="mt-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-1 text-xs text-neutral-200 disabled:opacity-60">
+          {loading ? "Loading…" : "▶ Play highlight"}
+        </button>
       )}
     </div>
   );

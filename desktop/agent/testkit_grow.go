@@ -49,6 +49,7 @@ type growPlan struct {
 	LedgerPath    string          `json:"ledgerPath"`
 	Applied       bool            `json:"applied"`
 	AuthorPrompt  string          `json:"authorPrompt"`
+	TaskID        string          `json:"taskId,omitempty"` // set when author:true enqueued the runner
 }
 
 func growTestPlan(dir string, apply bool) (*growPlan, error) {

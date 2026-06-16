@@ -115,18 +115,28 @@ func init() {
 		})
 
 	reg("project_test_grow",
-		"Self-grow the test suite: scan the project's routes/components, diff against the coverage ledger (yaver-tests/.coverage.json), and return an author plan of uncovered Features for the Yaver runner to write as new *.test.yaml specs. {dir? (repo root), apply? (write/refresh the ledger)}. The runner consumes the plan; no specs are deleted. Synchronous.",
+		"Self-grow the test suite: scan the project's routes/components, diff against the coverage ledger (yaver-tests/.coverage.json), and return an author plan of uncovered Features. With author:true, ALSO enqueue the Yaver runner to actually write the new *.test.yaml specs (the tests grow themselves, no user prompt). {dir? (repo root), apply? (write/refresh ledger), author? (dispatch the runner), runner? (claude|codex|opencode)}. No specs are deleted.",
 		func(c OpsContext, payload json.RawMessage) OpsResult {
 			var req struct {
-				Dir   string `json:"dir"`
-				Apply bool   `json:"apply"`
+				Dir    string `json:"dir"`
+				Apply  bool   `json:"apply"`
+				Author bool   `json:"author"`
+				Runner string `json:"runner"`
 			}
 			if len(payload) > 0 {
 				_ = json.Unmarshal(payload, &req)
 			}
-			plan, err := growTestPlan(req.Dir, req.Apply)
+			plan, err := growTestPlan(req.Dir, req.Apply || req.Author)
 			if err != nil {
 				return OpsResult{OK: false, Code: "grow_failed", Error: err.Error()}
+			}
+			// Autonomous authoring: hand the plan to the runner as a task so it
+			// writes the specs itself. Best-effort — the plan is still returned.
+			if req.Author && len(plan.Uncovered) > 0 && c.Server != nil && c.Server.taskMgr != nil {
+				title := "Grow tests: " + filepath.Base(plan.ProjectDir)
+				if t, terr := c.Server.taskMgr.CreateTask(title, plan.AuthorPrompt, "", "testkit-grow", req.Runner, "", nil); terr == nil && t != nil {
+					plan.TaskID = t.ID
+				}
 			}
 			return OpsResult{OK: true, Initial: plan}
 		})
@@ -157,7 +167,8 @@ type testkitFeature struct {
 	FailStep    int      `json:"failStep,omitempty"`
 	Screenshots []string `json:"screenshots,omitempty"`
 	FramesDir   string   `json:"framesDir,omitempty"`
-	ClipPath    string   `json:"clipPath,omitempty"` // per-Feature highlight mp4
+	ClipPath    string   `json:"clipPath,omitempty"`   // per-Feature highlight mp4 (downscaled/compressed)
+	PosterPath  string   `json:"posterPath,omitempty"` // tiny jpg first-frame thumbnail (cheap on weak links)
 }
 
 type testkitReport struct {
@@ -330,12 +341,23 @@ func buildTestkitReport(project, dir string, suite *testkit.Suite) *testkitRepor
 				f.FailStep = st.Index
 			}
 		}
+		// Keep the report JSON lean for weak/LAN links — last few shots are the
+		// useful ones (final state + the failure). The poster covers the thumbnail.
+		if len(f.Screenshots) > 3 {
+			f.Screenshots = f.Screenshots[len(f.Screenshots)-3:]
+		}
 		if r.VideoFramesDir != "" {
 			f.FramesDir = r.VideoFramesDir
 			clip := filepath.Join(dir, safeFileName(r.Spec.Name)+".mp4")
 			if err := stitchFramesToMP4(r.VideoFramesDir, clip); err == nil {
 				f.ClipPath = clip
 				clips = append(clips, clip)
+				// Tiny poster so the mobile UI shows the result instantly on a
+				// weak link without pulling the whole clip.
+				poster := filepath.Join(dir, safeFileName(r.Spec.Name)+".jpg")
+				if makePoster(clip, poster) == nil {
+					f.PosterPath = poster
+				}
 			}
 		}
 		rep.Features = append(rep.Features, f)
@@ -376,11 +398,31 @@ func stitchFramesToMP4(framesDir, out string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	// Downscale to <=640px wide + H.264 CRF so highlight clips are small enough
+	// to pull over a weak/LAN link (a phone on poor internet). -2 keeps height
+	// even for yuv420p.
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
 		"-framerate", "8", "-pattern_type", "glob", "-i", filepath.Join(framesDir, "*.png"),
-		"-pix_fmt", "yuv420p", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", out)
+		"-vf", "scale='min(640,iw)':-2", "-c:v", "libx264", "-preset", "veryfast",
+		"-crf", "32", "-pix_fmt", "yuv420p", out)
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg: %v: %s", err, string(b))
+	}
+	return nil
+}
+
+// makePoster grabs the first frame of a clip as a small jpg thumbnail — a few
+// KB, so the result is visible instantly even before the clip is fetched.
+func makePoster(clip, out string) error {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return fmt.Errorf("ffmpeg not found")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", clip,
+		"-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "6", out)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg poster: %v: %s", err, string(b))
 	}
 	return nil
 }
@@ -431,6 +473,9 @@ func readTestkitArtifact(jobID, path string) (map[string]any, error) {
 	for _, f := range rep.Features {
 		if f.ClipPath != "" {
 			allowed[f.ClipPath] = true
+		}
+		if f.PosterPath != "" {
+			allowed[f.PosterPath] = true
 		}
 		for _, s := range f.Screenshots {
 			allowed[s] = true

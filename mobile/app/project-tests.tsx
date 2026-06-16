@@ -117,7 +117,7 @@ export default function ProjectTestsScreen() {
     if (!dir) return setErr("No project path.");
     setBusy(true);
     setErr(null);
-    const plan = await testkitClient.grow(t, dir, true);
+    const plan = await testkitClient.grow(t, dir, { apply: true, author: true });
     setBusy(false);
     if ((plan as any)?.error) return setErr((plan as any).error);
     setGrow(plan);
@@ -249,10 +249,12 @@ function FeatureMedia({ feature, c, target, jobId }: { feature: TKFeature; c: an
 
   useEffect(() => {
     let alive = true;
-    const s = feature.screenshots && feature.screenshots[feature.screenshots.length - 1];
-    if (s && target && jobId) {
-      testkitClient.artifact(target, jobId, s).then((a) => {
-        if (alive && a?.base64) setShot(`data:${a.mimeType || "image/png"};base64,${a.base64}`);
+    // Prefer the tiny poster (a few KB) over a full screenshot so the result is
+    // visible instantly even on a weak link; fall back to the last screenshot.
+    const thumb = feature.posterPath || (feature.screenshots && feature.screenshots[feature.screenshots.length - 1]);
+    if (thumb && target && jobId) {
+      testkitClient.artifact(target, jobId, thumb).then((a) => {
+        if (alive && a?.base64) setShot(`data:${a.mimeType || "image/jpeg"};base64,${a.base64}`);
       });
     }
     return () => { alive = false; };
@@ -297,6 +299,7 @@ function GrowView({ plan, c }: { plan: TKGrowPlan; c: any }) {
       <Text style={{ color: c.textMuted, fontSize: 12 }}>
         {plan.coveredCount ?? 0} covered · {un.length} uncovered route(s){plan.applied ? " · ledger updated" : ""}
       </Text>
+      {plan.taskId ? <Text style={{ color: "#2fbf71", fontSize: 12 }}>🤖 runner authoring specs (task {plan.taskId})</Text> : null}
       {un.slice(0, 30).map((u, i) => (
         <Text key={i} style={{ color: c.textPrimary, fontSize: 12 }}>• {u.suggestedName}  <Text style={{ color: c.textMuted }}>({u.route})</Text></Text>
       ))}
