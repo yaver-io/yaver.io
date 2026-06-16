@@ -2812,6 +2812,21 @@ export class AgentClient {
     return url;
   }
 
+  /**
+   * Authed MJPEG/still URL for the home capture-card feed (own non-protected
+   * source; Yaver streams whatever the card provides, as-is). Same path-scoped
+   * browser-session + relay-password scheme as remoteDesktopStreamUrl. Pass
+   * "/capture/frame.jpg" for a single still.
+   */
+  async captureStreamUrl(path: "/capture/stream" | "/capture/frame.jpg" = "/capture/stream"): Promise<string> {
+    const token = await this.issueBrowserSession("/capture/");
+    let url = `${this.baseUrl}${path}?browser_session=${encodeURIComponent(token)}`;
+    if (this._activeRelayUrl && this.activeRelayPassword) {
+      url += `&__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
+  }
+
   private async issueBrowserSession(pathPrefix: string): Promise<string> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/auth/browser-session`, {
