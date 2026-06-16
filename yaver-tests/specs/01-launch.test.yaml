@@ -5,12 +5,20 @@
 name: yaver launches to home
 target: android-redroid
 url: io.yaver.mobile
+requires_env:
+  - YAVER_REDROID_SSH_HOST
+  - YAVER_REDROID_HOST_WORKDIR
 redroid:
-  container: yaver-qa
+  container: ${YAVER_REDROID_CONTAINER}
+  host_workdir: ${YAVER_REDROID_HOST_WORKDIR}
+  ssh_host: ${YAVER_REDROID_SSH_HOST}
+  keep: true
+  package: io.yaver.mobile
+  activity: .MainActivity
   # base: 2026-06-09-1        # uncomment to restore a warm base instead of cold boot
   # host_workdir: /var/lib/yaver/qa-data   # required for an ssh_host runner
   # ssh_host: user@on-prem-box             # omit to run on the local farm box
 steps:
   - goto: /                  # launch the package
   - sleep_ms: 4000
-  - assert.text: "io.yaver"  # a cheap smoke assertion; replace with a real on-screen label
+  - screenshot: true

@@ -7,5 +7,8 @@ base: ""                         # a Yaver Base Image version (see `yaver studio
 mode: catch                      # catch (report bugs) | fix (catch→patch→reload→re-verify; draft-PR only)
 flows_dir: yaver-tests/flows
 specs_dir: yaver-tests/specs
+# Root-level *.test.yaml specs cover the Yaver web UI. Specs with
+# requires_env are live dogfood checks and skip cleanly unless credentials are
+# provided by the caller.
 # host_workdir / ssh_host: set when the redroid host is an on-prem box rather than
 # the local farm box (defaults under ~/.yaver for the local runner).

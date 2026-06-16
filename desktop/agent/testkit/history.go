@@ -24,17 +24,17 @@ type History struct {
 
 // HistoryEntry is one suite run flattened for the log.
 type HistoryEntry struct {
-	StartedAt    time.Time             `json:"started_at"`
-	FinishedAt   time.Time             `json:"finished_at"`
-	DurationMS   int64                 `json:"duration_ms"`
-	Total        int                   `json:"total"`
-	Passed       int                   `json:"passed"`
-	Failed       int                   `json:"failed"`
-	FlakyCount   int                   `json:"flaky_count"`
-	GitSHA       string                `json:"git_sha,omitempty"`
-	GitBranch    string                `json:"git_branch,omitempty"`
-	HostOS       string                `json:"host_os"`
-	Specs        []HistorySpecResult   `json:"specs"`
+	StartedAt  time.Time           `json:"started_at"`
+	FinishedAt time.Time           `json:"finished_at"`
+	DurationMS int64               `json:"duration_ms"`
+	Total      int                 `json:"total"`
+	Passed     int                 `json:"passed"`
+	Failed     int                 `json:"failed"`
+	FlakyCount int                 `json:"flaky_count"`
+	GitSHA     string              `json:"git_sha,omitempty"`
+	GitBranch  string              `json:"git_branch,omitempty"`
+	HostOS     string              `json:"host_os"`
+	Specs      []HistorySpecResult `json:"specs"`
 }
 
 // HistorySpecResult is the per-spec view written to the log.
@@ -43,6 +43,8 @@ type HistorySpecResult struct {
 	Path       string `json:"path"`
 	Target     Target `json:"target"`
 	Passed     bool   `json:"passed"`
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
 	Flaky      bool   `json:"flaky,omitempty"`
 	Attempt    int    `json:"attempt"`
 	DurationMS int64  `json:"duration_ms"`
@@ -78,6 +80,8 @@ func (h *History) AppendSuite(suite *Suite, gitSHA, gitBranch, hostOS string) er
 			Path:       r.Spec.Path,
 			Target:     r.Spec.Target,
 			Passed:     r.Passed,
+			Skipped:    r.Skipped,
+			SkipReason: r.SkipReason,
 			Flaky:      r.Flaky,
 			Attempt:    r.Attempt,
 			DurationMS: r.Duration().Milliseconds(),

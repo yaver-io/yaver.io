@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"strconv"
 	"strings"
 
 	"github.com/yaver-io/agent/studio"
@@ -54,11 +59,9 @@ func (b *llmBrain) NextAction(ctx context.Context, obs studio.Observation) (stud
 	}
 	act, perr := parseBrainAction(raw)
 	if perr != nil {
-		// A model that didn't return clean JSON shouldn't crash the run — treat
-		// an unparseable reply as "done" with the reason, so the flow ends and
-		// the report captures what happened.
-		return studio.BrainAction{Done: true, Why: "unparseable model reply: " + truncQA(raw, 120)}, nil
+		return studio.BrainAction{}, fmt.Errorf("parse model action: %w; reply: %s", perr, truncQA(raw, 160))
 	}
+	normalizeBrainActionCoords(&act, obs.Screenshot)
 	return act, nil
 }
 
@@ -106,22 +109,65 @@ func parseBrainAction(raw string) (studio.BrainAction, error) {
 		return studio.BrainAction{}, fmt.Errorf("no JSON object in reply")
 	}
 	var p struct {
-		Verb string            `json:"verb"`
-		Args map[string]string `json:"args"`
-		Done bool              `json:"done"`
-		Why  string            `json:"why"`
+		Verb string         `json:"verb"`
+		Args map[string]any `json:"args"`
+		Done bool           `json:"done"`
+		Why  string         `json:"why"`
 	}
 	if err := json.Unmarshal([]byte(js), &p); err != nil {
 		return studio.BrainAction{}, err
 	}
-	if p.Args == nil {
-		p.Args = map[string]string{}
+	args := map[string]string{}
+	for k, v := range p.Args {
+		args[k] = qaActionArgString(v)
 	}
 	return studio.BrainAction{
-		Step: studio.TestStep{Verb: strings.ToLower(strings.TrimSpace(p.Verb)), Args: p.Args},
+		Step: studio.TestStep{Verb: strings.ToLower(strings.TrimSpace(p.Verb)), Args: args},
 		Done: p.Done,
 		Why:  p.Why,
 	}, nil
+}
+
+func qaActionArgString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64:
+		if x == float64(int64(x)) {
+			return strconv.FormatInt(int64(x), 10)
+		}
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(x)
+	}
+}
+
+func normalizeBrainActionCoords(act *studio.BrainAction, screenshot []byte) {
+	if act == nil || act.Step.Verb != "tap" || len(screenshot) == 0 {
+		return
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(screenshot))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return
+	}
+	if x, ok := normalizedCoord(act.Step.Args["x"], cfg.Width); ok {
+		act.Step.Args["x"] = x
+	}
+	if y, ok := normalizedCoord(act.Step.Args["y"], cfg.Height); ok {
+		act.Step.Args["y"] = y
+	}
+}
+
+func normalizedCoord(raw string, max int) (string, bool) {
+	f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || f < 0 || f > 1 {
+		return "", false
+	}
+	return strconv.Itoa(int(f * float64(max))), true
 }
 
 // qaExtractJSONObject returns the first balanced {...} span in s, or "".

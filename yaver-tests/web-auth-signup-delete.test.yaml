@@ -1,0 +1,57 @@
+name: web email signup and account deletion
+target: web
+url: http://127.0.0.1:3000
+viewport: { width: 1280, height: 900 }
+timeout_ms: 20000
+requires_env:
+  - YAVER_TEST_SIGNUP_EMAIL
+  - YAVER_TEST_SIGNUP_PASSWORD
+  - YAVER_TEST_SIGNUP_NAME
+
+artifacts:
+  on: always
+  screenshot: true
+  video: true
+
+capture:
+  console_errors: true
+  network: true
+
+steps:
+  - goto: /auth
+  - wait_for: 'input[type=email]'
+  - eval: "Array.from(document.querySelectorAll('button')).find((b) => b.textContent && b.textContent.trim() === 'Sign Up')?.click()"
+  - wait_for: 'input[placeholder="Full name"]'
+  - fill:
+      selector: 'input[placeholder="Full name"]'
+      text: '${YAVER_TEST_SIGNUP_NAME}'
+  - fill:
+      selector: 'input[type=email]'
+      text: '${YAVER_TEST_SIGNUP_EMAIL}'
+  - fill:
+      selector: 'input[placeholder="Password"]'
+      text: '${YAVER_TEST_SIGNUP_PASSWORD}'
+  - fill:
+      selector: 'input[placeholder="Confirm password"]'
+      text: '${YAVER_TEST_SIGNUP_PASSWORD}'
+  - eval: "Array.from(document.querySelectorAll('button')).find((b) => b.textContent && b.textContent.trim() === 'Sign Up')?.click()"
+  - sleep_ms: 3000
+  - assert.text: Tell us a bit about you
+  - screenshot: true
+
+teardown:
+  - goto: /delete-account
+  - wait_for: 'input[type=email]'
+  - fill:
+      selector: 'input[type=email]'
+      text: '${YAVER_TEST_SIGNUP_EMAIL}'
+  - fill:
+      selector: 'input[type=password]'
+      text: '${YAVER_TEST_SIGNUP_PASSWORD}'
+  - fill:
+      selector: 'input[placeholder="delete my account"]'
+      text: 'delete my account'
+  - eval: "Array.from(document.querySelectorAll('button')).find((b) => b.textContent && b.textContent.includes('Permanently Delete'))?.click()"
+  - sleep_ms: 2000
+  - assert.text: Account Deleted
+  - screenshot: true

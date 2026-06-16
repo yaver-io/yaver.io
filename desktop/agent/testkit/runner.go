@@ -16,11 +16,15 @@ import (
 
 // Result is the outcome of running a single Spec.
 type Result struct {
-	Spec       *Spec
-	Passed     bool
+	Spec   *Spec
+	Passed bool
+	// Skipped is true when the spec was intentionally not executed, usually
+	// because a requires_env gate was not satisfied.
+	Skipped    bool
+	SkipReason string
 	// Flaky is true when a previous attempt failed but the final
 	// attempt passed (i.e., the spec passed only thanks to FlakeRetries).
-	Flaky      bool
+	Flaky bool
 	// Attempt is the 1-indexed retry attempt this Result represents.
 	// Always 1 when FlakeRetries == 0.
 	Attempt    int
@@ -148,6 +152,12 @@ func runOnce(ctx context.Context, spec *Spec, opts RunOptions) *Result {
 		res.Err = err
 		return res
 	}
+	if missing := missingRequiredEnv(spec.RequiresEnv); len(missing) > 0 {
+		res.Skipped = true
+		res.Passed = true
+		res.SkipReason = "missing required env: " + strings.Join(missing, ", ")
+		return res
+	}
 
 	switch spec.Target {
 	case TargetWeb:
@@ -170,6 +180,20 @@ func runOnce(ctx context.Context, spec *Spec, opts RunOptions) *Result {
 
 	res.Passed = res.Err == nil && allStepsPassed(res.Steps)
 	return res
+}
+
+func missingRequiredEnv(names []string) []string {
+	var missing []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if os.Getenv(name) == "" {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 func allStepsPassed(steps []StepResult) bool {

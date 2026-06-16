@@ -78,6 +78,7 @@ func newRedroidAndroidDriver(spec *Spec) (*redroidAndroidDriver, error) {
 		apkPath:     spec.App,
 		base:        strings.TrimSpace(cfg.Base),
 		snapshotDir: snapDir,
+		keepBase:    cfg.Keep,
 	}, nil
 }
 
@@ -112,8 +113,9 @@ func (r *redroidAndroidDriver) Install(ctx context.Context, _ string) error {
 	return r.surface.Install(ctx, r.apkPath)
 }
 
-// Shutdown tears the surface down — UNLESS it was restored from a warm base, in
-// which case it's left running for the next run to reuse.
+// Shutdown tears the surface down — UNLESS it was restored from a warm base or
+// redroid.keep was set, in which case it is left running for reuse/shared
+// remote hosts.
 func (r *redroidAndroidDriver) Shutdown(ctx context.Context, _ string) error {
 	if r.keepBase {
 		return nil

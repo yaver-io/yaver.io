@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -47,12 +51,15 @@ func TestBrainNextActionParsesJSON(t *testing.T) {
 }
 
 func TestBrainVisionFallbackWhenTreeEmpty(t *testing.T) {
-	f := &fakeQAModel{decideReply: `{"verb":"tap","args":{"x":"540","y":"1200"},"done":false,"why":"tap by image"}`}
+	f := &fakeQAModel{decideReply: `{"verb":"tap","args":{"x":0.5,"y":0.25},"done":false,"why":"tap by image"}`}
 	b := newLLMBrain(f, "open settings")
 	// empty view tree (redroid uiautomator dead) but a screenshot present
-	_, err := b.NextAction(context.Background(), studio.Observation{ViewTree: "", Screenshot: []byte("\x89PNGdata"), Goal: "open settings"})
+	act, err := b.NextAction(context.Background(), studio.Observation{ViewTree: "", Screenshot: testPNG(t, 1000, 2000), Goal: "open settings"})
 	if err != nil {
 		t.Fatalf("next: %v", err)
+	}
+	if act.Step.Args["x"] != "500" || act.Step.Args["y"] != "500" {
+		t.Fatalf("fractional coordinates not normalized: %+v", act.Step.Args)
 	}
 	if len(f.lastPNG) == 0 {
 		t.Error("vision fallback should send the screenshot to the model")
@@ -73,15 +80,22 @@ func TestBrainTextPathWhenTreePresent(t *testing.T) {
 	}
 }
 
-func TestBrainUnparseableReplyEndsFlow(t *testing.T) {
+func TestBrainUnparseableReplyReturnsError(t *testing.T) {
 	f := &fakeQAModel{decideReply: "I cannot help with that."}
 	b := newLLMBrain(f, "x")
-	act, err := b.NextAction(context.Background(), studio.Observation{})
-	if err != nil {
-		t.Fatalf("should not error: %v", err)
+	_, err := b.NextAction(context.Background(), studio.Observation{})
+	if err == nil {
+		t.Fatal("unparseable reply should fail the harness step")
 	}
-	if !act.Done {
-		t.Error("unparseable reply should end the flow (done=true)")
+}
+
+func TestParseBrainActionAcceptsNumericArgs(t *testing.T) {
+	act, err := parseBrainAction(`{"verb":"tap","args":{"x":371,"y":620},"done":false}`)
+	if err != nil {
+		t.Fatalf("parse numeric args: %v", err)
+	}
+	if act.Step.Args["x"] != "371" || act.Step.Args["y"] != "620" {
+		t.Fatalf("numeric args not stringified: %+v", act.Step.Args)
 	}
 }
 
@@ -114,4 +128,15 @@ func TestExtractJSONObject(t *testing.T) {
 	if qaExtractJSONObject("no json here") != "" {
 		t.Error("should return empty when no object")
 	}
+}
+
+func testPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	img.Set(0, 0, color.White)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return buf.Bytes()
 }

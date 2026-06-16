@@ -1,0 +1,38 @@
+name: web dashboard build and test panels
+target: web
+url: http://127.0.0.1:3000
+viewport: { width: 1440, height: 960 }
+timeout_ms: 18000
+requires_env:
+  - YAVER_WEB_AUTH_TOKEN
+
+cookies:
+  - name: yaver_auth_token
+    value: ${YAVER_WEB_AUTH_TOKEN}
+    domain: 127.0.0.1
+    path: /
+  - name: yaver_session
+    value: ${YAVER_WEB_AUTH_TOKEN}
+    domain: 127.0.0.1
+    path: /
+
+artifacts:
+  on: always
+  screenshot: true
+  video: true
+
+capture:
+  console_errors: true
+  network: true
+
+steps:
+  - goto: /dashboard
+  - wait_for: 'button'
+  - assert.text: Devices
+  - eval: "Array.from(document.querySelectorAll('button')).find((b) => b.textContent && b.textContent.includes('Build'))?.click()"
+  - sleep_ms: 1000
+  - assert.text: App-Test Agent
+  - assert.text: Run app test
+  - assert.text: Web Tests
+  - assert.text: Run Web Tests
+  - screenshot: true

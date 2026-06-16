@@ -212,6 +212,9 @@ func qaConfigFromRequest(ctx context.Context, req qaRunRequest, flows []studio.S
 
 	// One model lane for navigator + asserter (the user's BYOK / gateway config).
 	visionCfg := testkit.LoadVisionConfig()
+	if err := preflightQAModel(ctx, visionCfg); err != nil {
+		return nil, err
+	}
 	brainFor := func(s studio.Scenario) studio.TestBrain {
 		return newLLMBrain(newHTTPQAModel(visionCfg), s.Goal)
 	}

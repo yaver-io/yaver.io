@@ -1,0 +1,30 @@
+name: web public routes
+target: web
+url: http://127.0.0.1:3000
+viewport: { width: 1366, height: 900 }
+timeout_ms: 12000
+
+artifacts:
+  on: failure
+  screenshot: true
+
+capture:
+  console_errors: true
+  network: true
+
+steps:
+  - goto: /
+  - wait_for: h1
+  - assert.text: What is Yaver?
+  - goto: /download
+  - wait_for: h1
+  - assert.text: One install path. npm.
+  - assert.text: npm install -g yaver-cli
+  - goto: /auth
+  - wait_for: 'input[type=email]'
+  - assert.text: Continue with GitHub
+  - assert.text: Sign In
+  - goto: /delete-account
+  - wait_for: 'input[type=email]'
+  - assert.text: Delete Your Account
+  - assert.text: Permanently Delete My Account

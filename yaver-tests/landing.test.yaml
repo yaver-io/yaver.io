@@ -24,5 +24,5 @@ steps:
   - wait_for: h1
   - assert.title: Yaver
   - assert.visible: 'h1'
-  - assert.text: AI writes the code
-  - assert.text: Yaver tests it on your real device
+  - assert.text: What is Yaver?
+  - assert.text: npm install -g yaver-cli

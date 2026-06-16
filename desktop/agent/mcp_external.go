@@ -238,6 +238,9 @@ func (s *HTTPServer) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 		found := false
 		for i := range cfg.ExternalMCPServers {
 			if cfg.ExternalMCPServers[i].Name == in.Name {
+				if in.AuthToken == "" {
+					in.AuthToken = cfg.ExternalMCPServers[i].AuthToken
+				}
 				cfg.ExternalMCPServers[i] = in
 				found = true
 				break

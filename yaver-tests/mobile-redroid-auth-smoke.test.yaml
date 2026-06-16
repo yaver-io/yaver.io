@@ -1,0 +1,23 @@
+name: yaver mobile redroid launch screenshot
+target: android-redroid
+url: io.yaver.mobile
+timeout_ms: 30000
+requires_env:
+  - YAVER_REDROID_SSH_HOST
+  - YAVER_REDROID_HOST_WORKDIR
+redroid:
+  container: ${YAVER_REDROID_CONTAINER}
+  host_workdir: ${YAVER_REDROID_HOST_WORKDIR}
+  ssh_host: ${YAVER_REDROID_SSH_HOST}
+  keep: true
+  package: io.yaver.mobile
+  activity: .MainActivity
+
+artifacts:
+  on: always
+  screenshot: true
+
+steps:
+  - goto: io.yaver.mobile
+  - sleep_ms: 5000
+  - screenshot: true

@@ -114,6 +114,12 @@ type Spec struct {
 	// applies to Target == web.
 	Cookies []SpecCookie `yaml:"cookies,omitempty"`
 
+	// RequiresEnv lists environment variables that must be non-empty for this
+	// spec to run. Missing values skip the spec instead of failing it. Use this
+	// for live signup/auth/device specs whose credentials or build paths are
+	// intentionally not committed.
+	RequiresEnv []string `yaml:"requires_env,omitempty"`
+
 	// Path is the absolute path of the spec file. Set by LoadSpec, not the
 	// user.
 	Path string `yaml:"-"`
@@ -147,6 +153,7 @@ type RedroidSpec struct {
 	Container   string `yaml:"container,omitempty"`    // container name; default yaver-qa
 	Base        string `yaml:"base,omitempty"`         // restore this Yaver Base Image version instead of cold boot
 	SnapshotDir string `yaml:"snapshot_dir,omitempty"` // base snapshot store (used with base)
+	Keep        bool   `yaml:"keep,omitempty"`         // leave container running after the spec (remote/shared surfaces)
 	Package     string `yaml:"package,omitempty"`      // app package id to launch; default from url
 	Activity    string `yaml:"activity,omitempty"`     // optional explicit launch activity
 }
@@ -361,6 +368,17 @@ func (s *Spec) expandEnv() {
 	s.Name = os.ExpandEnv(s.Name)
 	s.URL = os.ExpandEnv(s.URL)
 	s.App = os.ExpandEnv(s.App)
+	if s.Redroid != nil {
+		s.Redroid.Image = os.ExpandEnv(s.Redroid.Image)
+		s.Redroid.HostWorkDir = os.ExpandEnv(s.Redroid.HostWorkDir)
+		s.Redroid.SSHHost = os.ExpandEnv(s.Redroid.SSHHost)
+		s.Redroid.SSHOpts = os.ExpandEnv(s.Redroid.SSHOpts)
+		s.Redroid.Container = os.ExpandEnv(s.Redroid.Container)
+		s.Redroid.Base = os.ExpandEnv(s.Redroid.Base)
+		s.Redroid.SnapshotDir = os.ExpandEnv(s.Redroid.SnapshotDir)
+		s.Redroid.Package = os.ExpandEnv(s.Redroid.Package)
+		s.Redroid.Activity = os.ExpandEnv(s.Redroid.Activity)
+	}
 	for i := range s.Cookies {
 		s.Cookies[i].Name = os.ExpandEnv(s.Cookies[i].Name)
 		s.Cookies[i].Value = os.ExpandEnv(s.Cookies[i].Value)
@@ -369,6 +387,9 @@ func (s *Spec) expandEnv() {
 	}
 	for i := range s.Include {
 		s.Include[i] = os.ExpandEnv(s.Include[i])
+	}
+	for i := range s.RequiresEnv {
+		s.RequiresEnv[i] = os.ExpandEnv(s.RequiresEnv[i])
 	}
 	for i := range s.Setup {
 		expandEnvStep(&s.Setup[i])

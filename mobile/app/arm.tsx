@@ -6,6 +6,7 @@
 // (also visible to the host coding agent via the robot_camera MCP tool).
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
@@ -29,6 +30,7 @@ const DRIVERS = ["sim", "fairino", "mycobot", "parol6", "generic_tcp", "generic_
 
 export default function ArmScreen() {
   const c = useColors();
+  const router = useRouter();
   const deviceCtx = useDevice();
   const devices = (deviceCtx as any).devices as any[];
 
@@ -179,7 +181,7 @@ export default function ArmScreen() {
   if (!deviceId) {
     return (
       <View style={{ flex: 1, backgroundColor: c.bg }}>
-        <AppScreenHeader title="Robotic Arm" />
+        <AppScreenHeader title="Robotic Arm" onBack={() => router.back()} />
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           <Text style={[h, { marginBottom: 14 }]}>Pick the device the arm is wired to</Text>
           {(devices || []).map((d) => (
@@ -196,7 +198,7 @@ export default function ArmScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <AppScreenHeader title="Robotic Arm" />
+      <AppScreenHeader title="Robotic Arm" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         {/* identity + status */}
         <View style={[card, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>

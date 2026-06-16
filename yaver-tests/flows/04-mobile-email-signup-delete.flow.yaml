@@ -1,0 +1,18 @@
+# Agentic live mobile signup/onboarding path. Invoke qa_run with
+# {"testAccount":"ephemeral"} so the runner injects disposable credentials and
+# tears them down. This is a flow, not a deterministic spec, because the exact
+# onboarding copy can differ by build, platform, and remote auth state.
+name: mobile-email-signup-delete-account
+package: io.yaver.mobile
+goal: >
+  Launch Yaver, choose the email signup path, create a new account using the
+  injected disposable credentials (full name {{fullName}}, email {{email}},
+  password {{password}}), reach an authenticated or onboarding screen, then
+  navigate to account settings and delete that same account. If account deletion
+  is not reachable, stop and report the missing teardown path.
+expectations:
+  - The app accepts the injected disposable email/password and moves past the unauthenticated login screen.
+  - The run never uses a personal account or literal placeholder text like "{{email}}" or "{{password}}".
+  - The account is deleted before the flow finishes, or the report clearly marks teardown as blocked.
+  - No crash, ANR, red box, blank screen, or generic error overlay appears.
+max_steps: 30

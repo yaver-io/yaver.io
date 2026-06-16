@@ -136,6 +136,84 @@ steps:
 	}
 }
 
+func TestLoadSpecRequiresEnv(t *testing.T) {
+	t.Setenv("YAVER_REQUIRED_ONE", "set")
+	t.Setenv("YAVER_REQUIRED_TWO_NAME", "YAVER_REQUIRED_TWO")
+	dir := t.TempDir()
+	p := writeSpec(t, dir, "requires-env.test.yaml", `
+name: requires env
+target: web
+url: http://localhost
+requires_env:
+  - YAVER_REQUIRED_ONE
+  - ${YAVER_REQUIRED_TWO_NAME}
+steps:
+  - goto: /
+`)
+	s, err := LoadSpec(p)
+	if err != nil {
+		t.Fatalf("LoadSpec: %v", err)
+	}
+	if len(s.RequiresEnv) != 2 {
+		t.Fatalf("RequiresEnv len = %d", len(s.RequiresEnv))
+	}
+	if s.RequiresEnv[0] != "YAVER_REQUIRED_ONE" || s.RequiresEnv[1] != "YAVER_REQUIRED_TWO" {
+		t.Fatalf("RequiresEnv = %#v", s.RequiresEnv)
+	}
+}
+
+func TestLoadSpecExpandsRedroidEnv(t *testing.T) {
+	t.Setenv("YAVER_REDROID_SSH_HOST", "runner.example")
+	t.Setenv("YAVER_REDROID_HOST_WORKDIR", "/tmp/redroid")
+	t.Setenv("YAVER_REDROID_CONTAINER", "yaver-redroid")
+	dir := t.TempDir()
+	p := writeSpec(t, dir, "redroid-env.test.yaml", `
+name: redroid env
+target: android-redroid
+url: io.yaver.mobile
+redroid:
+  ssh_host: ${YAVER_REDROID_SSH_HOST}
+  host_workdir: ${YAVER_REDROID_HOST_WORKDIR}
+  container: ${YAVER_REDROID_CONTAINER}
+  keep: true
+steps:
+  - goto: io.yaver.mobile
+`)
+	s, err := LoadSpec(p)
+	if err != nil {
+		t.Fatalf("LoadSpec: %v", err)
+	}
+	if s.Redroid == nil {
+		t.Fatal("Redroid should be parsed")
+	}
+	if s.Redroid.SSHHost != "runner.example" || s.Redroid.HostWorkDir != "/tmp/redroid" || s.Redroid.Container != "yaver-redroid" {
+		t.Fatalf("Redroid = %#v", s.Redroid)
+	}
+	if !s.Redroid.Keep {
+		t.Fatal("Redroid.Keep should be true")
+	}
+}
+
+func TestRunSkipsWhenRequiredEnvMissing(t *testing.T) {
+	s := &Spec{
+		Name:        "live signup",
+		Target:      TargetWeb,
+		URL:         "http://localhost",
+		RequiresEnv: []string{"YAVER_TEST_LIVE_EMAIL", "YAVER_TEST_LIVE_PASSWORD"},
+		Steps:       []Step{{Goto: "/"}},
+	}
+	res := Run(t.Context(), s, RunOptions{})
+	if !res.Skipped {
+		t.Fatal("expected skipped result")
+	}
+	if !res.Passed {
+		t.Fatal("skipped result should not fail the suite")
+	}
+	if res.SkipReason == "" {
+		t.Fatal("skip reason should be set")
+	}
+}
+
 func TestValidateRejectsRelativeGotoWithoutURL(t *testing.T) {
 	s := &Spec{
 		Name:   "broken",

@@ -33,6 +33,9 @@ func (s *Suite) Passed() bool {
 func (s *Suite) Counts() (total, passed, failed int) {
 	for _, r := range s.Results {
 		total++
+		if r != nil && r.Skipped {
+			continue
+		}
 		if r != nil && r.Passed {
 			passed++
 		} else {
@@ -40,6 +43,17 @@ func (s *Suite) Counts() (total, passed, failed int) {
 		}
 	}
 	return
+}
+
+// Skipped returns how many specs were intentionally skipped.
+func (s *Suite) Skipped() int {
+	n := 0
+	for _, r := range s.Results {
+		if r != nil && r.Skipped {
+			n++
+		}
+	}
+	return n
 }
 
 // MarshalJSON flattens errors into strings so JSON consumers (mobile app,
@@ -58,6 +72,8 @@ func (s *Suite) MarshalJSON() ([]byte, error) {
 		Path       string     `json:"path"`
 		Target     Target     `json:"target"`
 		Passed     bool       `json:"passed"`
+		Skipped    bool       `json:"skipped,omitempty"`
+		SkipReason string     `json:"skip_reason,omitempty"`
 		StartedAt  time.Time  `json:"started_at"`
 		FinishedAt time.Time  `json:"finished_at"`
 		DurationMS int64      `json:"duration_ms"`
@@ -71,6 +87,7 @@ func (s *Suite) MarshalJSON() ([]byte, error) {
 		Total      int          `json:"total"`
 		Passed     int          `json:"passed"`
 		Failed     int          `json:"failed"`
+		Skipped    int          `json:"skipped"`
 		Results    []resultView `json:"results"`
 	}
 	total, passed, failed := s.Counts()
@@ -81,6 +98,7 @@ func (s *Suite) MarshalJSON() ([]byte, error) {
 		Total:      total,
 		Passed:     passed,
 		Failed:     failed,
+		Skipped:    s.Skipped(),
 		Results:    make([]resultView, 0, len(s.Results)),
 	}
 	for _, r := range s.Results {
@@ -92,6 +110,8 @@ func (s *Suite) MarshalJSON() ([]byte, error) {
 			Path:       r.Spec.Path,
 			Target:     r.Spec.Target,
 			Passed:     r.Passed,
+			Skipped:    r.Skipped,
+			SkipReason: r.SkipReason,
 			StartedAt:  r.StartedAt,
 			FinishedAt: r.FinishedAt,
 			DurationMS: r.Duration().Milliseconds(),
@@ -134,11 +154,12 @@ func (s *Suite) WriteJUnit(w io.Writer) error {
 		Body    string   `xml:",chardata"`
 	}
 	type testcase struct {
-		XMLName   xml.Name `xml:"testcase"`
-		Classname string   `xml:"classname,attr"`
-		Name      string   `xml:"name,attr"`
-		Time      string   `xml:"time,attr"`
-		Failure   *failure `xml:",omitempty"`
+		XMLName   xml.Name  `xml:"testcase"`
+		Classname string    `xml:"classname,attr"`
+		Name      string    `xml:"name,attr"`
+		Time      string    `xml:"time,attr"`
+		Failure   *failure  `xml:",omitempty"`
+		Skipped   *struct{} `xml:"skipped,omitempty"`
 	}
 	type testsuite struct {
 		XMLName  xml.Name   `xml:"testsuite"`
@@ -177,7 +198,9 @@ func (s *Suite) WriteJUnit(w io.Writer) error {
 			Name:      r.Spec.Name,
 			Time:      fmt.Sprintf("%.3f", r.Duration().Seconds()),
 		}
-		if !r.Passed {
+		if r.Skipped {
+			tc.Skipped = &struct{}{}
+		} else if !r.Passed {
 			msg := "spec failed"
 			body := r.Err
 			if body == nil {
@@ -221,10 +244,15 @@ func (s *Suite) WriteTTY(w io.Writer) {
 			continue
 		}
 		mark := "✓"
-		if !r.Passed {
+		if r.Skipped {
+			mark = "↷"
+		} else if !r.Passed {
 			mark = "✗"
 		}
 		fmt.Fprintf(w, "%s %s  (%s)\n", mark, r.Spec.Name, r.Duration().Round(time.Millisecond))
+		if r.Skipped {
+			fmt.Fprintf(w, "    skipped: %s\n", r.SkipReason)
+		}
 		if r.Err != nil {
 			fmt.Fprintf(w, "    error: %s\n", r.Err.Error())
 		}
@@ -238,6 +266,6 @@ func (s *Suite) WriteTTY(w io.Writer) {
 		}
 	}
 	fmt.Fprintln(w, strings.Repeat("─", 60))
-	fmt.Fprintf(w, "%d total, %d passed, %d failed (%s)\n",
-		total, passed, failed, s.FinishedAt.Sub(s.StartedAt).Round(time.Millisecond))
+	fmt.Fprintf(w, "%d total, %d passed, %d failed, %d skipped (%s)\n",
+		total, passed, failed, s.Skipped(), s.FinishedAt.Sub(s.StartedAt).Round(time.Millisecond))
 }

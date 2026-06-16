@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -41,6 +42,78 @@ type httpQAModel struct {
 }
 
 func newHTTPQAModel(cfg testkit.VisionConfig) *httpQAModel { return &httpQAModel{cfg: cfg} }
+
+func preflightQAModel(ctx context.Context, cfg testkit.VisionConfig) error {
+	if cfg.Provider != testkit.VisionProviderOllama {
+		return nil
+	}
+	tagsURL, err := ollamaTagsURL(cfg.Endpoint)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", tagsURL, nil)
+	if err != nil {
+		return err
+	}
+	cl := &http.Client{Timeout: 5 * time.Second}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return fmt.Errorf("qa model preflight: Ollama is not reachable at %s: %w", tagsURL, err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("qa model preflight: Ollama tags returned %d: %s", resp.StatusCode, truncQA(string(rb), 300))
+	}
+	var parsed struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(rb, &parsed); err != nil {
+		return fmt.Errorf("qa model preflight: parse Ollama tags: %w", err)
+	}
+	want := strings.TrimSpace(cfg.Model)
+	for _, model := range parsed.Models {
+		if ollamaModelMatches(model.Name, want) {
+			return nil
+		}
+	}
+	available := make([]string, 0, len(parsed.Models))
+	for _, model := range parsed.Models {
+		if strings.TrimSpace(model.Name) != "" {
+			available = append(available, model.Name)
+		}
+	}
+	if len(available) == 0 {
+		available = append(available, "none")
+	}
+	return fmt.Errorf("qa model preflight: Ollama model %q is not installed (available: %s). Run `ollama pull %s`, set YAVER_VISION_MODEL to an installed vision model, or provide MISTRAL_API_KEY/OPENAI_API_KEY/ANTHROPIC_API_KEY", want, strings.Join(available, ", "), want)
+}
+
+func ollamaTagsURL(chatEndpoint string) (string, error) {
+	u, err := url.Parse(chatEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("qa model preflight: parse endpoint %q: %w", chatEndpoint, err)
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/api/chat")
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/tags"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+func ollamaModelMatches(have, want string) bool {
+	have = strings.TrimSpace(have)
+	want = strings.TrimSpace(want)
+	if have == "" || want == "" {
+		return false
+	}
+	if have == want {
+		return true
+	}
+	return strings.TrimSuffix(have, ":latest") == want
+}
 
 func (m *httpQAModel) Judge(ctx context.Context, expectation string, png []byte) (string, string, error) {
 	tmp, err := os.CreateTemp("", "qa-judge-*.png")

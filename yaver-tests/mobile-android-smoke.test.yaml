@@ -2,6 +2,10 @@ name: ${YAVER_TEST_ANDROID_AVD} local-first smoke
 target: android-emu
 url: ${YAVER_TEST_ANDROID_AVD}
 app: ${YAVER_TEST_ANDROID_APK}
+requires_env:
+  - YAVER_TEST_ANDROID_AVD
+  - YAVER_TEST_ANDROID_APK
+  - YAVER_TEST_ANDROID_PACKAGE
 steps:
   - goto: ${YAVER_TEST_ANDROID_PACKAGE}
   - sleep_ms: 3000
