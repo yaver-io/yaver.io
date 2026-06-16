@@ -158,6 +158,37 @@ scan in Yaver -> classify -> launch right provider app/remote Android
 -> user approves provider UI -> Yaver tracks "charging or not" and session notes
 ```
 
+## Redroid / No-Camera Manual Code Path
+
+Remote Redroid should not depend on provider QR camera capture. In practice,
+camera plumbing inside Redroid may be unavailable, provider apps may reject a
+virtual camera, and even when frames work the provider scanner often expects a
+real-time camera permission flow.
+
+The easier and safer control path is:
+
+```text
+user scans QR in Yaver phone app OR types/pastes station/socket/QR text
+-> Yaver classifies provider + extracts station/socket/charger code
+-> Yaver launches the real provider app in Redroid
+-> AI runner guides the app to "manual station/socket code" entry
+-> user handles login/SMS/payment/final start
+-> Yaver tracks charging state and notes
+```
+
+For provider apps that expose a manual fallback, Redroid automation should prefer
+manual station/socket-code entry over camera scan. The AI runner brief must carry:
+
+- provider label
+- Android package hint
+- manual charger/station/socket code
+- raw QR/link payload, when available
+- explicit stop conditions: login, SMS/OTP, payment/card, final start/stop
+
+The runner may navigate, search visible text, tap obvious manual-code fields, and
+type the non-secret charger code. It must not store or infer provider passwords,
+SMS codes, payment credentials, or start/stop confirmations.
+
 ## Non-Goals
 
 Yaver must not:

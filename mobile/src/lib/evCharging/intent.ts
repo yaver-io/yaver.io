@@ -1,4 +1,4 @@
-import type { EVChargingIntent, EVEvent, EVParsedQR, EVRouteKind } from "./types";
+import type { EVChargingIntent, EVChargingState, EVEvent, EVParsedQR, EVRouteKind } from "./types";
 
 function id(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -49,6 +49,16 @@ export function addEVEvent(intent: EVChargingIntent, type: string, message: stri
     ...intent,
     updatedAt: now,
     events: [...intent.events, { at: now, type, message, data }],
+  };
+}
+
+export function setEVState(intent: EVChargingIntent, state: EVChargingState, message: string): EVChargingIntent {
+  const now = Date.now();
+  return {
+    ...intent,
+    state,
+    updatedAt: now,
+    events: [...intent.events, { at: now, type: "state", message, data: { state } }],
   };
 }
 

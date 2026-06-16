@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import * as Clipboard from "expo-clipboard";
 import * as Linking from "expo-linking";
 import { useRouter } from "expo-router";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,9 +19,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useDevice } from "../src/context/DeviceContext";
 import { useColors } from "../src/context/ThemeContext";
-import { addEVEvent, approveEV, makeEVIntent, setEVRoute } from "../src/lib/evCharging/intent";
-import { buildEVRouteOptions, providerForIntent, providerLabel, parseEVQr } from "../src/lib/evCharging/providers";
-import type { EVChargingIntent, EVRouteKind } from "../src/lib/evCharging/types";
+import { addEVEvent, approveEV, makeEVIntent, setEVRoute, setEVState } from "../src/lib/evCharging/intent";
+import { EV_PROVIDERS, buildEVRouteOptions, providerForIntent, providerLabel, parseEVManualInput, parseEVQr } from "../src/lib/evCharging/providers";
+import type { EVChargingIntent, EVProviderId, EVRouteKind } from "../src/lib/evCharging/types";
 import { quicClient } from "../src/lib/quic";
 
 function EVScanner({
@@ -104,10 +105,25 @@ export default function EVChargingScreen() {
   const [rawInput, setRawInput] = useState("");
   const [intent, setIntent] = useState<EVChargingIntent | null>(null);
   const [selectedRoute, setSelectedRoute] = useState<EVRouteKind | null>(null);
+  const [manualProvider, setManualProvider] = useState<EVProviderId>("unknown");
   const [packageHint, setPackageHint] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [chargingStartedAt, setChargingStartedAt] = useState<number | null>(null);
+  const [clock, setClock] = useState(Date.now());
 
   const provider = intent ? providerForIntent(intent) : null;
+  const manualCode = intent?.chargerId || intent?.connectorId || intent?.stationId || intent?.socketLabel || intent?.rawQr || "";
+  const runnerBrief = useMemo(() => {
+    if (!intent) return "";
+    return [
+      `Provider: ${providerLabel(intent.provider)}`,
+      `Android package hint: ${packageHint.trim() || provider?.androidPackageHints[0] || "unknown"}`,
+      `Manual charger code: ${manualCode || "unknown"}`,
+      intent.normalizedUrl ? `QR/link payload: ${intent.normalizedUrl}` : `Raw payload: ${intent.rawQr || manualCode || "unknown"}`,
+      "Task: launch the provider app on Redroid and use manual station/socket-code entry if camera scan is unavailable.",
+      "Stop at login, SMS/OTP, payment/card, and final start/stop confirmation. Ask the user; do not store secrets or codes.",
+    ].join("\n");
+  }, [intent, manualCode, packageHint, provider]);
   const routeOptions = useMemo(() => {
     if (!intent) return [];
     return buildEVRouteOptions(intent, {
@@ -116,6 +132,23 @@ export default function EVChargingScreen() {
       hasProviderUrl: Boolean(intent.normalizedUrl),
     });
   }, [connected, intent]);
+
+  useEffect(() => {
+    if (!chargingStartedAt) return undefined;
+    const id = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [chargingStartedAt]);
+
+  const elapsedLabel = useMemo(() => {
+    if (!chargingStartedAt) return "00:00";
+    const sec = Math.max(0, Math.floor((clock - chargingStartedAt) / 1000));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return h > 0
+      ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+      : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }, [chargingStartedAt, clock]);
 
   const classify = useCallback((raw: string) => {
     const parsed = parseEVQr(raw);
@@ -127,9 +160,28 @@ export default function EVChargingScreen() {
     const adapter = providerForIntent(next);
     setIntent(next);
     setSelectedRoute(null);
+    setChargingStartedAt(null);
     setPackageHint(adapter.androidPackageHints[0] ?? "");
     setScannerOpen(false);
   }, []);
+
+  const classifyManual = useCallback(() => {
+    const parsed = parseEVManualInput(rawInput, manualProvider);
+    if (!parsed) {
+      Alert.alert("Code needed", "Paste or type the QR payload, provider link, station code, socket code, or charger code.");
+      return;
+    }
+    const next = makeEVIntent(rawInput.trim(), parsed);
+    const adapter = providerForIntent(next);
+    setIntent(addEVEvent(next, "manual_code_entered", "Manual QR/station code entered for provider handoff.", {
+      provider: next.provider,
+      code: next.chargerId || next.connectorId || next.stationId || next.socketLabel,
+    }));
+    setSelectedRoute(null);
+    setChargingStartedAt(null);
+    setPackageHint(adapter.androidPackageHints[0] ?? "");
+    setScannerOpen(false);
+  }, [manualProvider, rawInput]);
 
   const pickRoute = useCallback((kind: EVRouteKind) => {
     if (!intent) return;
@@ -183,7 +235,9 @@ export default function EVChargingScreen() {
       setIntent((cur) => cur ? addEVEvent(cur, "remote_android_launch", `Launched ${providerLabel(intent.provider)} on remote Android.`, { package: launch?.package || hint }) : cur);
       Alert.alert(
         "Remote Android opened",
-        "Yaver opened the provider app. Login, SMS, payment, and final start still need your visible approval.",
+        manualCode
+          ? `Yaver opened the provider app. If camera scan is unavailable in Redroid, use the app's manual station/socket-code entry: ${manualCode}. Login, SMS, payment, and final start still need your visible approval.`
+          : "Yaver opened the provider app. Login, SMS, payment, and final start still need your visible approval.",
         [{ text: "View Android", onPress: () => router.push("/droid-control" as any) }],
       );
     } catch (e) {
@@ -191,7 +245,13 @@ export default function EVChargingScreen() {
     } finally {
       setBusy(null);
     }
-  }, [activeDevice, intent, packageHint, router]);
+  }, [activeDevice, intent, manualCode, packageHint, router]);
+
+  const copyRunnerBrief = useCallback(async () => {
+    if (!runnerBrief) return;
+    await Clipboard.setStringAsync(runnerBrief);
+    setIntent((cur) => cur ? addEVEvent(cur, "runner_brief_copied", "Copied Redroid manual-code runner brief.") : cur);
+  }, [runnerBrief]);
 
   const recordApproval = useCallback((kind: "login" | "otp" | "payment" | "start" | "stop") => {
     if (!intent) return;
@@ -203,6 +263,20 @@ export default function EVChargingScreen() {
       stop: "User reached stop confirmation. Yaver did not stop automatically.",
     };
     setIntent(approveEV(intent, kind, labels[kind]));
+  }, [intent]);
+
+  const markCharging = useCallback(() => {
+    if (!intent) return;
+    const next = approveEV(intent, "start", "User confirmed charging started in provider UI.");
+    setIntent(setEVState(next, "charging", "Charging marked active from Yaver."));
+    setChargingStartedAt(Date.now());
+  }, [intent]);
+
+  const markStopped = useCallback(() => {
+    if (!intent) return;
+    const next = approveEV(intent, "stop", "User confirmed charging stopped in provider UI.");
+    setIntent(setEVState(next, "complete", "Charging session marked complete from Yaver."));
+    setChargingStartedAt(null);
   }, [intent]);
 
   if (scannerOpen) {
@@ -218,9 +292,9 @@ export default function EVChargingScreen() {
             <Ionicons name="flash" size={28} color={c.accent} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.heroTitle, { color: c.textPrimary }]}>Scan first, approve later</Text>
+            <Text style={[styles.heroTitle, { color: c.textPrimary }]}>Scan or type, approve later</Text>
             <Text style={[styles.heroText, { color: c.textSecondary }]}>
-              Yaver identifies the charger and then supervises the real provider app. SMS, payment, and start remain user-approved.
+              Yaver identifies the charger and supervises the real provider app. Redroid can use manual station codes when camera scan is unavailable.
             </Text>
           </View>
         </View>
@@ -234,7 +308,7 @@ export default function EVChargingScreen() {
             <Text style={styles.primaryBtnText}>Scan QR</Text>
           </Pressable>
           <Pressable
-            onPress={() => classify(rawInput)}
+            onPress={classifyManual}
             disabled={!rawInput.trim()}
             style={({ pressed }) => [
               styles.secondaryBtn,
@@ -242,14 +316,38 @@ export default function EVChargingScreen() {
               pressed && { opacity: 0.75 },
             ]}
           >
-            <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>Classify</Text>
+            <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>Use code</Text>
           </Pressable>
+        </View>
+
+        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+          <Text style={[styles.cardTitle, { color: c.textPrimary }]}>Manual QR / station code</Text>
+          <Text style={[styles.routeDescription, { color: c.textMuted, marginTop: 6 }]}>
+            Use this when Redroid cannot scan with a camera. Pick the provider if the code itself does not identify one.
+          </Text>
+          <View style={styles.providerGrid}>
+            {EV_PROVIDERS.filter((p) => p.id !== "sarjtr").map((p) => {
+              const selected = manualProvider === p.id;
+              return (
+                <Pressable
+                  key={p.id}
+                  onPress={() => setManualProvider(p.id)}
+                  style={[styles.providerChip, {
+                    borderColor: selected ? c.accent : c.border,
+                    backgroundColor: selected ? c.accent + "18" : c.bg,
+                  }]}
+                >
+                  <Text style={{ color: selected ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{p.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <TextInput
           value={rawInput}
           onChangeText={setRawInput}
-          placeholder="Paste charger QR/link/code"
+          placeholder="Paste QR payload, provider link, station code, socket code, or charger code"
           placeholderTextColor={c.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -270,6 +368,18 @@ export default function EVChargingScreen() {
               {intent.normalizedUrl ? (
                 <Text style={[styles.urlText, { color: c.textMuted }]} numberOfLines={2}>{intent.normalizedUrl}</Text>
               ) : null}
+            </View>
+
+            <View style={[styles.sessionCard, { backgroundColor: intent.state === "charging" ? c.accent + "18" : c.bgCard, borderColor: intent.state === "charging" ? c.accent : c.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sessionLabel, { color: c.textMuted }]}>Session</Text>
+                <Text style={[styles.sessionStatus, { color: c.textPrimary }]}>
+                  {intent.state === "charging" ? "Charging" : intent.state === "complete" ? "Complete" : "Not charging"}
+                </Text>
+              </View>
+              <Text style={[styles.timerText, { color: intent.state === "charging" ? c.accent : c.textMuted }]}>
+                {elapsedLabel}
+              </Text>
             </View>
 
             <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
@@ -319,7 +429,7 @@ export default function EVChargingScreen() {
               <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
                 <Text style={[styles.cardTitle, { color: c.textPrimary }]}>Remote Android</Text>
                 <Text style={[styles.routeDescription, { color: c.textMuted, marginTop: 6 }]}>
-                  Launches the real provider app on the selected Yaver machine. You still approve SMS, payment, start, and stop.
+                  Launches the real provider app on the selected Yaver machine. Use manual station/socket entry if provider camera scan is unavailable. You still approve SMS, payment, start, and stop.
                 </Text>
                 <TextInput
                   value={packageHint}
@@ -342,6 +452,15 @@ export default function EVChargingScreen() {
                   {busy === "android" ? <ActivityIndicator color="#000" /> : <Ionicons name="logo-android" size={18} color="#000" />}
                   <Text style={styles.primaryBtnText}>Launch on Android</Text>
                 </Pressable>
+                {runnerBrief ? (
+                  <Pressable
+                    onPress={copyRunnerBrief}
+                    style={({ pressed }) => [styles.secondaryBtn, { borderColor: c.border, backgroundColor: c.bg, marginTop: 10 }, pressed && { opacity: 0.75 }]}
+                  >
+                    <Ionicons name="clipboard-outline" size={18} color={c.textPrimary} />
+                    <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>Copy runner brief</Text>
+                  </Pressable>
+                ) : null}
               </View>
             )}
 
@@ -357,6 +476,38 @@ export default function EVChargingScreen() {
                     <Text style={[styles.approvalText, { color: c.textPrimary }]}>{kind.toUpperCase()}</Text>
                   </Pressable>
                 ))}
+              </View>
+            </View>
+
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+              <Text style={[styles.cardTitle, { color: c.textPrimary }]}>Charging state</Text>
+              <Text style={[styles.routeDescription, { color: c.textMuted, marginTop: 6 }]}>
+                Use these after the provider app confirms the session. Yaver records state only; it does not command the charger.
+              </Text>
+              <View style={styles.stateActions}>
+                <Pressable
+                  onPress={markCharging}
+                  disabled={intent.state === "charging"}
+                  style={({ pressed }) => [
+                    styles.primaryBtn,
+                    { backgroundColor: c.accent, flex: 1, opacity: intent.state === "charging" ? 0.45 : 1 },
+                    pressed && { opacity: 0.85 },
+                  ]}
+                >
+                  <Ionicons name="flash" size={18} color="#000" />
+                  <Text style={styles.primaryBtnText}>Mark charging</Text>
+                </Pressable>
+                <Pressable
+                  onPress={markStopped}
+                  disabled={intent.state !== "charging"}
+                  style={({ pressed }) => [
+                    styles.secondaryBtn,
+                    { borderColor: c.border, backgroundColor: c.bg, flex: 1, opacity: intent.state === "charging" ? 1 : 0.45 },
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>Mark stopped</Text>
+                </Pressable>
               </View>
             </View>
 
@@ -410,6 +561,8 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: 8, minHeight: 84, padding: 12, fontSize: 14, textAlignVertical: "top" },
   singleInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginTop: 12 },
   card: { borderWidth: 1, borderRadius: 8, padding: 14 },
+  providerGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  providerChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8 },
   cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 },
   cardTitle: { fontSize: 16, fontWeight: "700" },
   badge: { overflow: "hidden", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, fontSize: 11, fontWeight: "700" },
@@ -417,10 +570,15 @@ const styles = StyleSheet.create({
   infoLabel: { fontSize: 12, fontWeight: "600", textTransform: "uppercase" },
   infoValue: { fontSize: 13, fontWeight: "600", flex: 1, textAlign: "right" },
   urlText: { fontSize: 12, marginTop: 8 },
+  sessionCard: { borderWidth: 1, borderRadius: 8, padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
+  sessionLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
+  sessionStatus: { fontSize: 20, fontWeight: "800", marginTop: 2 },
+  timerText: { fontSize: 24, fontWeight: "800", fontVariant: ["tabular-nums"] },
   routeRow: { borderWidth: 1, borderRadius: 8, padding: 12, flexDirection: "row", gap: 10, alignItems: "center" },
   routeLabel: { fontSize: 14, fontWeight: "700" },
   routeDescription: { fontSize: 12, lineHeight: 17, marginTop: 3 },
   approvalGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  stateActions: { flexDirection: "row", gap: 10, marginTop: 12 },
   approvalBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10 },
   approvalText: { fontSize: 12, fontWeight: "700" },
   eventRow: { borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 8 },

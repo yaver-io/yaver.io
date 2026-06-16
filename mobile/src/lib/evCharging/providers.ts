@@ -227,6 +227,26 @@ export function parseEVQr(raw: string): EVParsedQR | null {
   return parseUnknown(trimmed);
 }
 
+export function parseEVManualInput(raw: string, providerId?: EVProviderId): EVParsedQR | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = parseEVQr(trimmed) ?? parseUnknown(trimmed);
+  if (!providerId || providerId === "unknown") return parsed;
+  const token = parsed?.chargerId || parsed?.connectorId || parsed?.stationId || cleanToken(trimmed);
+  return {
+    ...parsed,
+    provider: providerId,
+    confidence: parsed?.provider === providerId ? parsed.confidence : "medium",
+    chargerId: parsed?.chargerId || token,
+    socketLabel: parsed?.socketLabel || token,
+    notes: [
+      `Manual provider selected: ${providerLabel(providerId)}.`,
+      "Use the provider app's manual station/socket-code fallback if Redroid camera scan is unavailable.",
+      ...(parsed?.notes ?? []),
+    ],
+  };
+}
+
 export function buildEVRouteOptions(intent: EVChargingIntent, env: EVRouteEnv): EVRouteOption[] {
   return providerForIntent(intent).buildRoutes(intent, env);
 }
