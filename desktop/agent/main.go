@@ -3401,6 +3401,12 @@ func runServe(args []string) {
 			httpServer.autopilot.OnTaskDone(task)
 		}
 
+		// Self-growing tests: when a coding/vibe task finishes successfully on a
+		// project that has a yaver-tests/ suite, let the runner author specs for
+		// any newly-uncovered routes — zero-touch growth during vibe-coding.
+		// Guarded against recursion (skips its own "testkit-grow" tasks).
+		maybeGrowTestsAfterTask(taskMgr, task)
+
 		// Video summary: if task asked for one, kick off the clip
 		// recorder. Non-blocking; the recorder emits clip_ready over
 		// the vibe-preview SSE channel when the MP4 is mux-ready.
