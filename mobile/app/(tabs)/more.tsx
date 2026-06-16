@@ -2741,6 +2741,7 @@ export default function MoreScreen() {
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
+  const handleCarVoice = useCallback(() => router.navigate("/car-voice-coding" as any), [router]);
   const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
   const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
   const handlePackages = useCallback(() => router.navigate("/packages" as any), [router]);
@@ -3073,6 +3074,24 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Circuit Simulator</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"SPICE/KiCad/EPLAN \u2014 simulate, ERC, view waveforms"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Car Voice Coding \u2014 Tier 0 hands-free: speak a coding command, it
+                runs on a box you pick and reads a one-sentence status back over
+                car audio. Risky commands gate behind a confirm; code is never
+                read aloud while driving. Box-reachable, so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleCarVoice}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83d\ude97"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Car Voice Coding</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Speak a command from the car \u2014 status read back over Bluetooth"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>

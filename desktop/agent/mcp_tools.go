@@ -1591,6 +1591,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "ev_charging", "description": "Find EV charging stations nearby. Filter by network (Tesla, IONITY, Trugo, ChargePoint, etc.), connector type, country, and minimum power. Covers Turkey (Trugo/Togg, Eşarj, ZES, Sharz.net), US (Tesla, Electrify America, ChargePoint, EVgo), and Europe (IONITY, Fastned, Shell, BP Pulse).", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"lat", "lon"}, "properties": map[string]interface{}{"lat": map[string]interface{}{"type": "number"}, "lon": map[string]interface{}{"type": "number"}, "radius": map[string]interface{}{"type": "integer", "description": "Search radius in km (default: 10)"}, "connector_type": map[string]interface{}{"type": "string", "description": "Connector type ID (use ev_connector_types to see list)"}, "network": map[string]interface{}{"type": "string", "description": "Network filter: tesla, ionity, chargepoint, evgo, shell, bp"}, "country": map[string]interface{}{"type": "string", "description": "Country code or name (e.g. TR, turkey, US, DE)"}, "min_power_kw": map[string]interface{}{"type": "integer", "description": "Minimum charging power in kW (e.g. 50 for DC fast only)"}}}},
 		{"name": "ev_networks", "description": "List EV charging networks by country — Turkey (Trugo/Togg, Eşarj, ZES, Sharz.net, Voltrun), US (Tesla, Electrify America, ChargePoint, EVgo), Europe (IONITY, Fastned, Shell, BP Pulse).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"country": map[string]interface{}{"type": "string", "description": "TR/turkey, US/usa, EU/europe (all if empty)"}}}},
 		{"name": "ev_connector_types", "description": "Reference: EV connector types (CCS2, Type 2, CHAdeMO, Tesla NACS, etc.) with regions and max power.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "gateway_query", "description": "Personal Agent Gateway: read state from one of YOUR credentialed apps/services (your wired connectors) as a structured answer. READ-ONLY — no writes/actions. Credentials live in your vault; nothing is sent to Convex. Use the connector + capability ids from your connector registry.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"connector", "capability"}, "properties": map[string]interface{}{"connector": map[string]interface{}{"type": "string", "description": "Connector id (e.g. 'google')"}, "capability": map[string]interface{}{"type": "string", "description": "Read capability id on that connector (e.g. 'next_event')"}, "params": map[string]interface{}{"type": "object", "description": "Optional string params substituted into the capability flow ({key} placeholders)", "additionalProperties": map[string]interface{}{"type": "string"}}}}},
 		{"name": "nobetci_eczane", "description": "Find on-duty pharmacies (nöbetçi eczane) in Turkish cities.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"city"}, "properties": map[string]interface{}{"city": map[string]interface{}{"type": "string", "description": "City name (e.g. istanbul, ankara, izmir, bursa)"}, "district": map[string]interface{}{"type": "string", "description": "District/ilçe (e.g. kadıköy, beşiktaş, çankaya)"}}}},
 		{"name": "eczane_nearby", "description": "Find pharmacies near a location (worldwide, OpenStreetMap).", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"lat", "lon"}, "properties": map[string]interface{}{"lat": map[string]interface{}{"type": "number"}, "lon": map[string]interface{}{"type": "number"}, "radius": map[string]interface{}{"type": "integer", "description": "Radius in meters (default: 2000)"}}}},
 		{"name": "places_search", "description": "Search for places, addresses, businesses (OpenStreetMap, free).", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"query"}, "properties": map[string]interface{}{"query": map[string]interface{}{"type": "string", "description": "Search query (e.g. 'coffee shop Istanbul')"}, "lat": map[string]interface{}{"type": "number", "description": "Center latitude"}, "lon": map[string]interface{}{"type": "number", "description": "Center longitude"}}}},
@@ -4227,6 +4228,35 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 	}
 	tools = append(tools, droidTools...)
+
+	redroidAppProps := map[string]interface{}{
+		"device_id":     map[string]interface{}{"type": "string", "description": "Optional owned Yaver device id/name/alias whose agent hosts the Redroid surface."},
+		"package_name":  map[string]interface{}{"type": "string", "description": "Android package id, e.g. com.example.app."},
+		"host_work_dir": map[string]interface{}{"type": "string", "description": "Optional host dir bind-mounted to Redroid /data. Default ~/.yaver/redroid-app-sync."},
+		"image":         map[string]interface{}{"type": "string", "description": "Optional Redroid image. Default redroid/redroid:13.0.0-latest."},
+		"container":     map[string]interface{}{"type": "string", "description": "Optional Redroid container name. Default yaver-app-sync-redroid."},
+	}
+	redroidInstallProps := map[string]interface{}{}
+	for k, v := range redroidAppProps {
+		redroidInstallProps[k] = v
+	}
+	redroidInstallProps["apk_path"] = map[string]interface{}{"type": "string", "description": "Local APK path on the target agent machine."}
+	redroidInstallProps["source"] = map[string]interface{}{"type": "string", "enum": []string{"", "apk", "yaver-build", "manual", "play"}, "description": "Install source. play currently returns unsupported unless a store integration is added."}
+	redroidQueryProps := map[string]interface{}{}
+	for k, v := range redroidAppProps {
+		redroidQueryProps[k] = v
+	}
+	redroidQueryProps["query"] = map[string]interface{}{"type": "string", "description": "Text to look for in the UIAutomator view tree after launch."}
+	redroidQueryProps["wait_text"] = map[string]interface{}{"type": "string", "description": "Optional text to wait for briefly before collecting UI text."}
+	redroidQueryProps["text"] = map[string]interface{}{"type": "string", "description": "Optional text to type after launch."}
+	redroidQueryProps["key"] = map[string]interface{}{"type": "string", "description": "Optional Android keyevent alias/code after typing, e.g. ENTER, BACK."}
+	androidAppSyncTools := []map[string]interface{}{
+		{"name": "android_app_status", "description": "Check whether an Android package is installed in a user-owned Redroid app-sync surface. Does not read phone keychain or app data.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"package_name"}, "properties": redroidAppProps}},
+		{"name": "android_app_install", "description": "Install a selected Android app APK into Redroid. Arbitrary Play Store restore is intentionally not faked; provide apk_path or install manually.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"package_name"}, "properties": redroidInstallProps}},
+		{"name": "android_app_launch", "description": "Launch an installed package in Redroid and return visible UI text plus whether it appears installed.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"package_name"}, "properties": redroidAppProps}},
+		{"name": "android_app_query", "description": "Launch/query a package in Redroid and report whether visible UI contains query text, plus a needsUser hint for login/OTP handoff screens.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"package_name"}, "properties": redroidQueryProps}},
+	}
+	tools = append(tools, androidAppSyncTools...)
 
 	// --- Vibe Preview ---
 	// Lets the AI runner check what its own visual change looked like

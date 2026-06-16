@@ -798,6 +798,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/studio/permission-prose", s.auth(s.handleStudioPermissionProse))
 	mux.HandleFunc("/studio/jobs", s.auth(s.handleStudioJobStart))
 	mux.HandleFunc("/studio/jobs/", s.auth(s.handleStudioJobStatus))
+	mux.HandleFunc("/android/apps/status", s.auth(s.handleAndroidAppStatus))
+	mux.HandleFunc("/android/apps/install", s.auth(s.handleAndroidAppInstall))
+	mux.HandleFunc("/android/apps/launch", s.auth(s.handleAndroidAppLaunch))
+	mux.HandleFunc("/android/apps/query", s.auth(s.handleAndroidAppQuery))
 
 	// Design references (web UI captures from the browser extension) —
 	// distinct store, same auth tier as feedback so SDK tokens can list
@@ -8517,6 +8521,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mcpEVNetworks(args.Country))
 	case "ev_connector_types":
 		return mcpToolJSON(mcpEVConnectorTypes())
+	case "gateway_query":
+		var args struct {
+			Connector  string            `json:"connector"`
+			Capability string            `json:"capability"`
+			Params     map[string]string `json:"params"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayQuery(args.Connector, args.Capability, args.Params))
 	case "nobetci_eczane":
 		var args struct {
 			City     string `json:"city"`
@@ -15355,6 +15367,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		// Native build & deploy — iosNative / androidNative / flutter (mcp_native_build.go)
 		if handled, result := dispatchNativeBuildMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
+		// Remote Android app sync/control on a Redroid surface.
+		if handled, result := dispatchAndroidAppMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
 		// Monorepo detection — mcp_monorepo.go

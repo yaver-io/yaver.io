@@ -37,9 +37,8 @@ func mcpDesktopNotify(args ...interface{}) interface{} { return droppedMCPStub(a
 func mcpDirections(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpDiskUsage(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpDomainCheck(args ...interface{}) interface{} { return droppedMCPStub(args...) }
-func mcpEVCharging(args ...interface{}) interface{} { return droppedMCPStub(args...) }
-func mcpEVConnectorTypes(args ...interface{}) interface{} { return droppedMCPStub(args...) }
-func mcpEVNetworks(args ...interface{}) interface{} { return droppedMCPStub(args...) }
+// ev_charging / ev_networks / ev_connector_types are now real handlers —
+// see ev_charging.go. (Restored from the lean-stack cut 2026-06-17.)
 func mcpEczaneSearch(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpElgatoControl(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpElgatoStatus(args ...interface{}) interface{} { return droppedMCPStub(args...) }

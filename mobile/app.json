@@ -148,7 +148,8 @@
           ]
         }
       ],
-      "./plugins/withAndroidTV"
+      "./plugins/withAndroidTV",
+      "./plugins/withAndroidAutoMessaging"
     ]
   }
 }

@@ -80,6 +80,27 @@ func (s *RedroidSurface) exec(ctx context.Context, cmd string) (string, error) {
 	return string(out), nil
 }
 
+// AndroidShell runs a shell command inside the redroid Android userspace. It is
+// intentionally narrower than exposing host docker exec to callers: higher
+// layers can inspect package state and UI without gaining arbitrary host shell.
+func (s *RedroidSurface) AndroidShell(ctx context.Context, inner string) (string, error) {
+	s.defaults()
+	return s.exec(ctx, s.de(inner))
+}
+
+// IsPackageInstalled reports whether an Android package exists in the surface.
+func (s *RedroidSurface) IsPackageInstalled(ctx context.Context, pkg string) (bool, error) {
+	pkg = strings.TrimSpace(pkg)
+	if pkg == "" {
+		return false, fmt.Errorf("package required")
+	}
+	out, err := s.AndroidShell(ctx, "pm path "+shellQuote(pkg)+" 2>/dev/null || true")
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, "package:"), nil
+}
+
 // Provision loads binder, boots the container, and waits for Android.
 func (s *RedroidSurface) Provision(ctx context.Context) error {
 	s.defaults()

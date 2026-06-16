@@ -38,6 +38,9 @@ class MainApplication : Application(), ReactApplication {
               // hands the event to dispatchKey(...) BEFORE the normal
               // RN keyboard pipeline so a grabbed sink can intercept.
               add(YaverKeyboardRouterPackage())
+              // Android-first app sync: selected installed-app inventory for
+              // provisioning a user-owned remote Redroid surface.
+              add(YaverAppInventoryPackage())
               // On-device coding agent: foreground service that runs
               // `libyaver.so serve` on loopback + a proot rootfs (claude/
               // codex/opencode ON the phone). JS: src/lib/sandboxControl.ts
