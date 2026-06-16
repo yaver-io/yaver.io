@@ -271,10 +271,17 @@ func (h *oauthCodeHandler) AuthCodeURL(c *Connector, redirectURI, state string, 
 	return c.Auth.AuthURL + sep + q.Encode(), nil
 }
 
-// ExchangeCode exchanges an authorization code (+ PKCE verifier) for tokens and
-// persists them in the vault under the connector's CredRef. This is the
-// one-time consent completion; afterwards Ensure() handles refresh.
-func (h *oauthCodeHandler) ExchangeCode(ctx context.Context, c *Connector, code, redirectURI, codeVerifier string) (*OAuthCreds, error) {
+// exchangeToken POSTs an authorization_code grant (+ PKCE verifier + optional
+// client secret) to the token endpoint and returns the resulting OAuthCreds. It
+// is the single code→token primitive shared by ExchangeCode (in-process consent)
+// and gatewayConnectFinish (authoring funnel), so the token-request shape never
+// diverges between the two paths. It does NOT persist — the caller saves.
+//
+// clientSecret is supplied by the authoring flow when a confidential client is
+// used; it is sent on the wire to the provider's token endpoint but is NEVER
+// stored in the manifest and NEVER returned in the creds blob (only access /
+// refresh tokens are persisted).
+func (h *oauthCodeHandler) exchangeToken(ctx context.Context, c *Connector, code, redirectURI, codeVerifier, clientSecret string) (*OAuthCreds, error) {
 	tokenURL := c.Auth.TokenURL
 	if tokenURL == "" {
 		return nil, fmt.Errorf("gateway: connector %q has no tokenUrl", c.ID)
@@ -286,6 +293,9 @@ func (h *oauthCodeHandler) ExchangeCode(ctx context.Context, c *Connector, code,
 	if c.Auth.ClientID != "" {
 		form.Set("client_id", c.Auth.ClientID)
 	}
+	if clientSecret != "" {
+		form.Set("client_secret", clientSecret)
+	}
 	form.Set("code_verifier", codeVerifier)
 
 	tr, status, err := h.postToken(ctx, tokenURL, form)
@@ -295,7 +305,7 @@ func (h *oauthCodeHandler) ExchangeCode(ctx context.Context, c *Connector, code,
 	if status != http.StatusOK || tr.Error != "" || tr.AccessToken == "" {
 		return nil, fmt.Errorf("gateway: code exchange for connector %q failed (status %d): %s %s", c.ID, status, tr.Error, tr.ErrorDesc)
 	}
-	creds := &OAuthCreds{
+	return &OAuthCreds{
 		AccessToken:  tr.AccessToken,
 		RefreshToken: tr.RefreshToken,
 		TokenType:    tr.TokenType,
@@ -303,6 +313,16 @@ func (h *oauthCodeHandler) ExchangeCode(ctx context.Context, c *Connector, code,
 		ExpiryUnix:   expiryFromExpiresIn(tr.ExpiresIn),
 		TokenURL:     tokenURL,
 		ClientID:     c.Auth.ClientID,
+	}, nil
+}
+
+// ExchangeCode exchanges an authorization code (+ PKCE verifier) for tokens and
+// persists them in the vault under the connector's CredRef. This is the
+// one-time consent completion; afterwards Ensure() handles refresh.
+func (h *oauthCodeHandler) ExchangeCode(ctx context.Context, c *Connector, code, redirectURI, codeVerifier string) (*OAuthCreds, error) {
+	creds, err := h.exchangeToken(ctx, c, code, redirectURI, codeVerifier, "")
+	if err != nil {
+		return nil, err
 	}
 	if err := saveOAuthCreds(h.store, c.Auth.CredRef, creds); err != nil {
 		return nil, fmt.Errorf("gateway: persist consent creds: %w", err)

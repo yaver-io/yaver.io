@@ -1,0 +1,32 @@
+# XcodeGen spec for the YaverTV tvOS app. Generate with: cd tvos && xcodegen generate
+# Keeps the .xcodeproj reproducible + out of git (see tvos/.gitignore) — edit
+# this spec, not the project. See tvos/README.md.
+name: YaverTV
+options:
+  deploymentTarget:
+    tvOS: "17.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.40.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"          # avoid Swift 6 strict-concurrency churn for the scaffold
+    DEVELOPMENT_TEAM: "5SJZ4KA39A"
+    TARGETED_DEVICE_FAMILY: "3"   # tvOS
+targets:
+  YaverTV:
+    type: application
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: YaverTV
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.tv
+        PRODUCT_NAME: Yaver
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: YaverTV/Info.plist
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""

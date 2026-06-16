@@ -8535,6 +8535,34 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpGatewayQuery(args.Connector, args.Capability, args.Params))
+	case "gateway_connect":
+		var args struct {
+			ID           string       `json:"id"`
+			Surface      string       `json:"surface"`
+			AuthURL      string       `json:"authUrl"`
+			TokenURL     string       `json:"tokenUrl"`
+			Scopes       []string     `json:"scopes"`
+			ClientID     string       `json:"clientId"`
+			ClientSecret string       `json:"clientSecret"`
+			Capabilities []Capability `json:"capabilities"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayConnect(args.ID, args.Surface, args.AuthURL, args.TokenURL, args.Scopes, args.ClientID, args.ClientSecret, args.Capabilities))
+	case "gateway_connect_finish":
+		var args struct {
+			ConnectID string `json:"connect_id"`
+			Code      string `json:"code"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayConnectFinish(args.ConnectID, args.Code))
+	case "gateway_connectors":
+		return mcpToolJSON(mcpGatewayConnectors())
+	case "gateway_capabilities":
+		var args struct {
+			Connector string `json:"connector"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayConnectorCapabilities(args.Connector))
 	case "nobetci_eczane":
 		var args struct {
 			City     string `json:"city"`
