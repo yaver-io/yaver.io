@@ -176,8 +176,10 @@ and `yaver-tests/`:
   and asserts it renders (guards the non-ASCII `getProjectFull` 500 fixed 2026-06-16). Green after
   the next web deploy ships the testid.
 
-Run: `TALOS_SESSION_TOKEN=<token> yaver test run` (locally or on magara). This is the seed the
-author loop (§2) grows from.
+Install + run: `npm install -g yaver-cli` (brings the runner + chromium/ffmpeg/playwright via the
+postinstall stacks), then `TALOS_SESSION_TOKEN=<token> yaver test run` (locally or on magara). This
+is the seed the author loop (§2) grows from. Any still-missing tool is one tap away via the in-app
+"Install test tools" button (`testkit_deps_install`).
 
 ---
 

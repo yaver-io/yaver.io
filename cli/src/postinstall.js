@@ -227,6 +227,38 @@ function installMissingMobileTools() {
   }
 }
 
+// Test-runner tooling. ffmpeg + chromium arrive via the vibe-preview stack;
+// here we ensure the optional Playwright web driver so `yaver test` works with
+// `target: web-playwright` straight after `npm install -g yaver-cli`. The
+// chromedp driver + redroid image are provisioned on demand by the in-app
+// "Install test tools" button (testkit_deps_install), so a run never fails on
+// missing tooling. Best-effort; never fails npm install.
+function installTestRunnerTools() {
+  if (!commandExists("node")) {
+    log("Node not found — skipping Playwright test driver bootstrap.");
+    return;
+  }
+  let hasPW = false;
+  try {
+    execSync("node -e \"require.resolve('playwright')\"", { stdio: ["ignore", "ignore", "ignore"] });
+    hasPW = true;
+  } catch (_) {}
+  if (hasPW) {
+    log("Playwright test driver already present.");
+    return;
+  }
+  const npmCmd = (process.env.npm_execpath || "npm").trim() || "npm";
+  try {
+    execSync(`"${npmCmd}" install -g --no-fund --no-audit playwright`, { stdio: "inherit" });
+    try {
+      execSync("npx --yes playwright install chromium", { stdio: "inherit" });
+    } catch (_) {}
+    log("Installed Playwright test driver (web-playwright target).");
+  } catch (error) {
+    log(`Skipping Playwright test driver bootstrap: ${error.message}`);
+  }
+}
+
 // Make sure `yaver` resolves on PATH for the next shell session. npm's
 // global prefix (e.g. ~/.npm-global/bin) is not on PATH by default on
 // most Linux distros — so `npm install -g yaver-cli` succeeds but
@@ -517,6 +549,12 @@ async function main() {
     } catch (error) {
       log(`Skipping vibe-preview bootstrap: ${error.message}`);
     }
+  }
+
+  // Test runner stack — Playwright web driver (chromium + ffmpeg come from
+  // vibe-preview above). Opt out with YAVER_SKIP_POSTINSTALL_TESTKIT=1.
+  if (!envEnabled("YAVER_SKIP_POSTINSTALL_TESTKIT")) {
+    installTestRunnerTools();
   }
 
   // Free/offline voice stack — provision ffmpeg + whisper.cpp + a ggml
