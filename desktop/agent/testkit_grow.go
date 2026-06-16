@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,40 @@ import (
 
 	"github.com/yaver-io/agent/testkit"
 )
+
+// maybeGrowTestsAfterTask is the zero-touch growth hook: called from
+// TaskManager.OnTaskDone, it lets the runner author specs for newly-uncovered
+// routes after a successful coding/vibe task — but only on projects that opted
+// in (have a yaver-tests/ dir) and never for its own "testkit-grow" tasks
+// (recursion guard). Best-effort; failures are logged, never fatal.
+func maybeGrowTestsAfterTask(tm *TaskManager, task *Task) {
+	if tm == nil || task == nil {
+		return
+	}
+	if task.Status != TaskStatusFinished {
+		return // only grow after a clean success
+	}
+	if task.Source == "testkit-grow" {
+		return // the authoring task we ourselves enqueue — don't recurse
+	}
+	workdir := strings.TrimSpace(task.WorkDir)
+	if workdir == "" {
+		return
+	}
+	if fi, err := os.Stat(filepath.Join(workdir, "yaver-tests")); err != nil || !fi.IsDir() {
+		return // project hasn't opted into the test suite
+	}
+	plan, err := growTestPlan(workdir, true)
+	if err != nil || len(plan.Uncovered) == 0 {
+		return
+	}
+	title := "Grow tests: " + filepath.Base(plan.ProjectDir)
+	if _, err := tm.CreateTask(title, plan.AuthorPrompt, "", "testkit-grow", "", "", nil); err != nil {
+		log.Printf("[testkit-grow] auto-grow after task %s: %v", task.ID, err)
+		return
+	}
+	log.Printf("[testkit-grow] queued spec authoring for %d uncovered route(s) in %s", len(plan.Uncovered), workdir)
+}
 
 // testkit_grow.go — the self-growing test loop's planning half (P2). It scans a
 // project's routes/screens, diffs them against the existing yaver-tests/ specs

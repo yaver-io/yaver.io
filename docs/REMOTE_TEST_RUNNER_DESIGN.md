@@ -143,8 +143,12 @@ The frames + per-step results already exist; the highlights layer is presentatio
 `testkitEnvMu`. Web runs where the agent runs → remote PC = `OpsRequest.machine` routing.
 
 **P2 — Self-growing author loop ✅** `desktop/agent/testkit_grow.go`: `growTestPlan` scans Next/Expo
-routes, diffs the `.coverage.json` ledger, returns the author plan + prompt for the runner. Monotonic,
-never deletes green coverage.
+routes, diffs the `.coverage.json` ledger, returns the author plan + prompt. `project_test_grow
+author:true` enqueues the runner (`taskMgr.CreateTask`) to write the specs. **Zero-touch:**
+`maybeGrowTestsAfterTask` is chained into `TaskManager.OnTaskDone` (main.go), so every successful
+vibe-code task on a project with `yaver-tests/` auto-authors specs for newly-uncovered routes —
+recursion-guarded (skips its own `testkit-grow` tasks). Monotonic, never deletes green coverage.
+Unit-tested (`testkit_grow_test.go`, green).
 
 **P3 — Mobile Projects→Tests ✅** `mobile/app/project-tests.tsx` + `mobile/src/lib/testkitClient.ts`
 (mirror `qaClient.ts`) + `apps.tsx` action-sheet "🧪 Tests" entry → `/project-tests`. Remote-PC
