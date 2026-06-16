@@ -80,7 +80,10 @@ type broker struct {
 func newBroker(store CredStore) *broker {
 	b := &broker{handlers: map[string]AuthMethod{}}
 	b.register(newOAuthCodeHandler(store))
-	// Future: b.register(newPasswordTOTPHandler(...)) etc.
+	// password_totp (redroid device-as-2FA, gateway_redroid.go). The production
+	// device driver picks the first attached/emulated device lazily; the gate
+	// store is the process-wide gatewayGates (notifies the user's own phone).
+	b.register(newPasswordTotpHandler(store, &redroidDeviceDriver{serial: droidPickDevice()}, gatewayGates))
 	return b
 }
 

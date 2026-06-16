@@ -4,6 +4,7 @@ import {
   Alert,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -35,6 +36,14 @@ import {
 import { useAuth } from "../../src/context/AuthContext";
 import { fetchPairInfo, submitPair, parsePairUrl } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
+import {
+  getSelectedAppPackages,
+  listPhoneApps,
+  remoteAndroidAppQuery,
+  remoteAndroidAppStatus,
+  setSelectedAppPackages,
+  type PhoneInstalledApp,
+} from "../../src/lib/appSync";
 
 // ── Quality Gates types ────────────────────────────────────────────
 
@@ -2700,6 +2709,171 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
   );
 }
 
+function MobileAppSyncSection({
+  c,
+  connected,
+  activeDeviceId,
+}: {
+  c: ReturnType<typeof useColors>;
+  connected: boolean;
+  activeDeviceId?: string;
+}) {
+  const [apps, setApps] = useState<PhoneInstalledApp[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [manualPackage, setManualPackage] = useState("");
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [busyPackage, setBusyPackage] = useState<string | null>(null);
+  const [result, setResult] = useState("");
+
+  const loadApps = useCallback(async () => {
+    setLoading(true);
+    setResult("");
+    try {
+      const [phoneApps, saved] = await Promise.all([listPhoneApps(), getSelectedAppPackages()]);
+      setApps(phoneApps);
+      setSelected(new Set(saved));
+    } catch (e) {
+      setResult(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadApps();
+  }, [loadApps]);
+
+  const persistSelected = useCallback(async (next: Set<string>) => {
+    setSelected(next);
+    await setSelectedAppPackages(Array.from(next));
+  }, []);
+
+  const togglePackage = useCallback(async (pkg: string) => {
+    const next = new Set(selected);
+    if (next.has(pkg)) next.delete(pkg);
+    else next.add(pkg);
+    await persistSelected(next);
+  }, [persistSelected, selected]);
+
+  const addManualPackage = useCallback(async () => {
+    const pkg = manualPackage.trim();
+    if (!pkg) return;
+    const next = new Set(selected);
+    next.add(pkg);
+    setManualPackage("");
+    await persistSelected(next);
+  }, [manualPackage, persistSelected, selected]);
+
+  const checkPackage = useCallback(async (pkg: string) => {
+    if (!connected) {
+      setResult("Pick a remote device first.");
+      return;
+    }
+    setBusyPackage(pkg);
+    setResult("");
+    try {
+      const q = query.trim();
+      const res = q
+        ? await remoteAndroidAppQuery({ packageName: pkg, query: q, deviceId: activeDeviceId })
+        : await remoteAndroidAppStatus(pkg, activeDeviceId);
+      if (!res.ok) {
+        setResult(res.error || "Remote app check failed.");
+        return;
+      }
+      const body = (res.result ?? {}) as Record<string, unknown>;
+      const installed = body.installed === true ? "installed" : "not installed";
+      const found = body.found === true ? "match found" : q ? "no visible match" : "";
+      const needsUser = body.needsUser === true ? " · needs phone/user login" : "";
+      setResult(`${pkg}: ${installed}${found ? ` · ${found}` : ""}${needsUser}`);
+    } finally {
+      setBusyPackage(null);
+    }
+  }, [activeDeviceId, connected, query]);
+
+  const visibleApps = apps.slice(0, 12);
+  const selectedOnly = Array.from(selected)
+    .filter((pkg) => !visibleApps.some((app) => app.packageName === pkg))
+    .map((pkg) => ({ packageName: pkg, label: pkg }));
+  const rows = [...selectedOnly, ...visibleApps];
+
+  return (
+    <View style={[s.cardBlock, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A3"}</Text>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[s.label, { color: c.textPrimary }]}>Mobile App Sync</Text>
+          <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+            {Platform.OS === "android" ? `${apps.length} launchable apps visible` : "Manual package sync on iPhone"}
+          </Text>
+        </View>
+        <Pressable style={[s.actionBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]} onPress={loadApps} disabled={loading}>
+          {loading ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Refresh</Text>}
+        </Pressable>
+      </View>
+
+      <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+        <TextInput
+          value={manualPackage}
+          onChangeText={setManualPackage}
+          placeholder="com.example.app"
+          placeholderTextColor={c.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[s.inlineInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
+        />
+        <Pressable style={[s.actionBtn, { backgroundColor: c.accent }]} onPress={addManualPackage}>
+          <Text style={[s.actionBtnText, { color: "#fff" }]}>Add</Text>
+        </Pressable>
+      </View>
+
+      <TextInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="optional visible text query"
+        placeholderTextColor={c.textMuted}
+        autoCapitalize="none"
+        autoCorrect={false}
+        style={[s.inlineInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg, marginBottom: 8 }]}
+      />
+
+      {rows.length === 0 ? (
+        <Text style={{ color: c.textMuted, fontSize: 13 }}>
+          {Platform.OS === "android" ? "No launchable apps returned by Android package visibility." : "iOS does not expose installed-app inventory."}
+        </Text>
+      ) : (
+        rows.map((app) => {
+          const pkg = app.packageName;
+          const isSelected = selected.has(pkg);
+          return (
+            <View key={pkg} style={[s.appSyncRow, { borderTopColor: c.border }]}>
+              <Pressable
+                onPress={() => togglePackage(pkg)}
+                style={[s.checkbox, { borderColor: isSelected ? c.accent : c.border, backgroundColor: isSelected ? c.accent : "transparent" }]}
+              >
+                <Text style={{ color: "#fff", fontSize: 12, fontWeight: "800" }}>{isSelected ? "\u2713" : ""}</Text>
+              </Pressable>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{app.label || pkg}</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }} numberOfLines={1}>{pkg}</Text>
+              </View>
+              <Pressable
+                onPress={() => checkPackage(pkg)}
+                disabled={busyPackage === pkg}
+                style={[s.actionBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]}
+              >
+                {busyPackage === pkg ? <ActivityIndicator size="small" color={c.accent} /> : <Text style={[s.actionBtnText, { color: c.textPrimary }]}>Check</Text>}
+              </Pressable>
+            </View>
+          );
+        })
+      )}
+
+      {result ? <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 8 }}>{result}</Text> : null}
+    </View>
+  );
+}
+
 export default function MoreScreen() {
   const LEAN_MORE_SURFACE = true;
   const c = useColors();
@@ -2741,6 +2915,8 @@ export default function MoreScreen() {
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
+  const handleEvStations = useCallback(() => router.navigate("/ev-stations" as any), [router]);
+  const handleGatewayGates = useCallback(() => router.navigate("/gateway-gates" as any), [router]);
   const handleCarVoice = useCallback(() => router.navigate("/car-voice-coding" as any), [router]);
   const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
   const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
@@ -2998,6 +3174,14 @@ export default function MoreScreen() {
             ) : null}
 
             {connected ? (
+              <MobileAppSyncSection
+                c={c}
+                connected={connected}
+                activeDeviceId={activeDevice?.id}
+              />
+            ) : null}
+
+            {connected ? (
               <Pressable
                 style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
                 onPress={handleScreenlog}
@@ -3074,6 +3258,42 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Circuit Simulator</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"SPICE/KiCad/EPLAN \u2014 simulate, ERC, view waveforms"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* EV Stations \u2014 nearby charging-station discovery through a box
+                (ev_charging verb / OpenChargeMap). Default filter CCS2 for
+                Togg/MG ZS EV in Turkey; filter by network + min power, then
+                Navigate. Discovery only, box-reachable, so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleEvStations}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83d\udd0c"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>EV Stations</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Find chargers nearby \u2014 CCS2 default, filter by network + power"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Gateway Gates \u2014 resolve the gateway Auth Broker's pending human
+                gates (OAuth re-consent / 2FA / captcha / payment). Interactive
+                challenges embed a live remote view so you solve them on your
+                phone. Box-reachable, so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleGatewayGates}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83d\udea6"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Gateway Gates</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Approve paused tasks \u2014 2FA, captcha, payment, with live view"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
@@ -3884,6 +4104,37 @@ const s = StyleSheet.create({
   actionBtnText: {
     fontSize: 13,
     fontWeight: "600",
+  },
+  cardBlock: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    gap: 0,
+  },
+  inlineInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    fontSize: 13,
+    minHeight: 38,
+  },
+  appSyncRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 8,
+    marginTop: 8,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   resultRow: {
     flexDirection: "row",

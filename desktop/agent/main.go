@@ -3216,6 +3216,10 @@ func runServe(args []string) {
 		log.Printf("Warning: blackbox unavailable: %v", err)
 	} else {
 		httpServer.blackboxMgr = bbMgr
+		// Point the gateway human-gate store at this BlackBoxManager so a
+		// broker suspend (captcha / push / code) notifies the user's own phone
+		// via the existing device_broadcast_command path (gateway_gate.go).
+		bindGatewayGateNotifier(bbMgr)
 		// Register so runner.go's pump can fire <<yaver-action:...>>
 		// sentinels (e.g. "reload sfmg") at the paired phone without
 		// threading the manager through every Task struct.

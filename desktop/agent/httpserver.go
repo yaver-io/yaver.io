@@ -659,6 +659,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/rd/frame.jpg", s.auth(s.handleRemoteDesktopFrame))
 	mux.HandleFunc("/rd/input", s.auth(s.handleRemoteDesktopInput))
 
+	// Personal Agent Gateway — resumable human gates (gateway_gate.go). The
+	// broker suspends on an irreducible human factor (captcha / push / code),
+	// notifies the user's own phone, and resumes when they resolve it here.
+	mux.HandleFunc("/gateway/gate", s.auth(s.handleGatewayGateList))
+	mux.HandleFunc("/gateway/gate/", s.auth(s.handleGatewayGateResolve))
+
 	// Affiliate tracking (extends the shortener with commissions)
 	mux.HandleFunc("/affiliates", s.auth(s.handleAffiliates))
 	mux.HandleFunc("/affiliates/", s.auth(s.handleAffiliateSub))

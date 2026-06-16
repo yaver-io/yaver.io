@@ -47,6 +47,24 @@ type ConnectorAuth struct {
 	// CredStore resolves it to a project/name pair. Required for any method
 	// that persists tokens. NEVER an inline secret.
 	CredRef string `json:"credRef,omitempty"`
+
+	// ── password_totp (redroid device-as-2FA) fields ─────────────────────────
+	// Forward-shape for the M-G4 passwordTotpHandler (gateway_redroid.go). All
+	// reference vault keys / package ids — NEVER an inline secret.
+
+	// Mechanism selects how the broker satisfies the connector's 2FA step:
+	// "totp_seed" | "authenticator_app" | "push_to_app" | "sms" | "passkey".
+	// Empty ⇒ no second factor (password-only).
+	Mechanism string `json:"mechanism,omitempty"`
+	// LoginRef is the vault key holding the connector's login credentials
+	// ({username, password}) the handler types into the app.
+	LoginRef string `json:"loginRef,omitempty"`
+	// TotpRef is the vault key holding the base32 TOTP seed Yaver owns (used
+	// when Mechanism == "totp_seed" — Yaver-as-authenticator).
+	TotpRef string `json:"totpRef,omitempty"`
+	// DeviceRef is the vault key holding the redroid golden-snapshot reference
+	// ({instanceId, snapshotId}) for this connector's trusted device.
+	DeviceRef string `json:"deviceRef,omitempty"`
 }
 
 // CapabilityFlow describes how a capability is executed. In this slice only
