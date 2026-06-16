@@ -23,6 +23,31 @@ mobile discovery, and remote-recovery — read it before changing those.
 ## Hard rules
 
 - **Never push or commit without explicit user permission.**
+- **Do no harm to third parties — it is not our purpose.** Yaver exists to lower
+  the *user's own* dev/ops cost, not to attack, scrape-abuse, or burden anyone
+  else's infrastructure. A datacenter IP (Hetzner/AWS/…) that hammers a third
+  party gets the whole account suspended — and it's wrong regardless. Concretely:
+  1. **No scanning/attacking hosts you don't own.** `nmap`, `port_scan`,
+     `arp_scan`, brute-force, floods, probes are for the user's OWN LAN/hosts or
+     explicitly authorized targets only. Never point them at a third party.
+  2. **Collect public data respectfully.** Don't spoof a browser
+     `User-Agent`/`Origin`/`Referer` to defeat bot detection; don't bypass
+     `robots.txt`, rate limits, WAFs, or geo/IP blocks. Prefer official/keyless
+     APIs. **Back off on 403/429/451 and stop** — a block is a "no", not a
+     puzzle. The collection layer records blocks as findings; it must never
+     rotate IPs or impersonate to route around them.
+  3. **Use the right resource, not the loudest one.** Move third-party reads off
+     a flagged datacenter IP onto the user's *own* devices/residential vantages
+     (`runtime: mobile_user_present`), distributed friend-roster runners, or an
+     official API — that's what `collection_plan` runtime selection and the Task
+     Packages phone-runner are for. Don't sustain a 24/7 scrape loop from one
+     cloud box.
+  4. **Peer-egress lends your OWN machines' egress only** — default-off,
+     same-user, RFC1918-blocked, never an open relay, never ban/geo evasion.
+  5. **If you build a loop that hits an external service:** identify honestly,
+     cap concurrency, jitter + back off, make it killable, and stop on a block.
+     When in doubt, don't. See `desktop/agent/access_policy.go` (Policy Guard)
+     and `egress_proxy.go` (anti-pivot). Mirrored in `../yaver-bet/CLAUDE.md`.
 - **Destructive paths**: before `rm -rf`, `git clean -fdx`, `find -delete`,
   `mv` over an existing dir:
   1. `ls -la <path>` first; show what's about to be deleted.
