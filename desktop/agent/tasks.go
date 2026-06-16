@@ -840,6 +840,13 @@ type TaskCreateOptions struct {
 	// the createTask handler.
 	AskFreely bool
 
+	// ResumeLast + ResumeSessionID wire native session resume into the FIRST
+	// spawn (used by the scheduler for recurring schedules with resume on).
+	// ResumeSessionID seeds task.SessionID so claude/glm/codex can resume by
+	// id; opencode resumes by --continue regardless. Default zero = fresh.
+	ResumeLast      bool
+	ResumeSessionID string
+
 	// AskMode reframes the task as a deep question-answer run instead of a
 	// work run: the runner deeply analyzes THIS repo, grounds the answer in
 	// file:line cites, escalates from a shallow scan to a wider read for
@@ -873,15 +880,21 @@ type PendingFollowUp struct {
 }
 
 type Task struct {
-	ID           string             `json:"id"`
-	Title        string             `json:"title"`
-	Description  string             `json:"description"`
-	Status       TaskStatus         `json:"status"`
-	Source       string             `json:"source,omitempty"`      // "mobile", "mcp", "cli"
-	GuestUserID  string             `json:"guestUserId,omitempty"` // set when task created by a guest
-	Model        string             `json:"model,omitempty"`
-	RunnerID     string             `json:"runnerId,omitempty"` // which runner is executing this task
-	SessionID    string             `json:"session_id,omitempty"`
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Status      TaskStatus `json:"status"`
+	Source      string     `json:"source,omitempty"`      // "mobile", "mcp", "cli"
+	GuestUserID string     `json:"guestUserId,omitempty"` // set when task created by a guest
+	Model       string     `json:"model,omitempty"`
+	RunnerID    string     `json:"runnerId,omitempty"` // which runner is executing this task
+	SessionID   string     `json:"session_id,omitempty"`
+	// ResumeLast asks startProcess to resume the prior session on the FIRST
+	// spawn (not just on follow-ups). Set by the scheduler when a recurring
+	// schedule with resume enabled re-fires, so the run picks up where the
+	// previous fire left off (claude/glm via SessionID, opencode via
+	// --continue, codex via exec resume). Default false = fresh spawn.
+	ResumeLast   bool               `json:"-"`
 	Output       string             `json:"output"`
 	ResultText   string             // Extracted clean result text from Claude
 	CostUSD      float64            // Total API cost
@@ -1537,6 +1550,8 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		AskFreely:                   opts.AskFreely,
 		AskMode:                     opts.AskMode,
 		RedactPII:                   opts.RedactPII,
+		ResumeLast:                  opts.ResumeLast,
+		SessionID:                   opts.ResumeSessionID,
 		Turns: []ConversationTurn{
 			{Role: "user", Content: initialTurnContent, Timestamp: now},
 		},
@@ -2240,6 +2255,19 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	}
 	args := buildRunnerArgsWithWorkDir(runner, prompt, taskDirForArgs)
 
+	// Recurring-schedule resume: when the scheduler re-fires a schedule with
+	// resume enabled, pick up the prior session on this first spawn. Takes
+	// precedence over (and suppresses) the warm-session resume below so the
+	// schedule's own session wins over the global warm one.
+	resumedForSchedule := false
+	if task.ResumeLast {
+		if newArgs, ok := resumeTransform(runner, args, prompt, taskDirForArgs, task.SessionID); ok {
+			args = newArgs
+			resumedForSchedule = true
+			log.Printf("[task %s] Recurring schedule: resuming prior %s session (id=%q)", task.ID, runner.RunnerID, task.SessionID)
+		}
+	}
+
 	// Use warm session if available (resume = same rate-limit bucket).
 	// Expire warm sessions after 1 hour — Claude Code purges them and resume
 	// will fail with "No conversation found with session ID".
@@ -2255,7 +2283,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		tm.mu.Unlock()
 		warmSID = ""
 	}
-	if warmSID != "" && runner.ResumeSupported && len(runner.ResumeArgs) > 0 {
+	if !resumedForSchedule && warmSID != "" && runner.ResumeSupported && len(runner.ResumeArgs) > 0 {
 		for _, ra := range runner.ResumeArgs {
 			args = append(args, strings.ReplaceAll(ra, "{sessionId}", warmSID))
 		}
@@ -2796,6 +2824,20 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 					outputMu.Lock()
 					tm.emit(task, &output, string(payload))
 					outputMu.Unlock()
+					// Best-effort: recover codex/opencode session id from raw
+					// output so follow-ups / recurring schedules can resume.
+					// A miss is harmless (opencode falls back to --continue,
+					// codex to carry-memo).
+					tm.mu.RLock()
+					haveSID := task.SessionID != ""
+					tm.mu.RUnlock()
+					if !haveSID {
+						if sid := parseRawSessionID(task.runner.RunnerID, string(payload)); sid != "" {
+							tm.mu.Lock()
+							task.SessionID = sid
+							tm.mu.Unlock()
+						}
+					}
 				}
 			}
 			if err != nil {
@@ -3445,25 +3487,16 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	}
 	args := buildRunnerArgsWithWorkDir(runner, prompt, resumeWorkDir)
 
-	// Resume with session ID if available (follow-up conversation)
-	if task.SessionID != "" && runner.RunnerID == "claude" {
-		args = append(args, "--resume", task.SessionID)
-		// Remove --no-session-persistence — can't resume a non-persisted session
-		filtered := args[:0]
-		for _, a := range args {
-			if a != "--no-session-persistence" {
-				filtered = append(filtered, a)
-			}
-		}
-		args = filtered
-		log.Printf("[task %s] Resuming session %s", task.ID, task.SessionID)
-	} else if task.SessionID != "" && len(runner.ResumeArgs) > 0 {
-		// Non-Claude runner with resume support
-		for _, ra := range runner.ResumeArgs {
-			args = append(args, strings.ReplaceAll(ra, "{sessionId}", task.SessionID))
-		}
-	} else if runner.RunnerID == "claude" {
-		// New task — give it a unique session ID
+	// Resume the prior conversation (this is always a follow-up). resumeTransform
+	// handles claude/glm (--resume <id>), opencode (--continue), codex (exec
+	// resume <id>), and generic ResumeArgs runners; it falls back (ok=false)
+	// when the runner can't resume with what we captured, so we spawn fresh.
+	if newArgs, ok := resumeTransform(runner, args, prompt, resumeWorkDir, task.SessionID); ok {
+		args = newArgs
+		log.Printf("[task %s] Resuming %s session (id=%q)", task.ID, runner.RunnerID, task.SessionID)
+	} else if runner.RunnerID == "claude" || runner.RunnerID == "glm" {
+		// New claude/glm session — give it a unique id so future follow-ups
+		// can resume it.
 		args = append(args, "--session-id", uuid.New().String())
 	}
 

@@ -165,6 +165,7 @@ func scheduleSelfToolSchema() map[string]interface{} {
 				"model":            map[string]interface{}{"type": "string", "description": "Optional model override for the next run."},
 				"title":            map[string]interface{}{"type": "string", "description": "Optional label. Defaults to a truncation of prompt."},
 				"max_runs":         map[string]interface{}{"type": "integer", "description": "Stop after this many fires (0 = use the 100-fire safety cap for recurring; one-shot ignores this)."},
+				"resume":           map[string]interface{}{"type": "boolean", "description": "Recurring only: natively resume the previous run's session each fire (claude/glm/codex by session id, opencode by --continue) instead of starting cold. Default false — prefer `memo` for curated continuity unless you need the full prior conversation."},
 			},
 		},
 	}
@@ -184,6 +185,7 @@ func (s *HTTPServer) scheduleSelf(raw json.RawMessage) interface{} {
 		Model           string `json:"model"`
 		Title           string `json:"title"`
 		MaxRuns         int    `json:"max_runs"`
+		Resume          bool   `json:"resume"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return mcpToolError("invalid arguments: " + err.Error())
@@ -225,6 +227,8 @@ func (s *HTTPServer) scheduleSelf(raw json.RawMessage) interface{} {
 		maxRuns = scheduleSelfRunawayCap
 		capped = true
 	}
+	// resume only makes sense for recurring schedules (something to resume).
+	resume := args.Resume && recurring
 
 	title := strings.TrimSpace(args.Title)
 	if title == "" {
@@ -244,18 +248,20 @@ func (s *HTTPServer) scheduleSelf(raw json.RawMessage) interface{} {
 		RepeatInterval: args.IntervalMinutes,
 		Cron:           strings.TrimSpace(args.Cron),
 		MaxRuns:        maxRuns,
+		ResumeSession:  resume,
 	}
 	if err := s.scheduler.AddSchedule(st); err != nil {
 		return mcpToolError(err.Error())
 	}
 
 	resp := map[string]interface{}{
-		"id":        st.ID,
-		"title":     st.Title,
-		"runner":    firstNonEmpty(st.Runner, "(agent default)"),
-		"nextRunAt": st.NextRunAt,
-		"recurring": recurring,
-		"hasMemo":   st.CarryNotes != "",
+		"id":            st.ID,
+		"title":         st.Title,
+		"runner":        firstNonEmpty(st.Runner, "(agent default)"),
+		"nextRunAt":     st.NextRunAt,
+		"recurring":     recurring,
+		"hasMemo":       st.CarryNotes != "",
+		"resumeSession": resume,
 	}
 	if st.MaxRuns > 0 {
 		resp["maxRuns"] = st.MaxRuns

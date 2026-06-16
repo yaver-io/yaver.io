@@ -45,9 +45,17 @@ type ScheduledTask struct {
 	// Local-only — never synced to Convex (it can hold task-derived text).
 	CarryNotes string `json:"carryNotes,omitempty"`
 	// LastSessionID records the runner session id of the most recent run
-	// (captured from claude/glm stream-json). Diagnostics + future native
-	// resume; not load-bearing for continuity (CarryNotes is).
+	// (claude/glm from stream-json; codex/opencode best-effort from raw
+	// output). Used to natively resume the prior session when ResumeSession
+	// is set.
 	LastSessionID string `json:"lastSessionId,omitempty"`
+	// ResumeSession opts a recurring schedule into NATIVE session resume:
+	// each fire after the first resumes the previous run's session (claude/
+	// glm via LastSessionID, opencode via --continue, codex via exec resume).
+	// Default false — fresh run each fire, with CarryNotes (the curated memo)
+	// as the continuity mechanism, which is usually preferable for recurring
+	// work. Set via schedule_self's `resume`.
+	ResumeSession bool `json:"resumeSession,omitempty"`
 
 	// State
 	Status     string `json:"status"` // "scheduled", "running", "completed", "failed", "paused"
@@ -228,7 +236,16 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 		// the previous scheduled run left off.
 		desc = "[Continuing a recurring task — notes carried from the previous run]\n" + strings.TrimSpace(st.CarryNotes) + "\n\n" + desc
 	}
-	task, err := s.taskMgr.CreateTask(st.Title, desc, st.Model, "scheduler", st.Runner, st.CustomCommand, nil, nil)
+	// Native session resume (opt-in): on the second+ fire of a resume-enabled
+	// schedule, continue the prior run's session instead of starting cold.
+	// claude/glm/codex need the captured LastSessionID; opencode resumes the
+	// last session in its workDir regardless (handled in resumeTransform).
+	opts := TaskCreateOptions{}
+	if st.ResumeSession && st.RunCount > 0 {
+		opts.ResumeLast = true
+		opts.ResumeSessionID = st.LastSessionID
+	}
+	task, err := s.taskMgr.CreateTaskWithOptions(st.Title, desc, st.Model, "scheduler", st.Runner, st.CustomCommand, nil, opts)
 	if err != nil {
 		log.Printf("[scheduler] Failed to create task for schedule %s: %v", st.ID, err)
 		return
