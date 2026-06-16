@@ -95,6 +95,12 @@ func streamListHandler(c OpsContext, _ json.RawMessage) OpsResult {
 			"note": "view via Remote Desktop (/rd/stream); open a video here with screen_watch",
 		})
 	}
+	// Pushed sources (a phone camera streaming itself to this box — M10).
+	for _, name := range listFreshPushed() {
+		sources = append(sources, map[string]interface{}{
+			"source": name, "label": "Pushed: " + name, "kind": "video", "live": true, "pushed": true,
+		})
+	}
 	return OpsResult{OK: true, Initial: map[string]interface{}{"sources": sources}}
 }
 
@@ -211,6 +217,13 @@ func streamSnapshotHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		}
 		return OpsResult{OK: true, Initial: out.Initial}
 	default:
+		// A pushed source (e.g. a phone camera streaming to this box).
+		if f, ok := getPushedFrame(p.Source); ok {
+			return OpsResult{OK: true, Initial: map[string]interface{}{
+				"source": p.Source,
+				"image":  "data:" + f.mime + ";base64," + f.b64,
+			}}
+		}
 		return OpsResult{OK: false, Code: "bad_payload", Error: fmt.Sprintf("unknown source %q", p.Source)}
 	}
 }

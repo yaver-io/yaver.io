@@ -150,6 +150,13 @@ export default function AppleTVRemoteScreen() {
       <View style={{ flex: 1, backgroundColor: c.bg }}>
         <AppScreenHeader title="Apple TV Remote" onBack={() => router.back()} />
         <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <Pressable
+            onPress={() => router.push("/stream-camera")}
+            style={[card, { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderColor: c.accent }]}
+          >
+            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>📷  Stream this phone's camera</Text>
+            <Text style={{ color: c.textMuted, fontSize: 12 }}>→</Text>
+          </Pressable>
           <Text style={[h, { marginBottom: 14 }]}>Pick the device running the Apple TV engine (your home Pi)</Text>
           {(devices || []).map((d) => (
             <Pressable

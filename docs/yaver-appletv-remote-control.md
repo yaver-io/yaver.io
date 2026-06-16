@@ -610,14 +610,14 @@ shaped, **simpler** version:
 
 | M | Scope | Buildable here? |
 |---|---|---|
-| **M8** `stream` guest scope + `stream_list`/`stream_snapshot` viewer verbs | ✅ **shipped this session** |
-| **M9** Guest-authed MJPEG (`/capture/stream` etc. under a stream-scoped token) + share-create UI | ⚠️ agent auth plumbing + mobile UI — buildable next |
-| **M10** Phone-camera source: `expo-camera` → JPEG push → box buffer (reuse feedback/external-camera path) | ⚠️ native mobile producer |
-| **M11** PC-screen source exposed via `stream_*` (wraps existing `ghost`/`screenlog`) | ✅ mostly wiring |
-| **M12** Android TV app (leanback + focus + `tv` layout) | ⚠️ config + focus, no new toolchain |
-| **M13** Apple TV (tvOS) app via `react-native-tvos` | ⚠️ ADR + separate target, large |
-| **M14** Box-side "OBS-wrap" compositor (`scene_*` verbs, ffmpeg filter_complex) | ⚠️ box ffmpeg graph + mobile director UI |
-| **M15** WebRTC real-time + RTMP broadcast-out | ⚠️ largest; later |
+| **M8** `stream` guest scope + `stream_list`/`stream_snapshot` viewer verbs | ✅ **shipped** |
+| **M9** view-only watch link (W3): `stream_share` token + `/watch` page | ✅ **shipped** (snapshot-poll; guest-authed MJPEG still optional) |
+| **M10** Phone-camera source: `expo-camera` → `/stream/push` → box buffer → stream plane | ✅ **shipped** (agent `stream_push.go` + mobile `stream-camera.tsx`); device-verify pending |
+| **M11** PC-screen source via `stream_*` + `screen_watch` (wraps `ghost`) | ✅ **shipped** |
+| **M12** Android TV app (leanback + focus + `tv` layout) | ⚠️ needs an Expo config plugin for the `LEANBACK_LAUNCHER` manifest — NOT done (risky to hand-edit app.json; documented) |
+| **M13** Apple TV (tvOS) app via `react-native-tvos` | ⚠️ **held** — forks the mobile build; ADR-level, would destabilize. Not done. |
+| **M14** Box-side "OBS-wrap" compositor (`scene_*` verbs) | ✅ **shipped** — in-process image compositor (grid/row/pip) → publishes the `scene` source through the stream plane (no ffmpeg graph); real-time mixing/RTMP is M15 |
+| **M15** WebRTC real-time + RTMP broadcast-out | ⚠️ **held** — largest, separate effort; later |
 
 **Recommended next step:** M9 + M11 (make the streams I built guest-shareable
 and add the PC-screen source — both are mostly wiring over shipped code), then

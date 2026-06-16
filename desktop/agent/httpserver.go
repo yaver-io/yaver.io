@@ -476,6 +476,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/capture/frame.jpg", s.auth(s.handleCaptureFrame))
 	// Apple TV now-playing metadata SSE (delta push to phone / car / glass).
 	mux.HandleFunc("/appletv/nowplaying/stream", s.auth(s.handleAppleTVNowPlayingStream))
+	// Phone-camera-as-source: a signed-in phone pushes its own frames here; the
+	// box serves them through the stream plane (stream_list/stream_snapshot).
+	mux.HandleFunc("/stream/push", s.auth(s.handleStreamPush))
 	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
