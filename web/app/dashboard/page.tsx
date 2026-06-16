@@ -37,6 +37,7 @@ import VaultView from "@/components/dashboard/VaultView";
 import APIKeysView from "@/components/dashboard/APIKeysView";
 import StorageView from "@/components/dashboard/StorageView";
 import ArmCellView from "@/components/dashboard/ArmCellView";
+import AppleTVCellView from "@/components/dashboard/AppleTVCellView";
 import SchedulesView from "@/components/dashboard/SchedulesView";
 import PackagesView from "@/components/dashboard/PackagesView";
 import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
@@ -730,7 +731,7 @@ const CONNECTION_REQUIRED_TABS = new Set<string>([
   "chat", "projects", "vault", "storage", "ops", "git", "data", "convex",
   "schedules", "apikeys", "exec", "companion", "builds", "quality", "observ",
   "screenlog", "extras", "accounts", "switch", "tools", "phone", "health",
-  "todos", "arm",
+  "todos", "arm", "appletv",
 ]);
 
 export default function DashboardPage() {
@@ -825,7 +826,7 @@ export default function DashboardPage() {
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud" | "build" | "arm" | "packages">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud" | "build" | "arm" | "appletv" | "packages">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1944,6 +1945,7 @@ export default function DashboardPage() {
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
     { id: "screenlog", label: "Screen Monitor", icon: "\uD83C\uDFA5" },
     { id: "arm", label: "Robot Arm", icon: "\uD83E\uDDBE" },
+    { id: "appletv", label: "Apple TV", icon: "\uD83D\uDCFA" },
   ];
 
   return (
@@ -2758,6 +2760,8 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full"><StorageView /></div>
           ) : activeTab === "arm" ? (
             <div className="flex-1 min-h-0 w-full overflow-auto p-4"><ArmCellView devices={devices} token={token} /></div>
+          ) : activeTab === "appletv" ? (
+            <div className="flex-1 min-h-0 w-full overflow-auto p-4"><AppleTVCellView devices={devices} token={token} /></div>
           ) : activeTab === "vault" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto">
               <VaultView
