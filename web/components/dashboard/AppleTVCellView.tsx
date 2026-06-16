@@ -232,7 +232,13 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
     try {
       const client = await ensureClient(deviceId);
       if (!client) return;
-      const pc = new RTCPeerConnection();
+      // Fetch STUN + relay-TURN so remote (CG-NAT) viewing works; STUN-only on LAN.
+      let iceServers: RTCIceServer[] = [];
+      try {
+        const iceRes = await client.agentFetch("/stream/webrtc/ice");
+        if (iceRes.ok) iceServers = (await iceRes.json())?.iceServers || [];
+      } catch {}
+      const pc = new RTCPeerConnection({ iceServers });
       pcRef.current = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = (e) => {

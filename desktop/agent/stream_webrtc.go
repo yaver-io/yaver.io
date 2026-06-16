@@ -19,13 +19,40 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	pionturn "github.com/pion/turn/v4"
 	"github.com/pion/webrtc/v4"
 )
+
+// iceServersForPeer builds the agent-side ICE config: a public STUN entry
+// always, plus the relay's colocated TURN (relay/turn.go) when the operator
+// points us at it (YAVER_TURN_URL + the shared TURN_AUTH_SECRET/RELAY_PASSWORD).
+// Same inputs as the /stream/webrtc/ice route the browser fetches, so both peers
+// agree on the relay candidate — that's what makes remote (CG-NAT) viewing work.
+func iceServersForPeer() []webrtc.ICEServer {
+	out := []webrtc.ICEServer{}
+	stun := strings.TrimSpace(os.Getenv("YAVER_STUN_URL"))
+	if stun == "" {
+		stun = "stun:stun.l.google.com:19302"
+	}
+	out = append(out, webrtc.ICEServer{URLs: []string{stun}})
+	turnURL := strings.TrimSpace(os.Getenv("YAVER_TURN_URL"))
+	secret := turnAuthSecret()
+	if turnURL == "" || secret == "" {
+		return out // STUN-only; ICE tries its best (works on same-network)
+	}
+	user, pass, err := pionturn.GenerateLongTermCredentials(secret, turnCredentialTTL)
+	if err != nil {
+		return out
+	}
+	out = append(out, webrtc.ICEServer{URLs: []string{turnURL}, Username: user, Credential: pass})
+	return out
+}
 
 // ---- runtime target: a Yaver stream source as an H264 capture --------------
 
@@ -136,7 +163,7 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersForPeer()})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "peer connection: "+err.Error())
 		return

@@ -860,6 +860,29 @@ Android TV (M12) is the lower-risk TV win and is staged as a config plugin.
 
 ---
 
+## 11b. TURN enablement for remote WebRTC (no relay code change)
+
+WebRTC media needs a relay candidate when both peers are behind NAT (the home
+Pi + a remote viewer). **The relay software already ships a TURN/STUN server**
+(`relay/turn.go`, wired in `relay/main.go` since v0.1.17) — it's **opt-in**, so
+no code change is required, only deploy config:
+
+```bash
+# relay host (needs a WAN-reachable IP):
+yaver relay serve --password <secret> \
+  --turn-port 3478 --turn-public-ip <RELAY_WAN_IP>     # or env TURN_PORT / TURN_PUBLIC_IP
+
+# the box running the stream agent:
+export YAVER_TURN_URL="turn:<RELAY_WAN_IP>:3478"
+# TURN auth shares the relay secret automatically (TURN_AUTH_SECRET → RELAY_PASSWORD)
+```
+
+Wired this session: the agent PC now uses `iceServersForPeer()` (STUN always +
+relay TURN when `YAVER_TURN_URL` is set), and `GET /stream/webrtc/ice` serves the
+same STUN+TURN list to the browser's `RTCPeerConnection`. With TURN off it's
+STUN-only (same-network works); turn it on and remote CG-NAT viewing works. The
+TURN password is a 60s long-term credential — the browser never sees the secret.
+
 ## 12. File-reference appendix (verified 2026-06-16)
 
 - CLI dispatch (no Cobra): `desktop/agent/main.go:336,350,434,530`

@@ -482,6 +482,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Self-contained one-way WebRTC: viewer POSTs an SDP offer, agent answers
 	// with an H264 track fed by a stream source (low-latency real-time).
 	mux.HandleFunc("/stream/webrtc/offer", s.auth(s.handleStreamWebRTCOffer))
+	// ICE servers (STUN + relay-backed TURN) for the viewer's RTCPeerConnection,
+	// so remote (CG-NAT) WebRTC works. Reuses the TURN-credential issuer.
+	mux.HandleFunc("/stream/webrtc/ice", s.auth(s.handleRemoteRuntimeTURNCredentials))
 	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
