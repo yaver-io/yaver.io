@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -172,7 +173,8 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 		W           int    `json:"w"`
 		H           int    `json:"h"`
 		Net         string `json:"net"`
-		Profile     string `json:"profile"` // viewer-requested tier or "auto"
+		Profile     string `json:"profile"`     // viewer-requested tier or "auto"
+		AudioDevice string `json:"audioDevice"` // ALSA hw:N,0 → add an Opus audio track
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.SDP) == "" {
 		jsonError(w, http.StatusBadRequest, "expected {source, sdp}")
@@ -216,10 +218,25 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 	}
 	se.addPC(pc)
 
+	// Optional Opus audio track from an ALSA capture device (Linux). Shared per
+	// device, fanned out + refcounted like the video.
+	var sa *sharedAudio
+	if strings.TrimSpace(body.AudioDevice) != "" && runtime.GOOS == "linux" {
+		if a, aerr := getOrCreateAudio(strings.TrimSpace(body.AudioDevice)); aerr == nil {
+			if _, e := pc.AddTrack(a.track); e == nil {
+				sa = a
+				sa.addPC(pc)
+			}
+		}
+	}
+
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		switch state {
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
 			se.removePC(pc) // last viewer of this tier stops the encoder
+			if sa != nil {
+				sa.removePC(pc)
+			}
 			_ = pc.Close()
 		}
 	})

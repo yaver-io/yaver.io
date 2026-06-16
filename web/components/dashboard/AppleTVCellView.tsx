@@ -44,6 +44,8 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [rtcOn, setRtcOn] = useState(false);
   const [rtcQuality, setRtcQuality] = useState<"auto" | "high" | "balanced" | "saver">("auto");
+  const [rtcAudio, setRtcAudio] = useState(false);
+  const audioDevRef = useRef<string>("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [rtcHealth, setRtcHealth] = useState<string | null>(null);
@@ -310,6 +312,17 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
       const pc = new RTCPeerConnection({ iceServers });
       pcRef.current = pc;
       pc.addTransceiver("video", { direction: "recvonly" });
+      // Opus audio (sound): resolve an ALSA capture device on the box and add a
+      // recvonly audio transceiver so the agent attaches an Opus track.
+      if (rtcAudio) {
+        if (!audioDevRef.current) {
+          try {
+            const ad = await callOps("audio_devices");
+            audioDevRef.current = ad?.devices?.[0]?.alsaDevice || "default";
+          } catch { audioDevRef.current = "default"; }
+        }
+        pc.addTransceiver("audio", { direction: "recvonly" });
+      }
       pc.ontrack = (e) => {
         if (videoElRef.current) videoElRef.current.srcObject = e.streams[0];
       };
@@ -341,6 +354,7 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
           // On Auto we drive the tier client-side from the measured loop;
           // otherwise honor the user's locked tier.
           profile: rtcQuality === "auto" ? effTierRef.current : rtcQuality,
+          audioDevice: rtcAudio ? audioDevRef.current : "",
         }),
       });
       if (!res.ok) throw new Error(`offer ${res.status}`);
@@ -352,7 +366,7 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
       setMsg(e?.message || "WebRTC failed");
       stopWebRTC();
     }
-  }, [deviceId, ensureClient, stopWebRTC, rtcQuality, startStatsLoop]);
+  }, [deviceId, ensureClient, stopWebRTC, rtcQuality, startStatsLoop, rtcAudio, callOps]);
 
   useEffect(() => { startRef.current = startWebRTC; }, [startWebRTC]);
 
@@ -473,9 +487,16 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
         </div>
         <div className="flex aspect-video items-center justify-center overflow-hidden rounded-md border border-neutral-800 bg-black">
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <video ref={videoElRef} autoPlay playsInline muted className="max-h-full max-w-full" />
+          <video ref={videoElRef} autoPlay playsInline muted={!rtcAudio} className="max-h-full max-w-full" />
         </div>
         <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={() => setRtcAudio((a) => !a)}
+            className={`rounded px-2 py-1 text-xs ${rtcAudio ? "bg-emerald-600 text-white" : "border border-neutral-700 bg-neutral-800 text-neutral-300"}`}
+            title="Add Opus audio from the capture card (restart the stream to apply)"
+          >
+            🔊 {rtcAudio ? "on" : "off"}
+          </button>
           <span className="text-xs text-neutral-400">Quality</span>
           {(["auto", "high", "balanced", "saver"] as const).map((q) => (
             <button

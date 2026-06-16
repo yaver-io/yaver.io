@@ -1038,12 +1038,18 @@ Shipped (agent):
 - **`stream_status`** verb — one-call overview of the whole plane (capture,
   scene, broadcast, live WebRTC tiers, pushed sources, audio devices).
 
-**Remaining audio gap:** WebRTC / MJPEG audio. MJPEG can't carry audio at all;
-WebRTC audio needs a net-new pion **Opus** track (ffmpeg ALSA→Opus→RTP into a
-second TrackLocalStaticSample) — there's no existing Opus-track infra to reuse,
-and it's hardware-gated to verify. Designed, not built. For now: broadcast/RTMP
-carries audio; live WebRTC/MJPEG watching is video + (Apple TV) now-playing
-metadata.
+- **WebRTC audio (Opus)** — `stream_webrtc_audio.go`: a second track on the live
+  WebRTC stream so the viewer HEARS the source. ffmpeg ALSA → libopus → Ogg →
+  pion `oggreader` → `WriteSample` into a `TrackLocalStaticSample{MimeTypeOpus,
+  48kHz, 2ch}`. Shared per ALSA device + refcounted like the video fan-out.
+  Offer accepts `{audioDevice}`; web adds a recvonly audio transceiver + a 🔊
+  toggle and unmutes the `<video>`. Linux-only (ALSA); hardware-verify sound on
+  a real box. Opus = the WebRTC audio codec (RFC 6716), nothing to do with the
+  Claude model of the same name.
+
+**Remaining audio gap:** MJPEG/snapshot can never carry audio (image frames
+only) — that path stays video + now-playing metadata. WebRTC + RTMP both have
+sound now.
 
 ## 11b. TURN enablement for remote WebRTC (no relay code change)
 
