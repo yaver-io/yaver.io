@@ -42,8 +42,11 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
   const [captureUrl, setCaptureUrl] = useState<string | null>(null);
   const [watchUrl, setWatchUrl] = useState("");
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [rtcOn, setRtcOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
 
   const clientRef = useRef<AgentClient | null>(null);
   const connectedTo = useRef("");
@@ -213,6 +216,54 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
     }
   }, [devices, deviceId, callOps]);
 
+  // Real-time WebRTC viewer (M15): offer/answer via the agent's
+  // /stream/webrtc/offer; the agent answers with an H264 track fed by `source`.
+  // Sub-second vs. the snapshot/MJPEG paths. (Same-network/relay-with-TURN.)
+  const stopWebRTC = useCallback(() => {
+    try { pcRef.current?.close(); } catch {}
+    pcRef.current = null;
+    if (videoElRef.current) videoElRef.current.srcObject = null;
+    setRtcOn(false);
+  }, []);
+
+  const startWebRTC = useCallback(async (source: string) => {
+    setMsg(null);
+    stopWebRTC();
+    try {
+      const client = await ensureClient(deviceId);
+      if (!client) return;
+      const pc = new RTCPeerConnection();
+      pcRef.current = pc;
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.ontrack = (e) => {
+        if (videoElRef.current) videoElRef.current.srcObject = e.streams[0];
+      };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      // non-trickle: wait for our ICE gathering to finish before signaling
+      await new Promise<void>((resolve) => {
+        if (pc.iceGatheringState === "complete") return resolve();
+        const check = () => { if (pc.iceGatheringState === "complete") { pc.removeEventListener("icegatheringstatechange", check); resolve(); } };
+        pc.addEventListener("icegatheringstatechange", check);
+        setTimeout(resolve, 2000); // fallback
+      });
+      const res = await client.agentFetch("/stream/webrtc/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source, sdp: pc.localDescription?.sdp }),
+      });
+      if (!res.ok) throw new Error(`offer ${res.status}`);
+      const ans = await res.json();
+      await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp });
+      setRtcOn(true);
+    } catch (e: any) {
+      setMsg(e?.message || "WebRTC failed");
+      stopWebRTC();
+    }
+  }, [deviceId, ensureClient, stopWebRTC]);
+
+  useEffect(() => () => stopWebRTC(), [stopWebRTC]);
+
   const btn = "rounded-md px-3 py-1.5 text-sm border border-neutral-700 bg-neutral-800 text-neutral-100 hover:bg-neutral-700 disabled:opacity-40";
   const btnAccent = "rounded-md px-3 py-1.5 text-sm bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40";
   const pad = "flex h-14 w-14 items-center justify-center rounded-xl border border-neutral-700 bg-neutral-800 text-lg text-neutral-100 hover:bg-neutral-700 disabled:opacity-40";
@@ -308,6 +359,29 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
           <p className="text-sm text-neutral-500">{cap?.ffmpeg === false ? "ffmpeg not installed on this box." : "Stopped. Start to stream a capture card (satellite box, console, camera, PC…)."}</p>
         )}
         {cap?.blackHint && <p className="mt-2 text-xs text-neutral-500">{cap.blackHint}</p>}
+      </div>
+
+      {/* real-time WebRTC viewer (low latency) */}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-sm font-semibold text-neutral-200">Live (WebRTC, low-latency)</div>
+          <div className="flex gap-2">
+            {rtcOn ? (
+              <button className={btn} onClick={stopWebRTC}>Stop</button>
+            ) : (
+              <>
+                <button className={btnAccent} onClick={() => startWebRTC("capture")}>Capture</button>
+                <button className={btn} onClick={() => startWebRTC("scene")}>Scene</button>
+                <button className={btn} onClick={() => startWebRTC("screen")}>Screen</button>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex aspect-video items-center justify-center overflow-hidden rounded-md border border-neutral-800 bg-black">
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video ref={videoElRef} autoPlay playsInline muted className="max-h-full max-w-full" />
+        </div>
+        <p className="mt-2 text-xs text-neutral-500">Sub-second vs. snapshot/MJPEG. Same-network now; remote needs TURN. Needs ffmpeg on the box.</p>
       </div>
 
       {/* watch a URL on the box (magara) */}

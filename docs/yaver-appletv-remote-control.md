@@ -617,7 +617,8 @@ shaped, **simpler** version:
 | **M12** Android TV app (leanback + focus + `tv` layout) | ✅ **config plugin built** (`plugins/withAndroidTV.js`, unregistered per convention — needs a TV banner asset + native rebuild to activate; see the plugin header) |
 | **M13** Apple TV (tvOS) app via `react-native-tvos` | ⚠️ **ADR'd + staged** (Part F) — dependency swap is owner-run (full native rebuild, version-locked); not executed here |
 | **M14** Box-side "OBS-wrap" compositor (`scene_*` verbs) | ✅ **shipped** — in-process compositor (grid/row/pip) → publishes the `scene` source through the stream plane |
-| **M15** RTMP broadcast-out | ✅ **shipped** — `stream_broadcast` pipes any source (capture/screen/scene/pushed) → ffmpeg x264 → FLV/RTMP (Twitch/YouTube/own); WebRTC real-time still a separate later effort |
+| **M15** RTMP broadcast-out | ✅ **shipped** — `stream_broadcast` pipes any source → ffmpeg x264 → FLV/RTMP (Twitch/YouTube/own) |
+| **M15** WebRTC real-time | ✅ **shipped** — self-contained `/stream/webrtc/offer` reuses the pion `videoTrackPump` via a `stream-<source>` H264 target (ffmpeg JPEG→H264); web viewer in `AppleTVCellView`. Same-network now; remote needs TURN wiring (`turn_credentials.go` exists). Device-verify pending. |
 | **W4** now-playing SSE live card (web) | ✅ **shipped** — EventSource via `nowPlayingStreamUrl()`, poll fallback |
 | (fix) browser-session whitelist for `/capture/ /appletv/ /rd/ /ghost/` | ✅ — these media views couldn't mint their `<img>`/EventSource token before |
 
@@ -785,7 +786,14 @@ recommend W1+W2 right after the mobile/agent work is merged.
 
 ---
 
-# PART F — ADR: Apple TV (tvOS) app via react-native-tvos (M13)
+# PART F — ADR: Apple TV (tvOS) app (M13)
+
+> **⚠️ SUPERSEDED for the chosen approach.** The canonical tvOS decision now
+> lives in `docs/yaver-tvos-fork-adr.md`, which chose **Option B — a thin native
+> SwiftUI tvOS app** (no `react-native-tvos` fork, avoiding the per-RN-bump fork
+> tax). This Part F captured the *react-native-tvos* option below; keep it only
+> as the rejected-alternative record. Use the SwiftUI ADR + `tvos/YaverTV/*` for
+> implementation.
 
 > 2026-06-17. **Decision: deferred-but-specified.** The tvOS app is a real,
 > wanted target, but adopting it is the one step in this whole feature that

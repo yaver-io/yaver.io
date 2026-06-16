@@ -479,6 +479,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Phone-camera-as-source: a signed-in phone pushes its own frames here; the
 	// box serves them through the stream plane (stream_list/stream_snapshot).
 	mux.HandleFunc("/stream/push", s.auth(s.handleStreamPush))
+	// Self-contained one-way WebRTC: viewer POSTs an SDP offer, agent answers
+	// with an H264 track fed by a stream source (low-latency real-time).
+	mux.HandleFunc("/stream/webrtc/offer", s.auth(s.handleStreamWebRTCOffer))
 	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))

@@ -71,6 +71,12 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 	case "browser-window":
 		return browserWindowTarget{}, nil
 	}
+	// "stream-<source>" — a Yaver stream source (capture/screen/scene/<pushed>)
+	// exposed as a one-way H264 capture for the self-contained WebRTC path
+	// (stream_webrtc.go). Decoupled from the interactive session targets above.
+	if strings.HasPrefix(targetID, "stream-") {
+		return streamSourceTarget{source: strings.TrimPrefix(targetID, "stream-")}, nil
+	}
 	return nil, fmt.Errorf("unknown remote runtime target %q", targetID)
 }
 
