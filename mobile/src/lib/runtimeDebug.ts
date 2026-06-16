@@ -24,7 +24,7 @@
 // evaluation time. Pull in BEFORE anything that might throw, i.e.
 // near the top of mobile/app/_layout.tsx.
 
-import { appLog, getLogEntries } from "./logger";
+import { appLog, getLogEntries, hydratePersistedLogs } from "./logger";
 
 // React Native exposes `ErrorUtils` on the global object. The
 // declared type lives in react-native's untyped vendor layer so we
@@ -48,6 +48,11 @@ let installed = false;
 export function installRuntimeDebugHandlers(): void {
   if (installed) return;
   installed = true;
+
+  // Restore the previous session's connection logs so a failure that
+  // preceded a restart/crash is still visible in the in-app panel.
+  // Fire-and-forget — never block handler install on disk I/O.
+  hydratePersistedLogs().catch(() => {});
 
   const utils = getErrorUtils();
   if (!utils?.setGlobalHandler) {
