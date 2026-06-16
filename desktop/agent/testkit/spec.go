@@ -106,9 +106,26 @@ type Spec struct {
 	// Empty / "online" = no emulation (default).
 	NetworkProfile string `yaml:"network_profile,omitempty"`
 
+	// Cookies are seeded on the browser before the first navigation, so a
+	// web spec can test authenticated pages without driving a login UI.
+	// Values support ${ENV} expansion so the session token / secret never
+	// lives in the spec file (e.g. value: ${TALOS_SESSION_TOKEN}). Only
+	// applies to Target == web.
+	Cookies []SpecCookie `yaml:"cookies,omitempty"`
+
 	// Path is the absolute path of the spec file. Set by LoadSpec, not the
 	// user.
 	Path string `yaml:"-"`
+}
+
+// SpecCookie is a single pre-seeded browser cookie (see Spec.Cookies).
+type SpecCookie struct {
+	Name     string `yaml:"name"`
+	Value    string `yaml:"value"`
+	Domain   string `yaml:"domain,omitempty"`
+	Path     string `yaml:"path,omitempty"` // default "/"
+	Secure   bool   `yaml:"secure,omitempty"`
+	HTTPOnly bool   `yaml:"http_only,omitempty"`
 }
 
 // Viewport sets the browser window size for web targets.
@@ -343,6 +360,12 @@ func (s *Spec) expandEnv() {
 	s.Name = os.ExpandEnv(s.Name)
 	s.URL = os.ExpandEnv(s.URL)
 	s.App = os.ExpandEnv(s.App)
+	for i := range s.Cookies {
+		s.Cookies[i].Name = os.ExpandEnv(s.Cookies[i].Name)
+		s.Cookies[i].Value = os.ExpandEnv(s.Cookies[i].Value)
+		s.Cookies[i].Domain = os.ExpandEnv(s.Cookies[i].Domain)
+		s.Cookies[i].Path = os.ExpandEnv(s.Cookies[i].Path)
+	}
 	for i := range s.Include {
 		s.Include[i] = os.ExpandEnv(s.Include[i])
 	}
