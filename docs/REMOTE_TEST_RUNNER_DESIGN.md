@@ -132,32 +132,37 @@ The frames + per-step results already exist; the highlights layer is presentatio
 
 ---
 
-## 5. Phased build (exact files)
+## 5. Phased build (exact files) — ALL SHIPPED 2026-06-16 (build/typecheck clean)
 
-**P0 — Auth enabler (DONE 2026-06-16):** `cookies:` on web specs.
-`testkit/spec.go` (`SpecCookie`, `expandEnv`), `testkit/runner.go` (`seedCookies`). Builds clean.
+**P0 — Auth enabler ✅** `cookies:` on web specs. `testkit/spec.go` (`SpecCookie`, `expandEnv`),
+`testkit/runner.go` (`seedCookies` via CDP). `go build ./testkit` clean.
 
-**P1 — testkit as a project-aware ops verb.** New `desktop/agent/ops_testkit.go`: register
-`project_test_run` + `project_test_grow` (pattern: `ops_qa.go:reg(...)`). Resolve project via
-`project_manifest.go:LoadManifest` → `tests.web.base_url`, `yaver-tests/`, auth env. Run
-`testkit.RunSuite` (web) / reuse `startQARun` surface seam (mobile) inside a `studioJobs` job.
-Add a `qaReport`-parallel `testReport` registry + `test_report` verb. *No mobile/web build needed
-to validate — exercise via `callOps`/curl.*
+**P1 — Project-aware ops verbs ✅** `desktop/agent/ops_testkit.go`: `project_test_specs`,
+`project_test_run`, `project_test_report`, `project_test_grow`, `project_test_artifact`. Runs
+`testkit.RunSuite` in a `studioJobs` job; env-injection (`${ENV}` secrets) serialized under
+`testkitEnvMu`. Web runs where the agent runs → remote PC = `OpsRequest.machine` routing.
 
-**P2 — Self-growing author loop.** A `playbooks/test-author.md` + agent hook that runs the §2
-step at end of vibe-code tasks and on `project_test_grow`. Coverage ledger `.coverage.json`.
+**P2 — Self-growing author loop ✅** `desktop/agent/testkit_grow.go`: `growTestPlan` scans Next/Expo
+routes, diffs the `.coverage.json` ledger, returns the author plan + prompt for the runner. Monotonic,
+never deletes green coverage.
 
-**P3 — Mobile Projects→Tests.** `mobile/app/project-tests.tsx` (new) + `apps.tsx` action
-`remote-tests` (~line 681/745) + `mobile/src/lib/testkitClient.ts` (mirror `qaClient.ts`). Remote-PC
-picker reuses `useDevice()`; report reuses `FrameSequencePlayer`.
+**P3 — Mobile Projects→Tests ✅** `mobile/app/project-tests.tsx` + `mobile/src/lib/testkitClient.ts`
+(mirror `qaClient.ts`) + `apps.tsx` action-sheet "🧪 Tests" entry → `/project-tests`. Remote-PC
+picker = `useDevice()`. Plays per-Feature mp4 clips (expo-av) + screenshots (data-URI), deps banner.
 
-**P4 — Web Projects→Tests.** `web/components/dashboard/WebTestsPanel.tsx` (new) + tab in
-`web/app/dashboard/page.tsx` + `agent-client.ts` methods. Machine picker reuses `mobileWorkers`
-pattern (broaden to `deviceClass === "edge-pc"`/has-chrome).
+**P4 — Web Projects→Tests ✅** `web/components/dashboard/WebTestsPanel.tsx` + quality-tab mount in
+`web/app/dashboard/page.tsx`. Feature highlights + grow + "Install test tools" via `agentClient.callOps`.
 
-**P5 — Highlights.** Per-feature clip stitching (ffmpeg) + report shape extension + the two viewers.
+**P5 — Highlights ✅** Per-Feature ffmpeg clip + combined reel in `ops_testkit.go`
+(`stitchFramesToMP4`/`concatMP4`), served by `project_test_artifact` (base64), played in both UIs.
 
-**P6 — Playwright driver (optional).** `testkit/driver_playwright.go` + `target: web-playwright`.
+**P6 — Playwright driver ✅** `testkit/driver_playwright.go` + `target: web-playwright`: spec →
+generated Node Playwright script → run → per-step `@@STEP` parse. Graceful if node/PW absent.
+
+**P7 — Dependency bootstrap ✅ (so a user never fails on missing tooling)** `ops_testkit_deps.go`:
+`testkit_deps_check` + `testkit_deps_install` (ffmpeg, chromium, node, playwright+chromium,
+docker+redroid image) — one-shot, idempotent, brew/apt/dnf/pacman. Surfaced as a one-tap installer
+banner in mobile + a button in web.
 
 ---
 

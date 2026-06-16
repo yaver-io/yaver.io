@@ -152,6 +152,8 @@ func runOnce(ctx context.Context, spec *Spec, opts RunOptions) *Result {
 	switch spec.Target {
 	case TargetWeb:
 		runWebSpec(ctx, spec, opts, res)
+	case TargetWebPlaywright:
+		runPlaywrightSpec(ctx, spec, opts, res)
 	case TargetAndroidEmu:
 		runAndroidSpec(ctx, spec, opts, res, false)
 	case TargetAndroidRedroid:
