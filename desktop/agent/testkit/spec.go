@@ -35,6 +35,7 @@ type Target string
 
 const (
 	TargetWeb            Target = "web"             // headless / headful Chromium via CDP (chromedp)
+	TargetWebPlaywright  Target = "web-playwright"  // same spec, driven by Playwright (node sidecar) when a team needs PW features
 	TargetIOSSim         Target = "ios-sim"         // iOS Simulator via simctl + WebDriverAgent (M5)
 	TargetAndroidEmu     Target = "android-emu"     // Android Emulator via emulator + UIAutomator2 (M5)
 	TargetAndroidRedroid Target = "android-redroid" // Android-in-Docker via the Studio redroid surface (no adb/AVD, no KVM)
@@ -503,11 +504,11 @@ func sortPaths(paths []string) {
 
 // Validate returns an error if the spec is malformed.
 func (s *Spec) Validate() error {
-	if s.Target != TargetWeb && s.Target != TargetIOSSim && s.Target != TargetAndroidEmu &&
+	if s.Target != TargetWeb && s.Target != TargetWebPlaywright && s.Target != TargetIOSSim && s.Target != TargetAndroidEmu &&
 		s.Target != TargetAndroidRedroid && s.Target != TargetDevice {
-		return fmt.Errorf("unknown target %q (supported: web, ios-sim, android-emu, android-redroid, device)", s.Target)
+		return fmt.Errorf("unknown target %q (supported: web, web-playwright, ios-sim, android-emu, android-redroid, device)", s.Target)
 	}
-	if s.Target == TargetWeb && s.URL == "" {
+	if (s.Target == TargetWeb || s.Target == TargetWebPlaywright) && s.URL == "" {
 		// We allow URL-less specs if every Goto is absolute, but flag the
 		// common mistake.
 		for _, st := range s.Steps {
