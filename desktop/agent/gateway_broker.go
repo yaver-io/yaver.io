@@ -112,6 +112,28 @@ func (b *broker) Ensure(ctx context.Context, c *Connector) (Session, error) {
 	return h.Ensure(ctx, c)
 }
 
+// Refresher is optionally implemented by auth methods that can force a
+// credential refresh even when the current credential is still valid by clock —
+// used on a 401 from a resource server (token rejected/rotated server-side).
+type Refresher interface {
+	Refresh(ctx context.Context, connector *Connector) (Session, error)
+}
+
+// Refresh forces a credential refresh for the connector when the handler
+// supports it (oauth_code); otherwise it falls back to Ensure. Used by the
+// 401-retry path so a still-clock-valid-but-rejected token gets exchanged
+// exactly once rather than re-handed unchanged.
+func (b *broker) Refresh(ctx context.Context, c *Connector) (Session, error) {
+	h, err := b.handlerFor(c)
+	if err != nil {
+		return Session{}, err
+	}
+	if r, ok := h.(Refresher); ok {
+		return r.Refresh(ctx, c)
+	}
+	return h.Ensure(ctx, c)
+}
+
 // NeedsHuman reports whether acquiring a session for the connector may require a
 // human gate. Unknown method ⇒ false (the Ensure call will return the routable
 // "no handler" error instead).

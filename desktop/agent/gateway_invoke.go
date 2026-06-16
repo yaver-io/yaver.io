@@ -114,7 +114,7 @@ func (d *gatewayDeps) gatewayInvoke(ctx context.Context, connectorID, capability
 		// Token may have been revoked server-side between Ensure and the call,
 		// or Ensure handed us a still-valid-by-clock-but-rejected token. Force
 		// a refresh and retry exactly once. No further retries (Policy Guard).
-		session2, rErr := d.broker.Ensure(ctx, conn)
+		session2, rErr := d.broker.Refresh(ctx, conn)
 		if rErr != nil {
 			return nil, fmt.Errorf("gateway: %q returned 401 and re-auth failed: %w", connectorID, rErr)
 		}

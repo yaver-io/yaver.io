@@ -91,6 +91,33 @@ func (h *oauthCodeHandler) Ensure(ctx context.Context, c *Connector) (Session, e
 	return bearerSession(refreshed), nil
 }
 
+// Refresh forces a token refresh regardless of clock expiry. It's used on the
+// 401-retry path in gatewayInvoke: the resource server rejected a token that is
+// still valid by our clock (revoked/rotated server-side), so Ensure would hand
+// back the same rejected token. Refresh skips the expiry check and exchanges the
+// refresh token exactly once.
+func (h *oauthCodeHandler) Refresh(ctx context.Context, c *Connector) (Session, error) {
+	ref := c.Auth.CredRef
+	if strings.TrimSpace(ref) == "" {
+		return Session{}, fmt.Errorf("gateway: connector %q has no credRef — run the consent flow first", c.ID)
+	}
+	creds, err := loadOAuthCreds(h.store, ref)
+	if err != nil {
+		return Session{}, fmt.Errorf("gateway: connector %q not authorized (no stored creds) — run the consent flow first: %w", c.ID, err)
+	}
+	if strings.TrimSpace(creds.RefreshToken) == "" {
+		return Session{}, fmt.Errorf("gateway: connector %q rejected (401) and no refresh token — re-consent required", c.ID)
+	}
+	refreshed, err := h.refresh(ctx, c, creds)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := saveOAuthCreds(h.store, ref, refreshed); err != nil {
+		return Session{}, fmt.Errorf("gateway: persist refreshed creds: %w", err)
+	}
+	return bearerSession(refreshed), nil
+}
+
 // oauthExpired reports whether the access token is at/after its refresh skew.
 // A zero expiry is treated as expired so we refresh before first use.
 func oauthExpired(c *OAuthCreds) bool {
