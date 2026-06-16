@@ -705,6 +705,84 @@ screen produces.
 
 ---
 
+# PART E — Yaver Web UI deep analysis (dashboard surface for control + streaming)
+
+> Added 2026-06-17 per "make deep analysis on yaver webui." Grounded in a
+> read of `web/` (Next.js 15, Cloudflare Workers via @opennextjs/cloudflare).
+> The web dashboard is the **fourth surface** (phone / car / glass / TV → web)
+> and is the easiest to ship: it reuses one transport (`AgentClient` over relay)
+> and the exact MJPEG pattern Remote Desktop already uses.
+
+## E.1 How the web dashboard is built (ground truth)
+
+- **Routing.** Each cell is a standalone route `web/app/dashboard/<x>/page.tsx`
+  that pulls `token` (`useAuth`) + `devices` (`useDevices(token)`) and renders a
+  `components/dashboard/<X>CellView.tsx`. Existing: `/dashboard/arm`, `/robot`,
+  `/circuit`, `/printer`, `/screw-cell`, `/ci`, `/collection`, `/packages`.
+  Adding a view = one `page.tsx` + one `CellView.tsx` + (optional) a nav tab in
+  `app/dashboard/page.tsx`'s `tabs[]`.
+- **Transport — relay-only.** Browsers can't reach the LAN (CORS), so the web
+  always goes through the relay. `web/lib/agent-client.ts` `AgentClient`:
+  `ensureClient(deviceId)` → `client.connect(host, port, token, id, {tunnelUrls})`
+  with `setRelayServers(...)`; then `client.callOps(verb, payload)` POSTs to
+  `${baseUrl}/ops` (baseUrl = `https://relay.../d/<deviceId>`). This is the web
+  twin of mobile's `callOpsOnDevice` — **the `appletv_*` / `capture_*` /
+  `stream_*` verbs I shipped are already callable from the web unchanged.**
+- **Streaming in the browser.** `RemoteDesktopView.tsx` renders MJPEG with a
+  plain `<img src={streamUrl}>`, where `agentClient.remoteDesktopStreamUrl()`
+  builds `${baseUrl}/rd/stream?browser_session=<tok>&__rp=<relayPass>`. The
+  **`browser_session`** token is key: an `<img>` can't send auth headers, so the
+  agent issues a path-scoped session token (`POST /auth/browser-session`
+  `{pathPrefix}`) that it promotes to a bearer, and the relay validates `__rp`.
+- **Device state + auth.** `useDevices(token)` returns `Device[]` (with `online`,
+  `needsAuth`, `tunnelUrl`, `publicEndpoints`); views show a picker and gate on
+  `needsAuth`. `agentFetch(path)` is the JSON helper (used by `ScreenMonitorView`).
+- **Build/deploy.** `scripts/deploy-web.sh` → `npm run deploy`
+  (`@opennextjs/cloudflare build` + `wrangler deploy`), **15 MB size guard**,
+  Cloudflare creds from `yaver vault env --project web`. Local dev: `npm run dev`.
+
+## E.2 What an `AppleTVCellView` needs (mostly reuse)
+
+| Need | Web mechanism | New? |
+|---|---|---|
+| Call control verbs (`appletv_remote_key`, `appletv_transport`, `appletv_power`, `appletv_launch_app`, `appletv_seek`, `appletv_scan/list`, `capture_*`, `stream_*`, `screen_watch`) | `client.callOps(verb, payload)` | ✅ reuse, verbs already shipped |
+| Now-playing metadata + artwork | `callOps("appletv_now_playing")` → render `artwork_b64` as `<img src="data:…">` | ✅ reuse |
+| Now-playing live SSE | `agentFetch("/appletv/nowplaying/stream")` (EventSource needs the browser-session token in the URL, same as MJPEG) | small |
+| **Capture-card video** | a browser-session URL `${baseUrl}/capture/stream?browser_session=…&__rp=…` in `<img>` — **add `captureStreamUrl()` to `agent-client.ts` mirroring `remoteDesktopStreamUrl()`** | small NET-NEW |
+| **Watch magara screen** | reuse the existing **RemoteDesktopView** (`/rd/stream`) + a `screen_watch` button (`callOps("screen_watch",{url})`) | ✅ reuse |
+| Device picker / connection / auth | `useDevices` + `ensureClient` + `needsAuth` gate | ✅ reuse |
+
+**Net-new for the web is small:** one `agent-client.ts` helper
+(`captureStreamUrl()`/`captureFrameUrl()` — copy `remoteDesktopStreamUrl()`), one
+`AppleTVCellView.tsx` (D-pad + transport + now-playing card + capture `<img>` +
+a "watch a URL on the box" field), one route `app/dashboard/apple-tv/page.tsx`,
+and a `tabs[]` entry (📺). No backend, no new transport.
+
+## E.3 Guest stream-share on the web
+
+The `stream` capability scope (Part C) is browser-friendly: a guest opens the
+web dashboard with a stream-scoped token and an `AppleTVCellView` in **view-only
+mode** — `stream_list` to enumerate, `stream_snapshot` for a frame, and (with a
+browser-session) the `/capture/stream` `<img>`. The guest token reaches only
+`stream_*` verbs, so a shared web link exposes the live view and nothing else.
+This is the cleanest place to ship "send a friend a link to watch": web + a
+stream-scoped guest token, no app install.
+
+## E.4 Web rollout milestones
+
+| M | Scope | Effort |
+|---|---|---|
+| **W1** `AppleTVCellView` + `/dashboard/apple-tv` route + nav tab; control + now-playing | small (reuse `ArmCellView` shape) |
+| **W2** `captureStreamUrl()` helper + capture `<img>` + `screen_watch` field | small (reuse `remoteDesktopStreamUrl`) |
+| **W3** Guest view-only mode (stream-scoped token) + a "share watch link" UX | medium (token mint + guest route) |
+| **W4** Now-playing SSE live card (EventSource w/ browser-session) | small |
+
+Deploy each via `scripts/deploy-web.sh` (local-first, 15 MB guard). The web
+surface is the **lowest-effort, highest-reach** way to land the whole feature —
+recommend W1+W2 right after the mobile/agent work is merged.
+
+---
+
 ## 12. File-reference appendix (verified 2026-06-16)
 
 - CLI dispatch (no Cobra): `desktop/agent/main.go:336,350,434,530`
