@@ -2827,6 +2827,18 @@ export class AgentClient {
     return url;
   }
 
+  /** Authed SSE URL for the Apple TV now-playing delta stream, for an
+   *  EventSource (which can't carry headers). Path-scoped browser-session +
+   *  relay-password, same scheme as captureStreamUrl. */
+  async nowPlayingStreamUrl(): Promise<string> {
+    const token = await this.issueBrowserSession("/appletv/");
+    let url = `${this.baseUrl}/appletv/nowplaying/stream?browser_session=${encodeURIComponent(token)}`;
+    if (this._activeRelayUrl && this.activeRelayPassword) {
+      url += `&__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
+  }
+
   private async issueBrowserSession(pathPrefix: string): Promise<string> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/auth/browser-session`, {

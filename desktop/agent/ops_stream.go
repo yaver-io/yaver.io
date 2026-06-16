@@ -30,6 +30,46 @@ func init() {
 		AllowGuest:  true,
 	})
 	registerOpsVerb(opsVerbSpec{
+		Name:        "stream_broadcast",
+		Description: "Go LIVE to an RTMP endpoint (Twitch/YouTube/own server) from a source — capture/screen/scene/<pushed>. Payload {rtmpUrl, source?, fps?}. User-initiated egress; the stream key is never echoed back. WebRTC real-time is separate.",
+		Schema: atvSchema(map[string]interface{}{
+			"rtmpUrl": map[string]interface{}{"type": "string", "description": "rtmp(s)://host/app/streamkey"},
+			"source":  map[string]interface{}{"type": "string", "description": "capture|screen|scene|<pushed name> (default capture)"},
+			"fps":     map[string]interface{}{"type": "integer"},
+		}),
+		Handler: func(c OpsContext, payload json.RawMessage) OpsResult {
+			var p struct {
+				RTMPUrl string `json:"rtmpUrl"`
+				Source  string `json:"source"`
+				FPS     int    `json:"fps"`
+			}
+			if err := json.Unmarshal(payload, &p); err != nil || strings.TrimSpace(p.RTMPUrl) == "" {
+				return OpsResult{OK: false, Code: "bad_payload", Error: "rtmpUrl required"}
+			}
+			if err := bcast.start(p.Source, p.RTMPUrl, p.FPS); err != nil {
+				return OpsResult{OK: false, Code: "broadcast_failed", Error: err.Error()}
+			}
+			return OpsResult{OK: true, StreamID: "broadcast", Initial: bcast.status()}
+		},
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "stream_broadcast_stop",
+		Description: "Stop the RTMP broadcast.",
+		Schema:      atvSchema(map[string]interface{}{}),
+		Handler: func(c OpsContext, _ json.RawMessage) OpsResult {
+			bcast.stop()
+			return OpsResult{OK: true, Initial: bcast.status()}
+		},
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "stream_broadcast_status",
+		Description: "RTMP broadcast status (running, source, target host — key masked).",
+		Schema:      atvSchema(map[string]interface{}{}),
+		Handler: func(c OpsContext, _ json.RawMessage) OpsResult {
+			return OpsResult{OK: true, Initial: bcast.status()}
+		},
+	})
+	registerOpsVerb(opsVerbSpec{
 		Name:        "screen_watch",
 		Description: "Open a URL (YouTube / a video / a web app) in THIS box's desktop browser and return the live screen-stream URL, so you can watch a remote box (e.g. magara) on your phone. Drive playback further with the browser_* / open_url tools or just watch. Payload {url}. Agnostic: Yaver streams whatever the screen shows as-is (DRM video like Netflix/Gain/Exxen may render black — streamed as-is). You are responsible for the content and the right to stream it.",
 		Schema: atvSchema(map[string]interface{}{

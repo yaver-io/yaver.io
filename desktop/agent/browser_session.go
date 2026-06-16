@@ -104,6 +104,19 @@ func isAllowedBrowserSessionPath(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/proxy/"):
 		return true
+	// Live media views from the web dashboard render with an <img>/EventSource
+	// that can't carry headers, so they mint a short-lived (2-min), path-scoped
+	// browser session. These are all owner-authed at mint time (handleBrowserSession
+	// is behind s.auth): Remote Desktop, the capture card, the Apple TV
+	// now-playing SSE, and the ghost screen.
+	case strings.HasPrefix(path, "/rd/"):
+		return true
+	case strings.HasPrefix(path, "/capture/"):
+		return true
+	case strings.HasPrefix(path, "/appletv/"):
+		return true
+	case strings.HasPrefix(path, "/ghost/"):
+		return true
 	default:
 		return false
 	}

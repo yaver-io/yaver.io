@@ -614,10 +614,12 @@ shaped, **simpler** version:
 | **M9** view-only watch link (W3): `stream_share` token + `/watch` page | ✅ **shipped** (snapshot-poll; guest-authed MJPEG still optional) |
 | **M10** Phone-camera source: `expo-camera` → `/stream/push` → box buffer → stream plane | ✅ **shipped** (agent `stream_push.go` + mobile `stream-camera.tsx`); device-verify pending |
 | **M11** PC-screen source via `stream_*` + `screen_watch` (wraps `ghost`) | ✅ **shipped** |
-| **M12** Android TV app (leanback + focus + `tv` layout) | ⚠️ needs an Expo config plugin for the `LEANBACK_LAUNCHER` manifest — NOT done (risky to hand-edit app.json; documented) |
-| **M13** Apple TV (tvOS) app via `react-native-tvos` | ⚠️ **held** — forks the mobile build; ADR-level, would destabilize. Not done. |
-| **M14** Box-side "OBS-wrap" compositor (`scene_*` verbs) | ✅ **shipped** — in-process image compositor (grid/row/pip) → publishes the `scene` source through the stream plane (no ffmpeg graph); real-time mixing/RTMP is M15 |
-| **M15** WebRTC real-time + RTMP broadcast-out | ⚠️ **held** — largest, separate effort; later |
+| **M12** Android TV app (leanback + focus + `tv` layout) | ✅ **config plugin built** (`plugins/withAndroidTV.js`, unregistered per convention — needs a TV banner asset + native rebuild to activate; see the plugin header) |
+| **M13** Apple TV (tvOS) app via `react-native-tvos` | ⚠️ **ADR'd + staged** (Part F) — dependency swap is owner-run (full native rebuild, version-locked); not executed here |
+| **M14** Box-side "OBS-wrap" compositor (`scene_*` verbs) | ✅ **shipped** — in-process compositor (grid/row/pip) → publishes the `scene` source through the stream plane |
+| **M15** RTMP broadcast-out | ✅ **shipped** — `stream_broadcast` pipes any source (capture/screen/scene/pushed) → ffmpeg x264 → FLV/RTMP (Twitch/YouTube/own); WebRTC real-time still a separate later effort |
+| **W4** now-playing SSE live card (web) | ✅ **shipped** — EventSource via `nowPlayingStreamUrl()`, poll fallback |
+| (fix) browser-session whitelist for `/capture/ /appletv/ /rd/ /ghost/` | ✅ — these media views couldn't mint their `<img>`/EventSource token before |
 
 **Recommended next step:** M9 + M11 (make the streams I built guest-shareable
 and add the PC-screen source — both are mostly wiring over shipped code), then
@@ -780,6 +782,73 @@ stream-scoped guest token, no app install.
 Deploy each via `scripts/deploy-web.sh` (local-first, 15 MB guard). The web
 surface is the **lowest-effort, highest-reach** way to land the whole feature —
 recommend W1+W2 right after the mobile/agent work is merged.
+
+---
+
+# PART F — ADR: Apple TV (tvOS) app via react-native-tvos (M13)
+
+> 2026-06-17. **Decision: deferred-but-specified.** The tvOS app is a real,
+> wanted target, but adopting it is the one step in this whole feature that
+> can't be done safely without a full native build — so this ADR specifies the
+> exact change and the gate, and the work is staged so the day-of swap is one
+> command + a rebuild, not a research project.
+
+## F.1 Why tvOS is different from every other surface here
+
+Every other surface reused existing transport/UI. tvOS does not exist in stock
+Expo/React Native: **the `react-native` package itself has no tvOS target.** The
+only supported path is the community fork **`react-native-tvos`**, a drop-in
+superset that adds tvOS while keeping iOS + Android. Adopting it means changing
+the dependency for the WHOLE app:
+
+```jsonc
+// mobile/package.json — the swap (do NOT run blind)
+"react-native": "npm:react-native-tvos@0.81.x"   // MUST match the current RN 0.81.5 minor
+```
+
+Risks that make this unverifiable-from-here:
+- **Version lock-step.** `react-native-tvos` must match the exact RN minor
+  (0.81.x) AND be compatible with **Expo SDK 54**. A wrong pin breaks
+  `npm install` for iOS + Android too — i.e. it can take the shipping phone app
+  down, not just "fail to add TV."
+- **Native rebuild required.** `expo prebuild` + a tvOS Xcode target + `pod
+  install` + a full archive — none of which runs in this environment. I can't
+  confirm the phone builds still pass after the swap, and "ship a broken phone
+  build to verify TV" is exactly backwards.
+- **Expo 54 tvOS support is partial** — some config plugins / native modules in
+  this app (mesh tunnel, GCDWebServer, rnwhisper) may need tvOS guards.
+
+Per CLAUDE.md (local deploy first, don't destabilize shipping builds), executing
+this swap autonomously is the wrong call. It's an owner-run, full-rebuild step.
+
+## F.2 What's already staged so the swap is the ONLY remaining work
+
+- **TV sign-in** (`tv-signin.tsx` + `Platform.isTV` routing) — already built;
+  works the moment the app runs on tvOS.
+- **Compact layouts** — the `?surface=glass` pattern is the basis for a `tv`
+  skin; the Apple TV control screen already branches on surface.
+- **The whole agent + transport** — unchanged; tvOS is just another client of
+  the same relay/ops plane.
+
+## F.3 The day-of runbook (owner, on the Mac)
+
+```bash
+cd mobile
+# 1. pin the fork to the matching RN minor (verify the exact patch on npm first)
+npm pkg set 'dependencies.react-native=npm:react-native-tvos@0.81.5'   # example pin
+npm install --legacy-peer-deps
+# 2. add the tvOS target
+EXPO_TV=1 npx expo prebuild --platform ios --clean --no-install
+cd ios && pod install && cd ..
+# 3. build to a tvOS simulator/device, verify phone builds STILL pass
+#    (run the existing iOS + Android builds before shipping anything)
+# 4. add focus management (hasTVPreferredFocus / TVFocusGuideView) per screen
+# 5. submit as the tvOS platform of the same App Store Connect app record
+```
+
+Decision recorded: **do not swap the dependency until the owner runs F.3 on a
+machine that can complete a native iOS build and confirm it's still green.**
+Android TV (M12) is the lower-risk TV win and is staged as a config plugin.
 
 ---
 

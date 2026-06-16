@@ -113,6 +113,35 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
     };
   }, [deviceId]); // eslint-disable-line
 
+  // W4: live now-playing via SSE (EventSource), on top of the poll fallback.
+  useEffect(() => {
+    if (!deviceId) return;
+    let es: EventSource | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const client = await ensureClient(deviceId);
+        if (!client || cancelled) return;
+        const url = await client.nowPlayingStreamUrl();
+        if (cancelled) return;
+        es = new EventSource(url);
+        es.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data && typeof data === "object") setNp((prev) => ({ ...prev, ...data }));
+          } catch {}
+        };
+        es.onerror = () => { es?.close(); }; // poll keeps it fresh
+      } catch {
+        /* SSE optional — poll covers it */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      es?.close();
+    };
+  }, [deviceId, ensureClient]);
+
   const run = useCallback(
     async (fn: () => Promise<any>) => {
       setBusy(true);
