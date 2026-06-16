@@ -54,6 +54,7 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
   const srcRef = useRef("capture");
   const lastSampleRef = useRef<{ lost: number; recv: number } | null>(null);
   const poorRef = useRef(0);
+  const goodRef = useRef(0);
   const qualityRef = useRef(rtcQuality);
   const startRef = useRef<(s: string) => void>(() => {});
   useEffect(() => { qualityRef.current = rtcQuality; }, [rtcQuality]);
@@ -245,6 +246,7 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
     if (statsRef.current) clearInterval(statsRef.current);
     lastSampleRef.current = null;
     poorRef.current = 0;
+    goodRef.current = 0;
     statsRef.current = setInterval(async () => {
       const pc = pcRef.current;
       if (!pc) return;
@@ -267,14 +269,26 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
         if (qualityRef.current !== "auto") return; // user-locked: don't auto-adapt
         if (lossRate > 0.05) {
           poorRef.current++;
+          goodRef.current = 0;
           if (poorRef.current >= 3 && effTierRef.current !== "saver") {
             effTierRef.current = effTierRef.current === "high" ? "balanced" : "saver";
             poorRef.current = 0;
             setMsg(`network poor — lowering quality to ${effTierRef.current}`);
             startRef.current(srcRef.current); // re-negotiate at the lower tier
           }
+        } else if (lossRate < 0.01) {
+          // Recovered — step back up, but slower than we step down (anti-flap).
+          goodRef.current++;
+          poorRef.current = 0;
+          if (goodRef.current >= 6 && effTierRef.current !== "high") {
+            effTierRef.current = effTierRef.current === "saver" ? "balanced" : "high";
+            goodRef.current = 0;
+            setMsg(`link recovered — raising quality to ${effTierRef.current}`);
+            startRef.current(srcRef.current);
+          }
         } else {
           poorRef.current = 0;
+          goodRef.current = 0;
         }
       } catch {}
     }, 3000);

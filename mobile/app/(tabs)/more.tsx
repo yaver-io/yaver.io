@@ -3573,6 +3573,18 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
+        <Pressable
+          style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+          onPress={() => router.navigate("/ev-charging" as any)}
+        >
+          <Text style={[s.icon, { color: c.textMuted }]}>{"\u26A1"}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[s.label, { color: c.textPrimary }]}>EV Charging</Text>
+            <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Scan QR, launch provider app</Text>
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+        </Pressable>
+
         {/* Data browser — tables, query, schema, storage, jobs */}
         {connected && (
           <Pressable

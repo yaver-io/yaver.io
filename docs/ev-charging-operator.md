@@ -97,6 +97,67 @@ device where ZES is already signed in. Starting may require SMS/payment approval
 Nothing starts until you approve the final provider screen."
 ```
 
+## Turkey Provider Landscape
+
+Current priority is Turkey. As of the June 2026 implementation pass, the
+practical first-class provider set is:
+
+| Provider | Why it matters | Android launch hint | Yaver v1 posture |
+|---|---|---|---|
+| Eşarj / Esarj | Major Turkish network; app supports map, station availability, charge sessions. | `com.esarj.mobile` | QR/deeplink + remote Android + manual assist |
+| ZES | Major Zorlu Energy charging network; app exposes QR/card/app start and live charge tracking. | `com.solidict.zorluenerji` | QR/deeplink + remote Android + manual assist |
+| Trugo | Togg ecosystem/high-performance charging network; screenshots show QR, station-code fallback, AutoCharge filters, SMS auth. | `com.togg.trugoapp` | QR/deeplink + remote Android + manual assist |
+| En Yakıt | Fuel + electricity app; screenshots show phone-number login and SMS verification. | `com.ilerleyen.EnYakit` | remote Android login assist + manual tracking |
+| Voltrun | Public FAQ describes QR start through the Voltrun app and card support. | `com.voltrun` | QR/deeplink + remote Android + manual assist |
+| Sharz | Turkey charging app/network; store pages describe station availability and charge start. | `com.ipitex.sharz` | QR/deeplink + remote Android + manual assist |
+| Şarj@TR | EPDK public station/socket availability app. | `tr.gov.epdk.sarjetTR` | discovery/status helper, not payment/start authority |
+| ChargeIQ / Voltla / other aggregators | Useful for tariffs, route planning, station discovery, and cross-provider comparison. | provider-specific later | read-only assist first |
+| Tesla Supercharger | Important network, but app/account/vehicle constraints differ from QR-first Turkish CPO apps. | provider-specific later | manual assist / official route only |
+
+This list should remain data-driven. Add a provider only after observing one of:
+
+- real QR payload
+- official domain
+- app-store package id
+- installed app package on an owned Android test device
+- provider API/OCPI documentation
+
+## Screenshot-Derived App Patterns
+
+The user provided real screenshots for ZES, Esarj, En Yakıt, and Trugo. The
+common pattern is strong enough to shape the MVP:
+
+1. **Map home + large QR action.**
+   ZES, Esarj, and Trugo all put QR start near the primary map experience.
+2. **Manual station/socket-code fallback.**
+   Trugo explicitly asks for station code when the QR is unavailable.
+3. **Readiness gates.**
+   Esarj shows invoice info, vehicle info, pending payment, default card, phone
+   verification, and "learn charging steps" as setup gates.
+4. **SMS auth is normal.**
+   En Yakıt and Trugo screenshots show phone-number login and 4-digit SMS
+   verification. Yaver must model OTP as a user-present step.
+5. **Provider overlays are not optional.**
+   Loading dialogs, scan sheets, bottom sheets, and provider warnings are part of
+   the source-of-truth UI. Yaver should observe/supervise them, not hide them.
+6. **AutoCharge exists but is provider-owned.**
+   Trugo surfaces AutoCharge. If the user already configured it, Yaver can track
+   and explain it, but should not pretend to configure or trigger it invisibly.
+
+The product assumption for v1 is now explicit:
+
+```text
+The user already has accounts, vehicles, cards, invoices, and provider setup.
+Yaver is the single control surface for scan -> provider handoff -> state tracking.
+```
+
+That means v1 optimizes the repeat path, not onboarding:
+
+```text
+scan in Yaver -> classify -> launch right provider app/remote Android
+-> user approves provider UI -> Yaver tracks "charging or not" and session notes
+```
+
 ## Non-Goals
 
 Yaver must not:
@@ -463,6 +524,40 @@ Provider-specific automation may be added only for low-impact navigation:
 - recover from known login screens
 
 Never automate final payment/start/stop without an explicit confirmation event.
+
+## MCP / Ops Surface
+
+Coding agents should not need special EV-specific MCP clients. Yaver already has
+a generic MCP `ops` tool and `ops_verbs` discovery. EV support should therefore
+enter MCP through ops verbs:
+
+```text
+ops verb: ev_provider_catalog
+  Returns provider metadata, domains, Android package hints, and safety policy.
+
+ops verb: ev_android_status
+  Reports attached Android readiness for supervised provider app control.
+
+ops verb: ev_android_launch
+  Payload {provider?, package?, device?}
+  Launches the real provider app on attached Android.
+  Does not start/stop charging.
+```
+
+The important MCP contract:
+
+- provider launch is allowed
+- reading Android frame/UI is allowed through existing `droid_*` tools
+- typing OTP is user-present only
+- final start/stop requires user approval
+- no provider password/payment secrets are exposed
+
+This lets an AI agent say:
+
+```text
+I opened Trugo on the remote Android device. It is asking for a 4-digit SMS code.
+Enter it on your phone or type it into Yaver's supervised input. I will not store it.
+```
 
 ## SMS, OTP, OAuth, and Payment
 

@@ -86,16 +86,23 @@ func (streamSourceTarget) CanEncodeRTPH264() bool { return ffmpegPath() != "" }
 // emitting raw H264 Annex-B on stdout, plus a feeder goroutine that pushes the
 // latest source frame at a fixed cadence. deviceID carries the source name.
 func (t streamSourceTarget) SpawnCapture(ctx context.Context, deviceID string) (*exec.Cmd, io.ReadCloser, error) {
+	// deviceID is the "source:tier" encode key (fan-out, Q4): the bare source
+	// names the frame buffer; the full key selects this tier's profile.
+	encodeKey := deviceID
 	source := deviceID
+	if i := strings.IndexByte(deviceID, ':'); i >= 0 {
+		source = deviceID[:i]
+	}
 	if source == "" {
 		source = t.source
+		encodeKey = source
 	}
 	ff := ffmpegPath()
 	if ff == "" {
 		return nil, nil, fmt.Errorf("ffmpeg not found — required for WebRTC encode")
 	}
 	// Adaptive encode from the resolved profile (Part H): fps, downscale, bitrate.
-	prof := getActiveEncodeProfile(source)
+	prof := getActiveEncodeProfile(encodeKey)
 	fps := prof.FPS
 	if fps <= 0 || fps > 30 {
 		fps = 12
@@ -187,7 +194,13 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 		wantTier = lockTier
 	}
 	prof := profileForConstraints(body.DeviceClass, body.W, body.H, body.Net, wantTier)
-	setActiveEncodeProfile(source, prof)
+	// Q4 fan-out: get/create the shared encode for this (source, tier). Many
+	// viewers at the same tier share one ffmpeg + one track.
+	se, err := getOrCreateEncode(source, prof)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "encode: "+err.Error())
+		return
+	}
 	if ffmpegPath() == "" {
 		jsonError(w, http.StatusServiceUnavailable, "ffmpeg not installed — required for WebRTC encode")
 		return

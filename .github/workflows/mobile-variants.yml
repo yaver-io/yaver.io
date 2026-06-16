@@ -1,0 +1,162 @@
+# Mobile Variants — TV / Car wiring CI.
+#
+# Android TV (leanback) and Android Auto (messaging) ship in the SAME AAB as the
+# phone app — they are manifest additions contributed by the Expo config plugins
+# mobile/plugins/withAndroidTV.js + withAndroidAutoMessaging.js (registered in
+# mobile/app.json). The signed Play upload lives in release-mobile.yml; this
+# workflow does NOT re-upload. Its jobs:
+#
+#   verify-wiring        (PR / push / dispatch) — fast, no native build: assert
+#                        the TV + Android Auto entries are present in the
+#                        resolved Expo config AND the tracked manifest overlay,
+#                        so the wiring can never silently regress (e.g. a plugin
+#                        getting unregistered, or the tracked AndroidManifest.xml
+#                        losing leanback). Also runs the plugin unit tests.
+#   build-android-variant(dispatch, opt-in) — actually builds a debug APK and
+#                        asserts leanback + Android Auto are in the BUILT binary
+#                        (aapt2), then uploads the APK artifact. No signing
+#                        secrets needed; proves the variant compiles end-to-end.
+#
+# Apple side (gated, intentionally not built here):
+#   - tvOS: native SwiftUI app (tvos/, ADR docs/yaver-tvos-fork-adr.md Option B).
+#     No Xcode project is checked in yet (tvos/README.md = one-time target
+#     creation), so there is nothing for CI to build. Add a `build-tvos` job
+#     once tvos/YaverTV.xcodeproj exists.
+#   - CarPlay: part of the iOS app, gated on the carplay-* entitlement
+#     (docs/yaver-carplay-entitlement-request.md). Ships via the iOS pipeline,
+#     not a separate binary.
+name: Mobile Variants (TV / Car)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_android_variant:
+        description: "Build a debug Android APK and verify TV + Android Auto in the binary"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+  pull_request:
+    paths:
+      - "mobile/plugins/**"
+      - "mobile/app.json"
+      - "mobile/android/app/src/main/AndroidManifest.xml"
+      - "mobile/assets/tv_banner.png"
+      - ".github/workflows/mobile-variants.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/plugins/**"
+      - "mobile/app.json"
+      - "mobile/android/app/src/main/AndroidManifest.xml"
+
+concurrency:
+  group: mobile-variants-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-wiring:
+    name: Verify TV + Car manifest wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.4"
+      - name: Install dependencies
+        run: cd mobile && npm ci --legacy-peer-deps
+      - name: Plugin unit tests
+        run: cd mobile && node --test plugins/withAndroidTV.test.mjs
+
+      - name: Resolved Expo config contains TV + Android Auto entries
+        run: |
+          cd mobile
+          npx expo config --type introspect --json > /tmp/introspect.json
+          node -e '
+            const j = require("/tmp/introspect.json");
+            const s = JSON.stringify(j);
+            const need = {
+              "Android TV leanback launcher": "LEANBACK_LAUNCHER",
+              "Android TV leanback feature": "software.leanback",
+              "Android TV banner": "tv_banner",
+              "Android Auto messaging meta": "com.google.android.gms.car.application",
+            };
+            const missing = Object.entries(need).filter(([, v]) => !s.includes(v)).map(([k]) => k);
+            if (missing.length) { console.error("MISSING wiring:\n - " + missing.join("\n - ")); process.exit(1); }
+            console.log("OK — TV + Android Auto wiring present in resolved Expo config:\n - " + Object.keys(need).join("\n - "));
+          '
+
+      - name: Tracked manifest overlay carries leanback (local gradle deploy path)
+        # release-mobile.yml prebuilds from app.json plugins, but the LOCAL
+        # deploy (scripts/deploy-playstore.sh) builds the tracked overlay
+        # directly — so the leanback entries must live in BOTH. Guard the overlay.
+        run: |
+          M=mobile/android/app/src/main/AndroidManifest.xml
+          fail=0
+          for needle in "LEANBACK_LAUNCHER" "android.software.leanback" "@drawable/tv_banner"; do
+            if ! grep -q "$needle" "$M"; then echo "::error::tracked manifest missing: $needle"; fail=1; fi
+          done
+          [ "$fail" = 0 ] && echo "OK — tracked AndroidManifest.xml carries leanback + banner."
+          exit $fail
+
+      - name: TV banner asset is present and 320x180
+        run: |
+          test -f mobile/assets/tv_banner.png || { echo "::error::mobile/assets/tv_banner.png missing"; exit 1; }
+          test -f mobile/android/app/src/main/res/drawable-xhdpi/tv_banner.png || { echo "::error::tracked drawable tv_banner.png missing"; exit 1; }
+          file mobile/assets/tv_banner.png
+          dims=$(node -e 'const b=require("fs").readFileSync("mobile/assets/tv_banner.png");console.log(b.readUInt32BE(16)+"x"+b.readUInt32BE(20))')
+          echo "banner dims: $dims"
+          [ "$dims" = "320x180" ] || { echo "::error::TV banner must be 320x180 (got $dims)"; exit 1; }
+
+  build-android-variant:
+    name: Build debug APK + verify TV/Car in the binary
+    needs: verify-wiring
+    if: github.event_name == 'workflow_dispatch' && inputs.build_android_variant == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.4"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - name: Install dependencies
+        run: cd mobile && npm ci --legacy-peer-deps
+      - name: Prebuild native projects
+        run: cd mobile && npx expo prebuild --platform android --clean
+      - name: Restore splashscreen_logo drawable
+        run: |
+          DIR="mobile/android/app/src/main/res/drawable"
+          mkdir -p "$DIR"
+          cat > "$DIR/splashscreen_logo.xml" <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android"
+              android:shape="rectangle">
+              <solid android:color="@android:color/transparent"/>
+          </shape>
+          XML
+      - name: Build debug APK
+        # Debug build needs no signing secrets — this job only verifies the
+        # variant manifest compiles into a real binary (the signed Play upload
+        # is release-mobile.yml's job).
+        env:
+          GRADLE_OPTS: -Xmx6g -XX:MaxMetaspaceSize=1g
+        run: cd mobile/android && ./gradlew :app:assembleDebug --no-daemon
+      - name: Verify leanback + Android Auto in the built APK
+        run: |
+          APK=$(find mobile/android/app/build/outputs/apk/debug -name "*.apk" | head -1)
+          echo "APK: $APK"
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -1)
+          echo "aapt2: $AAPT2"
+          DUMP=$("$AAPT2" dump xmltree --file AndroidManifest.xml "$APK")
+          fail=0
+          for needle in "LEANBACK_LAUNCHER" "android.software.leanback" "com.google.android.gms.car.application"; do
+            if echo "$DUMP" | grep -q "$needle"; then echo "  ✓ $needle"; else echo "::error::built APK missing $needle"; fail=1; fi
+          done
+          exit $fail
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yaver-tv-car-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
