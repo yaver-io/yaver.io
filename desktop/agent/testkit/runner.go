@@ -185,6 +185,31 @@ func allStepsPassed(steps []StepResult) bool {
 // `chromium`, etc.). If no Chrome is found, the error message tells the
 // user how to install one — and stays out of the way of the rest of
 // Yaver, which is the priority on a solo dev's laptop.
+
+// seedCookies sets each Spec.Cookie via CDP before the first navigation,
+// so authenticated pages can be tested without driving a login UI. httpOnly
+// cookies (which a page's JS can't set) work here because CDP sets them at
+// the network layer.
+func seedCookies(cookies []SpecCookie) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		for _, c := range cookies {
+			path := c.Path
+			if path == "" {
+				path = "/"
+			}
+			if err := cdpnetwork.SetCookie(c.Name, c.Value).
+				WithDomain(c.Domain).
+				WithPath(path).
+				WithSecure(c.Secure).
+				WithHTTPOnly(c.HTTPOnly).
+				Do(ctx); err != nil {
+				return fmt.Errorf("set cookie %q: %w", c.Name, err)
+			}
+		}
+		return nil
+	})
+}
+
 func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		res.Err = fmt.Errorf("yaver test run only supports macOS and Linux (current: %s)", runtime.GOOS)
@@ -215,6 +240,16 @@ func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 	if err := chromedp.Run(browserCtx); err != nil {
 		res.Err = fmt.Errorf("launch chromium: %w (install Chrome/Chromium and ensure it's on PATH)", err)
 		return
+	}
+
+	// Seed pre-auth cookies (Spec.Cookies) before any navigation so the
+	// spec can exercise logged-in pages without driving a login form. The
+	// values were already ${ENV}-expanded at load time.
+	if len(spec.Cookies) > 0 {
+		if err := chromedp.Run(browserCtx, seedCookies(spec.Cookies)); err != nil {
+			res.Err = fmt.Errorf("seed cookies: %w", err)
+			return
+		}
 	}
 
 	artifactDir := artifactDirFor(spec, opts)
