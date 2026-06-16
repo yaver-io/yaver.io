@@ -38,6 +38,15 @@ func init() {
 		Handler: screenWatchHandler,
 	})
 	registerOpsVerb(opsVerbSpec{
+		Name:        "stream_share",
+		Description: "Mint a VIEW-ONLY share token (owner only) for this box's live streams — capture card / Apple TV now-playing / screen. The token is scoped to the read-only stream_* verbs and NOTHING else; hand it to a friend's account or put it in a watch link. Payload {ttlHours?} (default 24). Returns {token, expiresInMs}.",
+		Schema: atvSchema(map[string]interface{}{
+			"ttlHours": map[string]interface{}{"type": "integer", "description": "link lifetime in hours (default 24)"},
+		}),
+		Handler:    streamShareHandler,
+		AllowGuest: false, // owner mints; a guest can't escalate their own scope
+	})
+	registerOpsVerb(opsVerbSpec{
 		Name:        "stream_snapshot",
 		Description: "Pull one frame from a shared source as a base64 data URL. Payload {source} — \"capture\" (capture card), \"appletv\" (now-playing artwork), \"camera\" (robot/host camera). Read-only; guest-viewable.",
 		Schema: atvSchema(map[string]interface{}{
@@ -112,6 +121,36 @@ func screenWatchHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	}}
 }
 
+func streamShareHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	var p struct {
+		TTLHours int `json:"ttlHours"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	if p.TTLHours <= 0 {
+		p.TTLHours = 24
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || cfg.AuthToken == "" {
+		return OpsResult{OK: false, Code: "not_signed_in", Error: "the box must be signed in (yaver auth) to mint a share token"}
+	}
+	expires := int64(p.TTLHours) * 3600 * 1000
+	tok, err := CreateSdkToken(c.Server.convexURL, cfg.AuthToken, SdkTokenCreateOpts{
+		Label:       "stream-watch-link",
+		Scopes:      []string{"stream"},
+		ExpiresInMs: expires,
+	})
+	if err != nil {
+		return OpsResult{OK: false, Code: "mint_failed", Error: err.Error()}
+	}
+	return OpsResult{OK: true, Initial: map[string]interface{}{
+		"token":       tok,
+		"scope":       "stream",
+		"expiresInMs": expires,
+		"deviceId":    c.Server.deviceID,
+		"hint":        "view-only — reaches only the stream_* verbs on this box. Expires; mint a new one to extend.",
+	}}
+}
+
 func streamSnapshotHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	var p struct {
 		Source string `json:"source"`
@@ -134,11 +173,23 @@ func streamSnapshotHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		}
 		return OpsResult{OK: true, Initial: out}
 	case "appletv":
-		_, dataURL := appleTVEng.nowPlayingArtworkDataURL(c.Ctx, p.Device)
-		if dataURL == "" {
-			return OpsResult{OK: false, Code: "no_artwork", Error: "no now-playing artwork available"}
+		// Include now-playing text too (title/artist/app/state) so a view-only
+		// watcher gets context without needing the appletv_now_playing verb
+		// (which is outside the stream_* scope).
+		np, dataURL := appleTVEng.nowPlayingArtworkDataURL(c.Ctx, p.Device)
+		out := map[string]interface{}{"source": "appletv"}
+		if dataURL != "" {
+			out["image"] = dataURL
 		}
-		return OpsResult{OK: true, Initial: map[string]interface{}{"source": "appletv", "image": dataURL}}
+		for _, k := range []string{"title", "artist", "app", "state"} {
+			if v, ok := np[k]; ok {
+				out[k] = v
+			}
+		}
+		if dataURL == "" && np["title"] == nil {
+			return OpsResult{OK: false, Code: "no_nowplaying", Error: "nothing playing"}
+		}
+		return OpsResult{OK: true, Initial: out}
 	case "screen":
 		// The box's desktop screen, via the shared ghost/Remote-Desktop frame
 		// buffer (populated while /rd/stream or /ghost/stream is active).

@@ -1502,6 +1502,12 @@ var scopePathPrefixes = map[string][]string{
 	// with delegatedGuestScope:"circuit" on the token so the caller is treated
 	// as a scoped guest (not the owner) when it reaches /ops.
 	"circuit": {"/ops", "/ops/plan", "/info", "/health"},
+	// stream: isolated VIEW-ONLY share credential. Opens only the ops endpoint
+	// (+ discovery); the verb gate (capabilityScopeVerbPrefix["stream"]="stream_")
+	// then restricts /ops to the read-only stream_* verbs. A watch link uses
+	// snapshot-polling (stream_snapshot returns base64) so no browser-session /
+	// MJPEG escalation is needed — the token reaches frames and NOTHING else.
+	"stream": {"/ops", "/info", "/health"},
 	// runner-auth: lets the embedded Feedback SDK inspect runner state
 	// and complete either browser-style auth (codex / claude) or
 	// token-based setup (opencode) without a separate full-session UI.

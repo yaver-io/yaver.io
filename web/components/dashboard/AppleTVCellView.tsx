@@ -41,6 +41,7 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
   const [cap, setCap] = useState<CaptureStatus | null>(null);
   const [captureUrl, setCaptureUrl] = useState<string | null>(null);
   const [watchUrl, setWatchUrl] = useState("");
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -145,6 +146,43 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
       setBusy(false);
     }
   }, [cap, callOps, ensureClient, deviceId, refreshCapture]);
+
+  // Mint a VIEW-ONLY watch link: a stream-scoped token (server-side, reaches
+  // only stream_* verbs) packed with this device's connection info + relay
+  // config into the URL hash, so a friend can watch with no login. Snapshot-poll
+  // only — the token can't reach controls.
+  const createShareLink = useCallback(async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const device = devices.find((d) => d.id === deviceId);
+      if (!device) return;
+      const r = await callOps("stream_share", { ttlHours: 24 });
+      if (!r?.token) {
+        setMsg(r?.error || "couldn't mint share token");
+        return;
+      }
+      const blob = {
+        d: {
+          id: device.id,
+          host: device.host,
+          port: device.port,
+          publicEndpoints: (device as any).publicEndpoints,
+          tunnelUrl: (device as any).tunnelUrl,
+        },
+        r: agentClient.configuredRelayServers.map((s) => ({ ...s })),
+        t: r.token,
+      };
+      const packed = btoa(encodeURIComponent(JSON.stringify(blob)));
+      const url = `${window.location.origin}/watch#${packed}`;
+      setShareUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {}
+    } finally {
+      setBusy(false);
+    }
+  }, [devices, deviceId, callOps]);
 
   const btn = "rounded-md px-3 py-1.5 text-sm border border-neutral-700 bg-neutral-800 text-neutral-100 hover:bg-neutral-700 disabled:opacity-40";
   const btnAccent = "rounded-md px-3 py-1.5 text-sm bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40";
@@ -262,6 +300,23 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
           </button>
         </div>
         <p className="mt-2 text-xs text-neutral-500">Opens in the box's browser; watch via Remote Desktop. Streams the screen as-is.</p>
+      </div>
+
+      {/* share a view-only watch link (guest / friend, no login) */}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-sm font-semibold text-neutral-200">Share a view-only link</div>
+          <button className={btnAccent} disabled={busy} onClick={createShareLink}>Create link</button>
+        </div>
+        <p className="text-xs text-neutral-500">A 24-hour, view-only link (live frames + now-playing, no controls). The recipient needs no account.</p>
+        {shareUrl && (
+          <input
+            readOnly
+            value={shareUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            className="mt-2 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-300"
+          />
+        )}
       </div>
 
       {busy && <p className="text-xs text-neutral-500">working…</p>}
