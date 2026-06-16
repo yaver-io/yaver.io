@@ -141,6 +141,131 @@ func routineToolSchemas() []map[string]interface{} {
 	}
 }
 
+// scheduleSelfRunawayCap bounds an interval/cron self-schedule that didn't
+// specify max_runs, so a runner can't spawn an unbounded fire loop. The user
+// can override with an explicit max_runs (including a larger one).
+const scheduleSelfRunawayCap = 100
+
+// scheduleSelfToolSchema describes the schedule_self MCP tool. Appended to the
+// master tools list by mcp_tools.go alongside routineToolSchemas.
+func scheduleSelfToolSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"name":        "schedule_self",
+		"description": "Schedule a CONTINUATION of your own work to run later — the way to handle recurring or deferred tasks instead of looping in-process or busy-waiting. Pick exactly one cadence: `when` (one-shot RFC3339 UTC), `interval_minutes` (every N minutes), or `cron` (5-field expr; supports */N steps and @daily/@hourly macros). The next run starts as a FRESH process (no memory of this turn) so put everything it needs into `prompt` and `memo`. `memo` is carried verbatim into the next run's prompt. `runner` defaults to this agent's default; pass it to pin claude/codex/opencode/glm. Recurring schedules without max_runs are capped at 100 fires.",
+		"inputSchema": map[string]interface{}{
+			"type":     "object",
+			"required": []string{"prompt"},
+			"properties": map[string]interface{}{
+				"prompt":           map[string]interface{}{"type": "string", "description": "The instruction the next run executes. Self-contained — the next process has no memory of the current turn."},
+				"memo":             map[string]interface{}{"type": "string", "description": "Optional notes carried verbatim into the next run's prompt (state, findings, where you left off)."},
+				"when":             map[string]interface{}{"type": "string", "description": "One-shot run time, RFC3339 UTC (e.g. 2026-06-17T09:00:00Z). Use this OR interval_minutes OR cron."},
+				"interval_minutes": map[string]interface{}{"type": "integer", "description": "Repeat every N minutes (minimum 1). Use this OR when OR cron."},
+				"cron":             map[string]interface{}{"type": "string", "description": "5-field cron expression (minute hour day month weekday), e.g. '*/30 * * * *' or '@daily'. Use this OR when OR interval_minutes."},
+				"runner":           map[string]interface{}{"type": "string", "description": "Runner for the next run: claude | codex | opencode | glm. Defaults to this agent's default runner."},
+				"model":            map[string]interface{}{"type": "string", "description": "Optional model override for the next run."},
+				"title":            map[string]interface{}{"type": "string", "description": "Optional label. Defaults to a truncation of prompt."},
+				"max_runs":         map[string]interface{}{"type": "integer", "description": "Stop after this many fires (0 = use the 100-fire safety cap for recurring; one-shot ignores this)."},
+			},
+		},
+	}
+}
+
+// scheduleSelf creates a Task-mode schedule from a schedule_self call. Runaway
+// guards: interval floor of 1 minute, and a max_runs cap on recurring
+// schedules that didn't set one.
+func (s *HTTPServer) scheduleSelf(raw json.RawMessage) interface{} {
+	var args struct {
+		Prompt          string `json:"prompt"`
+		Memo            string `json:"memo"`
+		When            string `json:"when"`
+		IntervalMinutes int    `json:"interval_minutes"`
+		Cron            string `json:"cron"`
+		Runner          string `json:"runner"`
+		Model           string `json:"model"`
+		Title           string `json:"title"`
+		MaxRuns         int    `json:"max_runs"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return mcpToolError("invalid arguments: " + err.Error())
+	}
+	args.Prompt = strings.TrimSpace(args.Prompt)
+	if args.Prompt == "" {
+		return mcpToolError("prompt is required — it is what the next run executes")
+	}
+
+	cadences := 0
+	if args.When != "" {
+		cadences++
+	}
+	if args.IntervalMinutes > 0 {
+		cadences++
+	}
+	if strings.TrimSpace(args.Cron) != "" {
+		cadences++
+	}
+	if cadences == 0 {
+		return mcpToolError("provide one cadence: when (one-shot), interval_minutes, or cron")
+	}
+	if cadences > 1 {
+		return mcpToolError("provide exactly one of when, interval_minutes, or cron")
+	}
+	if args.When != "" {
+		if _, err := time.Parse(time.RFC3339, args.When); err != nil {
+			return mcpToolError("when must be RFC3339 UTC (e.g. 2026-06-17T09:00:00Z): " + err.Error())
+		}
+	}
+	if args.Runner != "" && !IsSupportedRunner(args.Runner) {
+		return mcpToolError("unknown runner: " + args.Runner + " (use claude, codex, opencode, or glm)")
+	}
+
+	recurring := args.IntervalMinutes > 0 || strings.TrimSpace(args.Cron) != ""
+	maxRuns := args.MaxRuns
+	capped := false
+	if recurring && maxRuns <= 0 {
+		maxRuns = scheduleSelfRunawayCap
+		capped = true
+	}
+
+	title := strings.TrimSpace(args.Title)
+	if title == "" {
+		title = args.Prompt
+		if len(title) > 60 {
+			title = strings.TrimSpace(title[:60]) + "…"
+		}
+	}
+
+	st := &ScheduledTask{
+		Title:          title,
+		Description:    args.Prompt,
+		CarryNotes:     strings.TrimSpace(args.Memo),
+		Runner:         normalizeRunnerID(args.Runner),
+		Model:          strings.TrimSpace(args.Model),
+		RunAt:          args.When,
+		RepeatInterval: args.IntervalMinutes,
+		Cron:           strings.TrimSpace(args.Cron),
+		MaxRuns:        maxRuns,
+	}
+	if err := s.scheduler.AddSchedule(st); err != nil {
+		return mcpToolError(err.Error())
+	}
+
+	resp := map[string]interface{}{
+		"id":        st.ID,
+		"title":     st.Title,
+		"runner":    firstNonEmpty(st.Runner, "(agent default)"),
+		"nextRunAt": st.NextRunAt,
+		"recurring": recurring,
+		"hasMemo":   st.CarryNotes != "",
+	}
+	if st.MaxRuns > 0 {
+		resp["maxRuns"] = st.MaxRuns
+	}
+	if capped {
+		resp["note"] = fmt.Sprintf("recurring schedule capped at %d fires (no max_runs given); pass max_runs to change", scheduleSelfRunawayCap)
+	}
+	return mcpToolResultJSON(resp)
+}
+
 // handleRoutineMCP dispatches a routine_* MCP tool call against the
 // scheduler. Returns the same map[string]interface{} shape as the
 // other MCP tool branches (mcpToolResult / mcpToolError). The caller

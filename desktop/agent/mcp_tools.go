@@ -1304,6 +1304,12 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// docs) — see routines_mcp.go header for rationale.
 	tools = append(tools, routineToolSchemas()...)
 
+	// schedule_self — runner-agnostic "future work" tool. Any runner calls
+	// it to schedule a continuation of its own work (the portable analog of
+	// a harness wake-up); creates a Task-mode schedule with the runner
+	// pinned and a carry-memo for continuity. See routines_mcp.go.
+	tools = append(tools, scheduleSelfToolSchema())
+
 	// --- Utility Tools ---
 	utilTools := []map[string]interface{}{
 		{

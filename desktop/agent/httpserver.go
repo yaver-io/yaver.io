@@ -7371,6 +7371,18 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult("Schedule cancelled: " + args.ScheduleID)
 
+	case "schedule_self":
+		// Runner-agnostic "future work" tool: any runner (claude / codex /
+		// opencode / glm) calls this to schedule a continuation of its own
+		// work — the portable equivalent of a harness wake-up. Creates a
+		// Task-mode schedule with the runner pinned so the next fire uses
+		// the same runner; `memo` rides into the next run's prompt via
+		// ScheduledTask.CarryNotes (continuity without a warm session).
+		if s.scheduler == nil {
+			return mcpToolError("scheduler not available")
+		}
+		return s.scheduleSelf(call.Arguments)
+
 	case "routine_create", "routine_list", "routine_get", "routine_delete",
 		"routine_pause", "routine_resume", "routine_run_now", "routine_update":
 		// Verb-mode routines route to a single dispatcher in

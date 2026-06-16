@@ -73,6 +73,60 @@ func TestRunnerProviderEnv_AnthropicAndOpenAI(t *testing.T) {
 	}
 }
 
+func TestRunnerProviderEnv_GLMBareKeyDefaultsToZai(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	// A bare z.ai key (env) with NO runner-provider config is enough to
+	// activate the glm runner against z.ai's default Anthropic endpoint.
+	t.Setenv("ZAI_API_KEY", "zai-test-key")
+	vs, err := NewVaultStore("test-passphrase")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	setRuntimeVaultStore(vs)
+	t.Cleanup(func() { setRuntimeVaultStore(nil) })
+
+	glm := envMap(runnerProviderEnv("glm"))
+	if glm["ANTHROPIC_BASE_URL"] != zaiDefaultAnthropicBaseURL {
+		t.Fatalf("glm ANTHROPIC_BASE_URL = %q, want z.ai default", glm["ANTHROPIC_BASE_URL"])
+	}
+	if glm["ANTHROPIC_AUTH_TOKEN"] != "zai-test-key" {
+		t.Fatalf("glm ANTHROPIC_AUTH_TOKEN = %q", glm["ANTHROPIC_AUTH_TOKEN"])
+	}
+	if _, ok := glm["OPENAI_BASE_URL"]; ok {
+		t.Fatalf("glm must speak the Anthropic protocol, not OpenAI")
+	}
+	// The z.ai key must NOT leak into the real-Anthropic claude runner.
+	if got := runnerProviderEnv("claude"); got != nil {
+		t.Fatalf("claude must stay on its own OAuth path, got %v", got)
+	}
+	// Status detection sees the key.
+	if st := detectGLMStatus(); !st.AuthConfigured {
+		t.Fatalf("detectGLMStatus AuthConfigured = false, want true")
+	}
+}
+
+func TestRunnerProviderEnv_GLMExplicitBaseURLOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("ZAI_API_KEY", "zai-test-key")
+	vs, err := NewVaultStore("test-passphrase")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	// An explicit per-runner base URL wins over the z.ai default.
+	if err := vs.Set(VaultEntry{Project: runnerProviderVaultProject, Name: "BASE_URL__glm", Value: "http://localhost:8080/anthropic"}); err != nil {
+		t.Fatalf("set BASE_URL__glm: %v", err)
+	}
+	setRuntimeVaultStore(vs)
+	t.Cleanup(func() { setRuntimeVaultStore(nil) })
+
+	glm := envMap(runnerProviderEnv("glm"))
+	if glm["ANTHROPIC_BASE_URL"] != "http://localhost:8080/anthropic" {
+		t.Fatalf("glm BASE_URL override not applied: %q", glm["ANTHROPIC_BASE_URL"])
+	}
+}
+
 func TestRunnerProviderEnv_PerRunnerOverrideAndKeylessOllama(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

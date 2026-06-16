@@ -99,25 +99,40 @@ type runnerProviderCfg struct {
 // runner from the runtime vault. Returns the zero value (→ OAuth/default path)
 // when nothing is configured or no vault is mounted.
 func runnerProviderConfigFor(runnerID string) runnerProviderCfg {
-	vs := currentRuntimeVaultStore()
-	if vs == nil {
-		return runnerProviderCfg{}
-	}
 	runnerID = strings.TrimSpace(runnerID)
-	get := func(name string) string {
-		if runnerID != "" {
-			if e, err := vs.Get(runnerProviderVaultProject, name+"__"+runnerID); err == nil && e != nil {
-				if v := strings.TrimSpace(e.Value); v != "" {
-					return v
+	var baseURL, apiKey string
+	if vs := currentRuntimeVaultStore(); vs != nil {
+		get := func(name string) string {
+			if runnerID != "" {
+				if e, err := vs.Get(runnerProviderVaultProject, name+"__"+runnerID); err == nil && e != nil {
+					if v := strings.TrimSpace(e.Value); v != "" {
+						return v
+					}
 				}
 			}
+			if e, err := vs.Get(runnerProviderVaultProject, name); err == nil && e != nil {
+				return strings.TrimSpace(e.Value)
+			}
+			return ""
 		}
-		if e, err := vs.Get(runnerProviderVaultProject, name); err == nil && e != nil {
-			return strings.TrimSpace(e.Value)
-		}
-		return ""
+		baseURL = get("BASE_URL")
+		apiKey = get("API_KEY")
 	}
-	return runnerProviderCfg{baseURL: get("BASE_URL"), apiKey: get("API_KEY")}
+	// GLM (z.ai) convenience: a bare ZAI_API_KEY / GLM_API_KEY (env or vault,
+	// resolved by hostSecretValue) is enough to activate the runner — default
+	// the endpoint to z.ai's Anthropic-compatible base URL when no explicit
+	// BASE_URL__glm was configured. The key stays local-only (never Convex).
+	if normalizeRunnerID(runnerID) == "glm" {
+		if apiKey == "" {
+			if v, _ := hostSecretValue("ZAI_API_KEY"); v != "" {
+				apiKey = v
+			}
+		}
+		if baseURL == "" && apiKey != "" {
+			baseURL = zaiDefaultAnthropicBaseURL
+		}
+	}
+	return runnerProviderCfg{baseURL: baseURL, apiKey: apiKey}
 }
 
 // runnerProviderProtocol maps a runner to the wire protocol its endpoint must
@@ -125,12 +140,19 @@ func runnerProviderConfigFor(runnerID string) runnerProviderCfg {
 // aider, …) is pointed via the OpenAI-compatible env vars.
 func runnerProviderProtocol(runnerID string) string {
 	switch strings.ToLower(strings.TrimSpace(runnerID)) {
-	case "claude", "claude-code", "claudecode":
+	case "claude", "claude-code", "claudecode", "glm", "zai", "z.ai":
+		// GLM runs on the claude binary against z.ai's Anthropic-compatible
+		// endpoint, so it speaks the Anthropic wire protocol like claude.
 		return "anthropic"
 	default:
 		return "openai"
 	}
 }
+
+// zaiDefaultAnthropicBaseURL is z.ai's Anthropic-compatible endpoint. Used as
+// the fallback base URL for the glm runner so a user only needs to drop a
+// ZAI_API_KEY (or API_KEY__glm) into the vault — no BASE_URL required.
+const zaiDefaultAnthropicBaseURL = "https://api.z.ai/api/anthropic"
 
 // runnerProviderEnv returns the env-var assignments that point the given coding
 // runner at the configured local-model/external endpoint. Returns nil when no

@@ -273,6 +273,24 @@ func noQuestionsPreamble(vaultHints string) string {
 	return sb.String()
 }
 
+// schedulingPreamble is the runner-agnostic "future work" contract spliced in
+// alongside noQuestionsPreamble. It makes every runner (claude / codex /
+// opencode / glm) treat recurring or deferred work the same way: don't loop
+// in-process or busy-wait — confirm the cadence with the human once, then hand
+// the work to the scheduler via schedule_self. This is what gives non-Claude
+// runners the "should I run this periodically / at a time?" behaviour that the
+// Claude Code harness has natively; here it lives in Yaver's prompt assembly
+// so it is portable across runners.
+func schedulingPreamble() string {
+	var sb strings.Builder
+	sb.WriteString("\n\n[Yaver — recurring / future work]\n")
+	sb.WriteString("If the request implies recurring or deferred work — monitoring, a daily/periodic report, \"keep an eye on\", \"remind me\", \"every N\", \"when X happens\", or anything that should run again later — do NOT loop in-process, busy-wait, or sleep. You are a short-lived process; the right tool is the scheduler.\n")
+	sb.WriteString("1. If the cadence is unclear, confirm it ONCE via `yaver_ask_user` (a `choice` with options like \"Run once now\", \"Every day\", \"Every hour\", \"At a specific time\"). Mention the rough cost of recurring runs if it's frequent.\n")
+	sb.WriteString("2. Then call `schedule_self` to register the continuation: pick one cadence (when / interval_minutes / cron), put everything the next run needs in `prompt`, and carry any state forward in `memo` (the next run is a fresh process with no memory of this turn). It runs on the same runner unless you pass `runner`.\n")
+	sb.WriteString("Do the immediate part now if there is one; schedule only the future part. Don't schedule work the user didn't ask to repeat.\n")
+	return sb.String()
+}
+
 // askModePreamble is spliced into a task prompt when the task is created in
 // "ask mode" (yaver ask / yaver_ask MCP / an Ask toggle on the web/mobile
 // console). It reframes the run from "do work" to "deeply answer the user's
@@ -318,8 +336,8 @@ func askModePreamble() string {
 //
 // Output shape (one entry per line):
 //
-//	  github-token            (global, category=git-credential)
-//	  APP_STORE_KEY_ISSUER    (project=yaver, category=signing-key)
+//	github-token            (global, category=git-credential)
+//	APP_STORE_KEY_ISSUER    (project=yaver, category=signing-key)
 func renderVaultHintsForTask(vs *VaultStore, project string) string {
 	if vs == nil {
 		return ""

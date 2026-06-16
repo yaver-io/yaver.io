@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -34,6 +36,18 @@ type ScheduledTask struct {
 	RunAt          string `json:"runAt,omitempty"`          // ISO8601 for one-shot scheduled tasks
 	Cron           string `json:"cron,omitempty"`           // Cron expression for recurring (e.g. "0 9 * * 1-5")
 	RepeatInterval int    `json:"repeatInterval,omitempty"` // Repeat every N minutes (simpler than cron)
+
+	// CarryNotes is prepended to the next run's prompt — the universal
+	// continuity bridge for self-scheduled / recurring AI tasks. A runner
+	// is a fresh process on each fire (codex/opencode have no warm session;
+	// claude/glm only resume within a 1h window), so anything the next run
+	// needs is carried here as plain text. Set via schedule_self's `memo`.
+	// Local-only — never synced to Convex (it can hold task-derived text).
+	CarryNotes string `json:"carryNotes,omitempty"`
+	// LastSessionID records the runner session id of the most recent run
+	// (captured from claude/glm stream-json). Diagnostics + future native
+	// resume; not load-bearing for continuity (CarryNotes is).
+	LastSessionID string `json:"lastSessionId,omitempty"`
 
 	// State
 	Status     string `json:"status"` // "scheduled", "running", "completed", "failed", "paused"
@@ -92,6 +106,16 @@ func (s *Scheduler) SetOpsDispatcher(fn OpsDispatcher) {
 	s.opsDispatch = fn
 }
 
+// activeScheduler is the process-global scheduler, set by NewScheduler so
+// completion-time helpers (the scheduling-intent fallback) can register a
+// schedule without threading a *Scheduler through the TaskManager. Mirrors
+// activeTaskManager. Nil until the daemon constructs the scheduler.
+var activeScheduler *Scheduler
+
+// ActiveScheduler returns the process-global scheduler (may be nil in tests
+// or before daemon startup).
+func ActiveScheduler() *Scheduler { return activeScheduler }
+
 // NewScheduler creates a scheduler that persists to ~/.yaver/schedules.json.
 func NewScheduler(taskMgr *TaskManager) *Scheduler {
 	dir, _ := ConfigDir()
@@ -101,7 +125,22 @@ func NewScheduler(taskMgr *TaskManager) *Scheduler {
 		storePath: filepath.Join(dir, "schedules.json"),
 	}
 	s.load()
+	activeScheduler = s
 	return s
+}
+
+// CreatedSince reports whether any schedule was created at or after t. Used by
+// the scheduling-intent fallback to avoid re-asking when the runner already
+// self-scheduled during the task.
+func (s *Scheduler) CreatedSince(t time.Time) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, st := range s.tasks {
+		if created, err := time.Parse(time.RFC3339, st.CreatedAt); err == nil && !created.Before(t) {
+			return true
+		}
+	}
+	return false
 }
 
 // Start begins the scheduler loop, registered with the process-global
@@ -183,7 +222,13 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 		return
 	}
 
-	task, err := s.taskMgr.CreateTask(st.Title, st.Description, st.Model, "scheduler", st.Runner, st.CustomCommand, nil, nil)
+	desc := st.Description
+	if strings.TrimSpace(st.CarryNotes) != "" {
+		// Prepend the carry-memo so a fresh runner process picks up where
+		// the previous scheduled run left off.
+		desc = "[Continuing a recurring task — notes carried from the previous run]\n" + strings.TrimSpace(st.CarryNotes) + "\n\n" + desc
+	}
+	task, err := s.taskMgr.CreateTask(st.Title, desc, st.Model, "scheduler", st.Runner, st.CustomCommand, nil, nil)
 	if err != nil {
 		log.Printf("[scheduler] Failed to create task for schedule %s: %v", st.ID, err)
 		return
@@ -226,10 +271,14 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 			s.taskMgr.mu.RLock()
 			status := t.Status
 			cost := t.CostUSD
+			sid := t.SessionID
 			s.taskMgr.mu.RUnlock()
 
 			if status == TaskStatusFinished || status == TaskStatusFailed || status == TaskStatusStopped {
 				s.mu.Lock()
+				if sid != "" {
+					st.LastSessionID = sid
+				}
 				run := ScheduleRun{
 					TaskID:    task.ID,
 					Status:    string(status),
@@ -499,12 +548,14 @@ func (s *Scheduler) load() {
 	json.Unmarshal(data, &s.tasks)
 }
 
-// nextCronRun is a simple cron parser supporting: minute hour day-of-month month day-of-week.
-// Returns the next occurrence. Supports * and comma-separated values.
-// For a full cron implementation, a library would be used, but this covers common cases.
+// nextCronRun is a dependency-free cron parser supporting the standard 5
+// fields (minute hour day-of-month month day-of-week) with `*`, single
+// values, comma lists, `lo-hi` ranges, step syntax (`*/N`, `lo-hi/N`,
+// `N/step`), and the common `@hourly`/`@daily`/`@weekly`/`@monthly`/
+// `@yearly`/`@midnight` macros. Returns the next occurrence by brute-forcing
+// the next 48 hours minute-by-minute (cheap, and avoids a cron dependency).
 func nextCronRun(expr string) time.Time {
-	// Simple implementation: parse "M H D MO DOW"
-	// For now, support basic patterns
+	expr = expandCronMacro(expr)
 	parts := splitFields(expr)
 	if len(parts) != 5 {
 		return time.Time{}
@@ -514,15 +565,34 @@ func nextCronRun(expr string) time.Time {
 	// Try each minute in the next 48 hours
 	for i := 1; i <= 2880; i++ {
 		candidate := now.Add(time.Duration(i) * time.Minute)
-		if matchCronField(parts[0], candidate.Minute()) &&
-			matchCronField(parts[1], candidate.Hour()) &&
-			matchCronField(parts[2], candidate.Day()) &&
-			matchCronField(parts[3], int(candidate.Month())) &&
-			matchCronField(parts[4], int(candidate.Weekday())) {
+		if matchCronField(parts[0], candidate.Minute(), 0, 59) &&
+			matchCronField(parts[1], candidate.Hour(), 0, 23) &&
+			matchCronField(parts[2], candidate.Day(), 1, 31) &&
+			matchCronField(parts[3], int(candidate.Month()), 1, 12) &&
+			matchCronField(parts[4], int(candidate.Weekday()), 0, 6) {
 			return candidate.Truncate(time.Minute)
 		}
 	}
 	return time.Time{}
+}
+
+// expandCronMacro rewrites a `@macro` shorthand into its 5-field equivalent.
+// Unrecognized input (including normal 5-field expressions) is returned
+// unchanged.
+func expandCronMacro(expr string) string {
+	switch strings.TrimSpace(strings.ToLower(expr)) {
+	case "@yearly", "@annually":
+		return "0 0 1 1 *"
+	case "@monthly":
+		return "0 0 1 * *"
+	case "@weekly":
+		return "0 0 * * 0"
+	case "@daily", "@midnight":
+		return "0 0 * * *"
+	case "@hourly":
+		return "0 * * * *"
+	}
+	return expr
 }
 
 func splitFields(s string) []string {
@@ -544,39 +614,59 @@ func splitFields(s string) []string {
 	return fields
 }
 
-func matchCronField(field string, value int) bool {
-	if field == "*" {
-		return true
-	}
-	// Handle ranges like "1-5"
-	if len(field) >= 3 {
-		for _, part := range splitComma(field) {
-			if matchCronPart(part, value) {
-				return true
-			}
+// matchCronField reports whether value satisfies a whole cron field (which
+// may be a comma list of parts). lo/hi are the field's natural bounds, used to
+// expand `*` and `*/N` step ranges.
+func matchCronField(field string, value, lo, hi int) bool {
+	for _, part := range splitComma(field) {
+		if matchCronPart(part, value, lo, hi) {
+			return true
 		}
-		return false
-	}
-	// Simple number
-	var n int
-	if _, err := fmt.Sscanf(field, "%d", &n); err == nil {
-		return n == value
 	}
 	return false
 }
 
-func matchCronPart(part string, value int) bool {
-	// Range: "1-5"
-	var low, high int
-	if n, _ := fmt.Sscanf(part, "%d-%d", &low, &high); n == 2 {
-		return value >= low && value <= high
+// matchCronPart matches a single cron part against value. Supports `*`, a
+// single number, `lo-hi` ranges, and step syntax `base/N` where base is `*`,
+// a range, or a starting number (`5/10` → 5,15,25,…).
+func matchCronPart(part string, value, lo, hi int) bool {
+	base := part
+	step := 1
+	if slash := strings.IndexByte(part, '/'); slash >= 0 {
+		base = part[:slash]
+		n, err := strconv.Atoi(strings.TrimSpace(part[slash+1:]))
+		if err != nil || n <= 0 {
+			return false
+		}
+		step = n
 	}
-	// Single value
-	var n int
-	if _, err := fmt.Sscanf(part, "%d", &n); err == nil {
-		return n == value
+
+	var rlo, rhi int
+	switch {
+	case base == "*" || base == "":
+		rlo, rhi = lo, hi
+	case strings.ContainsRune(base, '-'):
+		var a, b int
+		if n, _ := fmt.Sscanf(base, "%d-%d", &a, &b); n != 2 {
+			return false
+		} else {
+			rlo, rhi = a, b
+		}
+	default:
+		var n int
+		if _, err := fmt.Sscanf(base, "%d", &n); err != nil {
+			return false
+		}
+		if step == 1 {
+			return n == value // bare single value, no step
+		}
+		rlo, rhi = n, hi // "5/10" means from 5 to the field max, every 10
 	}
-	return part == "*"
+
+	if value < rlo || value > rhi {
+		return false
+	}
+	return (value-rlo)%step == 0
 }
 
 func splitComma(s string) []string {

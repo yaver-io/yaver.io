@@ -122,6 +122,8 @@ func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntim
 		return detectOpenCodeStatus(workDir)
 	case "claude":
 		status = detectClaudeStatus()
+	case "glm":
+		status = detectGLMStatus()
 	default:
 		return status
 	}
@@ -258,6 +260,8 @@ func runnerCapabilityName(runnerID string) string {
 		return "Claude Code"
 	case "opencode":
 		return "OpenCode"
+	case "glm":
+		return "GLM (z.ai)"
 	default:
 		return strings.TrimSpace(runnerID)
 	}
@@ -275,6 +279,10 @@ func runnerCapabilityReason(runnerID string, status RunnerRuntimeStatus) (code, 
 	case "claude":
 		if !status.AuthConfigured {
 			return ReasonRunnerClaudeAuthRequired, "Claude Code is installed but no usable auth was detected yet.", "Run the Claude browser login flow or save an Anthropic credential on the host machine.", true
+		}
+	case "glm":
+		if !status.AuthConfigured {
+			return "runner.glm.auth_required", "GLM (z.ai) needs a z.ai API key.", "Save a ZAI_API_KEY in the vault (or runner-provider/API_KEY__glm) before using GLM remotely.", true
 		}
 	case "opencode":
 		if strings.TrimSpace(status.Error) != "" {
@@ -323,6 +331,9 @@ func normalizeRunnerID(id string) string {
 	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "claude-code":
 		return "claude"
+	case "zai", "z.ai", "z-ai", "glm-4.6", "glm-4.7":
+		// GLM/z.ai user-facing aliases collapse onto the internal "glm" id.
+		return "glm"
 	default:
 		return strings.ToLower(strings.TrimSpace(id))
 	}
@@ -375,8 +386,29 @@ func detectClaudeStatus() RunnerRuntimeStatus {
 	return status
 }
 
+// detectGLMStatus reports auth readiness for the GLM (z.ai) runner. GLM runs
+// on the claude binary pointed at z.ai's Anthropic endpoint, so "authenticated"
+// means a z.ai credential resolves — either a bare ZAI_API_KEY / GLM_API_KEY
+// (env or vault) or an explicit runner-provider config (API_KEY__glm). No
+// Anthropic OAuth / Keychain path applies here.
+func detectGLMStatus() RunnerRuntimeStatus {
+	status := RunnerRuntimeStatus{Ready: true}
+	if cfg := runnerProviderConfigFor("glm"); cfg.apiKey != "" {
+		status.AuthConfigured = true
+		status.AuthSource = "z.ai key (" + cfg.baseURL + ")"
+		return status
+	}
+	if value, source := hostSecretValue("ZAI_API_KEY"); value != "" {
+		status.AuthConfigured = true
+		status.AuthSource = source
+		return status
+	}
+	status.Warning = "No z.ai credential found — set ZAI_API_KEY (or vault runner-provider/API_KEY__glm) to use GLM."
+	return status
+}
+
 var (
-	claudeMacKeychainCache   = struct {
+	claudeMacKeychainCache = struct {
 		sync.Mutex
 		ok bool
 		at time.Time
