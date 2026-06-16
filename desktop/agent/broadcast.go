@@ -43,7 +43,7 @@ func maskRTMP(raw string) string {
 	return "rtmp://…"
 }
 
-func (b *broadcaster) start(source, rtmpURL string, fps int) error {
+func (b *broadcaster) start(source, rtmpURL string, fps int, profile string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.on {
@@ -59,18 +59,33 @@ func (b *broadcaster) start(source, rtmpURL string, fps int) error {
 	if source == "" {
 		source = "capture"
 	}
+	// Resolve a quality tier for the broadcast (downscale + bitrate); fps from
+	// the profile unless explicitly given.
+	prof, hasProf := streamProfileTiers[profile]
+	if hasProf && profile != "source" && fps <= 0 {
+		fps = prof.FPS
+	}
 	if fps <= 0 || fps > 30 {
 		fps = 10
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// JPEG frames in on stdin → x264 → FLV/RTMP out. -re paces to realtime.
+	// JPEG frames in on stdin → x264 → FLV/RTMP out.
 	args := []string{
 		"-f", "mjpeg", "-framerate", fmt.Sprintf("%d", fps), "-i", "pipe:0",
 		"-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
 		"-pix_fmt", "yuv420p", "-g", fmt.Sprintf("%d", fps*2),
-		"-f", "flv", rtmpURL,
 	}
+	if hasProf && profile != "source" {
+		if prof.MaxWidth > 0 {
+			args = append(args, "-vf", fmt.Sprintf("scale='min(%d,iw)':-2", prof.MaxWidth))
+		}
+		if prof.BitrateKbps > 0 {
+			args = append(args, "-b:v", fmt.Sprintf("%dk", prof.BitrateKbps),
+				"-maxrate", fmt.Sprintf("%dk", prof.BitrateKbps), "-bufsize", fmt.Sprintf("%dk", prof.BitrateKbps*2))
+		}
+	}
+	args = append(args, "-f", "flv", rtmpURL)
 	cmd := exec.CommandContext(ctx, ff, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

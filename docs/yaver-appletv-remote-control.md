@@ -1020,8 +1020,8 @@ A single `StreamProfile` threaded through the existing encode points:
 | **Q2** WebRTC/capture encode honor the profile + viewer constraints | ✅ WebRTC + capture (`capture_start {profile}` caps source res/fps/quality); scene/broadcast trivial follow-up |
 | **Q3** Measured live adaptation (getStats loss → step tier) | ✅ web getStats loop: >5% loss×3 → step DOWN + re-negotiate; <1% loss×6 → step UP (anti-flap, slower). Live link health shown. Locked tiers untouched. |
 | **Q4** Tiered simulcast fan-out (Pion per-tier) | ✅ `stream_webrtc_fanout.go`: one shared encode per (source, tier) — `getOrCreateEncode` + refcounted teardown; Pion fans the single H264 track to every viewer PC at that tier. At most one ffmpeg per tier per source regardless of viewer count. `stream_quality_get` shows live encodes. |
-| **Q5** Cast/projector/glass sink discovery → re-profile to terminal sink | ⬜ designed |
-| **Q6** Path auto-select (MJPEG vs WebRTC vs RTMP by sink + latency) | ⬜ designed |
+| **Q5** Cast/projector/glass sink discovery → re-profile to terminal sink | ⬜ designed (needs phone-side cast detection) |
+| **Q6** Path auto-select (MJPEG vs WebRTC vs RTMP by sink + latency) | ✅ `stream_plan.go` verb `stream_plan {deviceClass,w,h,net,latency,public}` → recommends path+endpoint+profile (RTMP=public, WebRTC=low-latency/TV/projector, MJPEG=small/low-power); unit-tested. Plus capture+broadcast now honor a `profile` tier (Q2 complete across capture/webrtc/broadcast). |
 
 ---
 
