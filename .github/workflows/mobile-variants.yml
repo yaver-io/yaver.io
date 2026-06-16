@@ -67,22 +67,37 @@ jobs:
       - name: Plugin unit tests
         run: cd mobile && node --test plugins/withAndroidTV.test.mjs
 
-      - name: Resolved Expo config contains TV + Android Auto entries
+      - name: Resolved Expo config contains TV (+ Android Auto when wired)
         run: |
           cd mobile
           npx expo config --type introspect --json > /tmp/introspect.json
           node -e '
+            const fs = require("fs");
             const j = require("/tmp/introspect.json");
             const s = JSON.stringify(j);
-            const need = {
+            // TV wiring is on main — REQUIRED.
+            const tv = {
               "Android TV leanback launcher": "LEANBACK_LAUNCHER",
               "Android TV leanback feature": "software.leanback",
               "Android TV banner": "tv_banner",
-              "Android Auto messaging meta": "com.google.android.gms.car.application",
             };
-            const missing = Object.entries(need).filter(([, v]) => !s.includes(v)).map(([k]) => k);
-            if (missing.length) { console.error("MISSING wiring:\n - " + missing.join("\n - ")); process.exit(1); }
-            console.log("OK — TV + Android Auto wiring present in resolved Expo config:\n - " + Object.keys(need).join("\n - "));
+            const missing = Object.entries(tv).filter(([, v]) => !s.includes(v)).map(([k]) => k);
+            if (missing.length) { console.error("MISSING TV wiring:\n - " + missing.join("\n - ")); process.exit(1); }
+            console.log("OK — Android TV wiring present:\n - " + Object.keys(tv).join("\n - "));
+
+            // Android Auto rides the same AAB but its plugin lands separately
+            // (car-voice work). Assert the manifest meta ONLY when the plugin is
+            // registered, so this guard auto-activates without failing main early.
+            const appJson = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            const plugins = (appJson.expo.plugins || []).map(p => Array.isArray(p) ? p[0] : p);
+            const carRegistered = plugins.includes("./plugins/withAndroidAutoMessaging");
+            const carMeta = s.includes("com.google.android.gms.car.application");
+            if (carRegistered) {
+              if (!carMeta) { console.error("Android Auto plugin registered but car meta-data missing from manifest"); process.exit(1); }
+              console.log("OK — Android Auto (car) messaging meta present.");
+            } else {
+              console.log("NOTE: Android Auto plugin not registered yet — car wiring check skipped (will activate when withAndroidAutoMessaging is registered).");
+            }
           '
 
       - name: Tracked manifest overlay carries leanback (local gradle deploy path)
