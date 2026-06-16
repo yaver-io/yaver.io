@@ -43,6 +43,7 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
   const [watchUrl, setWatchUrl] = useState("");
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [rtcOn, setRtcOn] = useState(false);
+  const [rtcQuality, setRtcQuality] = useState<"auto" | "high" | "balanced" | "saver">("auto");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
@@ -253,10 +254,24 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
         pc.addEventListener("icegatheringstatechange", check);
         setTimeout(resolve, 2000); // fallback
       });
+      // Tell the box our capabilities so it encodes only what we'll show
+      // (adaptive watch layer, Part H): viewport size + device class + net +
+      // requested quality tier (auto lets the box decide from the above).
+      const vw = videoElRef.current?.clientWidth || window.innerWidth;
+      const vh = videoElRef.current?.clientHeight || Math.round((vw * 9) / 16);
+      const net = (navigator as any)?.connection?.effectiveType || "";
       const res = await client.agentFetch("/stream/webrtc/offer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, sdp: pc.localDescription?.sdp }),
+        body: JSON.stringify({
+          source,
+          sdp: pc.localDescription?.sdp,
+          deviceClass: "web",
+          w: Math.round(vw),
+          h: Math.round(vh),
+          net,
+          profile: rtcQuality,
+        }),
       });
       if (!res.ok) throw new Error(`offer ${res.status}`);
       const ans = await res.json();
@@ -266,7 +281,7 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
       setMsg(e?.message || "WebRTC failed");
       stopWebRTC();
     }
-  }, [deviceId, ensureClient, stopWebRTC]);
+  }, [deviceId, ensureClient, stopWebRTC, rtcQuality]);
 
   useEffect(() => () => stopWebRTC(), [stopWebRTC]);
 
@@ -387,7 +402,19 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <video ref={videoElRef} autoPlay playsInline muted className="max-h-full max-w-full" />
         </div>
-        <p className="mt-2 text-xs text-neutral-500">Sub-second vs. snapshot/MJPEG. Same-network now; remote needs TURN. Needs ffmpeg on the box.</p>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs text-neutral-400">Quality</span>
+          {(["auto", "high", "balanced", "saver"] as const).map((q) => (
+            <button
+              key={q}
+              onClick={() => setRtcQuality(q)}
+              className={`rounded px-2 py-1 text-xs ${rtcQuality === q ? "bg-indigo-600 text-white" : "border border-neutral-700 bg-neutral-800 text-neutral-300"}`}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-neutral-500">The box encodes only what this view shows (adaptive). Auto = decide from viewport + network. Restart the stream after changing.</p>
       </div>
 
       {/* watch a URL on the box (magara) */}

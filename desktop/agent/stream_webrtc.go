@@ -94,13 +94,29 @@ func (t streamSourceTarget) SpawnCapture(ctx context.Context, deviceID string) (
 	if ff == "" {
 		return nil, nil, fmt.Errorf("ffmpeg not found — required for WebRTC encode")
 	}
-	const fps = 12
-	cmd := exec.CommandContext(ctx, ff,
+	// Adaptive encode from the resolved profile (Part H): fps, downscale, bitrate.
+	prof := getActiveEncodeProfile(source)
+	fps := prof.FPS
+	if fps <= 0 || fps > 30 {
+		fps = 12
+	}
+	args := []string{
 		"-f", "mjpeg", "-framerate", fmt.Sprintf("%d", fps), "-i", "pipe:0",
 		"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
 		"-pix_fmt", "yuv420p", "-g", fmt.Sprintf("%d", fps*2), "-bf", "0",
-		"-f", "h264", "pipe:1",
-	)
+	}
+	// Downscale to the profile cap (keep aspect, even dims). 0 = source.
+	if prof.MaxWidth > 0 {
+		args = append(args, "-vf", fmt.Sprintf("scale='min(%d,iw)':-2", prof.MaxWidth))
+	}
+	if prof.BitrateKbps > 0 {
+		args = append(args,
+			"-b:v", fmt.Sprintf("%dk", prof.BitrateKbps),
+			"-maxrate", fmt.Sprintf("%dk", prof.BitrateKbps),
+			"-bufsize", fmt.Sprintf("%dk", prof.BitrateKbps*2))
+	}
+	args = append(args, "-f", "h264", "pipe:1")
+	cmd := exec.CommandContext(ctx, ff, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, err
@@ -147,8 +163,13 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var body struct {
-		Source string `json:"source"`
-		SDP    string `json:"sdp"`
+		Source      string `json:"source"`
+		SDP         string `json:"sdp"`
+		DeviceClass string `json:"deviceClass"`
+		W           int    `json:"w"`
+		H           int    `json:"h"`
+		Net         string `json:"net"`
+		Profile     string `json:"profile"` // viewer-requested tier or "auto"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.SDP) == "" {
 		jsonError(w, http.StatusBadRequest, "expected {source, sdp}")
@@ -158,6 +179,15 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 	if source == "" {
 		source = "capture"
 	}
+	// Resolve the adaptive encode profile: a per-source LOCK wins; else the
+	// viewer's requested tier; else compute from declared capabilities.
+	lockTier := lockedProfileFor(source)
+	wantTier := body.Profile
+	if lockTier != "" {
+		wantTier = lockTier
+	}
+	prof := profileForConstraints(body.DeviceClass, body.W, body.H, body.Net, wantTier)
+	setActiveEncodeProfile(source, prof)
 	if ffmpegPath() == "" {
 		jsonError(w, http.StatusServiceUnavailable, "ffmpeg not installed — required for WebRTC encode")
 		return

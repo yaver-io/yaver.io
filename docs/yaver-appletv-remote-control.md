@@ -860,6 +860,171 @@ Android TV (M12) is the lower-risk TV win and is staged as a config plugin.
 
 ---
 
+# PART H — The adaptive "watch layer": capability-aware, per-sink, lockable quality
+
+> 2026-06-17, deep analysis. The user's insight: **the delivered quality should
+> match the final watcher and the weakest link, not the source.** A satellite
+> capture might be 1080p, but if the only watcher is a phone (or a glass HUD, or
+> on cellular), encode less — save CPU, bandwidth, battery, latency. And the
+> final sink isn't always the phone: phone → glass / projector / TV changes the
+> target again. Plus the user can **lock** a quality. This part is the design;
+> §H.9 is what shipped this session.
+
+## H.1 Why "stream the source as-is" is wrong for the watcher
+
+Today every path encodes a fixed profile (`capture.go` 720p + `-q:v 7`;
+`scene.go` defaults; `stream_webrtc.go` `fps=12` ultrafast; `broadcast.go`
+fps=10). That's a one-size encode. The mismatches it creates:
+- **Over-delivery to a small sink.** 1080p30 to a phone showing a 360-px card,
+  or to glass with a 480-px HUD, wastes the box's CPU and the link's bandwidth
+  and the phone's battery/decoder for pixels nobody sees.
+- **Under-delivery / stall on a weak link.** The same fixed bitrate stalls on
+  cellular or a far relay hop; the watcher wants *smooth 480p*, not *stuttering
+  1080p*.
+- **Latency cost.** Bigger frames = more encode + more bytes = more glass-to-
+  glass delay. A live remote (Apple TV control loop, a projector) wants low
+  latency over fidelity.
+
+**Principle:** *deliver `min(source, weakest-link, final-sink-capability,
+user-cap)`.* The "watch layer" computes that per watcher and re-encodes to it.
+
+## H.2 The chain model (what to reason about)
+
+```
+ SOURCE            ENCODE            TRANSPORT             SINK(s)
+ capture 1080i ─▶  ffmpeg  ─▶  LAN-direct | relay | TURN ─▶ phone ─▶? glass
+ satellite/STB     (profile)      (RTT, loss, bw)           web      projector
+ console/cam                                                tv-app   TV (cast)
+```
+Each watcher is an independent chain. Three caps stack:
+1. **Source cap** — native res/fps of the capture (can't exceed it).
+2. **Link cap** — measured: RTT, packet loss, throughput; or declared net type
+   (wifi/ethernet/cellular). Sets a *safe bitrate*.
+3. **Sink cap** — the final display: screen px, device class (phone/glass/tv/
+   projector), decoder limits (some glass top out at 720p), battery.
+
+The watch layer picks a `StreamProfile` = the floor of these (and the user lock).
+
+## H.3 Adaptation levers, per path
+
+| Path | Levers | Best for |
+|---|---|---|
+| **Snapshot / MJPEG** (`/capture/frame.jpg`, `stream_snapshot`) | JPEG quality, frame W×H, poll fps | phone thumbnails, glass HUD, low-power, iOS-safe |
+| **WebRTC** (`/stream/webrtc/offer`) | encoder bitrate, scale (`-vf scale`), fps, GOP, profile/level | full-screen TV/projector, low-latency live |
+| **RTMP** (`stream_broadcast`) | bitrate, scale, fps, keyint | public broadcast (fixed, platform-dictated) |
+
+The **path itself is a lever**: a phone glancing at a card → cheap MJPEG poll; a
+projector → WebRTC; a public stream → RTMP. Choosing the *path* by sink+latency
+need is the first adaptation, before tuning the encode.
+
+## H.4 Capability signals (how the box learns the cap)
+
+- **Declared by the viewer** (cheap, immediate): render size in CSS+device px,
+  `deviceClass` (phone/glass/tv/projector/web), `netType` (wifi/cellular/
+  ethernet), battery saver. The web `RTCPeerConnection`/`<video>` knows its
+  element size; RN knows screen + `NetInfo` + `Platform`.
+- **Measured** (closes the loop): WebRTC `getStats()` (RTT, packet loss, NACK,
+  `framesDropped`, available outgoing bitrate via REMB/GCC); for MJPEG, the
+  client's achieved poll rate. The box steps the profile down on loss/dropped
+  frames, up when headroom returns — with **hysteresis** (e.g. require N seconds
+  stable before stepping up) to avoid flapping.
+- **Final-sink discovery** (§H.7): when the phone re-projects, the *external*
+  display's caps, not the phone's.
+
+## H.5 Profiles + the user lock
+
+Named tiers (a small set keeps fan-out cheap, §H.6):
+
+| Profile | Scale | fps | ~bitrate | use |
+|---|---|---|---|---|
+| `source` | native | native | source | LAN, max fidelity |
+| `high` | ≤1080p | 30 | ~4 Mbps | TV/projector on good link |
+| `balanced` | ≤720p | 25 | ~1.8 Mbps | default phone/web |
+| `saver` | ≤480p | 15 | ~0.6 Mbps | cellular, glass HUD, battery |
+| `auto` | computed | computed | computed | follow the caps + measured loop |
+
+- **Auto** = the box computes the floor of caps and adapts live.
+- **Lock** = the user pins a tier (per source or per their own view); auto is
+  disabled for that watcher. "I'm on metered data — lock saver." "This is the
+  projector — lock high."
+- **Per-watcher**: the same source fans out to many watchers at *different*
+  profiles — a phone on `saver` and a TV on `high` off one capture.
+
+## H.6 Fan-out economics (the real cost decision)
+
+Re-encoding per watcher is CPU-expensive on a Pi. Three strategies:
+1. **Per-watcher ffmpeg** — simplest, N encodes for N watchers. Fine for 1–2
+   watchers; doesn't scale on a Pi.
+2. **Tiered / simulcast** — encode a fixed *small set* (e.g. saver+balanced+high)
+   once each; assign each watcher the nearest tier. Bounded CPU regardless of
+   watcher count; the WebRTC fan-out (Pion writes one track to many PCs) already
+   does this for *one* tier — extend to 2–3 tiers. **Recommended.**
+3. **Single + edge transcode** — encode once at source quality, transcode at a
+   beefier node (a cloud relay) per watcher. Moves CPU off the Pi but needs a
+   transcoding relay (future; ties into managed cloud).
+
+Recommendation: **tiered (2–3 fixed ladders), Pion fan-out per tier**, watchers
+snap to the nearest. Auto moves a watcher *between* tiers; it doesn't spawn a
+bespoke encode.
+
+## H.7 Multi-destination: phone → glass / projector / TV
+
+The phone is often a *relay to a bigger sink*, and the sink's caps differ:
+- **Phone → external display via cast** (Chromecast/AirPlay/Miracast): the phone
+  hands the URL/stream to the TV; the *TV* decodes. Target the TV's caps (often
+  it can do *more* than the phone — bump quality up). Yaver should detect a cast
+  session and re-profile to the sink.
+- **Phone → glasses** (USB-C DP / tethered): the glasses are a second display
+  off the phone; their native panel res is the cap (often *lower* — a small HUD;
+  re-profile down). Android/WebView glasses run the app directly → they're a
+  first-class sink, not a phone relay.
+- **Phone → projector** (HDMI/AirPlay): projector res (720p/1080p) is the cap;
+  usually bump up + lower fps tolerance is fine (movies).
+
+The watch layer models a `sinkChain`: the *terminal* sink's caps win. The phone
+reports "I'm projecting to <class>" and the box re-profiles. Where the phone is a
+dumb passthrough (cast), prefer handing the box's stream URL straight to the sink
+(no phone transcode).
+
+## H.8 Where it plugs into the shipped code
+
+A single `StreamProfile` threaded through the existing encode points:
+- `capture.go`: profile → `-video_size`, `-r`, `-q:v` (already takes w/h/fps).
+- `scene.go`: profile → `cfg.Width/Height/FPS` (already params).
+- `stream_webrtc.go` `SpawnCapture`: profile → `-vf scale`, `-r`, `-b:v/-maxrate`
+  (today fixed `fps=12` ultrafast).
+- `broadcast.go`: profile → scale/fps/bitrate (today fixed).
+- Resolution: a per-source profile store + the viewer constraints on the
+  `/stream/webrtc/offer` and `stream_snapshot` calls → resolve → encode.
+
+## H.9 What shipped this session (foundation)
+
+- **`stream_profile.go`**: the `StreamProfile` model + named tiers
+  (`source/high/balanced/saver`) + `profileForConstraints(deviceClass, wPx, hPx,
+  netType, locked)` (the floor-of-caps mapper) + a per-source profile/lock store
+  (`stream_quality` / `stream_quality_get` verbs).
+- **WebRTC honors it**: `/stream/webrtc/offer` now accepts
+  `{deviceClass, w, h, net, profile}`; the encoder applies `scale`/`-r`/`-b:v`
+  from the resolved profile (locked tier wins). The web viewer sends its
+  `<video>` size + device class + a quality selector (Auto/High/Balanced/Saver).
+- **Honest scope**: this is *declared-capability + lock* adaptation (the static
+  half). The **measured live loop** (getStats → step tiers with hysteresis) and
+  **tiered simulcast fan-out** and **cast-sink discovery** are designed here but
+  not yet built — §H.10.
+
+## H.10 Milestones
+
+| M | Scope | Status |
+|---|---|---|
+| **Q1** `StreamProfile` + tiers + lock + per-source store | ✅ shipped |
+| **Q2** WebRTC/capture/scene encode honor the profile + viewer constraints | ✅ WebRTC + capture; scene/broadcast wiring trivial follow-up |
+| **Q3** Measured live adaptation (getStats RTT/loss/dropped → step tiers, hysteresis) | ⬜ designed |
+| **Q4** Tiered simulcast fan-out (2–3 ladders, Pion per-tier) | ⬜ designed |
+| **Q5** Cast/projector/glass sink discovery → re-profile to terminal sink | ⬜ designed |
+| **Q6** Path auto-select (MJPEG vs WebRTC vs RTMP by sink + latency) | ⬜ designed |
+
+---
+
 ## 11b. TURN enablement for remote WebRTC (no relay code change)
 
 WebRTC media needs a relay candidate when both peers are behind NAT (the home
