@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -168,6 +169,53 @@ func droidSwipe(serial string, x1, y1, x2, y2, dur int) error {
 
 var droidTextAttrRe = regexp.MustCompile(`text="([^"]*)"`)
 
+type droidUINode struct {
+	Text        string `json:"text,omitempty"`
+	Description string `json:"description,omitempty"`
+	ResourceID  string `json:"resourceId,omitempty"`
+	Class       string `json:"class,omitempty"`
+	Package     string `json:"package,omitempty"`
+	Bounds      string `json:"bounds,omitempty"`
+	X           int    `json:"x,omitempty"`
+	Y           int    `json:"y,omitempty"`
+	W           int    `json:"w,omitempty"`
+	H           int    `json:"h,omitempty"`
+	Clickable   bool   `json:"clickable,omitempty"`
+	Enabled     bool   `json:"enabled,omitempty"`
+	Focusable   bool   `json:"focusable,omitempty"`
+	Password    bool   `json:"password,omitempty"`
+}
+
+type droidXMLNode struct {
+	XMLName     xml.Name       `xml:"node"`
+	Text        string         `xml:"text,attr"`
+	Description string         `xml:"content-desc,attr"`
+	ResourceID  string         `xml:"resource-id,attr"`
+	Class       string         `xml:"class,attr"`
+	Package     string         `xml:"package,attr"`
+	Bounds      string         `xml:"bounds,attr"`
+	Clickable   string         `xml:"clickable,attr"`
+	Enabled     string         `xml:"enabled,attr"`
+	Focusable   string         `xml:"focusable,attr"`
+	Password    string         `xml:"password,attr"`
+	Children    []droidXMLNode `xml:"node"`
+}
+
+type droidXMLHierarchy struct {
+	Children []droidXMLNode `xml:"node"`
+}
+
+func droidUIDumpXML(serial string) ([]byte, error) {
+	if _, err := runAdb(serial, 20*time.Second, "shell", "uiautomator", "dump", "/sdcard/ui.xml"); err != nil {
+		return nil, fmt.Errorf("droid ui dump: %w", err)
+	}
+	out, err := runAdb(serial, 10*time.Second, "shell", "cat", "/sdcard/ui.xml")
+	if err != nil {
+		return nil, fmt.Errorf("droid ui read: %w", err)
+	}
+	return out, nil
+}
+
 // droidUITexts dumps the current view hierarchy via uiautomator and returns the
 // non-empty text="..." values — handy for reading on-screen labels / fields
 // (e.g. to confirm a login form is showing). Best-effort: uiautomator can fail
@@ -175,12 +223,9 @@ var droidTextAttrRe = regexp.MustCompile(`text="([^"]*)"`)
 func droidUITexts(serial string) ([]string, error) {
 	// Dump to a known path, then read it back. Two calls because `adb exec-out
 	// uiautomator dump /dev/tty` is unreliable across devices.
-	if _, err := runAdb(serial, 20*time.Second, "shell", "uiautomator", "dump", "/sdcard/ui.xml"); err != nil {
-		return nil, fmt.Errorf("droid ui dump: %w", err)
-	}
-	out, err := runAdb(serial, 10*time.Second, "shell", "cat", "/sdcard/ui.xml")
+	out, err := droidUIDumpXML(serial)
 	if err != nil {
-		return nil, fmt.Errorf("droid ui read: %w", err)
+		return nil, err
 	}
 	var texts []string
 	seen := map[string]bool{}
@@ -193,6 +238,66 @@ func droidUITexts(serial string) ([]string, error) {
 		texts = append(texts, v)
 	}
 	return texts, nil
+}
+
+func droidUIElements(serial string, limit int) ([]droidUINode, error) {
+	if limit <= 0 || limit > 250 {
+		limit = 120
+	}
+	out, err := droidUIDumpXML(serial)
+	if err != nil {
+		return nil, err
+	}
+	var h droidXMLHierarchy
+	if err := xml.Unmarshal(out, &h); err != nil {
+		return nil, fmt.Errorf("droid ui parse: %w", err)
+	}
+	nodes := make([]droidUINode, 0, limit)
+	var walk func([]droidXMLNode)
+	walk = func(in []droidXMLNode) {
+		for _, n := range in {
+			if len(nodes) >= limit {
+				return
+			}
+			label := strings.TrimSpace(firstNonEmpty(n.Text, n.Description, n.ResourceID))
+			clickable := strings.EqualFold(n.Clickable, "true")
+			focusable := strings.EqualFold(n.Focusable, "true")
+			password := strings.EqualFold(n.Password, "true")
+			x, y, ww, hh := droidParseBounds(n.Bounds)
+			if label != "" || clickable || focusable {
+				nodes = append(nodes, droidUINode{
+					Text:        strings.TrimSpace(n.Text),
+					Description: strings.TrimSpace(n.Description),
+					ResourceID:  strings.TrimSpace(n.ResourceID),
+					Class:       strings.TrimSpace(n.Class),
+					Package:     strings.TrimSpace(n.Package),
+					Bounds:      strings.TrimSpace(n.Bounds),
+					X:           x,
+					Y:           y,
+					W:           ww,
+					H:           hh,
+					Clickable:   clickable,
+					Enabled:     strings.EqualFold(n.Enabled, "true"),
+					Focusable:   focusable,
+					Password:    password,
+				})
+			}
+			walk(n.Children)
+		}
+	}
+	walk(h.Children)
+	return nodes, nil
+}
+
+func droidParseBounds(bounds string) (x, y, w, h int) {
+	var x1, y1, x2, y2 int
+	if _, err := fmt.Sscanf(bounds, "[%d,%d][%d,%d]", &x1, &y1, &x2, &y2); err != nil {
+		return 0, 0, 0, 0
+	}
+	if x2 < x1 || y2 < y1 {
+		return 0, 0, 0, 0
+	}
+	return x1 + (x2-x1)/2, y1 + (y2-y1)/2, x2 - x1, y2 - y1
 }
 
 // droidFocus returns the currently focused/resumed activity (package/activity)
@@ -256,4 +361,30 @@ func droidLaunchPackage(serial, pkgSubstr string) (string, error) {
 		return pkg, fmt.Errorf("droid launch %q: %w", pkg, err)
 	}
 	return pkg, nil
+}
+
+func droidInstalledPackages(serial, filter string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 250
+	}
+	out, err := runAdb(serial, 15*time.Second, "shell", "pm", "list", "packages")
+	if err != nil {
+		return nil, fmt.Errorf("droid list packages: %w", err)
+	}
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	var packages []string
+	for _, line := range strings.Split(string(out), "\n") {
+		name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "package:"))
+		if name == "" {
+			continue
+		}
+		if filter != "" && !strings.Contains(strings.ToLower(name), filter) {
+			continue
+		}
+		packages = append(packages, name)
+		if len(packages) >= limit {
+			break
+		}
+	}
+	return packages, nil
 }

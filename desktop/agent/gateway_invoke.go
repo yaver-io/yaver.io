@@ -44,6 +44,13 @@ type gatewayResult struct {
 	StatusCode int                    `json:"status_code,omitempty"`
 	Detail     string                 `json:"detail,omitempty"`
 	Source     string                 `json:"source,omitempty"`
+	// Signature is the final-screen ScreenSignature for the redroid engine
+	// (docs §3) — empty for the api engine.
+	Signature string `json:"signature,omitempty"`
+	// NeedsHeal records flow steps whose observed signature drifted from the
+	// expected one (redroid engine). Non-fatal here; the M-G6 curator consumes it
+	// to rewrite a stale flow.
+	NeedsHeal []string `json:"needs_heal,omitempty"`
 }
 
 // gatewayDeps bundles the collaborators gatewayInvoke needs. In production these
@@ -88,14 +95,31 @@ func (d *gatewayDeps) gatewayInvoke(ctx context.Context, connectorID, capability
 	if !isReadVerb(cap.Verb) {
 		return nil, fmt.Errorf("gateway: capability %q is not a read — write/ACT is out of scope for this slice", capabilityID)
 	}
-	if conn.Engine != "api" || cap.Flow.Type != "api" {
-		return nil, fmt.Errorf("gateway: only the \"api\" engine is supported in this slice")
-	}
 
-	// Acquire/refresh the session (may refresh an expired access token).
+	// Acquire/refresh the session (may refresh an expired access token, or — for
+	// a redroid connector — restore/relogin the trusted device).
 	session, err := d.broker.Ensure(ctx, conn)
 	if err != nil {
 		return nil, err
+	}
+
+	// Engine dispatch. "api" runs an authed HTTP GET (below); "redroid" drives
+	// an app on the device the broker just authenticated (gateway_redroid_invoke.go).
+	switch conn.Engine {
+	case "redroid":
+		driver, ok := d.broker.deviceDriverFor(conn)
+		if !ok || driver == nil {
+			return nil, fmt.Errorf("gateway: connector %q uses the redroid engine but no device driver is available", connectorID)
+		}
+		return redroidInvoke(ctx, conn, cap, params, session, driver, d.broker.NeedsHuman(conn))
+	case "api":
+		// handled below
+	default:
+		return nil, fmt.Errorf("gateway: unsupported engine %q for connector %q", conn.Engine, connectorID)
+	}
+
+	if cap.Flow.Type != "api" {
+		return nil, fmt.Errorf("gateway: connector %q engine \"api\" requires flow type \"api\" (got %q)", connectorID, cap.Flow.Type)
 	}
 
 	res := &gatewayResult{

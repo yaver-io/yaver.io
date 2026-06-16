@@ -44,11 +44,19 @@ import (
 	"time"
 )
 
-// uiNode is a minimal on-screen text node read off the device. Kept generic so
-// the handler can scan for a rotating authenticator code or a login prompt
-// without app-specific knowledge.
+// uiNode is an on-screen node read off the device. Text alone is enough for the
+// auth handler (scanning for a rotating code / a login prompt), so the extra
+// accessibility fields are OPTIONAL and additive — existing uiNode{Text: …}
+// literals keep working. The redroid invoke path (gateway_redroid_invoke.go)
+// uses ResourceID/ContentDesc/Clickable to build a robust ScreenSignature and to
+// match answerSchema labels, mirroring the Screen model in docs §3.
 type uiNode struct {
-	Text string `json:"text"`
+	Text        string `json:"text"`
+	ResourceID  string `json:"resourceId,omitempty"`
+	ContentDesc string `json:"contentDesc,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Bounds      string `json:"bounds,omitempty"`
+	Clickable   bool   `json:"clickable,omitempty"`
 }
 
 // deviceDriver abstracts the redroid interaction surface the handler needs. The

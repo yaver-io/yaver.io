@@ -21,6 +21,7 @@ import { useDevice } from "../src/context/DeviceContext";
 import { useColors } from "../src/context/ThemeContext";
 import { addEVEvent, approveEV, makeEVIntent, setEVRoute, setEVState } from "../src/lib/evCharging/intent";
 import { EV_PROVIDERS, buildEVRouteOptions, providerForIntent, providerLabel, parseEVManualInput, parseEVQr } from "../src/lib/evCharging/providers";
+import { clearActiveEVSession, loadActiveEVSession, saveActiveEVSession } from "../src/lib/evCharging/sessionStore";
 import type { EVChargingIntent, EVProviderId, EVRouteKind } from "../src/lib/evCharging/types";
 import { quicClient } from "../src/lib/quic";
 
@@ -110,6 +111,7 @@ export default function EVChargingScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const [chargingStartedAt, setChargingStartedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
+  const [hydrated, setHydrated] = useState(false);
 
   const provider = intent ? providerForIntent(intent) : null;
   const manualCode = intent?.chargerId || intent?.connectorId || intent?.stationId || intent?.socketLabel || intent?.rawQr || "";
@@ -138,6 +140,38 @@ export default function EVChargingScreen() {
     const id = setInterval(() => setClock(Date.now()), 1000);
     return () => clearInterval(id);
   }, [chargingStartedAt]);
+
+  useEffect(() => {
+    let alive = true;
+    loadActiveEVSession()
+      .then((saved) => {
+        if (!alive || !saved) return;
+        setIntent(saved);
+        const adapter = providerForIntent(saved);
+        setPackageHint(adapter.androidPackageHints[0] ?? "");
+        if (saved.state === "charging") {
+          let started = saved.updatedAt;
+          for (let i = saved.approvals.length - 1; i >= 0; i -= 1) {
+            if (saved.approvals[i]?.kind === "start") {
+              started = saved.approvals[i].at;
+              break;
+            }
+          }
+          setChargingStartedAt(started);
+        }
+      })
+      .finally(() => {
+        if (alive) setHydrated(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated || !intent) return;
+    saveActiveEVSession(intent).catch(() => {});
+  }, [hydrated, intent]);
 
   const elapsedLabel = useMemo(() => {
     if (!chargingStartedAt) return "00:00";
@@ -279,6 +313,15 @@ export default function EVChargingScreen() {
     setChargingStartedAt(null);
   }, [intent]);
 
+  const clearSession = useCallback(async () => {
+    await clearActiveEVSession().catch(() => {});
+    setIntent(null);
+    setSelectedRoute(null);
+    setChargingStartedAt(null);
+    setRawInput("");
+    setPackageHint("");
+  }, []);
+
   if (scannerOpen) {
     return <EVScanner onScanned={classify} onClose={() => setScannerOpen(false)} />;
   }
@@ -381,6 +424,13 @@ export default function EVChargingScreen() {
                 {elapsedLabel}
               </Text>
             </View>
+            <Pressable
+              onPress={clearSession}
+              style={({ pressed }) => [styles.secondaryBtn, { borderColor: c.border, backgroundColor: c.bgCard }, pressed && { opacity: 0.75 }]}
+            >
+              <Ionicons name="trash-outline" size={18} color={c.textPrimary} />
+              <Text style={[styles.secondaryBtnText, { color: c.textPrimary }]}>Clear session</Text>
+            </Pressable>
 
             <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
               <Text style={[styles.cardTitle, { color: c.textPrimary }]}>Route</Text>

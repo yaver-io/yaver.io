@@ -91,6 +91,22 @@ func (b *broker) register(h AuthMethod) {
 	b.handlers[h.Method()] = h
 }
 
+// deviceDriverFor returns the device driver the connector's auth handler drives,
+// if that handler is device-backed (password_totp / redroid). This is the DI seam
+// the redroid invoke path uses to reuse the SAME logged-in device the broker
+// authenticated — tests register a passwordTotpHandler with a fakeDeviceDriver,
+// so redroidInvoke runs fully offline. Returns (nil, false) for non-device auth.
+func (b *broker) deviceDriverFor(c *Connector) (deviceDriver, bool) {
+	h, err := b.handlerFor(c)
+	if err != nil {
+		return nil, false
+	}
+	if dh, ok := h.(*passwordTotpHandler); ok && dh.driver != nil {
+		return dh.driver, true
+	}
+	return nil, false
+}
+
 // handlerFor returns the AuthMethod for a connector, or an error if its method
 // is unknown in this slice.
 func (b *broker) handlerFor(c *Connector) (AuthMethod, error) {

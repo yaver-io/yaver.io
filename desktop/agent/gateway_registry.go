@@ -67,12 +67,36 @@ type ConnectorAuth struct {
 	DeviceRef string `json:"deviceRef,omitempty"`
 }
 
-// CapabilityFlow describes how a capability is executed. In this slice only
-// engine "api" (a single authed HTTP GET) is implemented.
+// CapabilityFlow describes how a capability is executed. The "api" engine uses a
+// single authed HTTP GET (Method/Path). The "redroid" engine drives an app:
+// launch a package, run a short ordered list of UI Steps, then read the screen
+// (see gateway_redroid_invoke.go and docs §3-§5). All redroid fields are
+// OPTIONAL and additive — an "api" manifest never sets them.
 type CapabilityFlow struct {
-	Type   string `json:"type"`             // "api" (this slice); future: "redroid", "chromedp"
+	Type   string `json:"type"`             // "api" | "redroid"
 	Method string `json:"method,omitempty"` // HTTP method for type "api" — GET only in this slice
 	Path   string `json:"path,omitempty"`   // path appended to connector.Surface, with {param} placeholders
+
+	// ── redroid engine fields (type == "redroid") ───────────────────────────
+	// LaunchPkg is the Android package to open (defaults to connector.Surface,
+	// which for redroid connectors is the package id, when empty).
+	LaunchPkg string `json:"launchPkg,omitempty"`
+	// Steps is the ordered UI flow to reach the answer screen. Each step is
+	// re-observed + verified after execution (advance/needs-heal) per docs §4.
+	Steps []FlowStep `json:"steps,omitempty"`
+}
+
+// FlowStep is one UI action in a redroid Flow. action ∈ {tap, type, wait};
+// target is a generic hint (resourceId / text / contentDesc) the driver/extractor
+// resolves; text is the literal to type for action "type". expectSignature, when
+// set, is the ScreenSignature the step should advance TO — a mismatch is the
+// self-heal trigger (docs §3/§4). This slice records the mismatch and continues
+// best-effort (the curator that rewrites a stale step lands in M-G6).
+type FlowStep struct {
+	Action          string `json:"action"`                    // "tap" | "type" | "wait"
+	Target          string `json:"target,omitempty"`          // resourceId / text / contentDesc hint
+	Text            string `json:"text,omitempty"`            // literal for action "type" ({param} substituted)
+	ExpectSignature string `json:"expectSignature,omitempty"` // ScreenSignature expected after this step
 }
 
 // Capability is one read operation a connector advertises — the "tool" shape.
