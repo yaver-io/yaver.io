@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Info.plist for the YaverWatch watchOS target. Merge these keys into the
+     Xcode-generated plist when you create the target (see watch/README.md).
+
+     Microphone + speech-recognition usage strings are required because the
+     standalone fallback uses on-watch dictation (Dictation.swift). In the
+     DEFAULT phone-paired mode the phone does STT, but watchOS still requires
+     the strings to be present for the dictation text-input affordance.
+
+     ATS exception allows plain-HTTP POST /watch/turn to a box on the local
+     network in standalone mode; the bearer token still authenticates the call.
+     In phone-paired mode no network is touched from the watch at all. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Yaver</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>WKApplication</key>
+    <true/>
+    <!-- Voice in: dictation + speech recognition. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Yaver listens to your spoken command so it can run it on your remote box and read back a one-sentence result.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Yaver transcribes what you say on your wrist into a command for your Yaver agent.</string>
+    <!-- Standalone /watch/turn is plain HTTP to a private box; allow local
+         networking only. Phone-paired mode does not use the network. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Yaver connects to a machine on your network running the Yaver agent when you use the watch without your phone.</string>
+</dict>
+</plist>

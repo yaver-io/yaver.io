@@ -23,10 +23,10 @@ targets:
           - "Info.plist"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.tv
+        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.mobile   # universal w/ the iPhone app (Universal Purchase)
         PRODUCT_NAME: Yaver
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: YaverTV/Info.plist
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"

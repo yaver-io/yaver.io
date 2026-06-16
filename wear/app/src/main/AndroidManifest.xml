@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Yaver Wear OS app manifest.
+
+  This is a STANDALONE Wear OS app (Jetpack Compose), the watch counterpart of
+  the thin voice terminal. It owns nothing and shows nothing complex: voice in,
+  one short sentence + haptic out. The real loop runs on the paired Android
+  phone (Wear Data Layer default) or a remote box (standalone LAN, secondary).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Declares this as a watch app: required for Play Wear distribution and
+         so the launcher treats it as a watch (not phone) app. -->
+    <uses-feature
+        android:name="android.hardware.type.watch"
+        android:required="true" />
+
+    <!-- Voice in: on-watch dictation (RecognizerIntent / SpeechRecognizer). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Standalone mode only: POST /watch/turn to the box + device-code auth.
+         In the default phone-paired mode no network is used (Data Layer). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Haptics: short success/failure taps on completion. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:name=".YaverWearApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Yaver"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <!-- Tells the system this app is self-contained (runs without a phone
+             companion APK). The phone-paired transport is still PREFERRED at
+             runtime, but the watch app is installable standalone. -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="true" />
+
+        <!-- The single Compose-hosting activity: raise/tap → dictate → send →
+             one line + haptic. -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:label="Yaver"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.DeviceDefault">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Wear Data Layer listener: receives Phone → Watch replies on
+             "/yaver/watch/reply" (ack / confirm-needed / working / summary /
+             error / handoff). Routes them into the running UI state. -->
+        <service
+            android:name=".ReplyListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <!-- Scope to our reply path so we don't wake on unrelated msgs. -->
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/yaver/watch/reply" />
+            </intent-filter>
+        </service>
+
+    </application>
+
+</manifest>

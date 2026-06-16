@@ -80,7 +80,7 @@ func TestGatewayRedroidInvokeFlowAndExtract(t *testing.T) {
 
 	res, err := redroidInvoke(context.Background(), redroidInvokeConnector(), cap,
 		map[string]string{"station": "Main St Garage"}, Session{Kind: SessionDevice, DeviceID: "inst-1"},
-		driver, false)
+		driver, false, nil, nil)
 	if err != nil {
 		t.Fatalf("redroidInvoke: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGatewayRedroidChallengeRoutesToGate(t *testing.T) {
 	done := make(chan result, 1)
 	go func() {
 		r, e := redroidInvoke(context.Background(), redroidInvokeConnector(), cap, nil,
-			Session{Kind: SessionDevice}, driver, false)
+			Session{Kind: SessionDevice}, driver, false, nil, nil)
 		done <- result{r, e}
 	}()
 
@@ -249,7 +249,7 @@ func TestGatewayRedroidChallengeTimeoutAborts(t *testing.T) {
 	// Short context so awaitHuman's ctx.Done() fires fast (no 3-min wait).
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, err := redroidInvoke(ctx, redroidInvokeConnector(), cap, nil, Session{}, driver, false)
+	_, err := redroidInvoke(ctx, redroidInvokeConnector(), cap, nil, Session{}, driver, false, nil, nil)
 	if err == nil {
 		t.Fatal("an unresolved challenge must abort with an error, not a fabricated answer")
 	}
@@ -269,7 +269,7 @@ func TestGatewayRedroidBlockSignalStops(t *testing.T) {
 		Flow: CapabilityFlow{Type: "redroid", LaunchPkg: "com.example.charger"},
 	}
 	res, err := redroidInvoke(context.Background(), redroidInvokeConnector(), cap, nil,
-		Session{}, driver, false)
+		Session{}, driver, false, nil, nil)
 	if err != nil {
 		t.Fatalf("a block should be a structured result, not an error: %v", err)
 	}

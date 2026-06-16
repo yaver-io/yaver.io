@@ -1,0 +1,10 @@
+# watchOS scaffold is source-only. The Xcode project is generated locally per
+# watch/README.md and not tracked (mirrors tvos/ and mobile/ios being
+# gitignored).
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+build/
+DerivedData/
+*.xcuserstate
+.DS_Store

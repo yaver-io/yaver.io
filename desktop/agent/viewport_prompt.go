@@ -135,6 +135,11 @@ func surfaceShape(surface string, cols, rows int) string {
 		return "monocular glasses HUD ~40 chars wide — one-line headline plus the file path that changed; nothing else"
 	case "glasses-ray-ban":
 		return "Meta Ray-Ban Display 600x600 monocular — terse glanceable text, max 3 lines"
+	case "wearable-watch", "wearable-wear":
+		// Smartwatch (Apple Watch / Wear OS) — the thinnest surface: one
+		// spoken/glanced sentence, never code. See
+		// docs/yaver-smartwatch-voice-terminal.md.
+		return "smartwatch wrist screen — ONE short sentence answer only, no code, no diffs, no lists; if detail is needed say it's on the phone"
 	case "cli":
 		return "terminal — feel free to use ANSI colors and full detail"
 	default:

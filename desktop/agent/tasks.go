@@ -744,6 +744,7 @@ type TaskVerbosity struct {
 //	"mobile-phone" | "mobile-tablet" | "web-desktop"
 //	"web-spatial-hud" | "web-spatial-vr"
 //	"glasses-mentra-live" | "glasses-mentra-display" | "glasses-ray-ban"
+//	"wearable-watch" | "wearable-wear" (Apple Watch / Wear OS)
 //	"cli" | "" (no hint)
 //
 // All fields optional. nil = no viewport hint, default behavior.

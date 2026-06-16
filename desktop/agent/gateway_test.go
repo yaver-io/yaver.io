@@ -406,23 +406,37 @@ func TestGatewayRegistry(t *testing.T) {
 		t.Fatalf("expected rejection of inline-secret credRef")
 	}
 
-	// Non-api engine must be rejected.
+	// Unsupported engine must be rejected ("api" + "redroid" are the supported
+	// engines; anything else is refused loudly).
 	badEngine := conn
 	badEngine.ID = "badengine"
-	badEngine.Engine = "redroid"
+	badEngine.Engine = "ftp"
 	if err := reg.Store(badEngine); err == nil {
-		t.Fatalf("expected rejection of non-api engine in this slice")
+		t.Fatalf("expected rejection of unsupported engine")
 	}
 
-	// Write verb must be rejected.
+	// An ACT verb paired with a non-mutating GET method is a contradiction and
+	// must be rejected (act capabilities require POST/PUT/PATCH/DELETE — see
+	// validateCapabilityFlow / gateway_act.go).
 	badVerb := conn
 	badVerb.ID = "badverb"
 	badVerb.Capabilities = []Capability{{
-		ID: "place", Verb: "add", Risk: "act",
+		ID: "place", Verb: "add", Risk: "low",
 		Flow: CapabilityFlow{Type: "api", Method: "GET", Path: "/x"},
 	}}
 	if err := reg.Store(badVerb); err == nil {
-		t.Fatalf("expected rejection of write verb in read-only slice")
+		t.Fatalf("expected rejection of act verb paired with GET method")
+	}
+
+	// A well-shaped ACT capability (mutating method + declared risk) is accepted.
+	goodAct := conn
+	goodAct.ID = "goodact"
+	goodAct.Capabilities = []Capability{{
+		ID: "place", Verb: "add", Risk: "low",
+		Flow: CapabilityFlow{Type: "api", Method: "POST", Path: "/orders", Body: `{"item":"{item}"}`},
+	}}
+	if err := reg.Store(goodAct); err != nil {
+		t.Fatalf("expected well-shaped act capability to be accepted, got %v", err)
 	}
 }
 

@@ -111,7 +111,9 @@ func (d *gatewayDeps) gatewayInvoke(ctx context.Context, connectorID, capability
 		if !ok || driver == nil {
 			return nil, fmt.Errorf("gateway: connector %q uses the redroid engine but no device driver is available", connectorID)
 		}
-		return redroidInvoke(ctx, conn, cap, params, session, driver, d.broker.NeedsHuman(conn))
+		// Pass the registry so the self-heal path (M-G7) can write a rewritten flow
+		// back to the manifest; nil clock ⇒ wall-clock heal timestamps.
+		return redroidInvoke(ctx, conn, cap, params, session, driver, d.broker.NeedsHuman(conn), d.registry, nil)
 	case "api":
 		// handled below
 	default:

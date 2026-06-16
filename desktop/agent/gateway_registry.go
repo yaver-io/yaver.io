@@ -74,8 +74,15 @@ type ConnectorAuth struct {
 // OPTIONAL and additive — an "api" manifest never sets them.
 type CapabilityFlow struct {
 	Type   string `json:"type"`             // "api" | "redroid"
-	Method string `json:"method,omitempty"` // HTTP method for type "api" — GET only in this slice
+	Method string `json:"method,omitempty"` // HTTP method for type "api" — GET for reads; POST/PUT/PATCH/DELETE for acts
 	Path   string `json:"path,omitempty"`   // path appended to connector.Surface, with {param} placeholders
+
+	// Body is the JSON request-body template for an ACT capability on the "api"
+	// engine (POST/PUT/PATCH). {param} placeholders are substituted exactly like
+	// Path. It is a TEMPLATE only and NEVER carries a secret — credentials live in
+	// the vault and are attached as the bearer session, not the body. Empty for
+	// reads and for body-less acts (DELETE).
+	Body string `json:"body,omitempty"`
 
 	// ── redroid engine fields (type == "redroid") ───────────────────────────
 	// LaunchPkg is the Android package to open (defaults to connector.Surface,
@@ -84,6 +91,13 @@ type CapabilityFlow struct {
 	// Steps is the ordered UI flow to reach the answer screen. Each step is
 	// re-observed + verified after execution (advance/needs-heal) per docs §4.
 	Steps []FlowStep `json:"steps,omitempty"`
+
+	// Version is the self-heal revision of this flow (M-G7). It starts unset (0)
+	// and the selector-heal path bumps it each time it rewrites a step's
+	// Target/ExpectSignature, so a rewritten flow is versioned + auditable
+	// (docs §8: "all changes versioned, reversible, audited"). omitempty so
+	// existing manifests that never healed are byte-identical on disk.
+	Version int `json:"version,omitempty"`
 }
 
 // FlowStep is one UI action in a redroid Flow. action ∈ {tap, type, wait};
@@ -332,16 +346,21 @@ func isReadVerb(verb string) bool {
 	}
 }
 
-// validateConnectorManifest enforces the public-safe / read-only invariants:
-// no inline secrets, supported engine, read-only capabilities with a flow.
+// validateConnectorManifest enforces the public-safe invariants: no inline
+// secrets, a supported engine, and a well-shaped flow per capability. READ
+// capabilities must be non-mutating (GET / observe). ACT capabilities (M-G7,
+// gateway_act.go) are permitted but must be MUTATING and explicitly risk-tiered,
+// so the consent wrapper can require the right confirmation — an act verb paired
+// with a GET method (a contradiction) is rejected loudly.
 func validateConnectorManifest(c Connector) error {
 	if strings.TrimSpace(c.Engine) == "" {
 		return fmt.Errorf("connector %q: engine is required", c.ID)
 	}
-	if c.Engine != "api" {
-		// This slice implements only the "api" engine. Reject others loudly
-		// rather than silently accept a manifest we can't run.
-		return fmt.Errorf("connector %q: engine %q not supported in this slice (only \"api\")", c.ID, c.Engine)
+	switch c.Engine {
+	case "api", "redroid":
+		// supported engines
+	default:
+		return fmt.Errorf("connector %q: engine %q not supported (supported: \"api\", \"redroid\")", c.ID, c.Engine)
 	}
 	if err := validateCredRef(c.Auth.CredRef); err != nil {
 		return fmt.Errorf("connector %q auth: %w", c.ID, err)
@@ -353,20 +372,121 @@ func validateConnectorManifest(c Connector) error {
 		if cap.ID == "" {
 			return fmt.Errorf("connector %q: capability id is required", c.ID)
 		}
-		if !isReadVerb(cap.Verb) {
-			return fmt.Errorf("connector %q capability %q: only read verbs are allowed in this slice (got %q)", c.ID, cap.ID, cap.Verb)
+		if err := validateCapabilityFlow(c, cap); err != nil {
+			return err
 		}
-		if cap.Flow.Type != "api" {
-			return fmt.Errorf("connector %q capability %q: only flow type \"api\" is supported in this slice (got %q)", c.ID, cap.ID, cap.Flow.Type)
-		}
-		if cap.Flow.Method != "" && strings.ToUpper(cap.Flow.Method) != "GET" {
-			return fmt.Errorf("connector %q capability %q: only GET is allowed in this read-only slice (got %q)", c.ID, cap.ID, cap.Flow.Method)
+	}
+	return nil
+}
+
+// validateCapabilityFlow validates one capability's flow against its engine and
+// whether it is a read or an act.
+func validateCapabilityFlow(c Connector, cap Capability) error {
+	act := !isReadVerb(cap.Verb)
+	ft := strings.TrimSpace(cap.Flow.Type)
+	switch c.Engine {
+	case "api":
+		if ft != "api" {
+			return fmt.Errorf("connector %q capability %q: engine \"api\" requires flow type \"api\" (got %q)", c.ID, cap.ID, ft)
 		}
 		if strings.TrimSpace(cap.Flow.Path) == "" {
 			return fmt.Errorf("connector %q capability %q: flow.path is required", c.ID, cap.ID)
 		}
+		method := strings.ToUpper(strings.TrimSpace(cap.Flow.Method))
+		if act {
+			switch method {
+			case "POST", "PUT", "PATCH", "DELETE":
+				// mutating — good
+			default:
+				return fmt.Errorf("connector %q capability %q: an act verb (%q) requires a mutating method (POST/PUT/PATCH/DELETE), got %q", c.ID, cap.ID, cap.Verb, cap.Flow.Method)
+			}
+			if err := validateActRisk(c, cap); err != nil {
+				return err
+			}
+		} else if method != "" && method != "GET" {
+			return fmt.Errorf("connector %q capability %q: a read verb requires GET, got %q", c.ID, cap.ID, cap.Flow.Method)
+		}
+	case "redroid":
+		if ft != "redroid" {
+			return fmt.Errorf("connector %q capability %q: engine \"redroid\" requires flow type \"redroid\" (got %q)", c.ID, cap.ID, ft)
+		}
+		if act {
+			if len(cap.Flow.Steps) == 0 {
+				return fmt.Errorf("connector %q capability %q: an act verb requires at least one flow step", c.ID, cap.ID)
+			}
+			if err := validateActRisk(c, cap); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// validateActRisk requires an act capability to declare a recognized risk tier
+// so the consent wrapper can pick the right gate (a voice "yes" for a low,
+// reversible act; a tapped second-key for a high/financial one).
+func validateActRisk(c Connector, cap Capability) error {
+	switch gatewayRiskTier(cap.Risk) {
+	case riskLow, riskHigh, riskFinancial:
+		return nil
+	default:
+		return fmt.Errorf("connector %q capability %q: an act capability must declare risk (\"low\", \"high\", or \"financial\"), got %q", c.ID, cap.ID, cap.Risk)
+	}
+}
+
+// riskTier ranks how much confirmation an act needs.
+type riskTier int
+
+const (
+	riskUnknown riskTier = iota
+	riskRead
+	riskLow       // reversible, low-stakes — a voice "yes" may confirm
+	riskHigh      // irreversible / high-stakes — second-key tap required
+	riskFinancial // moves money — second-key tap required, never voice-alone
+)
+
+// gatewayRiskTier maps a manifest risk string onto a tier.
+func gatewayRiskTier(s string) riskTier {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "read", "observe":
+		return riskRead
+	case "low", "reversible", "safe":
+		return riskLow
+	case "high", "irreversible", "destructive":
+		return riskHigh
+	case "financial", "payment", "money", "purchase":
+		return riskFinancial
+	default:
+		return riskUnknown
+	}
+}
+
+// ActCapabilitiesForMCP returns the flattened ACT (write) capability list across
+// all connectors, so the intent router / a host AI can see which actions are
+// available and their risk tier. Distinct from CapabilitiesForMCP (reads).
+func (r *ConnectorRegistry) ActCapabilitiesForMCP() ([]MCPCapability, error) {
+	connectors, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MCPCapability, 0)
+	for _, c := range connectors {
+		for _, cap := range c.Capabilities {
+			if isReadVerb(cap.Verb) {
+				continue
+			}
+			out = append(out, MCPCapability{
+				Connector:    c.ID,
+				Capability:   cap.ID,
+				Verb:         cap.Verb,
+				Risk:         cap.Risk,
+				Title:        cap.Title,
+				Description:  cap.Description,
+				AnswerSchema: cap.AnswerSchema,
+			})
+		}
+	}
+	return out, nil
 }
 
 // validateCredRef ensures a credential reference looks like a vault key, never

@@ -110,6 +110,24 @@ func TestFormatViewportHint_AudioOnly(t *testing.T) {
 	}
 }
 
+func TestFormatViewportHint_Smartwatch(t *testing.T) {
+	// Smartwatch is the thinnest surface — one sentence, never code. Both the
+	// Apple Watch and Wear OS aliases must resolve to the same shape.
+	for _, surface := range []string{"wearable-watch", "wearable-wear"} {
+		vp := &TaskViewport{Surface: surface, Voice: true}
+		hint := formatViewportHint(vp)
+		if !strings.Contains(hint, "smartwatch") {
+			t.Errorf("%s hint missing surface cue: %q", surface, hint)
+		}
+		if !strings.Contains(hint, "ONE short sentence") {
+			t.Errorf("%s hint should demand a one-sentence answer: %q", surface, hint)
+		}
+		if !strings.Contains(hint, "no code") {
+			t.Errorf("%s hint should forbid code: %q", surface, hint)
+		}
+	}
+}
+
 func TestFormatViewportHint_CustomGeometry(t *testing.T) {
 	// No known surface, but explicit pane dims — should be passed through
 	vp := &TaskViewport{PaneCols: 40, PaneRows: 12}

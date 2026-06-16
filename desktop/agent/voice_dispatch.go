@@ -55,6 +55,17 @@ func DispatchVoiceTranscript(ctx context.Context, tm *TaskManager, transcript st
 		return nil, fmt.Errorf("empty transcript")
 	}
 
+	// Proactive runner pre-flight: if a specific runner is named and its auth is
+	// missing/expired, surface a spoken re-auth CTA NOW instead of creating a task
+	// that will 401 mid-flight (the "codex expired" friction). Only fires when a
+	// runner is named — the default-runner path is resolved inside the TaskManager.
+	if pf := RunnerPreflightByID(opts.Runner, ""); pf.NeedsReauth {
+		return &VoiceTaskResult{
+			Status:     "auth_required",
+			ResultText: runnerPreflightSpoken(pf),
+		}, nil
+	}
+
 	title := opts.Title
 	if title == "" {
 		title = voiceTitleFromTranscript(transcript)

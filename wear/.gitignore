@@ -1,0 +1,22 @@
+# Wear OS / Android Gradle build artifacts — standalone project under wear/.
+# Mirrors tvos/.gitignore intent: keep the source in git, keep generated +
+# machine-local files out. This project is NOT wired to CI; it is built locally
+# (see wear/README.md "Creating / Building").
+
+# Gradle
+.gradle/
+build/
+**/build/
+captures/
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+*.hprof
+
+# Local SDK + signing config (machine-specific, never committed)
+local.properties
+keystore.properties
+
+# OS noise
+.DS_Store

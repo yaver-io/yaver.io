@@ -846,6 +846,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/mobile/sessions", s.auth(s.handleMobileSessions))
 	mux.HandleFunc("/mobile/insert", s.auth(s.handleMobileInsert))
 
+	// Standalone smartwatch (no paired phone) — voice turn in, one-sentence
+	// summary out. See watch_http.go + docs/yaver-smartwatch-voice-terminal.md.
+	mux.HandleFunc("/watch/turn", s.auth(s.handleWatchTurn))
+	mux.HandleFunc("/watch/result", s.auth(s.handleWatchResult))
+
 	// Dev server (reverse proxy to local Metro/Vite/Flutter dev server)
 	mux.HandleFunc("/dev/status", s.authSDKOrGuest(s.handleDevServerStatus))
 	mux.HandleFunc("/dev/target", s.authSDKOrGuest(s.handleDevServerTarget))
@@ -8563,6 +8568,34 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpGatewayConnectorCapabilities(args.Connector))
+	case "gateway_act":
+		var args struct {
+			Connector  string            `json:"connector"`
+			Capability string            `json:"capability"`
+			Params     map[string]string `json:"params"`
+			Execute    bool              `json:"execute"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayAct(args.Connector, args.Capability, args.Params, args.Execute))
+	case "gateway_act_confirm":
+		var args struct {
+			ActID  string `json:"act_id"`
+			Answer string `json:"answer"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayActConfirm(args.ActID, args.Answer))
+	case "gateway_intent":
+		var args struct {
+			Utterance string `json:"utterance"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayIntent(args.Utterance))
+	case "gateway_audit":
+		var args struct {
+			Limit int `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayAudit(args.Limit))
 	case "nobetci_eczane":
 		var args struct {
 			City     string `json:"city"`

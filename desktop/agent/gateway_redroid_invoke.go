@@ -55,7 +55,14 @@ type Screen struct {
 // instance id); driver is the SAME device the broker authenticated. mayNeedHuman
 // hints whether this connector's auth could pause for a human (forwarded from the
 // broker); the challenge-screen gate fires regardless when a wall is detected.
-func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params map[string]string, session Session, driver deviceDriver, mayNeedHuman bool) (*gatewayResult, error) {
+//
+// reg, when non-nil, is the connector registry the self-heal path (M-G7) writes a
+// rewritten flow back to. It is OPTIONAL: when nil (or when nothing heals) the
+// flow is run unchanged and no manifest is written — so a caller that doesn't want
+// auto-rewrites simply passes nil. healClock supplies the timestamp hint for a
+// heal event (so the heal path never calls time.Now non-deterministically); nil ⇒
+// a default wall-clock hint.
+func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params map[string]string, session Session, driver deviceDriver, mayNeedHuman bool, reg *ConnectorRegistry, healClock func() int64) (*gatewayResult, error) {
 	if driver == nil {
 		return nil, fmt.Errorf("gateway: redroid invoke for %q has no device driver", conn.ID)
 	}
@@ -100,7 +107,49 @@ func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params
 		}
 	}
 
-	for i, step := range cap.Flow.Steps {
+	// runSteps is a mutable copy of the flow's steps; the self-heal path rewrites
+	// entries here when a selector is re-located, and the rewritten set is
+	// persisted (versioned) at the end if anything healed.
+	runSteps := make([]FlowStep, len(cap.Flow.Steps))
+	copy(runSteps, cap.Flow.Steps)
+	anyHealed := false
+
+	for i := range runSteps {
+		step := runSteps[i]
+
+		// SELF-HEAL (M-G7) before acting: if this step's selector target can't be
+		// found on the CURRENT screen — or its expected signature drifted — try to
+		// re-locate the element on the screen we're actually looking at and rewrite
+		// the step. This is the bounded auto-improvement (docs §6 step 2 / §8):
+		// READ-flow selector heals are auto-allowed. We NEVER heal across a
+		// challenge/block (those still route to the gate / stop, above and below).
+		needsRelocate := step.Target != "" && !targetPresent(*screen, step.Target)
+		signatureDrift := step.ExpectSignature != "" && screen.Signature != step.ExpectSignature
+		if needsRelocate || signatureDrift {
+			if healed, didHeal := healFlowStep(*screen, step); didHeal {
+				oldTarget := step.Target
+				strategy := strategyForTargets(*screen, oldTarget, healed.Target)
+				step = healed
+				runSteps[i] = healed
+				anyHealed = true
+				res.NeedsHeal = append(res.NeedsHeal, fmt.Sprintf("step %d re-located %q -> %q (%s)", i, oldTarget, healed.Target, strategy))
+				gatewayHealLog.append(healEvent{
+					Connector:  conn.ID,
+					Capability: cap.ID,
+					StepIndex:  i,
+					OldTarget:  oldTarget,
+					NewTarget:  healed.Target,
+					Strategy:   strategy,
+					AtUnixHint: healNowHint(healClock),
+				})
+			} else if needsRelocate {
+				// Couldn't re-locate the target at all — keep the existing
+				// best-effort NeedsHeal record and run the step as-authored (the
+				// driver may still resolve it; the extractor is the real oracle).
+				res.NeedsHeal = append(res.NeedsHeal, fmt.Sprintf("step %d target %q not found and could not be re-located", i, step.Target))
+			}
+		}
+
 		if err := runFlowStep(driver, step, params); err != nil {
 			return nil, fmt.Errorf("gateway: redroid %q step %d (%s): %w", conn.ID, i, step.Action, err)
 		}
@@ -123,14 +172,36 @@ func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params
 			}
 		}
 		// Verify advance: if the step declared an expected signature and the
-		// observed one differs, the flow is "stale" → self-heal trigger. This
-		// slice records it (NeedsHeal) and continues best-effort; the curator
-		// (M-G6) rewrites the step. We never fail hard on a signature drift — the
-		// extractor below is the real success/failure oracle.
+		// observed one differs AFTER acting, the flow is "stale". Refresh the
+		// step's ExpectSignature to the observed one (a versioned selector/sig
+		// update — auto-allowed by docs §8) and record the heal. We never fail
+		// hard on a signature drift — the extractor below is the real oracle.
 		if step.ExpectSignature != "" && next.Signature != step.ExpectSignature {
 			res.NeedsHeal = append(res.NeedsHeal, fmt.Sprintf("step %d expected signature %q, observed %q", i, step.ExpectSignature, next.Signature))
+			runSteps[i].ExpectSignature = next.Signature
+			anyHealed = true
+			gatewayHealLog.append(healEvent{
+				Connector:  conn.ID,
+				Capability: cap.ID,
+				StepIndex:  i,
+				OldTarget:  step.Target,
+				NewTarget:  step.Target, // selector unchanged; signature refreshed
+				Strategy:   "signature",
+				AtUnixHint: healNowHint(healClock),
+			})
 		}
 		screen = next
+	}
+
+	// Persist any rewritten flow back to the manifest (versioned + bounded). This
+	// is local-first: it writes ~/.yaver/connectors/<id>.json via the registry and
+	// never touches Convex. When reg is nil (caller opted out) or nothing healed,
+	// it's a no-op. A persist failure is non-fatal to the READ — the answer below
+	// is still returned — it just isn't durably rewritten this time.
+	if anyHealed && reg != nil {
+		if _, perr := persistHealedFlow(reg, conn.ID, cap.ID, runSteps); perr != nil {
+			res.NeedsHeal = append(res.NeedsHeal, "persist healed flow failed: "+perr.Error())
+		}
 	}
 
 	// Extract the answerSchema from the final screen (deterministic matcher;
