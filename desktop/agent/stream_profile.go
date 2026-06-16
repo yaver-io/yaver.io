@@ -165,7 +165,7 @@ func init() {
 			}
 			_ = json.Unmarshal(payload, &p)
 			q := getSourceQuality(p.Source)
-			return OpsResult{OK: true, Initial: map[string]interface{}{"source": p.Source, "quality": q, "tiers": streamProfileTiers, "active": getActiveEncodeProfile(p.Source)}}
+			return OpsResult{OK: true, Initial: map[string]interface{}{"source": p.Source, "quality": q, "tiers": streamProfileTiers, "liveEncodes": sharedEncodeStatus()}}
 		},
 		AllowGuest: true,
 	})

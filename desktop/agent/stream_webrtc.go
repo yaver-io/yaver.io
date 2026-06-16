@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	pionturn "github.com/pion/turn/v4"
@@ -161,9 +160,6 @@ func (t streamSourceTarget) SpawnCapture(ctx context.Context, deviceID string) (
 
 // ---- self-contained signaling: POST /stream/webrtc/offer -------------------
 
-// liveWebRTCPeers tracks PCs so we can cap concurrent viewers and clean up.
-var liveWebRTCPeers sync.Map // *webrtc.PeerConnection -> *videoTrackPump
-
 func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "POST only")
@@ -211,29 +207,19 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 		jsonError(w, http.StatusInternalServerError, "peer connection: "+err.Error())
 		return
 	}
-	track, err := webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "yaver-stream-"+source)
-	if err != nil {
-		_ = pc.Close()
-		jsonError(w, http.StatusInternalServerError, "track: "+err.Error())
-		return
-	}
-	if _, err := pc.AddTrack(track); err != nil {
+	// Attach the SHARED track (Pion fans its RTP out to every PC). The encoder
+	// pump is owned by the shared encode, started once for this tier.
+	if _, err := pc.AddTrack(se.track); err != nil {
 		_ = pc.Close()
 		jsonError(w, http.StatusInternalServerError, "add track: "+err.Error())
 		return
 	}
-
-	pump := newVideoTrackPump("stream-"+source, source, track, nil)
-	liveWebRTCPeers.Store(pc, pump)
+	se.addPC(pc)
 
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		switch state {
-		case webrtc.PeerConnectionStateConnected:
-			pump.Start(context.Background())
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
-			pump.Stop()
-			liveWebRTCPeers.Delete(pc)
+			se.removePC(pc) // last viewer of this tier stops the encoder
 			_ = pc.Close()
 		}
 	})

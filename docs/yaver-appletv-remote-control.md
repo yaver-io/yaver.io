@@ -1018,8 +1018,8 @@ A single `StreamProfile` threaded through the existing encode points:
 |---|---|---|
 | **Q1** `StreamProfile` + tiers + lock + per-source store | ✅ shipped |
 | **Q2** WebRTC/capture encode honor the profile + viewer constraints | ✅ WebRTC + capture (`capture_start {profile}` caps source res/fps/quality); scene/broadcast trivial follow-up |
-| **Q3** Measured live adaptation (getStats loss → auto-lower tier) | ✅ web getStats loop: on >5% loss for 3 samples while Auto, step the effective tier down + re-negotiate; live health shown. Auto-upgrade (back up on recovery) still designed. |
-| **Q4** Tiered simulcast fan-out (2–3 ladders, Pion per-tier) | ⬜ designed |
+| **Q3** Measured live adaptation (getStats loss → step tier) | ✅ web getStats loop: >5% loss×3 → step DOWN + re-negotiate; <1% loss×6 → step UP (anti-flap, slower). Live link health shown. Locked tiers untouched. |
+| **Q4** Tiered simulcast fan-out (Pion per-tier) | ✅ `stream_webrtc_fanout.go`: one shared encode per (source, tier) — `getOrCreateEncode` + refcounted teardown; Pion fans the single H264 track to every viewer PC at that tier. At most one ffmpeg per tier per source regardless of viewer count. `stream_quality_get` shows live encodes. |
 | **Q5** Cast/projector/glass sink discovery → re-profile to terminal sink | ⬜ designed |
 | **Q6** Path auto-select (MJPEG vs WebRTC vs RTMP by sink + latency) | ⬜ designed |
 
