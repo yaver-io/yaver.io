@@ -330,13 +330,27 @@ func captureDevicesHandler(c OpsContext, _ json.RawMessage) OpsResult {
 
 func captureStartHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	var p struct {
-		Device string `json:"device"`
-		FPS    int    `json:"fps"`
-		Width  int    `json:"width"`
-		Height int    `json:"height"`
+		Device  string `json:"device"`
+		FPS     int    `json:"fps"`
+		Width   int    `json:"width"`
+		Height  int    `json:"height"`
+		Profile string `json:"profile"` // cap the capture to a tier (source res can be high)
 	}
 	_ = json.Unmarshal(payload, &p)
-	if err := captureStream.start(p.Device, p.FPS, p.Width, p.Height); err != nil {
+	quality := 0
+	if tier, ok := streamProfileTiers[p.Profile]; ok && p.Profile != "source" {
+		if p.FPS == 0 {
+			p.FPS = tier.FPS
+		}
+		if p.Width == 0 {
+			p.Width = tier.MaxWidth
+		}
+		if p.Height == 0 {
+			p.Height = tier.MaxHeight
+		}
+		quality = tier.JPEGQuality
+	}
+	if err := captureStream.start(p.Device, p.FPS, p.Width, p.Height, quality); err != nil {
 		return OpsResult{OK: false, Code: "capture_failed", Error: err.Error()}
 	}
 	return OpsResult{OK: true, StreamID: "capture", Initial: captureStream.status()}

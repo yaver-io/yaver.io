@@ -46,8 +46,17 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
   const [rtcQuality, setRtcQuality] = useState<"auto" | "high" | "balanced" | "saver">("auto");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [rtcHealth, setRtcHealth] = useState<string | null>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const statsRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const effTierRef = useRef<"saver" | "balanced" | "high">("balanced"); // effective auto tier
+  const srcRef = useRef("capture");
+  const lastSampleRef = useRef<{ lost: number; recv: number } | null>(null);
+  const poorRef = useRef(0);
+  const qualityRef = useRef(rtcQuality);
+  const startRef = useRef<(s: string) => void>(() => {});
+  useEffect(() => { qualityRef.current = rtcQuality; }, [rtcQuality]);
 
   const clientRef = useRef<AgentClient | null>(null);
   const connectedTo = useRef("");
@@ -221,14 +230,59 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
   // /stream/webrtc/offer; the agent answers with an H264 track fed by `source`.
   // Sub-second vs. the snapshot/MJPEG paths. (Same-network/relay-with-TURN.)
   const stopWebRTC = useCallback(() => {
+    if (statsRef.current) { clearInterval(statsRef.current); statsRef.current = null; }
     try { pcRef.current?.close(); } catch {}
     pcRef.current = null;
     if (videoElRef.current) videoElRef.current.srcObject = null;
     setRtcOn(false);
+    setRtcHealth(null);
+  }, []);
+
+  // Measured live adaptation (Part H / Q3): sample inbound-rtp getStats; on
+  // sustained packet loss while on Auto, step the effective tier DOWN once and
+  // re-negotiate at the lower quality — "decrease to improve performance".
+  const startStatsLoop = useCallback(() => {
+    if (statsRef.current) clearInterval(statsRef.current);
+    lastSampleRef.current = null;
+    poorRef.current = 0;
+    statsRef.current = setInterval(async () => {
+      const pc = pcRef.current;
+      if (!pc) return;
+      try {
+        let lost = 0, recv = 0;
+        (await pc.getStats()).forEach((r: any) => {
+          if (r.type === "inbound-rtp" && r.kind === "video") {
+            lost = r.packetsLost || 0;
+            recv = r.packetsReceived || 0;
+          }
+        });
+        const prev = lastSampleRef.current;
+        let lossRate = 0;
+        if (prev) {
+          const dl = lost - prev.lost, dr = recv - prev.recv;
+          if (dr + dl > 0) lossRate = dl / (dr + dl);
+        }
+        lastSampleRef.current = { lost, recv };
+        setRtcHealth(`loss ${(lossRate * 100).toFixed(1)}% · ${effTierRef.current}`);
+        if (qualityRef.current !== "auto") return; // user-locked: don't auto-adapt
+        if (lossRate > 0.05) {
+          poorRef.current++;
+          if (poorRef.current >= 3 && effTierRef.current !== "saver") {
+            effTierRef.current = effTierRef.current === "high" ? "balanced" : "saver";
+            poorRef.current = 0;
+            setMsg(`network poor — lowering quality to ${effTierRef.current}`);
+            startRef.current(srcRef.current); // re-negotiate at the lower tier
+          }
+        } else {
+          poorRef.current = 0;
+        }
+      } catch {}
+    }, 3000);
   }, []);
 
   const startWebRTC = useCallback(async (source: string) => {
     setMsg(null);
+    srcRef.current = source;
     stopWebRTC();
     try {
       const client = await ensureClient(deviceId);
@@ -270,18 +324,23 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
           w: Math.round(vw),
           h: Math.round(vh),
           net,
-          profile: rtcQuality,
+          // On Auto we drive the tier client-side from the measured loop;
+          // otherwise honor the user's locked tier.
+          profile: rtcQuality === "auto" ? effTierRef.current : rtcQuality,
         }),
       });
       if (!res.ok) throw new Error(`offer ${res.status}`);
       const ans = await res.json();
       await pc.setRemoteDescription({ type: "answer", sdp: ans.sdp });
       setRtcOn(true);
+      if (rtcQuality === "auto") startStatsLoop();
     } catch (e: any) {
       setMsg(e?.message || "WebRTC failed");
       stopWebRTC();
     }
-  }, [deviceId, ensureClient, stopWebRTC, rtcQuality]);
+  }, [deviceId, ensureClient, stopWebRTC, rtcQuality, startStatsLoop]);
+
+  useEffect(() => { startRef.current = startWebRTC; }, [startWebRTC]);
 
   useEffect(() => () => stopWebRTC(), [stopWebRTC]);
 
@@ -414,7 +473,8 @@ export default function AppleTVCellView({ devices, token }: { devices: Device[];
             </button>
           ))}
         </div>
-        <p className="mt-2 text-xs text-neutral-500">The box encodes only what this view shows (adaptive). Auto = decide from viewport + network. Restart the stream after changing.</p>
+        <p className="mt-2 text-xs text-neutral-500">The box encodes only what this view shows (adaptive). Auto = decide from viewport + network, then auto-lower on packet loss. Restart after changing a locked tier.</p>
+        {rtcOn && rtcHealth && <p className="mt-1 text-xs text-neutral-400">link: {rtcHealth}</p>}
       </div>
 
       {/* watch a URL on the box (magara) */}

@@ -216,7 +216,7 @@ func runAppleTVCapture(args []string) {
 		if len(args) > 2 {
 			fps, _ = strconv.Atoi(args[2])
 		}
-		if err := captureStream.start(dev, fps, 0, 0); err != nil {
+		if err := captureStream.start(dev, fps, 0, 0, 0); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

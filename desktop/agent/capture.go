@@ -127,7 +127,7 @@ func ffmpegInputArgs(device string, fps, w, h int) []string {
 	}
 }
 
-func (g *captureStreamer) start(device string, fps, w, h int) error {
+func (g *captureStreamer) start(device string, fps, w, h, quality int) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.on {
@@ -150,6 +150,9 @@ func (g *captureStreamer) start(device string, fps, w, h int) error {
 	if h <= 0 {
 		h = 720
 	}
+	if quality < 2 || quality > 31 {
+		quality = 7 // ffmpeg -q:v default; lower = better
+	}
 	g.device = device
 	g.fps = captureClampFps(fps)
 	g.width, g.height = w, h
@@ -159,7 +162,7 @@ func (g *captureStreamer) start(device string, fps, w, h int) error {
 
 	args := append(ffmpegInputArgs(device, g.fps, w, h),
 		"-f", "mjpeg",
-		"-q:v", "7",
+		"-q:v", fmt.Sprintf("%d", quality),
 		"-an",
 		"pipe:1",
 	)
