@@ -1,6 +1,6 @@
 import { Redirect } from "expo-router";
 import React from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
 
@@ -21,6 +21,12 @@ export default function IndexScreen() {
       return <Redirect href="/survey" />;
     }
     return <Redirect href="/(tabs)/tasks" />;
+  }
+
+  // On a TV (Apple TV / Google TV) typing credentials is painful — use the
+  // QR / device-code flow instead of the browser-OAuth login screen.
+  if (Platform.isTV) {
+    return <Redirect href="/tv-signin" />;
   }
 
   return <Redirect href="/login" />;

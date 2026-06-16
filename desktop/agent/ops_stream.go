@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 func init() {
@@ -27,6 +28,14 @@ func init() {
 		Schema:      atvSchema(map[string]interface{}{}),
 		Handler:     streamListHandler,
 		AllowGuest:  true,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "screen_watch",
+		Description: "Open a URL (YouTube / a video / a web app) in THIS box's desktop browser and return the live screen-stream URL, so you can watch a remote box (e.g. magara) on your phone. Drive playback further with the browser_* / open_url tools or just watch. Payload {url}. NOTE: DRM video (Netflix/Gain/Exxen/Disney+ …) blanks under screen capture — control works, protected frames don't render. Use it for YouTube, your own media, and non-DRM sources.",
+		Schema: atvSchema(map[string]interface{}{
+			"url": map[string]interface{}{"type": "string", "description": "http(s) URL to open on the box"},
+		}),
+		Handler: screenWatchHandler,
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "stream_snapshot",
@@ -64,7 +73,44 @@ func streamListHandler(c OpsContext, _ json.RawMessage) OpsResult {
 			"devices": len(devs),
 		})
 	}
+	// PC/box screen — shareable via the existing Remote Desktop / ghost stream.
+	// `screen_watch <url>` opens a video here; the phone watches /rd/stream.
+	if ghostStream.running() {
+		sources = append(sources, map[string]interface{}{
+			"source": "screen", "label": "This box's screen", "kind": "video", "live": true,
+			"streamUrl": "/ghost/stream", "frameUrl": "/ghost/frame.jpg",
+		})
+	} else {
+		sources = append(sources, map[string]interface{}{
+			"source": "screen", "label": "This box's screen", "kind": "video", "live": false,
+			"note": "view via Remote Desktop (/rd/stream); open a video here with screen_watch",
+		})
+	}
 	return OpsResult{OK: true, Initial: map[string]interface{}{"sources": sources}}
+}
+
+// screenWatchHandler opens a URL in the box's desktop browser so a remote box
+// (e.g. magara) becomes a watch source the phone can view over the screen
+// stream. DRM video blanks under capture — that's surfaced, never worked around.
+func screenWatchHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	var p struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+	}
+	u := strings.TrimSpace(p.URL)
+	if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		return OpsResult{OK: false, Code: "bad_payload", Error: "url must be http(s)"}
+	}
+	openBrowser(u) // desktop browser on THIS box (xdg-open/open/start)
+	return OpsResult{OK: true, Initial: map[string]interface{}{
+		"opened":    u,
+		"viewVia":   "Remote Desktop screen stream (/rd/stream) or /ghost/stream",
+		"frameUrl":  "/ghost/frame.jpg",
+		"drmNote":   "DRM services (Netflix/Gain/Exxen/Disney+ …) blank protected frames under capture; YouTube and your own/non-DRM media stream fine.",
+		"controlBy": "browser_navigate / browser_click / open_url, or just watch the stream",
+	}}
 }
 
 func streamSnapshotHandler(c OpsContext, payload json.RawMessage) OpsResult {
@@ -92,6 +138,17 @@ func streamSnapshotHandler(c OpsContext, payload json.RawMessage) OpsResult {
 			return OpsResult{OK: false, Code: "no_artwork", Error: "no now-playing artwork available"}
 		}
 		return OpsResult{OK: true, Initial: map[string]interface{}{"source": "appletv", "image": dataURL}}
+	case "screen":
+		// The box's desktop screen, via the shared ghost/Remote-Desktop frame
+		// buffer (populated while /rd/stream or /ghost/stream is active).
+		f := ghostStream.frame()
+		if len(f) == 0 {
+			return OpsResult{OK: false, Code: "no_frame", Error: "screen stream not active — open Remote Desktop on this box first"}
+		}
+		return OpsResult{OK: true, Initial: map[string]interface{}{
+			"source": "screen",
+			"image":  "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(f),
+		}}
 	case "camera":
 		// Reuse the existing robot/host camera path so a shared "camera" works
 		// wherever robot_snapshot does.

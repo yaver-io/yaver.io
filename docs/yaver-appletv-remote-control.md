@@ -636,6 +636,85 @@ M12 (Android TV, cheap), then decide the tvOS ADR (M13) and the compositor (M14)
 
 ---
 
+# PART D — Distribution playbook + TV sign-in + watch-a-remote-box
+
+> Added 2026-06-17. Answers "how do I distribute in Apple car / Google car /
+> Apple TV / Google TV", the TV QR sign-in ask, and "stream from magara (open
+> YouTube/Netflix/Gain/Exxen via chat) to my phone."
+
+## D.1 How each surface is actually distributed
+
+The headline: **CarPlay and Android Auto are NOT separate apps** — they're
+capabilities of the *existing* iOS/Android app. **Apple TV and Google TV** are
+separate *form factors* of the same app record. You never ship a 5th store
+listing.
+
+| Target | How you distribute it | What it takes | Video? |
+|---|---|---|---|
+| **Apple CarPlay** | The **same iOS app** on the App Store, with the **CarPlay entitlement**. | Request the CarPlay entitlement from Apple (developer.apple.com → an **audio** app category fits Yaver). Add `com.apple.developer.carplay-audio` to the entitlements, a `CPTemplateApplicationSceneDelegate`, and `CPNowPlayingTemplate` + `CPListTemplate`. Ship in the normal iOS binary. Apple must approve the entitlement. | ❌ audio + now-playing + lists only |
+| **Android Auto** | The **same Android app** on Play, declaring an Auto capability. | Add a `MediaBrowserService` (media category) — or the Jetpack **Car App Library** for the IoT/POI categories — plus `automotive_app_desc.xml` + the `com.google.android.gms.car.application` meta-data. Passes an **Android Auto quality review** at Play submission (no separate approval for media apps). | ❌ media template only |
+| **Apple TV (tvOS)** | A **separate tvOS binary**, same App Store Connect **app record**, new platform. | RN doesn't target tvOS in stock Expo — adopt the **`react-native-tvos`** fork + a tvOS Xcode target (own entitlements, focus engine). TestFlight supports tvOS. Submit as the tvOS platform of your app. **This is the one real new build target** (ADR-worthy). | ✅ full app incl. non-protected video |
+| **Google TV / Android TV** | The **same Play app / AAB**, made TV-eligible. | Add `<uses-feature android:name="android.software.leanback" android:required="false">`, a `LEANBACK_LAUNCHER` `<intent-filter>` on a TV activity, a 320×180 TV **banner**, and D-pad **focus** handling. Passes the **Android TV quality** checklist. Google TV surfaces the same APK — no new toolchain. | ✅ full app incl. non-protected video |
+
+**Sequencing:** Google TV/Android TV (cheapest — same APK + leanback + focus) →
+CarPlay-audio + Android-Auto-media (entitlement/service on the existing apps) →
+tvOS (the only one needing the `react-native-tvos` fork). Yaver's deploy scripts
+(`deploy-testflight.sh`, `deploy-playstore.sh`) already cover the iOS/Android
+binaries; tvOS would add a tvOS archive step, Android TV is the same AAB with the
+manifest additions.
+
+## D.2 TV sign-in — shipped (QR / device-code)
+
+Typing credentials on a TV remote is miserable, so the TV uses the **device-code
+flow** (RFC 8628) — the *same* one `yaver auth` uses headless, which Yaver
+already has end-to-end (`backend/convex/deviceCode.ts`, phone approver
+`app/approve-device.tsx` with a QR scanner).
+
+Shipped this round:
+- `mobile/src/lib/tvSignIn.ts` — `createTVDeviceCode()` → `POST /auth/device-code`,
+  `pollTVDeviceCode()` → `GET /auth/device-code/poll`.
+- `mobile/app/tv-signin.tsx` — shows a **QR** (`react-native-qrcode-svg`,
+  already a dep) encoding `https://yaver.io/auth/device?code=…` + a big short
+  code, polls every 5s, calls `login(token)` on approval, auto-refreshes on
+  expiry.
+- `mobile/app/index.tsx` — `Platform.isTV` routes unauthenticated TV users to
+  `/tv-signin` instead of `/login`.
+
+Flow: TV shows QR → user scans with the signed-in phone (already routes to
+`approve-device.tsx`) or visits the URL → one-tap approve → TV signs itself in.
+**No new backend** — reuses the existing device-code contract.
+
+## D.3 Watch a remote box (magara) — open YouTube/video by chat
+
+Shipped: the `screen_watch {url}` ops verb opens a URL in **that box's desktop
+browser** (`openBrowser` → xdg-open/open/start) and returns the screen-stream
+URL. So a chat command to the agent on magara — "open this video and stream it
+to me" — opens it on magara and you watch via the existing **Remote Desktop**
+(`/rd/stream`, `app/remote-desktop.tsx`) or `/ghost/stream`. `stream_list` now
+includes a `screen` source; `stream_snapshot {source:"screen"}` returns a frame.
+
+What composes here (mostly already-shipped):
+- **Open / navigate by chat** → the agent's `open_url` + `browser_navigate` /
+  `browser_click` tools, now plus `screen_watch`.
+- **View the box's screen on the phone** → Remote Desktop (exists) / the screen
+  source.
+- **Share that view to a friend** → the `stream` guest scope (Part C).
+
+### The DRM line (Netflix / Gain / Exxen / Disney+ …) — held, not crossed
+Premium streaming services enforce **Widevine/FairPlay DRM + HDCP**. Their video
+**blanks under screen capture** (the browser/OS refuses to render protected
+frames into a capture buffer) — exactly like the Apple TV HDCP case (§B.1).
+`screen_watch` returns a `drmNote` saying so. We **drive** these apps (open,
+navigate, play/pause via the browser tools) and stream **non-protected** content
+(YouTube, your own media, web UIs); we do **not** strip DRM/HDCP to re-stream
+protected video. A block is a "no", not a puzzle (CLAUDE.md "do no harm").
+
+The always-legal pattern for premium services: use Yaver to **control** them on
+the box, and watch them **on the device that's licensed to play them** — not by
+re-capturing protected pixels.
+
+---
+
 ## 12. File-reference appendix (verified 2026-06-16)
 
 - CLI dispatch (no Cobra): `desktop/agent/main.go:336,350,434,530`
