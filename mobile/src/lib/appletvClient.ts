@@ -49,8 +49,8 @@ export type CaptureStatus = {
   width?: number;
   height?: number;
   hasFrame?: boolean;
-  hdcpBlocked?: boolean;
-  note?: string;
+  blackHint?: string; // advisory only — Yaver still streams the (black) frames
+  warning?: string; // standing agnostic warning
   error?: string;
   ffmpeg?: boolean;
 };

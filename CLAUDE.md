@@ -48,6 +48,19 @@ mobile discovery, and remote-recovery — read it before changing those.
      cap concurrency, jitter + back off, make it killable, and stop on a block.
      When in doubt, don't. See `desktop/agent/access_policy.go` (Policy Guard)
      and `egress_proxy.go` (anti-pivot). Mirrored in `../yaver-bet/CLAUDE.md`.
+- **Streaming is a neutral tool — like OBS.** Yaver *helps you stream* whatever
+  source you point it at (capture card / satellite / set-top box / console /
+  camera / screen) to your **own account or an explicitly-invited guest
+  account** — never public by default. Yaver is **content-agnostic**: it does
+  not inspect, classify, block, or police what's on the wire. If a source is
+  dark or HDCP-blanks itself, Yaver streams that as-is (a terse diagnostic hint
+  is fine; do **not** litter the code/UI with warnings). **What you capture and
+  stream, and the right to do so, is the user's responsibility** — exactly as
+  with OBS. The one line in *our* code: Yaver adds **no** DRM/HDCP
+  circumvention (no stripper); it passes through exactly what the hardware
+  gives. Note: Yaver's aim is utility, **not** privacy — don't sell or gate
+  streaming features on a privacy promise (the Convex privacy contract below is
+  a separate, data-storage constraint and still holds).
 - **Destructive paths**: before `rm -rf`, `git clean -fdx`, `find -delete`,
   `mv` over an existing dir:
   1. `ls -la <path>` first; show what's about to be deleted.

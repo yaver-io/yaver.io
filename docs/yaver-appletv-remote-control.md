@@ -367,35 +367,24 @@ how remote-server tests are gated.
 > built once; surfaces are thin clients on the same transport. This part is the
 > honest architecture, including the legal line we will NOT cross.
 
-## B.1 The one hard constraint, stated up front (capture card + HDCP)
+## B.1 Posture: agnostic, like OBS (capture card + HDCP)
 
-The user wants a **capture card on the Pi** feeding video home→car/glasses.
-A USB capture card on the Pi appears as a **V4L2 device** (`/dev/videoN`) +
-an ALSA audio device; `ffmpeg` reads it. That is a clean, legitimate path
-**for non-protected sources**.
+> **Supersedes the original brief's "HDCP non-goal" framing.** Owner decision
+> (2026-06-17). The canonical statement is the **Streaming policy in CLAUDE.md**
+> — this section just applies it.
 
-It is **not** a way to stream a premium Apple TV app to the car, and we will
-not make it one:
-
-- The Apple TV asserts **HDCP** on its HDMI output. An HDCP-compliant capture
-  card receives a **black/blocked frame** on protected playback (Netflix,
-  Disney+, Apple TV+, etc.). The Apple TV **home screen, Settings, and many
-  non-DRM apps capture fine**; premium video does not.
-- Defeating HDCP (an HDCP "stripper" between Apple TV and the card) is a DMCA
-  §1201 circumvention and a streaming-service ToS violation. **We do not
-  detect, document, or assume a stripper.** If the captured frame is black,
-  the feature reports "source is HDCP-protected — capture unavailable" and
-  stops. That message is a feature, not a bug (acceptance criterion §2.8).
-
-**So the capture-card product is:** stream **your own non-protected HDMI
-sources** — a games console, a camera/dashcam, a laptop you own, a non-DRM
-media player, the Apple TV *menu/non-DRM apps* — from the Pi to any surface.
-The **Apple TV control plane (Part A)** is the robust, always-legal way to
-*drive* the Apple TV; the capture path *shows* whatever non-protected pixels
-the card legitimately receives. Two orthogonal capabilities, composed.
-
-This collapses the brief's §2.7 "adjacent feature" into the **core** — the
-user explicitly asked for it — but keeps the §2.1 / §9 non-goals intact.
+Yaver is a **neutral streaming tool, like OBS**. A capture card appears as a
+V4L2 device (`/dev/videoN`); `ffmpeg` reads it; Yaver streams those bytes to the
+**owner's account or an explicitly-invited guest** (the `stream` scope) — never
+public, never inspected or policed. It streams **whatever is provided, including
+black** — an HDCP source blanks itself upstream, the card gets black, Yaver
+streams black (with a terse `blackHint`, no nagging). What you capture/stream
+and the right to it is **the user's responsibility**. The only line in our own
+code: **no DRM/HDCP circumvention** (no stripper) — pass through what the
+hardware gives. Source-agnostic by construction: satellite (`uydu yayını`),
+set-top box, console, camera, PC, the Apple TV's non-DRM screens — all the same
+code path. The Apple TV **control plane** (Part A) is the separate way to *drive*
+the TV.
 
 ## B.2 Architecture: source vs. surface (build the source once)
 
@@ -700,18 +689,19 @@ What composes here (mostly already-shipped):
   source.
 - **Share that view to a friend** → the `stream` guest scope (Part C).
 
-### The DRM line (Netflix / Gain / Exxen / Disney+ …) — held, not crossed
-Premium streaming services enforce **Widevine/FairPlay DRM + HDCP**. Their video
-**blanks under screen capture** (the browser/OS refuses to render protected
-frames into a capture buffer) — exactly like the Apple TV HDCP case (§B.1).
-`screen_watch` returns a `drmNote` saying so. We **drive** these apps (open,
-navigate, play/pause via the browser tools) and stream **non-protected** content
-(YouTube, your own media, web UIs); we do **not** strip DRM/HDCP to re-stream
-protected video. A block is a "no", not a puzzle (CLAUDE.md "do no harm").
+### DRM (Netflix / Gain / Exxen / Disney+ …) — agnostic + warned
+Premium services enforce **Widevine/FairPlay DRM + HDCP**; their video **blanks
+under screen capture** because the browser/OS refuses to render protected frames
+into a capture buffer. Per the §B.1 posture, Yaver is **agnostic**: it streams
+whatever the box's screen shows **as-is** — if DRM content renders black, Yaver
+streams black, with a `warning` that the content and the right to stream it are
+the **user's responsibility**. Yaver adds **no** DRM/HDCP circumvention (that's
+the one line in our code); it does not block or police otherwise.
 
-The always-legal pattern for premium services: use Yaver to **control** them on
-the box, and watch them **on the device that's licensed to play them** — not by
-re-capturing protected pixels.
+`screen_watch` returns that warning. The natural pattern for premium services is
+still to **control** them on the box (open/navigate/play-pause) and watch on a
+licensed device — but Yaver doesn't enforce that; it just streams the pixels the
+screen produces.
 
 ---
 

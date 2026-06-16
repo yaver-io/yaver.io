@@ -1,21 +1,27 @@
 package main
 
-// capture.go — home A/V capture-card source. A USB/HDMI capture card on the Pi
-// shows up as a V4L2 device (/dev/videoN on Linux, an AVFoundation index on
-// macOS for dev). We run ffmpeg to pull MJPEG off the card into a shared
+// capture.go — content-AGNOSTIC capture-card source. A USB/HDMI capture card on
+// the box shows up as a V4L2 device (/dev/videoN on Linux, an AVFoundation index
+// on macOS for dev). We run ffmpeg to pull MJPEG off the card into a shared
 // latest-frame buffer and serve it as MJPEG (multipart/x-mixed-replace) + a
-// single latest frame — exactly the ghost_stream.go pattern, but the source is
-// a capture card instead of a screen grab. The web dashboard / a parked Android
-// head unit embed <img src="/capture/stream">; iOS / glasses snapshot-poll
-// /capture/frame.jpg.
+// single latest frame — exactly the ghost_stream.go pattern, but the source is a
+// capture card. The web dashboard / a parked Android head unit embed
+// <img src="/capture/stream">; iOS / glasses snapshot-poll /capture/frame.jpg.
 //
-// LEGAL LINE (do no harm, §9 of docs/yaver-appletv-remote-control.md): this
-// streams the user's OWN non-protected sources only. The Apple TV (and any
-// HDCP-protected source) blanks its HDMI output under content protection, so an
-// HDCP-compliant card receives a BLACK frame on premium playback. We DETECT the
-// persistent-black case and report "source is HDCP-protected — capture
-// unavailable"; we never detect, document, or assume an HDCP stripper. A block
-// is a "no", not a puzzle.
+// Yaver is AGNOSTIC: it does not know or care what the card is fed — a
+// satellite/cable box (uydu yayını), a console, a camera, a set-top box, a PC.
+// It streams whatever bytes the card provides, to the OWNER's account or an
+// explicitly-invited GUEST account only (the "stream" capability scope) — never
+// public. It does not inspect, classify, or police the content.
+//
+// WARNING + USER RESPONSIBILITY: the user is responsible for what they capture
+// and stream and for having the rights to it. Yaver attaches a standing warning
+// to capture status and never decides for the user. Yaver itself adds NO content
+// -protection circumvention — it passes through exactly what the hardware gives.
+// Content protection is enforced UPSTREAM: an HDCP source blanks itself, the card
+// receives BLACK, and Yaver streams that black unchanged (with an advisory hint
+// so the user understands what they see). We never build, document, or assume an
+// HDCP stripper — but we also do not block; that call is the user's.
 
 import (
 	"bufio"
@@ -322,8 +328,9 @@ func (g *captureStreamer) status() map[string]interface{} {
 		"ffmpeg":    ffmpegPath() != "",
 	}
 	if g.hdcpBlocked {
-		st["hdcpBlocked"] = true
-		st["note"] = "source appears HDCP-protected — capture unavailable (this is expected for premium video; use the Apple TV control plane instead)"
+		// Terse diagnostic only — we keep streaming the (black) frames anyway.
+		// Responsibility framing lives in Yaver policy (CLAUDE.md), not here.
+		st["blackHint"] = "persistently black — likely an HDCP source; streamed as-is"
 	}
 	if g.lastErr != "" {
 		st["error"] = g.lastErr
@@ -348,10 +355,9 @@ func (s *HTTPServer) handleCaptureStream(w http.ResponseWriter, r *http.Request)
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			if captureStream.hdcpStatus() {
-				// Don't stream a black rectangle; tell the client honestly.
-				return
-			}
+			// Agnostic: stream whatever the card provides, including black.
+			// If the source is HDCP-protected the frames are black — that's
+			// fine, we stream them; the status carries an advisory hint.
 			f := captureStream.frame()
 			if len(f) == 0 {
 				continue
@@ -383,10 +389,7 @@ func (s *HTTPServer) handleCaptureFrame(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusServiceUnavailable, "capture not running")
 		return
 	}
-	if captureStream.hdcpStatus() {
-		jsonError(w, http.StatusConflict, "source appears HDCP-protected — capture unavailable")
-		return
-	}
+	// Agnostic: serve whatever the card provides, including a black/dark frame.
 	f := captureStream.frame()
 	if len(f) == 0 {
 		jsonError(w, http.StatusServiceUnavailable, "no frame yet")

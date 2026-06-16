@@ -266,22 +266,24 @@ export default function AppleTVRemoteScreen() {
               <Text style={{ color: cap?.running ? c.textPrimary : c.textInverse }}>{cap?.running ? "Stop" : "Start"}</Text>
             </Pressable>
           </View>
-          {cap?.hdcpBlocked ? (
-            <Text style={{ color: c.error || "#f55", fontSize: 12 }}>
-              Source is HDCP-protected — capture unavailable. Use the remote above to drive the Apple TV instead.
-            </Text>
-          ) : cap?.running ? (
-            // Android can render MJPEG directly; iOS polls the single-frame URL.
-            <Image
-              source={{
-                uri: Platform.OS === "android" ? quicClient.captureStreamUrl() : `${quicClient.captureFrameUrl()}&t=${tick}`,
-              }}
-              style={{ width: "100%", aspectRatio: 16 / 9, borderRadius: 8, backgroundColor: "#000" }}
-              resizeMode="contain"
-            />
+          {cap?.running ? (
+            // Agnostic: stream whatever the card provides, including black.
+            // Android renders MJPEG directly; iOS polls the single-frame URL.
+            <>
+              <Image
+                source={{
+                  uri: Platform.OS === "android" ? quicClient.captureStreamUrl() : `${quicClient.captureFrameUrl()}&t=${tick}`,
+                }}
+                style={{ width: "100%", aspectRatio: 16 / 9, borderRadius: 8, backgroundColor: "#000" }}
+                resizeMode="contain"
+              />
+              {cap?.blackHint ? (
+                <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>{cap.blackHint}</Text>
+              ) : null}
+            </>
           ) : (
             <Text style={{ color: c.textMuted, fontSize: 12 }}>
-              {cap?.ffmpeg === false ? "ffmpeg not installed on this box." : "Stopped. Start to stream a capture card on this box."}
+              {cap?.ffmpeg === false ? "ffmpeg not installed on this box." : "Stopped. Start to stream a capture card on this box (satellite box, console, camera, PC…)."}
             </Text>
           )}
         </View>

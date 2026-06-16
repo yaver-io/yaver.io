@@ -31,7 +31,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "screen_watch",
-		Description: "Open a URL (YouTube / a video / a web app) in THIS box's desktop browser and return the live screen-stream URL, so you can watch a remote box (e.g. magara) on your phone. Drive playback further with the browser_* / open_url tools or just watch. Payload {url}. NOTE: DRM video (Netflix/Gain/Exxen/Disney+ …) blanks under screen capture — control works, protected frames don't render. Use it for YouTube, your own media, and non-DRM sources.",
+		Description: "Open a URL (YouTube / a video / a web app) in THIS box's desktop browser and return the live screen-stream URL, so you can watch a remote box (e.g. magara) on your phone. Drive playback further with the browser_* / open_url tools or just watch. Payload {url}. Agnostic: Yaver streams whatever the screen shows as-is (DRM video like Netflix/Gain/Exxen may render black — streamed as-is). You are responsible for the content and the right to stream it.",
 		Schema: atvSchema(map[string]interface{}{
 			"url": map[string]interface{}{"type": "string", "description": "http(s) URL to open on the box"},
 		}),
@@ -108,7 +108,6 @@ func screenWatchHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		"opened":    u,
 		"viewVia":   "Remote Desktop screen stream (/rd/stream) or /ghost/stream",
 		"frameUrl":  "/ghost/frame.jpg",
-		"drmNote":   "DRM services (Netflix/Gain/Exxen/Disney+ …) blank protected frames under capture; YouTube and your own/non-DRM media stream fine.",
 		"controlBy": "browser_navigate / browser_click / open_url, or just watch the stream",
 	}}
 }
@@ -121,17 +120,19 @@ func streamSnapshotHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	_ = json.Unmarshal(payload, &p)
 	switch p.Source {
 	case "capture", "":
-		if captureStream.hdcpStatus() {
-			return OpsResult{OK: false, Code: "hdcp_blocked", Error: "source appears HDCP-protected — capture unavailable"}
-		}
+		// Agnostic: return whatever the card provides, including a black frame.
 		f := captureStream.frame()
 		if len(f) == 0 {
 			return OpsResult{OK: false, Code: "no_frame", Error: "no capture frame (start capture first)"}
 		}
-		return OpsResult{OK: true, Initial: map[string]interface{}{
+		out := map[string]interface{}{
 			"source": "capture",
 			"image":  "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(f),
-		}}
+		}
+		if captureStream.hdcpStatus() {
+			out["blackHint"] = "frames are persistently black — likely an HDCP-protected source; streamed as-is"
+		}
+		return OpsResult{OK: true, Initial: out}
 	case "appletv":
 		_, dataURL := appleTVEng.nowPlayingArtworkDataURL(c.Ctx, p.Device)
 		if dataURL == "" {
