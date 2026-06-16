@@ -215,16 +215,64 @@ func scanRunnerBrowserAuthOutput(sess *runnerBrowserAuthSessionState, reader io.
 	}
 }
 
+// cancelStaleRunnerBrowserAuthSessions terminates any non-terminal
+// browser-auth session for the given runner. Called before spawning a
+// fresh session so we never keep two `claude auth login` processes alive
+// at once (each holds its own PKCE verifier — a code pasted into the new
+// session would otherwise risk being exchanged against the old verifier).
+func cancelStaleRunnerBrowserAuthSessions(runner string) {
+	runner = normalizeRunnerAuthName(runner)
+	runnerBrowserAuthSessions.Range(func(_, v any) bool {
+		st, ok := v.(*runnerBrowserAuthSessionState)
+		if !ok {
+			return true
+		}
+		snap := st.snapshot()
+		if normalizeRunnerAuthName(snap.Runner) != runner {
+			return true
+		}
+		switch snap.Status {
+		case "completed", "failed", "cancelled":
+			return true
+		}
+		log.Printf("[runner-auth-browser] %s reaping stale session id=%s (status=%s) before new spawn", runner, snap.ID, snap.Status)
+		if st.cancel != nil {
+			st.cancel()
+		}
+		return true
+	})
+}
+
 func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBrowserAuthSessionState, error) {
 	runner = normalizeRunnerAuthName(runner)
+	// Reap any still-running auth process for the SAME runner before
+	// spawning a new one. A prior session can be orphaned when the
+	// user abandons the flow (closes the app, loses connectivity mid
+	// browser-auth) — the spawned `claude auth login` then blocks on
+	// stdin forever, holding the PKCE verifier for a URL the user has
+	// long since discarded. Leaving it alive both leaks a process and
+	// causes a code pasted into a FRESH session to be exchanged against
+	// the wrong verifier. One live auth session per runner is correct.
+	cancelStaleRunnerBrowserAuthSessions(runner)
 	sess := newRunnerBrowserAuthSession(runner)
 	method, cmd, err := runnerBrowserAuthCommand(runner)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	// Preserve the env that runnerBrowserAuthCommand set (notably
+	// CLAUDE_CONFIG_DIR, which steers `claude` to write the credentials
+	// FILE rather than the GUI Keychain — load-bearing for daemon-spawned
+	// processes). Rebuilding via exec.CommandContext drops cmd.Env, so we
+	// carry it across explicitly. Previously this re-derived from
+	// os.Environ() and silently lost CLAUDE_CONFIG_DIR.
+	origEnv := cmd.Env
 	cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
-	cmd.Env = append(cmd.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
+	if len(origEnv) > 0 {
+		cmd.Env = origEnv
+	} else {
+		cmd.Env = append(cmd.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
+	}
 	sess.Method = method
 	sess.cmd = cmd
 	sess.cancel = cancel
@@ -281,6 +329,13 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 			refreshRunnerBrowserAuthSnapshot(state)
 		})
 		snap := sess.snapshot()
+		// Always log the terminal outcome — this is the line that was
+		// missing when a browser-auth attempt died: agent.log showed the
+		// spawn + captured URL, then nothing, leaving no trace of whether
+		// the code was ever exchanged. Now the outcome (and any error /
+		// resulting auth source) is in the persistent agent log.
+		log.Printf("[runner-auth-browser] %s session id=%s terminal status=%s authConfigured=%v authSource=%s error=%q",
+			snap.Runner, snap.ID, snap.Status, snap.AuthConfigured, snap.AuthSource, snap.Error)
 		recordRunnerBrowserAuthOperation(snap)
 		recordRunnerBrowserAuthIncident(snap)
 		// Heartbeat-kick on terminal so the pill on yaver.io / mobile
@@ -414,7 +469,7 @@ func (s *HTTPServer) handleRunnerBrowserAuthStatus(w http.ResponseWriter, r *htt
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]any{
-		"ok":      true,
+		"ok": true,
 		"session": func() runnerBrowserAuthSession {
 			snap := sess.snapshot()
 			recordRunnerBrowserAuthOperation(snap)
@@ -460,6 +515,12 @@ func (s *HTTPServer) handleRunnerBrowserAuthSubmitCode(w http.ResponseWriter, r 
 		jsonError(w, http.StatusNotFound, "auth session not found")
 		return
 	}
+	// Log that a code arrived (never the value — privacy contract above).
+	// Pairs with the terminal-status line so agent.log shows the full arc:
+	// spawn → captured URL → code received → exchange outcome. Its absence
+	// is itself diagnostic: a 401 with no "code received" line means the
+	// request never reached the agent (e.g. relay rejected it upstream).
+	log.Printf("[runner-auth-browser] %s code received for session id=%s (%d chars) — forwarding to CLI stdin", sess.Runner, id, len(code))
 	sess.mu.Lock()
 	stdin := sess.stdin
 	status := sess.Status
@@ -546,7 +607,8 @@ func (s *HTTPServer) handleRunnerBrowserAuthCancel(w http.ResponseWriter, r *htt
 // Body: {"runner": "claude" | "codex", "credentialsJson": "<full JSON>"}
 //
 // Storage: claude → $HOME/.claude/.credentials.json (mode 0600),
-//	      codex  → $HOME/.codex/auth.json (mode 0600).
+//
+//	codex  → $HOME/.codex/auth.json (mode 0600).
 //
 // Side effect: clears MarkRunnerAuthInvalid for that runner so DeviceDetails
 // flips back to ✓ signed in on the next /runner-auth/status poll without
