@@ -212,6 +212,9 @@ func (s *HTTPServer) handleBuildByID(w http.ResponseWriter, r *http.Request) {
 		case "stream":
 			s.handleBuildStream(w, r, buildID)
 			return
+		case "log":
+			s.handleBuildLog(w, r, buildID)
+			return
 		}
 	}
 
@@ -260,6 +263,31 @@ func (s *HTTPServer) handleBuildArtifact(w http.ResponseWriter, r *http.Request,
 
 	// http.ServeFile handles Range requests, Content-Length, Content-Type automatically
 	http.ServeFile(w, r, build.ArtifactPath)
+}
+
+// handleBuildLog returns the build's captured exec output (stdout/stderr) so
+// `yaver build status` can show a log tail. It reads the build's own exec
+// session directly rather than proxying to the auth-gated /exec/{id} endpoint,
+// keeping the build surface self-contained and auth-free for local callers.
+func (s *HTTPServer) handleBuildLog(w http.ResponseWriter, r *http.Request, buildID string) {
+	if r.Method != http.MethodGet {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	build, ok := s.buildMgr.GetBuild(buildID)
+	if !ok {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "build not found"})
+		return
+	}
+
+	out := map[string]interface{}{"id": build.ID, "status": string(build.Status)}
+	if s.execMgr != nil && build.ExecID != "" {
+		if sess, ok := s.execMgr.GetExec(build.ExecID); ok {
+			out["exec"] = sess.Snapshot()
+		}
+	}
+	jsonReply(w, http.StatusOK, out)
 }
 
 // handleBuildStream proxies to the exec session's SSE stream.

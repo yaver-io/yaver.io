@@ -242,9 +242,25 @@ func sessionImportCmd(args []string) {
 // in the background, waits for it to come up, and retries once. This
 // keeps `yaver autodev` / `yaver loop` etc. self-healing.
 func localAgentRequest(method, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	return localAgentRequestAuth(method, path, body, true)
+}
+
+// localAgentRequestLocal is for purely-local operations (builds) the daemon
+// serves to loopback callers without requiring cloud sign-in. It sends the
+// auth token when one exists but never refuses on a missing/empty token, so
+// `yaver build aab|ios|status|list` work whether or not the CLI is signed in.
+func localAgentRequestLocal(method, path string, body map[string]interface{}) (map[string]interface{}, error) {
+	return localAgentRequestAuth(method, path, body, false)
+}
+
+func localAgentRequestAuth(method, path string, body map[string]interface{}, requireAuth bool) (map[string]interface{}, error) {
 	cfg, err := LoadConfig()
-	if err != nil || cfg.AuthToken == "" {
+	if requireAuth && (err != nil || cfg == nil || cfg.AuthToken == "") {
 		return nil, fmt.Errorf("not authenticated — run 'yaver auth'")
+	}
+	authToken := ""
+	if cfg != nil {
+		authToken = cfg.AuthToken
 	}
 	baseURL := localAgentBaseURL()
 
@@ -258,7 +274,9 @@ func localAgentRequest(method, path string, body map[string]interface{}) (map[st
 		if err != nil {
 			return nil, err, false
 		}
-		req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+		if authToken != "" {
+			req.Header.Set("Authorization", "Bearer "+authToken)
+		}
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}

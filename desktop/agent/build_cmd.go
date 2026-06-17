@@ -115,7 +115,7 @@ func startBuildViaAgent(platform BuildPlatform, workDir string, extraArgs []stri
 		"workDir":  workDir,
 		"args":     extraArgs,
 	}
-	resp, err := localAgentRequest("POST", "/builds", body)
+	resp, err := localAgentRequestLocal("POST", "/builds", body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintln(os.Stderr, "Is the agent running? Start with 'yaver serve'.")
@@ -274,7 +274,7 @@ func runBuildRegister(args []string) {
 	body := map[string]interface{}{
 		"artifactPath": filePath,
 	}
-	resp, err := localAgentRequest("POST", "/builds/register", body)
+	resp, err := localAgentRequestLocal("POST", "/builds/register", body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -287,7 +287,7 @@ func runBuildRegister(args []string) {
 }
 
 func runBuildList() {
-	resp, err := localAgentRequest("GET", "/builds", nil)
+	resp, err := localAgentRequestLocal("GET", "/builds", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -350,6 +350,22 @@ func runBuildStatusSmart(args []string) {
 	if startDir == "" {
 		startDir, _ = os.Getwd()
 	}
+
+	// No id and no platform filter, in an interactive terminal: don't make the
+	// user remember a build id — show a selectable list and let them pick. The
+	// build matching the current directory is pre-highlighted. Falls through to
+	// the deterministic dir-match path when not a TTY (pipes / CI / mobile).
+	if idArg == "" && platformFilter == "" && buildPickerAvailable() {
+		if builds, perr := fetchAllBuilds(); perr == nil && len(builds) > 0 {
+			preselect := preselectForDir(builds, startDir)
+			if sel, ok := pickBuildInteractive(builds, preselect); ok {
+				fmt.Println()
+				runBuildStatus(builds[sel].ID)
+			}
+			return
+		}
+	}
+
 	id, matchedDir, err := resolveBuildIDForDir(startDir, platformFilter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -365,11 +381,61 @@ func runBuildStatusSmart(args []string) {
 	runBuildStatus(id)
 }
 
+// fetchAllBuilds returns every build the agent knows about, newest-first.
+func fetchAllBuilds() ([]BuildSummary, error) {
+	resp, err := localAgentRequestLocal("GET", "/builds", nil)
+	if err != nil {
+		return nil, err
+	}
+	var builds []BuildSummary
+	if err := remarshal(resp, &builds); err != nil {
+		return nil, err
+	}
+	return builds, nil
+}
+
+// preselectForDir returns the index of the build most relevant to startDir —
+// a running build for the current project beats a finished one — or -1 when
+// nothing matches (the picker then starts on the newest build overall).
+func preselectForDir(builds []BuildSummary, startDir string) int {
+	cwd, _ := filepath.Abs(startDir)
+	repoRoot := findRepoRoot(cwd)
+	if repoRoot == "" {
+		repoRoot = cwd
+	}
+	running, finished := -1, -1
+	for i := range builds {
+		b := &builds[i]
+		if b.WorkDir == "" {
+			continue
+		}
+		bw, _ := filepath.Abs(b.WorkDir)
+		bRepo := findRepoRoot(bw)
+		if bRepo == "" {
+			bRepo = bw
+		}
+		if !(sameOrUnder(cwd, bw) || sameOrUnder(bw, cwd) || pathsEqual(repoRoot, bRepo)) {
+			continue
+		}
+		if b.Status == BuildStatusRunning {
+			if running == -1 {
+				running = i
+			}
+		} else if finished == -1 {
+			finished = i
+		}
+	}
+	if running != -1 {
+		return running
+	}
+	return finished
+}
+
 // resolveBuildIDForDir finds the newest build whose WorkDir belongs to the
 // same project/repo as startDir. A running build always wins over a finished
 // one. platformFilter is "", "ios" or "android".
 func resolveBuildIDForDir(startDir, platformFilter string) (id string, matchedDir string, err error) {
-	resp, lerr := localAgentRequest("GET", "/builds", nil)
+	resp, lerr := localAgentRequestLocal("GET", "/builds", nil)
 	if lerr != nil {
 		return "", "", fmt.Errorf("Error: %v", lerr)
 	}
@@ -456,7 +522,7 @@ func sameOrUnder(child, parent string) bool {
 }
 
 func runBuildStatus(id string) {
-	resp, err := localAgentRequest("GET", "/builds/"+id, nil)
+	resp, err := localAgentRequestLocal("GET", "/builds/"+id, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -506,7 +572,7 @@ func runBuildStatus(id string) {
 	switch build.Status {
 	case BuildStatusRunning:
 		fmt.Println()
-		tail := fetchBuildLogTail(build.ExecID, 8)
+		tail := fetchBuildLogTail(build.ID, 8)
 		if len(tail) > 0 {
 			fmt.Println("  Still building — latest output:")
 			for _, ln := range tail {
@@ -540,7 +606,7 @@ func runBuildStatus(id string) {
 		if build.Error != "" {
 			fmt.Printf("  %s %s\n", tcol(c, redCode, "Error:"), build.Error)
 		}
-		tail := fetchBuildLogTail(build.ExecID, 12)
+		tail := fetchBuildLogTail(build.ID, 12)
 		if len(tail) > 0 {
 			fmt.Println()
 			fmt.Println("  Last output before failure:")
@@ -692,11 +758,13 @@ func pushHint(b Build) string {
 
 // fetchBuildLogTail returns the last n non-empty lines of the build's exec
 // output (stdout+stderr merged), best-effort. Returns nil if unavailable.
-func fetchBuildLogTail(execID string, n int) []string {
-	if execID == "" {
+// It reads the build-scoped /builds/{id}/log endpoint (auth-free for local
+// callers) instead of the auth-gated /exec/{id} route.
+func fetchBuildLogTail(buildID string, n int) []string {
+	if buildID == "" {
 		return nil
 	}
-	resp, err := localAgentRequest("GET", "/exec/"+execID, nil)
+	resp, err := localAgentRequestLocal("GET", "/builds/"+buildID+"/log", nil)
 	if err != nil {
 		return nil
 	}
@@ -754,7 +822,7 @@ func runBuildPush(args []string) {
 	buildID := args[1]
 
 	// Get build info from agent
-	resp, err := localAgentRequest("GET", "/builds/"+buildID, nil)
+	resp, err := localAgentRequestLocal("GET", "/builds/"+buildID, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
