@@ -13,6 +13,8 @@ import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.modules.network.OkHttpClientProvider
+import io.yaver.mobile.car.YaverCarMessagingPackage
+import io.yaver.mobile.wear.YaverWearPackage
 
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
@@ -46,6 +48,12 @@ class MainApplication : Application(), ReactApplication {
               // codex/opencode ON the phone). JS: src/lib/sandboxControl.ts
               // + src/lib/localBox.ts. See docs/coding-agent-on-device.md.
               add(io.yaver.mobile.sandbox.SandboxPackage())
+              // Android Auto messaging lane: posts MessagingStyle
+              // notifications with voice replies routed back into JS.
+              add(YaverCarMessagingPackage())
+              // Paired Wear OS bridge: receives wrist turns over the Wear Data
+              // Layer and exposes a native sender back to the watch.
+              add(YaverWearPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="yaver_icon_background">#111827</color>
+    <color name="yaver_icon_foreground">#2DD4BF</color>
+    <color name="yaver_icon_foreground_secondary">#F8FAFC</color>
+</resources>

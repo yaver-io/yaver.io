@@ -28,9 +28,11 @@
 		C3F40E7C2219114E034B128C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B1D3AE60FAC95D8F162620 /* ExpoModulesProvider.swift */; };
 		D0E1F2A3B4C5D6E7F8A9B0C1 /* YaverKeyboardRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E1F2A3B4C5D6E7F8A9B0C3 /* YaverKeyboardRouter.swift */; };
 		D0E1F2A3B4C5D6E7F8A9B0C2 /* YaverKeyboardRouter.m in Sources */ = {isa = PBXBuildFile; fileRef = D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */; };
+		DB1FFFA1C35434307CD5FD2C /* sdk-manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 3A027291C28B8C619D5DCBBC /* sdk-manifest.json */; };
 		DF60D00DD06F00D000000001 /* YaverDogfood.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF60D00DD06F00D000000003 /* YaverDogfood.swift */; };
 		DF60D00DD06F00D000000002 /* YaverDogfood.m in Sources */ = {isa = PBXBuildFile; fileRef = DF60D00DD06F00D000000004 /* YaverDogfood.m */; };
-		DB1FFFA1C35434307CD5FD2C /* sdk-manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 3A027291C28B8C619D5DCBBC /* sdk-manifest.json */; };
+		E1A2B3C4D5E6F70100000001 /* YaverWatchBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A2B3C4D5E6F70100000003 /* YaverWatchBridge.swift */; };
+		E1A2B3C4D5E6F70100000002 /* YaverWatchBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = E1A2B3C4D5E6F70100000004 /* YaverWatchBridge.m */; };
 		F07CE48FD595B0ACD2F8B805 /* YaverBundleLoader.m in Sources */ = {isa = PBXBuildFile; fileRef = 415536B78C32721035E86A5D /* YaverBundleLoader.m */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
@@ -61,9 +63,11 @@
 		BFBCBDCEA23E250BCD12802F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Yaver/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		D0E1F2A3B4C5D6E7F8A9B0C3 /* YaverKeyboardRouter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverKeyboardRouter.swift; sourceTree = "<group>"; };
 		D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverKeyboardRouter.m; sourceTree = "<group>"; };
+		D96B74C631188D7B5D5605EA /* Pods-Yaver.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Yaver.release.xcconfig"; path = "Target Support Files/Pods-Yaver/Pods-Yaver.release.xcconfig"; sourceTree = "<group>"; };
 		DF60D00DD06F00D000000003 /* YaverDogfood.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverDogfood.swift; sourceTree = "<group>"; };
 		DF60D00DD06F00D000000004 /* YaverDogfood.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverDogfood.m; sourceTree = "<group>"; };
-		D96B74C631188D7B5D5605EA /* Pods-Yaver.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Yaver.release.xcconfig"; path = "Target Support Files/Pods-Yaver/Pods-Yaver.release.xcconfig"; sourceTree = "<group>"; };
+		E1A2B3C4D5E6F70100000003 /* YaverWatchBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverWatchBridge.swift; sourceTree = "<group>"; };
+		E1A2B3C4D5E6F70100000004 /* YaverWatchBridge.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverWatchBridge.m; sourceTree = "<group>"; };
 		E061AB9F0596DBAFDCA8691A /* Pods-Yaver.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Yaver.debug.xcconfig"; path = "Target Support Files/Pods-Yaver/Pods-Yaver.debug.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Yaver/AppDelegate.swift; sourceTree = "<group>"; };
@@ -107,6 +111,8 @@
 				D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */,
 				DF60D00DD06F00D000000003 /* YaverDogfood.swift */,
 				DF60D00DD06F00D000000004 /* YaverDogfood.m */,
+				E1A2B3C4D5E6F70100000003 /* YaverWatchBridge.swift */,
+				E1A2B3C4D5E6F70100000004 /* YaverWatchBridge.m */,
 				3A027291C28B8C619D5DCBBC /* sdk-manifest.json */,
 			);
 			name = Yaver;
@@ -499,6 +505,8 @@
 				9F7E1A0B2C3D4E5F60A1B2C9 /* YaverFloatingTrigger.swift in Sources */,
 				9F7E1A0B2C3D4E5F60A1B2DE /* YaverDeployPane.swift in Sources */,
 				6C14694BF3B023E182EEC337 /* YaverInfo.m in Sources */,
+				E1A2B3C4D5E6F70100000001 /* YaverWatchBridge.swift in Sources */,
+				E1A2B3C4D5E6F70100000002 /* YaverWatchBridge.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -527,7 +535,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.138;
+				MARKETING_VERSION = 1.18.140;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -561,7 +569,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.138;
+				MARKETING_VERSION = 1.18.140;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

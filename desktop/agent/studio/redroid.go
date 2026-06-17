@@ -129,9 +129,15 @@ func (s *RedroidSurface) Provision(ctx context.Context) error {
 	// than one redroid container (a base + a qa instance fight over 5555 —
 	// observed on magara 2026-06-09). Optional adb-over-TCP can re-add an
 	// ephemeral port later if a use case needs it.
+	//
+	// SECURITY: when PublishADB is on, bind ADB to LOCALHOST only
+	// (127.0.0.1:PORT:5555), never 0.0.0.0. ADB has no auth, so a public 5555
+	// is taken over by ADB worms within minutes — this caused the Hetzner abuse
+	// IP-block of 37.27.184.85 on 2026-06-15 (outbound :5555 scan). Reach ADB
+	// from a remote host via an SSH tunnel or Tailscale, not a public port.
 	pubPort := ""
 	if s.Port > 0 && s.PublishADB {
-		pubPort = fmt.Sprintf("-p %d:5555 ", s.Port)
+		pubPort = fmt.Sprintf("-p 127.0.0.1:%d:5555 ", s.Port)
 	}
 	runCmd := fmt.Sprintf(
 		"docker run -itd --privileged --name %s -v %s:/data %s%s "+

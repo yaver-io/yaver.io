@@ -4,6 +4,7 @@
 // ops verbs over the mesh (homeClient). Separate "Home" surface — not the dev UI.
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
@@ -13,6 +14,7 @@ const KINDS = ["apple_tv", "mibox", "androidtv", "ir", "switch"];
 
 export default function HomeSetupScreen() {
   const c = useColors();
+  const router = useRouter();
   const deviceCtx = useDevice();
   const devices = (deviceCtx as any).devices as any[];
 
@@ -104,7 +106,7 @@ export default function HomeSetupScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <AppScreenHeader title="Home Setup" />
+      <AppScreenHeader title="Home Setup" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Text style={{ color: c.textMuted, marginBottom: 6 }}>Hub device</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 14 }}>

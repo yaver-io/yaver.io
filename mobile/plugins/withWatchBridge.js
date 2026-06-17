@@ -37,7 +37,7 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-const WEAR_DEP = "com.google.android.gms:play-services-wearable:18.1.0";
+const WEAR_DEP = "com.google.android.gms:play-services-wearable:18.2.0";
 const WEAR_PKG_DIR = path.join("io", "yaver", "mobile", "wear");
 const LISTENER_PATH_TURN = "/yaver/watch/turn";
 

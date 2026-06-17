@@ -98,10 +98,21 @@ android {
         applicationId 'io.yaver.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 257
-        versionName "1.18.138"
+        versionCode 259
+        versionName "1.18.140"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+    }
+    sourceSets {
+        main {
+            // Force-tracked native Android Auto messaging module. The Expo
+            // plugin also copies this on prebuild, but local Play builds run
+            // directly from mobile/android.
+            java.srcDir '../../native-androidauto/android'
+            // Force-tracked phone-side Wear Data Layer bridge. The standalone
+            // Wear app lives in /wear; this is the paired Android phone half.
+            java.srcDir '../../native-wear/android'
+        }
     }
     signingConfigs {
         debug {
@@ -167,6 +178,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation("com.google.android.gms:play-services-wearable:18.2.0")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

@@ -1,0 +1,104 @@
+import React, { useEffect, useMemo } from "react";
+import { NativeEventEmitter, NativeModules, Platform } from "react-native";
+import { useDevice } from "../context/DeviceContext";
+import { makeRealCarVoiceDeps, type CarVoiceConfig, type CarVoiceTaskRef } from "../lib/carVoiceCoding";
+import { connectionManager } from "../lib/connectionManager";
+import { appLog } from "../lib/logger";
+import { watchBridgeBus } from "../lib/watchEntry";
+
+type NativeWatchBridge = {
+  sendToWatch?: (json: string) => void;
+  addListener?: (eventName: string) => void;
+  removeListeners?: (count: number) => void;
+};
+
+function nativeBridge(): NativeWatchBridge | null {
+  const mod = (NativeModules as { YaverWatchBridge?: NativeWatchBridge }).YaverWatchBridge;
+  return mod && typeof mod.sendToWatch === "function" ? mod : null;
+}
+
+function pickDeviceId(devices: any[], activeDevice: any | null): string {
+  const focused = connectionManager.focusedDeviceId();
+  if (focused) return focused;
+  const activeId = activeDevice?.id || activeDevice?.deviceId;
+  if (activeId) return activeId;
+  const connected = connectionManager.connectedDeviceIds()[0];
+  if (connected) return connected;
+  const online = devices.find((d) => d?.online);
+  return online?.id || online?.deviceId || devices[0]?.id || devices[0]?.deviceId || "";
+}
+
+function makeWatchDeps(deviceId: string) {
+  const config: CarVoiceConfig = {
+    pollIntervalMs: 4000,
+    maxWaitMs: 15 * 60 * 1000,
+    speakAcknowledgement: false,
+  };
+  const deps = makeRealCarVoiceDeps({
+    config,
+    dispatchTask: async (title, prompt) => {
+      if (!deviceId) throw new Error("No Yaver device selected");
+      const client = connectionManager.clientFor(deviceId);
+      const t = await client.sendTask(
+        title,
+        prompt,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      return { id: t.id };
+    },
+    getTask: async (taskId): Promise<CarVoiceTaskRef> => {
+      if (!deviceId) throw new Error("No Yaver device selected");
+      const t = await connectionManager.clientFor(deviceId).getTask(taskId);
+      return { id: t.id, status: t.status, resultText: t.resultText, output: t.output };
+    },
+  });
+  return { deps, config };
+}
+
+export function WatchBridgeHost() {
+  const deviceCtx = useDevice();
+  const devices = (deviceCtx.devices as any[]) || [];
+  const activeDevice = deviceCtx.activeDevice as any | null;
+  const targetDeviceId = useMemo(
+    () => pickDeviceId(devices, activeDevice),
+    [devices, activeDevice],
+  );
+
+  useEffect(() => {
+    const bridge = nativeBridge();
+    if (!bridge) {
+      watchBridgeBus.reset();
+      return;
+    }
+    watchBridgeBus.configure({
+      makeDeps: () => makeWatchDeps(targetDeviceId).deps,
+      config: () => makeWatchDeps(targetDeviceId).config,
+      sender: (json) => bridge.sendToWatch?.(json),
+    });
+    return () => watchBridgeBus.reset();
+  }, [targetDeviceId]);
+
+  useEffect(() => {
+    const bridge = nativeBridge();
+    if (!bridge) return;
+    if (Platform.OS !== "android" && Platform.OS !== "ios") return;
+    const emitter = new NativeEventEmitter(bridge as any);
+    const sub = emitter.addListener("yaverWatchMessage", (json: unknown) => {
+      if (typeof json !== "string") return;
+      void watchBridgeBus.deliver(json).catch((e) => {
+        appLog("warn", `watch bridge delivery failed: ${e instanceof Error ? e.message : String(e)}`);
+      });
+    });
+    return () => sub.remove();
+  }, []);
+
+  return null;
+}

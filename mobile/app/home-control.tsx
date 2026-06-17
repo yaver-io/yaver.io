@@ -161,7 +161,7 @@ export default function HomeControlScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <AppScreenHeader title="Home Control" />
+      <AppScreenHeader title="Home Control" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Pressable onPress={() => router.push("/home-setup")} style={{ alignSelf: "flex-end", marginBottom: 8 }}>
           <Text style={{ color: c.accent, fontWeight: "600" }}>⚙ Setup</Text>
