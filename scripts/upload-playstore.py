@@ -18,6 +18,7 @@ from googleapiclient.http import MediaFileUpload
 PACKAGE = "io.yaver.mobile"
 KEY_FILE = os.environ.get("PLAY_STORE_KEY_FILE", "")
 AAB_PATH = os.path.join(os.path.dirname(__file__), "..", "mobile", "android", "app", "build", "outputs", "bundle", "release", "app-release.aab")
+AAB_PATH = os.environ.get("AAB_PATH", AAB_PATH)
 TRACK = "internal"
 
 SCOPES = ["https://www.googleapis.com/auth/androidpublisher"]

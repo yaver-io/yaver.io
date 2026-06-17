@@ -1,12 +1,20 @@
-// App module for the standalone Yaver Wear OS app (io.yaver.wear).
+// App module for the standalone Yaver Wear OS app.
 //
 // Dependency versions are plausible-and-recent but MAY need a sync with the
 // build machine's toolchain (Compose compiler ↔ Kotlin pairing especially).
 // Source-only scaffold — not CI-wired. See wear/README.md.
 
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val keystorePropertiesFile = rootProject.file("../mobile/android/keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
 android {
@@ -14,16 +22,28 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "io.yaver.wear"
+        applicationId = (findProperty("yaverWearApplicationId") as String?) ?: "io.yaver.wear"
         // Wear OS 3 (which is what almost every current watch runs) is API 30+.
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = ((findProperty("yaverWearVersionCode") as String?) ?: "1").toInt()
+        versionName = (findProperty("yaverWearVersionName") as String?) ?: "1.0.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keystoreProperties["storeFile"] != null) {
+                storeFile = file("../mobile/android/${keystoreProperties["storeFile"]}")
+                storePassword = keystoreProperties["storePassword"] as String?
+                keyAlias = keystoreProperties["keyAlias"] as String?
+                keyPassword = keystoreProperties["keyPassword"] as String?
+            }
+        }
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
