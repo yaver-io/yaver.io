@@ -96,21 +96,7 @@ func runDeployPlatformCmd(target string, args []string) {
 }
 
 func mcpMobilePlatformDeploy(directory, target string, upload, dryRun bool, timeoutSec int) map[string]interface{} {
-	root := strings.TrimSpace(directory)
-	if root == "" {
-		if r, _, err := findDeployRepoRoot(); err == nil {
-			root = r
-		}
-	}
-	if root == "" {
-		wd, _ := os.Getwd()
-		root = wd
-	}
-	if !filepath.IsAbs(root) {
-		if abs, err := filepath.Abs(root); err == nil {
-			root = abs
-		}
-	}
+	root := normalizePlatformRoot(directory)
 
 	plan, err := platformDeployPlanFor(root, target, upload, nil)
 	if err != nil {

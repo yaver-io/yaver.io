@@ -45,7 +45,17 @@ type PublishJob = {
   createdAt: number;
 };
 
-type StoreChoice = "ios" | "android" | "both";
+type StoreChoice =
+  | "both"
+  | "ios"
+  | "android"
+  | "tv"
+  | "android-tv"
+  | "tvos"
+  | "android-auto"
+  | "android-wear"
+  | "watchos"
+  | "carplay";
 
 // Friendly store word → canonical /deploy/ship target IDs. Same map
 // as the CLI façade (publish_ship.go) so both surfaces agree.
@@ -53,6 +63,75 @@ const STORE_TARGETS: Record<StoreChoice, string[]> = {
   ios: ["testflight"],
   android: ["playstore"],
   both: ["testflight", "playstore"],
+  tv: ["android-tv", "tvos"],
+  "android-tv": ["android-tv"],
+  tvos: ["tvos"],
+  "android-auto": ["playstore"],
+  "android-wear": [],
+  watchos: [],
+  carplay: [],
+};
+
+const STORE_CHOICES: StoreChoice[] = [
+  "both",
+  "ios",
+  "android",
+  "tv",
+  "android-tv",
+  "tvos",
+  "android-auto",
+  "android-wear",
+  "watchos",
+  "carplay",
+];
+
+const STORE_META: Record<
+  StoreChoice,
+  { label: string; note: string; disabled?: boolean }
+> = {
+  both: {
+    label: "Mobile both",
+    note: "Queues TestFlight and Google Play.",
+  },
+  ios: {
+    label: "App Store",
+    note: "Queues iOS TestFlight on a Mac.",
+  },
+  android: {
+    label: "Google Play",
+    note: "Queues Android phone Play upload.",
+  },
+  tv: {
+    label: "TV both",
+    note: "Queues Android TV and Apple TV one after another.",
+  },
+  "android-tv": {
+    label: "Android TV",
+    note: "Verifies Leanback and uploads the Play AAB.",
+  },
+  tvos: {
+    label: "Apple TV",
+    note: "Queues tvOS archive/upload on a Mac.",
+  },
+  "android-auto": {
+    label: "Android Auto",
+    note: "Ships through the Android Play artifact.",
+  },
+  "android-wear": {
+    label: "Wear OS",
+    note: "Build lane exists; store upload is not one-tap yet.",
+    disabled: true,
+  },
+  watchos: {
+    label: "watchOS",
+    note: "Simulator build works; upload needs companion/release lane wiring.",
+    disabled: true,
+  },
+  carplay: {
+    label: "CarPlay",
+    note: "Needs Apple CarPlay entitlement and native template work first.",
+    disabled: true,
+  },
 };
 
 export default function PublishScreen() {
@@ -130,6 +209,10 @@ export default function PublishScreen() {
       setNote("Enter your app name first.");
       return;
     }
+    if (STORE_META[store].disabled || STORE_TARGETS[store].length === 0) {
+      setNote(STORE_META[store].note);
+      return;
+    }
     setQueuing(true);
     setNote("");
     try {
@@ -198,7 +281,7 @@ export default function PublishScreen() {
           <View>
             <Text style={styles.h1}>Publish</Text>
             <Text style={styles.sub}>
-              Build & ship to the App Store / Google Play on your own Mac.
+              Build & ship mobile, TV, and bundled car artifacts on your own Mac.
               Tap publish and close the app — it runs on the Mac.
             </Text>
 
@@ -229,29 +312,32 @@ export default function PublishScreen() {
                   );
                 })}
 
-                <Text style={styles.label}>Store</Text>
+                <Text style={styles.label}>Target</Text>
                 <View style={styles.segment}>
-                  {(["ios", "android", "both"] as StoreChoice[]).map((s) => (
+                  {STORE_CHOICES.map((s) => (
                     <Pressable
                       key={s}
+                      disabled={STORE_META[s].disabled}
                       onPress={() => setStore(s)}
-                      style={[styles.seg, store === s && styles.segOn]}
+                      style={[
+                        styles.seg,
+                        store === s && styles.segOn,
+                        STORE_META[s].disabled && styles.segDisabled,
+                      ]}
                     >
                       <Text
                         style={[
                           styles.segTxt,
                           store === s && styles.segTxtOn,
+                          STORE_META[s].disabled && styles.segTxtDisabled,
                         ]}
                       >
-                        {s === "ios"
-                          ? "App Store"
-                          : s === "android"
-                            ? "Google Play"
-                            : "Both"}
+                        {STORE_META[s].label}
                       </Text>
                     </Pressable>
                   ))}
                 </View>
+                <Text style={styles.targetNote}>{STORE_META[store].note}</Text>
 
                 <Text style={styles.label}>App name</Text>
                 <TextInput
@@ -276,12 +362,7 @@ export default function PublishScreen() {
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.ctaTxt}>
-                      Publish to{" "}
-                      {store === "both"
-                        ? "both stores"
-                        : store === "ios"
-                          ? "the App Store"
-                          : "Google Play"}
+                      Publish to {STORE_META[store].label}
                     </Text>
                   )}
                 </Pressable>
@@ -351,10 +432,11 @@ function makeStyles(c: any) {
     rowOn: { borderColor: c.accent },
     rowName: { color: c.text, fontWeight: "600", fontSize: 15 },
     rowMeta: { color: c.textMuted, fontSize: 12, marginTop: 3 },
-    segment: { flexDirection: "row", gap: 8 },
+    segment: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
     seg: {
-      flex: 1,
+      minWidth: "30%",
       paddingVertical: 12,
+      paddingHorizontal: 10,
       borderRadius: 10,
       backgroundColor: c.card,
       borderWidth: 1,
@@ -362,8 +444,11 @@ function makeStyles(c: any) {
       alignItems: "center",
     },
     segOn: { backgroundColor: c.accent, borderColor: c.accent },
+    segDisabled: { opacity: 0.45 },
     segTxt: { color: c.text, fontWeight: "600", fontSize: 13 },
     segTxtOn: { color: "#fff" },
+    segTxtDisabled: { color: c.textMuted },
+    targetNote: { color: c.textMuted, fontSize: 12, marginTop: 8 },
     input: {
       backgroundColor: c.card,
       borderRadius: 10,

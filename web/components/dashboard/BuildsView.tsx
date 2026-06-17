@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { agentClient, type CapabilitySnapshot, type CapabilityTargetReadiness } from "@/lib/agent-client";
+import { agentClient, type CapabilitySnapshot, type CapabilityTargetReadiness, type MobilePlatformMatrixReport, type MobilePlatformSurface } from "@/lib/agent-client";
 import { EmptyState } from "@/components/ui";
 
 interface Build { id: string; platform: string; status: string; startedAt?: number; artifactName?: string; }
@@ -59,11 +59,12 @@ export default function BuildsView({
   const [allowGitHubFallback, setAllowGitHubFallback] = useState(false);
   const [publishBusy, setPublishBusy] = useState<string | null>(null);
   const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  const [platformMatrix, setPlatformMatrix] = useState<MobilePlatformMatrixReport | null>(null);
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
 
   const noProjects = projects.length === 0;
 
-  useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); void loadUnityRuns(); void loadCapabilities(); }, []);
+  useEffect(() => { void loadBuilds(); void loadProjects(); void loadPublishes(); void loadUnityRuns(); void loadCapabilities(); void loadPlatformMatrix(); }, []);
   useEffect(() => {
     if (!selectedPath) return;
     void loadPublishConfig(selectedPath);
@@ -118,6 +119,14 @@ export default function BuildsView({
     }
   }
 
+  async function loadPlatformMatrix() {
+    try {
+      setPlatformMatrix(await agentClient.mobilePlatformMatrix());
+    } catch {
+      setPlatformMatrix(null);
+    }
+  }
+
   async function deploy(target: "testflight" | "playstore" | "web") {
     let proj = projects.find((p) => p.path === selectedPath) ?? projects[0];
     if (!proj) return; // buttons are disabled in this state; nothing to do
@@ -130,6 +139,21 @@ export default function BuildsView({
 
     try {
       const task = await agentClient.sendTask(`Deploy ${proj.name} to ${target}`, prompts[target]);
+      onTaskCreated?.(task.id);
+    } catch {}
+  }
+
+  async function runPlatformDeploy(surface: MobilePlatformSurface) {
+    const target = surface.deployTarget || surface.id;
+    if (!target) return;
+    const upload = surface.submitSupported ? "true" : "false";
+    const title = `Deploy ${surface.label}`;
+    const description = [
+      `Use the Yaver MCP mobile_platform_deploy tool for target=${target}, upload=${upload}.`,
+      "Run it one target at a time and report build/upload status, version/build number, and any blocking signing or review issue.",
+    ].join(" ");
+    try {
+      const task = await agentClient.sendTask(title, description);
       onTaskCreated?.(task.id);
     } catch {}
   }
@@ -183,6 +207,18 @@ export default function BuildsView({
     if (s === "failed") return "bg-red-500/10 text-red-400";
     if (s === "dispatched") return "bg-sky-500/10 text-sky-400";
     return "bg-surface-800 text-surface-400";
+  }
+
+  function platformTone(status: string) {
+    if (status === "ready" || status === "bundled") return "bg-emerald-500/10 text-emerald-400";
+    if (status === "build-only") return "bg-amber-500/10 text-amber-400";
+    if (status === "blocked") return "bg-red-500/10 text-red-400";
+    return "bg-surface-800 text-surface-400";
+  }
+
+  function canRunPlatformMcp(surface: MobilePlatformSurface) {
+    const target = surface.deployTarget || surface.id;
+    return surface.submitSupported && ["tv", "android-tv", "tvos"].includes(target) && surface.scriptPresent === true;
   }
 
   function unityTitle(run: UnityRun) {
@@ -247,6 +283,48 @@ export default function BuildsView({
             {publishMessage}
           </div>
         ) : null}
+      </div>
+
+      <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wider text-surface-500">Platform Surfaces</div>
+            <div className="mt-1 text-sm text-surface-300">TV is executable now; watch and car lanes show the current release gate instead of pretending they are uploadable.</div>
+          </div>
+          {platformMatrix ? (
+            <div className="text-xs text-surface-500">{platformMatrix.devicePlatform}/{platformMatrix.deviceArch}</div>
+          ) : null}
+        </div>
+        {platformMatrix?.surfaces?.length ? (
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {platformMatrix.surfaces.map((surface) => {
+              const canRun = canRunPlatformMcp(surface);
+              const note = surface.notes?.[0] || surface.limitations?.[0] || "";
+              return (
+                <div key={surface.id} className="rounded-lg border border-surface-800 bg-surface-900/60 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-medium text-surface-100">{surface.label}</div>
+                      <div className="mt-1 text-xs text-surface-500">{surface.family} / {surface.surface}</div>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${platformTone(surface.status)}`}>{surface.status}</span>
+                  </div>
+                  {note ? <div className="mt-3 min-h-10 text-xs leading-5 text-surface-400">{note}</div> : null}
+                  <button
+                    onClick={() => void runPlatformDeploy(surface)}
+                    disabled={!canRun}
+                    title={!canRun ? surface.limitations?.[0] || "This surface is not one-click deployable yet." : ""}
+                    className={deployButtonClass(!canRun, surface.surface === "tv")}
+                  >
+                    {canRun ? "Build + Submit" : surface.buildSupported ? "Build-only" : "Blocked"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-sm text-surface-500">Connect to an agent to load platform deployability.</div>
+        )}
       </div>
 
       <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">

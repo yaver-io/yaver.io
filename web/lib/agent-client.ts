@@ -1148,6 +1148,31 @@ export interface DeployCapabilitiesReport {
   targets: DeployCapability[];
 }
 
+export interface MobilePlatformSurface {
+  id: string;
+  label: string;
+  family: string;
+  surface: string;
+  status: string;
+  buildSupported: boolean;
+  submitSupported: boolean;
+  managedCloud: string;
+  requiredHost: string;
+  storeTarget?: string;
+  deployTarget?: string;
+  script?: string;
+  scriptPresent?: boolean;
+  queueTargets?: string[];
+  notes?: string[];
+  limitations?: string[];
+}
+
+export interface MobilePlatformMatrixReport {
+  devicePlatform: string;
+  deviceArch: string;
+  surfaces: MobilePlatformSurface[];
+}
+
 // Outbound P2P vault sync result. The agent walks the user's
 // device list and pulls newer entries from each online peer; the
 // dashboard's "Try syncing from peer" button surfaces the per-peer
@@ -5457,6 +5482,42 @@ export class AgentClient {
         reason: t?.reason ? String(t.reason) : undefined,
         ciAlternative: t?.ci_alternative ? String(t.ci_alternative) : undefined,
         vaultProject: t?.vault_project ? String(t.vault_project) : undefined,
+      })),
+    };
+  }
+
+  async mobilePlatformMatrix(args?: { directory?: string }): Promise<MobilePlatformMatrixReport> {
+    this.assertConnected();
+    const params = new URLSearchParams();
+    if (args?.directory) params.set("directory", args.directory);
+    const qs = params.toString();
+    const res = await fetch(
+      `${this.baseUrl}/mobile/platform-matrix${qs ? `?${qs}` : ""}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`mobilePlatformMatrix ${res.status}`);
+    const data = await res.json();
+    const surfaces = Array.isArray(data?.surfaces) ? data.surfaces : [];
+    return {
+      devicePlatform: String(data?.device_platform ?? ""),
+      deviceArch: String(data?.device_arch ?? ""),
+      surfaces: surfaces.map((s: any) => ({
+        id: String(s?.id ?? ""),
+        label: String(s?.label ?? ""),
+        family: String(s?.family ?? ""),
+        surface: String(s?.surface ?? ""),
+        status: String(s?.status ?? ""),
+        buildSupported: !!s?.build_supported,
+        submitSupported: !!s?.submit_supported,
+        managedCloud: String(s?.managed_cloud ?? ""),
+        requiredHost: String(s?.required_host ?? ""),
+        storeTarget: s?.store_target ? String(s.store_target) : undefined,
+        deployTarget: s?.deploy_target ? String(s.deploy_target) : undefined,
+        script: s?.script ? String(s.script) : undefined,
+        scriptPresent: typeof s?.script_present === "boolean" ? s.script_present : undefined,
+        queueTargets: Array.isArray(s?.queue_targets) ? s.queue_targets.map(String) : undefined,
+        notes: Array.isArray(s?.notes) ? s.notes.map(String) : undefined,
+        limitations: Array.isArray(s?.limitations) ? s.limitations.map(String) : undefined,
       })),
     };
   }

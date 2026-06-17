@@ -156,18 +156,27 @@ func executePublishBuild(convexBase, token string, claim *publishJobClaim) ([]pu
 
 // shotsJobTargets are pseudo-targets handled locally by Engine 1 (sim +
 // Maestro screenshot capture) rather than by /deploy/ship.
-//   shots        → capture + upload screenshots only
-//   shots-submit → capture + upload + metadata + attempt submit-for-review
+//
+//	shots        → capture + upload screenshots only
+//	shots-submit → capture + upload + metadata + attempt submit-for-review
 var shotsJobTargets = map[string]bool{"shots": true, "shots-submit": true}
+
+// platformJobTargets are deployable platform surfaces that do not go
+// through /deploy/ship yet. They use the mobile_platform_deploy spine
+// directly so mobile/web can enqueue TV deploys without a human shell.
+var platformJobTargets = map[string]bool{"tv": true, "android-tv": true, "tvos": true}
 
 // runLocalShipForJob dispatches the claim's targets: store binaries go
 // through the existing /deploy/ship spine; `shots*` pseudo-targets run the
 // local screenshot pipeline (ShotsPlan). Results are merged.
 func runLocalShipForJob(claim *publishJobClaim, phase *atomicString, token string) ([]publishTargetResult, bool) {
-	var shipTargets, shotsTargets []string
+	var shipTargets, shotsTargets, platformTargets []string
 	for _, t := range claim.Targets {
+		t = normalizePublishJobTarget(t)
 		if shotsJobTargets[t] {
 			shotsTargets = append(shotsTargets, t)
+		} else if platformJobTargets[t] {
+			platformTargets = append(platformTargets, t)
 		} else {
 			shipTargets = append(shipTargets, t)
 		}
@@ -187,7 +196,57 @@ func runLocalShipForJob(claim *publishJobClaim, phase *atomicString, token strin
 			overall = false
 		}
 	}
+	for _, t := range platformTargets {
+		r := runPlatformTargetForJob(t, phase)
+		results = append(results, r)
+		if !r.OK {
+			overall = false
+		}
+	}
 	return results, overall
+}
+
+func normalizePublishJobTarget(target string) string {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "androidtv", "leanback", "google-tv", "googletv":
+		return "android-tv"
+	case "apple-tv", "appletv":
+		return "tvos"
+	case "television":
+		return "tv"
+	default:
+		return strings.ToLower(strings.TrimSpace(target))
+	}
+}
+
+func runPlatformTargetForJob(target string, phase *atomicString) publishTargetResult {
+	phase.Set("building " + target)
+	start := time.Now()
+	out := mcpMobilePlatformDeploy("", target, true, false, 7200)
+	ok, _ := out["ok"].(bool)
+	result := publishTargetResult{
+		Target:     target,
+		OK:         ok,
+		DurationMs: time.Since(start).Milliseconds(),
+	}
+	if ok {
+		result.ExitCode = 0
+		phase.Set("finished " + target)
+		return result
+	}
+	result.ExitCode = -1
+	if code, ok := out["exit_code"].(int); ok {
+		result.ExitCode = code
+	}
+	if out["timed_out"] == true {
+		result.ErrorClass = "timeout"
+	} else if errText, _ := out["error"].(string); strings.TrimSpace(errText) != "" {
+		result.ErrorClass = "platform_dispatch"
+	} else {
+		result.ErrorClass = "platform_deploy"
+	}
+	phase.Set("failed " + target)
+	return result
 }
 
 // runShotsTargetForJob runs Engine 1 locally for a shots* pseudo-target.
@@ -477,9 +536,9 @@ func (a *atomicString) Get() string  { a.mu.RLock(); defer a.mu.RUnlock(); retur
 func computePublishCapabilities() []string {
 	switch runtime.GOOS {
 	case "darwin":
-		return []string{"ios", "android"}
+		return []string{"ios", "android", "android-tv", "tvos", "tv"}
 	case "linux":
-		return []string{"android"}
+		return []string{"android", "android-tv"}
 	default:
 		return []string{}
 	}

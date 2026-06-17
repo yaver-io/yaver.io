@@ -1333,6 +1333,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/doctor/build", s.auth(s.handleDoctorBuild))
 	mux.HandleFunc("/deploy/templates", s.auth(s.handleDeployTemplates))
 	mux.HandleFunc("/deploy/capabilities", s.auth(s.handleDeployCapabilities))
+	mux.HandleFunc("/mobile/platform-matrix", s.auth(s.handleMobilePlatformMatrix))
 	mux.HandleFunc("/deploy/generate", s.auth(s.handleDeployGenerate))
 	mux.HandleFunc("/fleet/deploy-options", s.auth(s.handleFleetDeployOptions))
 	mux.HandleFunc("/deploy/ship", s.auth(s.handleDeployShip))
@@ -10592,6 +10593,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpMobilePlatformDeploy(a.Dir, a.Target, a.Upload, a.DryRun, a.TimeoutSec))
+	case "mobile_platform_matrix":
+		var a struct {
+			Dir string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMobilePlatformMatrix(a.Dir))
 	case "deploy_run":
 		var a struct {
 			Dir string `json:"directory"`

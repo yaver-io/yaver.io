@@ -54,6 +54,18 @@ var publishStoreAliases = map[string][]string{
 	// Both
 	"both": {"testflight", "playstore"},
 	"all":  {"testflight", "playstore"},
+	// TV surfaces. These are handled by the platform deploy spine,
+	// not /deploy/ship, unless queued to a farm node.
+	"tv":         {"android-tv", "tvos"},
+	"television": {"android-tv", "tvos"},
+	"android-tv": {"android-tv"},
+	"androidtv":  {"android-tv"},
+	"google-tv":  {"android-tv"},
+	"googletv":   {"android-tv"},
+	"leanback":   {"android-tv"},
+	"tvos":       {"tvos"},
+	"apple-tv":   {"tvos"},
+	"appletv":    {"tvos"},
 }
 
 // isPublishStoreWord reports whether arg looks like a store selector (so
@@ -137,11 +149,35 @@ func runPublishStoreFacade(args []string) {
 	fmt.Fprintf(os.Stderr, "→ Publishing %s to %s on %s …\n",
 		resolvedApp, strings.Join(targets, " + "), where)
 
+	if hasPlatformPublishTarget(targets) {
+		if strings.TrimSpace(*machine) != "" {
+			fmt.Fprintln(os.Stderr, "TV platform targets on a remote machine use --queue --machine <deviceId> so the farm node can run mobile_platform_deploy.")
+			os.Exit(2)
+		}
+		for _, target := range targets {
+			out := mcpMobilePlatformDeploy(resolvedPath, target, true, false, *timeout)
+			if ok, _ := out["ok"].(bool); !ok {
+				fmt.Fprintf(os.Stderr, "platform publish %s failed: %v\n", target, out["error"])
+				os.Exit(1)
+			}
+		}
+		os.Exit(0)
+	}
+
 	// Delegate to the existing, tested ship path. Single store → one
 	// target (simple path); both → composite server-side fan-out. Either
 	// way this is /deploy/ship, not a reimplementation.
 	exit := shipToAgent(cfg, resolvedApp, targets, *stack, resolvedPath, *timeout, strings.TrimSpace(*machine))
 	os.Exit(exit)
+}
+
+func hasPlatformPublishTarget(targets []string) bool {
+	for _, target := range targets {
+		if platformJobTargets[normalizePublishJobTarget(target)] {
+			return true
+		}
+	}
+	return false
 }
 
 // publishConvexBase returns (token, convexSiteURL) for talking to the
