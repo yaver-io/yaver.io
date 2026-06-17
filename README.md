@@ -1,7 +1,7 @@
 # Yaver
 
 [![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
-[![License: AGPL%20v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html)
+[![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](LICENSING.md)
 
 Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md) · [Runtime Control Plane](docs/runtime-control-plane.md)
 
