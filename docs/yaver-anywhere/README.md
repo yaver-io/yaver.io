@@ -40,6 +40,8 @@ where isolation is solved by physics (1 phone = 1 user).
 | 5 | [rollout-and-capex.md](rollout-and-capex.md) | phased rollout, your 3×4 GB boxes, CapEx, economics |
 | 6 | [coding-tickets.md](coding-tickets.md) | **what to hand Codex now** — Ticket 1 (TURN) + Ticket 2 (onboarding) |
 | 7 | [DECISIONS.md](DECISIONS.md) | every decision made + rationale + open questions + how we got here |
+| 8 | [real-device-testing.md](real-device-testing.md) | physical Android, off-network TURN, reset wizard, and redroid evidence plan |
+| 9 | [hermes-agent-gap-analysis.md](hermes-agent-gap-analysis.md) | official Hermes Agent comparison and Yaver-specific follow-up tickets |
 
 > **Monetization & licensing** have no separate file: the no-VC monetization model lives
 > in [strategy-and-reality.md](strategy-and-reality.md) §6, and ARCHITECTURE.md §16
@@ -57,7 +59,7 @@ real but OS/path-limited · **stub** = exists but gated/unpublished · **absent*
 | WebRTC stream sources (screen/capture/scene) | prod | pion v4, H.264, fan-out, TURN ok |
 | WebRTC audio | partial | Opus, **Linux only** |
 | Remote control `/rd/input` + policy | prod | mac/linux/windows; consent + audit |
-| **TURN on interactive session path** | **stub** | `remote_runtime_webrtc.go:257` empty ICE → **WS-A / Ticket 1** |
+| **TURN on interactive session path** | alpha | `remote_runtime_webrtc.go` now uses `iceServersForPeer()`; scoped tests pass; off-network hardware proof still pending |
 | Remote Session MVP | alpha | `ops_remote_session.go` + `RemoteSessionView.tsx`, uncommitted, no tests |
 | Managed cloud (Hetzner) | partial | real, gated behind owner-email env |
 | Auto-down / idle shutdown | absent | **WS-B** (snapshot+delete, not power-off) |
@@ -65,6 +67,8 @@ real but OS/path-limited · **stub** = exists but gated/unpublished · **absent*
 | Published cloud image | stub | `cloud-images.json` all null → **WS-C** |
 | Metering live | stub | `dryRun` until `YAVER_MANAGED_METER_LIVE` → **WS-D** |
 | On-Android node | prod | `SandboxService.kt:99` runs `libyaver.so serve` |
+| Android home-host toggle | alpha | starts single-owner `serve --relay-only`; battery/charging status; real relay proof pending |
+| Android prepare-for-colo wizard | alpha | reset checklist + Android reset settings deep-link; physical walkthrough pending |
 | Phone multi-tenant isolation | absent | impossible w/o root → **colo = 1 phone/user** |
 | Licensing split (FSL core + Apache SDK) | prod | implemented; README badge fixed AGPL→FSL |
 
@@ -92,13 +96,22 @@ See ARCHITECTURE.md §17 for the dependency DAG.
 
 ## The five gaps (the whole game)
 
-1. **TURN on the interactive path** — one line; unblocks "Anywhere" off-LAN.
+1. **TURN on the interactive path** — wired in code; off-network phone proof still pending.
 2. **Auto-down** — snapshot+delete (Hetzner bills stopped boxes); the margin protector.
 3. **Publish one image** — instant provision.
 4. **Metering live** — flip flags + wallet.
 5. **README badge** — done (AGPL → FSL).
 
 Four of five are *finishing*, not greenfield.
+
+## Fresh Competitive Scan
+
+The Hermes Agent docs were reviewed on 2026-06-17. The useful gaps for Yaver are
+not "copy Hermes"; they are product primitives Yaver should add around its
+managed-cloud/runtime fabric: assistant profiles, scheduled jobs, memory-write
+approval, toolset filtering, chat pairing, hosted MCP OAuth, and a clearer
+redroid QA product surface. See
+[hermes-agent-gap-analysis.md](hermes-agent-gap-analysis.md).
 
 ---
 

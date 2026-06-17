@@ -27,14 +27,19 @@ Context docs (read for "why"):
 
 ## Ticket 1 — WS-A: Wire TURN into the interactive WebRTC path  ⭐ DO FIRST
 
+**Code status:** completed 2026-06-17. `remote_runtime_webrtc.go` now builds the
+interactive PeerConnection with `ICEServers: iceServersForPeer()`, scoped tests pass,
+and `RemoteSessionView.tsx` already fetches `/stream/webrtc/ice`. The remaining DoD is
+manual off-network phone/laptop verification with a real relay+TURN host.
+
 **Priority:** highest. This is the single load-bearing fix for the entire "Anywhere"
-thesis. Until it lands, interactive remote sessions only connect on the same LAN /
-Tailscale; off-network (CG-NAT, cellular, different WiFi) silently fails to connect.
+thesis. The code path is now wired; the remaining risk is proving it with a real
+off-network relay/TURN session instead of only scoped tests.
 
 ### 1.1 Problem (verified)
 
-The interactive session PeerConnection is built with an **empty ICE config**, so it
-never offers STUN/TURN candidates:
+The interactive session PeerConnection used to be built with an **empty ICE config**,
+so it never offered STUN/TURN candidates:
 
 `desktop/agent/remote_runtime_webrtc.go:257`
 ```go
@@ -55,7 +60,7 @@ config from `GET /stream/webrtc/ice` (`handleRemoteRuntimeTURNCredentials`,
 `turn_credentials.go:52`), so once the agent offers TURN candidates too, both peers
 agree on the relay candidate and off-network viewing works.
 
-### 1.2 The change (one line)
+### 1.2 The change (done)
 
 In `desktop/agent/remote_runtime_webrtc.go`, in `ApplyWebRTCOffer`, line ~257:
 
@@ -83,9 +88,9 @@ Only the non-`_test.go` hit gets the change. (If a new prod call site has appear
 `ghost_stream.go` / another remote-runtime file, apply the same `ICEServers:` fix
 there too.)
 
-### 1.4 Tests to add
+### 1.4 Tests added
 
-New file `desktop/agent/turn_interactive_test.go`:
+Added to `desktop/agent/turn_credentials_test.go`:
 
 1. **`iceServersForPeer` shape:**
    - With no TURN env → returns exactly one STUN entry (default
@@ -99,9 +104,9 @@ New file `desktop/agent/turn_interactive_test.go`:
    bandwidth). Assert the existing guard still holds. Follow the real-HTTP-server test
    pattern in the package.
 
-Run scoped:
+Scoped run used:
 ```bash
-cd desktop/agent && go test -run 'TestTURN|TestIceServers' ./... 2>&1 | tail -20
+cd desktop/agent && go test -run 'Test(IceServers|HandleRemoteRuntimeTURN|StreamWebRTCICE)' ./...
 ```
 
 ### 1.5 Manual verification (the real DoD)
@@ -119,9 +124,9 @@ Off-network proof, using one of the user's 4 GB laptops as the relay+TURN host:
    interactive viewer, add it).
 
 ### 1.6 Done when
-- One-line prod change in `remote_runtime_webrtc.go`; test clients untouched.
-- New tests pass (scoped run).
-- Off-network phone→laptop interactive session connects.
+- One-line prod change in `remote_runtime_webrtc.go`; test clients untouched. **Done.**
+- New tests pass (scoped run). **Done.**
+- Off-network phone→laptop interactive session connects. **Pending manual verification.**
 - No commit/push (await user).
 
 ---
@@ -143,9 +148,17 @@ Existing anchors (verified):
 - Operator mode: `desktop/agent/main.go:2146` `--operator` → `httpserver.go:46`
   `operatorMode`.
 - Egress jail: `desktop/agent/egress_proxy.go:149` `isPrivateOrReserved` (RFC1918 block).
-- Relay-only inbound bind: **NOT yet wired** (must add — see 2A).
+- Relay-only inbound bind: `desktop/agent/httpserver.go` `directBindHost()` binds direct
+  HTTP/TLS to `127.0.0.1` when `--relay-only` is set.
 
 ### Sub-ticket 2A — "Host my assistant here" (home-hosting, no wipe) — START HERE
+
+**Code status:** implemented 2026-06-17. Android has a "Host my assistant on this
+phone" toggle on `mobile/app/local-box.tsx`; `SandboxService` starts single-owner
+home-host mode with `serve --relay-only`, foreground notification, sticky restart, and
+battery/charging status. Agent `--relay-only` bind is wired and covered by
+`TestHTTPServerDirectBindHostRelayOnly`. Remaining DoD is a real phone → relay →
+off-network owner session proof.
 
 Goal: a non-engineer taps one button; their existing phone (all apps/data intact)
 starts serving their own assistant, reachable only via relay. Zero wipe, zero trust.
@@ -167,6 +180,11 @@ starts serving their own assistant, reachable only via relay. Zero wipe, zero tr
 
 ### Sub-ticket 2B — "Prepare this phone" wizard (guided factory reset)
 
+**Code status:** implemented 2026-06-17. `mobile/app/local-box.tsx` now includes an
+honest pre-reset checklist and `SandboxModule.openFactoryResetSettings()` deep-links to
+Android reset/privacy settings with a Settings fallback. It does not wipe
+programmatically. Remaining DoD is a physical Android walkthrough.
+
 Goal: non-engineer makes a phone safe to send for colo/donation. On-phone, no PC.
 
 - **Mobile:** a wizard with a checklist (back up · sign out of Google/accounts · we
@@ -178,6 +196,11 @@ Goal: non-engineer makes a phone safe to send for colo/donation. On-phone, no PC
   pre-erase checklist.
 
 ### Sub-ticket 2C — QR managed enrollment (Android Enterprise / Device Owner) — SPIKE FIRST
+
+**Spike status:** completed 2026-06-17 in `edge-fleet-colo-donate.md` §12.5. Decision:
+use Android Management API first for QR enrollment, kiosk policy, app auto-install, and
+remote wipe; keep a DIY Device Owner/DPC as a later fallback only if AMAPI blocks an
+appliance requirement.
 
 Goal: after reset, the user scans a Yaver QR in the setup wizard → phone becomes a
 managed, kiosk-locked Yaver appliance. This is the standard EMM path
@@ -194,6 +217,62 @@ managed, kiosk-locked Yaver appliance. This is the standard EMM path
   appliance, no PC/terminal/root.
 
 ### Sub-ticket 2D — Appliance hardening (Device Owner powers)
+
+## Ticket 3 — Real-device and redroid evidence loop
+
+**Code status:** added 2026-06-17. The real-device runbook lives in
+`docs/yaver-anywhere/real-device-testing.md`, and the local evidence script is
+`scripts/smoke-yaver-anywhere-android.sh`. On this Mac, Docker was not reachable
+and no Android device was attached, so only unit-level redroid/testkit coverage
+could be executed locally.
+
+Goal: make every Yaver Anywhere claim produce repeatable evidence from a real
+phone, off-network TURN session, reset wizard walkthrough, and redroid Linux
+runner.
+
+- Run `./scripts/smoke-yaver-anywhere-android.sh` with a physical phone attached.
+- Run `START_HOME_HOST=1 ./scripts/smoke-yaver-anywhere-android.sh` or start
+  home-host mode manually in the app and rerun the script.
+- Prove owner off-network access through the relay and non-owner rejection.
+- Prove `remote_runtime_webrtc.go` interactive WebRTC connects from cellular
+  when TURN env is configured.
+- Run the reset wizard on a spare phone and confirm it opens Android reset
+  settings with honest erase-device copy.
+- Run redroid on a Linux host; macOS Docker Desktop is not enough for the final
+  redroid proof because redroid needs host Linux binder support.
+
+Scoped local checks:
+
+```bash
+cd desktop/agent && go test -run 'Test.*Redroid|TestAndroid.*UI|TestAndroid.*Selector|TestStudio' ./studio ./testkit .
+```
+
+Done when the evidence template in `real-device-testing.md` is filled with
+sanitized artifacts for one physical Android phone and one redroid Linux host.
+
+## Ticket 4 — Hermes Agent competitive follow-up
+
+**Research status:** completed 2026-06-17 against the official Hermes Agent docs.
+Findings and Yaver-specific backlog live in
+`docs/yaver-anywhere/hermes-agent-gap-analysis.md`.
+
+Goal: copy the product primitives that make Hermes complete without weakening
+Yaver's managed-cloud/runtime position.
+
+Priority order:
+
+1. Productize dedicated resources for normal users: cloud box, Android clone,
+   home phone, laptop. `redroid_resource_status` is the first read-only status
+   verb for this; `android_clone_provision` is the first Hetzner-backed
+   dry-run/create verb for a private ARM redroid resource.
+2. Productize redroid QA as first-class boot/install/run/report actions.
+3. Design assistant profiles as a state and permission boundary, but present
+   them as normal-user assistants, not developer config profiles.
+4. Add scheduled automations with runtime selection and auto-down budget limits.
+5. Add bounded local memory with pending-write approval.
+6. Add toolset filtering presets and guest/owner enforcement.
+7. Add Telegram/Discord gateway pairing before broader messaging platforms.
+8. Add hosted MCP OAuth/paste-back onboarding.
 
 After 2C: kiosk lock to the node app, enforce FDE, remote-wipe, and (donation only) a
 Yaver-side **verified intake wipe + signed "data destroyed" certificate**. Maps to

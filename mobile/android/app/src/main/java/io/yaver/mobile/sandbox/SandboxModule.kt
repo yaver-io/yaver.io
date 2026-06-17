@@ -3,6 +3,7 @@ package io.yaver.mobile.sandbox
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -17,6 +18,7 @@ import java.io.File
  * JS side: mobile/src/lib/sandboxControl.ts.
  *
  *   start()                       → start the foreground SandboxService
+ *   startHomeHost()               → start owner-only relay-only home hosting
  *   stop()                        → stop it
  *   status()                      → { running, rootfsInstalled, version, nativeLibDir, credHome }
  *   installRootfs(url,sha,version)→ download+verify+extract (emits YaverSandboxProgress)
@@ -38,6 +40,17 @@ class SandboxModule(private val ctx: ReactApplicationContext) :
   }
 
   @ReactMethod
+  fun startHomeHost(promise: Promise) {
+    try {
+      val i = Intent(ctx, SandboxService::class.java).apply { action = SandboxService.ACTION_START_HOME_HOST }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i) else ctx.startService(i)
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("start_home_host_failed", e.message, e)
+    }
+  }
+
+  @ReactMethod
   fun stop(promise: Promise) {
     try {
       val i = Intent(ctx, SandboxService::class.java).apply { action = SandboxService.ACTION_STOP }
@@ -45,6 +58,25 @@ class SandboxModule(private val ctx: ReactApplicationContext) :
       promise.resolve(true)
     } catch (e: Exception) {
       promise.reject("stop_failed", e.message, e)
+    }
+  }
+
+  @ReactMethod
+  fun openFactoryResetSettings(promise: Promise) {
+    try {
+      val i = Intent(Settings.ACTION_PRIVACY_SETTINGS).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      try {
+        ctx.startActivity(i)
+      } catch (_: Exception) {
+        ctx.startActivity(Intent(Settings.ACTION_SETTINGS).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+      }
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("open_reset_settings_failed", e.message, e)
     }
   }
 
@@ -58,6 +90,11 @@ class SandboxModule(private val ctx: ReactApplicationContext) :
     m.putString("credHome", SandboxService.credHomeDir(ctx).absolutePath)
     m.putBoolean("prootPresent", File(SandboxService.nativeLibDir(ctx), "libproot.so").exists())
     m.putBoolean("agentPresent", File(SandboxService.nativeLibDir(ctx), "libyaver.so").exists())
+    m.putBoolean("homeHostMode", SandboxService.homeHostMode)
+    m.putBoolean("relayOnly", SandboxService.homeHostMode)
+    val battery = SandboxService.batteryStatus(ctx)
+    m.putInt("batteryPercent", battery.first)
+    m.putBoolean("charging", battery.second)
     promise.resolve(m)
   }
 

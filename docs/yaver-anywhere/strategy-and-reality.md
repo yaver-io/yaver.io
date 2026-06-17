@@ -87,7 +87,7 @@ exists, gated off or unpublished; **absent** = not in repo.
 | Audio (Opus) | `stream_webrtc_audio.go` | **partial** | ALSA→libopus, **Linux only**; mac/Windows silently skipped. |
 | MJPEG/snapshot fallback | `ghost_stream.go`, `capture.go`, `remote_runtime_webrtc.go` | **prod** | `/ghost/stream`, `/capture/stream`, JPEG data-channel `/remote-runtime/.../frame`. |
 | TURN for stream sources | `turn_credentials.go`, `/stream/webrtc/ice` | **prod** | STUN always; TURN if `YAVER_TURN_URL` + secret. |
-| **TURN for interactive sessions** | `remote_runtime_webrtc.go::ApplyWebRTCOffer` | **stub** | PeerConnection built with **empty ICE config** (line ~257, comment "TURN is not wired yet"). Off-LAN interactive sessions rely on direct/Tailscale only. **This is the #1 gap — see §4.** |
+| **TURN for interactive sessions** | `remote_runtime_webrtc.go::ApplyWebRTCOffer` | **alpha** | PeerConnection now uses `iceServersForPeer()`; scoped tests cover STUN/TURN shape and owner-only credential minting. Off-network hardware proof is still pending. |
 
 ### 3.2 Remote Control
 
@@ -143,10 +143,10 @@ exists, gated off or unpublished; **absent** = not in repo.
 Everything else in this doc is reuse. These five are the whole game, and four of the
 five are *finishing*, not building.
 
-1. **Wire TURN into the interactive session path.** `remote_runtime_webrtc.go`
-   builds the PeerConnection with an empty ICE config — reuse `iceServersForPeer()` /
-   `turn_credentials.go` already used by the stream-source path. Without this,
-   "Anywhere" does not work anywhere off-LAN. **#1 unlock.**
+1. **Prove TURN on the interactive session path off-network.** `remote_runtime_webrtc.go`
+   now reuses `iceServersForPeer()` / `turn_credentials.go`, matching the stream-source
+   path. The remaining unlock is the real cellular/WiFi hardware proof with a relay/TURN
+   host.
 
 2. **Idle shutdown for managed cloud.** A box runs until manually killed. At a 2×
    markup, one forgotten idle box eats the margin on ten active ones. Without VC,
@@ -280,7 +280,7 @@ roadmap.
 
 ### Phase 0 — Close the product gaps (the five in §4)
 
-- Wire TURN into `remote_runtime_webrtc.go` (reuse `iceServersForPeer`). Add
+- Prove the wired interactive TURN path from a different network, then add
   `yaver doctor stream` to report missing ffmpeg / screen perm / TURN / audio.
 - Implement managed-cloud idle shutdown (inactivity → snapshot-safe stop).
 - Capture + publish one Hetzner image; commit its ID to `cloud-images.json`.

@@ -24,7 +24,9 @@ import {
 const Native = (NativeModules as any).YaverSandbox as
   | {
       start(): Promise<boolean>;
+      startHomeHost(): Promise<boolean>;
       stop(): Promise<boolean>;
+      openFactoryResetSettings(): Promise<boolean>;
       status(): Promise<SandboxNativeStatus>;
       installRootfs(url: string, sha256: string, version: string, force: boolean): Promise<boolean>;
     }
@@ -38,6 +40,10 @@ export interface SandboxNativeStatus {
   credHome: string;
   prootPresent: boolean;
   agentPresent: boolean;
+  homeHostMode?: boolean;
+  relayOnly?: boolean;
+  batteryPercent?: number;
+  charging?: boolean;
 }
 
 /** Android-only, and only when the native module is linked (a build that shipped
@@ -123,6 +129,39 @@ export async function startSandbox(token: string): Promise<LocalBoxProbe> {
   return probe;
 }
 
+/** Start this phone as a single-owner home host. This is Android-only and
+ *  deliberately NOT operator mode: the agent serves the signed-in user and binds
+ *  direct listeners to loopback via --relay-only, so off-device access must come
+ *  through the authenticated relay path. It does not require the proot rootfs. */
+export async function startHomeHostSandbox(token: string): Promise<LocalBoxProbe> {
+  if (!Native) throw new Error("on-device sandbox not available on this build/platform");
+  await Native.startHomeHost();
+
+  let probe: LocalBoxProbe = { reachable: false };
+  for (let i = 0; i < 20; i++) {
+    probe = await probeLocalBox();
+    if (probe.reachable) break;
+    await delay(500);
+  }
+  if (!probe.reachable) return probe;
+
+  try {
+    await Promise.race([
+      connectionManager.ensureConnected(LOCAL_BOX_DEVICE_ID, {
+        host: "127.0.0.1",
+        port: 18080,
+        token,
+      }),
+      delay(8000).then(() => {
+        throw new Error("loopback connect pending");
+      }),
+    ]);
+  } catch {
+    // The home-host service is up; device registration/relay can settle after boot.
+  }
+  return probe;
+}
+
 export async function stopSandbox(): Promise<void> {
   if (!Native) return;
   try {
@@ -130,6 +169,11 @@ export async function stopSandbox(): Promise<void> {
   } finally {
     connectionManager.disconnect(LOCAL_BOX_DEVICE_ID);
   }
+}
+
+export async function openFactoryResetSettings(): Promise<boolean> {
+  if (!Native) throw new Error("Android reset settings are not available on this build/platform");
+  return Native.openFactoryResetSettings();
 }
 
 /** The synthetic "This phone" device to inject into the device list, or null

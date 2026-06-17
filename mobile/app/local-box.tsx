@@ -13,7 +13,7 @@
 // payload, or a rootfs that hasn't been published yet).
 
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack } from "expo-router";
 
@@ -24,13 +24,15 @@ import {
   sandboxStatus,
   installRootfs,
   onInstallProgress,
+  openFactoryResetSettings,
+  startHomeHostSandbox,
   startSandbox,
   stopSandbox,
   type SandboxNativeStatus,
 } from "../src/lib/sandboxControl";
 import { ROOTFS_MANIFEST, ROOTFS_PUBLISHED } from "../src/lib/sandboxRootfsManifest";
 
-type Busy = "idle" | "installing" | "starting" | "stopping";
+type Busy = "idle" | "installing" | "starting" | "hosting" | "stopping";
 
 export default function LocalBoxScreen() {
   const c = useColors();
@@ -41,6 +43,11 @@ export default function LocalBoxScreen() {
   const [busy, setBusy] = useState<Busy>("idle");
   const [progress, setProgress] = useState<{ phase: string; pct: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetChecks, setResetChecks] = useState({
+    backedUp: false,
+    signedOut: false,
+    understandsErase: false,
+  });
 
   const refresh = useCallback(async () => {
     setStatus(await sandboxStatus());
@@ -92,6 +99,27 @@ export default function LocalBoxScreen() {
     }
   }, [token, refresh]);
 
+  const onHomeHostToggle = useCallback(async (enabled: boolean) => {
+    if (enabled && !token) {
+      setError("Sign in first — the on-device agent authenticates as you.");
+      return;
+    }
+    setError(null);
+    setBusy(enabled ? "hosting" : "stopping");
+    try {
+      if (enabled) {
+        await startHomeHostSandbox(token!);
+      } else {
+        await stopSandbox();
+      }
+      await refresh();
+    } catch (e: any) {
+      setError(e?.message ?? (enabled ? "Failed to host on this phone." : "Failed to stop hosting."));
+    } finally {
+      setBusy("idle");
+    }
+  }, [token, refresh]);
+
   const onStop = useCallback(async () => {
     setError(null);
     setBusy("stopping");
@@ -102,6 +130,15 @@ export default function LocalBoxScreen() {
       setBusy("idle");
     }
   }, [refresh]);
+
+  const onOpenResetSettings = useCallback(async () => {
+    setError(null);
+    try {
+      await openFactoryResetSettings();
+    } catch (e: any) {
+      setError(e?.message ?? "Could not open Android reset settings.");
+    }
+  }, []);
 
   // ── Unsupported (iOS / web / build without the jniLibs payload) ──────────
   if (!supported) {
@@ -125,9 +162,17 @@ export default function LocalBoxScreen() {
   const prootPresent = !!status?.prootPresent;
   const rootfsInstalled = !!status?.rootfsInstalled;
   const running = !!status?.running;
+  const homeHostMode = !!status?.homeHostMode;
+  const relayOnly = !!status?.relayOnly;
+  const batteryPercent = typeof status?.batteryPercent === "number" && status.batteryPercent >= 0
+    ? `${status.batteryPercent}%`
+    : "unknown";
+  const charging = !!status?.charging;
 
   const canInstall = agentPresent && prootPresent && ROOTFS_PUBLISHED && busy === "idle";
   const canStart = agentPresent && rootfsInstalled && !running && busy === "idle";
+  const canToggleHomeHost = agentPresent && busy === "idle";
+  const resetReady = resetChecks.backedUp && resetChecks.signedOut && resetChecks.understandsErase;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -139,6 +184,65 @@ export default function LocalBoxScreen() {
           Yaver agent on 127.0.0.1. The terminal, runner toggles and Hermes
           reload then drive it exactly like a remote machine — no box needed.
         </Text>
+
+        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.h, { color: c.textPrimary }]}>Host my assistant on this phone</Text>
+              <Text style={[styles.p, { color: c.textMuted }]}>
+                Starts the native agent for your signed-in account with direct listeners bound to loopback.
+              </Text>
+            </View>
+            {busy === "hosting" || busy === "stopping" ? (
+              <ActivityIndicator size="small" color={c.accent} />
+            ) : (
+              <Switch
+                value={homeHostMode && running}
+                disabled={!canToggleHomeHost}
+                onValueChange={onHomeHostToggle}
+                trackColor={{ false: c.border, true: c.accent }}
+                thumbColor="#fff"
+              />
+            )}
+          </View>
+          <Sep c={c} />
+          <StepRow c={c} label="Relay-only inbound" ok={homeHostMode && relayOnly}
+            hint={homeHostMode && relayOnly ? "direct HTTP/TLS listeners are loopback-only" : "off"} />
+          <Sep c={c} />
+          <StepRow c={c} label="Power" ok={charging}
+            hint={`${batteryPercent}${charging ? " · charging" : " · not charging"}`} />
+        </View>
+
+        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+          <Text style={[styles.h, { color: c.textPrimary }]}>Prepare this phone for colo</Text>
+          <Text style={[styles.p, { color: c.textMuted }]}>
+            This path erases the phone, including apps. Use home hosting above when you want to keep apps and data.
+          </Text>
+          <CheckRow
+            c={c}
+            checked={resetChecks.backedUp}
+            label="Back up anything you need"
+            onPress={() => setResetChecks((v) => ({ ...v, backedUp: !v.backedUp }))}
+          />
+          <CheckRow
+            c={c}
+            checked={resetChecks.signedOut}
+            label="Sign out of Google and app accounts"
+            onPress={() => setResetChecks((v) => ({ ...v, signedOut: !v.signedOut }))}
+          />
+          <CheckRow
+            c={c}
+            checked={resetChecks.understandsErase}
+            label="I understand factory reset erases apps and data"
+            onPress={() => setResetChecks((v) => ({ ...v, understandsErase: !v.understandsErase }))}
+          />
+          <Btn
+            c={c}
+            label="Open Android reset settings"
+            disabled={!resetReady}
+            onPress={onOpenResetSettings}
+          />
+        </View>
 
         {/* Capability ladder */}
         <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
@@ -205,9 +309,13 @@ export default function LocalBoxScreen() {
                 ? "Select \"This phone\" in the box picker to open a terminal or run a coding agent against it."
                 : "Starts the foreground agent and registers this phone as a box."}
             </Text>
-            {running ? (
+            {running && !homeHostMode ? (
               <Btn c={c} label={busy === "stopping" ? "Stopping…" : "Stop"} tone="error"
                 disabled={busy !== "idle"} busy={busy === "stopping"} onPress={onStop} />
+            ) : running && homeHostMode ? (
+              <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 10 }}>
+                Turn off home hosting above before starting the coding sandbox mode.
+              </Text>
             ) : (
               <Btn c={c} label={busy === "starting" ? "Starting…" : "Start"}
                 disabled={!canStart} busy={busy === "starting"} onPress={onStart} />
@@ -240,6 +348,20 @@ function Sep({ c }: { c: any }) {
   return <View style={[styles.sep, { backgroundColor: c.borderSubtle }]} />;
 }
 
+function CheckRow({ c, checked, label, onPress }: { c: any; checked: boolean; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={styles.checkRow}>
+      <View style={[styles.checkBox, {
+        borderColor: checked ? c.accent : c.border,
+        backgroundColor: checked ? c.accent : "transparent",
+      }]}>
+        {checked && <Text style={styles.checkMark}>✓</Text>}
+      </View>
+      <Text style={{ color: c.textPrimary, flex: 1, fontSize: 13 }}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function Banner({ c, tone, text }: { c: any; tone: "error" | "warn"; text: string }) {
   const bg = tone === "error" ? c.errorBg : c.warnBg;
   const bd = tone === "error" ? c.errorBorder : c.warnBorder;
@@ -270,6 +392,10 @@ const styles = StyleSheet.create({
   h: { fontSize: 15, fontWeight: "700", marginBottom: 4 },
   p: { fontSize: 12, lineHeight: 18 },
   stepRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10 },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  checkRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 12 },
+  checkBox: { width: 22, height: 22, borderRadius: 5, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  checkMark: { color: "#fff", fontSize: 14, fontWeight: "800", lineHeight: 18 },
   dot: { width: 12, height: 12, borderRadius: 6, borderWidth: 1 },
   sep: { height: StyleSheet.hairlineWidth },
   banner: { borderWidth: 1, borderRadius: 10, padding: 12 },

@@ -1392,10 +1392,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Operator boxes bind direct listeners to loopback so they're reachable
 	// only via the relay (never exposed on the operator's home/office LAN).
-	bindHost := "0.0.0.0"
-	if s.relayOnly {
-		bindHost = "127.0.0.1"
-	}
+	bindHost := s.directBindHost()
 
 	s.server = &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", bindHost, s.port),
@@ -1465,6 +1462,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func (s *HTTPServer) directBindHost() string {
+	if s != nil && s.relayOnly {
+		return "127.0.0.1"
+	}
+	return "0.0.0.0"
 }
 
 // ---------------------------------------------------------------------------

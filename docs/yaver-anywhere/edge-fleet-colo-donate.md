@@ -549,3 +549,46 @@ certificate — that's Yaver's job, not the donor's.
   and (donation) the intake verified-wipe + certificate.
 - **Never ship** a "delete personal data, keep apps" button as a handover-safety
   feature — it cannot be made complete (§12.1).
+
+### 12.5 Device Owner / QR enrollment spike (2026-06-17)
+
+Primary path: **Android Management API first**, not a DIY DPC first.
+
+Why:
+- Google's Android Management API provisions a fully managed device by creating an
+  enrollment token; the setup wizard QR flow installs Android Device Policy and binds
+  the resulting device to an enterprise/policy. This is the shortest path to "scan QR
+  after reset → managed appliance" without maintaining a full EMM stack.
+- Dedicated-device/kiosk policies are already in the Android Enterprise model. Yaver's
+  first policy should install only the Yaver app, set it as the kiosk app, keep the
+  device encrypted, disable account/add-user escape hatches, and allow remote wipe.
+- DIY Device Owner (`android.app.action.PROVISION_MANAGED_DEVICE` with a custom DPC)
+  gives maximum control later, but it means shipping and maintaining a Device Policy
+  Controller surface. Build it only if Android Management API blocks required Yaver
+  appliance behavior.
+
+Constraints:
+- QR Device Owner provisioning is a **post-reset setup-wizard** path for company-owned /
+  dedicated devices. It is not an in-app conversion for a personal phone with data still
+  on it.
+- Android Management API requires an enterprise/project setup on Google's side. Treat
+  this as an operator-side integration, not a pure local app feature.
+- The Yaver app still needs an enrollment receiver/first-run flow for appliance identity:
+  after Android Device Policy installs/locks the app, the app registers hardware-backed
+  keys (§11.3), binds to the owner/device record, and starts `serve --relay-only`.
+
+Minimal build path:
+1. Backend/operator service creates an Android Management API enterprise policy for
+   "Yaver appliance": kiosk package = Yaver app, app auto-install, network/time/update
+   settings locked down, remote wipe enabled.
+2. Backend creates short-lived enrollment tokens and renders the QR in the owner UI.
+3. User factory-resets the phone, taps the setup-wizard QR enrollment gesture, scans the
+   Yaver QR, and Android installs/enrolls the managed device.
+4. First app launch completes Yaver owner binding and TEE-backed key enrollment, then
+   starts the node in relay-only home/appliance mode.
+
+Sources checked: Android Management API provisioning docs
+(`developers.google.com/android/management/provision-device`), Android dedicated-device
+docs (`developer.android.com/work/dpc/dedicated-devices`), AOSP provisioning docs
+(`source.android.com/docs/devices/admin/provision`), and Google Play EMM QR provisioning
+docs (`developers.google.com/android/work/play/emm-api/prov-devices`).

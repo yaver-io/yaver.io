@@ -140,19 +140,22 @@ stopped servers, "down" must mean **snapshot + delete**, and "wake" must mean
 
 ## 3. Workstream A — TURN on the interactive path
 
-**Why:** `remote_runtime_webrtc.go` builds the PeerConnection with an empty ICE
-config, so interactive sessions only connect on LAN/Tailscale. The stream-source
-path already has working TURN. Reuse it.
+**Status:** Code wired 2026-06-17; scoped tests pass. The remaining DoD is an
+off-network phone/laptop proof using a real relay+TURN host.
+
+**Why:** interactive sessions previously built the PeerConnection with an empty ICE
+config, so they only connected on LAN/Tailscale. The stream-source path already had
+working TURN, and the interactive path now reuses it.
 
 **Anchors (verified):**
-- `desktop/agent/remote_runtime_webrtc.go:257` — `pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})` ← the bug.
+- `desktop/agent/remote_runtime_webrtc.go:257` — `pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersForPeer()})`.
 - `desktop/agent/stream_webrtc.go:37` — `func iceServersForPeer() []webrtc.ICEServer` (reads `YAVER_STUN_URL`, `YAVER_TURN_URL`, `turnAuthSecret()` = `TURN_AUTH_SECRET`/`RELAY_PASSWORD`; mints long-term creds). Already used at `stream_webrtc.go:207`.
 - `desktop/agent/turn_credentials.go:52` — `handleRemoteRuntimeTURNCredentials` backing `GET /stream/webrtc/ice` (httpserver.go:487). The web client already fetches this.
 
-**Change:**
-1. `remote_runtime_webrtc.go:257` → `webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersForPeer()})`.
-2. Grep for any other `NewPeerConnection(webrtc.Configuration{})` in the remote-runtime/ghost paths and apply the same.
-3. Confirm `RemoteSessionView.tsx` already calls `/stream/webrtc/ice` before creating its offer (audit says yes) — if any interactive viewer doesn't, add the fetch.
+**Change completed:**
+1. `remote_runtime_webrtc.go:257` now uses `webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersForPeer()})`.
+2. Grep confirmed the remaining empty `webrtc.Configuration{}` call sites are test clients.
+3. `RemoteSessionView.tsx` already calls `/stream/webrtc/ice` before creating its offer.
 
 **DoD:** From a second network (phone hotspot), web dashboard opens a managed
 browser session on a Hetzner box and gets video without LAN/Tailscale.
@@ -504,7 +507,7 @@ four known operator-fleet gaps (`docs/yaver-public-compute-operator-fleet.md`):
 | --- | --- | --- | --- | --- |
 | I1 | **Ephemeral per-tenant container**, no shared FS/cache, fresh per allocation, destroyed on release | `container_runner.go:257` (cgroup limits, RO root) + `host_share_reaper.go:86`/`:108` (kill+wipe) | partial (reaper shipped; per-tenant container + cron not fully wired) | **finish** — every free session = its own container; nothing persists across users |
 | I2 | **No paired-token = owner** on operator boxes (a foreign token must never gain owner scope) | gap B (`httpserver.go:1928`, `multiuser_http.go:173`) | partial (operator mode disables fast-path; verify no-op end-to-end) | **prove** with a test: foreign token cannot read another tenant's data/FS |
-| I3 | **Network jail** — relay-only inbound + RFC1918 egress block (free user cannot reach our home LAN) | `egress_proxy.go:149` `isPrivateOrReserved` (RFC1918/loopback/link-local block) | egress block works; **relay-only inbound binding NOT yet wired** | **add** `--relay-only` bind; assert a fleet node has no LAN-reachable listener |
+| I3 | **Network jail** — relay-only inbound + RFC1918 egress block (free user cannot reach our home LAN) | `egress_proxy.go:149` `isPrivateOrReserved`; `httpserver.go` `directBindHost()` | egress block works; `--relay-only` direct HTTP/TLS bind is wired; field relay test pending | verify a fleet node has no LAN-reachable listener over real network conditions |
 | I4 | **Teardown leaves zero residue** — processes killed, workspace + container wiped, no cross-tenant cache | `host_share_reaper.go` `reapHostShareSessions` `:108`, `ReapExcept` `:140` | shipped (hard-kill + wipe); add scheduled cron + verify | **verify** with a test: after release, next tenant sees a clean FS, no prior env/secrets |
 | I5 | **Operator/service identity**, not a personal account token, binds the node | gap A (`main.go`, `httpserver.go:224`) | stub | **build** a scoped operator principal so a leaked node token ≠ a person's account |
 | I6 | **Free-tier data residency** — a free user's data lives only in their ephemeral container + their own Convex *metadata* rows; nothing of theirs in our vault; nothing of ours reachable by them | privacy contract `convex_privacy_test.go` | enforced for sync; extend to free-tier rows | **extend** privacy tests to cover free-tier/tenant fields |

@@ -254,7 +254,7 @@ func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.S
 		live.closePeer()
 	}
 
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersForPeer()})
 	if err != nil {
 		return session, webrtc.SessionDescription{}, err
 	}

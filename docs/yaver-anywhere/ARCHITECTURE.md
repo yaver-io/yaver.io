@@ -157,8 +157,9 @@ Two WebRTC paths share encode/fan-out but differ in signaling:
   multi-viewer fan-out (`stream_webrtc_fanout.go`), Opus audio on Linux
   (`stream_webrtc_audio.go`), STUN+TURN via `iceServersForPeer()`.
 - **Interactive session path** — `remote_runtime_webrtc.go` `ApplyWebRTCOffer`. For
-  device/browser control. RTP-H.264 or JPEG-data-channel fallback, multi-viewer. **Gap:**
-  PeerConnection built with **empty ICE config** at `:257` → no TURN off-LAN → **WS-A**.
+  device/browser control. RTP-H.264 or JPEG-data-channel fallback, multi-viewer.
+  The agent-side PeerConnection now uses `iceServersForPeer()`; off-network hardware
+  proof is still pending.
 - Fallbacks: MJPEG (`/ghost/stream`, `/capture/stream`) and JPEG snapshot/data-channel
   exist everywhere.
 - TURN: `relay/turn.go` colocated with the relay; `turn_credentials.go` mints long-term
@@ -222,9 +223,9 @@ metadata, no secrets.
 **Network jail (mandatory for shared/donated/colo nodes):**
 - **Egress:** RFC1918/loopback/link-local blocked — `egress_proxy.go:149`
   `isPrivateOrReserved` (**works**). A node cannot reach the host LAN or pivot.
-- **Inbound:** **relay-only bind** — loopback + relay tunnel, no LAN-reachable listener
-  (**NOT yet wired** — isolation item **I3**, part of WS-G/2A). This is the single
-  highest-value safety item for putting strangers on your own hardware.
+- **Inbound:** **relay-only bind** — loopback + relay tunnel, no LAN-reachable listener.
+  `--relay-only` binds direct HTTP/TLS listeners to `127.0.0.1`; cross-network relay
+  verification is still the remaining field test.
 
 ## 12. Auto-down lifecycle & the doorman
 

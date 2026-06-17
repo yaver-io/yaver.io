@@ -125,6 +125,90 @@ export type RedroidAppStatus = {
   [k: string]: unknown;
 };
 
+export type RedroidResourceStatus = {
+  kind?: "android-redroid" | string;
+  dedicated?: boolean;
+  ready?: boolean;
+  canHostHere?: boolean;
+  os?: string;
+  arch?: string;
+  dockerPresent?: boolean;
+  dockerReachable?: boolean;
+  dockerDetail?: string;
+  redroidImage?: string;
+  redroidImagePresent?: boolean;
+  defaultWorkDir?: string;
+  state?: "unsupported_host" | "docker_missing" | "docker_unreachable" | "image_missing" | "ready" | string;
+  summary?: string;
+  nextActions?: string[];
+  notes?: string[];
+};
+
+export type AndroidCloneProvisionResult = {
+  provider?: "hetzner" | string;
+  resource?: "android-clone" | string;
+  dedicated?: boolean;
+  dryRun?: boolean;
+  why?: string;
+  provisioned?: string;
+  ip?: string;
+  name?: string;
+  plan?: string;
+  serverType?: string;
+  region?: string;
+  location?: string;
+  image?: string;
+  redroidImage?: string;
+  hostWorkDir?: string;
+  nextActions?: string[];
+  error?: string;
+};
+
+type OpsEnvelope<T> = {
+  ok?: boolean;
+  initial?: T;
+  error?: string;
+  code?: string;
+};
+
+export async function redroidResourceStatus(deviceId?: string): Promise<McpDirectResult<RedroidResourceStatus>> {
+  const res = await callMcpDirect<OpsEnvelope<RedroidResourceStatus>>("ops", {
+    machine: deviceId?.trim() || "local",
+    verb: "redroid_resource_status",
+    payload: {},
+  });
+  if (!res.ok) return { ok: false, error: res.error, raw: res.raw };
+  if (res.result?.ok === false) {
+    return { ok: false, error: res.result.error || res.result.code || "resource status failed", raw: res.raw };
+  }
+  return { ok: true, result: res.result?.initial, raw: res.raw };
+}
+
+export async function provisionAndroidClone(opts: {
+  plan?: "starter" | "pro" | "scale";
+  region?: "eu" | "us";
+  name?: string;
+  image?: string;
+  confirm?: boolean;
+} = {}): Promise<McpDirectResult<AndroidCloneProvisionResult>> {
+  const res = await callMcpDirect<OpsEnvelope<AndroidCloneProvisionResult>>("ops", {
+    machine: "local",
+    verb: "android_clone_provision",
+    payload: {
+      plan: opts.plan,
+      region: opts.region,
+      name: opts.name,
+      image: opts.image,
+      confirm: opts.confirm ?? false,
+    },
+  });
+  if (!res.ok) return { ok: false, error: res.error, raw: res.raw };
+  if (res.result?.ok === false) {
+    return { ok: false, error: res.result.error || res.result.code || "Android clone provision failed", raw: res.raw };
+  }
+  return { ok: true, result: res.result?.initial, raw: res.raw };
+}
+
 export function remoteAndroidAppStatus(packageName: string, deviceId?: string): Promise<McpDirectResult<RedroidAppStatus>> {
   return callMcpDirect<RedroidAppStatus>("android_app_status", { package_name: packageName, device_id: deviceId });
 }
