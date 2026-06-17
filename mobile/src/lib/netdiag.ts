@@ -164,3 +164,188 @@ export async function runInternetProbes(withThroughput = true): Promise<Internet
 
   return { status, summary, reachable, latencyMs, dnsOverheadMs, publicIp, location, throughputMbps };
 }
+
+// --- Deep layered doctor (mirrors the agent's net_doctor) -------------------
+// Walks the connectivity stack in dependency order and reports the FIRST failing
+// layer as the root cause — the same model as the `net_doctor` MCP tool / CLI,
+// so the phone self-diagnoses (link/DHCP → internet → DNS → captive → quality)
+// even when no runner is connected. Pure on-device fetch + netinfo; no agent.
+
+export type NetLayerStatus = "ok" | "warn" | "fail" | "skip";
+
+export type NetLayer = {
+  name: string;
+  title: string;
+  status: NetLayerStatus;
+  detail: string;
+  hint?: string;
+};
+
+export type NetDoctorReport = {
+  medium: string; // wifi | cellular | ethernet | hotspot-ios | hotspot-android | unknown
+  ssid?: string | null;
+  status: NetLayerStatus; // overall worst
+  verdict: string;
+  rootCause?: string;
+  layers: NetLayer[];
+  remediation: string[];
+};
+
+function mediumFor(dev: DeviceNetwork | null): string {
+  if (!dev) return "unknown";
+  if (dev.type === "cellular") return "cellular";
+  if (dev.type === "ethernet") return "ethernet";
+  if (dev.type === "wifi") {
+    const gw = dev.gateway ?? "";
+    if (gw.startsWith("172.20.10.")) return "hotspot-ios";
+    if (gw.startsWith("192.168.43.")) return "hotspot-android";
+    return "wifi";
+  }
+  return dev.type || "unknown";
+}
+
+// Captive-portal probe: the sentinel must come back verbatim. A portal serves a
+// sign-in page (wrong body) or redirects, so a mismatch ⇒ captive.
+async function probeCaptive(): Promise<NetLayer> {
+  const l: NetLayer = { name: "captive", title: "Captive portal", status: "skip", detail: "" };
+  try {
+    const res = await fetch("http://captive.apple.com/hotspot-detect.html", {
+      cache: "no-store" as any,
+    });
+    const body = await res.text();
+    if (res.ok && body.includes("Success")) {
+      l.status = "ok";
+      l.detail = "No captive portal — traffic passes through cleanly.";
+    } else {
+      l.status = "fail";
+      l.detail = "Captive portal detected — a sign-in page is intercepting traffic.";
+      l.hint = "Open Safari/Chrome to any http:// site and complete the network's sign-in page.";
+    }
+  } catch {
+    l.status = "skip";
+    l.detail = "Could not run captive-portal check.";
+  }
+  return l;
+}
+
+export async function runNetDoctor(withThroughput = false): Promise<NetDoctorReport> {
+  const dev = await getDeviceNetwork().catch(() => null);
+  const medium = mediumFor(dev);
+  const layers: NetLayer[] = [];
+
+  // Layer 1: link / DHCP
+  const link: NetLayer = { name: "link", title: "Network interface & IP", status: "ok", detail: "" };
+  const ip = dev?.ipAddress ?? "";
+  if (!dev || dev.isConnected === false || (!ip && dev?.type === "none")) {
+    link.status = "fail";
+    link.detail = "Not connected to any network.";
+    link.hint = "Turn on Wi-Fi or cellular data (or join a hotspot), then re-test.";
+  } else if (ip.startsWith("169.254.")) {
+    link.status = "fail";
+    link.detail = `Self-assigned address (${ip}) — DHCP failed; the network never gave you an IP.`;
+    link.hint = "Toggle Wi-Fi off/on or forget & rejoin the network.";
+  } else {
+    const bits: string[] = [];
+    if (medium === "hotspot-ios") bits.push("iPhone hotspot");
+    else if (medium === "hotspot-android") bits.push("Android hotspot");
+    else if (dev?.type) bits.push(dev.type);
+    if (dev?.ssid) bits.push(`“${dev.ssid}”`);
+    if (ip) bits.push(`IP ${ip}`);
+    link.detail = bits.join(" · ") || "Connected.";
+  }
+  layers.push(link);
+
+  // Layers 2–4 (internet / dns / quality): reuse the probe pass.
+  const probe = await runInternetProbes(withThroughput).catch(() => null);
+
+  const inet: NetLayer = { name: "internet", title: "Internet reachable", status: "skip", detail: "" };
+  if (link.status === "fail") {
+    inet.status = "skip";
+    inet.detail = "Skipped — no network link.";
+  } else if (probe?.reachable) {
+    inet.status = "ok";
+    inet.detail = `Reached the internet by IP${probe.latencyMs != null ? ` (${probe.latencyMs} ms)` : ""}.`;
+  } else {
+    inet.status = "fail";
+    inet.detail = "Cannot reach the internet (1.1.1.1 unreachable).";
+    inet.hint =
+      medium.startsWith("hotspot") || medium === "cellular"
+        ? "Mobile data may be off, out of allowance, or in a no-signal area."
+        : "Router upstream/ISP appears down — check other devices or restart the router.";
+  }
+  layers.push(inet);
+
+  // DNS: hostname resolve forced by the by-host probe inside runInternetProbes.
+  const dns: NetLayer = { name: "dns", title: "DNS resolution", status: "skip", detail: "" };
+  if (inet.status === "ok") {
+    // dnsOverheadMs is only set when BOTH by-IP and by-host succeeded.
+    if (probe?.dnsOverheadMs != null) {
+      dns.status = probe.dnsOverheadMs > 600 ? "warn" : "ok";
+      dns.detail =
+        probe.dnsOverheadMs > 600
+          ? `DNS resolves but is slow (+${probe.dnsOverheadMs} ms).`
+          : `Names resolve (+${probe.dnsOverheadMs} ms overhead).`;
+      if (dns.status === "warn") dns.hint = "Set DNS to 1.1.1.1 or 8.8.8.8 for faster lookups.";
+    } else {
+      dns.status = "fail";
+      dns.detail = 'Internet works by IP but names don\'t resolve — the classic "connected but nothing loads".';
+      dns.hint = "Change DNS to 1.1.1.1 or 8.8.8.8. On a hotel/cafe network you may need to sign in first.";
+    }
+  } else {
+    dns.detail = "Skipped — no internet to resolve against.";
+  }
+  layers.push(dns);
+
+  // Captive portal (only meaningful once we have a link).
+  if (link.status !== "fail") {
+    layers.push(await probeCaptive());
+  }
+
+  // Quality
+  const qual: NetLayer = { name: "quality", title: "Connection quality", status: "skip", detail: "" };
+  if (inet.status === "ok" && probe) {
+    const issues: string[] = [];
+    if (probe.latencyMs != null && probe.latencyMs > 300) issues.push(`high latency ${probe.latencyMs} ms`);
+    if (probe.throughputMbps != null && probe.throughputMbps < 3)
+      issues.push(`low throughput ${probe.throughputMbps.toFixed(1)} Mbps`);
+    if (issues.length === 0) {
+      qual.status = "ok";
+      const parts: string[] = [];
+      if (probe.latencyMs != null) parts.push(`${probe.latencyMs} ms`);
+      if (probe.throughputMbps != null) parts.push(`${probe.throughputMbps.toFixed(1)} Mbps`);
+      qual.detail = parts.length ? parts.join(", ") + "." : "OK.";
+    } else {
+      qual.status = "warn";
+      qual.detail = "Working but degraded: " + issues.join(", ") + ".";
+      qual.hint = "Move to better signal, or switch between Wi-Fi and cellular.";
+    }
+  } else {
+    qual.detail = "Skipped — no internet to measure.";
+  }
+  layers.push(qual);
+
+  // Synthesize
+  const rank: Record<NetLayerStatus, number> = { ok: 0, skip: 0, warn: 1, fail: 2 };
+  let worst: NetLayerStatus = "ok";
+  let firstFail: NetLayer | undefined;
+  const remediation: string[] = [];
+  for (const l of layers) {
+    if (rank[l.status] > rank[worst]) worst = l.status;
+    if (l.status === "fail" && !firstFail) firstFail = l;
+  }
+  let verdict: string;
+  let rootCause: string | undefined;
+  if (firstFail) {
+    rootCause = firstFail.name;
+    verdict = firstFail.detail;
+    if (firstFail.hint) remediation.push(firstFail.hint);
+  } else if (worst === "warn") {
+    const w = layers.find((l) => l.status === "warn");
+    verdict = "Online, but: " + (w?.detail ?? "degraded");
+    layers.forEach((l) => l.status === "warn" && l.hint && remediation.push(l.hint));
+  } else {
+    verdict = "All connectivity layers healthy — you're fully online.";
+  }
+
+  return { medium, ssid: dev?.ssid ?? null, status: worst, verdict, rootCause, layers, remediation };
+}

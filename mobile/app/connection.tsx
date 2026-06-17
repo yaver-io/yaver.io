@@ -16,8 +16,12 @@ import {
   getDeviceNetwork,
   netInfoAvailable,
   runInternetProbes,
+  runNetDoctor,
   type DeviceNetwork,
   type InternetProbe,
+  type NetDoctorReport,
+  type NetLayer,
+  type NetLayerStatus,
 } from "../src/lib/netdiag";
 
 type RunnerNet = {
@@ -57,22 +61,30 @@ export default function ConnectionScreen() {
 
   const [device, setDevice] = useState<DeviceNetwork | null>(null);
   const [internet, setInternet] = useState<InternetProbe | null>(null);
+  const [doctor, setDoctor] = useState<NetDoctorReport | null>(null);
+  const [runnerDoctor, setRunnerDoctor] = useState<any | null>(null);
   const [runner, setRunner] = useState<RunnerNet | null>(null);
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
 
   const loadAll = useCallback(async () => {
     setProbing(true);
-    const [d, net] = await Promise.all([
+    const [d, net, doc] = await Promise.all([
       getDeviceNetwork().catch(() => null),
       runInternetProbes(true).catch(() => null),
+      runNetDoctor(true).catch(() => null),
     ]);
     setDevice(d);
     setInternet(net);
+    setDoctor(doc);
 
     // Runner-side network — only if a runner is actually connected.
     if (connected && quicClient.baseUrl) {
       const rn: RunnerNet = {};
+      // Deep layered diagnosis of the runner's own connectivity.
+      callMcpDirect("net_doctor", {})
+        .then((r) => setRunnerDoctor(r.ok ? r.result : null))
+        .catch(() => setRunnerDoctor(null));
       try {
         const [ifaces, route, ping, dns, pub, wifi, speed] = await Promise.all([
           callMcpDirect("network_interfaces", {}),
@@ -96,6 +108,7 @@ export default function ConnectionScreen() {
       setRunner(rn);
     } else {
       setRunner(null);
+      setRunnerDoctor(null);
     }
     setProbing(false);
     setLoading(false);
@@ -143,6 +156,60 @@ export default function ConnectionScreen() {
       </Text>
     ) : null;
 
+  const layerColor = (st: NetLayerStatus | string) => {
+    switch (st) {
+      case "ok":
+        return c.success;
+      case "warn":
+        return c.warn;
+      case "fail":
+        return c.error;
+      default:
+        return c.textMuted;
+    }
+  };
+  const layerGlyph = (st: NetLayerStatus | string) =>
+    st === "ok" ? "✓" : st === "warn" ? "!" : st === "fail" ? "✗" : "·";
+
+  // Renders a net_doctor-shaped report (phone OR runner). Loosely typed so the
+  // runner's snake_case JSON (root_cause) and the phone's camelCase both work.
+  const DoctorCard = ({ rep }: { rep: any }) => {
+    if (!rep) return null;
+    const overall: string = rep.status ?? "unknown";
+    const layers: NetLayer[] = rep.layers ?? [];
+    const remediation: string[] = rep.remediation ?? [];
+    return (
+      <View style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+        <View style={[s.verdict, { backgroundColor: statusColors(overall === "fail" ? "down" : overall === "warn" ? "degraded" : "ok").bg }]}>
+          <Text style={{ fontSize: 13, fontWeight: "700", color: layerColor(overall) }}>
+            {overall === "ok" ? "✓ Online" : overall === "warn" ? "! Degraded" : overall === "fail" ? "✗ Problem found" : "Diagnosing…"}
+          </Text>
+          {!!rep.verdict && <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 3 }}>{rep.verdict}</Text>}
+        </View>
+        {layers.map((l) => (
+          <View key={l.name} style={s.layerRow}>
+            <Text style={{ color: layerColor(l.status), fontWeight: "700", width: 16, fontSize: 13 }}>{layerGlyph(l.status)}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12.5, fontWeight: "600", color: c.textPrimary }}>{l.title}</Text>
+              <Text style={{ fontSize: 12, color: c.textSecondary, marginTop: 1 }}>{l.detail}</Text>
+              {!!l.hint && (l.status === "fail" || l.status === "warn") && (
+                <Text style={{ fontSize: 12, color: c.warn, marginTop: 2 }}>→ {l.hint}</Text>
+              )}
+            </View>
+          </View>
+        ))}
+        {remediation.length > 0 && (
+          <View style={[s.fixBox, { borderColor: c.border }]}>
+            <Text style={[s.subhead, { color: c.textMuted, marginTop: 0 }]}>WHAT TO DO</Text>
+            {remediation.map((r, i) => (
+              <Text key={i} style={{ fontSize: 12.5, color: c.textPrimary, marginTop: 4 }}>• {r}</Text>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const wifi = device?.type === "wifi";
 
   // Headline = phone's internet status (the thing a user means by "is my net ok").
@@ -183,6 +250,16 @@ export default function ConnectionScreen() {
             {internet && <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>{internet.summary}</Text>}
           </View>
         </View>
+
+        {/* Deep troubleshoot — phone */}
+        <Text style={[s.section, { color: c.textMuted }]}>TROUBLESHOOT (THIS PHONE)</Text>
+        {doctor ? (
+          <DoctorCard rep={doctor} />
+        ) : (
+          <View style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={{ fontSize: 13, color: c.textMuted, paddingVertical: 8 }}>Running layered diagnosis…</Text>
+          </View>
+        )}
 
         {/* This phone */}
         <Text style={[s.section, { color: c.textMuted }]}>THIS PHONE / LOCAL NETWORK</Text>
@@ -259,6 +336,23 @@ export default function ConnectionScreen() {
           {lastError && <Row label="Last error" value={lastError} valueColor={c.error} />}
         </View>
 
+        {/* Deep troubleshoot — runner */}
+        {connected && (
+          <>
+            <Text style={[s.section, { color: c.textMuted }]}>TROUBLESHOOT (RUNNER)</Text>
+            {runnerDoctor ? (
+              <DoctorCard rep={runnerDoctor} />
+            ) : (
+              <View style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 }}>
+                  <ActivityIndicator color={c.textMuted} size="small" />
+                  <Text style={{ fontSize: 13, color: c.textMuted }}>Diagnosing runner connectivity…</Text>
+                </View>
+              </View>
+            )}
+          </>
+        )}
+
         {/* Runner network (over MCP) */}
         {connected && (
           <>
@@ -310,6 +404,9 @@ function makeStyles(c: ThemeColors) {
     rowValue: { fontSize: 13, maxWidth: "62%", textAlign: "right" },
     divider: { height: StyleSheet.hairlineWidth, backgroundColor: "rgba(127,127,127,0.2)" },
     badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+    verdict: { borderRadius: 10, padding: 12, marginBottom: 6 },
+    layerRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingVertical: 7 },
+    fixBox: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: 8, paddingTop: 8 },
     dot: { width: 10, height: 10, borderRadius: 5 },
     mono: { fontSize: 11, fontFamily: "Menlo", lineHeight: 15 },
   });

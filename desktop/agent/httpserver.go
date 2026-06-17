@@ -888,6 +888,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Diagnose — one-shot self-check (CLI, HTTP, MCP, mobile, web)
 	mux.HandleFunc("/diagnose", s.auth(s.handleDiagnose))
 	mux.HandleFunc("/diagnose/stream", s.auth(s.handleDiagnoseStream))
+	mux.HandleFunc("/net/doctor", s.auth(s.handleNetDoctor))
 	mux.HandleFunc("/unity/test", s.authSDKOrGuest(s.handleUnityTest))
 	mux.HandleFunc("/unity/build", s.authSDKOrGuest(s.handleUnityBuild))
 	mux.HandleFunc("/unity/relaunch", s.authSDKOrGuest(s.handleUnityRelaunch))
@@ -11181,6 +11182,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpCurlTimings(a.URL))
+
+	case "net_doctor":
+		var a struct {
+			Throughput bool   `json:"throughput"`
+			Target     string `json:"target"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpNetDoctor(a.Throughput, a.Target))
 
 	// --- Linux System ---
 	case "dmesg":

@@ -541,6 +541,8 @@ func main() {
 		runAsk(os.Args[2:])
 	case "diagnose":
 		runDiagnoseCLI(os.Args[2:])
+	case "net":
+		runNet(os.Args[2:])
 	case "managed":
 		runManaged(os.Args[2:])
 	case "2fa", "totp":
