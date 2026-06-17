@@ -124,7 +124,6 @@ func TestGatewaySelfHealFlowStepRelocates(t *testing.T) {
 	}
 }
 
-
 func TestGatewaySelfHealFlowStepAbsentDoesNotHeal(t *testing.T) {
 	screen := Screen{Nodes: []uiNode{{Text: "Nothing relevant", ResourceID: "other"}}}
 	step := FlowStep{Action: "tap", Target: "old_search_box"}

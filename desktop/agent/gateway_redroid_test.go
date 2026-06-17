@@ -55,6 +55,13 @@ func (d *fakeDeviceDriver) Type(text string) error {
 	return nil
 }
 
+func (d *fakeDeviceDriver) LaunchURL(url string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.launched = url
+	return nil
+}
+
 func (d *fakeDeviceDriver) Frame() ([]byte, error) { return []byte("PNG"), nil }
 
 func (d *fakeDeviceDriver) Tap(target string) error {

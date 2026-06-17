@@ -8568,6 +8568,28 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpGatewayConnectorCapabilities(args.Connector))
+	case "gateway_node_apps":
+		var args struct {
+			Node string `json:"node"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayNodeApps(args.Node))
+	case "gateway_node_sync":
+		var args struct {
+			Node string    `json:"node"`
+			Apps []AppSpec `json:"apps"`
+			Mode string    `json:"mode"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayNodeSync(args.Node, args.Apps, args.Mode))
+	case "gateway_node_install":
+		var args struct {
+			Node    string `json:"node"`
+			Package string `json:"package"`
+			Mode    string `json:"mode"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayNodeInstall(args.Node, args.Package, args.Mode))
 	case "gateway_act":
 		var args struct {
 			Connector  string            `json:"connector"`

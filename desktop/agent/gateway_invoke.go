@@ -41,9 +41,17 @@ type gatewayResult struct {
 	Verb       string                 `json:"verb"`
 	Answer     map[string]interface{} `json:"answer,omitempty"`
 	Blocked    bool                   `json:"blocked,omitempty"`
-	StatusCode int                    `json:"status_code,omitempty"`
-	Detail     string                 `json:"detail,omitempty"`
-	Source     string                 `json:"source,omitempty"`
+	// IntegrityBlocked distinguishes a Play Integrity / SafetyNet /
+	// device-attestation failure (the app requires a genuine certified device)
+	// from a soft anti-automation block (Blocked). On an integrity block the
+	// device-invoke path STOPS immediately — no retry, no self-heal, no human
+	// gate, no fabricated answer — because a block is a "no", not a puzzle, and an
+	// emulated/uncertified device can never satisfy attestation. Callers steer the
+	// user to the official API or a real-device engine instead.
+	IntegrityBlocked bool   `json:"integrity_blocked,omitempty"`
+	StatusCode       int    `json:"status_code,omitempty"`
+	Detail           string `json:"detail,omitempty"`
+	Source           string `json:"source,omitempty"`
 	// Signature is the final-screen ScreenSignature for the redroid engine
 	// (docs §3) — empty for the api engine.
 	Signature string `json:"signature,omitempty"`
@@ -103,17 +111,23 @@ func (d *gatewayDeps) gatewayInvoke(ctx context.Context, connectorID, capability
 		return nil, err
 	}
 
-	// Engine dispatch. "api" runs an authed HTTP GET (below); "redroid" drives
-	// an app on the device the broker just authenticated (gateway_redroid_invoke.go).
+	// Engine dispatch. "api" runs an authed HTTP GET (below); "redroid" and
+	// "device" both drive an app on the device the broker just authenticated
+	// (gateway_redroid_invoke.go via deviceInvoke). The ONLY difference between the
+	// two device engines is the device source + persistence — a "redroid"
+	// connector restores a golden snapshot (ephemeral, container-backed), a
+	// "device" connector is a real paired phone that simply stays logged in — NOT
+	// the read loop, which is identical (observe → run flow → extract). So both
+	// route through the same invoke body via the same deviceDriverFor seam.
 	switch conn.Engine {
-	case "redroid":
+	case "redroid", "device":
 		driver, ok := d.broker.deviceDriverFor(conn)
 		if !ok || driver == nil {
-			return nil, fmt.Errorf("gateway: connector %q uses the redroid engine but no device driver is available", connectorID)
+			return nil, fmt.Errorf("gateway: connector %q uses the %q engine but no device driver is available", connectorID, conn.Engine)
 		}
 		// Pass the registry so the self-heal path (M-G7) can write a rewritten flow
 		// back to the manifest; nil clock ⇒ wall-clock heal timestamps.
-		return redroidInvoke(ctx, conn, cap, params, session, driver, d.broker.NeedsHuman(conn), d.registry, nil)
+		return deviceInvoke(ctx, conn, cap, params, session, driver, d.broker.NeedsHuman(conn), d.registry, nil)
 	case "api":
 		// handled below
 	default:

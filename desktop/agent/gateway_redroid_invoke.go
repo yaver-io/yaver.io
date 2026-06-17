@@ -62,9 +62,14 @@ type Screen struct {
 // auto-rewrites simply passes nil. healClock supplies the timestamp hint for a
 // heal event (so the heal path never calls time.Now non-deterministically); nil ⇒
 // a default wall-clock hint.
-func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params map[string]string, session Session, driver deviceDriver, mayNeedHuman bool, reg *ConnectorRegistry, healClock func() int64) (*gatewayResult, error) {
+//
+// deviceInvoke is the canonical name (M-G5c): the SAME path drives a redroid
+// container OR a real paired phone — the engine string differs (source +
+// persistence), the read loop does not. redroidInvoke is kept as an alias so
+// existing callers/tests don't break.
+func deviceInvoke(ctx context.Context, conn *Connector, cap *Capability, params map[string]string, session Session, driver deviceDriver, mayNeedHuman bool, reg *ConnectorRegistry, healClock func() int64) (*gatewayResult, error) {
 	if driver == nil {
-		return nil, fmt.Errorf("gateway: redroid invoke for %q has no device driver", conn.ID)
+		return nil, fmt.Errorf("gateway: device invoke for %q has no device driver", conn.ID)
 	}
 
 	res := &gatewayResult{
@@ -90,6 +95,13 @@ func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params
 	screen, err := observeScreen(driver, pkg)
 	if err != nil {
 		return nil, fmt.Errorf("gateway: redroid %q observe: %w", conn.ID, err)
+	}
+	// HIGHEST precedence: a device-attestation / Play Integrity / SafetyNet wall.
+	// An emulated or uncertified device can NEVER satisfy attestation, so there is
+	// nothing to retry, self-heal, or gate — STOP immediately with a structured
+	// result that steers to the official API or a real-device engine.
+	if integrity, reason := detectIntegrityBlock(*screen); integrity {
+		return integrityBlockedResult(res, conn, reason), nil
 	}
 	if blocked := detectBlockSignal(screen); blocked != "" {
 		// A block is a "no" — surface it structured, STOP, never retry/evade.
@@ -158,6 +170,11 @@ func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params
 		if err != nil {
 			return nil, fmt.Errorf("gateway: redroid %q observe after step %d: %w", conn.ID, i, err)
 		}
+		// HIGHEST precedence (same as the entry screen): an integrity/attestation
+		// wall mid-flow STOPS immediately — never retry/heal/gate/fabricate.
+		if integrity, reason := detectIntegrityBlock(*next); integrity {
+			return integrityBlockedResult(res, conn, reason), nil
+		}
 		if blocked := detectBlockSignal(next); blocked != "" {
 			res.Blocked = true
 			res.Detail = fmt.Sprintf("connector %q hit an anti-automation block (%s) mid-flow. Backing off — not retrying or evading.", conn.ID, blocked)
@@ -210,6 +227,13 @@ func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params
 	res.Answer = answer
 	res.Signature = screen.Signature
 	return res, nil
+}
+
+// redroidInvoke is the original name for the device-invoke path, kept as a thin
+// alias so existing callers/tests that name it keep compiling. New code calls
+// deviceInvoke (which serves both the "redroid" and "device" engines).
+func redroidInvoke(ctx context.Context, conn *Connector, cap *Capability, params map[string]string, session Session, driver deviceDriver, mayNeedHuman bool, reg *ConnectorRegistry, healClock func() int64) (*gatewayResult, error) {
+	return deviceInvoke(ctx, conn, cap, params, session, driver, mayNeedHuman, reg, healClock)
 }
 
 // observeScreen reads the device's accessibility nodes + a frame reference and
@@ -522,6 +546,62 @@ func detectBlockSignal(s *Screen) string {
 		}
 	}
 	return ""
+}
+
+// detectIntegrityBlock returns (true, reason) when the screen indicates a Play
+// Integrity / SafetyNet / device-attestation FAILURE — the app has decided this
+// device isn't a genuine, certified, untampered device and won't let the user in.
+//
+// This is DISTINCT from the other two signals and outranks both:
+//   - a challenge (detectChallengeScreen) is a HUMAN-solvable puzzle (captcha,
+//     "verify it's you") → route to the live human gate;
+//   - a generic block (detectBlockSignal) is a rate-limit / lockout that backs
+//     off and could succeed later from the same device;
+//   - an integrity block is a HARD device-class rejection: an emulated /
+//     uncertified / rooted device can NEVER pass attestation no matter what the
+//     user does here. Retrying, self-healing the flow, or asking a human to solve
+//     it are all futile (and the gate would just bounce). The honest move is to
+//     STOP and steer the user to the official API or a genuine certified device.
+//
+// Detection is conservative keyword-matching on the login-blocking copy these
+// failures show. We match attestation-specific phrasing ("Play Integrity",
+// "SafetyNet", "device isn't secure", "rooted device", "device not supported",
+// the login-blocking "update Google Play services to continue") rather than
+// generic words, so it doesn't over-trigger on an ordinary challenge or block.
+func detectIntegrityBlock(s Screen) (bool, string) {
+	for _, n := range s.Nodes {
+		blob := strings.ToLower(n.Text + " " + n.ContentDesc + " " + n.ResourceID)
+		for _, kw := range []string{
+			"play integrity", "safetynet", "device attestation", "attestation failed",
+			"device not supported", "unsupported device",
+			"this device isn't secure", "device isn't secure", "device is not secure",
+			"rooted device", "device is rooted", "your device is rooted",
+			"can't verify it's you", "cant verify it's you", "can't verify its you",
+			"couldn't verify your device", "could not verify your device",
+			"update google play services to continue",
+		} {
+			if strings.Contains(blob, kw) {
+				return true, kw
+			}
+		}
+	}
+	return false, ""
+}
+
+// integrityBlockedResult populates a gatewayResult for an integrity/attestation
+// block: Blocked AND IntegrityBlocked, no answer, and a Detail that is honest
+// about WHY (a genuine certified device is required) and what to do instead
+// (official API / real-device engine). A block is a "no", not a puzzle.
+func integrityBlockedResult(res *gatewayResult, conn *Connector, reason string) *gatewayResult {
+	res.Blocked = true
+	res.IntegrityBlocked = true
+	res.Answer = nil
+	res.Detail = fmt.Sprintf("connector %q hit a device-integrity/attestation block (%s). "+
+		"This app requires a genuine, certified device and will not run on an emulated or "+
+		"uncertified one — switch to the service's official API or a real-device engine. "+
+		"Not retrying, self-healing, or routing to a human gate: a block is a \"no\", not a puzzle.",
+		conn.ID, reason)
+	return res
 }
 
 // gateChallenge suspends on the interactive human gate (gateway_gate.go) so the

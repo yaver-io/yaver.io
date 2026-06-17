@@ -65,6 +65,11 @@ type uiNode struct {
 type deviceDriver interface {
 	// Launch starts the connector's app (by package id) on the device.
 	Launch(pkg string) error
+	// LaunchURL opens a URL/deep-link via an Android VIEW intent (e.g. a
+	// market://details?id=<pkg> Play page for app provisioning). Additive — the
+	// auth handler does not use it, but the app-sync installer
+	// (gateway_appsync.go) does.
+	LaunchURL(url string) error
 	// Type enters text into the focused field.
 	Type(text string) error
 	// Frame returns the current screen as image bytes (PNG) — used to attach a
@@ -102,6 +107,17 @@ func (d *redroidDeviceDriver) Launch(pkg string) error {
 }
 
 func (d *redroidDeviceDriver) Type(text string) error { return droidText(d.serial, text) }
+
+// LaunchURL opens a URL/deep-link via `am start -a android.intent.action.VIEW -d
+// <url>` — used by the app-sync installer to open a market:// Play page.
+func (d *redroidDeviceDriver) LaunchURL(url string) error {
+	if strings.TrimSpace(url) == "" {
+		return fmt.Errorf("droid launch url: url is required")
+	}
+	_, err := runAdb(d.serial, 12*time.Second, "shell", "am", "start",
+		"-a", "android.intent.action.VIEW", "-d", url)
+	return err
+}
 
 func (d *redroidDeviceDriver) Frame() ([]byte, error) { return droidFrame(d.serial) }
 
