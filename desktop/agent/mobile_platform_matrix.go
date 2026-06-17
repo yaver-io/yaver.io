@@ -86,7 +86,8 @@ func mobilePlatformMatrix(root string) mobilePlatformMatrixReport {
 			surface(mobilePlatformSurface{
 				ID: "watchos", Label: "Apple Watch", Family: "apple", Surface: "watch",
 				Status: "build-only", BuildSupported: true, SubmitSupported: false, ManagedCloud: "planned", RequiredHost: "macos",
-				Notes:       []string{"watchOS simulator builds work; upload should ride a companion iOS archive or a dedicated watch submission lane."},
+				Script:      "scripts/deploy-watchos.sh",
+				Notes:       []string{"Builds a signed standalone watchOS archive; upload should ride a companion iOS archive or an Apple-accepted standalone watch submission flow."},
 				Limitations: []string{"Not queued from mobile/web yet."},
 			}),
 			surface(mobilePlatformSurface{
