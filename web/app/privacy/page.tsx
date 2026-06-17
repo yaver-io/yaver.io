@@ -181,6 +181,65 @@ export default function PrivacyPolicyPage() {
         </p>
 
         <h2 className="!mt-10 border-b border-surface-800 pb-2 text-lg font-semibold text-surface-100">
+          Personal Agent Gateway &amp; Phone Clone
+        </h2>
+        <p>
+          Yaver can act on your behalf inside apps that have no public API by driving a{" "}
+          <strong className="text-surface-300">clone</strong> &mdash; either a containerized Android
+          instance (redroid) on a machine you control, or a spare physical Android phone you own.
+          The clone signs in to <em>your own</em> accounts so the AI can read and act for you. This
+          is optional and off until you set it up. A few things we want to be explicit about:
+        </p>
+        <ul className="list-disc space-y-2 pl-6">
+          <li>
+            <strong className="text-surface-300">It is peer-to-peer and self-hosted.</strong> The
+            clone runs on your own device or your own machine. Your credentials, sessions, and the
+            data the gateway reads flow directly between your devices over Yaver&rsquo;s P2P transport
+            (direct LAN / Tailscale / self-hostable relay). They do not pass through, and are never
+            stored on, our backend (Convex).
+          </li>
+          <li>
+            <strong className="text-surface-300">It is open source.</strong> The entire gateway
+            framework &mdash; connectors, the consent and audit layer, app provisioning, and the
+            device-driving engines &mdash; is in the public Yaver source on GitHub. You can read
+            exactly what it does, and self-host every part of it.
+          </li>
+          <li>
+            <strong className="text-surface-300">It is local-first and opt-in.</strong> Your app
+            list, your connector credentials (in the encrypted vault), and the local audit ledger
+            live on your devices. Each capability &mdash; sharing your installed-app list with a
+            clone, auto-forwarding a one-time code, or letting a clone read its own SMS inbox &mdash;
+            is a separate consent you grant, recorded locally and revocable.
+          </li>
+          <li>
+            <strong className="text-surface-300">We never store your secrets.</strong> Vault values,
+            tokens, one-time codes, message contents, and the contents of the apps the gateway reads
+            are forbidden from our backend by design and enforced by automated tests. A one-time code
+            your phone forwards is relayed straight to the waiting sign-in and is never persisted.
+          </li>
+          <li>
+            <strong className="text-surface-300">Two-factor authentication is relayed, not
+            bypassed.</strong> When a sign-in needs a code or an approval, you still receive and
+            approve it yourself &mdash; Yaver only carries your answer to the clone. We do not solve
+            CAPTCHAs, defeat device attestation, or circumvent any security control. If a service
+            blocks automated access, Yaver stops.
+          </li>
+          <li>
+            <strong className="text-surface-300">You only ever act on your own accounts.</strong> The
+            gateway is for automating tasks you already do by hand, on services where you hold the
+            account. It is not for accessing anyone else&rsquo;s data or systems.
+          </li>
+          <li>
+            <strong className="text-surface-300">A self-driving clone uses Android Accessibility on
+            that device only.</strong> If you run the clone on a spare phone with no separate host,
+            you enable Yaver&rsquo;s Accessibility service once in that phone&rsquo;s settings so the
+            app can tap and read its own screen. That capability controls only the clone device you
+            own, over a loopback connection that is never network-exposed, and is used solely to
+            drive your own logged-in apps.
+          </li>
+        </ul>
+
+        <h2 className="!mt-10 border-b border-surface-800 pb-2 text-lg font-semibold text-surface-100">
           Children&apos;s Privacy
         </h2>
         <p>

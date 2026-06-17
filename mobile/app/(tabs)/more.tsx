@@ -39,6 +39,7 @@ import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import {
   getSelectedAppPackages,
   listPhoneApps,
+  reportPhoneInventory,
   remoteAndroidAppQuery,
   remoteAndroidAppStatus,
   setSelectedAppPackages,
@@ -2733,12 +2734,18 @@ function MobileAppSyncSection({
       const [phoneApps, saved] = await Promise.all([listPhoneApps(), getSelectedAppPackages()]);
       setApps(phoneApps);
       setSelected(new Set(saved));
+      // Zero-friction: push this phone's app list up to the connected agent so it
+      // can mirror onto a clone (redroid / second-hand phone). Best-effort —
+      // never blocks the screen, never surfaces an error here.
+      if (connected && phoneApps.length > 0) {
+        reportPhoneInventory(phoneApps).catch(() => {});
+      }
     } catch (e) {
       setResult(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [connected]);
 
   useEffect(() => {
     loadApps();
@@ -2912,6 +2919,7 @@ export default function MoreScreen() {
   const handleNetwork = useCallback(() => router.navigate("/(tabs)/mesh" as any), [router]);
   const handleConnection = useCallback(() => router.navigate("/connection" as any), [router]);
   const handleMcpServers = useCallback(() => router.navigate("/mcp-servers" as any), [router]);
+  const handleHomeControl = useCallback(() => router.navigate("/home-control" as any), [router]);
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
@@ -3224,6 +3232,23 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Robot Cell</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"Jog the Ender-3 screwdriver robot \u2014 camera-validated moves"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+
+            {/* Home Control \u2014 the "single kumanda" universal remote + activities
+                (Apple TV / Mi Box / \u2026 via the home_* ops verbs). A separate Home
+                surface, never the coding tabs. Box-reachable, so always show it. */}
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleHomeControl}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\ud83c\udfe0"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Home Control</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Single kumanda \u2014 Apple TV / Mi Box / activities"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>

@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -101,10 +102,27 @@ func (b *broker) deviceDriverFor(c *Connector) (deviceDriver, bool) {
 	if err != nil {
 		return nil, false
 	}
-	if dh, ok := h.(*passwordTotpHandler); ok && dh.driver != nil {
-		return dh.driver, true
+	dh, ok := h.(*passwordTotpHandler)
+	if !ok || dh.driver == nil {
+		return nil, false
 	}
-	return nil, false
+	// Per-connector device targeting: when the connector pins a specific clone
+	// (c.Device, an adb serial) and the production adb-backed driver is in use,
+	// drive THAT device. A test-injected fake driver is returned unchanged so the
+	// offline suites keep working.
+	if _, isReal := dh.driver.(*redroidDeviceDriver); isReal {
+		switch serial := strings.TrimSpace(c.Device); serial {
+		case "":
+			// no pin → broker default driver
+		case localDeviceSentinel:
+			// self-driving phone: drive this device via its AccessibilityService.
+			return newLocalAccessibilityDriver(""), true
+		default:
+			// pin to a specific clone (adb serial).
+			return &redroidDeviceDriver{serial: serial}, true
+		}
+	}
+	return dh.driver, true
 }
 
 // handlerFor returns the AuthMethod for a connector, or an error if its method

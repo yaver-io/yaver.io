@@ -279,6 +279,49 @@ func (s *gateStore) Resolve(id string, res Resolution) error {
 	return nil
 }
 
+// ResolveByConnector resolves the OLDEST pending gate for a connector without
+// the caller needing its gate id. This is the seamless-relay path: the user's
+// own phone forwards "here's the OTP for <connector>" and we match it to the
+// login that's blocked waiting for it — no gate-id juggling on the phone.
+//
+// kind narrows the match (e.g. only an enter_code gate accepts a forwarded SMS
+// code); pass "" to match any kind. Returns the resolved gate id, or an error if
+// no pending gate matches (so a stray/duplicate OTP forward is a clean no-op, not
+// a wrong-gate resolution).
+func (s *gateStore) ResolveByConnector(connectorID string, kind GateKind, res Resolution) (string, error) {
+	connectorID = strings.TrimSpace(connectorID)
+	if connectorID == "" {
+		return "", fmt.Errorf("connectorId is required")
+	}
+	s.mu.Lock()
+	var match *gateWaiter
+	for _, w := range s.waiters {
+		if w.gate.ConnectorID != connectorID {
+			continue
+		}
+		if kind != "" && w.gate.Kind != kind {
+			continue
+		}
+		// Prefer the oldest matching gate (FIFO) so a forwarded code resolves the
+		// login that has been waiting longest.
+		if match == nil || w.gate.CreatedAt.Before(match.gate.CreatedAt) {
+			match = w
+		}
+	}
+	if match == nil {
+		s.mu.Unlock()
+		return "", fmt.Errorf("no pending gate for connector %q (kind %q)", connectorID, kind)
+	}
+	id := match.gate.ID
+	delete(s.waiters, id)
+	match.gate.Status = GateResolved
+	s.mu.Unlock()
+
+	res.Status = GateResolved
+	match.ch <- res // buffered (cap 1) ⇒ never blocks
+	return id, nil
+}
+
 // List returns a snapshot of all currently pending gates (for GET /gateway/gate).
 func (s *gateStore) List() []PendingGate {
 	s.mu.Lock()
@@ -350,6 +393,44 @@ func gatewayGateIDFromPath(p string) string {
 		return ""
 	}
 	return rest
+}
+
+// ── seamless OTP relay (MCP) ─────────────────────────────────────────────────
+
+// mcpGatewayProvideOTP is the seamless-relay entry point the user's own phone
+// calls (via callMcpDirect) to forward an OTP/2FA code to the remote box, so a
+// redroid (or device) login blocked on an enter_code gate completes WITHOUT the
+// user hunting for a gate id or typing into the remote view. The phone just says
+// "the code for <connector> is <code>". A code with no matching pending gate is a
+// clean no-op (stale/duplicate forward), never a wrong-gate resolution.
+//
+// This does NOT bypass the factor — the code is one the user legitimately
+// received on their own number; we only relay it to the waiting flow (the same
+// guarantee as a human typing it). No code is persisted.
+func mcpGatewayProvideOTP(connector, code string) interface{} {
+	connector = strings.TrimSpace(connector)
+	code = strings.TrimSpace(code)
+	if connector == "" || code == "" {
+		return map[string]interface{}{"error": "connector and code are required"}
+	}
+	// Opt-in gate: auto-forwarding a one-time code is off until the user grants it.
+	if !consentAllows(consentAutoRelayOtp) {
+		return consentNotEnabled(consentAutoRelayOtp)
+	}
+	id, err := gatewayGates.ResolveByConnector(connector, GateEnterCode, Resolution{Answer: code})
+	if err != nil {
+		return map[string]interface{}{
+			"ok":    false,
+			"error": err.Error(),
+			"note":  "No login is currently waiting on a code for this connector — the forward was ignored (safe).",
+		}
+	}
+	return map[string]interface{}{
+		"ok":        true,
+		"connector": connector,
+		"gateId":    id,
+		"note":      "Code relayed to the waiting login. Nothing was stored.",
+	}
 }
 
 // gatewayAnswerApproves interprets a free-form answer as a yes/no for

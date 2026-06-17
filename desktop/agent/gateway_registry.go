@@ -130,9 +130,14 @@ type Capability struct {
 // Connector is a manifest for one credentialed service. Generic + open; creds
 // referenced by vault key only.
 type Connector struct {
-	ID           string        `json:"id"`
-	Engine       string        `json:"engine"`  // "api" in this slice
-	Surface      string        `json:"surface"` // API base URL (engine "api")
+	ID      string `json:"id"`
+	Engine  string `json:"engine"`  // "api" | "redroid" | "device"
+	Surface string `json:"surface"` // API base URL (engine "api") / package id (redroid/device)
+	// Device names the specific clone node (adb serial) to drive for a
+	// redroid/device connector. Empty ⇒ the broker's default (first attached
+	// device). Set this to pin a connector to a particular clone — e.g. a
+	// SIM'd second-hand phone for SMS-2FA vs a redroid for the rest.
+	Device       string        `json:"device,omitempty"`
 	Auth         ConnectorAuth `json:"auth"`
 	Capabilities []Capability  `json:"capabilities"`
 }

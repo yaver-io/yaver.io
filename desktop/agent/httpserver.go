@@ -664,6 +664,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// notifies the user's own phone, and resumes when they resolve it here.
 	mux.HandleFunc("/gateway/gate", s.auth(s.handleGatewayGateList))
 	mux.HandleFunc("/gateway/gate/", s.auth(s.handleGatewayGateResolve))
+	mux.HandleFunc("/gateway/phone-inventory", s.auth(s.handleGatewayPhoneInventory))
 
 	// Affiliate tracking (extends the shortener with commissions)
 	mux.HandleFunc("/affiliates", s.auth(s.handleAffiliates))
@@ -1310,10 +1311,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/workdir", s.auth(s.handleAgentWorkdir))
 	mux.HandleFunc("/agent/context", s.auth(s.handleAgentContext))
 
-	// Builds (remote build & artifact transfer) — SDK-accessible
-	mux.HandleFunc("/builds", s.authSDK(s.handleBuilds))
-	mux.HandleFunc("/builds/register", s.authSDK(s.handleBuildRegister))
-	mux.HandleFunc("/builds/", s.authSDK(s.handleBuildByID))
+	// Builds (remote build & artifact transfer) — SDK-accessible, and
+	// auth-free for genuinely-local callers (see authBuildLocal): building
+	// is a local dev-machine operation that must not require `yaver auth`.
+	mux.HandleFunc("/builds", s.authBuildLocal(s.handleBuilds))
+	mux.HandleFunc("/builds/register", s.authBuildLocal(s.handleBuildRegister))
+	mux.HandleFunc("/builds/", s.authBuildLocal(s.handleBuildByID))
 
 	// Vault (P2P encrypted key sync)
 	// /vault/* is rate-limited on top of auth: the value payload
@@ -2357,6 +2360,48 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		next(w, r)
+	}
+}
+
+// isLocalLoopbackRequest reports whether r came from a process on THIS host
+// that reached the agent directly — no relay/cloudflared hop. Both tunnels
+// terminate on loopback but always add X-Forwarded-For, so requiring its
+// absence keeps tunneled (remote) traffic on the authenticated path while a
+// genuinely-local `yaver build` CLI process (which connects straight to
+// 127.0.0.1 with no proxy header) is recognized as local.
+func isLocalLoopbackRequest(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// authBuildLocal gates the build endpoints. A build is a purely-local
+// dev-machine capability — it runs gradle/xcode/flutter against files on THIS
+// host — so it must not depend on cloud sign-in: a caller that reaches the
+// agent directly on loopback already has shell access to the machine, and a
+// cloud token would add no security. Such requests are admitted without auth
+// so `yaver build aab|ios|...` and `yaver build status` work whether or not
+// the CLI (or the daemon) currently holds a valid auth token. Anything that
+// arrived over a relay/cloudflared hop (X-Forwarded-For set), from a non-
+// loopback IP, or on an operator/public-fleet node falls back to the normal
+// SDK auth path.
+func (s *HTTPServer) authBuildLocal(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.operatorMode && isLocalLoopbackRequest(r) {
+			next(w, r)
+			return
+		}
+		s.authSDK(next)(w, r)
 	}
 }
 
@@ -8590,6 +8635,45 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpGatewayNodeInstall(args.Node, args.Package, args.Mode))
+	case "gateway_phone_inventory_report":
+		var args struct {
+			Device string         `json:"device"`
+			Apps   []phoneAppWire `json:"apps"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayPhoneInventoryReport(args.Device, args.Apps))
+	case "gateway_phone_inventory":
+		var args struct {
+			Device string `json:"device"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayPhoneInventory(args.Device))
+	case "gateway_clone_from_phone":
+		var args struct {
+			Phone         string `json:"phone"`
+			Clone         string `json:"clone"`
+			ConnectorOnly bool   `json:"connector_only"`
+			Mode          string `json:"mode"`
+			Sync          bool   `json:"sync"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayCloneFromPhone(args.Phone, args.Clone, args.ConnectorOnly, args.Mode, args.Sync))
+	case "gateway_provide_otp":
+		var args struct {
+			Connector string `json:"connector"`
+			Code      string `json:"code"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayProvideOTP(args.Connector, args.Code))
+	case "gateway_consent":
+		return mcpToolJSON(mcpGatewayConsent())
+	case "gateway_consent_set":
+		var args struct {
+			Feature string `json:"feature"`
+			Enabled bool   `json:"enabled"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpGatewayConsentSet(args.Feature, args.Enabled))
 	case "gateway_act":
 		var args struct {
 			Connector  string            `json:"connector"`

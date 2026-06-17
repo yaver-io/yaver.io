@@ -154,9 +154,15 @@ func (d *redroidDeviceDriver) RestoreSnapshot(instanceID, snapshotID string) err
 }
 
 func (d *redroidDeviceDriver) ReadSMS() (string, error) {
-	// Reading the redroid's own SMS inbox needs a content-provider query; not
-	// wired in this slice. Return "" so the handler escalates to a human gate.
-	return "", nil
+	// GATED: only a clone the user explicitly authorized (read_device_sms) reads
+	// its OWN inbox. Without the opt-in we return "" so the handler escalates to a
+	// human gate — we never read SMS off a device without that consent. With the
+	// grant, query the content provider for the newest OTP (redroid has no SIM ⇒
+	// "" cleanly; a SIM'd second-hand phone returns the code).
+	if !consentAllows(consentReadDeviceSms) {
+		return "", nil
+	}
+	return droidReadLatestOTP(d.serial)
 }
 
 // loginCreds is the {username,password} blob stored in vault under LoginRef.

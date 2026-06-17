@@ -388,3 +388,40 @@ func droidInstalledPackages(serial, filter string, limit int) ([]string, error) 
 	}
 	return packages, nil
 }
+
+// droidReadLatestOTP reads the device's OWN SMS inbox via the content provider
+// and returns the newest 6-digit code, or "" if none/unsupported. Used ONLY for a
+// clone reading its own number (consent-gated by the caller, gateway_redroid.go's
+// ReadSMS). redroid has no SIM ⇒ this returns "" cleanly; a SIM'd phone returns
+// the latest OTP. `content query` prints rows newest-first ("date DESC").
+func droidReadLatestOTP(serial string) (string, error) {
+	out, err := runAdb(serial, 12*time.Second,
+		"shell", "content", "query",
+		"--uri", "content://sms/inbox",
+		"--projection", "body",
+		"--sort", "date DESC")
+	if err != nil {
+		return "", fmt.Errorf("droid read sms: %w", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		body := parseContentRowBody(line)
+		if body == "" {
+			continue
+		}
+		if code := extractSixDigitCode(body); code != "" {
+			return code, nil
+		}
+	}
+	return "", nil
+}
+
+// parseContentRowBody extracts the body value from a `content query` output row
+// ("Row: 0 body=Your code is 123456" → "Your code is 123456"). Returns "" when
+// the line has no body= field.
+func parseContentRowBody(line string) string {
+	i := strings.Index(line, "body=")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(line[i+len("body="):])
+}
