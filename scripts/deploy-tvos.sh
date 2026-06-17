@@ -23,6 +23,12 @@ iOS TestFlight script.
 Environment:
   TVOS_MARKETING_VERSION  Override MARKETING_VERSION for the archive.
   TVOS_BUILD_NUMBER       Override CURRENT_PROJECT_VERSION for the archive.
+  TVOS_PROVISIONING_PROFILE_SPECIFIER
+                           App Store profile name for manual upload signing.
+                           Defaults to "Yaver TVOS_APP_STORE profile".
+                           Set to empty to use automatic signing.
+  TVOS_CODE_SIGN_IDENTITY  Signing identity for manual upload signing.
+                           Defaults to "Apple Distribution".
 EOF
 }
 
@@ -79,9 +85,26 @@ AUTH_KEY="${APP_STORE_KEY_PATH:?APP_STORE_KEY_PATH unset}"
 AUTH_KEY_ID="${APP_STORE_KEY_ID:?APP_STORE_KEY_ID unset}"
 AUTH_KEY_ISSUER="${APP_STORE_KEY_ISSUER:?APP_STORE_KEY_ISSUER unset}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:?APPLE_TEAM_ID unset}"
+TVOS_PROVISIONING_PROFILE_SPECIFIER="${TVOS_PROVISIONING_PROFILE_SPECIFIER-Yaver TVOS_APP_STORE profile}"
+TVOS_CODE_SIGN_IDENTITY="${TVOS_CODE_SIGN_IDENTITY:-Apple Distribution}"
 
 ls -la "$ARCHIVE_PATH" "$EXPORT_PATH" "$DERIVED_DATA_PATH" 2>/dev/null || true
 rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH"
+
+SIGNING_SETTINGS=(DEVELOPMENT_TEAM="$APPLE_TEAM_ID")
+EXPORT_SIGNING_STYLE="automatic"
+ALLOW_PROVISIONING_UPDATES=(-allowProvisioningUpdates)
+if [ -n "$TVOS_PROVISIONING_PROFILE_SPECIFIER" ]; then
+  SIGNING_SETTINGS+=(
+    CODE_SIGN_STYLE=Manual
+    CODE_SIGN_IDENTITY="$TVOS_CODE_SIGN_IDENTITY"
+    PROVISIONING_PROFILE_SPECIFIER="$TVOS_PROVISIONING_PROFILE_SPECIFIER"
+  )
+  EXPORT_SIGNING_STYLE="manual"
+  ALLOW_PROVISIONING_UPDATES=()
+else
+  SIGNING_SETTINGS+=(CODE_SIGN_STYLE=Automatic)
+fi
 
 xcodebuild -project "$TVOS_DIR/YaverTV.xcodeproj" \
   -scheme "$SCHEME" \
@@ -90,34 +113,44 @@ xcodebuild -project "$TVOS_DIR/YaverTV.xcodeproj" \
   -destination "generic/platform=tvOS" \
   -archivePath "$ARCHIVE_PATH" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
-  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
-  -allowProvisioningUpdates \
+  "${SIGNING_SETTINGS[@]}" \
+  "${ALLOW_PROVISIONING_UPDATES[@]}" \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" \
   ${EXTRA_SETTINGS[@]+"${EXTRA_SETTINGS[@]}"} \
   archive
 
-EXPORT_OPTIONS="$(mktemp /tmp/YaverTVExportOptions.XXXXXX.plist)"
-cat > "$EXPORT_OPTIONS" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key><string>app-store-connect</string>
-    <key>teamID</key><string>${APPLE_TEAM_ID}</string>
-    <key>signingStyle</key><string>automatic</string>
-    <key>destination</key><string>upload</string>
-    <key>uploadSymbols</key><false/>
-</dict>
-</plist>
-EOF
+EXPORT_OPTIONS="$(mktemp /tmp/YaverTVExportOptions.plist.XXXXXX)"
+if [ -n "$TVOS_PROVISIONING_PROFILE_SPECIFIER" ]; then
+  PROVISIONING_PROFILES_XML="
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>io.yaver.mobile</key><string>${TVOS_PROVISIONING_PROFILE_SPECIFIER}</string>
+    </dict>"
+else
+  PROVISIONING_PROFILES_XML=""
+fi
+printf '%s\n' \
+'<?xml version="1.0" encoding="UTF-8"?>' \
+'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+'<plist version="1.0">' \
+'<dict>' \
+'    <key>method</key><string>app-store-connect</string>' \
+"    <key>teamID</key><string>${APPLE_TEAM_ID}</string>" \
+"    <key>signingStyle</key><string>${EXPORT_SIGNING_STYLE}</string>" \
+'    <key>destination</key><string>upload</string>' \
+'    <key>uploadSymbols</key><false/>' \
+"${PROVISIONING_PROFILES_XML}" \
+'</dict>' \
+'</plist>' > "$EXPORT_OPTIONS"
+plutil -lint "$EXPORT_OPTIONS"
 
 xcodebuild -exportArchive \
   -archivePath "$ARCHIVE_PATH" \
   -exportOptionsPlist "$EXPORT_OPTIONS" \
   -exportPath "$EXPORT_PATH" \
-  -allowProvisioningUpdates \
+  "${ALLOW_PROVISIONING_UPDATES[@]}" \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER"
