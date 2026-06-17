@@ -10582,6 +10582,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mcpJobsList(a.Dir))
 	case "console_machines":
 		return mcpToolJSON(mcpConsoleMachines())
+	case "mobile_platform_deploy":
+		var a struct {
+			Dir        string `json:"directory"`
+			Target     string `json:"target"`
+			Upload     bool   `json:"upload"`
+			DryRun     bool   `json:"dry_run"`
+			TimeoutSec int    `json:"timeout_sec"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpMobilePlatformDeploy(a.Dir, a.Target, a.Upload, a.DryRun, a.TimeoutSec))
 	case "deploy_run":
 		var a struct {
 			Dir string `json:"directory"`

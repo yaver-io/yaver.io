@@ -18,6 +18,9 @@ func runDeploy(args []string) {
 	case "all":
 		runDeployAllCmd(args[1:])
 		return
+	case "tv", "television", "android-tv", "androidtv", "leanback", "tvos", "apple-tv", "appletv":
+		runDeployPlatformCmd(args[0], args[1:])
+		return
 	case "npm", "cli":
 		runDeployNpmCmd(args[1:])
 		return
@@ -160,6 +163,12 @@ func printDeployUsage() {
   yaver deploy all --skip-testflight --skip-playstore  Per-stage skips.
   yaver deploy all --bump minor                        Bump cli minor (default: patch).
   yaver deploy all --dry-run                           Print what would run; no side effects.
+
+  # Platform surfaces:
+  yaver deploy tv                                      Android TV + tvOS upload.
+  yaver deploy tv --build-only                         Build/verify TV surfaces only.
+  yaver deploy android-tv                              Play AAB upload with leanback verification.
+  yaver deploy tvos                                    Apple TV standalone archive/upload.
 
   # npm CLI release only (bump version → tag → push → CI publishes):
   yaver deploy npm                                     Patch-bump + release the CLI to npm.

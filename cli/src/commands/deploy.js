@@ -43,15 +43,19 @@ const BUILTIN_ALIASES = {
   publish: 'npm',
   container: 'docker',
   compose: 'docker',
+  television: 'tv',
+  leanback: 'android-tv',
+  appletv: 'tvos',
 };
 
 // Canonical target names we always recognise even before scanning.
-const KNOWN_TARGETS = ['ios', 'android', 'convex', 'supabase', 'cloudflare', 'docker', 'npm'];
+const KNOWN_TARGETS = ['ios', 'android', 'android-tv', 'tvos', 'tv', 'convex', 'supabase', 'cloudflare', 'docker', 'npm'];
 
 // Built-in groups. Overridable by config.groups. Expanded lazily so a
 // group only pulls in targets that actually resolve.
 const BUILTIN_GROUPS = {
   mobile: ['ios', 'android'],
+  tv: ['android-tv', 'tvos'],
   all: ['convex', 'cloudflare', 'ios', 'android'],
 };
 
@@ -61,12 +65,15 @@ yaver deploy — build + ship a monorepo app from your own machine
 Targets:
   yaver deploy ios            Mobile → TestFlight (RN/Expo, Flutter, native Swift)
   yaver deploy android        Mobile → Play internal (RN/Expo, Flutter, native Kotlin)
+  yaver deploy android-tv     Android TV → Play AAB + leanback verification
+  yaver deploy tvos           Apple TV → standalone tvOS build/archive
   yaver deploy convex         Deploy the Convex backend          (alias: backend)
   yaver deploy supabase       Push Supabase db + edge functions  (alias: backend)
   yaver deploy cloudflare     Deploy web/jamstack to Cloudflare  (alias: frontend, front, web)
   yaver deploy docker         Build/up Docker (compose or image) (alias: container, compose)
   yaver deploy npm            Publish a detected npm library     (alias: library, lib, publish)
   yaver deploy mobile         ios + android
+  yaver deploy tv             android-tv + tvos
   yaver deploy all            backend → frontend → mobile (npm/docker excluded)
 
 Inspect:
@@ -234,6 +241,9 @@ function autoDetectTargets(repoRoot) {
   const has = (rel2) => fs.existsSync(path.join(repoRoot, rel2));
   const tfScript = has('scripts/deploy-testflight.sh');
   const psScript = has('scripts/deploy-playstore.sh');
+  const androidTvScript = has('scripts/deploy-android-tv.sh');
+  const tvosScript = has('scripts/deploy-tvos.sh');
+  const tvScript = has('scripts/deploy-tv.sh');
 
   // Group markers by the directory that owns them.
   const dirs = {}; // relDir -> { files:Set, dirs:Set }
@@ -421,6 +431,34 @@ function autoDetectTargets(repoRoot) {
         framework: 'dockerfile', description: `Docker image build ${tag} (${relDir})`,
       });
     }
+  }
+
+  if (androidTvScript) {
+    consider('android-tv', {
+      dir: '.',
+      run: 'bash scripts/deploy-android-tv.sh --upload',
+      scriptBacked: true,
+      framework: 'android-tv',
+      description: 'Android TV Play AAB upload with leanback release-manifest verification',
+    });
+  }
+  if (tvosScript) {
+    consider('tvos', {
+      dir: '.',
+      run: 'bash scripts/deploy-tvos.sh --upload',
+      scriptBacked: true,
+      framework: 'tvos',
+      description: 'Apple TV standalone tvOS archive/upload',
+    });
+  }
+  if (tvScript) {
+    consider('tv', {
+      dir: '.',
+      run: 'bash scripts/deploy-tv.sh --upload',
+      scriptBacked: true,
+      framework: 'tv',
+      description: 'Android TV + Apple TV platform deploy wrapper',
+    });
   }
 
   return targets;
