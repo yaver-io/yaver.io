@@ -18,7 +18,7 @@ func runDeploy(args []string) {
 	case "all":
 		runDeployAllCmd(args[1:])
 		return
-	case "tv", "television", "android-tv", "androidtv", "leanback", "tvos", "apple-tv", "appletv":
+	case "tv", "television", "android-tv", "androidtv", "leanback", "tvos", "apple-tv", "appletv", "wear", "wear-os", "wearos", "android-wear", "android-watch":
 		runDeployPlatformCmd(args[0], args[1:])
 		return
 	case "npm", "cli":
@@ -169,6 +169,7 @@ func printDeployUsage() {
   yaver deploy tv --build-only                         Build/verify TV surfaces only.
   yaver deploy android-tv                              Play AAB upload with leanback verification.
   yaver deploy tvos                                    Apple TV standalone archive/upload.
+  yaver deploy wear-os                                 Wear OS AAB upload to Play internal.
 
   # npm CLI release only (bump version → tag → push → CI publishes):
   yaver deploy npm                                     Patch-bump + release the CLI to npm.

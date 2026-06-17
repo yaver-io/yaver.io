@@ -66,6 +66,13 @@ var publishStoreAliases = map[string][]string{
 	"tvos":       {"tvos"},
 	"apple-tv":   {"tvos"},
 	"appletv":    {"tvos"},
+	// Watch surfaces.
+	"watch":         {"wear-os"},
+	"wear":          {"wear-os"},
+	"wear-os":       {"wear-os"},
+	"wearos":        {"wear-os"},
+	"android-wear":  {"wear-os"},
+	"android-watch": {"wear-os"},
 }
 
 // isPublishStoreWord reports whether arg looks like a store selector (so
@@ -151,7 +158,7 @@ func runPublishStoreFacade(args []string) {
 
 	if hasPlatformPublishTarget(targets) {
 		if strings.TrimSpace(*machine) != "" {
-			fmt.Fprintln(os.Stderr, "TV platform targets on a remote machine use --queue --machine <deviceId> so the farm node can run mobile_platform_deploy.")
+			fmt.Fprintln(os.Stderr, "Platform targets on a remote machine use --queue --machine <deviceId> so the farm node can run mobile_platform_deploy.")
 			os.Exit(2)
 		}
 		for _, target := range targets {

@@ -164,7 +164,7 @@ var shotsJobTargets = map[string]bool{"shots": true, "shots-submit": true}
 // platformJobTargets are deployable platform surfaces that do not go
 // through /deploy/ship yet. They use the mobile_platform_deploy spine
 // directly so mobile/web can enqueue TV deploys without a human shell.
-var platformJobTargets = map[string]bool{"tv": true, "android-tv": true, "tvos": true}
+var platformJobTargets = map[string]bool{"tv": true, "android-tv": true, "tvos": true, "wear-os": true}
 
 // runLocalShipForJob dispatches the claim's targets: store binaries go
 // through the existing /deploy/ship spine; `shots*` pseudo-targets run the
@@ -212,6 +212,8 @@ func normalizePublishJobTarget(target string) string {
 		return "android-tv"
 	case "apple-tv", "appletv":
 		return "tvos"
+	case "wear", "wearos", "android-wear", "android-watch":
+		return "wear-os"
 	case "television":
 		return "tv"
 	default:
@@ -536,9 +538,9 @@ func (a *atomicString) Get() string  { a.mu.RLock(); defer a.mu.RUnlock(); retur
 func computePublishCapabilities() []string {
 	switch runtime.GOOS {
 	case "darwin":
-		return []string{"ios", "android", "android-tv", "tvos", "tv"}
+		return []string{"ios", "android", "android-tv", "tvos", "tv", "wear-os"}
 	case "linux":
-		return []string{"android", "android-tv"}
+		return []string{"android", "android-tv", "wear-os"}
 	default:
 		return []string{}
 	}

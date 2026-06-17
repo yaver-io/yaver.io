@@ -12,7 +12,7 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	if err := os.MkdirAll(scripts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh"} {
+	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh", "deploy-wear-os.sh"} {
 		if err := os.WriteFile(filepath.Join(scripts, name), []byte("#!/bin/bash\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -43,5 +43,13 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	}
 	if plan.Target != "tvos" || plan.Script != "scripts/deploy-tvos.sh" || len(plan.Args) != 1 || plan.Args[0] != "--upload" {
 		t.Fatalf("unexpected tvos alias plan: %+v", plan)
+	}
+
+	plan, err = platformDeployPlanFor(root, "android-watch", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Target != "wear-os" || plan.Script != "scripts/deploy-wear-os.sh" || len(plan.Args) != 1 || plan.Args[0] != "--upload" {
+		t.Fatalf("unexpected wear-os alias plan: %+v", plan)
 	}
 }

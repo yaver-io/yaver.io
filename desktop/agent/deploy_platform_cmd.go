@@ -33,8 +33,11 @@ func platformDeployPlanFor(root, target string, upload bool, extra []string) (pl
 	case "tvos", "apple-tv", "appletv":
 		t = "tvos"
 		script = "scripts/deploy-tvos.sh"
+	case "wear", "wear-os", "wearos", "android-wear", "android-watch":
+		t = "wear-os"
+		script = "scripts/deploy-wear-os.sh"
 	default:
-		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos)", target)
+		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos, wear-os)", target)
 	}
 	if _, err := os.Stat(filepath.Join(root, script)); err != nil {
 		return platformDeployPlan{}, fmt.Errorf("%s not found in %s", script, root)

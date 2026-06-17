@@ -67,9 +67,9 @@ func mobilePlatformMatrix(root string) mobilePlatformMatrixReport {
 			}),
 			surface(mobilePlatformSurface{
 				ID: "android-wear", Label: "Wear OS", Family: "android", Surface: "watch",
-				Status: "build-only", BuildSupported: true, SubmitSupported: false, ManagedCloud: "planned", RequiredHost: "any",
-				Notes:       []string{"The repo has a Wear project path, but store submission needs a dedicated Wear release lane before one-tap upload is safe."},
-				Limitations: []string{"Not queued from mobile/web yet."},
+				Status: "ready", BuildSupported: true, SubmitSupported: true, ManagedCloud: "supported", RequiredHost: "any",
+				StoreTarget: "playstore", DeployTarget: "wear-os", Script: "scripts/deploy-wear-os.sh", QueueTargets: []string{"wear-os"},
+				Notes: []string{"Builds the standalone Wear OS AAB as a watch-only io.yaver.mobile artifact and uploads it to the existing Play internal track."},
 			}),
 			surface(mobilePlatformSurface{
 				ID: "ios-mobile", Label: "iPhone / iPad", Family: "apple", Surface: "mobile",
