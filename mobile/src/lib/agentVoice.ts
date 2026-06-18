@@ -29,10 +29,16 @@ export interface AgentVoiceStartOpts {
   /** Surface hint for the agent's prompt wrapper (see Go-side TaskViewport).
    *  Examples: "mobile-phone", "mobile-tablet", "web-spatial-hud". */
   surface?: string;
+  /** Dominant input mode: voice, dpad, touch, keyboard, approval, stream. */
+  interaction?: string;
   /** How many parallel Claude sessions the user has visible. */
   paneCount?: number;
   /** Max chars for TTS readback (Cartesia default ~280). */
   ttsBudget?: number;
+  /** none, glance, panel, or full. */
+  visualBudget?: string;
+  /** normal, driving, watch, shared-tv, or mcp. */
+  riskPolicy?: string;
 }
 
 export interface AgentVoiceCallbacks {
@@ -100,8 +106,11 @@ export class AgentVoiceSession {
               model: opts.model ?? "",
               runner: opts.runner ?? "",
               surface: opts.surface ?? "",
+              interaction: opts.interaction ?? "",
               paneCount: opts.paneCount ?? 0,
               ttsBudget: opts.ttsBudget ?? 0,
+              visualBudget: opts.visualBudget ?? "",
+              riskPolicy: opts.riskPolicy ?? "",
             }),
           );
           resolve();

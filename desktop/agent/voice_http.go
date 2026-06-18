@@ -61,9 +61,12 @@ type voiceStartFrame struct {
 	// Surface tells the prompt wrapper what display the user is on.
 	// Examples: "mobile-phone", "web-spatial-vr", "glasses-mentra-display".
 	// See TaskViewport docstring for full enum.
-	Surface   string `json:"surface,omitempty"`
-	PaneCount int    `json:"paneCount,omitempty"`
-	TTSBudget int    `json:"ttsBudget,omitempty"`
+	Surface      string `json:"surface,omitempty"`
+	Interaction  string `json:"interaction,omitempty"`
+	PaneCount    int    `json:"paneCount,omitempty"`
+	TTSBudget    int    `json:"ttsBudget,omitempty"`
+	VisualBudget string `json:"visualBudget,omitempty"`
+	RiskPolicy   string `json:"riskPolicy,omitempty"`
 	// Per-session provider overrides. Empty = fall back to the agent's
 	// configured default (VoiceConfig.EffectiveSTT/TTSProvider). This lets
 	// a standalone SDK client pick "local" (free whisper.cpp on the host)
@@ -385,9 +388,12 @@ loop:
 		Model:   start.Model,
 		Runner:  start.Runner,
 		Viewport: &TaskViewport{
-			Surface:   start.Surface,
-			PaneCount: start.PaneCount,
-			TTSBudget: start.TTSBudget,
+			Surface:      start.Surface,
+			Interaction:  start.Interaction,
+			PaneCount:    start.PaneCount,
+			TTSBudget:    start.TTSBudget,
+			VisualBudget: start.VisualBudget,
+			RiskPolicy:   start.RiskPolicy,
 		},
 	})
 	if result != nil && result.TaskID != "" {
