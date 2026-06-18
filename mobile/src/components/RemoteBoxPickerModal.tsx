@@ -17,12 +17,52 @@ import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
 import { connectionManager } from "../lib/connectionManager";
 import { quicClient } from "../lib/quic";
 import { eligibleRemoteBoxDevices, versionPatchDistance } from "../lib/devicePicker";
-import { lastSeenLabel, probeMobileDeviceStatus } from "../lib/deviceStatus";
+import {
+  lastSeenLabel,
+  probeMobileDeviceStatus,
+  type CodingRunnerProbe,
+} from "../lib/deviceStatus";
 
 interface Props {
   visible: boolean;
   onClose: () => void;
   onSelected?: (device: Device) => void;
+}
+
+type CodingStatus = {
+  ready: boolean;
+  runners: CodingRunnerProbe[];
+  path?: "relay" | "direct";
+  error?: string;
+};
+
+const CODING_RUNNER_ORDER = ["codex", "claude", "claude-code", "opencode"];
+
+function runnerDisplayName(id: string): string {
+  const normalized = id.toLowerCase();
+  if (normalized === "codex") return "Codex";
+  if (normalized === "claude" || normalized === "claude-code") return "Claude";
+  if (normalized === "opencode") return "OpenCode";
+  return id;
+}
+
+function sortedCodingRunners(runners: CodingRunnerProbe[]): CodingRunnerProbe[] {
+  return [...runners]
+    .filter((r) => CODING_RUNNER_ORDER.includes(r.id))
+    .sort((a, b) => {
+      const ai = CODING_RUNNER_ORDER.indexOf(a.id);
+      const bi = CODING_RUNNER_ORDER.indexOf(b.id);
+      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+    });
+}
+
+async function waitForClientConnected(deviceId: string, timeoutMs = 2500): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (connectionManager.clientFor(deviceId).isConnected) return true;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return connectionManager.clientFor(deviceId).isConnected;
 }
 
 export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: Props) {
@@ -71,6 +111,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   >({});
   const [hermesReadyByDevice, setHermesReadyByDevice] = React.useState<
     Record<string, { enabled: boolean; reason?: string; notes?: string[] } | null>
+  >({});
+  const [codingStatusByDevice, setCodingStatusByDevice] = React.useState<
+    Record<string, CodingStatus | null>
   >({});
   // Per-device "Fix this machine" remediation state. Drives the
   // /install/mobile flow (Node LTS + hermesc) on the box the user
@@ -197,6 +240,52 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     };
   }, [visible, eligibleDevices, hermesReadyByDevice]);
 
+  React.useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    for (const device of eligibleDevices) {
+      if (codingStatusByDevice[device.id] !== undefined) continue;
+      const load = async () => {
+        try {
+          const probe = await probeMobileDeviceStatus(
+            { id: device.id, host: (device as any).host, port: (device as any).port, lanIps: (device as any).lanIps },
+            token,
+            8000,
+          );
+          if (cancelled) return;
+          setCodingStatusByDevice((prev) => ({
+            ...prev,
+            [device.id]: probe.reachable
+              ? {
+                  ready: probe.codingReady,
+                  runners: probe.codingRunners,
+                  path: probe.path,
+                }
+              : {
+                  ready: false,
+                  runners: [],
+                  error: probe.error || "Coding agent status unavailable",
+                },
+          }));
+        } catch (err: any) {
+          if (cancelled) return;
+          setCodingStatusByDevice((prev) => ({
+            ...prev,
+            [device.id]: {
+              ready: false,
+              runners: [],
+              error: err?.message || "Coding agent status unavailable",
+            },
+          }));
+        }
+      };
+      void load();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, eligibleDevices, codingStatusByDevice, token]);
+
   const pickedDevice = eligibleDevices.find((d) => d.id === pickedDeviceId) ?? null;
 
   const handleContinue = React.useCallback(async (targetOverride?: Device | null) => {
@@ -221,6 +310,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       // unconditionally is safe and idempotent.
       if (activeDevice?.id !== target.id || !connectionManager.clientFor(target.id).isConnected) {
         await selectDevice(target);
+      }
+      if (!connectionManager.clientFor(target.id).isConnected) {
+        await waitForClientConnected(target.id);
       }
       if (!connectionManager.clientFor(target.id).isConnected) {
         const detail = (lastError || "").trim();
@@ -448,6 +540,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               eligibleDevices.map((device) => {
                 const ping = pingByDevice[device.id];
                 const hermesReady = hermesReadyByDevice[device.id];
+                const codingStatus = codingStatusByDevice[device.id];
+                const codingRunners = codingStatus ? sortedCodingRunners(codingStatus.runners) : [];
+                const readyCodingRunners = codingRunners.filter((r) => r.ready);
                 const fix = fixByDevice[device.id];
                 const selected = pickedDeviceId === device.id;
                 const agentVer = (device.agentVersion || "").trim();
@@ -624,6 +719,28 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             </>
                           )
                         ) : null}
+                        {codingStatus === undefined ? (
+                          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                            Checking coding agents…
+                          </Text>
+                        ) : readyCodingRunners.length > 0 ? (
+                          <Text style={{ color: c.success, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>
+                            {readyCodingRunners.map((r) => `${runnerDisplayName(r.id)} ready`).join(" · ")}
+                            {codingStatus?.path ? ` · ${codingStatus.path}` : ""}
+                          </Text>
+                        ) : codingRunners.length > 0 ? (
+                          <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>
+                            {codingRunners.map((r) => {
+                              if (!r.installed) return `${runnerDisplayName(r.id)} not installed`;
+                              if (!r.authConfigured) return `${runnerDisplayName(r.id)} auth needed`;
+                              return `${runnerDisplayName(r.id)} not ready`;
+                            }).join(" · ")}
+                          </Text>
+                        ) : (
+                          <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>
+                            {codingStatus?.error || "No coding agents ready"}
+                          </Text>
+                        )}
                         {outdated ? (
                           <Text style={{ color: c.warn, fontSize: 11, marginTop: 2, fontWeight: "600" }}>
                             yaver {agentVer} · {distance} version{distance === 1 ? "" : "s"} behind {latestCliVersion}

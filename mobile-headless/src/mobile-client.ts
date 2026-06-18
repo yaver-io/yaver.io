@@ -51,6 +51,14 @@ type Device = {
   hostName?: string;
   hostEmail?: string;
   lastHeartbeat?: number;
+  runners?: Array<{ id?: string; runnerId?: string; status?: string }>;
+  installedRunnerIds?: string[];
+};
+
+export type HeadlessDeviceStatusProbe = {
+  reachable: boolean;
+  codingReady?: boolean;
+  codingRunners?: Array<{ id?: string; ready?: boolean }>;
 };
 
 export type ExecStatus = "running" | "completed" | "failed" | "killed";
@@ -582,20 +590,57 @@ export class MobileClient {
   }
 
   // ── Auto-connect decision (mirrors DeviceContext.tsx rule) ────
-  /** Apply the same rule the real mobile app uses:
-   *   1. Exactly one online device                 -> auto-connect
-   *   2. Multiple online, primaryDeviceId matches  -> auto-connect primary
-   *   3. Otherwise                                 -> null (user must pick)
-   *  Guest devices are never treated as primary — the host can revoke. */
-  pickAutoConnectTarget(devices: Device[], primaryDeviceId: string | null): Device | null {
-    const online = devices.filter((d) => d.online);
-    if (online.length === 0) return null;
-    if (online.length === 1) return online[0];
-    if (primaryDeviceId) {
-      const primary = online.find((d) => d.id === primaryDeviceId && !d.isGuest);
-      if (primary) return primary;
+  /** Apply the same ranking the real mobile app uses after probing every
+   * owned device: reachable only, coding-ready first, then sticky →
+   * primary → secondary → any reachable by name. Guests are never auto-picked.
+   * When `probes` is omitted this falls back to the Convex `online` flag so
+   * the CLI remains useful without performing live network probes. */
+  pickAutoConnectTarget(
+    devices: Device[],
+    primaryDeviceId: string | null,
+    opts?: {
+      secondaryDeviceId?: string | null;
+      stickyDeviceId?: string | null;
+      probes?: Record<string, HeadlessDeviceStatusProbe | null | undefined>;
+    },
+  ): Device | null {
+    const candidates = devices.filter((d) => !d.isGuest);
+    const priorityIds = [opts?.stickyDeviceId, primaryDeviceId, opts?.secondaryDeviceId];
+    const ranked = candidates
+      .map((device) => ({
+        device,
+        rank: this.autoConnectRank(device, opts?.probes?.[device.id], priorityIds, opts?.probes !== undefined),
+      }))
+      .filter((row) => row.rank >= 0)
+      .sort((a, b) => {
+        if (b.rank !== a.rank) return b.rank - a.rank;
+        return a.device.name.localeCompare(b.device.name);
+      });
+    return ranked[0]?.device ?? null;
+  }
+
+  private autoConnectRank(
+    device: Device,
+    probe: HeadlessDeviceStatusProbe | null | undefined,
+    priorityIds: Array<string | null | undefined>,
+    hasExplicitProbeSet: boolean,
+  ): number {
+    const reachable = hasExplicitProbeSet ? probe?.reachable === true : device.online === true;
+    if (!reachable) return -1;
+    const priority = priorityIds.findIndex((id) => !!id && id === device.id);
+    const priorityScore = priority >= 0 ? 100 - priority * 10 : 10;
+    const codingScore = probe?.codingReady || this.deviceRunnerReadyFromHeartbeat(device) ? 1_000 : 0;
+    return codingScore + priorityScore;
+  }
+
+  private deviceRunnerReadyFromHeartbeat(device: Device): boolean {
+    const runnerIds = new Set(["claude", "claude-code", "codex", "opencode", "glm"]);
+    for (const runner of device.runners || []) {
+      const id = String(runner.runnerId || runner.id || "").trim().toLowerCase();
+      const status = String(runner.status || "").trim().toLowerCase();
+      if (runnerIds.has(id) && (status === "ready" || status === "running" || status === "idle")) return true;
     }
-    return null;
+    return (device.installedRunnerIds || []).some((id) => runnerIds.has(String(id).trim().toLowerCase()));
   }
 
   // ── Real-time relay presence ──────────────────────────────────
@@ -737,11 +782,22 @@ export class MobileClient {
       const body = await res.json() as { guests: any[] };
       return body.guests ?? [];
     },
-    invite: async (email: string) => {
+    invite: async (
+      target:
+        | string
+        | {
+            email?: string;
+            userId?: string;
+            deviceIds?: string[];
+            scope?: "full" | "feedback-only" | "sdk-project";
+            allowedProjects?: string[];
+          },
+    ) => {
+      const body = typeof target === "string" ? { email: target } : target;
       const res = await fetch(this.opts.convexUrl + "/guests/invite", {
         method: "POST",
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error("invite: HTTP " + res.status);
       return res.json();

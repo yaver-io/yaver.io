@@ -53,7 +53,7 @@ interface BannerPalette {
 
 export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: RemoteBoxBannerProps) {
   const c = useColors();
-  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId } = useDevice();
+  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError } = useDevice();
   // "Never added a remote device" is distinct from "have devices but none
   // selected/reachable" — show a create/pair prompt rather than a misleading
   // "Disconnected".
@@ -135,7 +135,7 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
                 style={[styles.deviceText, { color: needsPick ? c.textMuted : c.textPrimary }]}
                 numberOfLines={1}
               >
-                {needsPick ? "Tap to choose where tasks run" : deviceLabel}
+                {noDevicesYet && deviceListError ? deviceListError : needsPick ? "Tap to choose where tasks run" : deviceLabel}
               </Text>
             </View>
             {!disableTap && (

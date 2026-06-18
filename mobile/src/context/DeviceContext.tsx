@@ -22,7 +22,7 @@ import { appLog } from "../lib/logger";
 import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
 import { submitEncryptedPair } from "../lib/encryptedPair";
-import { probeMobileDeviceStatus } from "../lib/deviceStatus";
+import { probeMobileDeviceStatus, type MobileDeviceStatusProbe } from "../lib/deviceStatus";
 import { localBoxDeviceIfRunning } from "../lib/sandboxControl";
 import { LOCAL_BOX_DEVICE_ID } from "../lib/localBox";
 import {
@@ -89,11 +89,22 @@ export const CUSTOM_TUNNELS_KEY = "@yaver/custom_tunnels";
 const RELAY_ONBOARDING_KEY = "@yaver/relay_onboarding_done";
 
 const DETACHED_DEVICES_KEY = "@yaver/detached_devices";
+function detachedDevicesKey(userId?: string): string { return userKey(userId, "detached_devices"); }
 
-async function getDetachedDevices(): Promise<Set<string>> {
+async function getDetachedDevices(userId?: string): Promise<Set<string>> {
   try {
-    const raw = await AsyncStorage.getItem(DETACHED_DEVICES_KEY);
-    return raw ? new Set(JSON.parse(raw)) : new Set();
+    const scopedKey = detachedDevicesKey(userId);
+    const raw = await AsyncStorage.getItem(scopedKey);
+    if (raw) return new Set(JSON.parse(raw));
+    if (userId) {
+      const legacy = await AsyncStorage.getItem(DETACHED_DEVICES_KEY);
+      if (legacy) {
+        await AsyncStorage.setItem(scopedKey, legacy);
+        await AsyncStorage.removeItem(DETACHED_DEVICES_KEY);
+        return new Set(JSON.parse(legacy));
+      }
+    }
+    return new Set();
   } catch { return new Set(); }
 }
 
@@ -144,10 +155,19 @@ async function applyRelayPresence(list: Device[]): Promise<Device[]> {
   }
 }
 
-async function addDetachedDevice(key: string): Promise<void> {
-  const detached = await getDetachedDevices();
+async function clearDetachedDevices(userId?: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(detachedDevicesKey(userId));
+    await AsyncStorage.removeItem(DETACHED_DEVICES_KEY);
+  } catch {
+    // best-effort only
+  }
+}
+
+async function addDetachedDevice(key: string, userId?: string): Promise<void> {
+  const detached = await getDetachedDevices(userId);
   detached.add(key);
-  await AsyncStorage.setItem(DETACHED_DEVICES_KEY, JSON.stringify([...detached]));
+  await AsyncStorage.setItem(detachedDevicesKey(userId), JSON.stringify([...detached]));
 }
 
 let _debugLogsEnabled = false;
@@ -175,6 +195,28 @@ export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   // model id is forwarded verbatim. Mirrors builtinRunners["glm"].Model.
   glm: "glm-4.6",
 };
+
+function deviceRunnerReadyFromHeartbeat(device: Pick<Device, "runners" | "installedRunnerIds">): boolean {
+  const runnerIds = new Set(["claude", "claude-code", "codex", "opencode", "glm"]);
+  for (const runner of device.runners || []) {
+    const id = String((runner as any).runnerId || (runner as any).id || "").trim().toLowerCase();
+    const status = String((runner as any).status || "").trim().toLowerCase();
+    if (runnerIds.has(id) && (status === "ready" || status === "running" || status === "idle")) return true;
+  }
+  return false;
+}
+
+function autoConnectRank(
+  device: Device,
+  probe: MobileDeviceStatusProbe | null | undefined,
+  priorityIds: Array<string | null | undefined>,
+): number {
+  if (!probe?.reachable) return -1;
+  const priority = priorityIds.findIndex((id) => !!id && id === device.id);
+  const priorityScore = priority >= 0 ? 100 - priority * 10 : 10;
+  const codingScore = probe.codingReady || deviceRunnerReadyFromHeartbeat(device) ? 1_000 : 0;
+  return codingScore + priorityScore;
+}
 
 const APP_VERSION = Constants.expoConfig?.version ?? "unknown";
 const BUILD_NUMBER =
@@ -642,6 +684,8 @@ export interface DeviceState {
   userDisconnected: boolean;
   /** Last connection error message (null if no error) */
   lastError: string | null;
+  /** Last device-list fetch/filter error. Separate from transport connect errors. */
+  deviceListError: string | null;
   /** true when agent's Convex auth session is expired (agent reachable but needs re-auth) */
   agentAuthExpired: boolean;
   /** Trigger phone-driven auth recovery for a device. */
@@ -810,6 +854,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [userDisconnected, setUserDisconnected] = useState(false);
   const [relaysReady, setRelaysReady] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [deviceListError, setDeviceListError] = useState<string | null>(null);
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
   const [agentAuthExpired, setAgentAuthExpired] = useState(false);
   const [unreachableSet, setUnreachableSet] = useState<Set<string>>(() => new Set());
@@ -983,6 +1028,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const data = await devicesRes.json();
         const raw = data.devices || data || [];
         appLog("info", `Found ${raw.length} device(s) for ${user?.email || user?.id || "unknown-user"}`);
+        setDeviceListError(null);
         const connectedDeviceId = quicClient.isConnected ? activeDevice?.id : null;
         const mapped: Device[] = raw.map((d: any) => {
           const deviceId = d.deviceId || d.id;
@@ -1056,11 +1102,17 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // cannot collapse into one visible entry.
         const collapsed = collapseAliasDevices(mapped);
         // Filter out detached devices
-        const detached = await getDetachedDevices();
-        const filtered = collapsed.filter(d => {
+        const detached = await getDetachedDevices(uid);
+        let filtered = collapsed.filter(d => {
           const key = deviceIdentityKey(d);
           return !detached.has(key);
         });
+        if (collapsed.length > 0 && filtered.length === 0 && detached.size > 0) {
+          await clearDetachedDevices(uid);
+          filtered = collapsed;
+          setDeviceListError("Local hidden-device cache was stale; restored your device list.");
+          appLog("warn", "[devices] stale detached-device cache hid every backend device; cleared it");
+        }
         // Real-time presence override: ask the primary relay server which
         // devices have an active QUIC tunnel RIGHT NOW. This signal is
         // authoritative — heartbeat can be up to ~90 s stale, but the relay
@@ -1081,6 +1133,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         setDevices(withLocalBox);
       } else {
         appLog("warn", `/devices/list failed: ${devicesRes.status} via ${convexSiteUrl}`);
+        setDeviceListError(`Device list request failed: HTTP ${devicesRes.status}`);
         // A 401/403 here means our bearer is stale/rotated/revoked — but
         // the app still shows the cached account, so the user looks
         // "signed in" while every device query returns nothing. That
@@ -1104,6 +1157,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       appLog("error", `refreshDevices error: ${e}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      setDeviceListError(`Device list request failed: ${msg}`);
     } finally {
       hasLoadedOnce.current = true;
       setIsLoadingDevices(false);
@@ -1409,7 +1464,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
   const handleDetachDevice = useCallback(async (device: Device) => {
     const key = deviceIdentityKey(device);
-    await addDetachedDevice(key);
+    await addDetachedDevice(key, uid);
     // If detaching the active device, disconnect ITS pool client
     // (peer connections to other boxes stay open).
     if (activeDevice?.id === device.id) {
@@ -1422,7 +1477,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectionManager.disconnect(device.id);
     }
     setDevices((prev) => prev.filter((d) => deviceIdentityKey(d) !== key));
-  }, [activeDevice]);
+  }, [activeDevice, uid]);
 
   const handleSetDeviceAlias = useCallback(
     async (
@@ -2901,20 +2956,27 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         setConnectionStatus("connecting");
-        const reachable = new Set<string>();
+        const probes = new Map<string, MobileDeviceStatusProbe>();
         await Promise.all(
           candidates.map(async (d) => {
             const probe = await probeMobileDeviceStatus(d, token, 3000).catch(() => null);
-            if (probe?.reachable) reachable.add(d.id);
+            if (probe) probes.set(d.id, probe);
           }),
         );
         if (cancelled) return;
-        const alpha = [...candidates]
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map((d) => d.id);
-        const pickId = [userSelectedDeviceIdRef.current, primaryDeviceId, secondaryDeviceId, ...alpha].find(
-          (id): id is string => !!id && reachable.has(id),
-        );
+        const priorityIds = [userSelectedDeviceIdRef.current, primaryDeviceId, secondaryDeviceId];
+        const ranked = [...candidates]
+          .map((device) => ({
+            device,
+            probe: probes.get(device.id),
+            rank: autoConnectRank(device, probes.get(device.id), priorityIds),
+          }))
+          .filter((row) => row.rank >= 0)
+          .sort((a, b) => {
+            if (b.rank !== a.rank) return b.rank - a.rank;
+            return a.device.name.localeCompare(b.device.name);
+          });
+        const pickId = ranked[0]?.device.id;
 
         if (!pickId) {
           setConnectionStatus("error");
@@ -2925,16 +2987,22 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
         const target = devices.find((d) => d.id === pickId);
         if (!target || cancelled) return;
+        const targetProbe = probes.get(pickId);
         const reason =
           pickId === userSelectedDeviceIdRef.current ? "sticky" :
           pickId === primaryDeviceId ? "primary" :
-          pickId === secondaryDeviceId ? "secondary" : "reachable";
+          pickId === secondaryDeviceId ? "secondary" :
+          targetProbe?.codingReady ? "coding-ready" :
+          deviceRunnerReadyFromHeartbeat(target) ? "runner-heartbeat" :
+          "reachable";
         console.log(`[DeviceContext] Auto-connecting (${reason}) to`, target.name);
         sendTelemetry(token, "auto-connect", `${reason}: ${target.name}`, JSON.stringify({
           reason,
           relayCount: quicClient.relayServerCount,
           deviceId: target.id.slice(0, 8),
-          reachableCount: reachable.size,
+          reachableCount: ranked.length,
+          codingReady: targetProbe?.codingReady === true,
+          runnerCount: targetProbe?.codingRunners?.length ?? 0,
         }));
         await selectDevice(target);
         // Seed primaryDeviceId on a multi-device account's first auto-connect.
@@ -3103,6 +3171,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       isLoadingDevices,
       userDisconnected,
       lastError,
+      deviceListError,
       agentAuthExpired,
       recoverDeviceAuth,
       pendingClaims,
@@ -3138,7 +3207,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

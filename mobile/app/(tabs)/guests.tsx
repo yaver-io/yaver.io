@@ -96,6 +96,7 @@ export default function GuestsScreen() {
   const { token } = useAuth();
   const {
     devices,
+    activeDevice,
     guestInvitations,
     acceptGuestInvitation: ctxAcceptPending,
     refreshDevices,
@@ -126,6 +127,10 @@ export default function GuestsScreen() {
   const inviteSelectedDevices = useMemo(
     () => ownDevices.filter((d) => inviteProposedDeviceIds.includes(d.id)),
     [ownDevices, inviteProposedDeviceIds],
+  );
+  const activeOwnDevice = useMemo(
+    () => activeDevice && !activeDevice.isGuest ? activeDevice : null,
+    [activeDevice],
   );
 
   // ─── Join flow (guest side) ──────────────────────────────────
@@ -527,6 +532,24 @@ export default function GuestsScreen() {
                   <Text style={{ color: c.textMuted, fontSize: 11 }}>
                     Leave all unchecked to propose all of your machines. The guest can trim further when they accept.
                   </Text>
+                  {activeOwnDevice ? (
+                    <Pressable
+                      onPress={() => setInviteProposedDeviceIds([activeOwnDevice.id])}
+                      style={{
+                        alignSelf: "flex-start",
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                        borderRadius: 8,
+                        backgroundColor: c.accent + "15",
+                        borderWidth: 1,
+                        borderColor: c.accent,
+                      }}
+                    >
+                      <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>
+                        Use current remote box: {activeOwnDevice.name}
+                      </Text>
+                    </Pressable>
+                  ) : null}
                   {ownDevices.map((d) => {
                     const selected = inviteProposedDeviceIds.includes(d.id);
                     return (

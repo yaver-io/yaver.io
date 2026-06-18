@@ -86,6 +86,17 @@ import {
   type MobileDeviceLifecycleState,
   type MobileDeviceStatusProbe,
 } from "../../src/lib/deviceStatus";
+import {
+  displayRunnerLabel,
+  isModelCompatibleWithRunnerId,
+  isTransportDeviceLabel,
+  normalizeProjectChipName,
+  normalizeTaskRunnerId,
+  preferredDefaultModelForRunner,
+  preferredDefaultRunnerForDevice,
+  resolveModelForRemoteSend,
+  resolveRunnerForRemoteSend,
+} from "../../src/lib/remoteCodingSelection";
 
 // Cap streaming output retained per task. A vibing session can produce
 // 50k+ output lines (codex/claude tool runs spew bash stdout uncompressed),
@@ -119,69 +130,6 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   failed: "#ef4444",
   stopped: "#a1a1aa",
 };
-
-function isKivancAccount(email: string | null | undefined): boolean {
-  const normalized = String(email || "").trim().toLowerCase();
-  if (!normalized) return false;
-  const raw =
-    process.env.EXPO_PUBLIC_YAVER_OWNER_EMAIL ||
-    process.env.EXPO_PUBLIC_YAVER_CLOUD_PREVIEW_EMAILS ||
-    "";
-  const allowed = raw
-    .split(",")
-    .map((item: string) => item.trim().toLowerCase())
-    .filter(Boolean);
-  if (allowed.length === 0) return false;
-  return allowed.includes(normalized);
-}
-
-function isKivancMacBook(device: { name?: string | null; hostName?: string | null; os?: string | null }): boolean {
-  const haystack = `${device.name || ""} ${device.hostName || ""}`.toLowerCase();
-  const isMac = ["darwin", "macos"].includes(String(device.os || "").trim().toLowerCase());
-  if (!isMac) return false;
-  return haystack.includes("kivanc") || haystack.includes("cakmak") || haystack.includes("macbook");
-}
-
-function preferredDefaultRunnerForDevice(
-  device: { name?: string | null; hostName?: string | null; os?: string | null },
-  signedInEmail: string | null | undefined,
-  availableRunnerIds: string[],
-): string | null {
-  if (availableRunnerIds.length === 0) return null;
-  const unique = Array.from(new Set(availableRunnerIds.filter(Boolean)));
-  if (isKivancAccount(signedInEmail)) {
-    if (isKivancMacBook(device) && unique.includes("claude")) return "claude";
-    if (!isKivancMacBook(device) && unique.includes("codex")) return "codex";
-  }
-  if (unique.includes("claude")) return "claude";
-  if (unique.includes("codex")) return "codex";
-  return unique[0] || null;
-}
-
-function preferredDefaultModelForRunner(
-  runnerId: string | null | undefined,
-  device: { name?: string | null; hostName?: string | null; os?: string | null },
-  signedInEmail: string | null | undefined,
-): string | null {
-  const normalized = String(runnerId || "").trim().toLowerCase();
-  if (!normalized) return null;
-  if (isKivancAccount(signedInEmail)) {
-    if (normalized === "claude" && isKivancMacBook(device)) return "claude-opus-4-7";
-    if (normalized === "codex" && !isKivancMacBook(device)) return "gpt-5.3-codex";
-  }
-  if (normalized === "claude") return "claude-opus-4-7";
-  if (normalized === "codex") return "gpt-5.3-codex";
-  return null;
-}
-
-function displayRunnerLabel(runnerId?: string | null): string {
-  const normalized = String(runnerId || "").trim().toLowerCase();
-  if (normalized === "claude") return "Claude Code";
-  if (normalized === "codex") return "Codex";
-  if (normalized === "opencode") return "OpenCode";
-  if (normalized === "glm") return "GLM (z.ai)";
-  return normalized || "Selected agent";
-}
 
 function runnerAuthIssue(
   runner: Pick<RunnerInfo, "id" | "installed" | "ready" | "warning" | "error"> | null | undefined,
@@ -1397,7 +1345,7 @@ function buildAgentContextRows(
     if (taskModelId) {
       modelLabel = models.find((m) => m.id === taskModelId)?.name || taskModelId;
     }
-    if (!modelLabel && extras.selectedModelId) {
+    if (!modelLabel && extras.selectedModelId && isModelCompatibleWithRunnerId(extras.selectedModelId, task.runnerId)) {
       modelLabel = models.find((m) => m.id === extras.selectedModelId)?.name || extras.selectedModelId;
     }
     if (!modelLabel) {
@@ -1879,7 +1827,8 @@ export default function TasksScreen() {
   // setState so it doesn't need selectedModel as a dep — same fight-the-
   // user concern as the runner seeding above.
   useEffect(() => {
-    const runner = availableRunners.find((r) => r.id === selectedRunner);
+    const normalizedSelectedRunner = normalizeTaskRunnerId(selectedRunner);
+    const runner = availableRunners.find((r) => normalizeTaskRunnerId(r.id) === normalizedSelectedRunner);
     if (!runner?.models?.length) {
       setAvailableModels([]);
       setSelectedModel("");
@@ -1930,13 +1879,36 @@ export default function TasksScreen() {
   }, [availableRunners, activeDevice, primaryModelByDevice, selectedRunner, user?.email]);
 
   const selectedRunnerRow = useMemo(
-    () => availableRunners.find((runner) => runner.id === selectedRunner) || null,
+    () => availableRunners.find((runner) => normalizeTaskRunnerId(runner.id) === normalizeTaskRunnerId(selectedRunner)) || null,
     [availableRunners, selectedRunner],
   );
   const selectedRunnerAuthIssue = useMemo(
     () => runnerAuthIssue(selectedRunnerRow),
     [selectedRunnerRow],
   );
+
+  const resolveRunnerForSend = useCallback((fallbackRunner?: string | null): string | undefined => {
+    return resolveRunnerForRemoteSend({
+      activeDeviceId: activeDevice?.id,
+      primaryRunnerByDevice,
+      selectedRunner,
+      fallbackRunner,
+      userPickedRunner: userPickedRunnerRef.current,
+    });
+  }, [activeDevice?.id, primaryRunnerByDevice, selectedRunner]);
+
+  const resolveModelForSend = useCallback((runnerId: string | undefined, fallbackModel?: string | null): string | undefined => {
+    return resolveModelForRemoteSend({
+      runnerId,
+      activeDevice,
+      primaryModelByDevice,
+      selectedModel,
+      fallbackModel,
+      availableRunners,
+      signedInEmail: user?.email,
+      userPickedModel: userPickedModelRef.current,
+    });
+  }, [activeDevice, availableRunners, primaryModelByDevice, selectedModel, user?.email]);
 
   const refreshRunnerState = useCallback(async () => {
     if (connectionStatus !== "connected") return;
@@ -2035,15 +2007,21 @@ export default function TasksScreen() {
   const fetchTasks = useCallback(async () => {
     try {
       const list = await quicClient.listTasks();
+      const focusedDeviceId = quicClient.attachedDeviceId || activeDevice?.id || "";
+      const focusedDeviceName = devices.find((d) => d.id === focusedDeviceId)?.name || activeDevice?.name || "";
       // Filter out locally-deleted tasks and internal vibing-cache tasks
       const deletedIds = await getDeletedTaskIds();
       const filtered = list.filter((t) => !deletedIds.has(t.id) && t.source !== "vibing-cache");
       // Cap each task's output even on the initial fetch — a multi-day-old
       // task can come back from the agent with 100k+ lines of cached output,
       // which spikes JS heap on tab open.
-      const capped = filtered.map((t) => t.output.length > MAX_OUTPUT_LINES_PER_TASK
-        ? { ...t, output: capOutput(t.output) }
-        : t);
+      const capped = filtered.map((t) => {
+        const output = t.output.length > MAX_OUTPUT_LINES_PER_TASK ? capOutput(t.output) : t.output;
+        const deviceName = focusedDeviceName && (!t.deviceName || isTransportDeviceLabel(t.deviceName))
+          ? focusedDeviceName
+          : t.deviceName;
+        return { ...t, output, deviceName };
+      });
       setTasks(capped);
       // Keep selected task in sync with latest data
       setSelectedTask((prev) => {
@@ -2051,7 +2029,7 @@ export default function TasksScreen() {
         return capped.find((t) => t.id === prev.id) || prev;
       });
     } catch {}
-  }, []);
+  }, [activeDevice?.id, activeDevice?.name, devices]);
 
   const hasRunningTask = tasks.some(t => t.status === "running" || t.status === "queued");
   const effectiveFilter = statusFilter;
@@ -2782,8 +2760,11 @@ export default function TasksScreen() {
       // to pendingTarget.deviceId via selectDevice, so quicClient
       // baseUrl is correct without any per-call routing here.
       const effectiveRunner = pendingTarget?.runner
-        ?? (selectedRunner === "custom" ? "custom" : (selectedRunner || undefined));
-      const effectiveModel = pendingTarget?.model ?? (selectedModel || undefined);
+        ? normalizeTaskRunnerId(pendingTarget.runner)
+        : resolveRunnerForSend();
+      const effectiveModel = pendingTarget?.model && isModelCompatibleWithRunnerId(pendingTarget.model, effectiveRunner)
+        ? pendingTarget.model
+        : resolveModelForSend(effectiveRunner);
       // OpenCode mode comes from the wizard's remote opencode.json
       // probe when present; fall back to the in-modal selectedOpenCodeMode.
       const effectiveOpencodeMode = pendingTarget?.opencodeMode ?? selectedOpenCodeMode;
@@ -2867,7 +2848,7 @@ export default function TasksScreen() {
       // activeDevice.name even though the work ran on a sibling box.
       const task: Task = {
         ...rawTask,
-        deviceName: pendingTarget?.deviceName || rawTask.deviceName,
+        deviceName: pendingTarget?.deviceName || activeDevice?.name || rawTask.deviceName,
         model: rawTask.model || (effectiveRunner !== "custom" ? effectiveModel : undefined),
       };
       setNewTaskText("");
@@ -2958,19 +2939,27 @@ export default function TasksScreen() {
   // prompt with the just-picked runner/model — the recovery path for model
   // errors like "gpt-5.4 not supported with a ChatGPT account", which a
   // plain same-model retry just reproduces.
-  const closeAgentPicker = () => {
+  const closeAgentPicker = (retry = false) => {
     setShowAgentPicker(false);
     const task = retryAfterPickRef.current;
     retryAfterPickRef.current = null;
-    if (!task) return;
-    const retryRunner = (selectedRunner || task.runnerId || "").trim() || undefined;
-    const retryModel = (selectedModel || "").trim() || undefined;
+    if (!task || !retry) return;
+    const retryRunner = resolveRunnerForSend(task.runnerId);
+    const retryModel = resolveModelForSend(retryRunner, task.model);
+    const taskDevice = task.deviceName
+      ? devices.find((d) => d.name === task.deviceName || d.name.replace(/\.local$/, "") === task.deviceName?.replace(/\.local$/, ""))
+      : null;
+    const retryClient = taskDevice?.id && connectionManager.clientFor(taskDevice.id).isConnected
+      ? connectionManager.clientFor(taskDevice.id)
+      : quicClient;
     taskHaptics.retry();
-    void quicClient.sendTask(
+    void retryClient.sendTask(
       task.title, "", retryModel, retryRunner, undefined, undefined, undefined, projectDir || undefined,
     ).then((retried) => {
-      setTasks((prev) => [retried, ...prev]);
-      setSelectedTask(retried);
+      const deviceName = taskDevice?.name || task.deviceName || activeDevice?.name || retried.deviceName;
+      const next = { ...retried, deviceName, model: retried.model || retryModel };
+      setTasks((prev) => [next, ...prev]);
+      setSelectedTask(next);
     }).catch((err) => {
       Alert.alert("Retry failed", err instanceof Error ? err.message : String(err));
     });
@@ -3460,7 +3449,7 @@ export default function TasksScreen() {
     const fetchInfo = async () => {
       try {
         const info = await quicClient.agentInfo();
-        setProjectName(info.project?.name ?? "");
+        setProjectName(normalizeProjectChipName(info.project?.name));
         setProjectBranch(info.project?.gitBranch ?? "");
         setTodoCount(info.todoCount ?? 0);
         setTodoTotal(info.todoTotal ?? 0);
@@ -4831,14 +4820,14 @@ export default function TasksScreen() {
 
 
         {/* ── Agent / Model Picker Modal ─────────────────────────────── */}
-        <Modal visible={showAgentPicker} animationType="slide" transparent onRequestClose={closeAgentPicker}>
-          <Pressable style={{ flex: 1 }} onPress={closeAgentPicker} />
+        <Modal visible={showAgentPicker} animationType="slide" transparent onRequestClose={() => closeAgentPicker(false)}>
+          <Pressable style={{ flex: 1 }} onPress={() => closeAgentPicker(false)} />
           <View style={[s.agentPickerSheet, { backgroundColor: c.bgCard }]}>
             <View style={[s.agentPickerHeader, { borderBottomColor: c.border }]}>
               <Text style={[s.agentPickerTitle, { color: c.textPrimary }]}>
                 {retryAfterPickRef.current ? "Switch Model & Retry" : "Agent & Model"}
               </Text>
-              <Pressable onPress={closeAgentPicker}>
+              <Pressable onPress={() => closeAgentPicker(!!retryAfterPickRef.current)}>
                 <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>
                   {retryAfterPickRef.current ? "Retry" : "Done"}
                 </Text>
@@ -5170,7 +5159,9 @@ export default function TasksScreen() {
                     if (taskModelId) {
                       return availableModels.find((m) => m.id === taskModelId)?.name || taskModelId;
                     }
-                    const explicit = availableModels.find((m) => m.id === selectedModel)?.name;
+                    const explicit = isModelCompatibleWithRunnerId(selectedModel, selectedTask.runnerId)
+                      ? availableModels.find((m) => m.id === selectedModel)?.name
+                      : undefined;
                     if (explicit) return explicit;
                     const fallbackId = preferredDefaultModelForRunner(
                       selectedTask.runnerId,
@@ -5228,18 +5219,21 @@ export default function TasksScreen() {
                     // same path as the New Task modal. Smart-retry
                     // with an extra flag is offered separately in the
                     // ErrorMessage card below.
+                    const retryRunner = normalizeTaskRunnerId(selectedTask.runnerId) || resolveRunnerForSend();
+                    const retryModel = resolveModelForSend(retryRunner, selectedTask.model);
                     void quicClient.sendTask(
                       selectedTask.title,
                       "",
-                      undefined,
-                      selectedTask.runnerId || undefined,
+                      retryModel,
+                      retryRunner,
                       undefined,
                       undefined,
                       undefined,
                       projectDir || undefined,
                     ).then((retried) => {
-                      setTasks((prev) => [retried, ...prev]);
-                      setSelectedTask(retried);
+                      const next = { ...retried, deviceName: selectedTask.deviceName || activeDevice?.name || retried.deviceName, model: retried.model || retryModel };
+                      setTasks((prev) => [next, ...prev]);
+                      setSelectedTask(next);
                     }).catch((err) => {
                       const msg = err instanceof Error ? err.message : String(err);
                       Alert.alert("Retry failed", msg);
@@ -5415,18 +5409,21 @@ export default function TasksScreen() {
                                   suggestion.kind === "skip-git-repo-check"
                                     ? `${selectedTask.title} --skip-git-repo-check`
                                     : selectedTask.title;
+                                const retryRunner = normalizeTaskRunnerId(selectedTask.runnerId) || resolveRunnerForSend();
+                                const retryModel = resolveModelForSend(retryRunner, selectedTask.model);
                                 void quicClient.sendTask(
                                   titleHint,
                                   "",
-                                  undefined,
-                                  selectedTask.runnerId || undefined,
+                                  retryModel,
+                                  retryRunner,
                                   undefined,
                                   undefined,
                                   undefined,
                                   projectDir || undefined,
                                 ).then((retried) => {
-                                  setTasks((prev) => [retried, ...prev]);
-                                  setSelectedTask(retried);
+                                  const next = { ...retried, deviceName: selectedTask.deviceName || activeDevice?.name || retried.deviceName, model: retried.model || retryModel };
+                                  setTasks((prev) => [next, ...prev]);
+                                  setSelectedTask(next);
                                 }).catch((err) => {
                                   const msg = err instanceof Error ? err.message : String(err);
                                   Alert.alert("Retry failed", msg);

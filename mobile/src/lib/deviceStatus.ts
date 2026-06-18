@@ -5,11 +5,23 @@ export type MobileDeviceStatusProbe = {
   reachable: boolean;
   bootstrap: boolean;
   authExpired: boolean;
+  codingReady: boolean;
+  codingRunners: CodingRunnerProbe[];
   lifecycleState?: MobileDeviceLifecycleState | null;
   checkedAt: number;
   path?: "relay" | "direct";
   info?: Record<string, any> | null;
   error?: string;
+};
+
+export type CodingRunnerProbe = {
+  id: string;
+  name?: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured: boolean;
+  error?: string;
+  warning?: string;
 };
 
 export type MobileDeviceLifecycleState =
@@ -100,6 +112,49 @@ async function fetchInfoAt(
   }
 }
 
+function normalizeRunner(row: any): CodingRunnerProbe | null {
+  const id = String(row?.id || row?.runnerId || "").trim().toLowerCase();
+  if (!id) return null;
+  const installed = row?.installed === true;
+  const error = typeof row?.error === "string" ? row.error : undefined;
+  const authConfigured = row?.authConfigured !== false;
+  return {
+    id,
+    name: typeof row?.name === "string" ? row.name : undefined,
+    installed,
+    ready: installed && row?.ready !== false && authConfigured && !error,
+    authConfigured,
+    error,
+    warning: typeof row?.warning === "string" ? row.warning : undefined,
+  };
+}
+
+async function fetchCodingRunnersAt(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<CodingRunnerProbe[]> {
+  try {
+    const res = await fetch(`${url}/agent/runners`, {
+      headers,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => null);
+    const rows = Array.isArray(data?.runners) ? data.runners : [];
+    return rows.map(normalizeRunner).filter((r: CodingRunnerProbe | null): r is CodingRunnerProbe => !!r);
+  } catch {
+    return [];
+  }
+}
+
+function codingReady(runners: CodingRunnerProbe[]): boolean {
+  return runners.some((r) =>
+    (r.id === "claude" || r.id === "claude-code" || r.id === "codex" || r.id === "opencode" || r.id === "glm") &&
+    r.ready,
+  );
+}
+
 export async function probeMobileDeviceStatus(
   device: Pick<DeviceLike, "id" | "host" | "port" | "lanIps">,
   token?: string | null,
@@ -119,10 +174,13 @@ export async function probeMobileDeviceStatus(
       const info = await fetchInfoAt(`${relay.httpUrl}/d/${device.id}`, headers, timeoutMs);
       if (info) {
         const parsed = parseInfo(info);
+        const codingRunners = await fetchCodingRunnersAt(`${relay.httpUrl}/d/${device.id}`, headers, timeoutMs);
         return {
           reachable: true,
           bootstrap: parsed.bootstrap,
           authExpired: parsed.authExpired,
+          codingReady: codingReady(codingRunners),
+          codingRunners,
           lifecycleState: parsed.lifecycleState,
           checkedAt,
           path: "relay",
@@ -140,13 +198,17 @@ export async function probeMobileDeviceStatus(
     ]),
   );
   for (const target of directTargets) {
-    const info = await fetchInfoAt(target, {}, timeoutMs);
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    const info = await fetchInfoAt(target, headers, timeoutMs);
     if (info) {
       const parsed = parseInfo(info);
+      const codingRunners = await fetchCodingRunnersAt(target, headers, timeoutMs);
       return {
         reachable: true,
         bootstrap: parsed.bootstrap,
         authExpired: parsed.authExpired,
+        codingReady: codingReady(codingRunners),
+        codingRunners,
         lifecycleState: parsed.lifecycleState,
         checkedAt,
         path: "direct",
@@ -160,6 +222,8 @@ export async function probeMobileDeviceStatus(
     reachable: false,
     bootstrap: false,
     authExpired: false,
+    codingReady: false,
+    codingRunners: [],
     lifecycleState: null,
     checkedAt,
     error: lastError,
