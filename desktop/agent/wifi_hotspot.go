@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	osexec "os/exec"
@@ -96,6 +97,7 @@ type WiFiHotspotManager struct {
 	wifiInterface     string
 	workDir           string
 	stopChan          chan struct{}
+	bannedClients     map[string]time.Time
 }
 
 // NewWiFiHotspotManager creates a new WiFi hotspot manager
@@ -110,6 +112,7 @@ func NewWiFiHotspotManager(workDir string) *WiFiHotspotManager {
 		dnsmasqConfigPath: filepath.Join(yaverDir, "dnsmasq.conf"),
 		workDir:           workDir,
 		stopChan:          make(chan struct{}),
+		bannedClients:     make(map[string]time.Time),
 		status: &WiFiHotspotStatus{
 			SupportedModes:  []string{"ap"},
 			HardwareSupport: "unknown",
@@ -204,12 +207,22 @@ func (wm *WiFiHotspotManager) findWiFiInterfaces() ([]string, error) {
 		// macOS: use networksetup to find WiFi interfaces
 		if out, err := runWifiCmd("networksetup", "-listallhardwareports"); err == nil {
 			lines := strings.Split(out, "\n")
-			for _, line := range lines {
-				if strings.Contains(strings.ToLower(line), "wi-fi") {
-					parts := strings.Fields(line)
-					if len(parts) > 0 {
-						interfaces = append(interfaces, parts[len(parts)-1]) // Last field is usually the device
+			inWiFiPort := false
+			for _, raw := range lines {
+				line := strings.TrimSpace(raw)
+				lower := strings.ToLower(line)
+				if strings.HasPrefix(lower, "hardware port:") {
+					inWiFiPort = strings.Contains(lower, "wi-fi") || strings.Contains(lower, "airport")
+					continue
+				}
+				if inWiFiPort && strings.HasPrefix(lower, "device:") {
+					parts := strings.SplitN(line, ":", 2)
+					if len(parts) == 2 {
+						if iface := strings.TrimSpace(parts[1]); iface != "" {
+							interfaces = append(interfaces, iface)
+						}
 					}
+					inWiFiPort = false
 				}
 			}
 		}
@@ -759,9 +772,11 @@ func (wm *WiFiHotspotManager) getMACAddress(iface string) string {
 
 	case "darwin":
 		if out, err := runWifiCmd("ifconfig", iface); err == nil {
-			parts := strings.Split(out, " ")
-			if len(parts) >= 1 {
-				return parts[0]
+			for _, line := range strings.Split(out, "\n") {
+				parts := strings.Fields(strings.TrimSpace(line))
+				if len(parts) >= 2 && parts[0] == "ether" {
+					return parts[1]
+				}
 			}
 		}
 
@@ -905,21 +920,39 @@ func (wm *WiFiHotspotManager) checkInterfaceExists(iface string) bool {
 	return false
 }
 
-// StartHotspot starts hostapd/dnsmasq and applies the local IP/NAT plumbing.
+// StartHotspot starts the platform AP implementation.
+// Linux uses hostapd/dnsmasq. macOS uses the system Internet Sharing service.
 func (wm *WiFiHotspotManager) StartHotspot(cfg *WiFiHotspotConfig) error {
-	wm.mu.Lock()
-	defer wm.mu.Unlock()
-
+	cfg = normalizeWiFiHotspotConfig(cfg)
+	if cfg.Interface == "" {
+		ifaces, err := wm.findWiFiInterfaces()
+		if err != nil {
+			return fmt.Errorf("detect wifi interface: %w", err)
+		}
+		cfg.Interface = ifaces[0]
+	}
+	if runtime.GOOS == "darwin" {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("macOS hotspot start requires root privileges to configure Internet Sharing")
+		}
+		if err := wm.ValidateConfig(cfg); err != nil {
+			return err
+		}
+		wm.mu.Lock()
+		defer wm.mu.Unlock()
+		return wm.startMacOSHotspotLocked(cfg)
+	}
 	if runtime.GOOS != "linux" {
-		return fmt.Errorf("wifi hotspot lifecycle is currently implemented on Linux only")
+		return fmt.Errorf("wifi hotspot lifecycle is implemented on Linux and macOS only")
 	}
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("wifi hotspot start requires root privileges for hostapd, interface IP, DHCP, and NAT setup")
 	}
-	cfg = normalizeWiFiHotspotConfig(cfg)
 	if err := wm.ValidateConfig(cfg); err != nil {
 		return err
 	}
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(wm.configPath), 0o700); err != nil {
 		return fmt.Errorf("create hotspot state dir: %w", err)
 	}
@@ -992,13 +1025,16 @@ func (wm *WiFiHotspotManager) StartHotspot(cfg *WiFiHotspotConfig) error {
 	return nil
 }
 
-// StopHotspot stops hostapd/dnsmasq and removes Yaver-owned AP plumbing.
+// StopHotspot stops the platform AP implementation and removes Yaver-owned plumbing.
 func (wm *WiFiHotspotManager) StopHotspot() error {
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
 
+	if runtime.GOOS == "darwin" {
+		return wm.stopMacOSHotspotLocked()
+	}
 	if runtime.GOOS != "linux" {
-		return fmt.Errorf("wifi hotspot lifecycle is currently implemented on Linux only")
+		return fmt.Errorf("wifi hotspot lifecycle is implemented on Linux and macOS only")
 	}
 	cfg := wm.config
 	apIface := wm.wifiInterface
@@ -1051,6 +1087,11 @@ func (wm *WiFiHotspotManager) GetStatus() (*WiFiHotspotStatus, error) {
 		}
 		if wm.config != nil {
 			st.UpstreamStatus = wm.upstreamStatus(wm.config)
+		}
+	} else if runtime.GOOS == "darwin" {
+		st.Running = wm.macOSInternetSharingRunning()
+		if st.Running && !wm.startedAt.IsZero() {
+			st.Uptime = time.Since(wm.startedAt).Round(time.Second).String()
 		}
 	}
 	return &st, nil
@@ -1221,6 +1262,19 @@ func iptablesEnsure(args ...string) error {
 }
 
 func (wm *WiFiHotspotManager) defaultRouteInterface() string {
+	if runtime.GOOS == "darwin" {
+		out, err := runWifiCmd("route", "-n", "get", "default")
+		if err != nil {
+			return ""
+		}
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(strings.TrimSpace(line))
+			if len(fields) == 2 && fields[0] == "interface:" {
+				return fields[1]
+			}
+		}
+		return ""
+	}
 	out, err := runWifiCmd("sh", "-c", "ip route show default | awk 'NR==1 {for (i=1;i<=NF;i++) if ($i==\"dev\") print $(i+1)}'")
 	if err != nil {
 		return ""
@@ -1243,9 +1297,249 @@ func (wm *WiFiHotspotManager) connectedClientCount(iface string) int {
 	return count
 }
 
+func (wm *WiFiHotspotManager) startMacOSHotspotLocked(cfg *WiFiHotspotConfig) error {
+	if cfg.Mode != "ap" {
+		return fmt.Errorf("macOS supports Yaver hotspot mode through Internet Sharing only; AP+STA requires Linux hostapd/nl80211 support")
+	}
+	if err := os.MkdirAll(filepath.Dir(wm.configPath), 0o700); err != nil {
+		return fmt.Errorf("create hotspot state dir: %w", err)
+	}
+	if wm.status != nil && wm.status.Running {
+		return fmt.Errorf("wifi hotspot already running on %s", wm.status.Interface)
+	}
+
+	upstream := firstNonEmptyStr(cfg.UpstreamIF, wm.defaultRouteInterface())
+	if upstream == "" {
+		return fmt.Errorf("upstream interface required for macOS Internet Sharing")
+	}
+	if upstream == cfg.Interface {
+		return fmt.Errorf("macOS Internet Sharing needs distinct upstream and Wi-Fi AP interfaces")
+	}
+
+	if _, err := runWifiCmd("scutil", "--set", "ComputerName", cfg.SSID); err != nil {
+		return fmt.Errorf("set macOS hotspot name from ComputerName: %w", err)
+	}
+	if localName := macOSLocalHostName(cfg.SSID); localName != "" {
+		if _, err := runWifiCmd("scutil", "--set", "LocalHostName", localName); err != nil {
+			return fmt.Errorf("set macOS hotspot name from LocalHostName: %w", err)
+		}
+	}
+	if _, err := runWifiCmd("defaults", "write", "/Library/Preferences/SystemConfiguration/com.apple.nat", "NAT", "-dict", "Enabled", "-int", "1", "PrimaryInterface", upstream, "SharingDevices", "-array", cfg.Interface); err != nil {
+		return fmt.Errorf("configure macOS Internet Sharing NAT: %w", err)
+	}
+	_, _ = runWifiCmd("launchctl", "bootout", "system", "/System/Library/LaunchDaemons/com.apple.InternetSharing.plist")
+	if _, err := runWifiCmd("launchctl", "bootstrap", "system", "/System/Library/LaunchDaemons/com.apple.InternetSharing.plist"); err != nil {
+		_, _ = runWifiCmd("launchctl", "kickstart", "-k", "system/com.apple.InternetSharing")
+		if !wm.macOSInternetSharingRunning() {
+			return fmt.Errorf("start macOS Internet Sharing: %w", err)
+		}
+	}
+
+	wm.config = cfg
+	wm.wifiInterface = cfg.Interface
+	wm.startedAt = time.Now()
+	wm.status = &WiFiHotspotStatus{
+		Running:         wm.macOSInternetSharingRunning(),
+		Mode:            "ap",
+		SSID:            cfg.SSID,
+		Interface:       cfg.Interface,
+		UpstreamStatus:  "shared:" + upstream,
+		SupportedModes:  []string{"ap"},
+		HardwareSupport: "ap-only",
+	}
+	return nil
+}
+
+func (wm *WiFiHotspotManager) stopMacOSHotspotLocked() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("macOS hotspot stop requires root privileges to configure Internet Sharing")
+	}
+	_, _ = runWifiCmd("launchctl", "bootout", "system", "/System/Library/LaunchDaemons/com.apple.InternetSharing.plist")
+	_, _ = runWifiCmd("defaults", "write", "/Library/Preferences/SystemConfiguration/com.apple.nat", "NAT", "-dict", "Enabled", "-int", "0")
+	wm.startedAt = time.Time{}
+	wm.config = nil
+	wm.wifiInterface = ""
+	wm.status = &WiFiHotspotStatus{
+		Running:         false,
+		SupportedModes:  []string{"ap"},
+		HardwareSupport: "ap-only",
+	}
+	return nil
+}
+
+func (wm *WiFiHotspotManager) macOSInternetSharingRunning() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	if _, err := runWifiCmd("pgrep", "-x", "InternetSharing"); err == nil {
+		return true
+	}
+	out, err := runWifiCmd("defaults", "read", "/Library/Preferences/SystemConfiguration/com.apple.nat", "NAT")
+	if err != nil {
+		return false
+	}
+	return strings.Contains(out, "Enabled = 1") || strings.Contains(out, "Enabled = true")
+}
+
+func macOSLocalHostName(ssid string) string {
+	var b strings.Builder
+	for _, r := range ssid {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' && b.Len() > 0:
+			b.WriteRune(r)
+		case r == ' ' || r == '_' || r == '.':
+			if b.Len() > 0 {
+				b.WriteRune('-')
+			}
+		}
+		if b.Len() >= 63 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func (wm *WiFiHotspotManager) ListClients() []map[string]interface{} {
+	wm.mu.Lock()
+	iface := wm.wifiInterface
+	if iface == "" && wm.config != nil {
+		iface = firstNonEmptyStr(wm.config.APInterface, wm.config.Interface)
+	}
+	wm.mu.Unlock()
+	if iface == "" {
+		return nil
+	}
+
+	out, err := runWifiCmd("hostapd_cli", "-i", iface, "all_sta")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return nil
+	}
+	var clients []map[string]interface{}
+	var current map[string]interface{}
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.Count(line, ":") == 5 && !strings.Contains(line, "=") {
+			if current != nil {
+				clients = append(clients, current)
+			}
+			current = map[string]interface{}{"mac": line}
+			continue
+		}
+		if current == nil || !strings.Contains(line, "=") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		current[parts[0]] = parts[1]
+	}
+	if current != nil {
+		clients = append(clients, current)
+	}
+	return clients
+}
+
+func (wm *WiFiHotspotManager) KickClient(mac string) error {
+	wm.mu.Lock()
+	iface := wm.wifiInterface
+	if iface == "" && wm.config != nil {
+		iface = firstNonEmptyStr(wm.config.APInterface, wm.config.Interface)
+	}
+	wm.mu.Unlock()
+	if strings.TrimSpace(mac) == "" {
+		return fmt.Errorf("mac address required")
+	}
+	if iface == "" {
+		return fmt.Errorf("wifi hotspot is not running")
+	}
+	if _, err := runWifiCmd("hostapd_cli", "-i", iface, "deauthenticate", mac); err != nil {
+		return fmt.Errorf("deauthenticate %s: %w", mac, err)
+	}
+	return nil
+}
+
+func (wm *WiFiHotspotManager) BanClient(mac string, durationHours int) error {
+	mac = strings.TrimSpace(strings.ToLower(mac))
+	if mac == "" {
+		return fmt.Errorf("mac address required")
+	}
+	var expires time.Time
+	if durationHours > 0 {
+		expires = time.Now().Add(time.Duration(durationHours) * time.Hour)
+	}
+	wm.mu.Lock()
+	if wm.bannedClients == nil {
+		wm.bannedClients = make(map[string]time.Time)
+	}
+	wm.bannedClients[mac] = expires
+	wm.mu.Unlock()
+	_ = wm.KickClient(mac)
+	return nil
+}
+
+func (wm *WiFiHotspotManager) UnbanClient(mac string) error {
+	mac = strings.TrimSpace(strings.ToLower(mac))
+	if mac == "" {
+		return fmt.Errorf("mac address required")
+	}
+	wm.mu.Lock()
+	delete(wm.bannedClients, mac)
+	wm.mu.Unlock()
+	return nil
+}
+
+func (wm *WiFiHotspotManager) GetBannedClients() map[string]time.Time {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	out := make(map[string]time.Time, len(wm.bannedClients))
+	now := time.Now()
+	for mac, expires := range wm.bannedClients {
+		if !expires.IsZero() && now.After(expires) {
+			delete(wm.bannedClients, mac)
+			continue
+		}
+		out[mac] = expires
+	}
+	return out
+}
+
+func (wm *WiFiHotspotManager) SetAPSTAConfig(cfg *WiFiHotspotConfig) error {
+	cfg = normalizeWiFiHotspotConfig(cfg)
+	if err := os.MkdirAll(filepath.Dir(wm.configPath), 0o700); err != nil {
+		return fmt.Errorf("create hotspot config dir: %w", err)
+	}
+	body, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(wm.configPath, append(body, '\n'), 0o600)
+}
+
+func (wm *WiFiHotspotManager) GetAPSTAConfig() (*WiFiHotspotConfig, error) {
+	body, err := os.ReadFile(wm.configPath)
+	if err != nil {
+		return nil, err
+	}
+	var cfg WiFiHotspotConfig
+	if err := json.Unmarshal(body, &cfg); err != nil {
+		return nil, err
+	}
+	return normalizeWiFiHotspotConfig(&cfg), nil
+}
+
 func (wm *WiFiHotspotManager) upstreamStatus(cfg *WiFiHotspotConfig) string {
 	if cfg == nil || cfg.Mode != "apsta" {
 		return ""
+	}
+	if runtime.GOOS != "linux" {
+		return "unsupported"
 	}
 	iface := firstNonEmptyStr(cfg.UpstreamIF, cfg.Interface)
 	out, err := runWifiCmd("iw", "dev", iface, "link")

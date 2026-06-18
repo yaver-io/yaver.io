@@ -9,7 +9,8 @@ import { quicClient } from "../../src/lib/quic";
 
 // Native mobile Console — all Docker/machine ops via RN components. No WebViews.
 
-type Tab = "overview" | "machines" | "containers" | "catalog" | "mailpit" | "s3";
+type Tab = "overview" | "machines" | "containers" | "catalog" | "mailpit" | "s3" | "wifi";
+type WiFiTab = "hotspot" | "apsta" | "clients" | "diagnostics";
 
 export default function ConsoleScreen() {
   const c = useColors();
@@ -22,7 +23,7 @@ export default function ConsoleScreen() {
       <AppScreenHeader title="Console" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
       <View style={[styles.tabbar, { backgroundColor: c.bgCard, borderBottomColor: c.border }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {(["overview", "machines", "containers", "catalog", "mailpit", "s3"] as Tab[]).map((t) => (
+          {(["overview", "machines", "containers", "catalog", "mailpit", "s3", "wifi"] as Tab[]).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)} style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
               <Text style={{ fontSize: 13, fontWeight: "600", textTransform: "uppercase", color: tab === t ? c.accent : c.textMuted }}>{t}</Text>
             </Pressable>
@@ -36,6 +37,7 @@ export default function ConsoleScreen() {
         {tab === "catalog" && <CatalogTab c={c} />}
         {tab === "mailpit" && <MailpitTab c={c} />}
         {tab === "s3" && <S3Tab c={c} />}
+        {tab === "wifi" && <WiFiTabScreen c={c} />}
       </ScrollView>
     </View>
   );
@@ -340,6 +342,139 @@ function S3Tab({ c }: { c: any }) {
           <Text style={{ color: c.textMuted, fontSize: 11 }}>{fmtBytes(f.size)}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+function WiFiTabScreen({ c }: { c: any }) {
+  const [wifiTab, setWiFiTab] = useState<WiFiTab>("hotspot");
+  const [caps, setCaps] = useState<any>(null);
+  const [status, setStatus] = useState<any>(null);
+  const [meshCaps, setMeshCaps] = useState<any>(null);
+  const [meshStatus, setMeshStatus] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [ssid, setSsid] = useState("YaverHotspot");
+  const [password, setPassword] = useState("yaver1234");
+  const [iface, setIface] = useState("");
+  const [upstreamSsid, setUpstreamSsid] = useState("");
+  const [upstreamPass, setUpstreamPass] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function refresh() {
+    try {
+      const [c1, s1, c2, s2] = await Promise.all([
+        call("/console/wifi/capabilities"),
+        call("/console/wifi/status"),
+        call("/console/wifi-mesh/capabilities"),
+        call("/console/wifi-mesh/status"),
+      ]);
+      setCaps(c1.capabilities || null);
+      setStatus(s1.status || null);
+      setMeshCaps(c2.capabilities || null);
+      setMeshStatus(s2.status || null);
+      if (!iface && c1.capabilities?.interface) setIface(c1.capabilities.interface);
+      setMessage(c1.error || c2.error || "");
+    } catch (err: any) {
+      setMessage(err?.message || "WiFi refresh failed");
+    }
+  }
+  useEffect(() => { refresh(); const i = setInterval(refresh, 5000); return () => clearInterval(i); }, []);
+
+  async function start(mode: "ap" | "apsta") {
+    setBusy(true);
+    setMessage("");
+    try {
+      const body: any = {
+        ssid,
+        password,
+        mode,
+        interface: iface || caps?.interface || "",
+        channel: 6,
+        frequency: "2.4GHz",
+        enableDhcp: true,
+        enableNat: true,
+      };
+      if (mode === "apsta") {
+        body.upstreamSsid = upstreamSsid;
+        body.upstreamPass = upstreamPass;
+      }
+      const r = await call("/console/wifi/start", { method: "POST", body: JSON.stringify(body) });
+      setMessage(r.error || "started");
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function stop() {
+    setBusy(true);
+    try {
+      const r = await call("/console/wifi/stop", { method: "POST", body: "{}" });
+      setMessage(r.error || "stopped");
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const modeText = caps?.supportedModes?.join(", ") || "unknown";
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+        {(["hotspot", "apsta", "clients", "diagnostics"] as WiFiTab[]).map((t) => (
+          <Pressable key={t} onPress={() => setWiFiTab(t)} style={[actionBtn(c), { backgroundColor: wifiTab === t ? c.accent + "30" : c.bgCard, borderColor: wifiTab === t ? c.accent : c.border, borderWidth: 1 }]}>
+            <Text style={{ color: wifiTab === t ? c.accent : c.textMuted, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>{t}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={[card(c)]}>
+        <Text style={{ color: c.textPrimary, fontWeight: "700" }}>{status?.running ? "WiFi running" : "WiFi stopped"}</Text>
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>interface {status?.interface || caps?.interface || "unknown"} · modes {modeText}</Text>
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>hardware {caps?.hardwareSupport || status?.hardwareSupport || "unknown"} · driver {caps?.driver || "unknown"}</Text>
+        {message ? <Text style={{ color: message.includes("failed") || message.includes("requires") || message.includes("error") ? "#ef4444" : c.textMuted, fontSize: 11, marginTop: 6 }}>{message}</Text> : null}
+      </View>
+
+      {(wifiTab === "hotspot" || wifiTab === "apsta") && (
+        <View style={{ gap: 8 }}>
+          <TextInput value={ssid} onChangeText={setSsid} placeholder="SSID" placeholderTextColor={c.textMuted} style={inputStyle(c)} />
+          <TextInput value={password} onChangeText={setPassword} placeholder="Password" placeholderTextColor={c.textMuted} secureTextEntry style={inputStyle(c)} />
+          <TextInput value={iface} onChangeText={setIface} placeholder={caps?.interface || "WiFi interface"} placeholderTextColor={c.textMuted} style={inputStyle(c)} />
+          {wifiTab === "apsta" && (
+            <>
+              <TextInput value={upstreamSsid} onChangeText={setUpstreamSsid} placeholder="Upstream SSID" placeholderTextColor={c.textMuted} style={inputStyle(c)} />
+              <TextInput value={upstreamPass} onChangeText={setUpstreamPass} placeholder="Upstream password" placeholderTextColor={c.textMuted} secureTextEntry style={inputStyle(c)} />
+            </>
+          )}
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable disabled={busy} onPress={() => start(wifiTab === "apsta" ? "apsta" : "ap")} style={[actionBtn(c), { backgroundColor: c.accent, flex: 1, opacity: busy ? 0.6 : 1 }]}>
+              <Text style={{ color: "#fff", fontWeight: "700" }}>Start</Text>
+            </Pressable>
+            <Pressable disabled={busy} onPress={stop} style={[actionBtn(c), { backgroundColor: "#ef444420", flex: 1, opacity: busy ? 0.6 : 1 }]}>
+              <Text style={{ color: "#ef4444", fontWeight: "700" }}>Stop</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {wifiTab === "clients" && (
+        <View style={[card(c)]}>
+          <Text style={{ color: c.textPrimary, fontWeight: "700" }}>{status?.connectedClients || 0} clients</Text>
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>Client inventory is available from hostapd-backed Linux hotspots.</Text>
+        </View>
+      )}
+
+      {wifiTab === "diagnostics" && (
+        <View style={{ gap: 8 }}>
+          <View style={[card(c)]}>
+            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Mesh</Text>
+            <Text style={{ color: c.textMuted, fontSize: 11 }}>wpa_supplicant {meshCaps?.hasWpaSupplicant ? "yes" : "no"} · iw {meshCaps?.hasIw ? "yes" : "no"} · 802.11s {meshCaps?.supportsMeshPoint ? "yes" : "no"}</Text>
+            <Text style={{ color: c.textMuted, fontSize: 11 }}>backend {meshStatus?.backend || meshCaps?.recommendedBackend || "none"} · peers {(meshStatus?.peers || []).length}</Text>
+          </View>
+          <Pressable onPress={refresh} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1 }]}>
+            <Text style={{ color: c.accent, fontWeight: "700" }}>Refresh</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }

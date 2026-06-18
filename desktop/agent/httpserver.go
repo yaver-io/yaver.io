@@ -115,6 +115,8 @@ type HTTPServer struct {
 	cmsMgr             *CMSManager          // nil until first cms_*
 	templateMgr        *TemplateManager     // nil until first template_*
 	multiUserMgr       *MultiUserManager    // nil in single-user mode
+	wifiHotspotMgr     *WiFiHotspotManager  // nil until first /console/wifi or wifi_* op
+	wifiMeshMgr        *WiFiMeshManager     // nil until first /console/wifi-mesh or wifi_mesh_* op
 	server             *http.Server
 	tlsServer          *http.Server
 	onShutdown         func() // called when mobile requests agent shutdown
@@ -1145,6 +1147,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/console/metrics", s.auth(s.handleMetricsSnapshot))
 	mux.HandleFunc("/console/catalog", s.auth(s.handleCatalogList))
 	mux.HandleFunc("/console/catalog/install", s.auth(s.handleCatalogInstall))
+	mux.HandleFunc("/console/wifi/capabilities", s.auth(s.handleConsoleWiFiCapabilities))
+	mux.HandleFunc("/console/wifi/status", s.auth(s.handleConsoleWiFiStatus))
+	mux.HandleFunc("/console/wifi/start", s.auth(s.handleConsoleWiFiStart))
+	mux.HandleFunc("/console/wifi/stop", s.auth(s.handleConsoleWiFiStop))
+	mux.HandleFunc("/console/wifi-mesh/capabilities", s.auth(s.handleConsoleWiFiMeshCapabilities))
+	mux.HandleFunc("/console/wifi-mesh/status", s.auth(s.handleConsoleWiFiMeshStatus))
+	mux.HandleFunc("/console/wifi-mesh/start", s.auth(s.handleConsoleWiFiMeshStart))
+	mux.HandleFunc("/console/wifi-mesh/stop", s.auth(s.handleConsoleWiFiMeshStop))
 	mux.HandleFunc("/ws/metrics", s.auth(s.handleMetricsStream))
 	mux.HandleFunc("/ws/logs", s.auth(s.handleContainerLogsStream))
 	mux.HandleFunc("/ws/terminal", s.auth(s.handleTerminalWS))
