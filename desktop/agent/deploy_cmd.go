@@ -18,7 +18,7 @@ func runDeploy(args []string) {
 	case "all":
 		runDeployAllCmd(args[1:])
 		return
-	case "tv", "television", "android-tv", "androidtv", "leanback", "tvos", "apple-tv", "appletv", "wear", "wear-os", "wearos", "android-wear", "android-watch":
+	case "tv", "television", "android-tv", "androidtv", "leanback", "tvos", "apple-tv", "appletv", "wear", "wear-os", "wearos", "android-wear", "android-watch", "ios", "testflight", "carplay", "android", "android-auto", "auto", "playstore":
 		runDeployPlatformCmd(args[0], args[1:])
 		return
 	case "npm", "cli":
@@ -165,6 +165,13 @@ func printDeployUsage() {
   yaver deploy all --dry-run                           Print what would run; no side effects.
 
   # Platform surfaces:
+  yaver deploy ios                                     TestFlight upload (iOS app).
+  yaver deploy testflight                              Same as `yaver deploy ios`.
+  yaver deploy carplay                                  Same as `yaver deploy ios` (Apple CarPlay).
+  yaver deploy android                                  Play Store internal track upload.
+  yaver deploy android-auto                            Same as `yaver deploy android` (Android Auto).
+  yaver deploy auto                                     Same as `yaver deploy android` (Android Auto).
+  yaver deploy playstore                              Same as `yaver deploy android`.
   yaver deploy tv                                      Android TV + tvOS upload.
   yaver deploy tv --build-only                         Build/verify TV surfaces only.
   yaver deploy android-tv                              Play AAB upload with leanback verification.
