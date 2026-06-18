@@ -3,11 +3,14 @@
 The Ender-3 + BTS7960 screwdriver cell that drives terminal-block screws and
 pushes PASS/FAIL to the local Yaver agent.
 
+- **Preferred V0 boxed path:** use `usb_companion/` so Raspberry Pi GPIO stays
+  clean. The Pi sends USB serial commands; the companion owns PWM, direction,
+  soft-start, braking, watchdog, and optional current sensing.
 - **`screwdriver_control.py`** — BTS7960 driver (CAT Power 36V motor @ 24V via a
-  Mean Well EDR-120-24, GPIO12/13/5/6, VCC 3.3V). SPICE-tuned soft-start (first
-  ramp step capped so standstill inrush < 5 A), dynamic brake, dead-time on
-  reverse, optional MCP3008 clutch-slip. Needs a **1000–2200 µF / 50 V bulk cap**
-  across B+/B−.
+  Mean Well EDR-120-24, GPIO12/13/5/6, VCC 3.3V). This is the Pi-GPIO fallback.
+  SPICE-tuned soft-start (first ramp step capped so standstill inrush < 5 A),
+  dynamic brake, dead-time on reverse, optional MCP3008 clutch-slip. Needs a
+  **1000–2200 µF / 50 V bulk cap** across B+/B−.
 - **`endercli.py`** — Ender-3 as a Cartesian robot over serial (never heated).
 - **`cell_runner.py`** — orchestrates: per screw → rapid to Y → spin-slow + creep
   Z to find the slot → ramp to drive → seat (clutch-slip auto-stop with MCP3008,

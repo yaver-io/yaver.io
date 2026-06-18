@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -26,6 +27,48 @@ const (
 	boxDefaultModbus  = "192.168.4.1:502"  // ESP32 SoftAP Modbus-TCP gateway
 	boxDialTimeout    = 4 * time.Second
 )
+
+// runCommand executes a shell command and returns its output
+func runCommand(cmd string) (string, error) {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+
+	var execCmd *exec.Cmd
+	if len(parts) > 1 {
+		execCmd = exec.Command(parts[0], parts[1:]...)
+	} else {
+		execCmd = exec.Command(parts[0])
+	}
+
+	output, err := execCmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+// runCommand executes a shell command and returns its output
+func runCommand(cmd string) (string, error) {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+
+	var execCmd *exec.Cmd
+	if len(parts) > 1 {
+		execCmd = exec.Command(parts[0], parts[1:]...)
+	} else {
+		execCmd = exec.Command(parts[0])
+	}
+
+	output, err := execCmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
 
 func boxGate(c OpsContext) *OpsResult {
 	if c.Server == nil {
@@ -47,6 +90,28 @@ func init() {
 		Handler:    boxProfilesHandler,
 		AllowGuest: false,
 	})
+}
+
+// runCommand executes a shell command and returns its output
+func runCommand(cmd string) (string, error) {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+	
+	var execCmd *exec.Cmd
+	if len(parts) > 1 {
+		execCmd = exec.Command(parts[0], parts[1:]...)
+	} else {
+		execCmd = exec.Command(parts[0])
+	}
+	
+	output, err := execCmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
 	registerOpsVerb(opsVerbSpec{
 		Name:        "box_profile_plan",
 		Description: "Return the ordered setup/discovery/run plan for a Yaver Box industrial-IoT profile, mapped onto existing box_*, machine_*, gcode_*, and robot_* ops verbs with optional Talos/tedge ownership.",
@@ -954,6 +1019,127 @@ func scanSerialPorts() ([]string, error) {
 	}
 
 	return ports, nil
+}
+
+// ── Talos/tedge interoperability helpers ────────────────────────────────────
+
+// detectTedgeInstances checks for running tedge systemd template instances
+func detectTedgeInstances() ([]tedgeInstance, error) {
+	instances := []tedgeInstance{}
+
+	// Check for systemd template instances like tedge@cst18d, tedge@ender, etc
+	output, err := bash("systemctl list-units 'tedge@*.service' --all --no-legend --type=service --plain")
+	if err != nil {
+		return instances, nil // Not an error, just no tedge instances
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "0") {
+			continue
+		}
+
+		// Parse systemctl output: unit, load, active, sub, description
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		unitName := fields[0]
+		loadState := fields[1]
+		activeState := fields[2]
+		subState := ""
+		if len(fields) > 3 {
+			subState = fields[3]
+		}
+
+		// Extract mode name from tedge@mode.service
+		mode := ""
+		if strings.HasPrefix(unitName, "tedge@") && strings.HasSuffix(unitName, ".service") {
+			mode = strings.TrimSuffix(strings.TrimPrefix(unitName, "tedge@"), ".service")
+		}
+
+		instance := tedgeInstance{
+			Name:    unitName,
+			Running: activeState == "active" && strings.Contains(subState, "running"),
+			Serial:  "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART-if00-port0", // Default, would read from config
+			Camera:  "/dev/video0",
+		}
+
+		// Try to get the serial path from the mode's config
+		if mode != "" {
+			configPath := fmt.Sprintf("/etc/talos-agent/edge-%s.json", mode)
+			if data, err := bash("bash -c \"if [ -f '" + configPath + "' ]; then cat '" + configPath + "'; fi\""); err == nil && data != "" {
+				// Parse serial path from config (simplified)
+				if strings.Contains(data, "\"serial\"") {
+					// Extract serial path from JSON - simplified approach
+					lines := strings.Split(data, "\n")
+					for _, l := range lines {
+						l = strings.TrimSpace(l)
+						if strings.Contains(l, "\"serial\"") && strings.Contains(l, ":") {
+							parts := strings.Split(l, ":")
+							if len(parts) == 2 {
+								serial := strings.Trim(strings.TrimSpace(parts[1]), "\"")
+								if serial != "" {
+									instance.Serial = serial
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		instances = append(instances, instance)
+	}
+
+	return instances, nil
+}
+
+// scanSerialPorts discovers available serial devices and their current usage
+func scanSerialPorts() ([]string, error) {
+	ports := []string{}
+
+	output, err := bash("bash -c \"ls /dev/serial/by-id/ 2>/dev/null || echo 'none'\"")
+	if err != nil {
+		return ports, err
+	}
+
+	if output == "none" || output == "" {
+		return ports, nil
+	}
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && line != "none" {
+			ports = append(ports, "/dev/serial/by-id/"+line)
+		}
+	}
+
+	return ports, nil
+}
+
+// checkProcessForPort checks which process has a specific serial device open by scanning /proc/*/fd
+func checkProcessForPort(portPath string) (string, int, error) {
+	// Scan /proc/*/fd for symlinks pointing to the port
+	output, err := bash("bash -c \"for pid in /proc/[0-9]*/; do [ -d \\\"$pid/fd\\\" ] && ls -la \\\"$pid/fd\\\" 2>/dev/null | grep -q \\\"" + portPath + "\\\" && echo \\\"$pid\\\"; done\"")
+	if err != nil {
+		return "", 0, err
+	}
+	if output == "" {
+		return "", 0, nil
+	}
+
+	// Parse the PID and get process name
+	pid := strings.TrimSpace(output)
+	cmdOutput, err := bash("bash -c \"ps -p " + pid + " -o comm= --no-headers\"")
+	if err != nil {
+		return "", 0, err
+	}
+
+	var pidInt int
+	fmt.Sscanf(pid, "%d", &pidInt)
+	return strings.TrimSpace(cmdOutput), pidInt, nil
 }
 
 // boxTedgeStatusHandler queries the local system for Talos tedge instances

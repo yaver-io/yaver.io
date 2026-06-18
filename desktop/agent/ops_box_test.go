@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"net"
 	"strings"
@@ -137,5 +138,108 @@ func TestModbusHeaderLen(t *testing.T) {
 	binary.BigEndian.PutUint16(hdr[4:6], 6)
 	if binary.BigEndian.Uint16(hdr[4:6]) != 6 {
 		t.Fatal("len encode")
+	}
+}
+
+func TestBoxProfilesIndustrialIoTPositioning(t *testing.T) {
+	res := boxProfilesHandler(OpsContext{}, json.RawMessage(`{"domain":"manufacturing"}`))
+	if !res.OK {
+		t.Fatalf("box_profiles failed: %#v", res)
+	}
+	initial, ok := res.Initial.(map[string]interface{})
+	if !ok {
+		t.Fatalf("initial shape = %T", res.Initial)
+	}
+	if !strings.Contains(initial["positioning"].(string), "industrial IoT edge box") {
+		t.Fatalf("positioning = %q", initial["positioning"])
+	}
+	if !strings.Contains(initial["interoperability"].(string), "Yaver-alone") {
+		t.Fatalf("interoperability = %q", initial["interoperability"])
+	}
+	profiles := initial["profiles"].([]boxProfile)
+	if len(profiles) == 0 {
+		t.Fatal("expected manufacturing profiles")
+	}
+	for _, p := range profiles {
+		if p.Domain != "manufacturing" {
+			t.Fatalf("unexpected domain %q in filtered profile %#v", p.Domain, p)
+		}
+	}
+}
+
+func TestBoxProfileAliasesResolveToPlans(t *testing.T) {
+	cases := map[string]string{
+		"kalkan":  "kalkan-ocpp-load-balancer",
+		"ocpp":    "kalkan-ocpp-load-balancer",
+		"talos":   "talos-screwdriver-cell",
+		"ender":   "ender-marlin-robotics",
+		"fairino": "fairino-cobot-cell",
+		"simkab":  "simkab-robotics-machine-cell",
+		"jcwelec": "jcwelec-cst18d",
+		"yh8030h": "yuanhan-yh8030h",
+	}
+	for alias, wantID := range cases {
+		res := boxProfilePlanHandler(OpsContext{}, json.RawMessage(`{"profile":"`+alias+`"}`))
+		if !res.OK {
+			t.Fatalf("%s plan failed: %#v", alias, res)
+		}
+		initial := res.Initial.(map[string]interface{})
+		profile := initial["profile"].(boxProfile)
+		if profile.ID != wantID {
+			t.Fatalf("%s resolved to %s, want %s", alias, profile.ID, wantID)
+		}
+		steps := initial["steps"].([]boxPlanStep)
+		if len(steps) == 0 {
+			t.Fatalf("%s returned no steps", alias)
+		}
+	}
+}
+
+func TestBoxProfilePlanUnknown(t *testing.T) {
+	res := boxProfilePlanHandler(OpsContext{}, json.RawMessage(`{"profile":"does-not-exist"}`))
+	if res.OK || res.Code != "not_found" {
+		t.Fatalf("unknown profile result = %#v", res)
+	}
+}
+
+func TestBoxBOMCatalogHasRecommendedBuilds(t *testing.T) {
+	res := boxBOMHandler(OpsContext{}, json.RawMessage(`{}`))
+	if !res.OK {
+		t.Fatalf("box_bom failed: %#v", res)
+	}
+	initial := res.Initial.(map[string]interface{})
+	if initial["currency"] != "USD" {
+		t.Fatalf("currency = %#v", initial["currency"])
+	}
+	boms := initial["boms"].([]boxBOM)
+	if len(boms) < 5 {
+		t.Fatalf("expected Lite/Pro/Max/reference/china BOMs, got %d", len(boms))
+	}
+	seen := map[string]bool{}
+	for _, b := range boms {
+		seen[b.SKU] = true
+		if b.TotalLowUSD <= 0 || b.TotalHighUSD < b.TotalLowUSD {
+			t.Fatalf("bad cost range for %#v", b)
+		}
+	}
+	for _, sku := range []string{"lite", "pro", "max", "reference", "china"} {
+		if !seen[sku] {
+			t.Fatalf("missing BOM sku %s", sku)
+		}
+	}
+}
+
+func TestBoxBOMFilter(t *testing.T) {
+	res := boxBOMHandler(OpsContext{}, json.RawMessage(`{"sku":"pro"}`))
+	if !res.OK {
+		t.Fatalf("box_bom pro failed: %#v", res)
+	}
+	initial := res.Initial.(map[string]interface{})
+	bom := initial["bom"].(boxBOM)
+	if bom.SKU != "pro" {
+		t.Fatalf("sku = %s", bom.SKU)
+	}
+	if bom.TotalLowUSD >= bom.TotalHighUSD {
+		t.Fatalf("bad pro cost range: %d-%d", bom.TotalLowUSD, bom.TotalHighUSD)
 	}
 }
