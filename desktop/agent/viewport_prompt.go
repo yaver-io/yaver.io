@@ -20,7 +20,9 @@ import (
 
 // mergeClientVoiceHints augments a viewport with the request's
 // X-Yaver-Surface / X-Yaver-Voice headers and (as a last resort) the task
-// source, without overriding fields already set from the body. This is the
+// source, without overriding fields already set from the body. It also accepts
+// X-Yaver-Interaction / X-Yaver-Visual-Budget / X-Yaver-Risk-Policy for thin
+// surfaces such as car/watch/TV/MCP. This is the
 // header fallback for clients that don't send a speechContext body (CLI,
 // web). X-Yaver-Voice is a CSV of "stt"/"tts" (or "none"). Returns vp
 // (allocating one if a hint is present); nil only when there were no hints.
@@ -29,10 +31,13 @@ func mergeClientVoiceHints(r *http.Request, vp *TaskViewport, source string) *Ta
 		return vp
 	}
 	surface := strings.TrimSpace(r.Header.Get("X-Yaver-Surface"))
+	interaction := strings.TrimSpace(r.Header.Get("X-Yaver-Interaction"))
+	visualBudget := strings.TrimSpace(r.Header.Get("X-Yaver-Visual-Budget"))
+	riskPolicy := strings.TrimSpace(r.Header.Get("X-Yaver-Risk-Policy"))
 	voice := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Yaver-Voice")))
 	ttsMode := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Yaver-TTS-Mode")), "1") ||
 		strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Yaver-TTS-Mode")), "true")
-	if surface == "" && voice == "" && !ttsMode {
+	if surface == "" && interaction == "" && visualBudget == "" && riskPolicy == "" && voice == "" && !ttsMode {
 		return vp
 	}
 	if vp == nil {
@@ -47,6 +52,15 @@ func mergeClientVoiceHints(r *http.Request, vp *TaskViewport, source string) *Ta
 		} else if source != "" {
 			vp.Surface = source // best-effort: "cli" / "web" / "mobile"
 		}
+	}
+	if vp.Interaction == "" {
+		vp.Interaction = interaction
+	}
+	if vp.VisualBudget == "" {
+		vp.VisualBudget = visualBudget
+	}
+	if vp.RiskPolicy == "" {
+		vp.RiskPolicy = riskPolicy
 	}
 	if voice != "" && voice != "none" {
 		for _, tok := range strings.Split(voice, ",") {
@@ -72,6 +86,15 @@ func formatViewportHint(vp *TaskViewport) string {
 
 	// Surface-driven shape.
 	if shape := surfaceShape(vp.Surface, vp.PaneCols, vp.PaneRows); shape != "" {
+		parts = append(parts, shape)
+	}
+	if shape := interactionShape(vp.Interaction); shape != "" {
+		parts = append(parts, shape)
+	}
+	if shape := visualBudgetShape(vp.VisualBudget); shape != "" {
+		parts = append(parts, shape)
+	}
+	if shape := riskPolicyShape(vp.RiskPolicy); shape != "" {
 		parts = append(parts, shape)
 	}
 	// Multi-pane awareness — user has N parallel sessions visible.
@@ -140,10 +163,73 @@ func surfaceShape(surface string, cols, rows int) string {
 		// spoken/glanced sentence, never code. See
 		// docs/yaver-smartwatch-voice-terminal.md.
 		return "smartwatch wrist screen — ONE short sentence answer only, no code, no diffs, no lists; if detail is needed say it's on the phone"
+	case "car", "car-audio", "car-android-auto", "car-carplay":
+		return "car surface — driving-safe one spoken status sentence, no code, no diffs, no logs; hand off details to phone"
+	case "tv", "tv-living-room", "tv-android", "tv-apple":
+		return "TV shared-room display — large glanceable status, no secrets by default, D-pad friendly labels"
+	case "mcp":
+		return "MCP agent caller — return a concise human summary plus structured details an agent can branch on"
 	case "cli":
 		return "terminal — feel free to use ANSI colors and full detail"
 	default:
 		// Unknown surface — pass through verbatim so user can debug
 		return fmt.Sprintf("surface=%q (no specific shape hint yet)", surface)
+	}
+}
+
+func interactionShape(interaction string) string {
+	switch strings.ToLower(strings.TrimSpace(interaction)) {
+	case "":
+		return ""
+	case "voice":
+		return "voice interaction — prefer short spoken sentences and avoid dense option lists"
+	case "dpad":
+		return "D-pad interaction — expose a small number of clearly named choices"
+	case "approval":
+		return "approval interaction — state the action, risk, and approve/deny choice plainly"
+	case "stream":
+		return "stream viewer — summarize current state before detailed observations"
+	case "touch":
+		return "touch interaction — compact sections and obvious next action"
+	case "keyboard":
+		return "keyboard interaction — full text input available"
+	default:
+		return fmt.Sprintf("interaction=%q", interaction)
+	}
+}
+
+func visualBudgetShape(budget string) string {
+	switch strings.ToLower(strings.TrimSpace(budget)) {
+	case "":
+		return ""
+	case "none":
+		return "no visual budget — audio/status only"
+	case "glance":
+		return "glance visual budget — one headline and one next action"
+	case "panel":
+		return "panel visual budget — short sections, no walls of text"
+	case "full":
+		return "full visual budget — detailed markdown is acceptable"
+	default:
+		return fmt.Sprintf("visualBudget=%q", budget)
+	}
+}
+
+func riskPolicyShape(policy string) string {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "":
+		return ""
+	case "driving":
+		return "driving policy — never ask the user to read while driving; risky actions need explicit confirmation"
+	case "watch":
+		return "watch policy — approve/deny only for low or medium risk; high risk should hand off to phone"
+	case "shared-tv":
+		return "shared TV policy — do not reveal secrets, tokens, private paths, or sensitive account data"
+	case "mcp":
+		return "MCP policy — do not bypass human approval gates; surface pending approvals as structured state"
+	case "normal":
+		return ""
+	default:
+		return fmt.Sprintf("riskPolicy=%q", policy)
 	}
 }

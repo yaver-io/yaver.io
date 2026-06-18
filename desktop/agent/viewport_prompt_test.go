@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -125,6 +126,74 @@ func TestFormatViewportHint_Smartwatch(t *testing.T) {
 		if !strings.Contains(hint, "no code") {
 			t.Errorf("%s hint should forbid code: %q", surface, hint)
 		}
+	}
+}
+
+func TestFormatViewportHint_CarDrivingPolicy(t *testing.T) {
+	vp := &TaskViewport{
+		Surface:      "car-android-auto",
+		Interaction:  "voice",
+		VisualBudget: "none",
+		RiskPolicy:   "driving",
+		Voice:        true,
+		TTSBudget:    160,
+	}
+	hint := formatViewportHint(vp)
+	for _, want := range []string{"car surface", "driving-safe", "voice interaction", "no visual budget", "driving policy", "160"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("car hint missing %q: %q", want, hint)
+		}
+	}
+	if strings.Contains(hint, "code blocks") {
+		t.Errorf("car hint should forbid code/diffs/logs without inviting code-block detail: %q", hint)
+	}
+}
+
+func TestFormatViewportHint_TVSharedDpad(t *testing.T) {
+	vp := &TaskViewport{
+		Surface:      "tv-living-room",
+		Interaction:  "dpad",
+		VisualBudget: "glance",
+		RiskPolicy:   "shared-tv",
+	}
+	hint := formatViewportHint(vp)
+	for _, want := range []string{"TV shared-room display", "D-pad interaction", "glance visual budget", "shared TV policy"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("TV hint missing %q: %q", want, hint)
+		}
+	}
+}
+
+func TestFormatViewportHint_MCPStructuredApproval(t *testing.T) {
+	vp := &TaskViewport{
+		Surface:      "mcp",
+		Interaction:  "approval",
+		VisualBudget: "full",
+		RiskPolicy:   "mcp",
+	}
+	hint := formatViewportHint(vp)
+	for _, want := range []string{"MCP agent caller", "approval interaction", "full visual budget", "MCP policy"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("MCP hint missing %q: %q", want, hint)
+		}
+	}
+}
+
+func TestMergeClientVoiceHints_SurfaceMetadataHeaders(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "/tasks", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Yaver-Surface", "tv-apple")
+	req.Header.Set("X-Yaver-Interaction", "dpad")
+	req.Header.Set("X-Yaver-Visual-Budget", "glance")
+	req.Header.Set("X-Yaver-Risk-Policy", "shared-tv")
+	vp := mergeClientVoiceHints(req, nil, "")
+	if vp == nil {
+		t.Fatal("expected viewport")
+	}
+	if vp.Surface != "tv-apple" || vp.Interaction != "dpad" || vp.VisualBudget != "glance" || vp.RiskPolicy != "shared-tv" {
+		t.Fatalf("unexpected viewport: %#v", vp)
 	}
 }
 

@@ -764,16 +764,27 @@ type TaskVerbosity struct {
 //	"web-spatial-hud" | "web-spatial-vr"
 //	"glasses-mentra-live" | "glasses-mentra-display" | "glasses-ray-ban"
 //	"wearable-watch" | "wearable-wear" (Apple Watch / Wear OS)
-//	"cli" | "" (no hint)
+//	"car-audio" | "car-android-auto" | "car-carplay"
+//	"tv-living-room" | "tv-android" | "tv-apple"
+//	"mcp" | "cli" | "" (no hint)
 //
 // All fields optional. nil = no viewport hint, default behavior.
 type TaskViewport struct {
-	Surface   string `json:"surface,omitempty"`
-	PaneCount int    `json:"paneCount,omitempty"` // parallel Claude sessions visible
-	PaneCols  int    `json:"paneCols,omitempty"`  // approx pane width in mono chars
-	PaneRows  int    `json:"paneRows,omitempty"`  // approx pane height in rows
-	Voice     bool   `json:"voice,omitempty"`     // task originated from voice (STT)
-	TTSBudget int    `json:"ttsBudget,omitempty"` // max chars in TTS readback (0 = 280 default)
+	Surface string `json:"surface,omitempty"`
+	// Interaction is the dominant input mode on the consuming surface:
+	// "voice", "dpad", "touch", "keyboard", "approval", "stream".
+	Interaction string `json:"interaction,omitempty"`
+	PaneCount   int    `json:"paneCount,omitempty"` // parallel Claude sessions visible
+	PaneCols    int    `json:"paneCols,omitempty"`  // approx pane width in mono chars
+	PaneRows    int    `json:"paneRows,omitempty"`  // approx pane height in rows
+	Voice       bool   `json:"voice,omitempty"`     // task originated from voice (STT)
+	TTSBudget   int    `json:"ttsBudget,omitempty"` // max chars in TTS readback (0 = 280 default)
+	// VisualBudget tunes how much visible detail the surface can carry:
+	// "none" (audio-only), "glance", "panel", or "full".
+	VisualBudget string `json:"visualBudget,omitempty"`
+	// RiskPolicy names a product policy for confirmations and sensitive output:
+	// "normal", "driving", "watch", "shared-tv", "mcp".
+	RiskPolicy string `json:"riskPolicy,omitempty"`
 
 	// STT/TTS capability of the client that will consume this task's
 	// stream. Set from the request's speechContext body or the
