@@ -63,6 +63,7 @@ export function RemoteWindow3D({
   >("idle");
   const [statusDetail, setStatusDetail] = useState("");
   const [meta, setMeta] = useState<FrameMeta>({ width: 1280, height: 800 });
+  const [lastClick, setLastClick] = useState<{ x: number; y: number; time: number } | null>(null);
   const { size } = useThree();
 
   // Bootstrap the WebRTC pipeline once per session id. We deliberately
@@ -294,7 +295,23 @@ export function RemoteWindow3D({
           if (!uv) return;
           const x = Math.round(uv.x * meta.width);
           const y = Math.round((1 - uv.y) * meta.height);
-          dispatchControl("tap", { x, y });
+          const now = Date.now();
+
+          // Check for double-click (within 300ms of previous click at same location)
+          if (lastClick &&
+              now - lastClick.time < 300 &&
+              Math.abs(lastClick.x - x) < 10 &&
+              Math.abs(lastClick.y - y) < 10) {
+            // Remote runtime accepts tap/swipe/text/key; represent double-click
+            // as two taps instead of inventing a new wire action.
+            void dispatchControl("tap", { x, y });
+            window.setTimeout(() => void dispatchControl("tap", { x, y }), 40);
+            setLastClick(null);
+          } else {
+            // This is a single click - dispatch tap for selection
+            void dispatchControl("tap", { x, y });
+            setLastClick({ x, y, time: now });
+          }
         }}
         onWheel={(e) => {
           const uv = e.uv;
