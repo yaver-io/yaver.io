@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -34,8 +34,10 @@ import {
   type GuestUsageEntry,
 } from "../../src/lib/guests";
 import { useAuth } from "../../src/context/AuthContext";
+import { getUserSettings } from "../../src/lib/auth";
 import { fetchPairInfo, submitPair, parsePairUrl } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
+import { isOptionalMoreToolEnabled, normalizeOptionalMoreTools, type OptionalMoreToolId } from "../../src/lib/moreOptionalTools";
 import {
   getSelectedAppPackages,
   listPhoneApps,
@@ -2894,6 +2896,8 @@ export default function MoreScreen() {
   const { connectionStatus, activeDevice } = useDevice();
   const { token, user } = useAuth();
   const connected = connectionStatus === "connected";
+  const [moreOptionalTools, setMoreOptionalTools] = useState<OptionalMoreToolId[]>([]);
+  const showOptionalTool = useCallback((id: OptionalMoreToolId) => isOptionalMoreToolEnabled(moreOptionalTools, id), [moreOptionalTools]);
 
   // Tutorials lives in its own pushed screen now (mobile/app/(tabs)/tutorials.tsx)
   // so the open animation matches Quality Gates and every other More-tab
@@ -2940,6 +2944,26 @@ export default function MoreScreen() {
   // Never auto-submits — the user always taps the explicit Pair button.
   const search = useLocalSearchParams<{ pair?: string }>();
   const pairParam = typeof search.pair === "string" ? search.pair : "";
+
+  const refreshMoreOptionalTools = useCallback(() => {
+    if (!token) {
+      setMoreOptionalTools([]);
+      return;
+    }
+    getUserSettings(token).then((settings) => {
+      setMoreOptionalTools(normalizeOptionalMoreTools(settings.moreOptionalTools));
+    });
+  }, [token]);
+
+  useEffect(() => {
+    refreshMoreOptionalTools();
+  }, [refreshMoreOptionalTools]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshMoreOptionalTools();
+    }, [refreshMoreOptionalTools]),
+  );
 
   const openPair = useCallback(() => {
     setPairCode("");
@@ -3221,8 +3245,7 @@ export default function MoreScreen() {
               </Pressable>
             ) : null}
 
-            {/* Robot Cell talks to robotd directly over LAN (by IP), so it is
-                reachable WITHOUT a paired remote agent \u2014 always show it. */}
+            {showOptionalTool("robot-cell") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handleRobot}
@@ -3236,6 +3259,7 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
             {/* Home Control \u2014 the "single kumanda" universal remote + activities
                 (Apple TV / Mi Box / \u2026 via the home_* ops verbs). A separate Home
@@ -3254,9 +3278,7 @@ export default function MoreScreen() {
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
 
-            {/* 3D Printer cell \u2014 Bambu over the LAN (discover/status/camera/control)
-                + remote OpenSCAD CAD. Reachable via the host box on the printer's
-                LAN, so always show it. */}
+            {showOptionalTool("printer") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handlePrinter}
@@ -3270,10 +3292,9 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
-            {/* Circuit Simulator cell \u2014 import SPICE/KiCad/EPLAN, simulate
-                (built-in MNA or ngspice), ERC, view waveforms. Box-reachable, so
-                always show it. */}
+            {showOptionalTool("circuit") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handleCircuit}
@@ -3287,11 +3308,9 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
-            {/* EV Stations \u2014 nearby charging-station discovery through a box
-                (ev_charging verb / OpenChargeMap). Default filter CCS2 for
-                Togg/MG ZS EV in Turkey; filter by network + min power, then
-                Navigate. Discovery only, box-reachable, so always show it. */}
+            {showOptionalTool("ev-stations") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handleEvStations}
@@ -3305,6 +3324,7 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
             {/* Gateway Gates \u2014 resolve the gateway Auth Broker's pending human
                 gates (OAuth re-consent / 2FA / captcha / payment). Interactive
@@ -3324,10 +3344,7 @@ export default function MoreScreen() {
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
 
-            {/* Car Voice Coding \u2014 Tier 0 hands-free: speak a coding command, it
-                runs on a box you pick and reads a one-sentence status back over
-                car audio. Risky commands gate behind a confirm; code is never
-                read aloud while driving. Box-reachable, so always show it. */}
+            {showOptionalTool("car-voice") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handleCarVoice}
@@ -3341,10 +3358,9 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
-            {/* Data Collection cell \u2014 multi-vantage egress, peer-egress lending,
-                per-vantage source health + blocks, cross-vantage diff. Box-reachable,
-                so always show it. */}
+            {showOptionalTool("data-collection") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handleDataCollection}
@@ -3358,10 +3374,9 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
-            {/* Task Packages \u2014 author/run/share portable task-execution units
-                (collect or operate, fetch/MCP-over-MCP), allocate to a runner.
-                Box-reachable, so always show it. */}
+            {showOptionalTool("task-packages") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handlePackages}
@@ -3375,10 +3390,9 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
-            {/* Accept a shared task \u2014 the runner's consent screen: paste an
-                invite code (or open a deep link) to accept a package shared with
-                you and run it on your device. */}
+            {showOptionalTool("package-accept") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handlePackageAccept}
@@ -3392,10 +3406,9 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
-            {/* Screw Cell \u2014 shop-floor analytics from the robotic screw cell:
-                KPIs, daily fail-rate trend, flagged production orders, worst
-                blocks, recent runs. Box-reachable, so always show it. */}
+            {showOptionalTool("screw-cell") ? (
             <Pressable
               style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               onPress={handleScrewCell}
@@ -3409,6 +3422,7 @@ export default function MoreScreen() {
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
+            ) : null}
 
             <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
               <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>

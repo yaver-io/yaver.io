@@ -84,14 +84,21 @@ async function ensureUserSettings(ctx: MutationCtx, userId: Id<"users">) {
     .first();
   if (!settings) {
     const defaultRelay = await getDefaultRelay(ctx);
-    await ctx.db.insert("userSettings", { userId, forceRelay: false, ...defaultRelay });
+    await ctx.db.insert("userSettings", { userId, forceRelay: false, moreOptionalTools: [], ...defaultRelay });
     return;
+  }
+  const patch: Record<string, unknown> = {};
+  if (settings.moreOptionalTools === undefined) {
+    patch.moreOptionalTools = [];
   }
   if (!settings.relayPassword) {
     const defaultRelay = await getDefaultRelay(ctx);
     if (defaultRelay.relayPassword) {
-      await ctx.db.patch(settings._id, defaultRelay);
+      Object.assign(patch, defaultRelay);
     }
+  }
+  if (Object.keys(patch).length > 0) {
+    await ctx.db.patch(settings._id, patch);
   }
 }
 
@@ -242,6 +249,7 @@ async function mergeUserInto(
       ttsProvider: sourceSettings.ttsProvider,
       verbosity: sourceSettings.verbosity,
       keyStorage: sourceSettings.keyStorage,
+      moreOptionalTools: sourceSettings.moreOptionalTools ?? [],
     });
     await ctx.db.delete(sourceSettings._id);
   } else if (sourceSettings && targetSettings) {
@@ -257,6 +265,7 @@ async function mergeUserInto(
       ttsProvider: targetSettings.ttsProvider ?? sourceSettings.ttsProvider,
       verbosity: targetSettings.verbosity ?? sourceSettings.verbosity,
       keyStorage: targetSettings.keyStorage ?? sourceSettings.keyStorage,
+      moreOptionalTools: targetSettings.moreOptionalTools ?? sourceSettings.moreOptionalTools ?? [],
     });
     await ctx.db.delete(sourceSettings._id);
   }
@@ -1403,6 +1412,7 @@ export const createEmailUser = mutation({
     await ctx.db.insert("userSettings", {
       userId: userDocId,
       forceRelay: false,
+      moreOptionalTools: [],
       ...defaultRelay,
     });
     await ensureAuthIdentity(ctx, userDocId, "email", args.email, args.email);

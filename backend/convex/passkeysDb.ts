@@ -299,6 +299,7 @@ export const createPasskeyUser = mutation({
     await ctx.db.insert("userSettings", {
       userId: userDocId,
       forceRelay: false,
+      moreOptionalTools: [],
     });
 
     // Email-verification token: passkey signup gives no proof of

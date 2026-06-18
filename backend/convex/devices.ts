@@ -598,6 +598,7 @@ export const registerDevice = mutation({
         await ctx.db.insert("userSettings", {
           userId: session.user._id,
           primaryDeviceId: args.deviceId,
+          moreOptionalTools: [],
         });
       } else if (!settings.primaryDeviceId) {
         await ctx.db.patch(settings._id, { primaryDeviceId: args.deviceId });

@@ -1,6 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getConvexSiteUrlSync, getWebBaseUrlSync } from "./backendConfig";
+import type { OptionalMoreToolId } from "./moreOptionalTools";
 
 const TOKEN_KEY = "yaver_auth_token";
 const USER_KEY = "yaver_user";
@@ -598,6 +599,9 @@ export interface UserSettings {
    *  picker before the compose modal. Stored on the user record so it
    *  roams across phones / re-installs. Default: undefined → off. */
   multiTargetMode?: boolean;
+  /** Rare/specialized More-tab tools the user explicitly opted into.
+   *  Omitted/empty means the default More menu stays focused. */
+  moreOptionalTools?: OptionalMoreToolId[];
   /** Preferred device for auto-connect when user has multiple machines.
    * Send `null` to clear; omit to leave untouched. Single-device users
    * auto-connect regardless of this field. */

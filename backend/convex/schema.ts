@@ -729,6 +729,10 @@ export default defineSchema({
     // the user record (not per-device) so the preference roams across
     // phones/web logins.
     multiTargetMode: v.optional(v.boolean()),
+    // Rare/specialized More-tab tools the user explicitly wants visible.
+    // Stored as string IDs only, no per-device details or sensitive data.
+    // Omitted/empty = keep the default More menu focused.
+    moreOptionalTools: v.optional(v.array(v.string())),
     // Preferred device for auto-connect when the user has more than one
     // machine registered. When set, mobile / desktop / web will attach
     // to this device on login if it's online, skipping the "pick one"

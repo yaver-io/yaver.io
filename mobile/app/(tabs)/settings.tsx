@@ -42,6 +42,7 @@ import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../s
 import { quicClient, type AgentStatus, type CapabilitySnapshot, type EnvironmentProfileApplyResult, type IncidentEvent, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
 import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
+import { OPTIONAL_MORE_TOOLS, normalizeOptionalMoreTools, type OptionalMoreToolId } from "../../src/lib/moreOptionalTools";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -259,6 +260,7 @@ export default function SettingsScreen() {
   const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
   const [showToolchainSync, setShowToolchainSync] = useState(false);
   const [taskVideoSummaryEnabled, setTaskVideoSummaryEnabled] = useState(false);
+  const [moreOptionalTools, setMoreOptionalTools] = useState<OptionalMoreToolId[]>([]);
   const [toolchainSourceId, setToolchainSourceId] = useState<string | null>(null);
   const [toolchainSyncGitCredentials, setToolchainSyncGitCredentials] = useState(true);
   const [toolchainSyncProviderKeys, setToolchainSyncProviderKeys] = useState(true);
@@ -761,9 +763,20 @@ export default function SettingsScreen() {
       } else if (s.mobileCodingProvider === "glm" || s.mobileCodingProvider === "openai") {
         setMobileCodingProvider(s.mobileCodingProvider);
       }
+      setMoreOptionalTools(normalizeOptionalMoreTools(s.moreOptionalTools));
     });
     getUsageSummary(token).then(setUsageSummary);
   }, [token]);
+
+  const toggleMoreOptionalTool = async (id: OptionalMoreToolId, enabled: boolean) => {
+    const next = enabled
+      ? normalizeOptionalMoreTools([...moreOptionalTools, id])
+      : moreOptionalTools.filter((toolId) => toolId !== id);
+    setMoreOptionalTools(next);
+    if (token) {
+      await saveUserSettings(token, { moreOptionalTools: next });
+    }
+  };
 
   // Subscribe to live log updates
   useEffect(() => {
@@ -2017,6 +2030,39 @@ export default function SettingsScreen() {
             </View>
           );
         })()}
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>More menu</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            {OPTIONAL_MORE_TOOLS.map((tool, index) => {
+              const enabled = moreOptionalTools.includes(tool.id);
+              return (
+                <View key={tool.id}>
+                  {index > 0 ? <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} /> : null}
+                  <View style={styles.aboutRow}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>{tool.label}</Text>
+                      <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+                        {tool.description}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={enabled}
+                      onValueChange={(value) => {
+                        toggleMoreOptionalTool(tool.id, value).catch(() => {
+                          setMoreOptionalTools((prev) => (value ? prev.filter((id) => id !== tool.id) : normalizeOptionalMoreTools([...prev, tool.id])));
+                          Alert.alert("Couldn't Save Preference", "Yaver couldn't sync this More menu preference. Try again.");
+                        });
+                      }}
+                      trackColor={{ false: c.border, true: c.accent + "66" }}
+                      thumbColor={enabled ? c.accent : c.textMuted}
+                    />
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
 
         {/* People & shared projects */}
         <View style={styles.section}>

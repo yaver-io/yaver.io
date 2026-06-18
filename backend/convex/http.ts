@@ -3207,6 +3207,7 @@ http.route({
       verbosity: body.verbosity,
       keyStorage: body.keyStorage,
       multiTargetMode: body.multiTargetMode,
+      moreOptionalTools: body.moreOptionalTools,
       // Client sends null to clear the preference, undefined to leave untouched.
       primaryDeviceId: body.primaryDeviceId,
       secondaryDeviceId: body.secondaryDeviceId,

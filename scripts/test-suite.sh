@@ -538,6 +538,18 @@ run_unit_tests() {
         fail "MCP server tests failed"
         tail -20 "$TEST_DIR/mcp-test.log"
     fi
+
+    if command -v bun &>/dev/null && [ -d "$ROOT_DIR/mobile-headless" ]; then
+        info "Running mobile-headless dogfood preference tests..."
+        if (cd "$ROOT_DIR/mobile-headless" && bun test test/more-menu-preferences.test.ts > "$TEST_DIR/mobile-headless-more-menu.log" 2>&1); then
+            pass "Mobile-headless More menu preference tests passed"
+        else
+            fail "Mobile-headless More menu preference tests failed"
+            tail -20 "$TEST_DIR/mobile-headless-more-menu.log"
+        fi
+    else
+        skip "Mobile-headless More menu preference tests" "bun or mobile-headless missing"
+    fi
 }
 
 # ── Build Tests ────────────────────────────────────────────────────
