@@ -21,8 +21,7 @@
 // running process keeps the old code until the next `yaver serve` restart, so
 // we never risk killing a remote box mid-flow), then brings mesh up.
 
-import { deviceAgentContext } from "./deviceAgentFetch";
-import { connectionManager } from "./connectionManager";
+import { agentFetch, type AgentDeviceRef } from "./agentRequest";
 
 export type MeshDeviceStatus = {
   enabled: boolean;
@@ -54,34 +53,11 @@ export function meshEnablePhaseLabel(phase?: MeshEnablePhase): string {
   }
 }
 
-type DeviceRef = { id: string; host?: string; port?: number };
+type DeviceRef = AgentDeviceRef;
 
 const STATUS_TIMEOUT_MS = 5000;
 const SELF_HEAL_TIMEOUT_MS = 30000;
 const MESH_UP_TIMEOUT_MS = 25000;
-
-/** Issue an agent request to `device`, preferring its live QuicClient transport
- *  (direct-LAN-first) and falling back to the relay/host URL when nothing is
- *  connected. Throws "unreachable" when there's no route at all. */
-async function agentFetch(
-  device: DeviceRef,
-  token: string | null,
-  path: string,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<Response> {
-  const client = connectionManager.clientFor(device.id);
-  if (client?.isConnected) {
-    return client.agentRequest(device.id, path, init, timeoutMs);
-  }
-  const ctx = deviceAgentContext(device, token);
-  if (!ctx) throw new Error("unreachable");
-  return fetch(`${ctx.baseUrl}${path}`, {
-    ...init,
-    headers: { ...ctx.headers, ...((init.headers as Record<string, string>) || {}) },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-}
 
 /** Probe a box's live mesh state. Returns null when unreachable so the caller
  *  can fall back to the Convex control-plane view (mesh.peers). */

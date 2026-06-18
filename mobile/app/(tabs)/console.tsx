@@ -1,11 +1,30 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import Svg, { Polyline } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
+import { useAuth } from "../../src/context/AuthContext";
+import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
+import {
+  wifiBanClient,
+  wifiBannedClients,
+  wifiCapabilities,
+  wifiClients,
+  wifiGetAPSTAConfig,
+  wifiKickClient,
+  wifiSetAPSTAConfig,
+  wifiStart,
+  wifiStatus,
+  wifiStop,
+  wifiUnbanClient,
+  type WiFiBan,
+  type WiFiCapabilities,
+  type WiFiClient,
+  type WiFiStatus,
+} from "../../src/lib/wifiControl";
 
 // Native mobile Console — all Docker/machine ops via RN components. No WebViews.
 
@@ -347,60 +366,101 @@ function S3Tab({ c }: { c: any }) {
 }
 
 function WiFiTabScreen({ c }: { c: any }) {
+  const { token } = useAuth();
+  const { devices, activeDevice, primaryDeviceId } = useDevice();
+  const onlineDevices = useMemo(() => devices.filter((d) => d.online !== false && !d.needsAuth), [devices]);
+  const [deviceId, setDeviceId] = useState("");
   const [wifiTab, setWiFiTab] = useState<WiFiTab>("hotspot");
-  const [caps, setCaps] = useState<any>(null);
-  const [status, setStatus] = useState<any>(null);
+  const [caps, setCaps] = useState<WiFiCapabilities | null>(null);
+  const [status, setStatus] = useState<WiFiStatus | null>(null);
   const [meshCaps, setMeshCaps] = useState<any>(null);
   const [meshStatus, setMeshStatus] = useState<any>(null);
+  const [clients, setClients] = useState<WiFiClient[]>([]);
+  const [banned, setBanned] = useState<WiFiBan[]>([]);
   const [busy, setBusy] = useState(false);
   const [ssid, setSsid] = useState("YaverHotspot");
   const [password, setPassword] = useState("yaver1234");
   const [iface, setIface] = useState("");
+  const [apIface, setApIface] = useState("");
+  const [upstreamIf, setUpstreamIf] = useState("");
   const [upstreamSsid, setUpstreamSsid] = useState("");
   const [upstreamPass, setUpstreamPass] = useState("");
+  const [clientMac, setClientMac] = useState("");
+  const [banHours, setBanHours] = useState("0");
   const [message, setMessage] = useState("");
+
+  const selectedDevice = useMemo(() => {
+    const preferred = deviceId || activeDevice?.id || primaryDeviceId || onlineDevices[0]?.id || devices[0]?.id || "";
+    return devices.find((d) => d.id === preferred) || onlineDevices[0] || devices[0] || null;
+  }, [activeDevice?.id, deviceId, devices, onlineDevices, primaryDeviceId]);
+
+  useEffect(() => {
+    if (!deviceId && selectedDevice?.id) setDeviceId(selectedDevice.id);
+  }, [deviceId, selectedDevice?.id]);
+
+  function target(): Device {
+    if (!selectedDevice) throw new Error("Pick an online Yaver machine first");
+    return selectedDevice;
+  }
 
   async function refresh() {
     try {
-      const [c1, s1, c2, s2] = await Promise.all([
-        call("/console/wifi/capabilities"),
-        call("/console/wifi/status"),
-        call("/console/wifi-mesh/capabilities"),
-        call("/console/wifi-mesh/status"),
+      const d = target();
+      const [c1, s1, list, bans, saved] = await Promise.all([
+        wifiCapabilities(d, token),
+        wifiStatus(d, token),
+        wifiClients(d, token).catch(() => []),
+        wifiBannedClients(d, token).catch(() => []),
+        wifiGetAPSTAConfig(d, token).catch(() => null),
       ]);
-      setCaps(c1.capabilities || null);
-      setStatus(s1.status || null);
-      setMeshCaps(c2.capabilities || null);
-      setMeshStatus(s2.status || null);
-      if (!iface && c1.capabilities?.interface) setIface(c1.capabilities.interface);
-      setMessage(c1.error || c2.error || "");
+      setCaps(c1);
+      setStatus(s1);
+      setClients(list);
+      setBanned(bans);
+      setMeshCaps(null);
+      setMeshStatus(null);
+      if (!iface && c1?.interface) setIface(c1.interface);
+      if (saved) {
+        if (!ssid && saved.ssid) setSsid(saved.ssid);
+        if (!upstreamSsid && saved.upstreamSsid) setUpstreamSsid(saved.upstreamSsid);
+        if (!upstreamIf && saved.upstreamIf) setUpstreamIf(saved.upstreamIf);
+        if (!apIface && saved.apInterface) setApIface(saved.apInterface);
+      }
+      setMessage("");
     } catch (err: any) {
       setMessage(err?.message || "WiFi refresh failed");
     }
   }
-  useEffect(() => { refresh(); const i = setInterval(refresh, 5000); return () => clearInterval(i); }, []);
+  useEffect(() => { refresh(); const i = setInterval(refresh, 5000); return () => clearInterval(i); }, [selectedDevice?.id, token]);
 
   async function start(mode: "ap" | "apsta") {
     setBusy(true);
     setMessage("");
     try {
+      const d = target();
       const body: any = {
         ssid,
         password,
         mode,
         interface: iface || caps?.interface || "",
+        apInterface: apIface || undefined,
+        upstreamIf: upstreamIf || undefined,
         channel: 6,
         frequency: "2.4GHz",
         enableDhcp: true,
         enableNat: true,
+        countryCode: "US",
       };
       if (mode === "apsta") {
         body.upstreamSsid = upstreamSsid;
         body.upstreamPass = upstreamPass;
       }
-      const r = await call("/console/wifi/start", { method: "POST", body: JSON.stringify(body) });
-      setMessage(r.error || "started");
+      if (mode === "apsta") await wifiSetAPSTAConfig(d, token, body);
+      await wifiStart(d, token, body);
+      setMessage(`${mode.toUpperCase()} start requested`);
       await refresh();
+    } catch (err: any) {
+      setMessage(err?.message || "WiFi start failed");
     } finally {
       setBusy(false);
     }
@@ -408,9 +468,32 @@ function WiFiTabScreen({ c }: { c: any }) {
   async function stop() {
     setBusy(true);
     try {
-      const r = await call("/console/wifi/stop", { method: "POST", body: "{}" });
-      setMessage(r.error || "stopped");
+      await wifiStop(target(), token);
+      setMessage("stopped");
       await refresh();
+    } catch (err: any) {
+      setMessage(err?.message || "WiFi stop failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clientAction(action: "kick" | "ban" | "unban", mac = clientMac) {
+    if (!mac.trim()) {
+      setMessage("MAC address required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const d = target();
+      if (action === "kick") await wifiKickClient(d, token, mac.trim());
+      if (action === "ban") await wifiBanClient(d, token, mac.trim(), Number.parseInt(banHours, 10) || 0);
+      if (action === "unban") await wifiUnbanClient(d, token, mac.trim());
+      setClientMac("");
+      setMessage(action === "kick" ? "client kicked" : action === "ban" ? "client banned" : "client unbanned");
+      await refresh();
+    } catch (err: any) {
+      setMessage(err?.message || `client ${action} failed`);
     } finally {
       setBusy(false);
     }
@@ -419,6 +502,22 @@ function WiFiTabScreen({ c }: { c: any }) {
   const modeText = caps?.supportedModes?.join(", ") || "unknown";
   return (
     <View style={{ gap: 10 }}>
+      <View>
+        <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 6 }}>Machine</Text>
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+          {(onlineDevices.length ? onlineDevices : devices).map((d) => {
+            const active = d.id === selectedDevice?.id;
+            return (
+              <Pressable key={d.id} onPress={() => setDeviceId(d.id)} style={[actionBtn(c), { backgroundColor: active ? c.accent + "25" : c.bgCard, borderColor: active ? c.accent : c.border, borderWidth: 1 }]}>
+                <Text style={{ color: active ? c.accent : c.textPrimary, fontSize: 12, fontWeight: "700" }}>{d.alias ? `@${d.alias}` : d.name}</Text>
+                <Text style={{ color: d.online ? "#10b981" : c.textMuted, fontSize: 10 }}>{d.online ? "online" : "offline"} · {d.os || "agent"}</Text>
+              </Pressable>
+            );
+          })}
+          {devices.length === 0 && <Text style={{ color: c.textMuted, fontSize: 12 }}>No Yaver machines found.</Text>}
+        </View>
+      </View>
+
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
         {(["hotspot", "apsta", "clients", "diagnostics"] as WiFiTab[]).map((t) => (
           <Pressable key={t} onPress={() => setWiFiTab(t)} style={[actionBtn(c), { backgroundColor: wifiTab === t ? c.accent + "30" : c.bgCard, borderColor: wifiTab === t ? c.accent : c.border, borderWidth: 1 }]}>
@@ -429,7 +528,8 @@ function WiFiTabScreen({ c }: { c: any }) {
 
       <View style={[card(c)]}>
         <Text style={{ color: c.textPrimary, fontWeight: "700" }}>{status?.running ? "WiFi running" : "WiFi stopped"}</Text>
-        <Text style={{ color: c.textMuted, fontSize: 11 }}>interface {status?.interface || caps?.interface || "unknown"} · modes {modeText}</Text>
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>mode {status?.mode || "none"} · interface {status?.interface || caps?.interface || "unknown"} · modes {modeText}</Text>
+        {status?.ssid ? <Text style={{ color: c.textMuted, fontSize: 11 }}>ssid {status.ssid} · clients {status.connectedClients || 0} · upstream {status.upstreamStatus || "n/a"}</Text> : null}
         <Text style={{ color: c.textMuted, fontSize: 11 }}>hardware {caps?.hardwareSupport || status?.hardwareSupport || "unknown"} · driver {caps?.driver || "unknown"}</Text>
         {message ? <Text style={{ color: message.includes("failed") || message.includes("requires") || message.includes("error") ? "#ef4444" : c.textMuted, fontSize: 11, marginTop: 6 }}>{message}</Text> : null}
       </View>
@@ -441,6 +541,8 @@ function WiFiTabScreen({ c }: { c: any }) {
           <TextInput value={iface} onChangeText={setIface} placeholder={caps?.interface || "WiFi interface"} placeholderTextColor={c.textMuted} style={inputStyle(c)} />
           {wifiTab === "apsta" && (
             <>
+              <TextInput value={apIface} onChangeText={setApIface} placeholder="AP interface (optional, e.g. wlan0ap)" placeholderTextColor={c.textMuted} style={inputStyle(c)} />
+              <TextInput value={upstreamIf} onChangeText={setUpstreamIf} placeholder="Upstream interface (optional)" placeholderTextColor={c.textMuted} style={inputStyle(c)} />
               <TextInput value={upstreamSsid} onChangeText={setUpstreamSsid} placeholder="Upstream SSID" placeholderTextColor={c.textMuted} style={inputStyle(c)} />
               <TextInput value={upstreamPass} onChangeText={setUpstreamPass} placeholder="Upstream password" placeholderTextColor={c.textMuted} secureTextEntry style={inputStyle(c)} />
             </>
@@ -457,9 +559,55 @@ function WiFiTabScreen({ c }: { c: any }) {
       )}
 
       {wifiTab === "clients" && (
-        <View style={[card(c)]}>
-          <Text style={{ color: c.textPrimary, fontWeight: "700" }}>{status?.connectedClients || 0} clients</Text>
-          <Text style={{ color: c.textMuted, fontSize: 11 }}>Client inventory is available from hostapd-backed Linux hotspots.</Text>
+        <View style={{ gap: 8 }}>
+          <View style={[card(c)]}>
+            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>{clients.length || status?.connectedClients || 0} clients</Text>
+            <Text style={{ color: c.textMuted, fontSize: 11 }}>hostapd-backed Linux hotspots expose connected station controls.</Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TextInput value={clientMac} onChangeText={setClientMac} placeholder="client MAC" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { flex: 1 }]} />
+            <TextInput value={banHours} onChangeText={setBanHours} placeholder="hours" placeholderTextColor={c.textMuted} keyboardType="number-pad" style={[inputStyle(c), { width: 74 }]} />
+          </View>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable disabled={busy} onPress={() => clientAction("kick")} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+              <Text style={{ color: c.accent, fontWeight: "700" }}>Kick</Text>
+            </Pressable>
+            <Pressable disabled={busy} onPress={() => clientAction("ban")} style={[actionBtn(c), { backgroundColor: "#ef444420", flex: 1 }]}>
+              <Text style={{ color: "#ef4444", fontWeight: "700" }}>Ban</Text>
+            </Pressable>
+          </View>
+          {clients.map((client) => {
+            const mac = String(client.mac || "");
+            return (
+              <View key={mac || JSON.stringify(client)} style={[card(c), { gap: 4 }]}>
+                <Text style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 12 }}>{mac || "unknown client"}</Text>
+                <Text style={{ color: c.textMuted, fontSize: 10 }} numberOfLines={2}>{Object.entries(client).filter(([k]) => k !== "mac").map(([k, v]) => `${k}=${String(v)}`).join(" · ") || "connected"}</Text>
+                {mac ? (
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <Pressable disabled={busy} onPress={() => clientAction("kick", mac)} style={[actionBtn(c), { paddingVertical: 6, backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1 }]}>
+                      <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>Kick</Text>
+                    </Pressable>
+                    <Pressable disabled={busy} onPress={() => clientAction("ban", mac)} style={[actionBtn(c), { paddingVertical: 6, backgroundColor: "#ef444420" }]}>
+                      <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>Ban</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+            );
+          })}
+          {banned.length > 0 && (
+            <View style={[card(c), { gap: 6 }]}>
+              <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Banned</Text>
+              {banned.map((ban) => (
+                <View key={ban.mac} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={{ color: c.textMuted, fontFamily: "Menlo", fontSize: 11, flex: 1 }}>{ban.mac} · {ban.expiry}</Text>
+                  <Pressable disabled={busy} onPress={() => clientAction("unban", ban.mac)} style={[actionBtn(c), { paddingVertical: 6, backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1 }]}>
+                    <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>Unban</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
       )}
 
