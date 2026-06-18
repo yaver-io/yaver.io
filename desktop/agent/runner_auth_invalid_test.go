@@ -26,11 +26,25 @@ func TestIsRunnerAuthFailureOutput_Codex(t *testing.T) {
 		"Sign in required. Run codex login --device-auth",
 		"codex: not authenticated, please sign in",
 		"Please run codex login --device-auth to set up ChatGPT auth",
+		`ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account."}}`,
 	}
 	for _, in := range cases {
 		got := IsRunnerAuthFailureOutput(in)
 		if got != "codex" {
 			t.Errorf("IsRunnerAuthFailureOutput(%q) = %q, want %q", in, got, "codex")
+		}
+	}
+}
+
+func TestIsRunnerAuthFailureOutput_OpenCodeProvider(t *testing.T) {
+	cases := []string{
+		`opencode service=llm providerID=zai modelID=glm-4.7 error={"name":"AI_APICallError","cause":{"code":"FailedToOpenSocket"}} stream error`,
+		`opencode providerID=zai stream error`,
+	}
+	for _, in := range cases {
+		got := IsRunnerAuthFailureOutput(in)
+		if got != "opencode" {
+			t.Errorf("IsRunnerAuthFailureOutput(%q) = %q, want %q", in, got, "opencode")
 		}
 	}
 }
@@ -97,5 +111,23 @@ func TestDetectRunnerRuntimeStatus_AuthOverrideFlipsConfigured(t *testing.T) {
 		// check would have said true). Don't fail when override
 		// didn't trigger — it just means no claude creds are present
 		// in this test env, which is fine.
+	}
+}
+
+func TestDetectRunnerRuntimeStatus_OpenCodeOverrideFlipsConfigured(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GLM_API_KEY", "glm-test")
+	t.Setenv("ZAI_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	MarkRunnerAuthInvalid("opencode")
+	defer ClearRunnerAuthInvalid("opencode")
+	got := DetectRunnerRuntimeStatus(GetRunnerConfig("opencode"), t.TempDir())
+	if got.AuthConfigured {
+		t.Errorf("expected opencode AuthConfigured=false after MarkRunnerAuthInvalid; got AuthConfigured=true")
+	}
+	if !strings.Contains(got.Warning, "Token rejected") {
+		t.Fatalf("expected warning to mention token rejection, got %q", got.Warning)
 	}
 }

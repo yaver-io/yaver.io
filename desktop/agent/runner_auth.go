@@ -119,7 +119,7 @@ func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntim
 	case "codex":
 		status = detectCodexStatus()
 	case "opencode":
-		return detectOpenCodeStatus(workDir)
+		status = detectOpenCodeStatus(workDir)
 	case "claude":
 		status = detectClaudeStatus()
 	case "glm":
@@ -216,9 +216,19 @@ func IsRunnerAuthFailureOutput(output string) string {
 	looksLikeCodex := (strings.Contains(m, "sign in required") &&
 		(strings.Contains(m, "codex") || strings.Contains(m, "chatgpt"))) ||
 		strings.Contains(m, "codex login --device-auth") ||
-		(strings.Contains(m, "not authenticated") && strings.Contains(m, "codex"))
+		(strings.Contains(m, "not authenticated") && strings.Contains(m, "codex")) ||
+		(strings.Contains(m, "model is not supported") && strings.Contains(m, "chatgpt account")) ||
+		strings.Contains(m, "refresh_token_reused") ||
+		strings.Contains(m, "token_expired")
 	if looksLikeCodex {
 		return "codex"
+	}
+	looksLikeOpenCode := strings.Contains(m, "opencode") && (strings.Contains(m, "ai_apicallerror") ||
+		strings.Contains(m, "failedtoopensocket") ||
+		strings.Contains(m, "stream error") ||
+		strings.Contains(m, "providerid="))
+	if looksLikeOpenCode {
+		return "opencode"
 	}
 	return ""
 }

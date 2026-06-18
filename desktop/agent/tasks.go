@@ -188,17 +188,11 @@ var builtinRunners = map[string]RunnerConfig{
 		// patched app/index.tsx (#0f172a → #22c55e) on yaver-test-
 		// ephemeral once the flag was removed.
 		Args: []string{"exec", "--full-auto", "{prompt}"},
-		// Codex CLI's own default is `o3-mini`, which fails immediately
-		// for users on a ChatGPT-account login with:
-		//   "The 'o3-mini' model is not supported when using Codex with
-		//   a ChatGPT account."
-		// gpt-5.4 (the previous default) hit the SAME wall — general
-		// gpt-5.x models require API billing and aren't allowed on a
-		// ChatGPT subscription login. The Codex-NATIVE `gpt-5.3-codex`
-		// is what a ChatGPT-account Codex actually supports, so default
-		// to it. The injection logic in startTask falls back to
-		// runner.Model when task.Model is empty.
-		Model:      "gpt-5.3-codex",
+		// Keep this aligned with the backend model catalogue used by
+		// /agent/runners. Older "gpt-5.3-codex" ChatGPT-account runs now
+		// fail with "model is not supported"; the current default exposed
+		// by Codex is gpt-5.4.
+		Model:      "gpt-5.4",
 		OutputMode: "raw",
 	},
 	"opencode": {
@@ -472,6 +466,9 @@ func isSoftRunnerFailure(runnerID, output string, runErr error) bool {
 	if runErr == nil {
 		return false
 	}
+	if containsHardRunnerFailure(output) {
+		return false
+	}
 	// exec.ExitError exposes the wait status; signal-killed runs (OOM,
 	// crash, kill -9) have ExitCode() == -1 on Unix, which is never a
 	// valid soft outcome.
@@ -494,6 +491,27 @@ func isSoftRunnerFailure(runnerID, output string, runErr error) bool {
 		return strings.Contains(output, "Claude Code") || strings.Contains(output, "Anthropic Claude")
 	case "opencode":
 		return strings.Contains(output, "opencode")
+	}
+	return false
+}
+
+func containsHardRunnerFailure(output string) bool {
+	lower := strings.ToLower(output)
+	for _, needle := range []string{
+		"invalid_request_error",
+		"unsupported model",
+		"model is not supported",
+		"provided authentication token is expired",
+		"token_expired",
+		"refresh_token_reused",
+		"unauthorized",
+		"failedtoopensocket",
+		"ai_apicallerror",
+		"stream error",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
 	}
 	return false
 }
@@ -611,12 +629,13 @@ func (tm *TaskManager) GetRunnerInfos() []RunnerInfo {
 			} else {
 				healthStatus = "down"
 			}
-		case !rs.AuthConfigured && (id == "codex" || id == "claude"):
+		case !rs.AuthConfigured && (id == "codex" || id == "claude" || id == "opencode"):
 			// Claude's keychain-backed auth can't be probed on macOS so
 			// AuthConfigured stays false even when the user is signed in —
-			// don't force "needs-auth" there; only codex (where the probe is
-			// filesystem and reliable) rides this branch.
-			if id == "codex" {
+			// don't force "needs-auth" there; codex/opencode probes are
+			// filesystem/provider-config based and should be downgraded after
+			// a recent API rejection.
+			if id == "codex" || id == "opencode" {
 				healthStatus = "needs-auth"
 			}
 		}
