@@ -14,8 +14,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// mfgRFQMutex protects concurrent access to workspace files
+var mfgRFQMutex sync.Mutex
 
 type mfgRFQWorkspace struct {
 	ID        string            `json:"id"`
