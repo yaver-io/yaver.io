@@ -6,9 +6,13 @@ usage() {
 Run a Yaver-managed Wi-Fi AP or AP+STA repeater through a root agent.
 
 Usage:
+  sudo -E scripts/yaver-wifi-apsta.sh start --interface wlan0 --ssid kivanc --password 12345678
   sudo -E scripts/yaver-wifi-apsta.sh start --interface wlan0 --ssid kivanc --password 12345678 --upstream-ssid HomeWiFi --upstream-pass "$HOME_WIFI_PASSWORD"
   sudo -E scripts/yaver-wifi-apsta.sh status
   sudo -E scripts/yaver-wifi-apsta.sh stop
+
+When APSTA upstream credentials are omitted, the script tries to read the
+currently-connected NetworkManager Wi-Fi profile as root.
 
 Environment overrides:
   YAVER_BIN             yaver binary path
@@ -166,8 +170,76 @@ get_json() {
     "http://127.0.0.1:${port}${path}"
 }
 
+detect_nm_active_wifi() {
+  if ! command -v nmcli >/dev/null 2>&1; then
+    return 1
+  fi
+  nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status \
+    | awk -F: '$2 == "wifi" && $3 == "connected" { print $1 "\t" $4; exit }'
+}
+
+nm_profile_psk() {
+  local connection="$1"
+  if [[ -z "${connection}" ]] || ! command -v nmcli >/dev/null 2>&1; then
+    return 1
+  fi
+  local psk
+  psk="$(nmcli --show-secrets -g 802-11-wireless-security.psk connection show "${connection}" 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${psk}" ]]; then
+    printf '%s\n' "${psk}"
+    return 0
+  fi
+
+  local file
+  while IFS= read -r file; do
+    [[ -f "${file}" ]] || continue
+    if grep -qx "id=${connection}" "${file}" 2>/dev/null; then
+      psk="$(awk -F= '$1 == "psk" { print substr($0, index($0, "=") + 1); exit }' "${file}" 2>/dev/null || true)"
+      if [[ -n "${psk}" ]]; then
+        printf '%s\n' "${psk}"
+        return 0
+      fi
+    fi
+  done < <(find /etc/NetworkManager/system-connections -maxdepth 1 -type f 2>/dev/null)
+  return 1
+}
+
+autofill_upstream() {
+  [[ "${mode}" == "apsta" ]] || return
+  if [[ -n "${upstream_ssid}" && -n "${upstream_pass}" ]]; then
+    return
+  fi
+
+  local active dev connection
+  active="$(detect_nm_active_wifi || true)"
+  if [[ -z "${active}" ]]; then
+    echo "Could not auto-detect upstream Wi-Fi: NetworkManager has no connected Wi-Fi profile." >&2
+    return
+  fi
+  dev="${active%%$'\t'*}"
+  connection="${active#*$'\t'}"
+
+  if [[ -z "${iface}" ]]; then
+    iface="${dev}"
+  fi
+  if [[ -z "${upstream_if}" ]]; then
+    upstream_if="${dev}"
+  fi
+  if [[ -z "${upstream_ssid}" ]]; then
+    upstream_ssid="${connection}"
+  fi
+  if [[ -z "${upstream_pass}" ]]; then
+    upstream_pass="$(nm_profile_psk "${connection}" || true)"
+  fi
+
+  if [[ -n "${upstream_ssid}" && -n "${upstream_pass}" ]]; then
+    echo "Using current NetworkManager Wi-Fi profile '${upstream_ssid}' as APSTA upstream." >&2
+  fi
+}
+
 case "${cmd}" in
   start)
+    autofill_upstream
     if [[ "${mode}" != "ap" && "${mode}" != "apsta" ]]; then
       echo "--mode must be ap or apsta" >&2
       exit 2
@@ -181,7 +253,8 @@ case "${cmd}" in
       exit 2
     fi
     if [[ "${mode}" == "apsta" && ( -z "${upstream_ssid}" || -z "${upstream_pass}" ) ]]; then
-      echo "APSTA requires --upstream-ssid and --upstream-pass." >&2
+      echo "APSTA requires upstream Wi-Fi credentials." >&2
+      echo "Pass --upstream-ssid/--upstream-pass, or use NetworkManager with a saved PSK readable by root." >&2
       exit 2
     fi
     ensure_agent
