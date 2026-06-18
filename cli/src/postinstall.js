@@ -29,6 +29,10 @@ function envEnabled(name) {
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
+function isIotEdgeInstall() {
+  return envEnabled("YAVER_IOT_EDGE") || envEnabled("YAVER_EDGE_LITE");
+}
+
 function isGlobalInstall() {
   if (envEnabled("YAVER_FORCE_POSTINSTALL_BOOTSTRAP")) {
     return true;
@@ -464,6 +468,14 @@ async function main() {
   // takes effect without a manual `yaver restart`.
   refreshCurrentSymlink(installedBinary);
   bounceRunningAgent();
+
+  if (isIotEdgeInstall()) {
+    ensurePathOnUnix();
+    ensureZshenvRescue();
+    addNpmGlobalBinToProcessPath();
+    log("IoT edge mode enabled: installed the Go agent only; skipped mobile, Hermes, Playwright, voice, sandbox, and local coding-runner bootstrap.");
+    return;
+  }
 
   // Platform-aware hermesc provisioning. Downloads the binary matching
   // this host from the react-native npm tarball, caches it under the

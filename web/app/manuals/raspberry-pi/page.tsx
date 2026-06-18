@@ -12,18 +12,20 @@ export default function RaspberryPiManual() {
         </Link>
 
         <h1 className="mb-4 text-3xl font-bold text-surface-50 md:text-4xl">
-          Raspberry Pi — Plug-and-Play Yaver Home Server
+          Raspberry Pi — Yaver Dev Node or IoT Edge
         </h1>
         <p className="mb-4 text-sm leading-relaxed text-surface-400">
-          Turn a Raspberry Pi 4 or 5 into your always-on Yaver target: the phone talks
-          to it, the Pi compiles Hermes bundles for React Native apps, serves a local
-          relay for P2P connections, and survives power cuts with zero human
-          intervention. Under 15 minutes from SD card to first <code>yaver auth</code>.
+          Use a Raspberry Pi 4 or 5 as an always-on Yaver dev node, or use a
+          Raspberry Pi 3B/3B+ as a lightweight IoT edge node for machine IO.
+          The Pi 3B path runs the Go agent, mesh, serial/RS485, and control
+          surfaces; AI models, GPUs, local coding agents, Playwright, and mobile
+          build stacks should run on remote machines.
         </p>
         <p className="mb-12 text-sm leading-relaxed text-surface-400">
           This guide covers hardware, OS install, Yaver install, headless OAuth,
-          auto-start on reboot, auto-recovery after a power cut, and every
-          power-save knob that gets in the way of an always-reachable device.
+          auto-start on reboot, auto-recovery after a power cut, and the
+          difference between the full dev-node profile and the lightweight IoT
+          edge profile.
         </p>
 
         <div className="mb-12 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-800 dark:text-emerald-100">
@@ -42,10 +44,18 @@ export default function RaspberryPiManual() {
           <h2 className="mb-3 text-lg font-semibold text-surface-100">Hardware checklist</h2>
           <ul className="space-y-2 text-sm leading-relaxed text-surface-400">
             <li>
-              <span className="font-semibold text-surface-200">Raspberry Pi 4 (4 GB+) or Pi 5 (4 GB+).</span>
+              <span className="font-semibold text-surface-200">Dev node: Raspberry Pi 4 (4 GB+) or Pi 5 (4 GB+).</span>
               {" "}
               The Pi 3 works for the agent alone but chokes on Metro bundling for any
               non-trivial RN app. Pi Zero 2 W is not recommended.
+            </li>
+            <li>
+              <span className="font-semibold text-surface-200">IoT edge node: Raspberry Pi 3B/3B+ with Raspberry Pi OS Lite 64-bit.</span>
+              {" "}
+              This is the cheap path for RS485, GPIO, mesh, and Yaver control
+              when heavy AI/coding/runtime work is remote. The npm agent
+              bootstrap supports <code>linux-arm64</code>; do not use 32-bit
+              Pi OS for this lane.
             </li>
             <li>
               <span className="font-semibold text-surface-200">32 GB+ microSD card</span> (A2
@@ -100,18 +110,23 @@ export default function RaspberryPiManual() {
         <section className="mb-12">
           <h2 className="mb-3 text-lg font-semibold text-surface-100">Install Yaver</h2>
           <p className="mb-3 text-sm leading-relaxed text-surface-400">
-            Install Yaver with npm, then use the CLI to pull any Pi-specific toolchains.
-            Make sure Node.js 18+ is present first. The systemd install step below uses the
-            user unit so you never touch root services.
+            Install Yaver with npm, then choose exactly one profile. The full
+            dev-node profile is for Pi 4/5. The IoT edge profile is for Pi
+            3B/3B+ machine IO and deliberately skips mobile build tools,
+            Playwright, local voice models, sandbox packages, and local coding
+            agents.
           </p>
           <div className="overflow-x-auto rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
+            <div className="mb-1 text-surface-500"># Pi 3B/3B+ IoT edge: Go agent only, heavy work remote</div>
+            <div className="mb-3"><span className="text-surface-500">$</span> YAVER_IOT_EDGE=1 npm install -g yaver-cli</div>
+            <div className="mb-1 text-surface-500"># Pi 4/5 dev node: full mobile/coding toolchain</div>
             <div className="mb-1"><span className="text-surface-500">$</span> npm install -g yaver-cli</div>
             <div className="mb-3"><span className="text-surface-500">$</span> yaver install mobile   # pulls Node + hermesc, idempotent</div>
-            <div className="mb-3"><span className="text-surface-500">$</span> yaver install pi-dev-node   # Pi-focused dev-node profile: AI stack + TDD + sqlite/vercel/convex/postgres/redis/supabase/mqtt</div>
+            <div className="mb-3"><span className="text-surface-500">$</span> yaver install pi-dev-node   # AI/dev stack for Pi 4/5, not Pi 3B edge nodes</div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
-            The new <code>pi-dev-node</code> profile is the best starting point for a headless
-            Raspberry Pi Yaver box. It installs the economic AI stack plus
+            The <code>pi-dev-node</code> profile is the best starting point for a headless
+            Raspberry Pi 4/5 Yaver dev box. It installs the economic AI stack plus
             Python/TypeScript TDD helpers and the promoted-backend toolchain:
             <code> sqlite3</code>, <code>vercel</code>, <code>convex</code>,{" "}
             <code>postgresql</code>, <code>redis</code>, <code>supabase</code>, and{" "}
@@ -119,6 +134,13 @@ export default function RaspberryPiManual() {
             still left to you. Add <code>yaver install tailscale</code> or{" "}
             <code>yaver install cloudflared</code> if you want remote connectivity modules
             after the base node comes up.
+          </p>
+          <p className="mt-4 text-sm leading-relaxed text-surface-400">
+            For Pi 3B/3B+ IoT edge nodes, keep the install smaller: use
+            <code> YAVER_IOT_EDGE=1</code>, then run <code>yaver auth --headless</code>
+            and <code>yaver serve</code>. Treat the Pi as a gateway and control
+            plane for RS485/GPIO/USB devices, while Yaver routes coding agents
+            and GPU/model workloads to stronger remote machines.
           </p>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
             If you use the flashable Pi image instead of a manual install, the boot partition

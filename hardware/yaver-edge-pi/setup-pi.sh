@@ -7,7 +7,9 @@
 #   sudo ./setup-pi.sh            # interactive claim (prints a short code + URL)
 #   sudo ./setup-pi.sh --token YV_PROVISION_TOKEN   # unattended (from a QR/manifest)
 #
-# Requires: Raspberry Pi with BLE (Zero 2 W / 3 / 4 / 5). Run as root.
+# Requires: Raspberry Pi with BLE (Zero 2 W / 3 / 4 / 5) running a 64-bit OS.
+# Pi 3B/3B+ is supported for IoT edge use when heavy AI/coding work runs remote.
+# Run as root.
 set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)"; exit 1; }
@@ -34,6 +36,13 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 log "installing yaver-cli…"
+YAVER_IOT_EDGE=1 \
+YAVER_SKIP_POSTINSTALL_MOBILE=1 \
+YAVER_SKIP_POSTINSTALL_RUNNERS=1 \
+YAVER_SKIP_POSTINSTALL_REMOTE_RUNTIME=1 \
+YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW=1 \
+YAVER_SKIP_POSTINSTALL_TESTKIT=1 \
+YAVER_SKIP_POSTINSTALL_VOICE=1 \
 npm install -g yaver-cli@latest
 
 # ── 2. enable the UART / RS485 serial port (free it from the login console) ──

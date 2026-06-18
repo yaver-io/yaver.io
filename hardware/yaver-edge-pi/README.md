@@ -18,7 +18,9 @@ camera-verify, `mesh`, `vault`, the runner) to the bus. Two configs off one buil
 
 | Part | ~$ | Notes |
 |---|---|---|
-| **Raspberry Pi Zero 2 W** (Wi-Fi + **BLE** built in) | 15 | BLE is required for the no-Wi-Fi layer; Zero 2 W has it. Pi 4/5 also fine. |
+| **Raspberry Pi 3B/3B+** (Wi-Fi + **BLE** built in) | used/cheap | Recommended cheap IoT edge target for machine IO. Run Raspberry Pi OS Lite **64-bit** so the npm-distributed Yaver Go agent uses the linux-arm64 binary. |
+| Raspberry Pi Zero 2 W | 15 | Works for very small monitor-only installs, but Pi 3B/3B+ is easier to wire/debug. |
+| Raspberry Pi 4/5 | varies | Best as a dev/headroom board. Use remote machines for GPUs, models, and coding agents; the edge Pi should stay small. |
 | Isolated RS485 for Pi — **Waveshare RS485 CAN HAT** (isolated) *or* an isolated USB-RS485 dongle (DSD TECH SH-U11F) | 15–25 | isolation mandatory on a factory floor |
 | microSD (16 GB+ A1) | 5 | |
 | 9–24 V → 5 V/3 A buck (industrial) *or* USB-C PSU | 6 | 24 V is common at the panel |
@@ -37,7 +39,7 @@ curl -fsSL https://yaver.io/pi | sudo bash         # or: sudo ./setup-pi.sh
 ```
 
 `setup-pi.sh` (in this folder) is idempotent and:
-1. installs Node + `npm install -g yaver-cli` (the only supported install path),
+1. installs Node + `YAVER_IOT_EDGE=1 npm install -g yaver-cli` (Go agent only; skips local coding agents, mobile build tools, Playwright, voice models, and sandbox bootstrap),
 2. enables the UART / RS485 serial port (disables the login console on it),
 3. runs the zero-touch claim (`yaver provision claim` from the QR, or
    `yaver auth --headless`) and enables autostart (`yaver serve --netcapture`),
@@ -46,6 +48,25 @@ curl -fsSL https://yaver.io/pi | sudo bash         # or: sudo ./setup-pi.sh
 5. joins **Yaver mesh** so you reach it from anywhere as the same user.
 
 After this the Pi comes up on every boot, on mesh, with BLE up — no SSH, no typing.
+
+## Pi 3B / Yaver agent compatibility
+
+Use **Raspberry Pi OS Lite 64-bit** on Pi 3B/3B+. The npm package currently
+downloads `linux-arm64` Yaver agent assets; 32-bit `armv7/armhf` Pi OS is not
+the supported Yaver IoT lane. This is intentional for V0: the Pi is an edge IO
+appliance for RS485/GPIO/USB and mesh, while LLMs, GPUs, browser automation,
+and coding agents run on remote machines reached through Yaver.
+
+The lightweight install path is:
+
+```bash
+YAVER_IOT_EDGE=1 npm install -g yaver-cli
+yaver auth --headless
+yaver serve --netcapture
+```
+
+Use a Pi 4 first while developing if you want more headroom, then move the
+proven machine wiring/config back to Pi 3B/3B+.
 
 ## How each connection tier behaves (camera implications)
 
