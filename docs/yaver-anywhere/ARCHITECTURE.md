@@ -326,7 +326,7 @@ approves/denies (audited) → agent proceeds or halts. Human-takeover available 
 
 ## 16. Licensing boundaries per component
 
-Per [`../../LICENSING.md`](../../LICENSING.md):
+Per [`../planning/LICENSING.md`](../planning/LICENSING.md):
 - **FSL-1.1-Apache-2.0 (core):** agent, relay, backend/control plane, web/mobile/watch/
   TV clients, managed-cloud lifecycle, remote runtime/session orchestration, doorman,
   MCP server, device registry/auth, `remote_session_*` ops, RemoteSession UI, generic

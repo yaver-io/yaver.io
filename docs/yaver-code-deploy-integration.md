@@ -37,7 +37,7 @@
   `mobile/app/phone-project/[slug].tsx`, `…/api-keys.tsx`,
   `…/oauth.tsx`, `…/dns.tsx`
 - targets (today): `dev-hw` ✅, `yaver-cloud` ✅,
-  `cloudflare-workers` ❌ (specced in `PHONE_EXPORT_PIPELINE.md`
+  `cloudflare-workers` ❌ (specced in `mobile/PHONE_EXPORT_PIPELINE.md`
   §Handoff 2.5, not yet implemented)
 
 A developer working on a phone project today can:
@@ -166,7 +166,7 @@ What Convex does **not** get:
 
 ## Cloudflare Workers Target — Detail
 
-Spec source: `PHONE_EXPORT_PIPELINE.md` §Handoff 2.5 ("Yaver Lite on
+Spec source: `mobile/PHONE_EXPORT_PIPELINE.md` §Handoff 2.5 ("Yaver Lite on
 Cloudflare Workers"). Estimate stands at 2-3 days.
 
 Slice 1 — agent endpoint:
@@ -192,7 +192,7 @@ Slice 2 — Workers runtime:
 - per-token rate limit via Workers' `Cloudflare-RateLimit` headers +
   D1-backed counter (shared with `phone_data_http.go` later)
 - CORS allowlist read from a D1 row (`__yaver_meta`) — same shape as
-  the per-project allowlist gap called out in `remained.md`
+  the per-project allowlist gap called out in `handoffs/remained.md`
 
 Slice 3 — `yaver code` integration:
 - `/phone deploy workers` palette entry (interactive)
@@ -279,7 +279,7 @@ volume.
 ## Out of Scope (kept here so we don't re-litigate)
 
 - Real-time subscriptions (`/data/{slug}/{table}/subscribe`) —
-  deferred per `PHONE_EXPORT_PIPELINE.md`. Polling-first.
+  deferred per `mobile/PHONE_EXPORT_PIPELINE.md`. Polling-first.
 - Multi-tenant phone projects (one slug, multiple owners) — single
   owner per slug, aligned with the rest of the P2P model.
 - Replacing `yaver phone` with a hard rename — both trees stay; the

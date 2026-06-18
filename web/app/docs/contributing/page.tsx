@@ -772,7 +772,7 @@ export default function ContributingPage() {
                 Every commit must carry a <InlineCode>Signed-off-by:</InlineCode> trailer. Use
                 <InlineCode> git commit -s</InlineCode> (or <InlineCode>git rebase --signoff</InlineCode>
                 to retrofit). This certifies the contribution is yours to submit.
-                See <Link href="https://github.com/kivanccakmak/yaver.io/blob/main/CONTRIBUTING.md"
+                See <Link href="https://github.com/kivanccakmak/yaver.io/blob/main/docs/setup/CONTRIBUTING.md"
                 className="text-surface-200 underline">CONTRIBUTING.md</Link> for the full clause.
               </p>
             </div>
@@ -786,7 +786,7 @@ export default function ContributingPage() {
                 href="mailto:kivanc.cakmak@simkab.com">kivanc.cakmak@simkab.com</a> — 48-hour
                 acknowledgement, 90-day disclosure window, good-faith safe harbour.
                 Do <strong>not</strong> open a public issue. Full policy in
-                <Link className="text-surface-200 underline" href="https://github.com/kivanccakmak/yaver.io/blob/main/SECURITY.md"> SECURITY.md</Link>.
+                <Link className="text-surface-200 underline" href="https://github.com/kivanccakmak/yaver.io/blob/main/docs/security/SECURITY.md"> SECURITY.md</Link>.
               </p>
             </div>
           </div>

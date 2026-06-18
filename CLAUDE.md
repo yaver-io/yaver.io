@@ -2,9 +2,10 @@
 
 ## Read This First
 
-**Markdown files drift. Code is the source of truth.** This file, `AI_ARCH.md`,
-`REMOTE_WORKER.md`, every other `*.md` — accurate when written, stale by the
-next handler rename. Before acting on any `.md` claim:
+**Markdown files drift. Code is the source of truth.** This file,
+`docs/architecture/AI_ARCH.md`, `docs/architecture/REMOTE_WORKER.md`, every
+other `*.md` — accurate when written, stale by the next handler rename. Before
+acting on any `.md` claim:
 
 1. **grep the actual code.** Routes referenced in docs may exist as functions
    without ever being wired to the mux (we shipped `yaver diagnose` like that
@@ -17,8 +18,9 @@ next handler rename. Before acting on any `.md` claim:
 4. **When the doc and the code disagree, the doc is the bug.** Fix it in the
    same change.
 
-`AI_ARCH.md` is the runtime-architecture reference for auth, bootstrap, relay,
-mobile discovery, and remote-recovery — read it before changing those.
+`docs/architecture/AI_ARCH.md` is the runtime-architecture reference for auth,
+bootstrap, relay, mobile discovery, and remote-recovery — read it before
+changing those.
 
 ## Hard rules
 
@@ -481,7 +483,7 @@ or `pubspec.yaml`, or `ios/*.xcodeproj`. **CWD matters.**
 **To iterate on Yaver mobile (this repo):**
 ```bash
 # from repo ROOT — wire/wireless walks into ./mobile automatically
-cd /Users/kivanccakmak/Workspace/yaver.io
+cd <repo>
 yaver wireless push                                      # WiFi-paired iPhone
 # or:
 yaver wire push                                          # USB-attached
@@ -492,7 +494,7 @@ subdir fails with `no mobile project detected at <path>`. Always
 
 **To iterate on a third-party app (sfmg, talos, …):**
 ```bash
-cd /Users/kivanccakmak/Workspace/sfmg
+cd <example-app>
 yaver wire push       # builds + installs sfmg, NOT Yaver
 ```
 Third-party RN apps load INSIDE the Yaver container via Hermes-push;
@@ -590,7 +592,7 @@ matters.
 | Vault | `desktop/agent/vault.go`, `vault_cmd.go`, `vault_http.go`. NaCl secretbox + Argon2id, encrypted with auth-token-derived key |
 | Deploy script generator + doctor | `desktop/agent/deploy_script_gen.go`, `doctor_build.go`, `deploy_script_http.go` |
 | Guest access | `backend/convex/guests.ts`; `desktop/agent/guest_*.go`. Scopes: `full` / `feedback-only` / `deploy` |
-| Container sandbox (deferred) | `desktop/agent/container_runner.go`, `Dockerfile.sandbox`. End-to-end testing TODO — see `DOCKER_REMAINED.md` |
+| Container sandbox (deferred) | `desktop/agent/container_runner.go`, `Dockerfile.sandbox`. End-to-end testing TODO — see `docs/guides/DOCKER_REMAINED.md` |
 | Multi-user | `desktop/agent/multiuser.go`, `multiuser_http.go`; `backend/convex/teams.ts` |
 | Account linking + merge | `backend/convex/auth.ts::mergeUserInto`; `desktop/agent/account_cmd.go`, `mcp_auth_link_tools.go` |
 | Phone-first mini backend | `desktop/agent/phone_backend.go`, `phone_backend_http.go`; mobile `app/phone-projects*` |

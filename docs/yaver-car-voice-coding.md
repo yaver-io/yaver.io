@@ -200,9 +200,9 @@ apply.
   `/voice/config`).
 - **Remote-box task dispatch + poll** — `mobile/src/lib/quic.ts`
   `QuicClient.sendTask(... codeMode)` (quic.ts:1584, POST `/tasks`,
-  `source="mobile-code"`) and `getTask()` (quic.ts:1893). Cross-device routing
+  `source="mobile-code"`) and `getTask()` (quic.ts#L1893). Cross-device routing
   via `mobile/src/lib/connectionManager.ts::clientFor(deviceId)`
-  (connectionManager.ts:102) + `peerEndpoint`.
+  (connectionManager.ts#L102) + `peerEndpoint`.
 - **Notifications dependency** — `expo-notifications` already a dependency and
   already registered in `mobile/app.json` `plugins`.
 - **Expo config-plugin pattern** — `mobile/plugins/withMeshTunnel.js` is the

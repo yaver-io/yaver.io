@@ -26,7 +26,7 @@ Stopping ≈ 85% saving for the typical user; Yaver keeps 100% margin.
   hardcodes ubuntu-22.04, no imageID.** No stop/suspend/resume verb.
   Reuse dry-run: host_recycle.go:45-65 + cloud_provisioner_robot.go:
   53-127 (+ accountField vault token). No first-boot readiness hook.
-- Mobile ManagedCloudCard.tsx (infra.tsx:604): box + decommission,
+- Mobile ManagedCloudCard.tsx (infra.tsx#L604): box + decommission,
   gated by server `cloudPreviewOwner` (cosmetic hide). NO start/stop
   (web or mobile), NO balance UI. subscription.ts lacks
   prepaidBalance/stoppedAt.

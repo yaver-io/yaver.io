@@ -13,7 +13,7 @@ This is the current code-backed runtime map for the parts of Yaver that are easi
 
 Read this together with:
 
-- [`AI_ARCH.md`](../AI_ARCH.md)
+- [`AI_ARCH.md`](architecture/AI_ARCH.md)
 - [`README.md`](../README.md)
 
 Code wins over docs. File paths below point at the current implementation.
@@ -167,8 +167,8 @@ Current route wiring:
 
 Code:
 
-- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go:342)
-- [`desktop/agent/auth_bootstrap.go`](../desktop/agent/auth_bootstrap.go:237)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go#L342)
+- [`desktop/agent/auth_bootstrap.go`](../desktop/agent/auth_bootstrap.go#L237)
 
 ### Pairing modes
 
@@ -187,9 +187,9 @@ Bootstrap beacon payload may include:
 
 Code:
 
-- [`desktop/agent/beacon.go`](../desktop/agent/beacon.go:19)
-- [`desktop/agent/auth_pair.go`](../desktop/agent/auth_pair.go:246)
-- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx:1241)
+- [`desktop/agent/beacon.go`](../desktop/agent/beacon.go#L19)
+- [`desktop/agent/auth_pair.go`](../desktop/agent/auth_pair.go#L246)
+- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx#L1241)
 
 ### Recovery modes
 
@@ -217,9 +217,9 @@ Important current behavior:
 
 Code:
 
-- [`desktop/agent/auth_recover.go`](../desktop/agent/auth_recover.go:246)
-- [`desktop/agent/auth_recover.go`](../desktop/agent/auth_recover.go:336)
-- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx:1461)
+- [`desktop/agent/auth_recover.go`](../desktop/agent/auth_recover.go#L246)
+- [`desktop/agent/auth_recover.go`](../desktop/agent/auth_recover.go#L336)
+- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx#L1461)
 
 ### Mobile recovery order
 
@@ -233,7 +233,7 @@ Current mobile behavior for a known device is:
 
 Code:
 
-- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx:1483)
+- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx#L1483)
 
 ## 3. Discovery and reachability
 
@@ -268,9 +268,9 @@ Queries derive online state from both explicit online flags and heartbeat freshn
 
 Code:
 
-- [`backend/convex/devices.ts`](../backend/convex/devices.ts:22)
-- [`backend/convex/devices.ts`](../backend/convex/devices.ts:443)
-- [`backend/convex/devices.ts`](../backend/convex/devices.ts:949)
+- [`backend/convex/devices.ts`](../backend/convex/devices.ts#L22)
+- [`backend/convex/devices.ts`](../backend/convex/devices.ts#L443)
+- [`backend/convex/devices.ts`](../backend/convex/devices.ts#L949)
 
 ### Mobile selection logic
 
@@ -282,9 +282,9 @@ Mobile deduplicates device rows, merges relay/tunnel hints, and overlays relay l
 
 Code:
 
-- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx:344)
-- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx:651)
-- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx:740)
+- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx#L344)
+- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx#L651)
+- [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx#L740)
 
 ### Transport racing
 
@@ -299,9 +299,9 @@ The mobile app and feedback SDKs do not trust a single IP. They race candidates:
 
 Code:
 
-- [`mobile/src/lib/quic.ts`](../mobile/src/lib/quic.ts:3556)
-- [`sdk/feedback/react-native/src/Discovery.ts`](../sdk/feedback/react-native/src/Discovery.ts:146)
-- [`sdk/feedback/web/src/discovery.ts`](../sdk/feedback/web/src/discovery.ts:109)
+- [`mobile/src/lib/quic.ts`](../mobile/src/lib/quic.ts#L3556)
+- [`sdk/feedback/react-native/src/Discovery.ts`](../sdk/feedback/react-native/src/Discovery.ts#L146)
+- [`sdk/feedback/web/src/discovery.ts`](../sdk/feedback/web/src/discovery.ts#L109)
 
 ## 4. Heartbeat, presence, and bus
 
@@ -327,9 +327,9 @@ Foreground mobile/web subscribe through `/bus/events` SSE. Backgrounded mobile f
 
 Code:
 
-- [`desktop/agent/bus.go`](../desktop/agent/bus.go:1)
-- [`desktop/agent/bus_http.go`](../desktop/agent/bus_http.go:1)
-- [`desktop/agent/heartbeat_watcher.go`](../desktop/agent/heartbeat_watcher.go:215)
+- [`desktop/agent/bus.go`](../desktop/agent/bus.go#L1)
+- [`desktop/agent/bus_http.go`](../desktop/agent/bus_http.go#L1)
+- [`desktop/agent/heartbeat_watcher.go`](../desktop/agent/heartbeat_watcher.go#L215)
 
 ## 4.1 Task artifact contract and remote demo video
 
@@ -377,9 +377,9 @@ Mechanics:
 
 Code:
 
-- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go:607)
-- [`web/lib/agent-client.ts`](../web/lib/agent-client.ts:2893)
-- [`web/components/dashboard/PreviewPane.tsx`](../web/components/dashboard/PreviewPane.tsx:221)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go#L607)
+- [`web/lib/agent-client.ts`](../web/lib/agent-client.ts#L2893)
+- [`web/components/dashboard/PreviewPane.tsx`](../web/components/dashboard/PreviewPane.tsx#L221)
 
 ### Mobile native Hermes path
 
@@ -400,9 +400,9 @@ This is the only first-class path that works over LAN, relay, and cellular.
 
 Code:
 
-- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go:604)
-- [`mobile/app/(tabs)/apps.tsx`](../mobile/app/(tabs)/apps.tsx:67)
-- [`README.md`](../README.md:1516)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go#L604)
+- [`mobile/app/(tabs)/apps.tsx`](<../mobile/app/(tabs)/apps.tsx#L67>)
+- [`README.md`](../README.md#L1516)
 
 ### Second-class mobile paths
 
@@ -414,7 +414,7 @@ Flutter, Swift, and Kotlin are supported differently:
 
 Code:
 
-- [`mobile/app/(tabs)/apps.tsx`](../mobile/app/(tabs)/apps.tsx:67)
+- [`mobile/app/(tabs)/apps.tsx`](<../mobile/app/(tabs)/apps.tsx#L67>)
 
 ## 6. WebView versus native loading
 
@@ -431,9 +431,9 @@ That split exists today in both docs and code:
 
 Code:
 
-- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go:604)
-- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go:607)
-- [`mobile/app/(tabs)/apps.tsx`](../mobile/app/(tabs)/apps.tsx:1222)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go#L604)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go#L607)
+- [`mobile/app/(tabs)/apps.tsx`](<../mobile/app/(tabs)/apps.tsx#L1222>)
 
 ## 7. Vibing
 
@@ -450,7 +450,7 @@ Current eligibility checks:
 
 Code:
 
-- [`desktop/agent/vibing.go`](../desktop/agent/vibing.go:999)
+- [`desktop/agent/vibing.go`](../desktop/agent/vibing.go#L999)
 
 Current SDK/web/mobile usage:
 
@@ -462,9 +462,9 @@ SDKs call eligibility first, then execute.
 
 Code:
 
-- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go:642)
-- [`sdk/feedback/web/src/P2PClient.ts`](../sdk/feedback/web/src/P2PClient.ts:379)
-- [`sdk/feedback/react-native/src/P2PClient.ts`](../sdk/feedback/react-native/src/P2PClient.ts:537)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go#L642)
+- [`sdk/feedback/web/src/P2PClient.ts`](../sdk/feedback/web/src/P2PClient.ts#L379)
+- [`sdk/feedback/react-native/src/P2PClient.ts`](../sdk/feedback/react-native/src/P2PClient.ts#L537)
 
 ## 8. Feedback SDK control flow
 
@@ -489,8 +489,8 @@ Current web SDK features:
 
 Code:
 
-- [`sdk/feedback/web/src/auth.ts`](../sdk/feedback/web/src/auth.ts:144)
-- [`sdk/feedback/web/src/YaverFeedback.ts`](../sdk/feedback/web/src/YaverFeedback.ts:75)
+- [`sdk/feedback/web/src/auth.ts`](../sdk/feedback/web/src/auth.ts#L144)
+- [`sdk/feedback/web/src/YaverFeedback.ts`](../sdk/feedback/web/src/YaverFeedback.ts#L75)
 
 ### React Native SDK
 
@@ -505,8 +505,8 @@ Current RN SDK features:
 
 Code:
 
-- [`sdk/feedback/react-native/src/auth.ts`](../sdk/feedback/react-native/src/auth.ts:232)
-- [`sdk/feedback/react-native/src/YaverFeedback.ts`](../sdk/feedback/react-native/src/YaverFeedback.ts:26)
+- [`sdk/feedback/react-native/src/auth.ts`](../sdk/feedback/react-native/src/auth.ts#L232)
+- [`sdk/feedback/react-native/src/YaverFeedback.ts`](../sdk/feedback/react-native/src/YaverFeedback.ts#L26)
 
 ### Command stream semantics
 
@@ -520,8 +520,8 @@ Those are delivered over the blackbox command stream and mapped to host-specific
 
 Code:
 
-- [`sdk/feedback/react-native/src/BlackBox.ts`](../sdk/feedback/react-native/src/BlackBox.ts:375)
-- [`sdk/feedback/web/src/P2PClient.ts`](../sdk/feedback/web/src/P2PClient.ts:441)
+- [`sdk/feedback/react-native/src/BlackBox.ts`](../sdk/feedback/react-native/src/BlackBox.ts#L375)
+- [`sdk/feedback/web/src/P2PClient.ts`](../sdk/feedback/web/src/P2PClient.ts#L441)
 
 ## 9. Phone sandbox, export, push, and runtime deploy
 
@@ -535,7 +535,7 @@ Current HTTP surface:
 
 Code:
 
-- [`desktop/agent/phone_backend_http.go`](../desktop/agent/phone_backend_http.go:13)
+- [`desktop/agent/phone_backend_http.go`](../desktop/agent/phone_backend_http.go#L13)
 
 ### Export bundle contract
 
@@ -563,7 +563,7 @@ When `containerize=true`, it also includes:
 
 Code:
 
-- [`desktop/agent/phone_backend.go`](../desktop/agent/phone_backend.go:994)
+- [`desktop/agent/phone_backend.go`](../desktop/agent/phone_backend.go#L994)
 
 ### Import/push behavior
 
@@ -577,7 +577,7 @@ and may skip seed application with `skip_seed=true`.
 
 Code:
 
-- [`desktop/agent/phone_backend.go`](../desktop/agent/phone_backend.go:1404)
+- [`desktop/agent/phone_backend.go`](../desktop/agent/phone_backend.go#L1404)
 
 ### Runtime deploy surface
 
@@ -591,8 +591,8 @@ Phone sandbox continuation is bigger than raw export. The MCP/runtime deploy pat
 
 Code:
 
-- [`desktop/agent/mcp_phone.go`](../desktop/agent/mcp_phone.go:145)
-- [`desktop/agent/vibing.go`](../desktop/agent/vibing.go:792)
+- [`desktop/agent/mcp_phone.go`](../desktop/agent/mcp_phone.go#L145)
+- [`desktop/agent/vibing.go`](../desktop/agent/vibing.go#L792)
 
 ## 10. What to keep updated
 

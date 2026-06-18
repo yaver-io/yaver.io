@@ -60,9 +60,9 @@ The host-share control plane now exists:
 
 Relevant files:
 
-- [backend/convex/hostShare.ts](/Users/kivanccakmak/Workspace/yaver.io/backend/convex/hostShare.ts:1)
-- [backend/convex/http.ts](/Users/kivanccakmak/Workspace/yaver.io/backend/convex/http.ts:3261)
-- [desktop/agent/auth.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/auth.go:1015)
+- [backend/convex/hostShare.ts](../backend/convex/hostShare.ts#L1)
+- [backend/convex/http.ts](../backend/convex/http.ts#L3261)
+- [desktop/agent/auth.go](../desktop/agent/auth.go#L1015)
 
 ### Host runtime admission
 
@@ -76,8 +76,8 @@ Host-share sessions can reach a narrow runtime surface on the host:
 
 Relevant files:
 
-- [desktop/agent/httpserver.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/httpserver.go:974)
-- [desktop/agent/console_terminal.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/console_terminal.go:33)
+- [desktop/agent/httpserver.go](../desktop/agent/httpserver.go#L974)
+- [desktop/agent/console_terminal.go](../desktop/agent/console_terminal.go#L33)
 
 ### Borrowed workspace
 
@@ -90,8 +90,8 @@ The host now has a per-session borrowed workspace manager:
 
 Relevant files:
 
-- [desktop/agent/host_share_workspace.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_workspace.go:13)
-- [desktop/agent/host_share_workspace_http.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_workspace_http.go:1)
+- [desktop/agent/host_share_workspace.go](../desktop/agent/host_share_workspace.go#L13)
+- [desktop/agent/host_share_workspace_http.go](../desktop/agent/host_share_workspace_http.go#L1)
 
 ### Guest-bus repo surface
 
@@ -106,8 +106,8 @@ The guest agent now exposes a narrow host-share repo bus:
 
 Relevant files:
 
-- [desktop/agent/files_browser.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/files_browser.go:48)
-- [desktop/agent/httpserver.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/httpserver.go:316)
+- [desktop/agent/files_browser.go](../desktop/agent/files_browser.go#L48)
+- [desktop/agent/httpserver.go](../desktop/agent/httpserver.go#L316)
 
 ### Host-share bus workflow
 
@@ -121,8 +121,8 @@ The host CLI can now:
 
 Relevant files:
 
-- [desktop/agent/host_share_cmd.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_cmd.go:409)
-- [desktop/agent/host_share_cmd.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_cmd.go:682)
+- [desktop/agent/host_share_cmd.go](../desktop/agent/host_share_cmd.go#L409)
+- [desktop/agent/host_share_cmd.go](../desktop/agent/host_share_cmd.go#L682)
 
 ### Guest-owned repo attach/sync workflow
 
@@ -137,8 +137,8 @@ This means the guest no longer has to manually drive host-side `guest-pull` and
 
 Relevant files:
 
-- [desktop/agent/host_share_cmd.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_cmd.go:878)
-- [desktop/agent/host_share_workspace_http.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_workspace_http.go:1)
+- [desktop/agent/host_share_cmd.go](../desktop/agent/host_share_cmd.go#L878)
+- [desktop/agent/host_share_workspace_http.go](../desktop/agent/host_share_workspace_http.go#L1)
 
 ### Transport readiness audit
 
@@ -153,7 +153,7 @@ The host-share prep flow already audits:
 
 Relevant files:
 
-- [desktop/agent/host_share_prepare.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_prepare.go:332)
+- [desktop/agent/host_share_prepare.go](../desktop/agent/host_share_prepare.go#L332)
 
 ## What Connectivity Infrastructure Exists Today
 
@@ -163,8 +163,8 @@ Yaver already knows how to advertise local reachability and local IP candidates 
 
 Relevant files:
 
-- [desktop/agent/auth_pair.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/auth_pair.go:150)
-- [desktop/agent/pair_url.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/pair_url.go:102)
+- [desktop/agent/auth_pair.go](../desktop/agent/auth_pair.go#L150)
+- [desktop/agent/pair_url.go](../desktop/agent/pair_url.go#L102)
 
 ### 2. Tailscale
 
@@ -172,7 +172,7 @@ Yaver can detect a locally running Tailscale and extract Tailnet IP candidates.
 
 Relevant files:
 
-- [desktop/agent/tailscale.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/tailscale.go:39)
+- [desktop/agent/tailscale.go](../desktop/agent/tailscale.go#L39)
 
 ### 3. Relay
 
@@ -185,8 +185,8 @@ Yaver has a real application-layer relay system:
 
 Relevant files:
 
-- [relay/README.md](/Users/kivanccakmak/Workspace/yaver.io/relay/README.md:1)
-- [desktop/agent/agent_mesh_remote.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/agent_mesh_remote.go:16)
+- [relay/README.md](../relay/README.md#L1)
+- [desktop/agent/agent_mesh_remote.go](../desktop/agent/agent_mesh_remote.go#L16)
 
 ### 4. Cloudflare Tunnel / public HTTPS endpoints
 
@@ -196,10 +196,10 @@ heartbeats so remote resolution can actually use them.
 
 Relevant files:
 
-- [desktop/agent/config.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/config.go:141)
-- [desktop/agent/tunnel_cf_wizard.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/tunnel_cf_wizard.go:44)
-- [desktop/agent/auth.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/auth.go:1300)
-- [desktop/agent/agent_mesh_remote.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/agent_mesh_remote.go:334)
+- [desktop/agent/config.go](../desktop/agent/config.go#L141)
+- [desktop/agent/tunnel_cf_wizard.go](../desktop/agent/tunnel_cf_wizard.go#L44)
+- [desktop/agent/auth.go](../desktop/agent/auth.go#L1300)
+- [desktop/agent/agent_mesh_remote.go](../desktop/agent/agent_mesh_remote.go#L334)
 
 ### 5. Generic VPN
 
@@ -241,8 +241,8 @@ The current runtime path now does more than the older report assumed:
 
 Relevant files:
 
-- [desktop/agent/agent_mesh_remote.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/agent_mesh_remote.go:234)
-- [desktop/agent/agent_mesh_remote_test.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/agent_mesh_remote_test.go:104)
+- [desktop/agent/agent_mesh_remote.go](../desktop/agent/agent_mesh_remote.go#L234)
+- [desktop/agent/agent_mesh_remote_test.go](../desktop/agent/agent_mesh_remote_test.go#L104)
 
 What is still missing is a more explicit session-level transport memory and
 reconnect policy. The current behavior is request-level robust, but not yet a
@@ -288,11 +288,11 @@ probe freshness, candidate ordering, and transport churn during long sessions.
 
 ### 5. Pairing transport hints and runtime transport selection are not unified
 
-Pairing URLs use one transport candidate system in [desktop/agent/auth_pair.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/auth_pair.go:150).
+Pairing URLs use one transport candidate system in [desktop/agent/auth_pair.go](../desktop/agent/auth_pair.go#L150).
 
-Host-share prep derives another order in [desktop/agent/host_share_prepare.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_prepare.go:432).
+Host-share prep derives another order in [desktop/agent/host_share_prepare.go](../desktop/agent/host_share_prepare.go#L432).
 
-Runtime proxying uses a third, thinner decision path in [desktop/agent/agent_mesh_remote.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/agent_mesh_remote.go:16).
+Runtime proxying uses a third, thinner decision path in [desktop/agent/agent_mesh_remote.go](../desktop/agent/agent_mesh_remote.go#L16).
 
 That split is a structural source of bugs.
 
@@ -370,7 +370,7 @@ There is no full model yet for:
 
 ### Readiness audit is advisory, not enforcing
 
-The prep report in [desktop/agent/host_share_prepare.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/host_share_prepare.go:332) is useful, but nothing yet forces invite creation or live session handling to respect a verified working transport.
+The prep report in [desktop/agent/host_share_prepare.go](../desktop/agent/host_share_prepare.go#L332) is useful, but nothing yet forces invite creation or live session handling to respect a verified working transport.
 
 ### Repo discovery is still a prerequisite
 
@@ -416,7 +416,7 @@ basic header support.
 
 ### 4. Relay trust is origin-sensitive
 
-Relay password checks in [desktop/agent/agent_mesh_remote.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/agent_mesh_remote.go:107) are good, but robustness work must preserve the current rule that relay origins are trusted only when present in config/platform data.
+Relay password checks in [desktop/agent/agent_mesh_remote.go](../desktop/agent/agent_mesh_remote.go#L107) are good, but robustness work must preserve the current rule that relay origins are trusted only when present in config/platform data.
 
 This must not regress into:
 
@@ -526,7 +526,7 @@ Add:
 
 ### Phase 3: Cloudflare first-class runtime support
 
-Use configured `CloudflareTunnelConfig` values from [desktop/agent/config.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/config.go:141) as true remote candidates.
+Use configured `CloudflareTunnelConfig` values from [desktop/agent/config.go](../desktop/agent/config.go#L141) as true remote candidates.
 
 ### Phase 4: guest-bus hardening
 

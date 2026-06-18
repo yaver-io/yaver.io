@@ -49,7 +49,7 @@ Relevant existing code that this design extends:
 - [`mobile/src/lib/quic.ts`](../mobile/src/lib/quic.ts)
 - [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx)
 - [`backend/convex/devices.ts`](../backend/convex/devices.ts)
-- [`AI_ARCH.md`](../AI_ARCH.md)
+- [`AI_ARCH.md`](architecture/AI_ARCH.md)
 
 ## 1. Goal
 

@@ -159,4 +159,4 @@ For a persistent Hetzner box, the safe and usable default is:
 
 That is the operational model behind the shared-owner Hetzner runbook.
 
-See also: [hetzner-shared-owner-runbook.md](/Users/kivanccakmak/Workspace/yaver.io/docs/hetzner-shared-owner-runbook.md:1)
+See also: [hetzner-shared-owner-runbook.md](hetzner-shared-owner-runbook.md#L1)

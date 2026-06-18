@@ -1,6 +1,6 @@
 # Yaver Solo Runtime Architecture Spec
 
-Status: draft  
+Status: draft
 Date: 2026-04-24
 
 ## Goal
@@ -47,16 +47,16 @@ The product should strongly prefer running recurring and operational work on Yav
 
 These are already in the repo and should remain the substrate:
 
-- Workspace manifest: [yaver.workspace.yaml](/Users/kivanccakmak/Workspace/yaver.io/yaver.workspace.yaml:1), [workspace.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/workspace.go:1), [workspace_engine.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/workspace_engine.go:1)
-- Project manifest: [project_manifest.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/project_manifest.go:1)
-- Local scheduler: [scheduler.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/scheduler.go:1), [/schedules](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/httpserver.go:3362), [cron_cmd.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/cron_cmd.go:1)
-- Uptime monitor: [monitor_cmd.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/monitor_cmd.go:1), [monitor_http.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/monitor_http.go:1)
-- DNS and Cloudflare primitives: [ops_dns.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/ops_dns.go:1), [cloudflare_dns.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/cloudflare_dns.go:1)
-- Domain metadata and verification: [userDomains.ts](/Users/kivanccakmak/Workspace/yaver.io/backend/convex/userDomains.ts:1)
-- Cloud machines: [cloudMachines.ts](/Users/kivanccakmak/Workspace/yaver.io/backend/convex/cloudMachines.ts:1), [cloud.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/cloud.go:1)
-- Machine inventory: [console_machines.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/console_machines.go:1)
-- Vibing execution and eligibility: [vibing.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/vibing.go:700)
-- Mobile transport surface: [quic.ts](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/lib/quic.ts:1)
+- Workspace manifest: [yaver.workspace.yaml](../yaver.workspace.yaml#L1), [workspace.go](../desktop/agent/workspace.go#L1), [workspace_engine.go](../desktop/agent/workspace_engine.go#L1)
+- Project manifest: [project_manifest.go](../desktop/agent/project_manifest.go#L1)
+- Local scheduler: [scheduler.go](../desktop/agent/scheduler.go#L1), [/schedules](../desktop/agent/httpserver.go#L3362), [cron_cmd.go](../desktop/agent/cron_cmd.go#L1)
+- Uptime monitor: [monitor_cmd.go](../desktop/agent/monitor_cmd.go#L1), [monitor_http.go](../desktop/agent/monitor_http.go#L1)
+- DNS and Cloudflare primitives: [ops_dns.go](../desktop/agent/ops_dns.go#L1), [cloudflare_dns.go](../desktop/agent/cloudflare_dns.go#L1)
+- Domain metadata and verification: [userDomains.ts](../backend/convex/userDomains.ts#L1)
+- Cloud machines: [cloudMachines.ts](../backend/convex/cloudMachines.ts#L1), [cloud.go](../desktop/agent/cloud.go#L1)
+- Machine inventory: [console_machines.go](../desktop/agent/console_machines.go#L1)
+- Vibing execution and eligibility: [vibing.go](../desktop/agent/vibing.go#L700)
+- Mobile transport surface: [quic.ts](../mobile/src/lib/quic.ts#L1)
 
 ## Core Decision
 
@@ -322,7 +322,7 @@ Supported kinds:
 
 Execution semantics:
 
-- all jobs are reconciled into the existing local scheduler in [`scheduler.go`](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/scheduler.go:1)
+- all jobs are reconciled into the existing local scheduler in [`scheduler.go`](../desktop/agent/scheduler.go#L1)
 - each job carries a `machine_role`
 - the selected machine executes the job locally
 - `convex-action` means "run this Convex function from the machine", not "install this in Convex cron"
@@ -359,7 +359,7 @@ Do not default to Convex for:
    - uptime monitors
    - backups and alerts
 
-The existing [`ApplyManifest`](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/project_manifest.go:66) path is the starting point, but it needs typed runtime reconciliation instead of the current narrow add-only behavior.
+The existing [`ApplyManifest`](../desktop/agent/project_manifest.go#L66) path is the starting point, but it needs typed runtime reconciliation instead of the current narrow add-only behavior.
 
 ## New HTTP and MCP Surface
 
@@ -478,7 +478,7 @@ Payload:
 }
 ```
 
-This should live beside the existing verbs in [`ops_workspace.go`](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/ops_workspace.go:1) and [`ops_cloud.go`](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/ops_cloud.go:1).
+This should live beside the existing verbs in [`ops_workspace.go`](../desktop/agent/ops_workspace.go#L1) and [`ops_cloud.go`](../desktop/agent/ops_cloud.go#L1).
 
 ## Mobile Product Surface
 
@@ -549,7 +549,7 @@ Primary views:
 - Machines
 - Jobs
 
-The existing views in [ConvexView.tsx](/Users/kivanccakmak/Workspace/yaver.io/web/components/dashboard/ConvexView.tsx:1) and [DomainsView.tsx](/Users/kivanccakmak/Workspace/yaver.io/web/components/dashboard/DomainsView.tsx:1) should plug into the new runtime page instead of standing alone.
+The existing views in [ConvexView.tsx](../web/components/dashboard/ConvexView.tsx#L1) and [DomainsView.tsx](../web/components/dashboard/DomainsView.tsx#L1) should plug into the new runtime page instead of standing alone.
 
 ## Vibing Integration
 
@@ -616,8 +616,8 @@ Vibing and mobile/web product polish.
 
 Implement in this order:
 
-1. extend `ProjectManifest` in [project_manifest.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/project_manifest.go:1) with `runtime`, `placement`, `jobs`
-2. add runtime resolver against [console_machines.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/console_machines.go:1)
+1. extend `ProjectManifest` in [project_manifest.go](../desktop/agent/project_manifest.go#L1) with `runtime`, `placement`, `jobs`
+2. add runtime resolver against [console_machines.go](../desktop/agent/console_machines.go#L1)
 3. add `/project/runtime` read endpoint
 4. add `/project/runtime/plan`
 5. reconcile `jobs` to existing scheduler

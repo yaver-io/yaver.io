@@ -244,7 +244,7 @@ running Yaver *as a service* — this is open-core done correctly. Keep it.
 
 ### Licensing strategy (already implemented — keep, don't re-architect)
 
-Per `../LICENSING.md`:
+Per `../planning/LICENSING.md`:
 
 - **FSL-1.1-Apache-2.0** core: agent, relay, backend/control-plane, web, mobile/
   watch/TV clients, managed-cloud lifecycle, remote runtime/session orchestration,

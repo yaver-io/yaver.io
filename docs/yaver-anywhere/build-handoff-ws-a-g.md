@@ -150,7 +150,7 @@ working TURN, and the interactive path now reuses it.
 **Anchors (verified):**
 - `desktop/agent/remote_runtime_webrtc.go:257` — `pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersForPeer()})`.
 - `desktop/agent/stream_webrtc.go:37` — `func iceServersForPeer() []webrtc.ICEServer` (reads `YAVER_STUN_URL`, `YAVER_TURN_URL`, `turnAuthSecret()` = `TURN_AUTH_SECRET`/`RELAY_PASSWORD`; mints long-term creds). Already used at `stream_webrtc.go:207`.
-- `desktop/agent/turn_credentials.go:52` — `handleRemoteRuntimeTURNCredentials` backing `GET /stream/webrtc/ice` (httpserver.go:487). The web client already fetches this.
+- `desktop/agent/turn_credentials.go:52` — `handleRemoteRuntimeTURNCredentials` backing `GET /stream/webrtc/ice` (httpserver.go#L487). The web client already fetches this.
 
 **Change completed:**
 1. `remote_runtime_webrtc.go:257` now uses `webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: iceServersForPeer()})`.

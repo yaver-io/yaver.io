@@ -491,7 +491,7 @@ through a scoped token over the relay:
   `YAVER_RELAY_PASSWORD`; OCPP web route + mobile screen updated to send it too.)
 - **One bug fixed to make it work:** `/ops` + `/ops/plan` were registered with the
   owner-only `auth()` middleware, so SDK tokens never validated (→ "invalid token").
-  Switched to `authSDKOrGuest` (httpserver.go:458) — owner/agent tokens pass through
+  Switched to `authSDKOrGuest` (httpserver.go#L458) — owner/agent tokens pass through
   unchanged; capability-scoped SDK tokens validate + CIDR-check + demote to scoped
   guest. Host build + tests green.
 - **Verified remote (this Mac → public.yaver.io → box):** `circuit_health` → ok,

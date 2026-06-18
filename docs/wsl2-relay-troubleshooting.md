@@ -29,7 +29,7 @@ Windows host (not the phone's carrier). Relay roaming will not work.
   "Mirrored" mode bypasses this by putting WSL on the same link as
   Windows, so the relay's QUIC packets are forwarded natively.
 - The mobile app looked connected briefly because a direct LAN
-  probe to `172.29.115.204:18080` (the WSL internal NAT IP) happened
+  probe to `172.29.0.10:18080` (the WSL internal NAT IP) happened
   to succeed during the 2 s direct-first race. That IP is not
   reachable from the phone's actual network; subsequent HTTP calls
   all timed out and triggered reconnect.
@@ -115,7 +115,7 @@ remaining options:
 2. **Use the remote-worker pattern** — have the phone connect to a
    Mac / Linux box that *does* have a working relay tunnel, and
    have that box drive Hermes builds for the WSL project via `git
-   clone` or rsync. See `REMOTE_WORKER.md` Layer 1 (`dev_*` tools
+   clone` or rsync. See `architecture/REMOTE_WORKER.md` Layer 1 (`dev_*` tools
    with `device_id=`).
 
 ## Verifying end-to-end after a fix

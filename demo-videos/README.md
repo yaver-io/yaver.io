@@ -7,7 +7,8 @@ sources live on GitHub Releases (too heavy for git).
 
 | File | Length | Size | Purpose |
 |---|---|---|---|
-| `yaver-hosting-demo.mp4` | ~46s | ~1.9 MB | Landing page "Push to Phone / Hosting" tab. Side-by-side: real phone loads SFMG, user shakes the app, types a task, Claude edits on the Mac, Hermes bundle hot-reloads the new splash color. |
+| `yaver-hosting-demo.gif` | 12s | ~416 KB | Lightweight animated GitHub README preview of the landing-page demo. Links through to the full MP4 release asset. |
+| `yaver-hosting-demo.mp4` | ~46s | ~4.5 MB | Landing page "Push to Phone / Hosting" tab. Side-by-side: real phone loads SFMG, user shakes the app, types a task, Claude edits on the Mac, Hermes bundle hot-reloads the new splash color. |
 | `sources/yaver-hosting-phone-lite.mp4` | 4:18 | ~1.4 MB | Lightweight 640-wide encode of the original phone screen recording (2026-04-20). Keep for re-edits. |
 | `sources/yaver-hosting-desktop-lite.mp4` | 5:29 | ~4.7 MB | Lightweight 854-wide / 15 fps encode of the original desktop recording. Keep for re-edits. |
 

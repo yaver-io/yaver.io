@@ -177,5 +177,5 @@ When adding a new method to `web/lib/agent-client.ts` or `mobile/src/lib/*`, mir
 
 - [`mobile-headless/README.md`](../mobile-headless/README.md) — full mobile verb catalogue
 - [`web-headless/README.md`](../web-headless/README.md) — full web verb catalogue
-- [`MOBILE_WORKER.md`](../MOBILE_WORKER.md) — phone-first backend spec the mobile client mirrors
-- [`AI_ARCH.md`](../AI_ARCH.md) — how auth, bootstrap, and relay flows actually work at runtime
+- [`MOBILE_WORKER.md`](mobile/MOBILE_WORKER.md) — phone-first backend spec the mobile client mirrors
+- [`AI_ARCH.md`](architecture/AI_ARCH.md) — how auth, bootstrap, and relay flows actually work at runtime

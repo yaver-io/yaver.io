@@ -41,8 +41,8 @@ The mobile app already lets you start a project on:
 
 Current implementation:
 
-- [mobile/app/phone-projects.tsx](/Users/kivanccakmak/Workspace/yaver.io/mobile/app/phone-projects.tsx:1)
-- [mobile/src/lib/phoneProjects.ts](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/lib/phoneProjects.ts:1)
+- [mobile/app/phone-projects.tsx](../../../mobile/app/phone-projects.tsx#L1)
+- [mobile/src/lib/phoneProjects.ts](../../../mobile/src/lib/phoneProjects.ts#L1)
 
 ### 2. Push / export continuum
 
@@ -54,8 +54,8 @@ Phone projects can already be exported and received by another agent through:
 
 Current implementation:
 
-- [desktop/agent/phone_backend_http.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/phone_backend_http.go:1)
-- [MOBILE_BACKEND_EXPORT.md](/Users/kivanccakmak/Workspace/yaver.io/MOBILE_BACKEND_EXPORT.md:1)
+- [desktop/agent/phone_backend_http.go](../../../desktop/agent/phone_backend_http.go#L1)
+- [MOBILE_BACKEND_EXPORT.md](../../mobile/MOBILE_BACKEND_EXPORT.md#L1)
 
 ### 3. Cloud machine activation exists in preview form
 
@@ -66,14 +66,14 @@ The agent already has preview-oriented cloud billing / activation calls:
 
 Current implementation:
 
-- [desktop/agent/cloud.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/cloud.go:300)
-- [desktop/agent/cloud_preview_smoke_test.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/cloud_preview_smoke_test.go:1)
+- [desktop/agent/cloud.go](../../../desktop/agent/cloud.go#L300)
+- [desktop/agent/cloud_preview_smoke_test.go](../../../desktop/agent/cloud_preview_smoke_test.go#L1)
 
 ### 4. Git-provider usage from phone already exists conceptually
 
 The product already supports “browse repos from phone, clone on the machine”:
 
-- [README.md](/Users/kivanccakmak/Workspace/yaver.io/README.md:1408)
+- [README.md](../../../README.md#L1408)
 
 This is the right model for a managed VPS too, but the dedicated-cloud onboarding still needs a smoother credential-attachment path.
 
@@ -87,9 +87,9 @@ There are three relevant sharing layers:
 
 Relevant implementation:
 
-- [desktop/agent/guest_scope.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/guest_scope.go:1)
-- [desktop/agent/multiuser.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/multiuser.go:1)
-- [docs/host_guest_borrowed_runner_spec.md](/Users/kivanccakmak/Workspace/yaver.io/docs/host_guest_borrowed_runner_spec.md:1)
+- [desktop/agent/guest_scope.go](../../../desktop/agent/guest_scope.go#L1)
+- [desktop/agent/multiuser.go](../../../desktop/agent/multiuser.go#L1)
+- [docs/host_guest_borrowed_runner_spec.md](../../host_guest_borrowed_runner_spec.md#L1)
 
 ## What You Can Set Up Today
 
@@ -105,7 +105,7 @@ Pick one of these:
 
 If you are using your own box, use the shared-owner setup:
 
-- [docs/hetzner-shared-owner-runbook.md](/Users/kivanccakmak/Workspace/yaver.io/docs/hetzner-shared-owner-runbook.md:1)
+- [docs/hetzner-shared-owner-runbook.md](../../hetzner-shared-owner-runbook.md#L1)
 
 Target machine requirements:
 
@@ -207,9 +207,9 @@ Severity: medium
 
 Current surfaces disagree:
 
-- [desktop/agent/switch_targets.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/switch_targets.go:74) says `Yaver Cloud` is `$9/mo`
-- [MOBILE_BACKEND_EXPORT.md](/Users/kivanccakmak/Workspace/yaver.io/MOBILE_BACKEND_EXPORT.md:13) says `$19/mo single project, $49/mo unlimited`
-- [web/app/docs/cloud-machines/page.tsx](/Users/kivanccakmak/Workspace/yaver.io/web/app/docs/cloud-machines/page.tsx:140) says `$49/mo` CPU and `$449/mo` GPU
+- [desktop/agent/switch_targets.go](../../../desktop/agent/switch_targets.go#L74) says `Yaver Cloud` is `$9/mo`
+- [MOBILE_BACKEND_EXPORT.md](../../mobile/MOBILE_BACKEND_EXPORT.md#L13) says `$19/mo single project, $49/mo unlimited`
+- `web/app/docs/cloud-machines/page.tsx` says `$49/mo` CPU and `$449/mo` GPU
 
 Why it matters:
 
@@ -227,7 +227,7 @@ Severity: high
 
 Current implementation:
 
-- [mobile/src/lib/cloudPreview.ts](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/lib/cloudPreview.ts:1)
+- [mobile/src/lib/cloudPreview.ts](../../../mobile/src/lib/cloudPreview.ts#L1)
 
 It currently returns true for any non-empty email:
 
@@ -255,8 +255,8 @@ Current flow:
 
 Relevant code:
 
-- [mobile/src/lib/phoneProjects.ts](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/lib/phoneProjects.ts:713)
-- [mobile/src/lib/phoneProjects.ts](/Users/kivanccakmak/Workspace/yaver.io/mobile/src/lib/phoneProjects.ts:1360)
+- [mobile/src/lib/phoneProjects.ts](../../../mobile/src/lib/phoneProjects.ts#L713)
+- [mobile/src/lib/phoneProjects.ts](../../../mobile/src/lib/phoneProjects.ts#L1360)
 
 Why it matters:
 
@@ -308,7 +308,7 @@ What exists:
 
 Relevant code:
 
-- [desktop/agent/runner_auth.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/runner_auth.go:1)
+- [desktop/agent/runner_auth.go](../../../desktop/agent/runner_auth.go#L1)
 
 What is missing:
 
@@ -361,8 +361,8 @@ This area is already aligned with the desired cloud story:
 
 Relevant references:
 
-- [desktop/agent/phone_backend_http.go](/Users/kivanccakmak/Workspace/yaver.io/desktop/agent/phone_backend_http.go:381)
-- [MOBILE_BACKEND_EXPORT.md](/Users/kivanccakmak/Workspace/yaver.io/MOBILE_BACKEND_EXPORT.md:1)
+- [desktop/agent/phone_backend_http.go](../../../desktop/agent/phone_backend_http.go#L381)
+- [MOBILE_BACKEND_EXPORT.md](../../mobile/MOBILE_BACKEND_EXPORT.md#L1)
 
 This should remain the core portability contract:
 
@@ -418,7 +418,7 @@ If the goal is practical usage now, not waiting for the full managed product:
 
 1. Keep your Hetzner box as the canonical always-on machine.
 2. Use the shared-owner model from:
-   - [docs/hetzner-shared-owner-runbook.md](/Users/kivanccakmak/Workspace/yaver.io/docs/hetzner-shared-owner-runbook.md:1)
+   - [docs/hetzner-shared-owner-runbook.md](../../hetzner-shared-owner-runbook.md#L1)
 3. Treat it as the prototype for Yaver Cloud.
 4. Store your Codex key in the machine vault.
 5. Use guest / multi-user for collaborators.

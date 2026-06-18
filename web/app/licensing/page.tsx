@@ -175,7 +175,7 @@ export default function LicensingPage() {
               See{" "}
               <a
                 className="underline hover:text-surface-100"
-                href="https://github.com/kivanccakmak/yaver.io/blob/main/CONTRIBUTING.md"
+                href="https://github.com/kivanccakmak/yaver.io/blob/main/docs/setup/CONTRIBUTING.md"
               >
                 CONTRIBUTING.md
               </a>
@@ -199,7 +199,7 @@ export default function LicensingPage() {
               and{" "}
               <a
                 className="underline hover:text-surface-100"
-                href="https://github.com/kivanccakmak/yaver.io/blob/main/LICENSING.md"
+                href="https://github.com/kivanccakmak/yaver.io/blob/main/docs/planning/LICENSING.md"
               >
                 LICENSING.md
               </a>{" "}

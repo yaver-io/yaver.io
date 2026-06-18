@@ -2563,7 +2563,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               <p className="mt-3 text-sm text-surface-400">
                 Full policy + vulnerability disclosure details in{" "}
                 <Link
-                  href="https://github.com/kivanccakmak/yaver.io/blob/main/SECURITY.md"
+                  href="https://github.com/kivanccakmak/yaver.io/blob/main/docs/security/SECURITY.md"
                   className="text-surface-200 underline"
                 >
                   SECURITY.md

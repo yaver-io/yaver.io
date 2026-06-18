@@ -4,7 +4,7 @@ This file is for AI coding agents (OpenAI Codex, Aider, Amp, Goose, Claude Code,
 
 ## Golden rule: .md files go stale, code is the source of truth
 
-Every Markdown file in this repo — including this one, [`CLAUDE.md`](CLAUDE.md), [`AI_ARCH.md`](AI_ARCH.md), [`REMOTE_WORKER.md`](REMOTE_WORKER.md), `init.md`, and every `*.md` under `docs/` — was accurate on the day it was written. Drift is the norm, not the exception. Routes get renamed, handlers get refactored, fields get added, version numbers roll forward. The docs don't always keep up.
+Every Markdown file in this repo — including this one, [`CLAUDE.md`](CLAUDE.md), [`docs/architecture/AI_ARCH.md`](docs/architecture/AI_ARCH.md), [`docs/architecture/REMOTE_WORKER.md`](docs/architecture/REMOTE_WORKER.md), `init.md`, and every `*.md` under `docs/` — was accurate on the day it was written. Drift is the norm, not the exception. Routes get renamed, handlers get refactored, fields get added, version numbers roll forward. The docs don't always keep up.
 
 **Before you act on any claim a `.md` file makes:**
 
@@ -18,8 +18,8 @@ Treat `.md` files the way you'd treat a commit message from six months ago: usef
 ## What to read before making changes
 
 - Full project guide → [`CLAUDE.md`](CLAUDE.md)
-- Runtime architecture (auth / bootstrap / relay / recovery) → [`AI_ARCH.md`](AI_ARCH.md)
-- Slave-machine / remote-build flows → [`REMOTE_WORKER.md`](REMOTE_WORKER.md)
+- Runtime architecture (auth / bootstrap / relay / recovery) → [`docs/architecture/AI_ARCH.md`](docs/architecture/AI_ARCH.md)
+- Slave-machine / remote-build flows → [`docs/architecture/REMOTE_WORKER.md`](docs/architecture/REMOTE_WORKER.md)
 - Per-project cached context → `init.md` at the project root (best-effort; may be out of date)
 - For local iOS/TestFlight deploys on this Mac, also read the "iOS TestFlight deploy gotchas" and "iOS — TestFlight" sections in [`CLAUDE.md`](CLAUDE.md) before assuming the vault path is working.
 

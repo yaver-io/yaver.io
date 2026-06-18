@@ -15,7 +15,7 @@ const LANDING_TAGLINE =
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
-// LANDING_TAGLINE + the hero H1/subline to Option B (see LICENSING.md
+// LANDING_TAGLINE + the hero H1/subline to Option B (see docs/planning/LICENSING.md
 // blog post and the competitive audit in the repo for the full pitch).
 // Keeping it out of the page for now so the Show HN + viral launch has
 // a single narrow wedge.
@@ -122,7 +122,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   // ── License ─────────────────────────────────────────────────────────
   {
     q: "What license is Yaver under?",
-    a: "Split license. Core (agent, relay, backend, web, mobile app, desktop app) is FSL-1.1-Apache-2.0 — free for any non-competing use; each release auto-transitions to Apache-2.0 two years after publication. Client SDKs and CLIs are Apache-2.0 from day one. See LICENSING.md.",
+    a: "Split license. Core (agent, relay, backend, web, mobile app, desktop app) is FSL-1.1-Apache-2.0 — free for any non-competing use; each release auto-transitions to Apache-2.0 two years after publication. Client SDKs and CLIs are Apache-2.0 from day one. See docs/planning/LICENSING.md.",
   },
   {
     q: "Can I use Yaver in a commercial closed-source app?",
