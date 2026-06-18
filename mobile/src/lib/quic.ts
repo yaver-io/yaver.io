@@ -125,6 +125,41 @@ export interface SyncItem<T = any> {
   deleted?: boolean;
 }
 
+export interface MfgBOMLine {
+  ref: string;
+  qty: number;
+  part?: string;
+  description?: string;
+  package?: string;
+  supplierPn?: string;
+  lcsc?: string;
+  unitUsd?: number;
+  location?: string;
+  attrs?: Record<string, string>;
+}
+
+export interface MfgPixelSeed {
+  id?: string;
+  lineRef: string;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  location?: string;
+  quantity?: number;
+  note?: string;
+  updatedAt?: number;
+}
+
+export interface MfgRFQWorkspace {
+  id: string;
+  name?: string;
+  bom: MfgBOMLine[];
+  seeds: MfgPixelSeed[];
+  updatedAt: number;
+  meta?: Record<string, string>;
+}
+
 export interface EnvironmentProjectSummary {
   path: string;
   branch?: string;
@@ -7728,6 +7763,48 @@ export class QuicClient {
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
     }
+  }
+
+  async mfgRFQImportBOM(opts: {
+    id: string;
+    name?: string;
+    csv?: string;
+    path?: string;
+    meta?: Record<string, string>;
+  }): Promise<MfgRFQWorkspace | null> {
+    const r = await this.callOps("mfg_rfq_import_bom", opts);
+    if (!r.ok) throw new Error(r.error || "mfg_rfq_import_bom failed");
+    return r.initial?.workspace ?? null;
+  }
+
+  async mfgRFQGet(id: string): Promise<MfgRFQWorkspace | null> {
+    const r = await this.callOps("mfg_rfq_get", { id });
+    if (!r.ok) throw new Error(r.error || "mfg_rfq_get failed");
+    return r.initial?.workspace ?? null;
+  }
+
+  async mfgBOMLineUpdate(opts: {
+    id: string;
+    lineRef: string;
+    quantity?: number;
+    location?: string;
+    line?: MfgBOMLine;
+  }): Promise<MfgRFQWorkspace | null> {
+    const r = await this.callOps("mfg_bom_line_update", opts as Record<string, unknown>);
+    if (!r.ok) throw new Error(r.error || "mfg_bom_line_update failed");
+    return r.initial?.workspace ?? null;
+  }
+
+  async mfgPixelSeedUpsert(id: string, seed: MfgPixelSeed): Promise<MfgRFQWorkspace | null> {
+    const r = await this.callOps("mfg_pixel_seed_upsert", { id, seed });
+    if (!r.ok) throw new Error(r.error || "mfg_pixel_seed_upsert failed");
+    return r.initial?.workspace ?? null;
+  }
+
+  async mfgPixelSeedDelete(id: string, seedId: string): Promise<MfgRFQWorkspace | null> {
+    const r = await this.callOps("mfg_pixel_seed_delete", { id, seedId });
+    if (!r.ok) throw new Error(r.error || "mfg_pixel_seed_delete failed");
+    return r.initial?.workspace ?? null;
   }
 
   /** callOpsOnDevice invokes an ops verb DIRECTLY on a specific device over the

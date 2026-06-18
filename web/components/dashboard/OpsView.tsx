@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 import EnvironmentSwitcher from "./EnvironmentSwitcher";
 
-type Tab = "deploy" | "backups" | "domains" | "logs" | "errors" | "clone" | "cron" | "uptime";
+type Tab = "deploy" | "rfq" | "backups" | "domains" | "logs" | "errors" | "clone" | "cron" | "uptime";
 
 export default function OpsView() {
   const [directory, setDirectory] = useState("");
@@ -16,7 +16,7 @@ export default function OpsView() {
         className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-mono text-surface-200" />
       <EnvironmentSwitcher directory={directory || undefined} />
       <div className="flex gap-1 border-b border-surface-800 overflow-auto">
-        {(["deploy", "backups", "domains", "logs", "errors", "clone", "cron", "uptime"] as Tab[]).map((t) => (
+        {(["deploy", "rfq", "backups", "domains", "logs", "errors", "clone", "cron", "uptime"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-3 py-2 text-xs uppercase font-semibold whitespace-nowrap ${tab === t ? "text-indigo-400 border-b-2 border-indigo-400" : "text-surface-500 hover:text-surface-300"}`}>
             {t}
@@ -24,6 +24,7 @@ export default function OpsView() {
         ))}
       </div>
       {tab === "deploy" && <Deploy directory={directory} />}
+      {tab === "rfq" && <RFQAssist />}
       {tab === "backups" && <Backups directory={directory} />}
       {tab === "domains" && <Domains />}
       {tab === "logs" && <LogSearch />}
@@ -31,6 +32,172 @@ export default function OpsView() {
       {tab === "clone" && <Clone />}
       {tab === "cron" && <Cron directory={directory} />}
       {tab === "uptime" && <Uptime />}
+    </div>
+  );
+}
+
+function RFQAssist() {
+  const [id, setId] = useState("default");
+  const [name, setName] = useState("");
+  const [csvText, setCsvText] = useState("");
+  const [path, setPath] = useState("");
+  const [workspace, setWorkspace] = useState<any>(null);
+  const [selectedRef, setSelectedRef] = useState("");
+  const [seedId, setSeedId] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [location, setLocation] = useState("");
+  const [x, setX] = useState("");
+  const [y, setY] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+
+  async function call(verb: string, payload: Record<string, unknown>) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await agentClient.callOps(verb, payload);
+      if (!res.ok) throw new Error(res.error || `${verb} failed`);
+      const ws = res.initial?.workspace;
+      if (ws) setWorkspace(ws);
+      setMsg({ type: "ok", text: "Saved." });
+      return res.initial;
+    } catch (e: any) {
+      setMsg({ type: "error", text: e?.message || String(e) });
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importBOM() {
+    const initial = await call("mfg_rfq_import_bom", { id, name, csv: csvText || undefined, path: path || undefined });
+    const first = initial?.workspace?.bom?.[0];
+    if (first?.ref) setSelectedRef(first.ref);
+  }
+
+  async function loadWorkspace() {
+    const initial = await call("mfg_rfq_get", { id });
+    const first = initial?.workspace?.bom?.[0];
+    if (first?.ref && !selectedRef) setSelectedRef(first.ref);
+  }
+
+  async function updateLine() {
+    if (!selectedRef) return;
+    await call("mfg_bom_line_update", {
+      id,
+      lineRef: selectedRef,
+      quantity: quantity.trim() ? Number(quantity) : undefined,
+      location: location.trim() || undefined,
+    });
+  }
+
+  async function upsertSeed() {
+    if (!selectedRef) return;
+    const seed: Record<string, unknown> = {
+      id: seedId.trim() || undefined,
+      lineRef: selectedRef,
+      quantity: quantity.trim() ? Number(quantity) : undefined,
+      location: location.trim() || undefined,
+      note: note.trim() || undefined,
+      x: x.trim() ? Number(x) : undefined,
+      y: y.trim() ? Number(y) : undefined,
+    };
+    const initial = await call("mfg_pixel_seed_upsert", { id, seed });
+    if (initial?.seed?.id) setSeedId(initial.seed.id);
+  }
+
+  async function deleteSeed(seed: any) {
+    await call("mfg_pixel_seed_delete", { id, seedId: seed.id });
+    if (seedId === seed.id) setSeedId("");
+  }
+
+  function pickLine(line: any) {
+    setSelectedRef(line.ref || "");
+    setQuantity(line.qty === undefined ? "" : String(line.qty));
+    setLocation(line.location || "");
+    const seed = workspace?.seeds?.find((s: any) => String(s.lineRef).toLowerCase() === String(line.ref).toLowerCase());
+    setSeedId(seed?.id || "");
+    setX(seed?.x === undefined ? "" : String(seed.x));
+    setY(seed?.y === undefined ? "" : String(seed.y));
+    setNote(seed?.note || "");
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid lg:grid-cols-[1fr_1.2fr] gap-4">
+        <div className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 space-y-3">
+          <div className="grid sm:grid-cols-2 gap-2">
+            <input value={id} onChange={(e) => setId(e.target.value)} placeholder="workspace id" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm font-mono" />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="quote name" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm" />
+          </div>
+          <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="BOM CSV path on the agent machine" className="w-full rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm font-mono" />
+          <textarea value={csvText} onChange={(e) => setCsvText(e.target.value)} placeholder="Or paste BOM CSV with ref, qty, part, supplier, location..." className="w-full min-h-36 rounded border border-surface-700 bg-surface-900 px-2 py-2 text-xs font-mono" />
+          <div className="flex flex-wrap gap-2">
+            <button disabled={busy} onClick={importBOM} className="px-3 py-2 text-sm rounded bg-indigo-500 text-white disabled:opacity-50">Import BOM</button>
+            <button disabled={busy || !id.trim()} onClick={loadWorkspace} className="px-3 py-2 text-sm rounded bg-surface-800 text-surface-200 disabled:opacity-50">Load</button>
+          </div>
+          {msg && <div className={`text-sm ${msg.type === "ok" ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</div>}
+        </div>
+
+        <div className="bg-surface-900/50 border border-surface-800 rounded-lg p-3 space-y-3">
+          <div className="text-sm font-semibold">Manual assist seed</div>
+          <div className="grid sm:grid-cols-3 gap-2">
+            <input value={selectedRef} onChange={(e) => setSelectedRef(e.target.value)} placeholder="BOM ref" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm font-mono" />
+            <input value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="quantity" inputMode="decimal" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm" />
+            <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="location" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm" />
+            <input value={seedId} onChange={(e) => setSeedId(e.target.value)} placeholder="seed id" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm font-mono" />
+            <input value={x} onChange={(e) => setX(e.target.value)} placeholder="x" inputMode="decimal" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm" />
+            <input value={y} onChange={(e) => setY(e.target.value)} placeholder="y" inputMode="decimal" className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm" />
+          </div>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="seed note" className="w-full min-h-20 rounded border border-surface-700 bg-surface-900 px-2 py-2 text-sm" />
+          <div className="flex flex-wrap gap-2">
+            <button disabled={busy || !selectedRef} onClick={upsertSeed} className="px-3 py-2 text-sm rounded bg-indigo-500 text-white disabled:opacity-50">Save seed</button>
+            <button disabled={busy || !selectedRef} onClick={updateLine} className="px-3 py-2 text-sm rounded bg-surface-800 text-surface-200 disabled:opacity-50">Update BOM line</button>
+          </div>
+        </div>
+      </div>
+
+      {workspace && (
+        <div className="grid xl:grid-cols-[1.4fr_1fr] gap-4">
+          <div className="border border-surface-800 rounded-lg overflow-hidden">
+            <div className="px-3 py-2 text-xs uppercase font-semibold text-surface-500 bg-surface-900/60">BOM lines</div>
+            <div className="max-h-96 overflow-auto divide-y divide-surface-800">
+              {(workspace.bom || []).map((line: any) => (
+                <button key={line.ref} onClick={() => pickLine(line)} className={`w-full text-left grid grid-cols-[90px_70px_1fr_120px] gap-2 px-3 py-2 text-xs hover:bg-surface-900 ${selectedRef === line.ref ? "bg-indigo-500/10" : ""}`}>
+                  <span className="font-mono text-surface-200">{line.ref}</span>
+                  <span className="font-mono text-surface-300">{line.qty}</span>
+                  <span className="truncate text-surface-300">{line.part || line.description || "-"}</span>
+                  <span className="truncate text-surface-500">{line.location || "-"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="border border-surface-800 rounded-lg overflow-hidden">
+            <div className="px-3 py-2 text-xs uppercase font-semibold text-surface-500 bg-surface-900/60">Pixel seeds</div>
+            <div className="max-h-96 overflow-auto divide-y divide-surface-800">
+              {(workspace.seeds || []).map((seed: any) => (
+                <div key={seed.id} className="px-3 py-2 text-xs space-y-1">
+                  <div className="flex gap-2">
+                    <button onClick={() => {
+                      setSelectedRef(seed.lineRef || "");
+                      setSeedId(seed.id || "");
+                      setQuantity(seed.quantity === undefined ? "" : String(seed.quantity));
+                      setLocation(seed.location || "");
+                      setX(seed.x === undefined ? "" : String(seed.x));
+                      setY(seed.y === undefined ? "" : String(seed.y));
+                      setNote(seed.note || "");
+                    }} className="flex-1 text-left font-mono text-surface-200 truncate">{seed.id}</button>
+                    <button onClick={() => deleteSeed(seed)} className="text-red-400 hover:text-red-300">Remove</button>
+                  </div>
+                  <div className="text-surface-500">{seed.lineRef} qty {seed.quantity ?? "-"} loc {seed.location || "-"}</div>
+                </div>
+              ))}
+              {(workspace.seeds || []).length === 0 && <div className="px-3 py-4 text-sm text-surface-500">No seeds yet.</div>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
