@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	osexec "os/exec"
@@ -12,6 +13,35 @@ import (
 	"sync"
 	"time"
 )
+
+var errWiFiUpstreamCredentialsRequired = errors.New("APSTA upstream Wi-Fi credentials required")
+
+type wiFiUpstreamCredentialsRequiredError struct {
+	Missing []string
+	Reason  string
+}
+
+func (e *wiFiUpstreamCredentialsRequiredError) Error() string {
+	if e == nil {
+		return errWiFiUpstreamCredentialsRequired.Error()
+	}
+	missing := strings.Join(e.Missing, ", ")
+	if missing == "" {
+		missing = "upstreamSsid, upstreamPass"
+	}
+	if e.Reason != "" {
+		return fmt.Sprintf("%s: missing %s (%s)", errWiFiUpstreamCredentialsRequired, missing, e.Reason)
+	}
+	return fmt.Sprintf("%s: missing %s", errWiFiUpstreamCredentialsRequired, missing)
+}
+
+func (e *wiFiUpstreamCredentialsRequiredError) Unwrap() error {
+	return errWiFiUpstreamCredentialsRequired
+}
+
+func isWiFiUpstreamCredentialsRequired(err error) bool {
+	return errors.Is(err, errWiFiUpstreamCredentialsRequired)
+}
 
 // runWifiCmd executes a command and returns its output
 func runWifiCmd(name string, args ...string) (string, error) {
@@ -954,6 +984,11 @@ func (wm *WiFiHotspotManager) StartHotspot(cfg *WiFiHotspotConfig) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("wifi hotspot start requires root privileges for hostapd, interface IP, DHCP, and NAT setup")
 	}
+	if cfg.Mode == "apsta" {
+		if err := wm.AutoFillAPSTAUpstream(cfg); err != nil {
+			return err
+		}
+	}
 	if err := wm.ValidateConfig(cfg); err != nil {
 		return err
 	}
@@ -1597,6 +1632,157 @@ func (wm *WiFiHotspotManager) GetAPSTAConfig() (*WiFiHotspotConfig, error) {
 		return nil, err
 	}
 	return normalizeWiFiHotspotConfig(&cfg), nil
+}
+
+func (wm *WiFiHotspotManager) AutoFillAPSTAUpstream(cfg *WiFiHotspotConfig) error {
+	if cfg == nil || cfg.Mode != "apsta" {
+		return nil
+	}
+	if cfg.UpstreamSSID != "" && cfg.UpstreamPass != "" {
+		if cfg.UpstreamIF == "" {
+			cfg.UpstreamIF = cfg.Interface
+		}
+		return nil
+	}
+	if runtime.GOOS != "linux" {
+		return &wiFiUpstreamCredentialsRequiredError{
+			Missing: missingAPSTAUpstreamFields(cfg),
+			Reason:  "automatic upstream credential detection is only supported on Linux with NetworkManager",
+		}
+	}
+	active, err := detectNetworkManagerActiveWiFi()
+	if err != nil {
+		return &wiFiUpstreamCredentialsRequiredError{
+			Missing: missingAPSTAUpstreamFields(cfg),
+			Reason:  err.Error(),
+		}
+	}
+	if cfg.Interface == "" {
+		cfg.Interface = active.Interface
+	}
+	if cfg.UpstreamIF == "" {
+		cfg.UpstreamIF = active.Interface
+	}
+	if cfg.UpstreamSSID == "" {
+		cfg.UpstreamSSID = active.SSID
+	}
+	if cfg.UpstreamPass == "" {
+		psk, err := networkManagerPSK(active.Connection)
+		if err != nil {
+			return &wiFiUpstreamCredentialsRequiredError{
+				Missing: missingAPSTAUpstreamFields(cfg),
+				Reason:  err.Error(),
+			}
+		}
+		cfg.UpstreamPass = psk
+	}
+	if cfg.UpstreamSSID == "" || cfg.UpstreamPass == "" {
+		return &wiFiUpstreamCredentialsRequiredError{
+			Missing: missingAPSTAUpstreamFields(cfg),
+			Reason:  "active Wi-Fi profile did not include both SSID and PSK",
+		}
+	}
+	return nil
+}
+
+type networkManagerWiFiProfile struct {
+	Interface  string
+	Connection string
+	SSID       string
+}
+
+func detectNetworkManagerActiveWiFi() (networkManagerWiFiProfile, error) {
+	if !toolExists("nmcli") {
+		return networkManagerWiFiProfile{}, fmt.Errorf("NetworkManager nmcli is not installed")
+	}
+	out, err := runWifiCmd("nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status")
+	if err != nil {
+		return networkManagerWiFiProfile{}, fmt.Errorf("query NetworkManager active Wi-Fi: %w", err)
+	}
+	for _, raw := range strings.Split(out, "\n") {
+		parts := strings.Split(raw, ":")
+		if len(parts) < 4 {
+			continue
+		}
+		if parts[1] == "wifi" && parts[2] == "connected" {
+			connection := strings.Join(parts[3:], ":")
+			if connection == "" || connection == "--" {
+				continue
+			}
+			return networkManagerWiFiProfile{Interface: parts[0], Connection: connection, SSID: connection}, nil
+		}
+	}
+	return networkManagerWiFiProfile{}, fmt.Errorf("NetworkManager has no connected Wi-Fi profile")
+}
+
+func networkManagerPSK(connection string) (string, error) {
+	connection = strings.TrimSpace(connection)
+	if connection == "" {
+		return "", fmt.Errorf("active NetworkManager connection name is empty")
+	}
+	if toolExists("nmcli") {
+		out, err := runWifiCmd("nmcli", "--show-secrets", "-g", "802-11-wireless-security.psk", "connection", "show", connection)
+		if err == nil {
+			for _, line := range strings.Split(out, "\n") {
+				if line != "" {
+					return line, nil
+				}
+			}
+		}
+	}
+	psk, err := networkManagerPSKFromProfileFiles(connection)
+	if err == nil && psk != "" {
+		return psk, nil
+	}
+	return "", fmt.Errorf("could not read saved PSK for NetworkManager profile %q; pass upstreamSsid/upstreamPass", connection)
+}
+
+func networkManagerPSKFromProfileFiles(connection string) (string, error) {
+	entries, err := os.ReadDir("/etc/NetworkManager/system-connections")
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join("/etc/NetworkManager/system-connections", entry.Name())
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if !networkManagerProfileMatchesConnection(string(body), connection) {
+			continue
+		}
+		for _, raw := range strings.Split(string(body), "\n") {
+			line := strings.TrimSpace(raw)
+			if strings.HasPrefix(line, "psk=") {
+				return strings.TrimPrefix(line, "psk="), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("saved NetworkManager profile %q has no psk", connection)
+}
+
+func networkManagerProfileMatchesConnection(body, connection string) bool {
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "id=") && strings.TrimPrefix(line, "id=") == connection {
+			return true
+		}
+	}
+	return false
+}
+
+func missingAPSTAUpstreamFields(cfg *WiFiHotspotConfig) []string {
+	var missing []string
+	if cfg == nil || cfg.UpstreamSSID == "" {
+		missing = append(missing, "upstreamSsid")
+	}
+	if cfg == nil || cfg.UpstreamPass == "" {
+		missing = append(missing, "upstreamPass")
+	}
+	return missing
 }
 
 func (wm *WiFiHotspotManager) upstreamStatus(cfg *WiFiHotspotConfig) string {

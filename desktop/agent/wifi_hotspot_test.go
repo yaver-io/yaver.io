@@ -112,3 +112,36 @@ func TestWiFiHotspotAPSTAWpaSupplicantConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestWiFiHotspotAPSTACredentialsRequiredError(t *testing.T) {
+	cfg := &WiFiHotspotConfig{
+		SSID:      "YaverAP",
+		Password:  "local-passphrase",
+		Mode:      "apsta",
+		Interface: "wlan0",
+	}
+	err := &wiFiUpstreamCredentialsRequiredError{Missing: missingAPSTAUpstreamFields(cfg), Reason: "test"}
+	if !isWiFiUpstreamCredentialsRequired(err) {
+		t.Fatalf("expected credentials_required-compatible error, got %T %v", err, err)
+	}
+	missing := missingAPSTAUpstreamFields(cfg)
+	if strings.Join(missing, ",") != "upstreamSsid,upstreamPass" {
+		t.Fatalf("missing fields = %v", missing)
+	}
+}
+
+func TestNetworkManagerProfilePSKParsing(t *testing.T) {
+	body := `[connection]
+id=Office WiFi
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=pass with spaces
+`
+	if !networkManagerProfileMatchesConnection(body, "Office WiFi") {
+		t.Fatal("expected profile id match")
+	}
+	if networkManagerProfileMatchesConnection(body, "Other WiFi") {
+		t.Fatal("did not expect different profile id to match")
+	}
+}

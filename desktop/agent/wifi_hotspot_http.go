@@ -68,6 +68,16 @@ func (s *HTTPServer) handleConsoleWiFiStart(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := s.wifiManager().StartHotspot(&cfg); err != nil {
+		if isWiFiUpstreamCredentialsRequired(err) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"ok":      false,
+				"code":    "credentials_required",
+				"error":   err.Error(),
+				"missing": missingAPSTAUpstreamFields(&cfg),
+				"ask":     "Ask the user for upstreamSsid and upstreamPass, then retry start.",
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}

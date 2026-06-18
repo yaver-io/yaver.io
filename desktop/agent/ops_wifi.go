@@ -20,9 +20,28 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "wifi_start",
-		Description: "Start a Yaver-managed Linux Wi-Fi access point or AP+STA repeater. Payload is WiFiHotspotConfig.",
-		Handler:     opsWiFiStart,
-		AllowGuest:  false,
+		Description: "Start a Yaver-managed Wi-Fi access point or AP+STA repeater. Payload is WiFiHotspotConfig. In APSTA mode, upstreamSsid/upstreamPass are optional when the Linux box uses NetworkManager with a saved PSK readable by root; otherwise returns code credentials_required so MCP/mobile can ask the user for them.",
+		Schema: map[string]interface{}{
+			"type":     "object",
+			"required": []string{"ssid", "password"},
+			"properties": map[string]interface{}{
+				"ssid":         map[string]interface{}{"type": "string", "description": "SSID to broadcast, e.g. kivanc."},
+				"password":     map[string]interface{}{"type": "string", "description": "WPA2 password for the broadcast network; 8-63 chars."},
+				"mode":         map[string]interface{}{"type": "string", "enum": []string{"ap", "apsta"}, "description": "ap for hotspot only, apsta for repeater. Default ap."},
+				"interface":    map[string]interface{}{"type": "string", "description": "Wi-Fi STA interface, e.g. wlan0. Optional if auto-detected."},
+				"apInterface":  map[string]interface{}{"type": "string", "description": "Optional AP virtual interface, e.g. wlan0ap."},
+				"upstreamIf":   map[string]interface{}{"type": "string", "description": "Optional NAT/uplink interface. Defaults to interface in APSTA."},
+				"upstreamSsid": map[string]interface{}{"type": "string", "description": "Existing Wi-Fi SSID to join in APSTA mode. Optional with NetworkManager auto-detect."},
+				"upstreamPass": map[string]interface{}{"type": "string", "description": "Existing Wi-Fi password for APSTA mode. If credentials_required is returned, ask the user for this."},
+				"channel":      map[string]interface{}{"type": "integer", "description": "Wi-Fi channel. Default 6."},
+				"frequency":    map[string]interface{}{"type": "string", "enum": []string{"2.4GHz", "5GHz"}},
+				"countryCode":  map[string]interface{}{"type": "string", "description": "ISO country code, e.g. US."},
+				"enableDhcp":   map[string]interface{}{"type": "boolean", "description": "Run dnsmasq DHCP. Default true."},
+				"enableNat":    map[string]interface{}{"type": "boolean", "description": "Enable NAT masquerade. Default true."},
+			},
+		},
+		Handler:    opsWiFiStart,
+		AllowGuest: false,
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "wifi_stop",
@@ -133,6 +152,17 @@ func opsWiFiStart(c OpsContext, raw json.RawMessage) OpsResult {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
 	}
 	if err := c.Server.wifiManager().StartHotspot(&cfg); err != nil {
+		if isWiFiUpstreamCredentialsRequired(err) {
+			return OpsResult{
+				OK:    false,
+				Code:  "credentials_required",
+				Error: err.Error(),
+				Initial: map[string]interface{}{
+					"missing": missingAPSTAUpstreamFields(&cfg),
+					"ask":     "Ask the user for upstreamSsid and upstreamPass, then retry wifi_start with those fields.",
+				},
+			}
+		}
 		return OpsResult{OK: false, Code: "wifi_start_failed", Error: err.Error()}
 	}
 	status, _ := c.Server.wifiManager().GetStatus()
