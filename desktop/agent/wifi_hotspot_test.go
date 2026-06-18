@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestParseIWPhyCapabilitiesAPSTA(t *testing.T) {
 	out := `
@@ -73,5 +78,37 @@ func TestComboTotalAtLeastTwo(t *testing.T) {
 	}
 	if !comboTotalAtLeastTwo("#{ managed } <= 1, #{ AP } <= 1") {
 		t.Fatal("missing total should be treated as non-blocking")
+	}
+}
+
+func TestWiFiHotspotAPSTAWpaSupplicantConfig(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewWiFiHotspotManager(dir)
+	cfg := &WiFiHotspotConfig{
+		SSID:         "YaverAP",
+		Password:     "local-passphrase",
+		Mode:         "apsta",
+		Interface:    "wlan0",
+		UpstreamSSID: `Office "WiFi"`,
+		UpstreamPass: `upstream\passphrase`,
+		CountryCode:  "us",
+	}
+	if err := mgr.GenerateAPSTAWpaSupplicantConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	bodyBytes, err := os.ReadFile(filepath.Join(dir, ".yaver", "wpa_supplicant-apsta.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(bodyBytes)
+	for _, want := range []string{
+		"country=US",
+		`ssid="Office \"WiFi\""`,
+		"key_mgmt=WPA-PSK",
+		`psk="upstream\\passphrase"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("APSTA wpa_supplicant config missing %q:\n%s", want, body)
+		}
 	}
 }

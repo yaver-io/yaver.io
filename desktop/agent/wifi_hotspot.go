@@ -94,6 +94,9 @@ type WiFiHotspotManager struct {
 	logPath           string
 	hostapdConfigPath string
 	dnsmasqConfigPath string
+	wpaConfigPath     string
+	wpaPIDPath        string
+	wpaCtrlPath       string
 	wifiInterface     string
 	workDir           string
 	stopChan          chan struct{}
@@ -110,6 +113,9 @@ func NewWiFiHotspotManager(workDir string) *WiFiHotspotManager {
 		logPath:           filepath.Join(yaverDir, "wifi-hotspot.log"),
 		hostapdConfigPath: filepath.Join(yaverDir, "hostapd.conf"),
 		dnsmasqConfigPath: filepath.Join(yaverDir, "dnsmasq.conf"),
+		wpaConfigPath:     filepath.Join(yaverDir, "wpa_supplicant-apsta.conf"),
+		wpaPIDPath:        filepath.Join(yaverDir, "wpa_supplicant-apsta.pid"),
+		wpaCtrlPath:       filepath.Join(yaverDir, "wpa-apsta-ctrl"),
 		workDir:           workDir,
 		stopChan:          make(chan struct{}),
 		bannedClients:     make(map[string]time.Time),
@@ -951,6 +957,9 @@ func (wm *WiFiHotspotManager) StartHotspot(cfg *WiFiHotspotConfig) error {
 	if err := wm.ValidateConfig(cfg); err != nil {
 		return err
 	}
+	if cfg.Mode == "apsta" && !toolExists("wpa_supplicant") {
+		return fmt.Errorf("AP+STA mode requires wpa_supplicant in PATH")
+	}
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(wm.configPath), 0o700); err != nil {
@@ -976,31 +985,48 @@ func (wm *WiFiHotspotManager) StartHotspot(cfg *WiFiHotspotConfig) error {
 		apIface = cfg.APInterface
 	}
 
+	if cfg.Mode == "apsta" {
+		if err := wm.GenerateAPSTAWpaSupplicantConfig(cfg); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(wm.wpaCtrlPath, 0o700); err != nil {
+			return fmt.Errorf("create wpa_supplicant control dir: %w", err)
+		}
+		if err := wm.startAPSTAWpaSupplicant(cfg.Interface); err != nil {
+			return err
+		}
+	}
 	if err := wm.GenerateHostapdConfig(cfg); err != nil {
+		_ = wm.stopAPSTAWpaSupplicant()
 		return err
 	}
 	if cfg.EnableDHCP {
 		if err := wm.GenerateDnsmasqConfig(cfg); err != nil {
+			_ = wm.stopAPSTAWpaSupplicant()
 			return err
 		}
 	}
 	if err := wm.configureAPInterface(apIface, cfg.IPAddress); err != nil {
+		_ = wm.stopAPSTAWpaSupplicant()
 		return err
 	}
 	if cfg.EnableNAT {
 		if err := wm.enableNAT(apIface, firstNonEmptyStr(cfg.UpstreamIF, wm.defaultRouteInterface())); err != nil {
+			_ = wm.stopAPSTAWpaSupplicant()
 			return err
 		}
 	}
 	if cfg.EnableDHCP {
 		if err := wm.startDnsmasq(); err != nil {
 			_ = wm.disableNAT(apIface, firstNonEmptyStr(cfg.UpstreamIF, wm.defaultRouteInterface()))
+			_ = wm.stopAPSTAWpaSupplicant()
 			return err
 		}
 	}
 	if err := wm.startHostapd(); err != nil {
 		_ = wm.stopDnsmasq()
 		_ = wm.disableNAT(apIface, firstNonEmptyStr(cfg.UpstreamIF, wm.defaultRouteInterface()))
+		_ = wm.stopAPSTAWpaSupplicant()
 		return err
 	}
 
@@ -1046,6 +1072,7 @@ func (wm *WiFiHotspotManager) StopHotspot() error {
 	}
 	_ = wm.stopHostapd()
 	_ = wm.stopDnsmasq()
+	_ = wm.stopAPSTAWpaSupplicant()
 	if cfg != nil && cfg.EnableNAT {
 		_ = wm.disableNAT(apIface, firstNonEmptyStr(cfg.UpstreamIF, wm.defaultRouteInterface()))
 	}
@@ -1054,6 +1081,7 @@ func (wm *WiFiHotspotManager) StopHotspot() error {
 	}
 	_ = os.Remove(wm.pidPath)
 	_ = os.Remove(wm.dnsmasqPIDPath)
+	_ = os.Remove(wm.wpaPIDPath)
 
 	wm.pid = 0
 	wm.dnsmasqPID = 0
@@ -1156,6 +1184,30 @@ func (wm *WiFiHotspotManager) GenerateDnsmasqConfig(cfg *WiFiHotspotConfig) erro
 	return os.WriteFile(wm.dnsmasqConfigPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 }
 
+// GenerateAPSTAWpaSupplicantConfig writes the STA uplink config for AP+STA mode.
+func (wm *WiFiHotspotManager) GenerateAPSTAWpaSupplicantConfig(cfg *WiFiHotspotConfig) error {
+	cfg = normalizeWiFiHotspotConfig(cfg)
+	if err := os.MkdirAll(filepath.Dir(wm.wpaConfigPath), 0o700); err != nil {
+		return err
+	}
+	lines := []string{
+		"ctrl_interface=" + wm.wpaCtrlPath,
+		"update_config=0",
+	}
+	if cfg.CountryCode != "" {
+		lines = append(lines, "country="+strings.ToUpper(cfg.CountryCode))
+	}
+	network := []string{
+		"network={",
+		"\tssid=\"" + escapeWPAString(cfg.UpstreamSSID) + "\"",
+		"\tkey_mgmt=WPA-PSK",
+		"\tpsk=\"" + escapeWPAString(cfg.UpstreamPass) + "\"",
+		"}",
+	}
+	lines = append(lines, network...)
+	return os.WriteFile(wm.wpaConfigPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
 func normalizeWiFiHotspotConfig(cfg *WiFiHotspotConfig) *WiFiHotspotConfig {
 	if cfg == nil {
 		return nil
@@ -1221,6 +1273,19 @@ func (wm *WiFiHotspotManager) startDnsmasq() error {
 
 func (wm *WiFiHotspotManager) stopDnsmasq() error {
 	return stopPIDFile(wm.dnsmasqPIDPath)
+}
+
+func (wm *WiFiHotspotManager) startAPSTAWpaSupplicant(iface string) error {
+	cmd := osexec.Command("wpa_supplicant", "-B", "-i", iface, "-c", wm.wpaConfigPath, "-P", wm.wpaPIDPath, "-f", wm.logPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("start AP+STA wpa_supplicant: %w: %s", err, clipString(strings.TrimSpace(string(out)), 500))
+	}
+	return nil
+}
+
+func (wm *WiFiHotspotManager) stopAPSTAWpaSupplicant() error {
+	return stopPIDFile(wm.wpaPIDPath)
 }
 
 func (wm *WiFiHotspotManager) enableNAT(apIface, upstreamIface string) error {
