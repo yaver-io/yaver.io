@@ -72,8 +72,18 @@ func saveSessionFile(task *Task, runnerName, workDir string) {
 		}
 	}
 
-	// If no turns but we have result text, include it
-	if len(task.Turns) <= 1 && task.ResultText != "" {
+	// Always persist the final runner result when it was not already
+	// appended as the latest assistant turn. Raw-mode runners can finish
+	// with pre-seeded turns, and hiding ResultText there leaves the saved
+	// session looking like the prompt only.
+	lastAssistant := ""
+	for i := len(task.Turns) - 1; i >= 0; i-- {
+		if task.Turns[i].Role == "assistant" {
+			lastAssistant = task.Turns[i].Content
+			break
+		}
+	}
+	if task.ResultText != "" && strings.TrimSpace(lastAssistant) != strings.TrimSpace(task.ResultText) {
 		content := task.ResultText
 		if len(content) > 3000 {
 			content = content[:3000] + "\n\n...(truncated)"

@@ -1023,6 +1023,13 @@ type Task struct {
 	retryCount int // Number of auto-restart attempts so far
 }
 
+func (tm *TaskManager) effectiveTaskWorkDir(task *Task) string {
+	if task != nil && strings.TrimSpace(task.WorkDir) != "" {
+		return strings.TrimSpace(task.WorkDir)
+	}
+	return tm.workDir
+}
+
 func formatTaskSliceContract(contract *TaskSliceContract) string {
 	if contract == nil {
 		return ""
@@ -2259,10 +2266,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// allowlist (codex uses -C <DIR> to add it). Without this, codex's
 	// workspace-write sandbox treats the project path as Read-only and
 	// rejects apply_patch / sed inplace edits.
-	taskDirForArgs := tm.workDir
-	if task.WorkDir != "" {
-		taskDirForArgs = task.WorkDir
-	}
+	taskDirForArgs := tm.effectiveTaskWorkDir(task)
 	// Yaver-action sentinel instruction: tells the runner it can emit
 	// `<<yaver-action: reload <slug>>>` to drive the user's paired
 	// phone. Only relevant when the user is actually talking through
@@ -2348,10 +2352,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	}
 
 	// Determine working directory
-	taskDir := tm.workDir
-	if task.WorkDir != "" {
-		taskDir = task.WorkDir
-	}
+	taskDir := tm.effectiveTaskWorkDir(task)
 	if err := CheckRunnerReady(runner, taskDir); err != nil {
 		cancel()
 		return fmt.Errorf("runner not ready: %w", err)
@@ -2784,7 +2785,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		// scheduled, offer to schedule it (non-blocking; guards inside).
 		tm.maybeProposeSchedule(task)
 		// Save session file for recent history (non-blocking)
-		go saveSessionFile(task, task.runner.Name, tm.workDir)
+		go saveSessionFile(task, task.runner.Name, tm.effectiveTaskWorkDir(task))
 		tm.mu.Unlock()
 		close(task.doneCh)
 	}()
@@ -3512,10 +3513,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 
 	// Resume reuses the same workDir resolution as initial spawn so
 	// codex's -C sandbox allowlist stays consistent across follow-ups.
-	resumeWorkDir := tm.workDir
-	if task.WorkDir != "" {
-		resumeWorkDir = task.WorkDir
-	}
+	resumeWorkDir := tm.effectiveTaskWorkDir(task)
 	args := buildRunnerArgsWithWorkDir(runner, prompt, resumeWorkDir)
 
 	// Resume the prior conversation (this is always a follow-up). resumeTransform
@@ -3532,7 +3530,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	}
 
 	cmd := exec.CommandContext(ctx, runner.Command, args...)
-	cmd.Dir = tm.workDir
+	cmd.Dir = resumeWorkDir
 
 	// On Android, run the forked runner inside the proot rootfs (no-op elsewhere).
 	cmd = sandboxWrapCmd(cmd)
@@ -3632,7 +3630,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 		}
 		tm.persist()
 		tm.fireTaskDone(task)
-		go saveSessionFile(task, task.runner.Name, tm.workDir)
+		go saveSessionFile(task, task.runner.Name, tm.effectiveTaskWorkDir(task))
 		tm.mu.Unlock()
 		close(task.doneCh)
 	}()
