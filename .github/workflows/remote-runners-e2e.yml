@@ -1,0 +1,73 @@
+name: remote-runners-e2e
+
+# Headless browser test: sign in with the seeded email/password automation
+# account, reach the real dashboard, and drive the remote box's coding
+# runners (claude / codex / opencode / glm) over relay.
+#
+# Runs against PRODUCTION (yaver.io) with a real account, so it's manual /
+# scheduled rather than on every PR. Secrets are scoped to the `integration`
+# GitHub Environment (YAVER_TEST_EMAIL / YAVER_TEST_PASSWORD / YAVER_TEST_CONVEX_SITE);
+# GLM_API_KEY / OPENAI_API_KEY are repo-level (used when the box's runners run).
+#
+# The login + device-list assertions pass today; the workspace/runner tests
+# self-skip until the target box's runners are authenticated on the box.
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: "Target device name"
+        default: "ubuntu-4gb-hel1-1"
+        required: true
+      runners:
+        description: "Comma-separated runners to exercise"
+        default: "claude,codex,opencode,glm"
+        required: true
+  schedule:
+    - cron: "0 6 * * *" # nightly smoke (06:00 UTC)
+
+permissions:
+  contents: read
+
+jobs:
+  remote-runners:
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install e2e deps
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run remote-runners e2e
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: https://yaver.io
+          E2E_CONVEX_URL: ${{ secrets.YAVER_TEST_CONVEX_SITE }}
+          E2E_SKIP_LIVE_AUTH: "1"
+          YAVER_TEST_EMAIL: ${{ secrets.YAVER_TEST_EMAIL }}
+          YAVER_TEST_PASSWORD: ${{ secrets.YAVER_TEST_PASSWORD }}
+          YAVER_TEST_DEVICE: ${{ github.event.inputs.device || 'ubuntu-4gb-hel1-1' }}
+          YAVER_TEST_RUNNERS: ${{ github.event.inputs.runners || 'claude,codex,opencode,glm' }}
+          # Available for box-side runner config / future direct checks.
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: npx playwright test tests/remote-runners.spec.ts --project=chromium --reporter=line
+
+      - name: Upload Playwright report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
