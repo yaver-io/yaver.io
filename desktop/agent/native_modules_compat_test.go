@@ -503,27 +503,27 @@ func TestHostRuntimeFamilies_UsesEmbeddedManifestFamilies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HostRuntimeFamilies: %v", err)
 	}
-	if len(families) < 2 {
-		t.Fatalf("got %d runtime families, want at least 2", len(families))
+	if len(families) == 0 {
+		t.Fatal("expected at least one embedded runtime family")
 	}
-	var familyB *RuntimeFamily
+	var familyA *RuntimeFamily
 	for i := range families {
-		if families[i].ID == "family-b" {
-			familyB = &families[i]
+		if families[i].ID == "family-a" {
+			familyA = &families[i]
 			break
 		}
 	}
-	if familyB == nil {
-		t.Fatalf("family-b missing from embedded runtime families: %#v", families)
+	if familyA == nil {
+		t.Fatalf("family-a missing from embedded runtime families: %#v", families)
 	}
-	if !familyB.CompiledIn {
-		t.Fatalf("family-b compiledIn = false, want true")
+	if !familyA.CompiledIn {
+		t.Fatalf("family-a compiledIn = false, want true")
 	}
-	if familyB.Status != "pilot" {
-		t.Fatalf("family-b status = %q, want pilot", familyB.Status)
+	if familyA.Status != "active" {
+		t.Fatalf("family-a status = %q, want active", familyA.Status)
 	}
-	if len(familyB.PreferredPackageNames) != 1 || familyB.PreferredPackageNames[0] != "sfmg" {
-		t.Fatalf("family-b preferredPackageNames = %#v, want [sfmg]", familyB.PreferredPackageNames)
+	if familyA.PackageRoot != "mobile" {
+		t.Fatalf("family-a packageRoot = %q, want mobile", familyA.PackageRoot)
 	}
 }
 

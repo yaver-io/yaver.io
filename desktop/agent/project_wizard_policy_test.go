@@ -13,6 +13,8 @@ import (
 // This is the regression guard for the 2026 submission gates documented
 // in MOBILE_APP_PERMS_POLICY_FULLSTACK.md.
 func TestWizardGeneratesStoreSubmissionGates(t *testing.T) {
+	t.Setenv("YAVER_DISABLE_WIZARD_AUTOINIT", "1")
+
 	tmpDir, err := os.MkdirTemp("", "wizard-policy-")
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +198,8 @@ func TestWizardGeneratesStoreSubmissionGates(t *testing.T) {
 // TestWizardOmitsGatesWhenMobileOff confirms we don't generate
 // mobile-specific store gates for pure web / landing projects.
 func TestWizardOmitsGatesWhenMobileOff(t *testing.T) {
+	t.Setenv("YAVER_DISABLE_WIZARD_AUTOINIT", "1")
+
 	tmpDir, err := os.MkdirTemp("", "wizard-no-mobile-")
 	if err != nil {
 		t.Fatal(err)

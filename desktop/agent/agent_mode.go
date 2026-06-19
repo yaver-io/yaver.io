@@ -358,7 +358,7 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 				VerifyPoints: 1.0,
 			},
 		}
-	case "full", "agent", "default":
+	case "full", "agent", "default", "ship":
 		return []AgentGraphNodeSpec{
 			{
 				ID:           "plan",

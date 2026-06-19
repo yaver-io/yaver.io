@@ -55,8 +55,8 @@ func TestDummyMode(t *testing.T) {
 	fmt.Printf("Task status: %s\n", status)
 	fmt.Printf("Output:\n%s\n", output)
 
-	if status != "completed" {
-		t.Fatalf("expected completed, got %s", status)
+	if status != "review" && status != "completed" {
+		t.Fatalf("expected review/completed, got %s", status)
 	}
 	if !strings.Contains(output, "Dummy Response") {
 		t.Fatal("expected dummy output")

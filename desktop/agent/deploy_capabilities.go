@@ -138,10 +138,11 @@ type DeployCapabilitiesReport struct {
 // means there is no CI fallback (everything has one today, but the
 // shape stays open for future targets that are inherently local).
 var targetCIWorkflow = map[string]string{
-	"testflight": "release-mobile.yml workflow_dispatch (upload_testflight=true)",
-	"playstore":  "release-mobile.yml workflow_dispatch (upload_playstore=true)",
-	"convex":     "release-web.yml on web/* tag (also runs convex deploy)",
-	"cloudflare": "release-web.yml on web/* tag",
+	"testflight":        "release-mobile.yml workflow_dispatch (upload_testflight=true)",
+	"playstore":         "release-mobile.yml workflow_dispatch (upload_playstore=true)",
+	"convex":            "release-web.yml on web/* tag (also runs convex deploy)",
+	"convex-selfhosted": "release-web.yml on web/* tag (self-hosted Convex deploy script)",
+	"cloudflare":        "release-web.yml on web/* tag",
 }
 
 // targetDefaultVaultProject is the vault project a target's secrets
@@ -152,10 +153,11 @@ var targetCIWorkflow = map[string]string{
 // continue to satisfy capability checks across every phone-project
 // the user creates.
 var targetDefaultVaultProject = map[string]string{
-	"testflight": "mobile",
-	"playstore":  "mobile",
-	"convex":     "backend",
-	"cloudflare": "web",
+	"testflight":        "mobile",
+	"playstore":         "mobile",
+	"convex":            "backend",
+	"convex-selfhosted": "backend",
+	"cloudflare":        "web",
 }
 
 // targetPlatformLock returns the GOOS the target is locked to (single

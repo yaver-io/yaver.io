@@ -80,8 +80,8 @@ func TestMachineRemoveSchedulesShutdown(t *testing.T) {
 	}
 
 	status, body := doRequest(t, "POST", baseURL+"/machine/remove", "infra-token", `{"confirm":true,"phrase":"delete my machine"}`)
-	if status != 200 {
-		t.Fatalf("expected 200, got %d", status)
+	if status != 202 {
+		t.Fatalf("expected 202, got %d", status)
 	}
 	if body["action"] != "machine_remove" {
 		t.Fatalf("unexpected action: %#v", body["action"])

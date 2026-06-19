@@ -98,6 +98,7 @@ func startAutoInitBackground(body AutoInitStart) (map[string]interface{}, error)
 	}
 	cmd := osexec.Command(exe, buildAutoInitArgs(body)...)
 	cmd.Dir = body.WorkDir
+	cmd.Env = append(os.Environ(), autodevDetachEnv+"=1")
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil

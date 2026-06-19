@@ -738,7 +738,14 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 			}
 		}
 	}
-	if autoinitResp, err := startAutoInitBackground(AutoInitStart{
+	if envTruthy(os.Getenv("YAVER_DISABLE_WIZARD_AUTOINIT")) {
+		res.AutoInit = map[string]interface{}{
+			"ok":      true,
+			"started": false,
+			"skipped": true,
+			"reason":  "disabled",
+		}
+	} else if autoinitResp, err := startAutoInitBackground(AutoInitStart{
 		Project: slug,
 		WorkDir: dir,
 		Prompt:  wizardAutoInitHint(a),

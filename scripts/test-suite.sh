@@ -52,6 +52,18 @@ skip()  { echo -e "${YELLOW}  ⊘ $1 (skipped)${NC}"; SKIP_COUNT=$((SKIP_COUNT +
 info()  { echo -e "${CYAN}  → $1${NC}"; }
 header(){ echo -e "\n${BOLD}${BLUE}══ $1 ══${NC}"; }
 
+print_go_failure_log() {
+    local log_file="$1"
+    if [ ! -f "$log_file" ]; then
+        return 0
+    fi
+
+    echo "---- go test failure summary ----"
+    grep -n -E '^(--- FAIL:|FAIL[[:space:]]+|panic:|fatal error:)' "$log_file" || true
+    echo "---- go test tail ----"
+    tail -80 "$log_file"
+}
+
 PASS_COUNT=0
 FAIL_COUNT=0
 SKIP_COUNT=0
@@ -516,7 +528,7 @@ run_unit_tests() {
         pass "Agent unit tests passed"
     else
         fail "Agent unit tests failed"
-        tail -20 "$TEST_DIR/agent-test.log"
+        print_go_failure_log "$TEST_DIR/agent-test.log"
     fi
 
     info "Running Go relay tests..."
@@ -527,7 +539,7 @@ run_unit_tests() {
             skip "Relay has no unit tests"
         else
             fail "Relay unit tests failed"
-            tail -20 "$TEST_DIR/relay-test.log"
+            print_go_failure_log "$TEST_DIR/relay-test.log"
         fi
     fi
 
@@ -536,7 +548,7 @@ run_unit_tests() {
         pass "MCP server tests passed"
     else
         fail "MCP server tests failed"
-        tail -20 "$TEST_DIR/mcp-test.log"
+        print_go_failure_log "$TEST_DIR/mcp-test.log"
     fi
 
     if command -v bun &>/dev/null && [ -d "$ROOT_DIR/mobile-headless" ]; then
@@ -3125,7 +3137,12 @@ HELP
     done
 
     if $run_all || $run_unit; then
+        local unit_failures_before="$FAIL_COUNT"
         run_unit_tests
+        if $run_all && [ "$FAIL_COUNT" -gt "$unit_failures_before" ]; then
+            info "Stopping full suite after unit test failure"
+            run_all=false
+        fi
     fi
 
     if $run_all || $run_features; then

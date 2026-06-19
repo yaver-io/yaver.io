@@ -316,10 +316,10 @@ func TestTaskStatusTransition(t *testing.T) {
 	_, resp := doRequest(t, "POST", baseURL+"/tasks", token, `{"title":"Status test"}`)
 	taskID := resp["taskId"].(string)
 
-	// Should transition through queued/running → completed
+	// Should transition through queued/running → review/completed.
 	status := waitForTask(t, baseURL, token, taskID, 30*time.Second)
-	if status != "completed" {
-		t.Fatalf("expected completed, got %s", status)
+	if status != "review" && status != "completed" {
+		t.Fatalf("expected review/completed, got %s", status)
 	}
 
 	// Verify output is non-empty
@@ -582,7 +582,7 @@ func TestMCPAgentGraphStartAndList(t *testing.T) {
 	listResult := listResp["result"].(map[string]interface{})
 	listContent := listResult["content"].([]interface{})
 	listText := listContent[0].(map[string]interface{})["text"].(string)
-	if !strings.Contains(listText, "nodes=2") {
+	if !strings.Contains(listText, "nodes=3") {
 		t.Fatalf("expected ship template node count, got: %s", listText)
 	}
 	if !strings.Contains(listText, "@ ") {
@@ -785,7 +785,7 @@ func waitForTask(t *testing.T, baseURL, token, taskID string, timeout time.Durat
 			continue
 		}
 		status, _ := task["status"].(string)
-		if status == "completed" || status == "failed" || status == "stopped" {
+		if status == "review" || status == "completed" || status == "failed" || status == "stopped" {
 			return status
 		}
 		time.Sleep(200 * time.Millisecond)

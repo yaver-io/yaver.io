@@ -152,6 +152,12 @@ func keychainAccount(userID string) string {
 	return userID
 }
 
+func vaultKeychainDisabled() bool {
+	return os.Getenv("YAVER_VAULT_SKIP_KEYCHAIN") == "1" ||
+		envTruthy(os.Getenv("YAVER_NONINTERACTIVE")) ||
+		envTruthy(os.Getenv("CI"))
+}
+
 // readMasterKeyFromKeychain attempts to read the master key from the
 // macOS Keychain. Returns (key, true, nil) on hit, (zero, false, nil)
 // when the keychain has no entry or we're not on macOS, (zero, false, err)
@@ -160,7 +166,7 @@ func keychainAccount(userID string) string {
 // the macOS `security` shell-out so unit tests don't pollute the user's
 // real login keychain.
 func readMasterKeyFromKeychain(userID string) (key [masterKeyLen]byte, ok bool, err error) {
-	if runtime.GOOS != "darwin" || os.Getenv("YAVER_VAULT_SKIP_KEYCHAIN") == "1" {
+	if runtime.GOOS != "darwin" || vaultKeychainDisabled() {
 		return key, false, nil
 	}
 	cmd := exec.Command("security", "find-generic-password",
@@ -196,7 +202,7 @@ func readMasterKeyFromKeychain(userID string) (key [masterKeyLen]byte, ok bool, 
 // vault operations continue via the file path. We log but don't return
 // the error so callers stay simple.
 func writeMasterKeyToKeychain(userID string, key [masterKeyLen]byte) {
-	if runtime.GOOS != "darwin" || os.Getenv("YAVER_VAULT_SKIP_KEYCHAIN") == "1" {
+	if runtime.GOOS != "darwin" || vaultKeychainDisabled() {
 		return
 	}
 	hexKey := hex.EncodeToString(key[:])
@@ -300,7 +306,7 @@ func PurgeMasterKey() error {
 	if rerr := os.Remove(metaPath); rerr != nil && !os.IsNotExist(rerr) {
 		return rerr
 	}
-	if runtime.GOOS == "darwin" && os.Getenv("YAVER_VAULT_SKIP_KEYCHAIN") != "1" {
+	if runtime.GOOS == "darwin" && !vaultKeychainDisabled() {
 		// Best-effort; we don't know the userID at sign-out time
 		// without resolving against Convex (which may be offline),
 		// so we wipe all accounts under the service.

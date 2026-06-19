@@ -543,7 +543,9 @@ func applyMachineOnboardingRemoveLocal(req machineOnboardingRemoveRequest) (map[
 		switch strings.ToLower(strings.TrimSpace(provider)) {
 		case "github":
 			if removeClone {
-				if ok, err := removeGitProvidersByMatch(func(p GitProvider) bool { return strings.EqualFold(p.Provider, "github") || strings.EqualFold(p.Host, "github.com") }); err != nil {
+				if ok, err := removeGitProvidersByMatch(func(p GitProvider) bool {
+					return strings.EqualFold(p.Provider, "github") || strings.EqualFold(p.Host, "github.com")
+				}); err != nil {
 					return nil, err
 				} else if ok {
 					removed = append(removed, "github.clone")
@@ -562,17 +564,23 @@ func applyMachineOnboardingRemoveLocal(req machineOnboardingRemoveRequest) (map[
 		case "gitlab":
 			targetHost := strings.TrimSpace(req.GitLabHost)
 			if removeClone {
+				providerHosts := map[string]bool{}
 				matchProvider := func(p GitProvider) bool {
 					if !strings.EqualFold(p.Provider, "gitlab") {
 						return false
 					}
-					return targetHost == "" || strings.EqualFold(p.Host, targetHost)
+					matched := targetHost == "" || strings.EqualFold(p.Host, targetHost)
+					if matched && strings.TrimSpace(p.Host) != "" {
+						providerHosts[strings.ToLower(strings.TrimSpace(p.Host))] = true
+					}
+					return matched
 				}
 				matchCred := func(c GitCredential) bool {
 					if targetHost != "" {
 						return strings.EqualFold(c.Host, targetHost)
 					}
-					return strings.Contains(strings.ToLower(strings.TrimSpace(c.Host)), "gitlab")
+					host := strings.ToLower(strings.TrimSpace(c.Host))
+					return strings.Contains(host, "gitlab") || providerHosts[host]
 				}
 				if ok, err := removeGitProvidersByMatch(matchProvider); err != nil {
 					return nil, err

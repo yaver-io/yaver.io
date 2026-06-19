@@ -10,7 +10,9 @@ func setupMachineOnboardingTestEnv(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("YAVER_VAULT_PASSPHRASE", "")
+	t.Setenv("YAVER_VAULT_PASSPHRASE", "test-vault-passphrase")
+	t.Setenv("YAVER_VAULT_SKIP_KEYCHAIN", "1")
+	t.Setenv("YAVER_VAULT_USER_ID", "test-user")
 	cfg := &Config{AuthToken: "test-auth-token"}
 	if err := SaveConfig(cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)

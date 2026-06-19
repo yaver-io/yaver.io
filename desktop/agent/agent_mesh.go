@@ -38,6 +38,19 @@ type meshPolicyState struct {
 }
 
 func planGraphPlacements(req AgentGraphCreateRequest, nodes []AgentGraphNodeSpec) []*AgentNodePlacement {
+	if graphPlacementLocalOnly(req, nodes) {
+		out := make([]*AgentNodePlacement, 0, len(nodes))
+		for _, node := range nodes {
+			out = append(out, &AgentNodePlacement{
+				DeviceID: "local",
+				Runner:   normalizedPlacementRunner(node.Runner),
+				Model:    node.Model,
+				Reason:   "local execution requested",
+			})
+		}
+		return out
+	}
+
 	machineList := listAllMachines(context.Background())
 	state := &meshPlannerState{
 		machines:           map[string]MachineInfo{},
@@ -54,6 +67,36 @@ func planGraphPlacements(req AgentGraphCreateRequest, nodes []AgentGraphNodeSpec
 		state.reserve(placement)
 	}
 	return out
+}
+
+func graphPlacementLocalOnly(req AgentGraphCreateRequest, nodes []AgentGraphNodeSpec) bool {
+	if !placementTargetsLocalOnly(req.AllowedDevices) {
+		return false
+	}
+	if v := strings.TrimSpace(req.PreferredDevice); v != "" && v != "local" {
+		return false
+	}
+	for _, node := range nodes {
+		if !placementTargetsLocalOnly(node.AllowedDevices) {
+			return false
+		}
+		if v := strings.TrimSpace(node.PreferredDevice); v != "" && v != "local" {
+			return false
+		}
+	}
+	return len(req.AllowedDevices) > 0 || strings.TrimSpace(req.PreferredDevice) == "local"
+}
+
+func placementTargetsLocalOnly(targets []string) bool {
+	if len(targets) == 0 {
+		return true
+	}
+	for _, target := range targets {
+		if strings.TrimSpace(target) != "local" {
+			return false
+		}
+	}
+	return true
 }
 
 func (ps *meshPlannerState) reserve(placement *AgentNodePlacement) {
@@ -322,7 +365,7 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 		}
 	}
 
-if m.IsShared {
+	if m.IsShared {
 		hostLabel := firstNonEmpty(m.HostName, m.HostEmail, "a shared host")
 		if runnerNeedsHostedAPIKey(runner) && !m.UseHostAPIKeys && !m.AllowGuestProvidedAPIKeys {
 			score -= 1500

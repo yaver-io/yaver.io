@@ -9,6 +9,8 @@ import (
 )
 
 func TestMCPSelfHostedProjectCreateGeneratesFullMonorepo(t *testing.T) {
+	t.Setenv("YAVER_DISABLE_WIZARD_AUTOINIT", "1")
+
 	parent, err := os.MkdirTemp("", "yaver-mcp-project-")
 	if err != nil {
 		t.Fatal(err)
