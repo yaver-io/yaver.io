@@ -1637,7 +1637,13 @@ export const lookupEmailUser = query({
       .withIndex("by_email", (q) => q.eq("email", args.email))
       .unique();
 
-    if (!user || user.provider !== "email") return null;
+    // Gate on a password being set, not on the primary `provider` field.
+    // An account created via OAuth (provider="apple"/"google"/…) can ALSO
+    // have an email/password credential linked (passwordHash + an "email"
+    // authIdentity); requiring provider==="email" locked those users out
+    // of password login entirely. Login still verifies the password, so
+    // returning any password-bearing user by email is safe.
+    if (!user || !user.passwordHash) return null;
 
     return {
       _id: user._id,

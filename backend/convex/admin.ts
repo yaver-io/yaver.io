@@ -1030,6 +1030,43 @@ export const pruneSurfaceSessions = mutation({
   },
 });
 
+/** Attach an email/password credential to an EXISTING user (e.g. an
+ *  OAuth-primary account that wants a password login too, or a seeded
+ *  automation login for chromedp/redroid tests). Sets passwordHash and
+ *  upserts an "email" authIdentity without creating a second user row.
+ *  passwordHash must be in the backend's PBKDF2 format (`saltB64:hashB64`,
+ *  SHA-256, 100k iterations). Pairs with the relaxed lookupEmailUser gate. */
+export const setUserPassword = mutation({
+  args: {
+    targetDocId: v.id("users"),
+    passwordHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.targetDocId);
+    if (!user) throw new Error("Target user not found");
+    await ctx.db.patch(args.targetDocId, { passwordHash: args.passwordHash });
+
+    const email = user.email;
+    const existing = email
+      ? await ctx.db
+          .query("authIdentities")
+          .withIndex("by_provider", (q) => q.eq("provider", "email").eq("providerId", email))
+          .unique()
+      : null;
+    if (email && !existing) {
+      await ctx.db.insert("authIdentities", {
+        userId: args.targetDocId,
+        provider: "email",
+        providerId: email,
+        email,
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+      });
+    }
+    return { ok: true, email, identityLinked: Boolean(email) };
+  },
+});
+
 /** Cascade delete a user across every user-scoped table. GDPR
  *  right-to-erasure. Audit row is written BEFORE the user row is
  *  deleted so the foreign-key reference resolves. */
