@@ -14,6 +14,7 @@
 // box's own `yaver auth` poller finishes within ~5s and it comes online.
 
 import { router, useLocalSearchParams } from "expo-router";
+import * as LocalAuthentication from "expo-local-authentication";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -83,11 +84,37 @@ export default function ApproveDeviceScreen() {
     if (approving) return;
     setApproving(true);
     setError(null);
+    // Biometric gate: authorizing a remote machine is sensitive, so require a
+    // fresh Face ID / Touch ID before it goes through — possession of an
+    // already-unlocked phone shouldn't be enough. disableDeviceFallback keeps
+    // it to biometrics (no passcode substitute). If the device has no
+    // biometric hardware/enrollment we don't lock the user out: the signed-in
+    // session token already proves account control.
+    try {
+      const [hasHw, enrolled] = await Promise.all([
+        LocalAuthentication.hasHardwareAsync(),
+        LocalAuthentication.isEnrolledAsync(),
+      ]);
+      if (hasHw && enrolled) {
+        const r = await LocalAuthentication.authenticateAsync({
+          promptMessage: `Approve sign-in for ${info?.machineName || "this machine"}`,
+          disableDeviceFallback: true,
+          cancelLabel: "Cancel",
+        });
+        if (!r.success) {
+          setApproving(false);
+          setError("Face ID / Touch ID is required to approve a sign-in.");
+          return;
+        }
+      }
+    } catch {
+      // A biometric subsystem error shouldn't hard-block a valid session.
+    }
     const res = await approveDeviceCode(code, token ?? "");
     setApproving(false);
     if (res.ok) setDone(true);
     else setError(res.error ?? "Couldn't authorize the machine.");
-  }, [approving, code, token]);
+  }, [approving, code, token, info?.machineName]);
 
   const goHome = useCallback(() => {
     router.replace("/(tabs)/tasks");
