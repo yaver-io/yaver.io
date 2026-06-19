@@ -1472,7 +1472,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, retryConnection, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, deviceListError, unreachableDeviceIds, stopReconnectAndBounce, retryConnection, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -4024,6 +4024,30 @@ export default function TasksScreen() {
                   Pair your computer to run your AI agent, or build from this phone.
                 </Text>
 
+                {/* If the device-list fetch actually FAILED (stale/rotated
+                    token → 401, or a network error), the generic "pair your
+                    computer" copy is misleading — the user may already have
+                    machines that just couldn't load. Surface the real error
+                    and offer a clean re-auth, which mints a fresh consistent
+                    token and is the universal fix when the stored token and
+                    the live session have drifted apart. */}
+                {deviceListError ? (
+                  <View style={[s.discoverErrorCard, { borderColor: withAlpha("#E0A800", "55"), backgroundColor: withAlpha("#E0A800", "12") }]}>
+                    <Text style={[s.discoverErrorText, { color: c.textPrimary }]}>
+                      Couldn't load your devices. If you have machines paired, this is usually a stale sign-in on this phone.
+                    </Text>
+                    <Text style={[s.discoverHelper, { color: c.textMuted, marginTop: 4 }]} numberOfLines={2}>
+                      {deviceListError}
+                    </Text>
+                    <Pressable
+                      style={[s.discoverSecondaryBtn, { borderColor: c.border, marginTop: 10 }]}
+                      onPress={async () => { try { await logout(); } catch {} }}
+                    >
+                      <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Sign in again</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
                 <Pressable
                   style={[s.discoverPrimaryBtn, { backgroundColor: c.accent }]}
                   onPress={() => taskRouter.navigate("/onboarding-pair" as any)}
@@ -5971,6 +5995,8 @@ const s = StyleSheet.create({
   discoverRefreshLink: { marginTop: 20, paddingVertical: 8, alignItems: "center" },
   discoverRefreshText: { fontSize: 13, fontWeight: "500" },
   discoverHelper: { fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: "center", paddingHorizontal: 8 },
+  discoverErrorCard: { width: "100%", marginBottom: 20, padding: 14, borderRadius: 12, borderWidth: 1 },
+  discoverErrorText: { fontSize: 13, lineHeight: 19, fontWeight: "500", textAlign: "center" },
   discoverDivider: { height: 1, width: "100%", marginTop: 28, marginBottom: 14, opacity: 0.5 },
   discoverSectionLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 },
   discoverSteps: { width: "100%", marginTop: 12, gap: 14 },
