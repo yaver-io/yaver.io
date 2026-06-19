@@ -35,15 +35,18 @@ interface Props {
 
 // Pre-fills for the most common providers. Same set the web
 // ToolsView uses; keep them in sync.
-const PRESETS: Array<{ label: string; id: string; name: string; baseUrl?: string; hint: string }> = [
+const PRESETS: Array<{ label: string; id: string; name: string; baseUrl?: string; hint: string; model?: string; models?: Record<string, unknown> }> = [
   { label: "OpenAI", id: "openai", name: "OpenAI", hint: "GPT-5 family via your OpenAI API key." },
   { label: "Anthropic", id: "anthropic", name: "Anthropic", hint: "Claude models via your Anthropic API key." },
   { label: "Gemini", id: "google", name: "Google Gemini", hint: "Gemini models via GEMINI_API_KEY. OpenCode knows the stock Google provider." },
-  // Two distinct z.ai surfaces — same vendor, different keys/SLA. Coding
-  // Plan keys (z.ai/coding) only authenticate against the coding endpoint;
-  // Zhipu OpenAPI keys only authenticate against bigmodel.cn. Picking the
-  // wrong preset surfaces as 401 mid-task — keep both visible.
-  { label: "Z.ai Coding (GLM-4.7)", id: "zai", name: "Z.ai Coding Plan", baseUrl: "https://api.z.ai/api/coding/paas/v4", hint: "GLM-4.7 / GLM-4.5-air. Key from z.ai (Coding Plan)." },
+  {
+    label: "Z.ai Coding Plan",
+    id: "zai-coding-plan",
+    name: "Zai Coding Plan (GLM 4.7)",
+    model: "zai-coding-plan/glm-4.7",
+    hint: "GLM 4.7 Coding Plan using OpenCode's built-in provider. This is the Hetzner/OpenCode default.",
+  },
+  { label: "Z.ai API (GLM-4.7)", id: "zai", name: "Zai API (GLM 4.7)", baseUrl: "https://api.zai.ai/v1", model: "zai/glm-4.7", models: { "glm-4.7": { name: "GLM 4.7", tools: true }, "glm-4.7-flash": { name: "GLM 4.7 Flash", tools: true } }, hint: "General z.ai OpenAI-compatible endpoint." },
   { label: "Zhipu OpenAPI (GLM-4)", id: "glm", name: "Zhipu (open.bigmodel.cn)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", hint: "Legacy GLM-4 / GLM-4V via open.bigmodel.cn. Different key from Z.ai Coding Plan." },
   { label: "Groq", id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", hint: "Fast Llama / Mixtral / Qwen. Key from console.groq.com." },
   { label: "OpenRouter", id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", hint: "Aggregator across most models. openrouter.ai." },
@@ -78,6 +81,8 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
   const [addName, setAddName] = useState("");
   const [addBaseUrl, setAddBaseUrl] = useState("");
   const [addApiKey, setAddApiKey] = useState("");
+  const [addModel, setAddModel] = useState("");
+  const [addModels, setAddModels] = useState<Record<string, unknown> | undefined>(undefined);
   const [presetHint, setPresetHint] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -109,6 +114,8 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       setAddName("");
       setAddBaseUrl("");
       setAddApiKey("");
+      setAddModel("");
+      setAddModels(undefined);
       setPresetHint("");
       return;
     }
@@ -188,14 +195,18 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       return;
     }
     const apiKeyTrimmed = addApiKey.trim();
+    const modelTrimmed = addModel.trim();
     setBusy(true);
     const res = await quicClient.saveOpenCodeConfig({
+      defaultAgent: modelTrimmed ? "build" : undefined,
+      model: modelTrimmed || undefined,
       providers: [
         {
           id: addId.trim(),
           name: addName.trim() || undefined,
           baseUrl: addBaseUrl.trim() || undefined,
           apiKey: apiKeyTrimmed || undefined,
+          models: addModels,
         },
       ],
     });
@@ -209,7 +220,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       void setPrimaryRunnerForDevice(
         activeDevice.id,
         "opencode",
-        res.config?.model || null,
+        res.config?.model || modelTrimmed || null,
         res.config?.defaultAgent || null,
         addId.trim(),
       ).catch(() => {});
@@ -219,8 +230,10 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
     setAddName("");
     setAddBaseUrl("");
     setAddApiKey("");
+    setAddModel("");
+    setAddModels(undefined);
     setPresetHint("");
-  }, [addId, addName, addBaseUrl, addApiKey, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
+  }, [addId, addName, addBaseUrl, addApiKey, addModel, addModels, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
 
   const deleteProvider = useCallback(
     (provider: OpenCodeProviderSummary) => {
@@ -423,6 +436,8 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
                       setAddId(p.id);
                       setAddName(p.name);
                       setAddBaseUrl(p.baseUrl || "");
+                      setAddModel(p.model || "");
+                      setAddModels(p.models);
                       setPresetHint(p.hint);
                     }}
                     style={({ pressed }) => [
@@ -437,6 +452,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
               {presetHint ? <Text style={[styles.muted, { color: c.textMuted, fontSize: 11, marginBottom: 8 }]}>{presetHint}</Text> : null}
               <Field label="Provider id" value={addId} onChange={setAddId} placeholder="glm / groq / ollama-tailscale" c={c} />
               <Field label="Base URL" value={addBaseUrl} onChange={setAddBaseUrl} placeholder="https://… or http://127.0.0.1:11434/v1" c={c} />
+              <Field label="Default model" value={addModel} onChange={setAddModel} placeholder="provider/model (optional)" c={c} />
               <Field label="API key" value={addApiKey} onChange={setAddApiKey} placeholder="(leave empty for local Ollama)" c={c} secret />
               <Pressable
                 onPress={addProvider}

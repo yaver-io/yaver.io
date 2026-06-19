@@ -1932,12 +1932,12 @@ export class AgentClient {
    * desktop/agent/runner_test_http.go. `needsAuth + supportsBrowserAuth`
    * are the signal callers use to auto-trigger the headless login flow.
    */
-  async testRunner(runner: string, opts?: { prompt?: string; model?: string }): Promise<RunnerTestResult> {
+  async testRunner(runner: string, opts?: { prompt?: string; model?: string; timeoutMs?: number }): Promise<RunnerTestResult> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/runners/test`, {
       method: "POST",
       headers: this.authHeaders,
-      body: JSON.stringify({ runner, prompt: opts?.prompt, model: opts?.model }),
+      body: JSON.stringify({ runner, prompt: opts?.prompt, model: opts?.model, timeoutMs: opts?.timeoutMs }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");

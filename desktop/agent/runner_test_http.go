@@ -53,6 +53,7 @@ type runnerTestResult struct {
 const (
 	runnerTestDefaultPrompt = "Reply with the single word OK and nothing else."
 	runnerTestTimeout       = 25 * time.Second
+	runnerTestMaxTimeout    = 2 * time.Minute
 )
 
 func runnerSupportsBrowserAuth(id string) bool {
@@ -111,9 +112,10 @@ func (s *HTTPServer) handleRunnerTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Runner string `json:"runner"`
-		Prompt string `json:"prompt"`
-		Model  string `json:"model"`
+		Runner    string `json:"runner"`
+		Prompt    string `json:"prompt"`
+		Model     string `json:"model"`
+		TimeoutMs int64  `json:"timeoutMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
@@ -136,6 +138,16 @@ func (s *HTTPServer) handleRunnerTest(w http.ResponseWriter, r *http.Request) {
 	}
 	if model := strings.TrimSpace(req.Model); model != "" {
 		cfg.Model = model
+	}
+	timeout := runnerTestTimeout
+	if req.TimeoutMs > 0 {
+		requested := time.Duration(req.TimeoutMs) * time.Millisecond
+		if requested > runnerTestMaxTimeout {
+			requested = runnerTestMaxTimeout
+		}
+		timeout = requested
+	} else if runnerID == "opencode" {
+		timeout = 75 * time.Second
 	}
 	started := time.Now()
 
@@ -170,7 +182,7 @@ func (s *HTTPServer) handleRunnerTest(w http.ResponseWriter, r *http.Request) {
 	// Step 3 — local LLMs: don't actually generate. Probe the daemon
 	// listing instead. Matches "for local LLMs just test pass/fail".
 	if runnerIsLocalLLM(runnerID) {
-		result := probeOllamaDaemon(runnerTestTimeout, cfg.Model)
+		result := probeOllamaDaemon(timeout, cfg.Model)
 		result.Runner = runnerID
 		result.DurationMs = time.Since(started).Milliseconds()
 		writeRunnerTestResult(w, result)
@@ -182,7 +194,7 @@ func (s *HTTPServer) handleRunnerTest(w http.ResponseWriter, r *http.Request) {
 	if prompt == "" {
 		prompt = runnerTestDefaultPrompt
 	}
-	output, err := runRunnerProbe(cfg, runnerID, prompt, runnerTestTimeout)
+	output, err := runRunnerProbe(cfg, runnerID, prompt, timeout)
 	duration := time.Since(started).Milliseconds()
 	if err != nil {
 		combined := strings.TrimSpace(output) + "\n" + err.Error()
@@ -231,7 +243,11 @@ func runRunnerProbe(cfg RunnerConfig, runnerID, prompt string, timeout time.Dura
 			args = append(args, "--model", mid)
 		}
 	case "codex":
-		args = []string{"exec", "--skip-git-repo-check", prompt}
+		args = []string{"exec", "--skip-git-repo-check"}
+		if mid := strings.TrimSpace(cfg.Model); mid != "" {
+			args = append(args, "--model", mid)
+		}
+		args = append(args, prompt)
 	case "aider":
 		args = []string{
 			"--yes-always", "--no-git", "--no-pretty", "--no-stream",

@@ -157,6 +157,42 @@ func TestBuildRunnerArgs_CodexSkipGitRepoCheck(t *testing.T) {
 	})
 }
 
+func TestInsertRunnerFlagAfter(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		after string
+		want  []string
+	}{
+		{
+			name:  "opencode model stays before prompt",
+			args:  []string{"run", "--dangerously-skip-permissions", "What is 2+2?"},
+			after: "run",
+			want:  []string{"run", "--model", "zai-coding-plan/glm-4.7", "--dangerously-skip-permissions", "What is 2+2?"},
+		},
+		{
+			name:  "codex model stays before prompt",
+			args:  []string{"exec", "--skip-git-repo-check", "What is 2+2?"},
+			after: "exec",
+			want:  []string{"exec", "--model", "zai-coding-plan/glm-4.7", "--skip-git-repo-check", "What is 2+2?"},
+		},
+		{
+			name:  "fallback prepends when subcommand missing",
+			args:  []string{"custom", "prompt"},
+			after: "run",
+			want:  []string{"--model", "zai-coding-plan/glm-4.7", "custom", "prompt"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := insertRunnerFlagAfter(tt.args, tt.after, "--model", "zai-coding-plan/glm-4.7")
+			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") {
+				t.Fatalf("args = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func containsArg(args []string, want string) bool {
 	for _, a := range args {
 		if a == want {

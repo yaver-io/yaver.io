@@ -249,6 +249,26 @@ export default function ProjectTestsScreen() {
     setRuns(rr.runs || []);
   };
 
+  const preflightMissingDeps = () => {
+    const deps = ((qualityReport?.preflight as any)?.deps || []) as any[];
+    const missing = deps.filter((d) => d && d.present === false).map((d) => String(d.name || "")).filter(Boolean);
+    if ((qualityReport?.preflight as any)?.playwright?.ok === false && !missing.includes("playwright")) missing.push("playwright");
+    return missing;
+  };
+
+  const repairPreflightDeps = async () => {
+    const t = target();
+    if (!t) return setErr("Pick a remote PC first.");
+    const include = preflightMissingDeps();
+    if (!include.length) return setErr("No missing preflight dependencies found.");
+    setBusy(true);
+    setErr(null);
+    const j = await testkitClient.depsInstall(t, include);
+    setBusy(false);
+    if ((j as any)?.error || !j?.id) return setErr((j as any)?.error || "could not start dependency repair");
+    setJob(j);
+  };
+
   const runQuality = async () => {
     const t = target();
     if (!t) return setErr("Pick a remote PC that holds the project repo first.");
@@ -506,7 +526,7 @@ export default function ProjectTestsScreen() {
           </View>
         )}
 
-        {qualityReport ? <QualityView report={qualityReport} c={c} /> : null}
+        {qualityReport ? <QualityView report={qualityReport} c={c} onRepair={repairPreflightDeps} /> : null}
         {report && <ReportView report={report} c={c} target={target()} jobId={qualityReport?.browserJobId || job?.id} playwright={mode !== "chromedp"} />}
         {grow && <GrowView plan={grow} c={c} />}
       </ScrollView>
@@ -628,13 +648,18 @@ function ArtifactRefs({ artifacts, c, target, jobId }: { artifacts: TKArtifactRe
           {(traceInfo.entries || []).slice(0, 8).map((e, i) => (
             <Text key={i} style={{ color: c.textMuted, fontSize: 10 }}>{e.name}</Text>
           ))}
+          {(traceInfo.timeline || []).slice(0, 12).map((e, i) => (
+            <Text key={`tl-${i}`} style={{ color: e.error ? "#ff5d5d" : c.textMuted, fontSize: 10 }}>
+              {e.apiName || e.method || e.type || "event"}{e.duration ? ` · ${Math.round(e.duration)}ms` : ""}{e.error ? ` · ${e.error}` : ""}
+            </Text>
+          ))}
         </View>
       ) : null}
     </View>
   );
 }
 
-function QualityView({ report, c }: { report: TKQualityReport; c: any }) {
+function QualityView({ report, c, onRepair }: { report: TKQualityReport; c: any; onRepair: () => void }) {
   return (
     <View style={{ backgroundColor: c.bgCard, borderRadius: 10, padding: 12, gap: 6, borderWidth: 1, borderColor: c.border }}>
       <Text style={{ color: report.passed ? "#2fbf71" : "#ff5d5d", fontWeight: "800" }}>
@@ -647,6 +672,11 @@ function QualityView({ report, c }: { report: TKQualityReport; c: any }) {
         <Text style={{ color: (report.preflight as any).ready ? "#2fbf71" : "#ffd166", fontSize: 12 }}>
           Preflight: {(report.preflight as any).ready ? "ready" : "needs attention"}
         </Text>
+      ) : null}
+      {report.preflight && !(report.preflight as any).ready ? (
+        <Pressable onPress={onRepair} style={{ alignSelf: "flex-start", backgroundColor: "#a86a1a", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 }}>
+          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>Repair Missing Deps</Text>
+        </Pressable>
       ) : null}
       {report.android ? (
         <Text style={{ color: c.textPrimary, fontSize: 12 }}>

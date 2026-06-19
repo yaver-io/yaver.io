@@ -27,6 +27,9 @@ export interface MobileClientOptions {
    *  works for Convex-only calls (listDevices, etc.) but agent
    *  endpoints need `connect()` first. */
   agentBaseUrl?: string;
+  /** Relay password for relay-backed agentBaseUrl targets. When set,
+   *  every agent request gets `__rp` unless the path already has it. */
+  agentRelayPassword?: string;
 }
 
 type Device = {
@@ -207,8 +210,9 @@ export interface HeadlessRecoveryResult {
 }
 
 export class MobileClient {
-  readonly opts: Required<Omit<MobileClientOptions, "agentBaseUrl">> & { agentBaseUrl?: string };
+  readonly opts: Required<Omit<MobileClientOptions, "agentBaseUrl" | "agentRelayPassword">> & { agentBaseUrl?: string; agentRelayPassword?: string };
   private agentBaseUrl?: string;
+  private agentRelayPassword?: string;
 
   constructor(opts: MobileClientOptions = {}) {
     this.opts = {
@@ -220,6 +224,7 @@ export class MobileClient {
       atsAware: opts.atsAware ?? process.env.YMH_ATS === "1",
     };
     this.agentBaseUrl = opts.agentBaseUrl ?? process.env.YMH_AGENT_URL;
+    this.agentRelayPassword = opts.agentRelayPassword ?? process.env.YMH_AGENT_RELAY_PASSWORD;
   }
 
   // ── Auth ──────────────────────────────────────────────────────
@@ -419,7 +424,10 @@ export class MobileClient {
 
   /** Alternative — point directly at a base URL. Used by tests that
    *  spin up a local mock agent. */
-  useAgentBaseUrl(url: string) { this.agentBaseUrl = url; }
+  useAgentBaseUrl(url: string, relayPassword?: string) {
+    this.agentBaseUrl = url;
+    if (relayPassword !== undefined) this.agentRelayPassword = relayPassword;
+  }
 
   async infraSummary(target?: string): Promise<any> {
     return (await this.raw.get(this.peerPath(target, "/infra/summary"))).body;
@@ -1073,7 +1081,16 @@ export class MobileClient {
   }
   private agentURL(p: string): string {
     const base = this.agentBaseUrl ?? "http://127.0.0.1:18080";
-    return base.replace(/\/$/, "") + (p.startsWith("/") ? p : "/" + p);
+    const raw = base.replace(/\/$/, "") + (p.startsWith("/") ? p : "/" + p);
+    const relayPassword = this.agentRelayPassword;
+    if (!relayPassword || raw.includes("__rp=")) return raw;
+    try {
+      const u = new URL(raw);
+      u.searchParams.set("__rp", relayPassword);
+      return u.toString();
+    } catch {
+      return raw;
+    }
   }
   private absoluteUrl(base: string, p: string): string {
     return base.replace(/\/$/, "") + (p.startsWith("/") ? p : "/" + p);

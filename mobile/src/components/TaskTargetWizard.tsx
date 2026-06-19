@@ -105,9 +105,9 @@ const MODELS_BY_RUNNER: Record<TaskTarget["runner"], { id: string; label: string
     //    with a ChatGPT account."
     // We don't surface those at all so a free-tier vibing user never
     // ends up in the crash loop their plan doesn't allow.
-    { id: "gpt-5.4", label: "GPT-5.4 (best on ChatGPT plan)" },
-    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini (fast)" },
     { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { id: "gpt-5.4", label: "GPT-5.4" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
   ],
   // OpenCode picks model+provider via opencode.json on the host, not
   // via a wizard-level model id. The runner's own agents pane handles

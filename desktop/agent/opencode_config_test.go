@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -10,8 +12,10 @@ func TestLoadOpenCodeConfigSummaryParsesJSONCAndModels(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("OPENCODE_CONFIG", "")
 	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("OPENCODE_AUTH", "")
 
 	cfgPath := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
@@ -122,15 +126,14 @@ func TestProviderSummary_HasAPIKey(t *testing.T) {
 		t.Errorf("expected ollama.HasAPIKey=false (no apiKey configured)")
 	}
 	// Defense-in-depth: HasAPIKey must NEVER carry the key value into
-	// any field on the summary — boolean only. Round-trip the summary
-	// through json so we catch any new field that might leak the key.
-	jsonBlob := summary.Providers
-	for _, p := range jsonBlob {
-		if p.ID == "zai" {
-			if p.BaseURL == "secret-not-leaked-to-summary" || p.Name == "secret-not-leaked-to-summary" {
-				t.Fatalf("provider summary leaked the apiKey into another field: %#v", p)
-			}
-		}
+	// any field on the summary — boolean only. Round-trip the full
+	// summary through JSON so we catch any new field that might leak it.
+	blob, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if strings.Contains(string(blob), "secret-not-leaked-to-summary") {
+		t.Fatalf("opencode summary leaked apiKey: %s", string(blob))
 	}
 }
 
@@ -162,6 +165,11 @@ func TestApplyOpenCodeConfigPatchCreatesAndUpdatesConfig(t *testing.T) {
 	if summary.DefaultAgent != defaultAgent || summary.Model != model || summary.PlanModel != planModel {
 		t.Fatalf("unexpected summary %#v", summary)
 	}
+	if st, err := os.Stat(summary.Path); err != nil {
+		t.Fatalf("stat created config: %v", err)
+	} else if got := st.Mode().Perm(); got != 0o600 {
+		t.Fatalf("created config mode = %o, want 600", got)
+	}
 
 	cleared := ""
 	summary, err = applyOpenCodeConfigPatch(openCodeConfigPatch{
@@ -176,5 +184,126 @@ func TestApplyOpenCodeConfigPatchCreatesAndUpdatesConfig(t *testing.T) {
 	}
 	if summary.PlanModel != "" {
 		t.Fatalf("expected plan model cleared, got %q", summary.PlanModel)
+	}
+}
+
+func TestApplyOpenCodeConfigPatchSyncsAuthStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_CONFIG", "")
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("OPENCODE_AUTH", "")
+
+	defaultAgent := "build"
+	model := "zai-coding-plan/glm-4.7"
+	secret := "secret-not-leaked-to-summary"
+	summary, err := applyOpenCodeConfigPatch(openCodeConfigPatch{
+		DefaultAgent: &defaultAgent,
+		Model:        &model,
+		BuildModel:   &model,
+		PlanModel:    &model,
+		Providers: []openCodeProviderPatch{{
+			ID:      "zai-coding-plan",
+			Name:    "Zai Coding Plan",
+			BaseURL: "https://api.zai.ai/v1",
+			APIKey:  secret,
+			Models: map[string]any{
+				"glm-4.7": map[string]any{"name": "GLM 4.7 Coding Plan", "tools": true},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("applyOpenCodeConfigPatch: %v", err)
+	}
+	authPath := filepath.Join(home, ".local", "share", "opencode", "auth.json")
+	raw, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatalf("read auth store: %v", err)
+	}
+	if st, err := os.Stat(authPath); err != nil {
+		t.Fatalf("stat auth store: %v", err)
+	} else if got := st.Mode().Perm(); got != 0o600 {
+		t.Fatalf("auth store mode = %o, want 600", got)
+	}
+	var auth map[string]map[string]string
+	if err := json.Unmarshal(raw, &auth); err != nil {
+		t.Fatalf("unmarshal auth store: %v", err)
+	}
+	if got := auth["zai-coding-plan"]["type"]; got != "api" {
+		t.Fatalf("auth type = %q, want api", got)
+	}
+	if got := auth["zai-coding-plan"]["key"]; got != secret {
+		t.Fatalf("auth key was not written to OpenCode auth store")
+	}
+	blob, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if strings.Contains(string(blob), secret) {
+		t.Fatalf("opencode summary leaked apiKey: %s", string(blob))
+	}
+	if len(summary.Providers) != 1 || !summary.Providers[0].HasAPIKey {
+		t.Fatalf("expected provider hasApiKey summary, got %#v", summary.Providers)
+	}
+}
+
+func TestLoadOpenCodeConfigSummaryUsesAuthStoreForBuiltinCodingPlan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_CONFIG", "")
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("OPENCODE_AUTH", "")
+
+	cfgPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rawCfg := `{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "zai-coding-plan/glm-4.7",
+  "enabled_providers": ["zai-coding-plan"],
+  "default_agent": "build"
+}`
+	if err := os.WriteFile(cfgPath, []byte(rawCfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authPath := filepath.Join(home, ".local", "share", "opencode", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPath, []byte(`{"zai-coding-plan":{"type":"api","key":"secret-not-leaked-to-summary"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := loadOpenCodeConfigSummary()
+	if err != nil {
+		t.Fatalf("loadOpenCodeConfigSummary: %v", err)
+	}
+	var codingPlan OpenCodeProviderSummary
+	for _, p := range summary.Providers {
+		if p.ID == "zai-coding-plan" {
+			codingPlan = p
+			break
+		}
+	}
+	if !codingPlan.HasAPIKey {
+		t.Fatalf("expected auth-store key to mark zai-coding-plan configured, providers=%#v", summary.Providers)
+	}
+	if codingPlan.BaseURL != "" {
+		t.Fatalf("builtin coding plan provider should not require a custom baseUrl, got %q", codingPlan.BaseURL)
+	}
+	blob, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if strings.Contains(string(blob), "secret-not-leaked-to-summary") {
+		t.Fatalf("opencode summary leaked auth-store key: %s", string(blob))
+	}
+	if len(summary.Diagnostics) != 0 {
+		t.Fatalf("unexpected diagnostics for builtin coding plan: %#v", summary.Diagnostics)
 	}
 }

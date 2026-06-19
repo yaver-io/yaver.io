@@ -166,6 +166,15 @@ export type TKTraceInspect = {
   resources?: number;
   screenshots?: number;
   sourceFiles?: number;
+  timeline?: {
+    callId?: string;
+    apiName?: string;
+    method?: string;
+    type?: string;
+    duration?: number;
+    error?: string;
+    params?: Record<string, unknown>;
+  }[];
 };
 
 async function lanAttempt(host: string, port: number, body: string, timeoutMs: number): Promise<any | null> {
@@ -291,7 +300,7 @@ export const testkitClient = {
     ),
 
   /** Install every missing test dependency once (async job; poll then re-check). */
-  depsInstall: (t: TKTarget) => tkOps<TKJob>(t, "testkit_deps_install", {}, 30000),
+  depsInstall: (t: TKTarget, include?: string[]) => tkOps<TKJob>(t, "testkit_deps_install", { include }, 30000),
 
   /** Fetch a highlight clip / reel / screenshot (base64) to play/show in-app. */
   artifact: (t: TKTarget, jobId: string, path: string) =>

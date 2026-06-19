@@ -2038,6 +2038,22 @@ func buildRunnerArgsWithWorkDir(runner RunnerConfig, prompt, workDir string) []s
 	return args
 }
 
+func insertRunnerFlagAfter(args []string, after, flag, value string) []string {
+	out := make([]string, 0, len(args)+2)
+	inserted := false
+	for _, a := range args {
+		out = append(out, a)
+		if !inserted && a == after {
+			out = append(out, flag, value)
+			inserted = true
+		}
+	}
+	if !inserted {
+		out = append([]string{flag, value}, out...)
+	}
+	return out
+}
+
 // isInsideGitRepo reports whether dir (or any ancestor) contains a
 // `.git` entry — the same check `git rev-parse --is-inside-work-tree`
 // performs, but without shelling out (the runner-args build path is
@@ -2347,7 +2363,14 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			}
 		}
 		if !modelOverride {
-			args = append(args, "--model", effectiveModel)
+			switch runner.RunnerID {
+			case "opencode":
+				args = insertRunnerFlagAfter(args, "run", "--model", effectiveModel)
+			case "codex":
+				args = insertRunnerFlagAfter(args, "exec", "--model", effectiveModel)
+			default:
+				args = append(args, "--model", effectiveModel)
+			}
 		}
 	}
 

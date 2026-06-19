@@ -499,10 +499,11 @@ This is the current split in code:
     controls for remote PC execution.
   - Web/mobile now expose headed `playwright_profile_auth` start/finish/cancel,
     run inventory, and GC dry-run controls.
-  - Web/mobile now expose trace zip inspection via `playwright_trace_inspect`.
-  - Still missing UI polish: full Playwright trace timeline rendering beyond zip
-    metadata/listing, and first-class HTML/JSON report navigation beyond the
-    basic artifact open/download flows.
+  - Web/mobile now expose trace zip inspection via `playwright_trace_inspect`,
+    including parsed Playwright action timeline entries.
+  - Still missing UI polish: pixel-perfect parity with the upstream Playwright
+    trace viewer, and first-class HTML/JSON report navigation beyond the basic
+    artifact open/download flows.
 
 - **Redroid path exists and is separately UI-wired.**
   - Backend: `desktop/agent/ops_qa.go` registers `qa_base_build`, `qa_base_up`,
@@ -541,10 +542,10 @@ This is the current split in code:
 
 Practical next frontend/backend integration tasks:
 
-1. Add full Playwright trace timeline rendering from trace zip data.
+1. Add upstream-style Playwright trace viewer parity for screenshots/snapshots.
 2. Add a dedicated combined-quality dashboard history view on top of
    `talos_quality_report` and `playwright_runs`.
-3. Add a direct "repair missing preflight deps" action inside Full Quality.
+3. Add persistent saved Full Quality runs beyond in-memory report lookup.
 
 ## Safety Constraints
 
@@ -644,13 +645,14 @@ Implemented in this pass:
 - `talos_quality_run` / `talos_quality_report` combined Playwright + Redroid
   orchestration verbs in `desktop/agent/ops_quality.go`
 - Dependency preflight aggregation in `talos_quality_report`
-- `playwright_trace_inspect` scoped trace zip metadata/listing verb
+- `playwright_trace_inspect` scoped trace zip metadata/listing/timeline verb
 - Web/mobile Full Quality actions with optional Redroid package/APK/base fields
+- Web/mobile Full Quality missing-preflight dependency repair action
 - Web/mobile headed profile-auth start/finish/cancel controls
 - Web/mobile Playwright run inventory and GC dry-run controls
 - Web artifact drawer with inline image/video/text/html handling, trace zip
-  inspection, and binary download fallback
-- Mobile trace artifact metadata/listing inspection
+  inspection/timeline, and binary download fallback
+- Mobile trace artifact metadata/listing/timeline inspection
 - Focused test coverage in `desktop/agent/testkit/driver_playwright_test.go`
 - Focused root-package helper/report coverage in
   `desktop/agent/ops_testkit_playwright_test.go`

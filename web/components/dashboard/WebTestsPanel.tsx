@@ -272,6 +272,35 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
     } catch (e: any) { setMsg(String(e?.message || e)); setBusy(false); }
   };
 
+  const preflightMissingDeps = () => {
+    const deps = (qualityReport?.preflight?.deps || []) as any[];
+    const missing = deps.filter((d) => d && d.present === false).map((d) => String(d.name || "")).filter(Boolean);
+    if (qualityReport?.preflight?.playwright?.ok === false && !missing.includes("playwright")) missing.push("playwright");
+    return missing;
+  };
+
+  const repairPreflightDeps = async () => {
+    const include = preflightMissingDeps();
+    if (include.length === 0) { setMsg("No missing preflight dependencies found."); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const r = await agentClient.callOps("testkit_deps_install", { include });
+      const j = (r.initial as Job) || null;
+      if (!j?.id) { setMsg((r as any)?.error || "could not start dependency repair"); setBusy(false); return; }
+      setJob(j);
+      if (poll.current) clearInterval(poll.current);
+      poll.current = setInterval(async () => {
+        const s = await agentClient.callOps("studio_job_status", { jobId: j.id });
+        const sj = (s.initial as Job) || null;
+        setJob(sj);
+        if (sj?.state === "completed" || sj?.state === "failed") {
+          if (poll.current) clearInterval(poll.current);
+          setBusy(false);
+        }
+      }, 3000);
+    } catch (e: any) { setMsg(String(e?.message || e)); setBusy(false); }
+  };
+
   const doGrow = async () => {
     setBusy(true); setMsg(null);
     try {
@@ -505,6 +534,11 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
               Preflight: {qualityReport.preflight.ready ? "ready" : "needs attention"}
             </div>
           )}
+          {qualityReport.preflight && !qualityReport.preflight.ready && (
+            <button onClick={repairPreflightDeps} disabled={busy || running} className="rounded border border-amber-700 bg-amber-950 px-3 py-2 text-xs font-medium text-amber-300 disabled:opacity-60">
+              Repair Missing Deps
+            </button>
+          )}
           {(qualityReport.summary || []).map((s, i) => <div key={i} className="text-xs text-neutral-400">{s}</div>)}
           {qualityReport.android && (
             <div className="text-xs text-neutral-300">
@@ -622,6 +656,27 @@ function ArtifactList({ artifacts, jobId, playwright }: { artifacts: ArtifactRef
               <div key={i}>{e.name} <span className="text-neutral-600">({e.bytes || 0} bytes)</span></div>
             ))}
           </div>
+          {traceInfo.timeline?.length ? (
+            <div className="mt-3">
+              <div className="font-medium text-neutral-300">Timeline</div>
+              <div className="mt-2 max-h-72 overflow-auto border-l border-neutral-800 pl-3">
+                {traceInfo.timeline.slice(0, 120).map((e: any, i: number) => (
+                  <div key={i} className="mb-2">
+                    <div className={e.error ? "text-red-300" : "text-neutral-200"}>
+                      {e.apiName || e.method || e.type || "event"}
+                      {Number.isFinite(e.duration) && e.duration > 0 ? <span className="ml-2 text-neutral-600">{Math.round(e.duration)}ms</span> : null}
+                    </div>
+                    {e.params && (
+                      <div className="text-neutral-500">
+                        {Object.entries(e.params).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+                      </div>
+                    )}
+                    {e.error ? <div className="text-red-400">{e.error}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {open && (

@@ -1206,22 +1206,17 @@ const providerPresets: Array<{
   label: string;
   id: string;
   name: string;
-  baseUrl: string;
+  baseUrl?: string;
   hint: string;
 }> = [
-  // z.ai's Coding Plan and Zhipu's OpenAPI are different products with
-  // different keys. Authenticating Coding-Plan keys against bigmodel.cn
-  // (and vice versa) returns 401 mid-task, so the two presets stay
-  // distinct — provider id "zai" for the coding plan, "glm" for the
-  // legacy OpenAPI — matching mobile's OpenCodeConfigModal so the two
-  // surfaces never write conflicting `provider.<id>` blocks for the
-  // same opencode.json.
+  // z.ai's Coding Plan is an OpenCode built-in provider. Keep it
+  // distinct from Zhipu's OpenAPI and do not write a custom base URL
+  // override for it; the API key belongs in OpenCode's auth store.
   {
-    label: "Z.ai Coding (GLM-4.7)",
-    id: "zai",
-    name: "Z.ai Coding Plan",
-    baseUrl: "https://api.z.ai/api/coding/paas/v4",
-    hint: "GLM-4.7 + GLM-4.5 Air via z.ai's coding endpoint. Key from z.ai.",
+    label: "Z.ai Coding Plan",
+    id: "zai-coding-plan",
+    name: "Zai Coding Plan",
+    hint: "GLM-4.7 via OpenCode's built-in Coding Plan provider. Key from z.ai.",
   },
   {
     label: "Zhipu OpenAPI (GLM-4)",
@@ -1297,7 +1292,7 @@ function AddProviderForm({
             onClick={() => {
               setId(preset.id);
               setName(preset.name);
-              setBaseUrl(preset.baseUrl);
+              setBaseUrl(preset.baseUrl || "");
               setHint(preset.hint);
             }}
             className="rounded-full border border-surface-700 bg-surface-950 px-2.5 py-1 text-[11px] text-surface-300 hover:border-surface-500 hover:text-surface-100"

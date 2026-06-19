@@ -42,8 +42,8 @@ type OpenCodeProviderSummary struct {
 // list every entry here so a custom agent isn't a hidden CLI-only
 // power-user feature.
 type OpenCodeAgentSummary struct {
-	Name        string `json:"name"`              // "build", "plan", "review", …
-	Model       string `json:"model,omitempty"`   // e.g. "anthropic/claude-sonnet-4-6"
+	Name        string `json:"name"`            // "build", "plan", "review", …
+	Model       string `json:"model,omitempty"` // e.g. "anthropic/claude-sonnet-4-6"
 	Description string `json:"description,omitempty"`
 	IsBuiltin   bool   `json:"isBuiltin,omitempty"` // true for build + plan
 }
@@ -166,6 +166,7 @@ func applyOpenCodeConfigPatch(patch openCodeConfigPatch) (OpenCodeConfigSummary,
 	if patch.PlanModel != nil {
 		setOpenCodeAgentModel(cfg, "plan", strings.TrimSpace(*patch.PlanModel))
 	}
+	authPatches := openCodeAuthProviderPatches(patch.Providers)
 	for _, p := range patch.Providers {
 		applyOpenCodeProviderPatch(cfg, p)
 	}
@@ -177,10 +178,55 @@ func applyOpenCodeConfigPatch(patch openCodeConfigPatch) (OpenCodeConfigSummary,
 		return OpenCodeConfigSummary{}, err
 	}
 	raw = append(raw, '\n')
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		return OpenCodeConfigSummary{}, err
 	}
+	if len(authPatches) > 0 {
+		if err := applyOpenCodeAuthPatches(authPatches); err != nil {
+			return OpenCodeConfigSummary{}, err
+		}
+	}
 	return summarizeOpenCodeConfig(path, cfg, true), nil
+}
+
+func openCodeAuthProviderPatches(providers []openCodeProviderPatch) map[string]string {
+	out := map[string]string{}
+	for _, p := range providers {
+		id := strings.TrimSpace(p.ID)
+		key := strings.TrimSpace(p.APIKey)
+		if id == "" || key == "" || p.Delete {
+			continue
+		}
+		out[id] = key
+	}
+	return out
+}
+
+func applyOpenCodeAuthPatches(keysByProvider map[string]string) error {
+	path := preferredOpenCodeAuthPath()
+	auth := map[string]any{}
+	if raw, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(raw)) != "" {
+		if err := json.Unmarshal(raw, &auth); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for id, key := range keysByProvider {
+		auth[id] = map[string]any{
+			"type": "api",
+			"key":  key,
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(auth, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	return os.WriteFile(path, raw, 0o600)
 }
 
 // applyOpenCodeProviderPatch upserts a single provider entry on the
@@ -192,6 +238,13 @@ func applyOpenCodeConfigPatch(patch openCodeConfigPatch) (OpenCodeConfigSummary,
 func applyOpenCodeProviderPatch(cfg map[string]any, p openCodeProviderPatch) {
 	id := strings.TrimSpace(p.ID)
 	if id == "" {
+		return
+	}
+	if isOpenCodeBuiltinAuthProvider(id) && strings.TrimSpace(p.BaseURL) == "" && len(p.Models) == 0 {
+		// Built-in providers such as zai-coding-plan should keep using
+		// OpenCode's bundled endpoint/model catalogue. The API key is
+		// synchronized to auth.json by applyOpenCodeAuthPatches; writing
+		// a provider block here would override the built-in provider.
 		return
 	}
 	providersNode, _ := cfg["provider"].(map[string]any)
@@ -242,6 +295,15 @@ func applyOpenCodeProviderPatch(cfg map[string]any, p openCodeProviderPatch) {
 		for k, v := range p.Models {
 			modelsNode[strings.TrimSpace(k)] = v
 		}
+	}
+}
+
+func isOpenCodeBuiltinAuthProvider(id string) bool {
+	switch strings.TrimSpace(id) {
+	case "zai-coding-plan":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -385,10 +447,11 @@ func openCodeDiagnostics(cfg map[string]any, sum OpenCodeConfigSummary) []string
 	// Stock providers that ship their own base URL via opencode's
 	// built-in config — users shouldn't have to set baseUrl for these.
 	stockProviders := map[string]bool{
-		"anthropic": true,
-		"openai":    true,
-		"google":    true,
-		"groq":      true,
+		"anthropic":       true,
+		"openai":          true,
+		"google":          true,
+		"groq":            true,
+		"zai-coding-plan": true,
 	}
 
 	for _, p := range sum.Providers {
@@ -459,8 +522,22 @@ func openCodeAgentModel(cfg map[string]any, agentName string) string {
 }
 
 func openCodeProvidersFromConfig(cfg map[string]any) []OpenCodeProviderSummary {
+	authKeys := openCodeAuthProviderKeySet()
 	providersNode, ok := cfg["provider"].(map[string]any)
 	if !ok || providersNode == nil {
+		if authKeys["zai-coding-plan"] {
+			return []OpenCodeProviderSummary{{
+				ID:        "zai-coding-plan",
+				Name:      "Zai Coding Plan",
+				HasAPIKey: true,
+				Models: []OpenCodeModelSummary{{
+					ID:       "zai-coding-plan/glm-4.7",
+					Name:     "GLM 4.7 Coding Plan",
+					Provider: "zai-coding-plan",
+					Source:   "builtin",
+				}},
+			}}
+		}
 		return nil
 	}
 	ids := make([]string, 0, len(providersNode))
@@ -485,6 +562,9 @@ func openCodeProvidersFromConfig(cfg map[string]any) []OpenCodeProviderSummary {
 				row.HasAPIKey = true
 			}
 		}
+		if authKeys[id] {
+			row.HasAPIKey = true
+		}
 		if modelsNode, ok := entry["models"].(map[string]any); ok {
 			modelIDs := make([]string, 0, len(modelsNode))
 			for modelID := range modelsNode {
@@ -508,6 +588,33 @@ func openCodeProvidersFromConfig(cfg map[string]any) []OpenCodeProviderSummary {
 			}
 		}
 		out = append(out, row)
+	}
+	return out
+}
+
+func openCodeAuthProviderKeySet() map[string]bool {
+	path := preferredOpenCodeAuthPath()
+	raw, err := os.ReadFile(path)
+	if err != nil || strings.TrimSpace(string(raw)) == "" {
+		return nil
+	}
+	var auth map[string]any
+	if err := json.Unmarshal(raw, &auth); err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for id, rawEntry := range auth {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if key, _ := stringFromMap(entry, "key"); strings.TrimSpace(key) != "" {
+			out[id] = true
+			continue
+		}
+		if key, _ := stringFromMap(entry, "apiKey"); strings.TrimSpace(key) != "" {
+			out[id] = true
+		}
 	}
 	return out
 }
@@ -633,6 +740,20 @@ func openCodeGlobalConfigPaths() []string {
 		)
 	}
 	return uniqStrings(out)
+}
+
+func preferredOpenCodeAuthPath() string {
+	if file := strings.TrimSpace(os.Getenv("OPENCODE_AUTH")); file != "" {
+		return file
+	}
+	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
+		return filepath.Join(xdg, "opencode", "auth.json")
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		return filepath.Join(home, ".local", "share", "opencode", "auth.json")
+	}
+	return filepath.Join(".", "auth.json")
 }
 
 func stringFromMap(m map[string]any, key string) (string, bool) {

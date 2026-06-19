@@ -212,7 +212,12 @@ func TestInspectTestkitTraceArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Write([]byte("{}\n")); err != nil {
+	traceLines := strings.Join([]string{
+		`{"type":"before","callId":"call@1","apiName":"page.click","startTime":10,"params":{"selector":"button.submit"}}`,
+		`{"type":"after","callId":"call@1","endTime":42}`,
+		"",
+	}, "\n")
+	if _, err := w.Write([]byte(traceLines)); err != nil {
 		t.Fatal(err)
 	}
 	w, err = zw.Create("resources/abc")
@@ -240,6 +245,10 @@ func TestInspectTestkitTraceArtifact(t *testing.T) {
 	}
 	if got["entryCount"] != 2 || got["traceFiles"] != 1 || got["resources"] != 1 {
 		t.Fatalf("unexpected trace summary: %#v", got)
+	}
+	timeline, _ := got["timeline"].([]map[string]any)
+	if len(timeline) != 1 || timeline[0]["apiName"] != "page.click" || timeline[0]["duration"].(float64) != 32 {
+		t.Fatalf("unexpected trace timeline: %#v", got["timeline"])
 	}
 	if _, err := inspectTestkitTraceArtifact(jobID, filepath.Join(dir, "other.zip")); err == nil {
 		t.Fatal("expected unreferenced trace to be rejected")

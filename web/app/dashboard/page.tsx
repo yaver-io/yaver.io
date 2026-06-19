@@ -3114,6 +3114,7 @@ export default function DashboardPage() {
                       setOpencodeSaving(true);
                       setOpencodeSaveMsg(null);
                       try {
+                        const builtinAuthProvider = provider.id === "zai-coding-plan";
                         const patch: Parameters<typeof agentClient.saveOpenCodeConfig>[0] = {
                           model: fullModel,
                           providers: [
@@ -3122,7 +3123,7 @@ export default function DashboardPage() {
                               name: provider.label,
                               ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
                               ...(opencodeApiKey.trim() ? { apiKey: opencodeApiKey.trim() } : {}),
-                              models: { [modelId]: {} },
+                              ...(builtinAuthProvider ? {} : { models: { [modelId]: {} } }),
                             },
                           ],
                         };

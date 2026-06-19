@@ -2027,16 +2027,13 @@ export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
     ],
   },
   {
-    // Matches the mobile preset for the coding-plan endpoint.
-    id: "zai",
-    label: "GLM 4.7 (Z.ai)",
-    baseUrl: "https://api.z.ai/api/coding/paas/v4",
+    id: "zai-coding-plan",
+    label: "GLM 4.7 Coding Plan",
     requiresKey: true,
     keyEnv: "ZAI_API_KEY",
-    blurb: "z.ai Coding Plan — GLM-4.7 + GLM-4.5 Air. Key from z.ai (separate from Zhipu OpenAPI keys).",
+    blurb: "z.ai Coding Plan via OpenCode's built-in provider. Key from z.ai (separate from Zhipu OpenAPI keys).",
     models: [
       { id: "glm-4.7", label: "GLM-4.7", hint: "newest, coding-tuned" },
-      { id: "glm-4.6", label: "GLM-4.6", hint: "previous coding model" },
       { id: "glm-4.5-air", label: "GLM-4.5 Air", hint: "lighter, faster" },
     ],
   },
