@@ -519,8 +519,8 @@ jobs:
       - name: Install mobile dependencies
         run: cd mobile && npm ci --legacy-peer-deps
 
-      - name: Prebuild native iOS project
-        run: cd mobile && npx expo prebuild --platform ios --clean
+      - name: Prebuild native Android project
+        run: cd mobile && npx expo prebuild --platform android --clean
 
       - name: Build CLI agent
         run: cd desktop/agent && go build -o yaver .
@@ -561,6 +561,9 @@ jobs:
 
       - name: Install mobile dependencies
         run: cd mobile && npm ci --legacy-peer-deps
+
+      - name: Prebuild native iOS project
+        run: cd mobile && npx expo prebuild --platform ios --clean
 
       - name: Build CLI agent
         run: cd desktop/agent && go build -o yaver .
