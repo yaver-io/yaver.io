@@ -70,7 +70,13 @@ jobs:
           go test -v -count=1 ./... 2>&1 | go-junit-report > /tmp/go-sdk-junit.xml 2>/dev/null || true
 
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y ffmpeg && exit 0
+            sleep $((i * 10))
+          done
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Go agent unit tests (JUnit)
         if: always()
@@ -360,7 +366,13 @@ jobs:
           exit 1
 
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y ffmpeg && exit 0
+            sleep $((i * 10))
+          done
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Go agent tests (all new features)
         run: |
