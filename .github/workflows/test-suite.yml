@@ -200,9 +200,22 @@ jobs:
           cd desktop/agent
           mkdir -p ~/.yaver
           echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-feedback-device\"}" > ~/.yaver/config.json
-          ./yaver serve --debug --dummy &
-          sleep 3
-          curl -s http://localhost:18080/health | grep -q ok
+          ./yaver serve --debug --dummy > /tmp/yaver-feedback-agent.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:18080/health | grep -q ok; then
+              exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "::error::agent exited before health became ready"
+              tail -120 /tmp/yaver-feedback-agent.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::agent health did not become ready"
+          tail -120 /tmp/yaver-feedback-agent.log || true
+          exit 1
 
       - name: Run feedback SDK tests
         env:
@@ -329,9 +342,22 @@ jobs:
           cd desktop/agent
           mkdir -p ~/.yaver
           echo "{\"auth_token\":\"${{ steps.ci-auth.outputs.token }}\",\"convex_site_url\":\"${{ steps.ci-auth.outputs.convex_url }}\",\"device_id\":\"ci-integration-device\"}" > ~/.yaver/config.json
-          ./yaver serve --debug --dummy &
-          sleep 3
-          curl -sf http://localhost:18080/health
+          ./yaver serve --debug --dummy > /tmp/yaver-integration-agent.log 2>&1 &
+          pid=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:18080/health; then
+              exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "::error::agent exited before health became ready"
+              tail -120 /tmp/yaver-integration-agent.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::agent health did not become ready"
+          tail -120 /tmp/yaver-integration-agent.log || true
+          exit 1
 
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -492,6 +518,9 @@ jobs:
 
       - name: Install mobile dependencies
         run: cd mobile && npm ci --legacy-peer-deps
+
+      - name: Prebuild native iOS project
+        run: cd mobile && npx expo prebuild --platform ios --clean
 
       - name: Build CLI agent
         run: cd desktop/agent && go build -o yaver .
