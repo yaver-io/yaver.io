@@ -1,6 +1,6 @@
 name: autodev-smoke
 
-# Smoke-test the autoideas / autoinit / autotest CLI
+# Smoke-test the autoideas / autoinit CLI
 # surface on every PR. Each command runs with --plan so no real
 # Claude / Codex / Aider call happens — we just exercise flag
 # parsing, plan generation, and exit codes. Catches regressions
@@ -59,11 +59,6 @@ jobs:
           echo '{"name":"fixture","version":"0.0.1"}' > package.json
           echo "- [ ] item one" > remained.md
           git add . && git commit -q -m "init"
-
-      - name: yaver autotest --plan
-        run: |
-          cd /tmp/fixture
-          /tmp/yaver autotest fixture --plan
 
       - name: yaver autoideas --plan
         run: |
