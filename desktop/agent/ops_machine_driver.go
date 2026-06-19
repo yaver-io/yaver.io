@@ -14,6 +14,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/yaver-io/agent/machine"
@@ -21,6 +23,13 @@ import (
 )
 
 const machineDriverTimeout = 10 * time.Second
+
+func machineDriverOpTimeout() time.Duration {
+	if os.Getenv("CI") != "" || strings.HasSuffix(os.Args[0], ".test") {
+		return 750 * time.Millisecond
+	}
+	return machineDriverTimeout
+}
 
 func init() {
 	registerOpsVerb(opsVerbSpec{
@@ -189,7 +198,7 @@ func machineConnectHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	default:
 		return OpsResult{OK: false, Code: "unsupported", Error: "protocol must be modbus_tcp or vision (more drivers coming)"}
 	}
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
 	if err := d.Connect(ctx); err != nil {
 		return OpsResult{OK: false, Code: "connect_failed", Error: err.Error()}
@@ -207,9 +216,9 @@ func machineListHandler(c OpsContext, _ json.RawMessage) OpsResult {
 		return *deny
 	}
 	maybeRegisterRobotDriver(eng)
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
-	statuses := eng.DriverStatuses(ctx, 4*time.Second)
+	statuses := eng.DriverStatuses(ctx, machineDriverOpTimeout())
 	machines := make([]map[string]any, 0, len(statuses))
 	for id, st := range statuses {
 		machines = append(machines, map[string]any{"id": id, "status": st})
@@ -228,7 +237,7 @@ func machineStateHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if deny != nil {
 		return *deny
 	}
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
 	st, err := d.Status(ctx)
 	if err != nil {
@@ -248,7 +257,7 @@ func machineBrowseHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if deny != nil {
 		return *deny
 	}
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
 	tags, err := d.Browse(ctx)
 	if err != nil {
@@ -272,7 +281,7 @@ func machineReadTagsHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if !d.Capabilities().Has(machine.CapRead) {
 		return OpsResult{OK: false, Code: "unsupported", Error: "machine has no read capability"}
 	}
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
 	samples, err := d.Read(ctx, p.Refs)
 	if err != nil {
@@ -303,7 +312,7 @@ func machineWriteTagsHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if !d.Capabilities().Has(machine.CapWrite) {
 		return OpsResult{OK: false, Code: "unsupported", Error: "machine has no write capability"}
 	}
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
 	if err := d.Write(ctx, p.Writes); err != nil {
 		return OpsResult{OK: false, Code: "machine_failed", Error: err.Error()}
@@ -330,7 +339,7 @@ func machineRecallHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if !d.Capabilities().Has(machine.CapProgram) {
 		return OpsResult{OK: false, Code: "unsupported", Error: "machine has no program-recall capability"}
 	}
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
 	if err := d.Recall(ctx, p.Program); err != nil {
 		return OpsResult{OK: false, Code: "machine_failed", Error: err.Error()}
@@ -358,7 +367,7 @@ func machineSubmitJobHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if !d.Capabilities().Has(machine.CapJob) {
 		return OpsResult{OK: false, Code: "unsupported", Error: "machine has no job-download capability"}
 	}
-	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverTimeout)
+	ctx, cancel := context.WithTimeout(c.Ctx, machineDriverOpTimeout())
 	defer cancel()
 	if err := d.SubmitJob(ctx, machine.Job{Program: p.Program, Params: p.Params}); err != nil {
 		return OpsResult{OK: false, Code: "machine_failed", Error: err.Error()}

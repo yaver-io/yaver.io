@@ -44,10 +44,14 @@ func robotEnabled() bool {
 	// A camera-only box (vision/PLC monitoring, a phone pushing its own camera)
 	// is a valid cell with no motion backend — enable the verbs so robot_snapshot
 	// / robot_look / robot_camera_push answer, while motion verbs gate on profile.
+	return robotEnvEnabled() ||
+		robotConfigGet().Camera != ""
+}
+
+func robotEnvEnabled() bool {
 	return os.Getenv("YAVER_ROBOT_SERIAL") != "" ||
 		os.Getenv("YAVER_ROBOT_BRIDGE") != "" ||
-		os.Getenv("YAVER_ROBOT_CAMERA") != "" ||
-		robotConfigGet().Camera != ""
+		os.Getenv("YAVER_ROBOT_CAMERA") != ""
 }
 
 func robotEnvOr(k, def string) string {
@@ -190,7 +194,7 @@ var (
 // robotConfigDefault derives a config from hardware env when the vault has none
 // yet — an existing rig keeps working with zero setup.
 func robotConfigDefault() robot.Config {
-	c := robot.DefaultConfig(robotEnabled(), true)
+	c := robot.DefaultConfig(robotEnvEnabled(), true)
 	c.Serial = os.Getenv("YAVER_ROBOT_SERIAL")
 	c.ToolMode = robotEnvOr("YAVER_ROBOT_TOOL", "fan")
 	c.ToolPin = robotAtoi("YAVER_ROBOT_TOOL_PIN", 6)

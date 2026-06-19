@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yaver-io/agent/machine"
 )
@@ -48,6 +49,7 @@ func (f *fakeModbus) reg(a int) uint16 { f.mu.Lock(); defer f.mu.Unlock(); retur
 func (f *fakeModbus) handle(c net.Conn) {
 	defer c.Close()
 	rd := func(b []byte) bool {
+		_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
 		got := 0
 		for got < len(b) {
 			n, err := c.Read(b[got:])
@@ -97,6 +99,7 @@ func (f *fakeModbus) handle(c net.Conn) {
 		binary.BigEndian.PutUint16(out[4:6], uint16(len(resp)+1))
 		out = append(out, hdr[6])
 		out = append(out, resp...)
+		_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		if _, err := c.Write(out); err != nil {
 			return
 		}
@@ -119,7 +122,9 @@ func dispatchVerb(t *testing.T, c OpsContext, verb string, payload map[string]an
 
 func TestMachineDriverVerbs_EndToEnd(t *testing.T) {
 	f := startFakeModbus(t, map[int]uint16{12: 5000, 13: 500, 100: 1})
-	c := machineTestCtx()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := OpsContext{Ctx: ctx, Server: &HTTPServer{machineEnabled: true}, Caller: "owner"}
 
 	tags := []map[string]any{
 		{"name": "cut_length", "addr": 12, "func": 3, "unit2": "mm", "scale": 0.25, "min": 0, "max": 5000, "writable": true},

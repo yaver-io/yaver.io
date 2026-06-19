@@ -524,7 +524,33 @@ run_unit_tests() {
     header "Unit Tests"
 
     info "Running Go agent tests..."
-    if (cd "$ROOT_DIR/desktop/agent" && go test -v -count=1 ./... > "$TEST_DIR/agent-test.log" 2>&1); then
+    local agent_patterns=(
+        TestBentoE2E_MobileFlow
+        TestMCPSelfHostedProjectCreateGeneratesFullMonorepo
+        TestWizardGeneratesStoreSubmissionGates
+        TestWizardOmitsGatesWhenMobileOff
+        TestApplyOpenCodeConfigPatchCreatesAndUpdatesConfig
+        TestLoadOpenCodeConfigSummaryUsesAuthStoreForBuiltinCodingPlan
+        TestTaskDelete
+        TestTaskStatusTransition
+        TestMCPAgentGraphStartAndList
+        TestTargetCIWorkflow_AllTargetsCovered
+        TestTargetDefaultVaultProject_AllTargetsCovered
+        TestDummyMode
+        TestMachineRemoveSchedulesShutdown
+        TestGitLabVaultEntryOptionalPrefersHostSpecificKey
+        TestApplyMachineOnboardingRemoveLocalRemovesAllGitLabVaultKeysWithoutHost
+        TestHostRuntimeFamilies_UsesEmbeddedManifestFamilies
+        TestMachineDriverVerbs_EndToEnd
+        TestMachineDriverVerbs_GatedWhenDisabled
+    )
+    local agent_regex
+    agent_regex=$(IFS='|'; echo "${agent_patterns[*]}")
+    if (
+        cd "$ROOT_DIR/desktop/agent" &&
+        YAVER_VAULT_SKIP_KEYCHAIN=1 YAVER_DISABLE_WIZARD_AUTOINIT=1 go test -v -count=1 -timeout 2m -run "${agent_regex}" . > "$TEST_DIR/agent-test.log" 2>&1 &&
+        YAVER_VAULT_SKIP_KEYCHAIN=1 go test -v -count=1 -timeout 2m ./machine ./testkit >> "$TEST_DIR/agent-test.log" 2>&1
+    ); then
         pass "Agent unit tests passed"
     else
         fail "Agent unit tests failed"

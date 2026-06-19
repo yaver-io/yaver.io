@@ -24,6 +24,14 @@ type RTUClient struct {
 	unit byte
 }
 
+type rtuDeadlinePort interface {
+	SetDeadline(time.Time) error
+}
+
+type rtuWriteDeadlinePort interface {
+	SetWriteDeadline(time.Time) error
+}
+
 // NewRTUClient wraps an open serial port as an RTU master for `unit`.
 func NewRTUClient(port io.ReadWriteCloser, unit byte) *RTUClient {
 	if unit == 0 {
@@ -43,6 +51,12 @@ func rtuFrame(unit byte, pdu []byte) []byte {
 
 // txn writes a request frame and reads one response, framed by CRC.
 func (c *RTUClient) txn(pdu []byte, expectedLen int, timeout time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(timeout)
+	if p, ok := c.port.(rtuDeadlinePort); ok {
+		_ = p.SetDeadline(deadline)
+	} else if p, ok := c.port.(rtuWriteDeadlinePort); ok {
+		_ = p.SetWriteDeadline(deadline)
+	}
 	if _, err := c.port.Write(rtuFrame(c.unit, pdu)); err != nil {
 		return nil, err
 	}
