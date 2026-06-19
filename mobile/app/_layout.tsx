@@ -35,6 +35,7 @@ import { ShareComposeModal } from "../src/components/ShareComposeModal";
 import { DogfoodCaptureHost } from "../src/components/DogfoodCaptureHost";
 import { RunningTasksPill } from "../src/components/RunningTasksPill";
 import { WatchBridgeHost } from "../src/components/WatchBridgeHost";
+import { AuthPushHost } from "../src/components/AuthPushHost";
 import { PairLinkHandler } from "../src/lib/pairLinkHandler";
 import { ShareIntentReceiver } from "../src/lib/shareReceiver";
 import { registerNativeScreenRecorder } from "../src/lib/screenRecorder";
@@ -135,6 +136,7 @@ function InnerLayout() {
       <ShareComposeModal />
       <DogfoodCaptureHost />
       <WatchBridgeHost />
+      <AuthPushHost />
     </>
   );
 }

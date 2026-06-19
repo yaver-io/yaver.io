@@ -2237,4 +2237,20 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_user", ["userId"])
     .index("by_device", ["deviceId"]),
+
+  // Push tokens for the device-auth approval channel (P2): lets a remote
+  // box's re-auth ring the user's phone so they approve with Face ID instead
+  // of opening a browser. Only a notification-routing id is stored (Expo push
+  // token / native APNs/FCM token) — never an auth token or task data.
+  pushTokens: defineTable({
+    userId: v.id("users"),
+    installId: v.string(), // stable per phone install
+    pushToken: v.string(), // expo push token, or native device token
+    transport: v.string(), // "expo" | "apns" | "fcm"
+    platform: v.string(), // "ios" | "android"
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_pushToken", ["pushToken"])
+    .index("by_install", ["installId"]),
 });

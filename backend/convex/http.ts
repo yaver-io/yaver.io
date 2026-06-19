@@ -3332,6 +3332,39 @@ http.route({
   }),
 });
 
+// ── Push token registration (device-auth approval channel, P2) ──────
+
+/** POST /push/register — a signed-in phone registers its push token so a
+ *  remote box's re-auth can ring it for Face ID approval. Authed. */
+http.route({
+  path: "/push/register",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    if (!body.installId || !body.pushToken) {
+      return errorResponse("installId and pushToken required", 400);
+    }
+    try {
+      await ctx.runMutation(api.pushNotifications.registerPushToken, {
+        tokenHash,
+        installId: String(body.installId),
+        pushToken: String(body.pushToken),
+        transport: String(body.transport || "expo"),
+        platform: String(body.platform || "unknown"),
+      });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
+      return errorResponse(e?.message || "Failed to register push token", 400);
+    }
+  }),
+});
+
 // ── Mobile Stream Logs ──────────────────────────────────────────────
 
 http.route({
