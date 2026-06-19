@@ -40,9 +40,9 @@ const LAUNCHER: Record<string, RegExp> = {
 
 test.describe("seeded account → real device → coding runner (headless)", () => {
   test.skip(() => {
-    const { email, password } = testCreds();
-    return !email || !password;
-  }, "no test account creds (set YAVER_TEST_EMAIL / YAVER_TEST_PASSWORD)");
+    const { token, email, password } = testCreds();
+    return !token && (!email || !password);
+  }, "no test creds (set YAVER_TEST_TOKEN, or YAVER_TEST_EMAIL/PASSWORD)");
 
   test("login resolves the seeded account and lists the real devices", async ({ page }) => {
     await signIn(page);

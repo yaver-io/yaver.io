@@ -55,8 +55,9 @@ jobs:
           E2E_BASE_URL: https://yaver.io
           E2E_CONVEX_URL: ${{ secrets.YAVER_TEST_CONVEX_SITE }}
           E2E_SKIP_LIVE_AUTH: "1"
-          YAVER_TEST_EMAIL: ${{ secrets.YAVER_TEST_EMAIL }}
-          YAVER_TEST_PASSWORD: ${{ secrets.YAVER_TEST_PASSWORD }}
+          # Revocable session token (no password in CI). Delete the
+          # ci-automation session to cut it off.
+          YAVER_TEST_TOKEN: ${{ secrets.YAVER_TEST_TOKEN }}
           YAVER_TEST_DEVICE: ${{ github.event.inputs.device || 'ubuntu-4gb-hel1-1' }}
           YAVER_TEST_RUNNERS: ${{ github.event.inputs.runners || 'claude,codex,opencode,glm' }}
           # Available for box-side runner config / future direct checks.
