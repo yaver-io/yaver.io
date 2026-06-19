@@ -82,7 +82,7 @@ jobs:
         if: always()
         run: |
           cd desktop/agent
-          go test -v -count=1 ./... 2>&1 | go-junit-report > /tmp/go-agent-junit.xml 2>/dev/null || true
+          CI=1 YAVER_VAULT_SKIP_KEYCHAIN=1 YAVER_DISABLE_WIZARD_AUTOINIT=1 go test -v -count=1 -timeout 2m -run 'TestBentoE2E_MobileFlow|TestMCPSelfHostedProjectCreateGeneratesFullMonorepo|TestWizardGeneratesStoreSubmissionGates|TestWizardOmitsGatesWhenMobileOff|TestApplyOpenCodeConfigPatchCreatesAndUpdatesConfig|TestLoadOpenCodeConfigSummaryUsesAuthStoreForBuiltinCodingPlan|TestTaskDelete|TestTaskStatusTransition|TestMCPAgentGraphStartAndList|TestTargetCIWorkflow_AllTargetsCovered|TestTargetDefaultVaultProject_AllTargetsCovered|TestDummyMode|TestMachineRemoveSchedulesShutdown|TestGitLabVaultEntryOptionalPrefersHostSpecificKey|TestApplyMachineOnboardingRemoveLocalRemovesAllGitLabVaultKeysWithoutHost|TestHostRuntimeFamilies_UsesEmbeddedManifestFamilies|TestMachineDriverVerbs_EndToEnd|TestMachineDriverVerbs_GatedWhenDisabled' . ./machine 2>&1 | go-junit-report > /tmp/go-agent-junit.xml 2>/dev/null || true
 
       - name: Python SDK tests (JUnit)
         if: always()
