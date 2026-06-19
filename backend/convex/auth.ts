@@ -1204,30 +1204,54 @@ export const createSession = mutation({
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
-    // Session hygiene: a fresh login for a device that already has
-    // sessions means the old ones are dead weight — the agent now holds
-    // the new token. Without this, every `yaver auth` / bootstrap /
-    // re-login appended a row that lived for a year, accreting hundreds
-    // of stale sessions per heavy user (one power user hit 339). Retire
-    // this device's prior sessions before inserting the new one. Scoped
-    // to the SAME (userId, deviceId) so other live devices/surfaces are
-    // never touched; deviceId-less sessions (web/mobile) are left alone.
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("sessions")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+
     if (args.deviceId) {
-      const prior = await ctx.db
-        .query("sessions")
-        .withIndex("by_userId", (q) => q.eq("userId", args.userId))
-        .filter((q) => q.eq(q.field("deviceId"), args.deviceId))
-        .collect();
-      for (const old of prior) {
-        await ctx.db.delete(old._id);
+      // Session hygiene (device-bound): a fresh login for a device that
+      // already has sessions means the old ones are dead weight — the
+      // agent now holds the new token. Without this, every `yaver auth` /
+      // bootstrap / re-login appended a row that lived for a year. Retire
+      // this device's prior sessions before inserting the new one. Scoped
+      // to the SAME (userId, deviceId) so other live devices/surfaces are
+      // never touched.
+      for (const old of existing) {
+        if (old.deviceId === args.deviceId) await ctx.db.delete(old._id);
+      }
+    } else {
+      // Session hygiene (surface sessions: web / mobile, no deviceId).
+      // The device-bound branch above never covered these, so every web
+      // or mobile re-login appended a year-long row that nothing pruned —
+      // one account accreted 362 sessions (184 still valid). Systematic
+      // fix: drop expired surface sessions outright, then cap the
+      // survivors to the newest N so the table can't grow without bound.
+      // Device-bound sessions are untouched, and keeping the newest N
+      // (not just one) preserves a user's several live browsers + phone.
+      const liveSurface: typeof existing = [];
+      for (const s of existing) {
+        if (s.deviceId) continue; // device-bound — handled in the other branch
+        if ((s.expiresAt ?? 0) <= now) {
+          await ctx.db.delete(s._id);
+        } else {
+          liveSurface.push(s);
+        }
+      }
+      liveSurface.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      const MAX_SURFACE_SESSIONS = 10;
+      for (const stale of liveSurface.slice(MAX_SURFACE_SESSIONS)) {
+        await ctx.db.delete(stale._id);
       }
     }
+
     return await ctx.db.insert("sessions", {
       tokenHash: args.tokenHash,
       userId: args.userId,
       deviceId: args.deviceId,
       expiresAt: args.expiresAt,
-      createdAt: Date.now(),
+      createdAt: now,
     });
   },
 });

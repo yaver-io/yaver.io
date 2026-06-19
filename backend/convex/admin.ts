@@ -977,6 +977,59 @@ export const signOutUserAllSessions = mutation({
   },
 });
 
+/** Maintenance: prune leaked surface sessions. Drops expired sessions and
+ *  caps each user's deviceId-less (web / mobile) sessions to the newest N.
+ *  Device-bound (agent) sessions are never touched. Mirrors the inline
+ *  hygiene now in auth.createSession; this is the backstop that clears the
+ *  historical backlog accreted before that fix (one account reached 362
+ *  sessions / 184 valid). Pass targetDocId to prune one user, or omit to
+ *  sweep every user. */
+export const pruneSurfaceSessions = mutation({
+  args: {
+    targetDocId: v.optional(v.id("users")),
+    keepNewest: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const keep = Math.max(1, args.keepNewest ?? 10);
+    const sessions = args.targetDocId
+      ? await ctx.db
+          .query("sessions")
+          .withIndex("by_userId", (q) => q.eq("userId", args.targetDocId!))
+          .collect()
+      : await ctx.db.query("sessions").collect();
+
+    const byUser = new Map<string, typeof sessions>();
+    for (const s of sessions) {
+      const k = String(s.userId);
+      const arr = byUser.get(k) ?? [];
+      arr.push(s);
+      byUser.set(k, arr);
+    }
+
+    let expiredDeleted = 0;
+    let cappedDeleted = 0;
+    for (const arr of byUser.values()) {
+      const liveSurface: typeof sessions = [];
+      for (const s of arr) {
+        if (s.deviceId) continue; // never touch device-bound (agent) sessions
+        if ((s.expiresAt ?? 0) <= now) {
+          await ctx.db.delete(s._id);
+          expiredDeleted++;
+        } else {
+          liveSurface.push(s);
+        }
+      }
+      liveSurface.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+      for (const stale of liveSurface.slice(keep)) {
+        await ctx.db.delete(stale._id);
+        cappedDeleted++;
+      }
+    }
+    return { users: byUser.size, expiredDeleted, cappedDeleted, kept: keep };
+  },
+});
+
 /** Cascade delete a user across every user-scoped table. GDPR
  *  right-to-erasure. Audit row is written BEFORE the user row is
  *  deleted so the foreign-key reference resolves. */
