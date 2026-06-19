@@ -148,6 +148,9 @@ func projectKindLabel(framework string, mobileCapable, webCapable bool) string {
 
 func repoDisplayName(repoRoot string) string {
 	repoName := strings.TrimSpace(filepath.Base(strings.TrimSpace(repoRoot)))
+	if repoName == "." || repoName == string(filepath.Separator) {
+		return ""
+	}
 	repoName = strings.TrimSuffix(repoName, ".git")
 	if dot := strings.Index(repoName, "."); dot > 0 {
 		repoName = repoName[:dot]
@@ -181,6 +184,9 @@ func displayProjectName(repoRoot, monorepoApp, appName, framework string, mobile
 	}
 	if repoName == "" {
 		repoName = appName
+	}
+	if strings.EqualFold(subproject, repoName) {
+		subproject = ""
 	}
 	if repoName == "" {
 		repoName = "project"
@@ -653,6 +659,30 @@ func runMobileScan(reason string) {
 
 	log.Printf("[mobile-scan] %s: %d projects in %dms (permDenied=%d timedOut=%v)",
 		reason, len(projects), stats.ElapsedMs, stats.PermDenied, stats.TimedOut)
+}
+
+func requestForcedMobileScan(reason string) {
+	mobileProjectCache.mu.Lock()
+	wasScanning := mobileProjectCache.scanning
+	if wasScanning {
+		mobileProjectCache.cancel = true
+	}
+	mobileProjectCache.mu.Unlock()
+
+	go func() {
+		if wasScanning {
+			for i := 0; i < 100; i++ {
+				time.Sleep(50 * time.Millisecond)
+				mobileProjectCache.mu.RLock()
+				scanning := mobileProjectCache.scanning
+				mobileProjectCache.mu.RUnlock()
+				if !scanning {
+					break
+				}
+			}
+		}
+		runMobileScan(reason)
+	}()
 }
 
 // dirSizeHuman returns a human-readable size of a directory (e.g. "42M").
@@ -1414,9 +1444,10 @@ func mobileCapableProjects(in []MobileProject) []MobileProject {
 // 10 minutes; POST forces a re-scan.
 func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		// Force re-scan in the background — never block the request. The
-		// guard inside runMobileScan coalesces overlapping POSTs.
-		go runMobileScan("forced re-scan")
+		// Force a fresh background re-scan. If startup discovery is already
+		// walking an older filesystem snapshot, cancel it first so newly cloned
+		// or generated projects are picked up by the explicit refresh.
+		requestForcedMobileScan("forced re-scan")
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"ok":      true,
 			"message": "scan started",

@@ -47,7 +47,15 @@ async function waitForMobileProject(
   for (;;) {
     const res = await mobile.raw.get("/projects/mobile");
     const projects = Array.isArray(res.body?.projects) ? res.body.projects : [];
-    const found = projects.find((p: any) => p?.name === projectName);
+    const found = projects.find((p: any) => {
+      const name = String(p?.name ?? "");
+      const projectPath = String(p?.path ?? "");
+      return (
+        name === projectName ||
+        name.startsWith(`${projectName} /`) ||
+        path.basename(projectPath) === projectName
+      );
+    });
     if (found) return found;
     if (Date.now() - start > timeoutMs) {
       throw new Error(`mobile project ${projectName} not discovered within ${timeoutMs}ms`);

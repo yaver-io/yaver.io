@@ -240,7 +240,7 @@ type pingResult struct {
 	OwnerEmail     string `json:"ownerEmail,omitempty"`
 	OwnerIsCaller  bool   `json:"ownerIsCaller"`
 	Cause          string `json:"cause,omitempty"`
-	Hint2          string `json:"hint,omitempty"`
+	Hint2          string `json:"hint2,omitempty"`
 }
 
 func emitPingReport(report *remoteAgentStatusReport, err error, asJSON bool, hint string) {

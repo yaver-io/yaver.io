@@ -264,6 +264,13 @@ func TestDisplayProjectName_DualCapabilityReactNativeStillReadsMobile(t *testing
 	}
 }
 
+func TestDisplayProjectName_DirectWorkspaceChildKeepsAppName(t *testing.T) {
+	got := displayProjectName(".", "", "ymh-ios-bundleid", "expo", true, false)
+	if got != "ymh-ios-bundleid / mobile" {
+		t.Fatalf("got %q, want %q", got, "ymh-ios-bundleid / mobile")
+	}
+}
+
 func TestDisplayProjectName_WebProjectReadsWeb(t *testing.T) {
 	got := displayProjectName("/tmp/carrotbet", "", "Workspace", "vite", false, true)
 	if got != "carrotbet / web" {
@@ -656,9 +663,9 @@ targets:
 
 func TestDemoShowcaseProject(t *testing.T) {
 	cases := map[string]struct {
-		dir          string
-		wantSurface  string
-		wantLeaf     string
+		dir         string
+		wantSurface string
+		wantLeaf    string
 	}{
 		"mobile_under_yaver":   {"/Users/k/Workspace/yaver.io/demo/mobile/todo-rn", "mobile", "todo-rn"},
 		"web_under_yaver":      {"/Users/k/Workspace/yaver.io/demo/web/todo-web", "web", "todo-web"},
