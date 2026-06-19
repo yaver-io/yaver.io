@@ -8,32 +8,66 @@ import (
 	"testing"
 )
 
-// fixturesRepoRoot resolves the yaver.io repo root (where tests/fixtures/ lives) from
-// the agent test cwd by walking up until tests/fixtures/ is visible.
-func fixturesRepoRoot(t *testing.T) string {
+func writeMonorepoFixtureFile(t *testing.T, path, contents string) {
 	t.Helper()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
-	dir := cwd
-	for i := 0; i < 6; i++ {
-		if st, err := os.Stat(filepath.Join(dir, "tests", "fixtures")); err == nil && st.IsDir() {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
-	t.Fatalf("repo root with tests/fixtures/ not found from %s", cwd)
-	return ""
+}
+
+func makeMonorepoFixtures(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeAndroidFixture(t, filepath.Join(root, "native-android-kotlin"))
+	writeIOSFixture(t, filepath.Join(root, "native-ios-swift"))
+	writeFlutterFixture(t, filepath.Join(root, "native-flutter-app"))
+	return root
+}
+
+func writeAndroidFixture(t *testing.T, dir string) {
+	t.Helper()
+	writeMonorepoFixtureFile(t, filepath.Join(dir, "settings.gradle.kts"), `pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+rootProject.name = "NativeAndroidKotlin"
+include(":app")
+`)
+	writeMonorepoFixtureFile(t, filepath.Join(dir, "build.gradle.kts"), `plugins {
+    id("com.android.application") version "8.5.0" apply false
+    id("org.jetbrains.kotlin.android") version "2.0.0" apply false
+}
+`)
+	writeMonorepoFixtureFile(t, filepath.Join(dir, "app", "src", "main", "AndroidManifest.xml"), `<manifest xmlns:android="http://schemas.android.com/apk/res/android" />`)
+}
+
+func writeIOSFixture(t *testing.T, dir string) {
+	t.Helper()
+	writeMonorepoFixtureFile(t, filepath.Join(dir, "project.yml"), `name: NativeIOSSwift
+options:
+  bundleIdPrefix: io.yaver.fixture
+targets:
+  NativeIOSSwift:
+    type: application
+    platform: iOS
+    sources: [Sources]
+`)
+}
+
+func writeFlutterFixture(t *testing.T, dir string) {
+	t.Helper()
+	writeMonorepoFixtureFile(t, filepath.Join(dir, "pubspec.yaml"), `name: native_flutter_app
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
+`)
 }
 
 func TestDetectMonorepo_FixturesAsMonorepo(t *testing.T) {
-	root := fixturesRepoRoot(t)
-	fixturesDir := filepath.Join(root, "tests", "fixtures")
+	fixturesDir := makeMonorepoFixtures(t)
 	mr, err := DetectMonorepo(fixturesDir, DetectOpts{})
 	if err != nil {
 		t.Fatalf("DetectMonorepo: %v", err)
@@ -66,8 +100,8 @@ func TestDetectMonorepo_FixturesAsMonorepo(t *testing.T) {
 }
 
 func TestDetectMonorepo_KotlinFixtureIsAndroidNative(t *testing.T) {
-	root := fixturesRepoRoot(t)
-	dir := filepath.Join(root, "tests", "fixtures", "native-android-kotlin")
+	root := makeMonorepoFixtures(t)
+	dir := filepath.Join(root, "native-android-kotlin")
 	mr, err := DetectMonorepo(dir, DetectOpts{})
 	if err != nil {
 		t.Fatalf("DetectMonorepo: %v", err)
@@ -88,8 +122,8 @@ func TestDetectMonorepo_KotlinFixtureIsAndroidNative(t *testing.T) {
 }
 
 func TestDetectMonorepo_SwiftFixtureIsIOSNative(t *testing.T) {
-	root := fixturesRepoRoot(t)
-	dir := filepath.Join(root, "tests", "fixtures", "native-ios-swift")
+	root := makeMonorepoFixtures(t)
+	dir := filepath.Join(root, "native-ios-swift")
 	mr, err := DetectMonorepo(dir, DetectOpts{})
 	if err != nil {
 		t.Fatalf("DetectMonorepo: %v", err)
@@ -108,8 +142,8 @@ func TestDetectMonorepo_SwiftFixtureIsIOSNative(t *testing.T) {
 }
 
 func TestDetectMonorepo_FlutterFixture(t *testing.T) {
-	root := fixturesRepoRoot(t)
-	dir := filepath.Join(root, "tests", "fixtures", "native-flutter-app")
+	root := makeMonorepoFixtures(t)
+	dir := filepath.Join(root, "native-flutter-app")
 	mr, err := DetectMonorepo(dir, DetectOpts{})
 	if err != nil {
 		t.Fatalf("DetectMonorepo: %v", err)

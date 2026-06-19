@@ -8,6 +8,7 @@ import (
 )
 
 func TestDetectRunnerRuntimeStatusCodexEnvKey(t *testing.T) {
+	stubCodexLinuxSandboxPrereq(t, "")
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("CODEX_HOME", t.TempDir())
 
@@ -24,6 +25,7 @@ func TestDetectRunnerRuntimeStatusCodexEnvKey(t *testing.T) {
 }
 
 func TestDetectRunnerRuntimeStatusCodexAuthFile(t *testing.T) {
+	stubCodexLinuxSandboxPrereq(t, "")
 	t.Setenv("OPENAI_API_KEY", "")
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
@@ -44,6 +46,7 @@ func TestDetectRunnerRuntimeStatusCodexAuthFile(t *testing.T) {
 }
 
 func TestDetectRunnerRuntimeStatusCodexVaultKey(t *testing.T) {
+	stubCodexLinuxSandboxPrereq(t, "")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("CODEX_HOME", t.TempDir())
@@ -67,6 +70,15 @@ func TestDetectRunnerRuntimeStatusCodexVaultKey(t *testing.T) {
 	if status.AuthSource != "vault:OPENAI_API_KEY" {
 		t.Fatalf("expected vault OPENAI_API_KEY auth source, got %q", status.AuthSource)
 	}
+}
+
+func stubCodexLinuxSandboxPrereq(t *testing.T, err string) {
+	t.Helper()
+	prev := codexLinuxSandboxPrereqErrorFunc
+	codexLinuxSandboxPrereqErrorFunc = func() string { return err }
+	t.Cleanup(func() {
+		codexLinuxSandboxPrereqErrorFunc = prev
+	})
 }
 
 func TestDetectRunnerRuntimeStatusOpenCodeAllowsOpenAIOAuth(t *testing.T) {

@@ -471,7 +471,7 @@ func claudeCredentialsPath() (string, bool) {
 func detectCodexStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
 	if runtime.GOOS == "linux" {
-		if err := codexLinuxSandboxPrereqError(); err != "" {
+		if err := codexLinuxSandboxPrereqErrorFunc(); err != "" {
 			status.Ready = false
 			status.Error = err
 			return status
@@ -542,6 +542,8 @@ func codexLoginStatusOK() bool {
 	codexLoginStatusCache.at = time.Now()
 	return ok
 }
+
+var codexLinuxSandboxPrereqErrorFunc = codexLinuxSandboxPrereqError
 
 func codexLinuxSandboxPrereqError() string {
 	issues := []string{}

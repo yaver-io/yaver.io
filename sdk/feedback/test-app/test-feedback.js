@@ -174,7 +174,7 @@ async function testVaultAPI() {
   console.log('\n--- Vault API ---');
   const { status, body } = await request('GET', '/vault/list');
   assert(status === 200, 'GET /vault/list returns 200');
-  assert(Array.isArray(body), 'Vault list is array');
+  assert(Array.isArray(body?.entries), 'Vault list entries is array');
 }
 
 async function main() {
