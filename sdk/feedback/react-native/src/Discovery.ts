@@ -7,6 +7,14 @@ type AsyncStorageLike = {
   setItem: (key: string, value: string) => Promise<void>;
   removeItem: (key: string) => Promise<void>;
 };
+
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  const maybeNodeTimer = timer as unknown as { unref?: () => void };
+  if (typeof maybeNodeTimer.unref === 'function') {
+    maybeNodeTimer.unref();
+  }
+}
+
 function getAsyncStorage(): AsyncStorageLike | null {
   try {
     const mod = require('@react-native-async-storage/async-storage');
@@ -362,14 +370,15 @@ export class YaverDiscovery {
   static async probe(url: string): Promise<DiscoveryResult | null> {
     const base = url.replace(/\/$/, '');
     const start = Date.now();
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+      timeoutId = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+      unrefTimer(timeoutId);
       const response = await fetch(`${base}/health`, {
         method: 'GET',
         signal: controller.signal,
       });
-      clearTimeout(timeoutId);
       if (!response.ok) return null;
       const latency = Date.now() - start;
       let hostname = 'Unknown';
@@ -384,6 +393,8 @@ export class YaverDiscovery {
       return { url: base, hostname, version, latency };
     } catch {
       return null;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 

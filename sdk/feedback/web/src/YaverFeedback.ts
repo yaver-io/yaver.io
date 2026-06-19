@@ -2839,7 +2839,12 @@ export class YaverFeedback {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
     const STORAGE_KEY = 'yvr-fb-rail-pos:v1';
     const SIZE_KEY = 'yvr-fb-rail-size:v1';
-    const isPhoneViewport = () => window.matchMedia('(max-width: 640px)').matches;
+    const isPhoneViewport = () => {
+      if (typeof window.matchMedia === 'function') {
+        return window.matchMedia('(max-width: 640px)').matches;
+      }
+      return typeof window.innerWidth === 'number' && window.innerWidth <= 640;
+    };
 
     // Restore saved size on mount + watch for user-driven resize
     // (CSS `resize: both` paints the native grip; ResizeObserver

@@ -11,6 +11,13 @@ import {
   VoiceCapability,
 } from './types';
 
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  const maybeNodeTimer = timer as unknown as { unref?: () => void };
+  if (typeof maybeNodeTimer.unref === 'function') {
+    maybeNodeTimer.unref();
+  }
+}
+
 export interface FeedbackEvent {
   type: string;
   timestamp: string;
@@ -360,19 +367,22 @@ export class P2PClient {
 
   /** Health check — returns true if the agent is reachable. */
   async health(): Promise<boolean> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      timeoutId = setTimeout(() => controller.abort(), 3000);
+      unrefTimer(timeoutId);
 
       const response = await fetch(`${this.baseUrl}/health`, {
         method: 'GET',
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
       return response.ok;
     } catch {
       return false;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 

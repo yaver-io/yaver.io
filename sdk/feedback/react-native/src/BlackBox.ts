@@ -66,6 +66,13 @@ export interface BlackBoxCommand {
 /** Callback type for handling agent commands. */
 export type CommandHandler = (cmd: BlackBoxCommand) => void;
 
+function unrefTimer(timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>): void {
+  const maybeNodeTimer = timer as unknown as { unref?: () => void };
+  if (typeof maybeNodeTimer.unref === 'function') {
+    maybeNodeTimer.unref();
+  }
+}
+
 export class BlackBox {
   private static baseUrl: string | null = null;
   private static authToken: string | null = null;
@@ -120,6 +127,7 @@ export class BlackBox {
     // Start periodic flush
     if (BlackBox.flushTimer) clearInterval(BlackBox.flushTimer);
     BlackBox.flushTimer = setInterval(() => BlackBox.flush(), BlackBox.flushInterval);
+    unrefTimer(BlackBox.flushTimer);
 
     // Log the session start
     BlackBox.push({
@@ -471,6 +479,7 @@ export class BlackBox {
       BlackBox.sseReconnectTimer = null;
       if (BlackBox.started) BlackBox.connectSSE();
     }, 5000);
+    unrefTimer(BlackBox.sseReconnectTimer);
   }
 
   // ─── Internal ────────────────────────────────────────────────────

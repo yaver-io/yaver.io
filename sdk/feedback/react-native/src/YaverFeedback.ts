@@ -28,6 +28,13 @@ import {
   QuickIconColorPreset,
 } from './preferences';
 
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  const maybeNodeTimer = timer as unknown as { unref?: () => void };
+  if (typeof maybeNodeTimer.unref === 'function') {
+    maybeNodeTimer.unref();
+  }
+}
+
 // Is this JS runtime the Yaver mobile app's super-host bridge? The
 // YaverInfo native module is only registered inside Yaver's container
 // (mobile/ios/Yaver/YaverInfo.{swift,m} + Android counterpart); a
@@ -461,7 +468,7 @@ export class YaverFeedback {
       // after auth — that path still works (start() is idempotent), so
       // upgrading SDK without removing the manual call is safe.
       if (cfg.autoStartBlackBox !== false) {
-        setTimeout(() => {
+        const autoStartTimer = setTimeout(() => {
           if (config?.agentUrl && (config?.authToken || p2pAuthToken)) {
             try {
               BlackBox.start();
@@ -470,6 +477,7 @@ export class YaverFeedback {
             }
           }
         }, 500);
+        unrefTimer(autoStartTimer);
       }
     }
 
