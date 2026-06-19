@@ -32,6 +32,70 @@ func TestRelayPasswordForBaseUsesConfiguredRelayPassword(t *testing.T) {
 	}
 }
 
+func TestRepairRelayPasswordForRemoteHTTPSyncsFreshPassword(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var sawRepair bool
+	var sawSettings bool
+	convex := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token-123" {
+			t.Fatalf("Authorization header = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/settings/repair-relay":
+			sawRepair = true
+			_, _ = w.Write([]byte(`{"ok":true,"repaired":true}`))
+		case "/settings":
+			sawSettings = true
+			_, _ = w.Write([]byte(`{"settings":{"relayUrl":"https://relay.example.com","relayPassword":"fresh-pw"}}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer convex.Close()
+
+	cfg := &Config{
+		ConvexSiteURL:       convex.URL,
+		AuthToken:           "token-123",
+		RelayPassword:       "old-global",
+		CachedRelayPassword: "old-cached",
+		RelayServers: []RelayServerConfig{
+			{ID: "free", HttpURL: "https://relay.example.com", Password: "old-per-relay"},
+			{ID: "custom", HttpURL: "https://custom.example.com", Password: "custom-pw"},
+		},
+		CachedRelayServers: []RelayServerConfig{
+			{ID: "cached-free", HttpURL: "https://relay.example.com", Password: "old-cached-per-relay"},
+		},
+	}
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	if !repairRelayPasswordForRemoteHTTP(context.Background()) {
+		t.Fatal("repairRelayPasswordForRemoteHTTP() = false")
+	}
+	if !sawRepair || !sawSettings {
+		t.Fatalf("repair=%v settings=%v, want both endpoints called", sawRepair, sawSettings)
+	}
+	loaded, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if loaded.RelayPassword != "fresh-pw" || loaded.CachedRelayPassword != "fresh-pw" {
+		t.Fatalf("global relay passwords = %q/%q, want fresh-pw", loaded.RelayPassword, loaded.CachedRelayPassword)
+	}
+	if got := loaded.RelayServers[0].Password; got != "fresh-pw" {
+		t.Fatalf("free relay password = %q, want fresh-pw", got)
+	}
+	if got := loaded.RelayServers[1].Password; got != "custom-pw" {
+		t.Fatalf("custom relay password = %q, want preserved", got)
+	}
+	if got := loaded.CachedRelayServers[0].Password; got != "fresh-pw" {
+		t.Fatalf("cached free relay password = %q, want fresh-pw", got)
+	}
+}
+
 func TestRemoteAgentJSONRejectsUntrustedRelayOrigin(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

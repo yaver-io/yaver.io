@@ -225,7 +225,7 @@ var builtinRunners = map[string]RunnerConfig{
 		// win (CLI last-flag-wins). The model id is forwarded verbatim to
 		// z.ai's Anthropic endpoint.
 		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--dangerously-skip-permissions"},
-		Model:       "glm-4.6",
+		Model:       "glm-4.7",
 		OutputMode:  "stream-json",
 		ExitCommand: "/exit",
 	},

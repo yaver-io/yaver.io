@@ -66,7 +66,7 @@ type RelayServer struct {
 
 	// Cache of validated per-user passwords (password -> expiry time)
 	validatedPwMu sync.RWMutex
-	validatedPw   map[string]time.Time // password -> cache expiry
+	validatedPw   map[string]time.Time // password/access cache key -> cache expiry
 
 	startedAt time.Time // server start time for uptime tracking
 
@@ -257,7 +257,10 @@ func (s *RelayServer) authorizeAdmin(w http.ResponseWriter, r *http.Request) boo
 }
 
 // validatePassword checks a password against the shared password or Convex backend.
-// Returns true if the password is valid.
+// Returns true if the password is valid. This is intentionally action-less and
+// used for admin/bus compatibility. Device tunnel registration and /d/ proxy
+// traffic use validateRelayAccess so the official free relay can enforce
+// account/device ownership in Convex.
 func (s *RelayServer) validatePassword(pw string) bool {
 	// 1. Check shared password (self-hosted mode)
 	if sharedPw := s.getPassword(); sharedPw != "" && pw == sharedPw {
@@ -294,16 +297,68 @@ func (s *RelayServer) validatePassword(pw string) bool {
 
 // validatePasswordViaConvex calls the Convex backend to check a per-user relay password.
 func (s *RelayServer) validatePasswordViaConvex(pw string) bool {
-	_, ok := s.validateAndResolveViaConvex(pw)
+	_, ok := s.validateAndResolveViaConvex(pw, "", "", "")
 	return ok
+}
+
+func (s *RelayServer) validateRelayAccess(pw, action, deviceID, token string) (string, bool) {
+	pw = strings.TrimSpace(pw)
+	action = strings.TrimSpace(action)
+	deviceID = strings.TrimSpace(deviceID)
+	token = strings.TrimSpace(token)
+	if pw == "" {
+		return "", false
+	}
+
+	// Self-hosted shared-password mode remains supported. The official free
+	// relay sets CONVEX_URL, so register/proxy authorization goes through the
+	// backend ownership/quota path instead of accepting a universal shared key.
+	if s.convexURL == "" {
+		if sharedPw := s.getPassword(); sharedPw != "" {
+			return "", pw == sharedPw
+		}
+		return "", true
+	}
+
+	cacheKey := strings.Join([]string{"access", action, deviceID, pw, token}, "\x00")
+	s.validatedPwMu.RLock()
+	if expiry, ok := s.validatedPw[cacheKey]; ok && time.Now().Before(expiry) {
+		s.validatedPwMu.RUnlock()
+		return s.resolveUserIDFromPassword(pw), true
+	}
+	s.validatedPwMu.RUnlock()
+
+	userID, ok := s.validateAndResolveViaConvex(pw, action, deviceID, token)
+	if ok {
+		s.validatedPwMu.Lock()
+		s.validatedPw[cacheKey] = time.Now().Add(5 * time.Minute)
+		s.validatedPwMu.Unlock()
+		if userID != "" {
+			s.pwUserIDMu.Lock()
+			s.pwUserIDs[pw] = userID
+			s.pwUserIDExp[pw] = time.Now().Add(5 * time.Minute)
+			s.pwUserIDMu.Unlock()
+		}
+	}
+	return userID, ok
 }
 
 // validateAndResolveViaConvex returns both the validity and the
 // resolved userId. Same 5-minute cache as validatePassword. Used by
 // the bus to scope fanout per-user without a second Convex round-trip.
-func (s *RelayServer) validateAndResolveViaConvex(pw string) (string, bool) {
+func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token string) (string, bool) {
 	url := strings.TrimRight(s.convexURL, "/") + "/relay/validate"
-	body, _ := json.Marshal(map[string]string{"password": pw})
+	payload := map[string]string{"password": pw}
+	if strings.TrimSpace(action) != "" {
+		payload["action"] = strings.TrimSpace(action)
+	}
+	if strings.TrimSpace(deviceID) != "" {
+		payload["deviceId"] = strings.TrimSpace(deviceID)
+	}
+	if strings.TrimSpace(token) != "" {
+		payload["token"] = strings.TrimSpace(token)
+	}
+	body, _ := json.Marshal(payload)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
 	if err != nil {
@@ -339,7 +394,7 @@ func (s *RelayServer) resolveUserIDFromPassword(pw string) string {
 	}
 	s.pwUserIDMu.RUnlock()
 
-	uid, ok := s.validateAndResolveViaConvex(pw)
+	uid, ok := s.validateAndResolveViaConvex(pw, "", "", "")
 	if !ok || uid == "" {
 		return ""
 	}
@@ -491,8 +546,11 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		}
 	}
 
-	// Validate relay password (shared or per-user via Convex)
-	if !s.validatePassword(reg.Password) {
+	// Validate relay password for this registration. On the official free
+	// relay this proves the password belongs to the same signed-in user as
+	// the agent token and, when the device row already exists, that the user
+	// owns the deviceId being registered.
+	if _, ok := s.validateRelayAccess(reg.Password, "register", reg.DeviceID, reg.Token); !ok {
 		if !s.abuseGuard.allowInvalidAuth(remoteAddr) {
 			rejectRegistration("too many invalid relay password attempts", "invalid password rate limited")
 			return
@@ -982,12 +1040,18 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if relayPw == "" {
 		relayPw = r.URL.Query().Get("__rp")
 	}
-	if !s.validatePassword(relayPw) {
+	userID, ok := s.validateRelayAccess(relayPw, "proxy", deviceID, "")
+	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": "invalid relay password",
 		})
+		return
+	}
+	if userID != "" && !s.abuseGuard.allow("proxy-user:"+userID, s.abuseGuard.cfg.ProxyPerUserPerMin, s.abuseGuard.cfg.ProxyBurstPerUser) {
+		s.abuseGuard.logLimited("proxy-user", userID)
+		writeRelayError(w, http.StatusTooManyRequests, "free relay user rate limit exceeded")
 		return
 	}
 

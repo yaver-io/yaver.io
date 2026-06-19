@@ -179,6 +179,7 @@ The relay has built-in abuse controls with conservative defaults. Operators can 
 |---|---:|---|
 | `RELAY_HTTP_RATE_PER_IP_PER_MIN` / `RELAY_HTTP_BURST_PER_IP` | `600` / `120` | General HTTP requests per source IP |
 | `RELAY_PROXY_RATE_PER_IP_PER_MIN` / `RELAY_PROXY_BURST_PER_IP` | `240` / `80` | `/d/{deviceId}/...` proxy requests per source IP |
+| `RELAY_PROXY_RATE_PER_USER_PER_MIN` / `RELAY_PROXY_BURST_PER_USER` | `240` / `80` | `/d/{deviceId}/...` proxy requests per validated Yaver user on the official free relay |
 | `RELAY_BUS_RATE_PER_IP_PER_MIN` / `RELAY_BUS_BURST_PER_IP` | `120` / `40` | `/bus/*` event requests per source IP |
 | `RELAY_ADMIN_RATE_PER_IP_PER_MIN` / `RELAY_ADMIN_BURST_PER_IP` | `60` / `20` | `/admin/*`, `/presence`, `/tunnels` requests per source IP |
 | `RELAY_QUIC_REGISTER_RATE_PER_IP_PER_MIN` / `RELAY_QUIC_REGISTER_BURST_PER_IP` | `60` / `20` | Agent QUIC registration attempts per source IP |

@@ -775,6 +775,17 @@ func remoteAgentJSON(ctx context.Context, baseURL, token, method, path string, b
 	if err != nil {
 		return err
 	}
+	if staleRelayPasswordHTTP(status, raw) && repairRelayPasswordForRemoteHTTP(ctx) {
+		headers, err := transportHeadersForBase(nil, baseURL)
+		if err != nil {
+			return err
+		}
+		candidate.Headers = headers
+		_, status, raw, err = doRemoteAgentRequest(ctx, []RemoteAgentCandidate{candidate}, token, method, path, bodyJSON, 60*time.Second)
+		if err != nil {
+			return err
+		}
+	}
 	if status >= 400 {
 		msg := strings.TrimSpace(string(raw))
 		if msg == "" {
@@ -805,6 +816,16 @@ func remoteAgentJSONForDevice(ctx context.Context, deviceHint, method, path stri
 	if err != nil {
 		return err
 	}
+	if staleRelayPasswordHTTP(status, raw) && repairRelayPasswordForRemoteHTTP(ctx) {
+		candidates, token, err = resolveRemoteAgentCandidates(deviceHint)
+		if err != nil {
+			return err
+		}
+		_, status, raw, err = doRemoteAgentRequest(ctx, candidates, token, method, path, bodyJSON, 60*time.Second)
+		if err != nil {
+			return err
+		}
+	}
 	if status >= 400 {
 		msg := strings.TrimSpace(string(raw))
 		if msg == "" {
@@ -816,4 +837,67 @@ func remoteAgentJSONForDevice(ctx context.Context, deviceHint, method, path stri
 		return nil
 	}
 	return json.Unmarshal(raw, out)
+}
+
+func staleRelayPasswordHTTP(status int, raw []byte) bool {
+	if status != http.StatusUnauthorized && status != http.StatusForbidden {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(raw)))
+	return strings.Contains(msg, "relay") && strings.Contains(msg, "password") &&
+		(strings.Contains(msg, "invalid") || strings.Contains(msg, "rejected") || strings.Contains(msg, "denied"))
+}
+
+func repairRelayPasswordForRemoteHTTP(ctx context.Context) bool {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.ConvexSiteURL) == "" || strings.TrimSpace(cfg.AuthToken) == "" {
+		return false
+	}
+	req, err := newBearerRequest(http.MethodPost, strings.TrimRight(cfg.ConvexSiteURL, "/")+"/settings/repair-relay", cfg.AuthToken, bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		return false
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+	resp, err := remoteHTTPClient(10 * time.Second).Do(req)
+	if err != nil {
+		return false
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false
+	}
+	settings, err := FetchUserSettings(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil || settings == nil || strings.TrimSpace(settings.RelayPassword) == "" {
+		return false
+	}
+	persistFreshRelayPassword(cfg, settings.RelayUrl, settings.RelayPassword)
+	if err := SaveConfig(cfg); err != nil {
+		return false
+	}
+	return true
+}
+
+func persistFreshRelayPassword(cfg *Config, relayURL, password string) {
+	if cfg == nil {
+		return
+	}
+	pw := strings.TrimSpace(password)
+	if pw == "" {
+		return
+	}
+	relayURL = strings.TrimRight(strings.TrimSpace(relayURL), "/")
+	cfg.RelayPassword = pw
+	cfg.CachedRelayPassword = pw
+	update := func(relays []RelayServerConfig) {
+		for i := range relays {
+			if relayURL == "" || strings.TrimRight(strings.TrimSpace(relays[i].HttpURL), "/") == relayURL {
+				relays[i].Password = pw
+			}
+		}
+	}
+	update(cfg.RelayServers)
+	update(cfg.CachedRelayServers)
 }

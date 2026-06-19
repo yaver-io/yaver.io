@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { MobileClient } from "../src/mobile-client";
 import {
   normalizeProjectChipName,
+  preferredDefaultModelForRunner,
+  preferredDefaultRunnerForDevice,
   resolveModelForRemoteSend,
   resolveRunnerForRemoteSend,
 } from "../../mobile/src/lib/remoteCodingSelection";
@@ -50,10 +52,10 @@ describe("remote box coding flow", () => {
     expect(target?.id).toBe("live");
   });
 
-  it("resolves Codex runner/model from the focused remote box at send time", () => {
+  it("resolves OpenCode/GLM runner/model from the focused remote box at send time", () => {
     const runner = resolveRunnerForRemoteSend({
       activeDeviceId: "hetzner",
-      primaryRunnerByDevice: { hetzner: "codex" },
+      primaryRunnerByDevice: { hetzner: "opencode" },
       selectedRunner: "claude",
       fallbackRunner: "claude",
       userPickedRunner: false,
@@ -61,18 +63,25 @@ describe("remote box coding flow", () => {
     const model = resolveModelForRemoteSend({
       runnerId: runner,
       activeDevice: { id: "hetzner", name: "remote-linux", os: "linux" } as any,
-      primaryModelByDevice: { hetzner: "gpt-5.3-codex" },
+      primaryModelByDevice: { hetzner: "zai-coding-plan/glm-4.7" },
       selectedModel: "sonnet",
       fallbackModel: "sonnet",
       availableRunners: [
+        { id: "opencode", models: [{ id: "zai-coding-plan/glm-4.7", isDefault: true }] },
         { id: "codex", models: [{ id: "gpt-5.3-codex", isDefault: true }] },
         { id: "claude", models: [{ id: "claude-opus-4-7", isDefault: true }] },
       ],
       userPickedModel: false,
     });
 
-    expect(runner).toBe("codex");
-    expect(model).toBe("gpt-5.3-codex");
+    expect(runner).toBe("opencode");
+    expect(model).toBe("zai-coding-plan/glm-4.7");
+  });
+
+  it("prefers OpenCode with GLM defaults on Hetzner-style Linux boxes", () => {
+    const device = { name: "Hetzner box", hostName: "yaver-cpu-1234", os: "linux" };
+    expect(preferredDefaultRunnerForDevice(device, "dev@example.com", ["claude", "codex", "opencode"])).toBe("opencode");
+    expect(preferredDefaultModelForRunner("opencode", device, "dev@example.com")).toBe("zai-coding-plan/glm-4.7");
   });
 
   it("does not show transport addresses or root as task context chips", () => {

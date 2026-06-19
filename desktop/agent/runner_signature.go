@@ -36,6 +36,7 @@ import (
 var runnerSignatures = map[string][]string{
 	"claude":   {"claude", "anthropic"},
 	"codex":    {"codex"},
+	"glm":      {"claude", "anthropic"},
 	"opencode": {"opencode"},
 }
 

@@ -14,6 +14,9 @@ export type DeviceIdentityLike = {
   os?: string | null;
 };
 
+export const HETZNER_OPENCODE_MODEL = "zai-coding-plan/glm-4.7";
+export const HETZNER_GLM_MODEL = "glm-4.7";
+
 export function isKivancAccount(email: string | null | undefined): boolean {
   const normalized = String(email || "").trim().toLowerCase();
   if (!normalized) return false;
@@ -34,6 +37,17 @@ export function isKivancMacBook(device: DeviceIdentityLike): boolean {
   const isMac = ["darwin", "macos"].includes(String(device.os || "").trim().toLowerCase());
   if (!isMac) return false;
   return haystack.includes("kivanc") || haystack.includes("cakmak") || haystack.includes("macbook");
+}
+
+export function isHetznerLikeDevice(device: DeviceIdentityLike): boolean {
+  const haystack = `${device.name || ""} ${device.hostName || ""}`.toLowerCase();
+  const os = String(device.os || "").trim().toLowerCase();
+  return os === "linux" && (
+    haystack.includes("hetzner") ||
+    haystack.includes("cloud") ||
+    haystack.includes("remote") ||
+    haystack.includes("yaver-")
+  );
 }
 
 export function normalizeTaskRunnerId(runnerId?: string | null): string {
@@ -70,12 +84,16 @@ export function preferredDefaultRunnerForDevice(
 ): string | null {
   if (availableRunnerIds.length === 0) return null;
   const unique = Array.from(new Set(availableRunnerIds.map(normalizeTaskRunnerId).filter(Boolean)));
+  if (isHetznerLikeDevice(device) && unique.includes("opencode")) return "opencode";
   if (isKivancAccount(signedInEmail)) {
     if (isKivancMacBook(device) && unique.includes("claude")) return "claude";
+    if (!isKivancMacBook(device) && unique.includes("opencode")) return "opencode";
     if (!isKivancMacBook(device) && unique.includes("codex")) return "codex";
   }
   if (unique.includes("claude")) return "claude";
   if (unique.includes("codex")) return "codex";
+  if (unique.includes("opencode")) return "opencode";
+  if (unique.includes("glm")) return "glm";
   return unique[0] || null;
 }
 
@@ -88,10 +106,14 @@ export function preferredDefaultModelForRunner(
   if (!normalized) return null;
   if (isKivancAccount(signedInEmail)) {
     if (normalized === "claude" && isKivancMacBook(device)) return "claude-opus-4-7";
+    if (normalized === "opencode" && !isKivancMacBook(device)) return HETZNER_OPENCODE_MODEL;
+    if (normalized === "glm" && !isKivancMacBook(device)) return HETZNER_GLM_MODEL;
     if (normalized === "codex" && !isKivancMacBook(device)) return "gpt-5.3-codex";
   }
   if (normalized === "claude") return "claude-opus-4-7";
   if (normalized === "codex") return "gpt-5.3-codex";
+  if (normalized === "opencode") return HETZNER_OPENCODE_MODEL;
+  if (normalized === "glm") return HETZNER_GLM_MODEL;
   return null;
 }
 

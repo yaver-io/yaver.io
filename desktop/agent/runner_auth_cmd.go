@@ -146,8 +146,11 @@ func buildRunnerAuthEntries(runner string, openAIKey string, anthropicKey string
 		out = add(out, "ANTHROPIC_API_KEY", anthropicKey, "anthropic-api-key")
 		out = add(out, "GLM_API_KEY", glmKey, "glm-api-key")
 		out = add(out, "ZAI_API_KEY", zaiKey, "zai-api-key")
+	case "glm":
+		out = add(out, "GLM_API_KEY", glmKey, "glm-api-key")
+		out = add(out, "ZAI_API_KEY", zaiKey, "zai-api-key")
 	default:
-		return nil, fmt.Errorf("unsupported runner %q (want claude, codex, or opencode)", runner)
+		return nil, fmt.Errorf("unsupported runner %q (want claude, codex, opencode, or glm)", runner)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no auth values provided for %s", runner)
@@ -231,6 +234,7 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 		{ID: "claude", Name: "Claude Code", Cmd: "claude"},
 		{ID: "codex", Name: "OpenAI Codex", Cmd: "codex"},
 		{ID: "opencode", Name: "OpenCode", Cmd: "opencode"},
+		{ID: "glm", Name: "GLM (z.ai)", Cmd: "claude"},
 	}
 	rows := make([]runnerAuthStatusRow, 0, len(runners)+8)
 	for _, runner := range runners {

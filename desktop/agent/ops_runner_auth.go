@@ -24,7 +24,7 @@ import (
 
 func init() {
 	registerOpsVerb(opsVerbSpec{
-		Name: "runner_auth",
+		Name:        "runner_auth",
 		Description: "Authorize a coding runner (claude/codex/opencode) ON an owned box (e.g. a managed cloud box) so it can run agents. op=browser_start returns {verification_uri,user_code,sessionId} to open in any browser; poll op=browser_status; op=credentials_import copies a locally signed-in subscription token to the box (preferred — never API keys). Pass deviceId to target the box; remote routing + ownership are enforced by the underlying runner-auth layer, tokens go device→device and never reach Convex.",
 		Schema: map[string]interface{}{
 			"type":     "object",
@@ -38,7 +38,7 @@ func init() {
 					},
 				},
 				"deviceId":        map[string]interface{}{"type": "string", "description": "Target owned device id (the managed box). Omit for local."},
-				"runner":          map[string]interface{}{"type": "string", "enum": []string{"claude", "claude-code", "codex", "opencode"}},
+				"runner":          map[string]interface{}{"type": "string", "enum": []string{"claude", "claude-code", "codex", "opencode", "glm"}},
 				"sessionId":       map[string]interface{}{"type": "string", "description": "From browser_start; for browser_status/submit_code/cancel."},
 				"code":            map[string]interface{}{"type": "string", "description": "Auth code/token for submit_code."},
 				"credentialsJson": map[string]interface{}{"type": "string", "description": "Subscription credentials blob for credentials_import."},

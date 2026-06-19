@@ -57,7 +57,7 @@ const prompt =
   "Add an exclamation mark to the greeting so it returns 'Hello, <name>!', and " +
   "update App so it greets 'Yaver' instead of 'world'. Keep everything else.";
 
-console.log("→ running agentic loop on GLM (glm-4.6)…\n");
+console.log("-> running agentic loop on GLM (glm-4.7)...\n");
 const t0 = Date.now();
 const res = await runCodingAgent({
   prompt,

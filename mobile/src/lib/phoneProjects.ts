@@ -625,7 +625,7 @@ export async function generatePhoneProjectDraftFromPrompt(args: {
     provider === "glm"
       ? "https://api.z.ai/api/coding/paas/v4/chat/completions"
       : "https://api.openai.com/v1/chat/completions";
-  const model = provider === "glm" ? "glm-4.6" : "gpt-4.1-mini";
+  const model = provider === "glm" ? "glm-4.7" : "gpt-4.1-mini";
   const providerName = provider === "glm" ? "GLM" : "OpenAI";
   const res = await fetch(endpoint, {
     method: "POST",
@@ -703,7 +703,7 @@ export async function generateClarifyingQuestions(args: {
     provider === "glm"
       ? "https://api.z.ai/api/coding/paas/v4/chat/completions"
       : "https://api.openai.com/v1/chat/completions";
-  const model = provider === "glm" ? "glm-4.6" : "gpt-4.1-mini";
+  const model = provider === "glm" ? "glm-4.7" : "gpt-4.1-mini";
   const res = await fetch(endpoint, {
     method: "POST",
     headers: {

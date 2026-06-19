@@ -3312,7 +3312,16 @@ http.route({
       if (!body.password || typeof body.password !== "string") {
         return jsonResponse({ ok: false, error: "password required" }, 400);
       }
-      const result = await ctx.runQuery(api.userSettings.validateRelayPassword, { password: body.password });
+      const tokenHash =
+        typeof body.token === "string" && body.token
+          ? await sha256Hex(body.token)
+          : undefined;
+      const result = await ctx.runQuery(api.userSettings.validateRelayPassword, {
+        password: body.password,
+        deviceId: typeof body.deviceId === "string" ? body.deviceId : undefined,
+        action: typeof body.action === "string" ? body.action : undefined,
+        tokenHash,
+      });
       if (!result) {
         return jsonResponse({ ok: false }, 401);
       }
@@ -3669,7 +3678,14 @@ http.route({
     let relayServers: unknown[] = [];
     if (config.relay_servers) {
       try {
-        relayServers = JSON.parse(config.relay_servers);
+        const parsed = JSON.parse(config.relay_servers);
+        relayServers = Array.isArray(parsed)
+          ? parsed.map((server) => {
+              if (!server || typeof server !== "object" || Array.isArray(server)) return server;
+              const { password: _password, ...publicServer } = server as Record<string, unknown>;
+              return publicServer;
+            })
+          : [];
       } catch {
         // ignore parse errors
       }

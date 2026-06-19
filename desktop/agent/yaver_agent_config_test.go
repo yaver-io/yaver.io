@@ -27,13 +27,13 @@ func newTestVaultForAgentCfg(t *testing.T) *VaultStore {
 
 func TestYaverAgentDefaultModel(t *testing.T) {
 	cases := map[string]string{
-		"glm":         "glm-4.6",
-		"anthropic":   "claude-haiku-4-5",
-		"openai":      "gpt-4o-mini",
-		"openrouter":  "anthropic/claude-haiku-4-5",
-		"unknown":     "",
-		"  GLM  ":     "glm-4.6", // case + whitespace tolerance
-		"OpenRouter":  "anthropic/claude-haiku-4-5",
+		"glm":        "glm-4.7",
+		"anthropic":  "claude-haiku-4-5",
+		"openai":     "gpt-4o-mini",
+		"openrouter": "anthropic/claude-haiku-4-5",
+		"unknown":    "",
+		"  GLM  ":    "glm-4.7", // case + whitespace tolerance
+		"OpenRouter": "anthropic/claude-haiku-4-5",
 	}
 	for in, want := range cases {
 		got := yaverAgentDefaultModel(in)
@@ -72,7 +72,7 @@ func TestSaveAndLoadYaverAgentConfig_RoundtripWithDefaultModel(t *testing.T) {
 	if cfg.Provider != "glm" {
 		t.Errorf("provider not normalized: %q", cfg.Provider)
 	}
-	if cfg.Model != "glm-4.6" {
+	if cfg.Model != "glm-4.7" {
 		t.Errorf("model default not applied: %q", cfg.Model)
 	}
 	if !cfg.HasAPIKey {
@@ -83,7 +83,7 @@ func TestSaveAndLoadYaverAgentConfig_RoundtripWithDefaultModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if loaded.Provider != "glm" || loaded.Model != "glm-4.6" || !loaded.HasAPIKey {
+	if loaded.Provider != "glm" || loaded.Model != "glm-4.7" || !loaded.HasAPIKey {
 		t.Errorf("roundtrip mismatch: %+v", loaded)
 	}
 

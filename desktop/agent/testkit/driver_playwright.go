@@ -33,7 +33,7 @@ func runPlaywrightSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Re
 		return
 	}
 
-	script, steps := buildPlaywrightScript(spec, artifactDir)
+	script, steps := buildPlaywrightScript(spec, artifactDir, opts)
 	scriptPath := filepath.Join(artifactDir, "playwright-run.mjs")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
 		res.Err = fmt.Errorf("write playwright script: %w", err)
@@ -43,6 +43,7 @@ func runPlaywrightSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Re
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, node, scriptPath)
+	cmd.Dir = filepath.Dir(spec.Path)
 	out, runErr := cmd.CombinedOutput()
 
 	// Each step prints a line: @@STEP {json}. Parse them into StepResults.
@@ -86,19 +87,35 @@ type pwStepLine struct {
 
 // buildPlaywrightScript renders the spec into a Node ESM script and returns it
 // plus the human labels (parallel to the emitted @@STEP indices).
-func buildPlaywrightScript(spec *Spec, artifactDir string) (string, []string) {
+func buildPlaywrightScript(spec *Spec, artifactDir string, opts RunOptions) (string, []string) {
 	var b strings.Builder
 	var labels []string
+	storageState := strings.TrimSpace(opts.PlaywrightStorageState)
 	b.WriteString("import { chromium } from 'playwright';\n")
+	if storageState != "" {
+		b.WriteString("import fs from 'node:fs';\n")
+	}
 	b.WriteString("const base = " + jsStr(spec.URL) + ";\n")
 	b.WriteString("const shotDir = " + jsStr(artifactDir) + ";\n")
+	if storageState != "" {
+		b.WriteString("const storageStatePath = " + jsStr(storageState) + ";\n")
+	}
 	w := 1280
 	h := 800
 	if spec.Viewport != nil {
 		w, h = spec.Viewport.Width, spec.Viewport.Height
 	}
-	b.WriteString(fmt.Sprintf("const browser = await chromium.launch({ headless: true });\n"))
-	b.WriteString(fmt.Sprintf("const ctx = await browser.newContext({ viewport: { width: %d, height: %d } });\n", w, h))
+	b.WriteString(fmt.Sprintf("const browser = await chromium.launch({ headless: %t });\n", !opts.Headful))
+	if storageState != "" {
+		b.WriteString(fmt.Sprintf("const ctxOpts = { viewport: { width: %d, height: %d } };\n", w, h))
+		b.WriteString("if (fs.existsSync(storageStatePath)) ctxOpts.storageState = storageStatePath;\n")
+		b.WriteString("const ctx = await browser.newContext(ctxOpts);\n")
+	} else {
+		b.WriteString(fmt.Sprintf("const ctx = await browser.newContext({ viewport: { width: %d, height: %d } });\n", w, h))
+	}
+	if opts.PlaywrightTrace {
+		b.WriteString("await ctx.tracing.start({ screenshots: true, snapshots: true, sources: true });\n")
+	}
 	for _, c := range spec.Cookies {
 		path := c.Path
 		if path == "" {
@@ -113,6 +130,7 @@ func buildPlaywrightScript(spec *Spec, artifactDir string) (string, []string) {
 	b.WriteString("const page = await ctx.newPage();\n")
 	b.WriteString("function urlOf(p){ return /^https?:\\/\\//.test(p) ? p : (base.replace(/\\/$/,'') + p); }\n")
 	b.WriteString("async function step(i, label, fn){ try { await fn(); let shot=shotDir+'/pw-step-'+i+'.png'; await page.screenshot({path:shot}).catch(()=>{}); console.log('@@STEP '+JSON.stringify({i, ok:true, shot})); } catch(e){ let shot=shotDir+'/pw-step-'+i+'-fail.png'; await page.screenshot({path:shot}).catch(()=>{}); console.log('@@STEP '+JSON.stringify({i, ok:false, err:String(e&&e.message||e), shot})); throw e; } }\n")
+	b.WriteString("try {\n")
 
 	idx := 0
 	emit := func(label, body string) {
@@ -148,7 +166,15 @@ func buildPlaywrightScript(spec *Spec, artifactDir string) (string, []string) {
 			emit("eval", "await page.evaluate(()=>{ "+st.Eval+" });")
 		}
 	}
+	b.WriteString("} finally {\n")
+	if opts.PlaywrightTrace {
+		b.WriteString("await ctx.tracing.stop({ path: shotDir + '/trace.zip' }).catch(()=>{});\n")
+	}
+	if storageState != "" {
+		b.WriteString("await ctx.storageState({ path: storageStatePath }).catch(()=>{});\n")
+	}
 	b.WriteString("await browser.close();\n")
+	b.WriteString("}\n")
 	return b.String(), labels
 }
 

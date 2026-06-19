@@ -71,7 +71,7 @@ type yaverAgentSetRequest struct {
 func yaverAgentDefaultModel(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "glm":
-		return "glm-4.6"
+		return "glm-4.7"
 	case "anthropic":
 		return "claude-haiku-4-5"
 	case "openai":

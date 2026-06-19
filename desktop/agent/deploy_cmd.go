@@ -166,12 +166,12 @@ func printDeployUsage() {
 
   # Platform surfaces:
   yaver deploy ios                                     TestFlight upload (iOS app).
-  yaver deploy testflight                              Same as `yaver deploy ios`.
-  yaver deploy carplay                                  Same as `yaver deploy ios` (Apple CarPlay).
+  yaver deploy testflight                              Same as yaver deploy ios.
+  yaver deploy carplay                                  Same as yaver deploy ios (Apple CarPlay).
   yaver deploy android                                  Play Store internal track upload.
-  yaver deploy android-auto                            Same as `yaver deploy android` (Android Auto).
-  yaver deploy auto                                     Same as `yaver deploy android` (Android Auto).
-  yaver deploy playstore                              Same as `yaver deploy android`.
+  yaver deploy android-auto                            Same as yaver deploy android (Android Auto).
+  yaver deploy auto                                     Same as yaver deploy android (Android Auto).
+  yaver deploy playstore                              Same as yaver deploy android.
   yaver deploy tv                                      Android TV + tvOS upload.
   yaver deploy tv --build-only                         Build/verify TV surfaces only.
   yaver deploy android-tv                              Play AAB upload with leanback verification.

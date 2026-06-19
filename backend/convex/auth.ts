@@ -84,7 +84,13 @@ async function ensureUserSettings(ctx: MutationCtx, userId: Id<"users">) {
     .first();
   if (!settings) {
     const defaultRelay = await getDefaultRelay(ctx);
-    await ctx.db.insert("userSettings", { userId, forceRelay: false, moreOptionalTools: [], ...defaultRelay });
+    await ctx.db.insert("userSettings", {
+      userId,
+      forceRelay: false,
+      moreOptionalTools: [],
+      relayUrl: defaultRelay.relayUrl,
+      relayPassword: randomHex(24),
+    });
     return;
   }
   const patch: Record<string, unknown> = {};
@@ -93,8 +99,13 @@ async function ensureUserSettings(ctx: MutationCtx, userId: Id<"users">) {
   }
   if (!settings.relayPassword) {
     const defaultRelay = await getDefaultRelay(ctx);
-    if (defaultRelay.relayPassword) {
-      Object.assign(patch, defaultRelay);
+    if (defaultRelay.relayUrl) patch.relayUrl = defaultRelay.relayUrl;
+    patch.relayPassword = randomHex(24);
+  } else {
+    const defaultRelay = await getDefaultRelay(ctx);
+    if (defaultRelay.platformRelayPassword && settings.relayPassword === defaultRelay.platformRelayPassword) {
+      if (defaultRelay.relayUrl) patch.relayUrl = defaultRelay.relayUrl;
+      patch.relayPassword = randomHex(24);
     }
   }
   if (Object.keys(patch).length > 0) {
@@ -510,9 +521,11 @@ async function mergeUserInto(
 /**
  * Fetch the first platform relay server and generate a unique per-user relay password.
  * Each user gets their own random password — the relay validates it via Convex backend.
- * Returns { relayUrl, relayPassword } or {} if no relay configured.
+ * Returns the platform free-relay URL. The platform/shared relay
+ * password is deliberately not returned to user settings; public
+ * clients receive per-user random relay credentials.
  */
-async function getDefaultRelay(ctx: MutationCtx): Promise<{ relayUrl?: string; relayPassword?: string }> {
+async function getDefaultRelay(ctx: MutationCtx): Promise<{ relayUrl?: string; platformRelayPassword?: string }> {
   const config = await ctx.db
     .query("platformConfig")
     .withIndex("by_key", (q) => q.eq("key", "relay_servers"))
@@ -524,7 +537,7 @@ async function getDefaultRelay(ctx: MutationCtx): Promise<{ relayUrl?: string; r
     const first = relays[0];
     return {
       relayUrl: first.httpUrl || undefined,
-      relayPassword: first.password || undefined, // shared relay password from platform config
+      platformRelayPassword: first.password || undefined,
     };
   } catch {
     return {};
@@ -1413,7 +1426,8 @@ export const createEmailUser = mutation({
       userId: userDocId,
       forceRelay: false,
       moreOptionalTools: [],
-      ...defaultRelay,
+      relayUrl: defaultRelay.relayUrl,
+      relayPassword: randomHex(24),
     });
     await ensureAuthIdentity(ctx, userDocId, "email", args.email, args.email);
 

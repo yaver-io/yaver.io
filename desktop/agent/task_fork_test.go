@@ -40,6 +40,7 @@ func mkParentTask(t *testing.T) *Task {
 func newForkTestServer(t *testing.T) *HTTPServer {
 	t.Helper()
 	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	tm.DummyMode = true
 	mgr, err := NewBlackBoxManager()
 	if err != nil {
 		t.Fatalf("NewBlackBoxManager: %v", err)
@@ -188,7 +189,7 @@ func TestHandleTaskForkCreatesChildAndKeepsParentImmutable(t *testing.T) {
 
 	body := bytes.NewReader([]byte(`{
 		"runner":"opencode",
-		"model":"glm/glm-4.6",
+		"model":"zai-coding-plan/glm-4.7",
 		"mode":"plan",
 		"input":"switch to opencode plan and outline the next 3 steps",
 		"contextWords":800

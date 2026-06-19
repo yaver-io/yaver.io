@@ -1897,7 +1897,7 @@ export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   codex: "gpt-5.3-codex",
   // GLM runs on the claude binary against z.ai's Anthropic endpoint; the
   // model id is forwarded verbatim. Mirrors builtinRunners["glm"].Model.
-  glm: "glm-4.6",
+  glm: "glm-4.7",
 };
 
 export function isKivancAccount(email: string | null | undefined): boolean {

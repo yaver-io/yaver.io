@@ -21,7 +21,7 @@ import (
 // and duration (claude-code's stream-json can't surface an exit code;
 // opencode's raw stream can't surface output). It talks to any
 // OpenAI-compatible chat-completions endpoint — GLM direct or
-// OpenRouter (z-ai/glm-4.6) — with the user's own key (BYOK; no
+// OpenRouter (z-ai/glm-4.7) — with the user's own key (BYOK; no
 // inference revenue, per feedback_no_api_keys_subscription_only).
 //
 // SCOPE (honest): this is the loop CORE only. It is NOT the full
@@ -46,7 +46,7 @@ import (
 type GLMLoopConfig struct {
 	BaseURL  string // e.g. https://openrouter.ai/api/v1  (no trailing slash needed)
 	APIKey   string // user's own key (BYOK)
-	Model    string // e.g. z-ai/glm-4.6
+	Model    string // e.g. z-ai/glm-4.7
 	MaxSteps int    // hard cap on tool round-trips (default 12)
 	// MaxToolOutputBytes caps how much command output is fed back to
 	// the model (and marked truncated on the card). 0 → 16 KiB.
@@ -56,9 +56,9 @@ type GLMLoopConfig struct {
 // --- OpenAI-compatible wire types (subset we use) -------------------
 
 type glmMessage struct {
-	Role       string          `json:"role"`
-	Content    string          `json:"content,omitempty"`
-	ToolCalls  []glmToolCall   `json:"tool_calls,omitempty"`
+	Role       string        `json:"role"`
+	Content    string        `json:"content,omitempty"`
+	ToolCalls  []glmToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
 	Name       string        `json:"name,omitempty"`
 }

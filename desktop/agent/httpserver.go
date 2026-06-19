@@ -3203,6 +3203,18 @@ func fallbackRunnerModels(runnerID string) []runnerModelInfo {
 			{ID: "gpt-5.4", Name: "GPT-5.4", Source: "builtin", IsDefault: false},
 			{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Source: "builtin", IsDefault: false},
 		}
+	case "opencode":
+		return []runnerModelInfo{
+			{ID: "zai-coding-plan/glm-4.7", Name: "GLM 4.7 Coding Plan (z.ai)", Provider: "zai-coding-plan", Source: "builtin", IsDefault: true},
+			{ID: "zai/glm-4.7", Name: "GLM 4.7 (z.ai)", Provider: "zai", Source: "builtin", IsDefault: false},
+			{ID: "openrouter/z-ai/glm-4.7", Name: "GLM 4.7 (OpenRouter)", Provider: "openrouter", Source: "builtin", IsDefault: false},
+			{ID: "openai/gpt-5.4", Name: "GPT-5.4", Provider: "openai", Source: "builtin", IsDefault: false},
+			{ID: "anthropic/claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Provider: "anthropic", Source: "builtin", IsDefault: false},
+		}
+	case "glm":
+		return []runnerModelInfo{
+			{ID: "glm-4.7", Name: "GLM 4.7", Provider: "z.ai", Source: "builtin", IsDefault: true},
+		}
 	default:
 		return nil
 	}
@@ -3246,7 +3258,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, runnerID := range []string{"claude", "codex", "opencode"} {
+	for _, runnerID := range []string{"claude", "codex", "opencode", "glm"} {
 		if len(modelsByRunner[runnerID]) == 0 {
 			if fallback := fallbackRunnerModels(runnerID); len(fallback) > 0 {
 				modelsByRunner[runnerID] = fallback
@@ -3316,7 +3328,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		addRunner(r)
 	}
 	// Then rest in stable order
-	for _, id := range []string{"claude", "codex", "opencode"} {
+	for _, id := range []string{"opencode", "glm", "claude", "codex"} {
 		if r, ok := builtinRunners[id]; ok {
 			addRunner(r)
 		}
@@ -10296,6 +10308,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			InstallIfMissing     *bool  `json:"install_if_missing"`
 			CodexLogin           *bool  `json:"codex_login"`
 			SetupMCP             *bool  `json:"setup_mcp"`
+			AllowInstallOnly     *bool  `json:"allow_install_only"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpRunnerAuthSetup(a.DeviceID, runnerAuthSetupRequest{
@@ -10310,6 +10323,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			InstallIfMissing:     a.InstallIfMissing,
 			CodexLogin:           a.CodexLogin,
 			SetupMCP:             a.SetupMCP,
+			AllowInstallOnly:     a.AllowInstallOnly,
 		}))
 	case "runner_auth_browser_start":
 		var a struct {

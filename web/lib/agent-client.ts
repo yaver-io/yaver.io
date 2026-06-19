@@ -2333,7 +2333,7 @@ export class AgentClient {
     const res = await fetch(`${this.baseUrl}/agent/runner/switch`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ runner: runnerId }),
+      body: JSON.stringify({ runnerId }),
     });
     if (!res.ok) throw new Error(`Failed to switch runner: ${res.status}`);
   }

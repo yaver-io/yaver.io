@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
 
-// WebTestsPanel — run a project's web test suite (yaver-tests/*.test.yaml) via
-// the connected agent's chromedp runner and read a feature-based highlight
-// report (pass/fail per Feature + clip/reel paths). "Grow" returns the
-// self-author plan of uncovered Features for the Yaver runner. The connected
-// agent IS the remote PC — pick the machine in the dashboard's device selector.
-// Backed by ops verbs project_test_run / project_test_report / project_test_grow.
+// WebTestsPanel — run a project's web test suite on the connected agent:
+// chromedp YAML, Playwright YAML, or native Playwright project tests. The
+// connected agent IS the remote PC — pick it in the dashboard device selector.
 
 type Feature = {
   name: string;
@@ -22,6 +19,16 @@ type Feature = {
   screenshots?: string[];
   clipPath?: string;
   posterPath?: string;
+  tracePath?: string;
+};
+type ArtifactRef = {
+  kind: string;
+  path: string;
+  name?: string;
+  mimeType?: string;
+  bytes?: number;
+  feature?: string;
+  step?: number;
 };
 type Report = {
   project?: string;
@@ -32,8 +39,19 @@ type Report = {
   features?: Feature[];
   reelPath?: string;
   dir?: string;
+  artifacts?: ArtifactRef[];
 };
 type Job = { id?: string; state?: string; phase?: string; log?: string[]; error?: string };
+type RunMode = "chromedp" | "playwright-yaml" | "playwright-native";
+type QualityReport = {
+  passed?: boolean;
+  browserJobId?: string;
+  qaJobId?: string;
+  preflight?: any;
+  web?: Report;
+  android?: { caught?: number; fixed?: number; passed?: boolean; bugs?: any[]; flows?: any[] };
+  summary?: string[];
+};
 type GrowPlan = {
   coveredCount?: number;
   uncovered?: { suggestedName: string; route: string; file: string }[];
@@ -45,6 +63,25 @@ type GrowPlan = {
 export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string }) {
   const [dir, setDir] = useState(initialDir);
   const [token, setToken] = useState("");
+  const [mode, setMode] = useState<RunMode>("playwright-yaml");
+  const [profile, setProfile] = useState("");
+  const [devCommand, setDevCommand] = useState("");
+  const [waitURL, setWaitURL] = useState("");
+  const [trace, setTrace] = useState(true);
+  const [nativeProject, setNativeProject] = useState("");
+  const [nativeGrep, setNativeGrep] = useState("");
+  const [status, setStatus] = useState<any | null>(null);
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [authURL, setAuthURL] = useState("");
+  const [authSuccessURL, setAuthSuccessURL] = useState("");
+  const [authJob, setAuthJob] = useState<Job | null>(null);
+  const [qaPackage, setQAPackage] = useState("");
+  const [qaAPK, setQAAPK] = useState("");
+  const [qaBase, setQABase] = useState("");
+  const [runRedroid, setRunRedroid] = useState(false);
+  const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
+  const [runs, setRuns] = useState<any[]>([]);
+  const [gcResult, setGCResult] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [report, setReport] = useState<Report | null>(null);
@@ -60,10 +97,31 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
     return e;
   };
 
+  const browserPayload = () => ({
+    dir: dir || undefined,
+    env: envFor(),
+    video: true,
+    trace,
+    profile: profile.trim() || undefined,
+    devCommand: devCommand.trim() || undefined,
+    waitURL: waitURL.trim() || undefined,
+  });
+
+  const nativePayload = () => ({
+    dir: dir || undefined,
+    project: nativeProject.trim() || undefined,
+    grep: nativeGrep.trim() || undefined,
+    trace: trace ? "retain-on-failure" : "off",
+    devCommand: devCommand.trim() || undefined,
+    waitURL: waitURL.trim() || undefined,
+    env: envFor(),
+  });
+
   const run = async () => {
-    setBusy(true); setMsg(null); setReport(null); setGrow(null);
+    setBusy(true); setMsg(null); setReport(null); setGrow(null); setQualityReport(null);
     try {
-      const r = await agentClient.callOps("project_test_run", { dir: dir || undefined, env: envFor(), video: true });
+      const verb = mode === "chromedp" ? "project_test_run" : mode === "playwright-native" ? "playwright_native_run" : "playwright_run";
+      const r = await agentClient.callOps(verb, mode === "playwright-native" ? nativePayload() : browserPayload());
       const j = (r.initial as Job) || null;
       if (!j?.id) { setMsg((r as any)?.error || "could not start run"); setBusy(false); return; }
       setJob(j);
@@ -80,6 +138,135 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
         } else if (sj?.state === "failed") {
           if (poll.current) clearInterval(poll.current);
           setMsg(sj?.error || "run failed"); setBusy(false);
+        }
+      }, 3000);
+    } catch (e: any) { setMsg(String(e?.message || e)); setBusy(false); }
+  };
+
+  const checkPlaywright = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await agentClient.callOps("playwright_status", { dir: dir || undefined });
+      setStatus(r.initial || r);
+    } catch (e: any) { setMsg(String(e?.message || e)); }
+    setBusy(false);
+  };
+
+  const repairPlaywright = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await agentClient.callOps("playwright_repair", { include: ["node", "playwright", "ffmpeg"] });
+      const j = (r.initial as Job) || null;
+      if (!j?.id) { setMsg((r as any)?.error || "could not start repair"); setBusy(false); return; }
+      setJob(j);
+      if (poll.current) clearInterval(poll.current);
+      poll.current = setInterval(async () => {
+        const s = await agentClient.callOps("studio_job_status", { jobId: j.id });
+        const sj = (s.initial as Job) || null;
+        setJob(sj);
+        if (sj?.state === "completed" || sj?.state === "failed") {
+          if (poll.current) clearInterval(poll.current);
+          await checkPlaywright();
+          setBusy(false);
+        }
+      }, 3000);
+    } catch (e: any) { setMsg(String(e?.message || e)); setBusy(false); }
+  };
+
+  const loadProfiles = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await agentClient.callOps("playwright_profiles", {});
+      const p = ((r.initial as any)?.profiles || (r as any)?.profiles || []) as any[];
+      setProfiles(p);
+    } catch (e: any) { setMsg(String(e?.message || e)); }
+    setBusy(false);
+  };
+
+  const startProfileAuth = async () => {
+    if (!authURL.trim()) { setMsg("profile auth URL is required"); return; }
+    if (!profile.trim()) { setMsg("profile name is required"); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const r = await agentClient.callOps("playwright_profile_auth", {
+        dir: dir || undefined,
+        url: authURL.trim(),
+        successURL: authSuccessURL.trim() || undefined,
+        profile: profile.trim(),
+        timeoutSec: 300,
+      });
+      const j = (r.initial as Job) || null;
+      if (!j?.id) { setMsg((r as any)?.error || "could not start profile auth"); setBusy(false); return; }
+      setAuthJob(j);
+    } catch (e: any) { setMsg(String(e?.message || e)); }
+    setBusy(false);
+  };
+
+  const signalProfileAuth = async (signal: "finish" | "cancel") => {
+    if (!authJob?.id) return;
+    setBusy(true); setMsg(null);
+    try {
+      await agentClient.callOps(signal === "finish" ? "playwright_profile_auth_finish" : "playwright_profile_auth_cancel", { jobId: authJob.id });
+      const s = await agentClient.callOps("studio_job_status", { jobId: authJob.id });
+      setAuthJob((s.initial as Job) || authJob);
+      if (signal === "finish") await loadProfiles();
+    } catch (e: any) { setMsg(String(e?.message || e)); }
+    setBusy(false);
+  };
+
+  const loadRuns = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await agentClient.callOps("playwright_runs", { limit: 20 });
+      setRuns(((r.initial as any)?.runs || []) as any[]);
+    } catch (e: any) { setMsg(String(e?.message || e)); }
+    setBusy(false);
+  };
+
+  const gcRuns = async (dryRun = true) => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await agentClient.callOps("playwright_gc", { olderThanHours: 168, dryRun });
+      setGCResult(r.initial || r);
+      const rr = await agentClient.callOps("playwright_runs", { limit: 20 });
+      setRuns(((rr.initial as any)?.runs || []) as any[]);
+    } catch (e: any) { setMsg(String(e?.message || e)); }
+    setBusy(false);
+  };
+
+  const runQuality = async () => {
+    setBusy(true); setMsg(null); setReport(null); setGrow(null); setQualityReport(null);
+    try {
+      const r = await agentClient.callOps("talos_quality_run", {
+        browserMode: mode,
+        browser: browserPayload(),
+        native: nativePayload(),
+        runQA: runRedroid,
+        qa: {
+          package: qaPackage.trim() || undefined,
+          apk: qaAPK.trim() || undefined,
+          base: qaBase.trim() || undefined,
+          mode: "catch",
+        },
+      });
+      const j = (r.initial as Job) || null;
+      if (!j?.id) { setMsg((r as any)?.error || "could not start quality run"); setBusy(false); return; }
+      setJob(j);
+      if (poll.current) clearInterval(poll.current);
+      poll.current = setInterval(async () => {
+        const s = await agentClient.callOps("studio_job_status", { jobId: j.id });
+        const sj = (s.initial as Job) || null;
+        setJob(sj);
+        if (sj?.state === "completed") {
+          if (poll.current) clearInterval(poll.current);
+          const rep = await agentClient.callOps("talos_quality_report", { jobId: j.id });
+          const qr = (rep.initial as QualityReport) || null;
+          setQualityReport(qr);
+          if (qr?.web) setReport(qr.web);
+          setBusy(false);
+        } else if (sj?.state === "failed") {
+          if (poll.current) clearInterval(poll.current);
+          setMsg(sj?.error || "quality run failed"); setBusy(false);
         }
       }, 3000);
     } catch (e: any) { setMsg(String(e?.message || e)); setBusy(false); }
@@ -120,10 +307,15 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
       <div>
         <h2 className="text-lg font-semibold">Web Tests — Highlights</h2>
         <p className="text-sm text-neutral-400">
-          Run <code>yaver-tests/*.test.yaml</code> on the connected machine via chromedp, recording
-          video. Each Feature comes back as a pass/fail highlight. <b>Grow</b> proposes new Features
-          the Yaver runner authors automatically.
+          Run <code>yaver-tests/*.test.yaml</code> or native Playwright tests on the connected
+          machine. Each completed run returns pass/fail Features and scoped artifacts.
         </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <ModeButton active={mode === "chromedp"} onClick={() => setMode("chromedp")}>YAML chromedp</ModeButton>
+        <ModeButton active={mode === "playwright-yaml"} onClick={() => setMode("playwright-yaml")}>YAML Playwright</ModeButton>
+        <ModeButton active={mode === "playwright-native"} onClick={() => setMode("playwright-native")}>Native Playwright</ModeButton>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -137,9 +329,78 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
         </label>
       </div>
 
-      <div className="flex gap-2">
+      {mode !== "chromedp" && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-sm">
+            <span className="text-neutral-400">Profile</span>
+            <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={profile} onChange={(e) => setProfile(e.target.value)} placeholder="talos-admin" />
+          </label>
+          <label className="text-sm">
+            <span className="text-neutral-400">Wait URL</span>
+            <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={waitURL} onChange={(e) => setWaitURL(e.target.value)} placeholder="http://127.0.0.1:3000" />
+          </label>
+          <label className="text-sm sm:col-span-2">
+            <span className="text-neutral-400">Dev command</span>
+            <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={devCommand} onChange={(e) => setDevCommand(e.target.value)} placeholder="npm run dev" />
+          </label>
+          {mode === "playwright-native" && (
+            <>
+              <label className="text-sm">
+                <span className="text-neutral-400">Native project</span>
+                <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={nativeProject} onChange={(e) => setNativeProject(e.target.value)} placeholder="chromium" />
+              </label>
+              <label className="text-sm">
+                <span className="text-neutral-400">Grep</span>
+                <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={nativeGrep} onChange={(e) => setNativeGrep(e.target.value)} placeholder="checkout" />
+              </label>
+            </>
+          )}
+          <label className="flex items-center gap-2 text-sm text-neutral-300">
+            <input type="checkbox" checked={trace} onChange={(e) => setTrace(e.target.checked)} />
+            Capture trace
+          </label>
+        </div>
+      )}
+
+      {mode !== "chromedp" && (
+        <div className="rounded bg-neutral-950 border border-neutral-800 p-3 space-y-3">
+          <div className="text-sm font-medium">Playwright Profile Auth</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <input className="w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={authURL} onChange={(e) => setAuthURL(e.target.value)} placeholder="Login URL" />
+            <input className="w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={authSuccessURL} onChange={(e) => setAuthSuccessURL(e.target.value)} placeholder="Success URL substring" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={startProfileAuth} disabled={busy || running} className="rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 disabled:opacity-60">Start Auth</button>
+            <button onClick={() => signalProfileAuth("finish")} disabled={busy || !authJob?.id} className="rounded border border-green-800 bg-green-950 px-3 py-2 text-sm text-green-300 disabled:opacity-60">Finish Auth</button>
+            <button onClick={() => signalProfileAuth("cancel")} disabled={busy || !authJob?.id} className="rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300 disabled:opacity-60">Cancel Auth</button>
+          </div>
+          {authJob && <div className="text-xs text-neutral-500">{authJob.id} · {authJob.phase || authJob.state}</div>}
+        </div>
+      )}
+
+      <div className="rounded bg-neutral-950 border border-neutral-800 p-3 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-medium">Full Quality</div>
+          <label className="flex items-center gap-2 text-xs text-neutral-300">
+            <input type="checkbox" checked={runRedroid} onChange={(e) => setRunRedroid(e.target.checked)} />
+            Include Redroid
+          </label>
+        </div>
+        {runRedroid && (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <input className="w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={qaPackage} onChange={(e) => setQAPackage(e.target.value)} placeholder="Android package" />
+            <input className="w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={qaAPK} onChange={(e) => setQAAPK(e.target.value)} placeholder="APK path optional" />
+            <input className="w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={qaBase} onChange={(e) => setQABase(e.target.value)} placeholder="Warm base optional" />
+          </div>
+        )}
+        <button onClick={runQuality} disabled={busy || running} className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+          {running ? "Running…" : "Run Full Quality"}
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
         <button onClick={run} disabled={busy || running} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
-          {running ? "Running…" : "Run Web Tests"}
+          {running ? "Running…" : mode === "playwright-native" ? "Run Native Playwright" : mode === "playwright-yaml" ? "Run Playwright YAML" : "Run Web Tests"}
         </button>
         <button onClick={doGrow} disabled={busy || running} className="rounded border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 disabled:opacity-60">
           🌱 Grow Tests
@@ -147,9 +408,56 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
         <button onClick={installDeps} disabled={busy || running} title="Install ffmpeg, chromium, node, playwright, redroid once" className="rounded border border-amber-700 bg-amber-950 px-4 py-2 text-sm font-medium text-amber-300 disabled:opacity-60">
           🔧 Install test tools
         </button>
+        {mode !== "chromedp" && (
+          <>
+            <button onClick={checkPlaywright} disabled={busy || running} className="rounded border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 disabled:opacity-60">
+              Check Playwright
+            </button>
+            <button onClick={repairPlaywright} disabled={busy || running} className="rounded border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 disabled:opacity-60">
+              Repair Playwright
+            </button>
+            <button onClick={loadProfiles} disabled={busy || running} className="rounded border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 disabled:opacity-60">
+              Load Profiles
+            </button>
+            <button onClick={loadRuns} disabled={busy || running} className="rounded border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 disabled:opacity-60">
+              Runs
+            </button>
+            <button onClick={() => gcRuns(true)} disabled={busy || running} className="rounded border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 disabled:opacity-60">
+              GC Dry Run
+            </button>
+          </>
+        )}
       </div>
 
+      {mode !== "chromedp" && (status || profiles.length > 0) && (
+        <div className="rounded bg-neutral-900 border border-neutral-800 p-3 text-xs text-neutral-300">
+          {status && (
+            <div>
+              <span className={status.ready ? "text-green-400" : "text-amber-300"}>{status.ready ? "Ready" : "Needs repair"}</span>
+              {status.nodeVersion ? <span className="ml-2 text-neutral-500">{status.nodeVersion}</span> : null}
+              {status.fixes?.length ? <div className="mt-1 text-neutral-500">{status.fixes.join(" · ")}</div> : null}
+            </div>
+          )}
+          {profiles.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {profiles.map((p, i) => (
+                <button key={p.name || i} onClick={() => setProfile(p.name)} className="rounded border border-neutral-700 px-2 py-1 text-neutral-200">
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {msg && <div className="rounded bg-red-950 border border-red-800 p-3 text-sm text-red-300">{msg}</div>}
+
+      {(runs.length > 0 || gcResult) && (
+        <div className="rounded bg-neutral-900 border border-neutral-800 p-3 text-xs text-neutral-400">
+          {gcResult ? <div className="mb-2">GC: {(gcResult.deleted || []).length ?? 0} deleted candidates</div> : null}
+          {runs.slice(0, 10).map((r, i) => <div key={i}>{r.kind || r.source || "run"} · {r.name || r.path}</div>)}
+        </div>
+      )}
 
       {job && (
         <div>
@@ -169,6 +477,7 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
             {ok ? "PASS — all Features green" : `${report.failed} Feature(s) failing`}
             {report.reelPath ? <span className="ml-2 text-neutral-500">🎬 reel: {report.reelPath}</span> : null}
           </div>
+          {report.artifacts?.length ? <ArtifactList artifacts={report.artifacts} jobId={qualityReport?.browserJobId || job?.id} playwright={mode !== "chromedp"} /> : null}
           {(report.features || []).map((f, i) => (
             <div key={i} className="rounded bg-neutral-900 p-3 border-l-2" style={{ borderColor: f.status === "pass" ? "#2fbf71" : "#ff5d5d" }}>
               <div className="flex justify-between">
@@ -179,9 +488,29 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
                 {f.target}{f.url ? " · " + f.url : ""} · {Math.round((f.durationMs ?? 0) / 100) / 10}s · {f.steps ?? 0} steps{f.screenshots?.length ? ` · ${f.screenshots.length} shots` : ""}
               </div>
               {f.error && <div className="text-xs text-orange-400 mt-1">step {f.failStep}: {f.error}</div>}
-              <WebFeatureMedia feature={f} jobId={job?.id} />
+              {f.tracePath ? <div className="text-xs text-neutral-500 mt-1">trace: {f.tracePath}</div> : null}
+              <WebFeatureMedia feature={f} jobId={qualityReport?.browserJobId || job?.id} playwright={mode !== "chromedp"} />
             </div>
           ))}
+        </div>
+      )}
+
+      {qualityReport && (
+        <div className="rounded bg-neutral-900 border border-neutral-800 p-3 space-y-2">
+          <div className={`text-sm font-bold ${qualityReport.passed ? "text-green-400" : "text-red-400"}`}>
+            {qualityReport.passed ? "FULL QUALITY PASS" : "FULL QUALITY FOUND FAILURES"}
+          </div>
+          {qualityReport.preflight && (
+            <div className={`text-xs ${qualityReport.preflight.ready ? "text-green-400" : "text-amber-300"}`}>
+              Preflight: {qualityReport.preflight.ready ? "ready" : "needs attention"}
+            </div>
+          )}
+          {(qualityReport.summary || []).map((s, i) => <div key={i} className="text-xs text-neutral-400">{s}</div>)}
+          {qualityReport.android && (
+            <div className="text-xs text-neutral-300">
+              Redroid: {qualityReport.android.caught ?? 0} caught · {qualityReport.android.fixed ?? 0} fixed · {(qualityReport.android.flows || []).length} flows
+            </div>
+          )}
         </div>
       )}
 
@@ -203,7 +532,7 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
 // WebFeatureMedia shows a Feature's short success/fail evidence: a tiny poster
 // thumbnail (auto) and a tap-to-play highlight clip, both fetched base64 via
 // project_test_artifact. Kept lazy/cheap for weak links.
-function WebFeatureMedia({ feature, jobId }: { feature: Feature; jobId?: string }) {
+function WebFeatureMedia({ feature, jobId, playwright }: { feature: Feature; jobId?: string; playwright?: boolean }) {
   const [poster, setPoster] = useState<string | null>(null);
   const [clip, setClip] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -212,7 +541,7 @@ function WebFeatureMedia({ feature, jobId }: { feature: Feature; jobId?: string 
     let alive = true;
     const thumb = feature.posterPath || (feature.screenshots && feature.screenshots[feature.screenshots.length - 1]);
     if (thumb && jobId) {
-      agentClient.callOps("project_test_artifact", { jobId, path: thumb }).then((r: any) => {
+      agentClient.callOps(playwright ? "playwright_artifact" : "project_test_artifact", { jobId, path: thumb }).then((r: any) => {
         const a = r?.initial;
         if (alive && a?.base64) setPoster(`data:${a.mimeType || "image/jpeg"};base64,${a.base64}`);
       }).catch(() => {});
@@ -224,7 +553,7 @@ function WebFeatureMedia({ feature, jobId }: { feature: Feature; jobId?: string 
     if (!feature.clipPath || !jobId) return;
     setLoading(true);
     try {
-      const r: any = await agentClient.callOps("project_test_artifact", { jobId, path: feature.clipPath });
+      const r: any = await agentClient.callOps(playwright ? "playwright_artifact" : "project_test_artifact", { jobId, path: feature.clipPath });
       const a = r?.initial;
       if (a?.base64) setClip(`data:${a.mimeType || "video/mp4"};base64,${a.base64}`);
     } catch { /* keep poster */ }
@@ -241,6 +570,82 @@ function WebFeatureMedia({ feature, jobId }: { feature: Feature; jobId?: string 
         </button>
       )}
     </div>
+  );
+}
+
+function ArtifactList({ artifacts, jobId, playwright }: { artifacts: ArtifactRef[]; jobId?: string; playwright?: boolean }) {
+  const [open, setOpen] = useState<{ uri: string; mime: string; name?: string } | null>(null);
+  const [traceInfo, setTraceInfo] = useState<any | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const fetchArtifact = async (a: ArtifactRef) => {
+    if (!jobId) return;
+    setErr(null);
+    try {
+      const r: any = await agentClient.callOps(playwright ? "playwright_artifact" : "project_test_artifact", { jobId, path: a.path });
+      const x = r?.initial;
+      const mime = x?.mimeType || a.mimeType || "application/octet-stream";
+      if (x?.base64) setOpen({ uri: `data:${mime};base64,${x.base64}`, mime, name: x?.name || a.name });
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+  const inspectTrace = async (a: ArtifactRef) => {
+    if (!jobId) return;
+    setErr(null);
+    setTraceInfo(null);
+    try {
+      const r: any = await agentClient.callOps("playwright_trace_inspect", { jobId, path: a.path });
+      setTraceInfo(r.initial || r);
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+  return (
+    <div className="rounded bg-neutral-900 border border-neutral-800 p-3">
+      <div className="text-xs font-medium text-neutral-300">Artifacts</div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {artifacts.slice(0, 40).map((a, i) => (
+          <span key={`${a.path}-${i}`} className="inline-flex overflow-hidden rounded border border-neutral-700">
+            <button onClick={() => fetchArtifact(a)} className="px-2 py-1 text-xs text-neutral-200">
+              {a.kind}{a.name ? ` · ${a.name}` : ""}
+            </button>
+            {a.kind === "trace" && (
+              <button onClick={() => inspectTrace(a)} className="border-l border-neutral-700 px-2 py-1 text-xs text-blue-300">
+                Inspect
+              </button>
+            )}
+          </span>
+        ))}
+      </div>
+      {err ? <div className="mt-2 text-xs text-red-400">{err}</div> : null}
+      {traceInfo ? (
+        <div className="mt-3 rounded border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-300">
+          <div className="font-medium">{traceInfo.name} · {traceInfo.entryCount} entries · {traceInfo.resources} resources · {traceInfo.screenshots} screenshots</div>
+          <div className="mt-2 max-h-52 overflow-auto text-neutral-500">
+            {(traceInfo.entries || []).map((e: any, i: number) => (
+              <div key={i}>{e.name} <span className="text-neutral-600">({e.bytes || 0} bytes)</span></div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {open && (
+        <div className="mt-3">
+          {open.mime.startsWith("image/") ? (
+            <img src={open.uri} alt="" className="max-h-96 w-full rounded object-contain bg-black" />
+          ) : open.mime.startsWith("video/") ? (
+            <video src={open.uri} controls className="max-h-96 w-full rounded bg-black" />
+          ) : open.mime.includes("html") || open.mime.startsWith("text/") || open.mime.includes("json") ? (
+            <iframe src={open.uri} className="h-72 w-full rounded border border-neutral-800 bg-white" />
+          ) : (
+            <a href={open.uri} download={open.name || "artifact"} className="text-xs text-blue-300 underline">Download {open.name || "artifact"}</a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModeButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button onClick={onClick} className={`rounded border px-3 py-2 text-sm ${active ? "border-blue-500 bg-blue-950 text-blue-100" : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}>
+      {children}
+    </button>
   );
 }
 

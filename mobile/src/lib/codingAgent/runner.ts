@@ -9,7 +9,7 @@
 // but generic over a tool registry and wired to the CODING tools
 // (sandboxTools.ts) instead of the coding-forbidden control-plane tools.
 //
-// Default provider is GLM (glm-4.6 @ z.ai): cheapest capable BYO key, and the
+// Default provider is GLM (glm-4.7 @ z.ai): cheapest capable BYO key, and the
 // agentic read-only-what-you-need pattern is where GLM's price advantage
 // compounds (see the design doc's optimization section).
 
@@ -38,9 +38,9 @@ const PROVIDER_DEFAULTS: Record<CodingProvider, { baseUrl: string; model: string
   // ("Insufficient balance") on the general endpoint, which is what the
   // single-shot GLM provider (llmOpenAI.ts) still uses. Pay-as-you-go users can
   // override baseUrl to https://api.z.ai/api/paas/v4.
-  glm: { baseUrl: "https://api.z.ai/api/coding/paas/v4", model: "glm-4.6" },
+  glm: { baseUrl: "https://api.z.ai/api/coding/paas/v4", model: "glm-4.7" },
   openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1" },
-  openrouter: { baseUrl: "https://openrouter.ai/api/v1", model: "z-ai/glm-4.6" },
+  openrouter: { baseUrl: "https://openrouter.ai/api/v1", model: "z-ai/glm-4.7" },
   anthropic: { baseUrl: "https://api.anthropic.com/v1", model: "claude-opus-4-7" },
 };
 

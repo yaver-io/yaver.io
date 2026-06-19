@@ -14,12 +14,11 @@ Type=simple
 # CONVEX_URL to their own Convex deploy or leave it empty for
 # shared-password-only mode.
 #
-# CONVEX_URL is what actually drives per-user `__rp=` validation:
-# the relay POSTs to {CONVEX_URL}/relay/validate when the inbound
-# password doesn't match RELAY_PASSWORD. The agent's QUIC register
-# works either way because the agent always sends the shared
-# password; only the web/mobile per-user path needs Convex. Override
-# CONVEX_URL via /etc/default/yaver-relay for staging-Convex deploys.
+# CONVEX_URL drives official free-relay validation: the relay POSTs to
+# {CONVEX_URL}/relay/validate for agent registration and /d/<device>
+# proxy requests so Convex can enforce per-user credentials, active
+# sessions, device ownership, and quota. Override CONVEX_URL via
+# /etc/default/yaver-relay for staging-Convex deploys.
 Environment=YAVER_RELAY_OFFICIAL=1
 Environment=CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site
 # Built-in abuse guard defaults are intentionally generous for normal
@@ -28,6 +27,8 @@ Environment=CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site
 # or relax them:
 #   RELAY_PROXY_RATE_PER_IP_PER_MIN=240
 #   RELAY_PROXY_BURST_PER_IP=80
+#   RELAY_PROXY_RATE_PER_USER_PER_MIN=240
+#   RELAY_PROXY_BURST_PER_USER=80
 #   RELAY_QUIC_REGISTER_RATE_PER_IP_PER_MIN=60
 #   RELAY_MAX_CONCURRENT_PER_DEVICE=64
 #   RELAY_MAX_REQUEST_BODY_BYTES=67108864

@@ -832,7 +832,8 @@ export default defineSchema({
       inference: v.optional(v.boolean()),  // Yaver gateway (only if no own AI key)  → inference
       publish:   v.optional(v.boolean()),  // Mac-farm App Store / Play              → publish
     })),
-  }).index("by_userId", ["userId"]),
+  }).index("by_userId", ["userId"])
+    .index("by_relayPassword", ["relayPassword"]),
 
   aiRunners: defineTable({
     runnerId: v.string(),

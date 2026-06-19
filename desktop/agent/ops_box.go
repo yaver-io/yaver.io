@@ -28,46 +28,13 @@ const (
 	boxDialTimeout    = 4 * time.Second
 )
 
-// runCommand executes a shell command and returns its output
-func runCommand(cmd string) (string, error) {
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return "", fmt.Errorf("empty command")
-	}
-
-	var execCmd *exec.Cmd
-	if len(parts) > 1 {
-		execCmd = exec.Command(parts[0], parts[1:]...)
-	} else {
-		execCmd = exec.Command(parts[0])
-	}
-
-	output, err := execCmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
-}
-
-// runCommand executes a shell command and returns its output
-func runCommand(cmd string) (string, error) {
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return "", fmt.Errorf("empty command")
-	}
-
-	var execCmd *exec.Cmd
-	if len(parts) > 1 {
-		execCmd = exec.Command(parts[0], parts[1:]...)
-	} else {
-		execCmd = exec.Command(parts[0])
-	}
-
-	output, err := execCmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
+type tedgeInstance struct {
+	Name     string   `json:"name"`
+	Running  bool     `json:"running"`
+	Serial   string   `json:"serial,omitempty"`
+	Camera   string   `json:"camera,omitempty"`
+	ExitCode int      `json:"exitCode,omitempty"`
+	Ports    []string `json:"ports,omitempty"`
 }
 
 func boxGate(c OpsContext) *OpsResult {
@@ -90,28 +57,6 @@ func init() {
 		Handler:    boxProfilesHandler,
 		AllowGuest: false,
 	})
-}
-
-// runCommand executes a shell command and returns its output
-func runCommand(cmd string) (string, error) {
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return "", fmt.Errorf("empty command")
-	}
-	
-	var execCmd *exec.Cmd
-	if len(parts) > 1 {
-		execCmd = exec.Command(parts[0], parts[1:]...)
-	} else {
-		execCmd = exec.Command(parts[0])
-	}
-	
-	output, err := execCmd.CombinedOutput()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
-}
 	registerOpsVerb(opsVerbSpec{
 		Name:        "box_profile_plan",
 		Description: "Return the ordered setup/discovery/run plan for a Yaver Box industrial-IoT profile, mapped onto existing box_*, machine_*, gcode_*, and robot_* ops verbs with optional Talos/tedge ownership.",
@@ -916,109 +861,9 @@ func parseKV(line, key string) int {
 	return 0
 }
 
-// ── Talos/tedge interoperability handlers ────────────────────────────────────
-
-// checkProcessForPort checks if a process has a specific serial device open by scanning /proc/*/fd
-func checkProcessForPort(portPath string) (string, int, error) {
-	// Scan /proc/*/fd for symlinks pointing to the port
-	entries, err := bash("bash -c \"for pid in /proc/[0-9]*/; do [ -d \\\"$pid/fd\\\" ] && ls -la \\\"$pid/fd\\\" 2>/dev/null | grep -q \\\"" + portPath + "\\\" && echo \\\"$pid\\\"; done\"")
-	if err != nil {
-		return "", 0, err
-	}
-	if entries == "" {
-		return "", 0, nil
-	}
-
-	// Parse the PID and get process name
-	pid := strings.TrimSpace(entries)
-	cmdOutput, err := bash("bash -c \"ps -p " + pid + " -o comm= --no-headers\"")
-	if err != nil {
-		return "", 0, err
-	}
-
-	var pidInt int
-	fmt.Sscanf(pid, "%d", &pidInt)
-	return strings.TrimSpace(cmdOutput), pidInt, nil
-}
-
-// detectTedgeInstances checks for running tedge systemd instances
-func detectTedgeInstances() ([]tedgeInstance, error) {
-	instances := []tedgeInstance{}
-
-	// Check for systemd template instances like tedge@cst18d, tedge@ender, etc.
-	output, err := bash("systemctl list-units 'tedge@*.service' --all --no-legend")
-	if err != nil {
-		return instances, nil // Not an error, just no tedge instances
-	}
-
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) < 4 {
-			continue
-		}
-
-		unitName := parts[0]
-		loadState := parts[1]
-		activeState := parts[2]
-		subState := parts[3]
-
-		// Extract mode name from tedge@mode.service
-		mode := ""
-		if strings.HasPrefix(unitName, "tedge@") && strings.HasSuffix(unitName, ".service") {
-			mode = strings.TrimSuffix(strings.TrimPrefix(unitName, "tedge@"), ".service")
-		}
-
-		instance := tedgeInstance{
-			Name:    unitName,
-			Running: activeState == "active" && subState == "running",
-			Serial:  "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART-if00-port0", // Default, would read from config
-			Camera:  "/dev/video0",
-		}
-
-		// Try to get the serial path from the mode's config
-		if mode != "" {
-			configPath := fmt.Sprintf("/etc/talos-agent/edge-%s.json", mode)
-			if data, err := bash("bash -c \"if [ -f '" + configPath + "' ]; then cat '" + configPath + "'; fi\""); err == nil && data != "" {
-				// Parse serial path from config (simplified)
-				if strings.Contains(data, "\"serial\"") {
-					// Extract serial path from JSON
-					// This is simplified - real implementation would use JSON parsing
-					instance.Serial = "/dev/serial/by-id/..." // Would be parsed from config
-				}
-			}
-		}
-
-		instances = append(instances, instance)
-	}
-
-	return instances, nil
-}
-
-// scanSerialPorts discovers available serial devices and their current usage
-func scanSerialPorts() ([]string, error) {
-	ports := []string{}
-
-	output, err := bash("bash -c \"ls /dev/serial/by-id/ 2>/dev/null || echo 'none'\"")
-	if err != nil {
-		return ports, err
-	}
-
-	if output == "none" || output == "" {
-		return ports, nil
-	}
-
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && line != "none" {
-			ports = append(ports, "/dev/serial/by-id/"+line)
-		}
-	}
-
-	return ports, nil
+func bash(cmd string) (string, error) {
+	out, err := exec.Command("bash", "-lc", cmd).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 // ── Talos/tedge interoperability helpers ────────────────────────────────────
@@ -1046,7 +891,6 @@ func detectTedgeInstances() ([]tedgeInstance, error) {
 		}
 
 		unitName := fields[0]
-		loadState := fields[1]
 		activeState := fields[2]
 		subState := ""
 		if len(fields) > 3 {
@@ -1131,7 +975,7 @@ func checkProcessForPort(portPath string) (string, int, error) {
 	}
 
 	// Parse the PID and get process name
-	pid := strings.TrimSpace(output)
+	pid := strings.Fields(strings.TrimSpace(output))[0]
 	cmdOutput, err := bash("bash -c \"ps -p " + pid + " -o comm= --no-headers\"")
 	if err != nil {
 		return "", 0, err
@@ -1147,29 +991,20 @@ func checkProcessForPort(portPath string) (string, int, error) {
 func boxTedgeStatusHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	// No payload needed for read-only status query
 
-	type tedgeInstance struct {
-		Name     string   `json:"name"`
-		Running  bool     `json:"running"`
-		Serial   string   `json:"serial,omitempty"`
-		Camera   string   `json:"camera,omitempty"`
-		ExitCode int     `json:"exitCode,omitempty"`
-		Ports    []string `json:"ports,omitempty"`
-	}
-
 	type portOwner struct {
-		Path       string `json:"path"`
-		Owner      string `json:"owner"` // yaver|tedge|shared|unknown
-		Process    string `json:"process,omitempty"`
-		PID        int    `json:"pid,omitempty"`
-		Conflict   bool   `json:"conflict"`
+		Path     string `json:"path"`
+		Owner    string `json:"owner"` // yaver|tedge|shared|unknown
+		Process  string `json:"process,omitempty"`
+		PID      int    `json:"pid,omitempty"`
+		Conflict bool   `json:"conflict"`
 	}
 
 	type tedgeStatusResult struct {
-		Instances   []tedgeInstance `json:"instances"`
-		PortOwners  []portOwner      `json:"portOwners"`
-		Mode        string          `json:"mode"` // yaver-only|talos-only|interop|unknown
-		CanUse      bool            `json:"canUse"`
-		Warning     string          `json:"warning,omitempty"`
+		Instances  []tedgeInstance `json:"instances"`
+		PortOwners []portOwner     `json:"portOwners"`
+		Mode       string          `json:"mode"` // yaver-only|talos-only|interop|unknown
+		CanUse     bool            `json:"canUse"`
+		Warning    string          `json:"warning,omitempty"`
 	}
 
 	result := tedgeStatusResult{
@@ -1193,9 +1028,9 @@ func boxTedgeStatusHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	// Determine port ownership for each serial port
 	for _, port := range serialPorts {
 		owner := portOwner{
-			Path:      port,
-			Owner:     "unknown",
-			Conflict:   false,
+			Path:     port,
+			Owner:    "unknown",
+			Conflict: false,
 		}
 
 		// Check if tedge is using this port
@@ -1268,68 +1103,6 @@ func boxTedgeStatusHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	return OpsResult{
 		OK:      true,
 		Initial: map[string]interface{}{"status": result},
-	}
-}
-
-	type portOwner struct {
-		Path     string `json:"path"`
-		Owner    string `json:"owner"` // yaver|tedge|shared|unknown
-		Process  string `json:"process,omitempty"`
-		PID      int    `json:"pid,omitempty"`
-		Conflict bool   `json:"conflict"`
-	}
-
-	type tedgeStatus struct {
-		Instances  []tedgeInstance `json:"instances"`
-		PortOwners []portOwner     `json:"portOwners"`
-		Mode       string          `json:"mode"` // yaver-only|talos-only|interop|unknown
-		CanUse     bool            `json:"canUse"`
-		Warning    string          `json:"warning,omitempty"`
-	}
-
-	status := tedgeStatus{
-		Mode:   "unknown",
-		CanUse: true,
-	}
-
-	// Try to detect running tedge instances via systemctl or process list
-	// Look for tedge processes and their serial device usage
-	status.Instances = []tedgeInstance{
-		{
-			Name:    "tedge@screwdriver",
-			Running: false, // Would need actual systemd/proc query
-			Serial:  "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART-if00-port0",
-			Camera:  "/dev/video0",
-			Ports:   []string{"/dev/serial/by-id/usb-FTDI_FT232R_USB_UART-if00-port0"},
-		},
-	}
-
-	// Detect port ownership by checking which processes have serial devices open
-	// This is a simplified implementation - real version would parse /proc/*/fd
-	status.PortOwners = []portOwner{
-		{
-			Path:     "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART-if00-port0",
-			Owner:    "unknown",
-			Conflict: false,
-		},
-	}
-
-	// Determine overall canUse flag
-	conflictCount := 0
-	for _, p := range status.PortOwners {
-		if p.Conflict {
-			conflictCount++
-		}
-	}
-	status.CanUse = conflictCount == 0
-
-	if conflictCount > 0 {
-		status.Warning = fmt.Sprintf("%d port ownership conflict(s) detected - resolve before use", conflictCount)
-	}
-
-	return OpsResult{
-		OK:      true,
-		Initial: map[string]interface{}{"status": status},
 	}
 }
 

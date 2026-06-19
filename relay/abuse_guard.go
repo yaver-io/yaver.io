@@ -19,6 +19,8 @@ type abuseGuardConfig struct {
 	HTTPBurstPerIP          int
 	ProxyPerIPPerMin        int
 	ProxyBurstPerIP         int
+	ProxyPerUserPerMin      int
+	ProxyBurstPerUser       int
 	BusPerIPPerMin          int
 	BusBurstPerIP           int
 	AdminPerIPPerMin        int
@@ -41,6 +43,8 @@ func defaultAbuseGuardConfig() abuseGuardConfig {
 		HTTPBurstPerIP:          120,
 		ProxyPerIPPerMin:        240,
 		ProxyBurstPerIP:         80,
+		ProxyPerUserPerMin:      240,
+		ProxyBurstPerUser:       80,
 		BusPerIPPerMin:          120,
 		BusBurstPerIP:           40,
 		AdminPerIPPerMin:        60,
@@ -64,6 +68,8 @@ func abuseGuardConfigFromEnv() abuseGuardConfig {
 	cfg.HTTPBurstPerIP = envInt("RELAY_HTTP_BURST_PER_IP", cfg.HTTPBurstPerIP)
 	cfg.ProxyPerIPPerMin = envInt("RELAY_PROXY_RATE_PER_IP_PER_MIN", cfg.ProxyPerIPPerMin)
 	cfg.ProxyBurstPerIP = envInt("RELAY_PROXY_BURST_PER_IP", cfg.ProxyBurstPerIP)
+	cfg.ProxyPerUserPerMin = envInt("RELAY_PROXY_RATE_PER_USER_PER_MIN", cfg.ProxyPerUserPerMin)
+	cfg.ProxyBurstPerUser = envInt("RELAY_PROXY_BURST_PER_USER", cfg.ProxyBurstPerUser)
 	cfg.BusPerIPPerMin = envInt("RELAY_BUS_RATE_PER_IP_PER_MIN", cfg.BusPerIPPerMin)
 	cfg.BusBurstPerIP = envInt("RELAY_BUS_BURST_PER_IP", cfg.BusBurstPerIP)
 	cfg.AdminPerIPPerMin = envInt("RELAY_ADMIN_RATE_PER_IP_PER_MIN", cfg.AdminPerIPPerMin)

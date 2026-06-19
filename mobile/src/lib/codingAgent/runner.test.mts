@@ -78,9 +78,9 @@ function scriptedFetch(turns: any[]) {
 
 const GLM_CFG: CodingAgentConfig = defaultCodingAgentConfig("glm-key");
 
-test("defaultCodingAgentConfig points at GLM (z.ai, glm-4.6)", () => {
+test("defaultCodingAgentConfig points at GLM (z.ai, glm-4.7)", () => {
   assert.equal(GLM_CFG.provider, "glm");
-  assert.equal(GLM_CFG.model, "glm-4.6");
+  assert.equal(GLM_CFG.model, "glm-4.7");
   assert.match(GLM_CFG.baseUrl!, /api\.z\.ai/);
 });
 

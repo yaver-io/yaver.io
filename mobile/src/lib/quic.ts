@@ -779,7 +779,7 @@ export interface RunnerAuthStatusRow {
 }
 
 export interface RunnerAuthSetupParams {
-  runner: "claude" | "claude-code" | "codex" | "opencode";
+  runner: "claude" | "claude-code" | "codex" | "opencode" | "glm";
   openaiApiKey?: string;
   anthropicApiKey?: string;
   anthropicAuthToken?: string;
@@ -835,7 +835,7 @@ export function unwrapRunnerBrowserAuthEnvelope(raw: any): RunnerBrowserAuthSess
 }
 
 export interface RunnerAuthSetParams {
-  runner: "claude" | "claude-code" | "codex" | "opencode";
+  runner: "claude" | "claude-code" | "codex" | "opencode" | "glm";
   openaiApiKey?: string;
   anthropicApiKey?: string;
   anthropicAuthToken?: string;

@@ -4,7 +4,7 @@
 // Store-policy boundary: mobile must not create, display, or open a checkout
 // URL. Purchase/top-up flows stay on web and CLI. This helper sequences only
 // the post-purchase setup verbs that are safe in the App Store / Play Store
-// app: cloud_status and runner_auth_mirror.
+// app: cloud_status, runner_auth_mirror, and runner_auth_setup.
 //
 // Step-by-step:
 //
@@ -13,10 +13,8 @@
 //   3. Wait until the box's agentStatus flips to "online" (the
 //      Convex device row gets registered by the provisioner script
 //      installing yaver-cli + running `yaver serve`).
-//   4. Call runner_auth_mirror with sourceDeviceId=THIS device,
-//      targetDeviceId=the new box. The agent on the new box receives
-//      the credentials.json byte-for-byte and the user has Claude
-//      Code / Codex ready to go.
+//   4. Mirror OAuth runner credentials for Claude/Codex, or bootstrap
+//      OpenCode/GLM target-locally so the box is immediately selectable.
 //   5. Done. Caller can switch the active device to the cloud box.
 //
 // Each step emits a progress event so the UI can render a checklist
@@ -71,8 +69,8 @@ interface CloudStatusPayload {
 }
 
 export interface ManagedCloudFlowOpts {
-  /** Runner whose credentials to mirror to the new box. */
-  runner?: "claude" | "codex";
+  /** Runner to configure on the new box. */
+  runner?: "claude" | "codex" | "opencode" | "glm";
   /** Max minutes to wait before giving up on the box coming online. */
   maxWaitMinutes?: number;
   /** Called for every step transition. */
@@ -86,7 +84,7 @@ export interface ManagedCloudFlowOpts {
  */
 export async function runManagedCloudFlow(opts: ManagedCloudFlowOpts): Promise<string> {
   const {
-    runner = "claude",
+    runner = "opencode",
     maxWaitMinutes = 15,
     onProgress,
     signal,
@@ -130,26 +128,43 @@ export async function runManagedCloudFlow(opts: ManagedCloudFlowOpts): Promise<s
     throw new Error("timed out waiting for agent to come online on the new box");
   }
 
-  // Mirror runner creds to the new box.
+  // Mirror OAuth runners; configure BYOK/config runners on the target box.
   onProgress({
     step: "mirror_runner",
-    message: `pushing ${runner} runner token to ${newBox.label}...`,
+    message: `configuring ${runner} on ${newBox.label}...`,
     newBox,
   });
-  const mirror = await callMcpDirect<{ ok?: boolean; writtenTo?: string }>(
-    "runner_auth_mirror",
-    { runner, targetDeviceId: newBox.deviceId },
-    signal,
-  );
-  if (!mirror.ok) {
-    // Mirror failure is recoverable — the user can re-run from the
-    // device picker. Surface the error but don't lose the box.
-    throw new Error(`mirror failed (box is provisioned, just re-run mirror): ${mirror.error}`);
+  if (runner === "claude" || runner === "codex") {
+    const mirror = await callMcpDirect<{ ok?: boolean; writtenTo?: string; error?: string }>(
+      "runner_auth_mirror",
+      { runner, targetDeviceId: newBox.deviceId },
+      signal,
+    );
+    if (!mirror.ok || !mirror.result?.ok) {
+      // Mirror failure is recoverable — the user can re-run from the
+      // device picker. Surface the error but don't lose the box.
+      throw new Error(`mirror failed (box is provisioned, just re-run mirror): ${mirror.result?.error || mirror.error}`);
+    }
+  } else {
+    const setup = await callMcpDirect<{ ok?: boolean; error?: string }>(
+      "runner_auth_setup",
+      {
+        device_id: newBox.deviceId,
+        runner,
+        install_if_missing: true,
+        allow_install_only: true,
+        setup_mcp: true,
+      },
+      signal,
+    );
+    if (!setup.ok || !setup.result?.ok) {
+      throw new Error(`runner setup failed (box is provisioned, just re-run setup): ${setup.result?.error || setup.error}`);
+    }
   }
 
   onProgress({
     step: "done",
-    message: `ready - ${newBox.label} is signed in with your ${runner} token. switch devices to start coding.`,
+    message: `ready - ${newBox.label} is configured for ${runner}. switch devices to start coding.`,
     newBox,
     done: true,
   });

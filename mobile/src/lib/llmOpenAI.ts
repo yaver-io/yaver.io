@@ -33,7 +33,7 @@ const FLAVOR_DEFAULTS: Record<OpenAiFlavor, { baseUrl: string; model: string; la
     // it's provisioned for /api/coding/paas/v4 instead. Pay-as-you-go (prepaid
     // balance) keys also work here. Matches codingAgent/runner.ts.
     baseUrl: "https://api.z.ai/api/coding/paas/v4",
-    model: "glm-4.6",
+    model: "glm-4.7",
     label: "GLM",
   },
 };

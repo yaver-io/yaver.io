@@ -23,14 +23,23 @@ test("buildManagedCloudInit writes managed agent config and service", () => {
     gpu: false,
   });
 
-  assert.match(cloudInit, /cat > \/root\/\.yaver\/config\.json/);
+  assert.match(cloudInit, /cat > \/home\/yaver\/\.yaver\/config\.json/);
   assert.match(cloudInit, /"auth_token": "session-token-xyz"/);
   assert.match(cloudInit, /"convex_site_url": "https:\/\/example\.convex\.site"/);
   assert.match(cloudInit, /"device_id": "cloud-12345678"/);
+  assert.match(cloudInit, /"public_endpoints": \["https:\/\/12345678\.cloud\.yaver\.io"\]/);
+  assert.match(cloudInit, /cat > \/home\/yaver\/\.config\/opencode\/opencode\.json/);
+  assert.match(cloudInit, /"model": "zai-coding-plan\/glm-4\.7"/);
+  assert.match(cloudInit, /"enabled_providers": \[\n\s+"zai-coding-plan"\n\s+\]/);
+  assert.match(cloudInit, /"default_agent": "build"/);
+  assert.match(cloudInit, /"command": \[\n\s+"\/usr\/local\/bin\/yaver",\n\s+"mcp"\n\s+\]/);
   assert.match(cloudInit, /cat > \/etc\/systemd\/system\/yaver-agent\.service/);
   assert.match(cloudInit, /ExecStart=\/usr\/local\/bin\/yaver serve --debug --port 18080/);
   assert.match(cloudInit, /systemctl enable --now yaver-agent/);
-  assert.match(cloudInit, /git clone 'https:\/\/github\.com\/example\/repo\.git' \/srv\/yaver\/workspace/);
+  assert.match(cloudInit, /cat > \/usr\/local\/bin\/yaver-bootstrap-workspace/);
+  assert.match(cloudInit, /clone_one https:\/\/github\.com\/kivanccakmak\/yaver\.io\.git yaver\.io/);
+  assert.match(cloudInit, /clone_one https:\/\/github\.com\/kivanccakmak\/talos\.git talos/);
+  assert.match(cloudInit, /clone_one 'https:\/\/github\.com\/example\/repo\.git' starter/);
   assert.match(cloudInit, /command -v claude >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @anthropic-ai\/claude-code"/);
   assert.match(cloudInit, /command -v codex >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @openai\/codex"/);
   assert.match(cloudInit, /command -v opencode >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs opencode-ai"/);
@@ -163,6 +172,15 @@ test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self
   assert.match(byok, /docker run -d --name yaver --restart always/);
   assert.match(byok, /docker pull '.*yaver-cloud:latest'/);
   assert.match(byok, /CONVEX_SELFHOSTED_FILE=\/root\/\.yaver\/convex-selfhosted\.json/);
+  assert.match(byok, /cat > \/usr\/local\/bin\/yaver-bootstrap-workspace/);
+  assert.match(byok, /cat > \/srv\/yaver\/state\/\.config\/opencode\/opencode\.json/);
+  assert.match(byok, /"model": "zai-coding-plan\/glm-4\.7"/);
+  assert.match(byok, /"enabled_providers": \[\n\s+"zai-coding-plan"\n\s+\]/);
+  assert.match(byok, /"default_agent": "build"/);
+  assert.match(byok, /"command": \[\n\s+"\/usr\/local\/bin\/yaver",\n\s+"mcp"\n\s+\]/);
+  assert.match(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/yaver\.io\.git yaver\.io/);
+  assert.match(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/talos\.git talos/);
+  assert.match(byok, /-v \/srv\/yaver\/state\/Workspace:\/srv\/yaver\/workspace/);
   assert.doesNotMatch(byok, /ghcr\.io\/get-convex\/convex-backend/);
   assert.doesNotMatch(byok, /docker run -d --name yaver-convex/);
   assert.match(byok, /: > \/etc\/nginx\/snippets\/yaver-convex\.conf/);

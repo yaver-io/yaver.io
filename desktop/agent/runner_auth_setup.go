@@ -133,6 +133,9 @@ func runnerAuthValueProvided(req runnerAuthSetupRequest) bool {
 			strings.TrimSpace(req.AnthropicAPIKey) != "" ||
 			strings.TrimSpace(req.GLMAPIKey) != "" ||
 			strings.TrimSpace(req.ZAIAPIKey) != ""
+	case "glm":
+		return strings.TrimSpace(req.GLMAPIKey) != "" ||
+			strings.TrimSpace(req.ZAIAPIKey) != ""
 	default:
 		return false
 	}
@@ -197,7 +200,7 @@ func ensureRunnerInstalled(ctx context.Context, runner string) error {
 		return nil
 	}
 	switch normalizeRunnerAuthName(runner) {
-	case "claude":
+	case "claude", "glm":
 		return installNodeGlobalPackage(ctx, "@anthropic-ai/claude-code")
 	case "codex":
 		return installNodeGlobalPackage(ctx, "@openai/codex")
@@ -238,8 +241,8 @@ func setupRunnerMCP(runner string) ([]string, error) {
 func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) (runnerAuthSetupResult, error) {
 	req.Runner = normalizeRunnerAuthName(req.Runner)
 	result := runnerAuthSetupResult{OK: true, Runner: req.Runner}
-	if req.Runner != "claude" && req.Runner != "codex" && req.Runner != "opencode" {
-		return result, fmt.Errorf("unsupported runner %q (want claude, codex, or opencode)", req.Runner)
+	if req.Runner != "claude" && req.Runner != "codex" && req.Runner != "opencode" && req.Runner != "glm" {
+		return result, fmt.Errorf("unsupported runner %q (want claude, codex, opencode, or glm)", req.Runner)
 	}
 
 	installIfMissing := boolOrDefault(req.InstallIfMissing, true)

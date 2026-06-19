@@ -77,7 +77,7 @@ func TestGLMLoop_RunsCommandAndEmitsNativeEvents(t *testing.T) {
 
 	task := &Task{ID: "t-glm", eventCh: make(chan map[string]interface{}, 16)}
 	out, err := RunGLMLoop(context.Background(), GLMLoopConfig{
-		BaseURL: srv.URL, Model: "z-ai/glm-4.6",
+		BaseURL: srv.URL, Model: "z-ai/glm-4.7",
 	}, task, t.TempDir(), "say hello")
 	if err != nil {
 		t.Fatalf("RunGLMLoop: %v", err)

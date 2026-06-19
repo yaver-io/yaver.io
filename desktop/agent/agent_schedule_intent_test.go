@@ -40,11 +40,11 @@ func TestScheduleFromChoice(t *testing.T) {
 		t.Errorf("unrecognized free text should yield nil, got %+v", st)
 	}
 
-	daily := scheduleFromChoice(schedChoiceDaily, "summarize PRs", "glm", "glm-4.6")
+	daily := scheduleFromChoice(schedChoiceDaily, "summarize PRs", "glm", "glm-4.7")
 	if daily == nil || daily.Cron != "0 9 * * *" {
 		t.Fatalf("daily choice = %+v, want cron 0 9 * * *", daily)
 	}
-	if daily.Runner != "glm" || daily.Model != "glm-4.6" {
+	if daily.Runner != "glm" || daily.Model != "glm-4.7" {
 		t.Errorf("daily schedule did not carry runner/model: %+v", daily)
 	}
 	if daily.MaxRuns != scheduleSelfRunawayCap {

@@ -94,6 +94,35 @@ function jsonString(value: string): string {
   return JSON.stringify(value);
 }
 
+const OPENCODE_CODING_PLAN_PROVIDER = "zai-coding-plan";
+const OPENCODE_CODING_PLAN_MODEL = "zai-coding-plan/glm-4.7";
+
+function managedOpenCodeConfigBody(yaverBin: string): string {
+  return JSON.stringify(
+    {
+      $schema: "https://opencode.ai/config.json",
+      model: OPENCODE_CODING_PLAN_MODEL,
+      enabled_providers: [OPENCODE_CODING_PLAN_PROVIDER],
+      default_agent: "build",
+      agent: {
+        build: {
+          steps: 50,
+          temperature: 0.2,
+        },
+      },
+      mcp: {
+        yaver: {
+          command: [yaverBin, "mcp"],
+          enabled: true,
+          type: "local",
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
 // buildManagedCloudInitContainer — thin cloud-init for the "yaver
 // image" model: the VM only installs Docker, drops the per-user
 // config into a host dir, and `docker run`s ghcr.io/.../yaver-cloud
@@ -110,14 +139,28 @@ export function buildManagedCloudInitContainer(
   spec: ManagedCloudBootstrapSpec,
   image: string,
 ): string {
-  const repoClone = spec.repoUrl
-    ? `  - |
-    if [ ! -d /srv/yaver/state/srv/yaver/workspace/.git ]; then
-      mkdir -p /srv/yaver/state/srv/yaver/workspace
-      git clone ${shellSingleQuote(spec.repoUrl)} /srv/yaver/state/srv/yaver/workspace || echo "[cloud-init] repo clone skipped"
-    fi
-`
+  const optionalRepoClone = spec.repoUrl
+    ? `      clone_one ${shellSingleQuote(spec.repoUrl)} starter\n`
     : "";
+  const workspaceBootstrap = `  # ── persistent source workspace (visible inside the agent container) ─
+  - mkdir -p /srv/yaver/state/Workspace
+  - |
+    cat > /usr/local/bin/yaver-bootstrap-workspace <<'SCRIPT'
+    #!/usr/bin/env bash
+    set -u
+    root=/srv/yaver/state/Workspace
+    mkdir -p "$root"
+    clone_one() {
+      repo="$1"; name="$2"; dest="$root/$name"
+      [ -d "$dest/.git" ] && return 0
+      git clone "$repo" "$dest" || echo "[workspace] clone skipped: $repo"
+    }
+    clone_one https://github.com/kivanccakmak/yaver.io.git yaver.io
+    clone_one https://github.com/kivanccakmak/talos.git talos
+${optionalRepoClone}    SCRIPT
+  - chmod +x /usr/local/bin/yaver-bootstrap-workspace
+  - /usr/local/bin/yaver-bootstrap-workspace || true
+`;
 
   // Hosted tier in the container model (SANDBOX_HOSTED_HANDOFF.md
   // §convergence). A self-hosted Convex runs as a HOST-side sibling
@@ -272,6 +315,7 @@ export function buildManagedCloudInitContainer(
   }
   yaverDockerRunLines.push(`      ${selfhostedEnv} \\`);
   yaverDockerRunLines.push(`      -v /srv/yaver/state:/root \\`);
+  yaverDockerRunLines.push(`      -v /srv/yaver/state/Workspace:/srv/yaver/workspace \\`);
   yaverDockerRunLines.push(`      ${shellSingleQuote(image)}`);
   const yaverDockerRun = yaverDockerRunLines.join("\n");
 
@@ -301,6 +345,7 @@ ${sshBlock}package_update: true
 packages:
   - ca-certificates
   - curl
+  - git
   - jq
   - nginx
   - certbot
@@ -320,7 +365,16 @@ ${relayUfwRules}  - ufw --force enable || true
 ${configBody}
     EOF
   - chmod 0600 /srv/yaver/state/.yaver/config.json
-${repoClone}  # ── run the yaver image (the box IS this container) ────────────────
+  - mkdir -p /srv/yaver/state/.config/opencode
+  - |
+    cat > /srv/yaver/state/.config/opencode/opencode.json <<'EOF'
+${managedOpenCodeConfigBody("/usr/local/bin/yaver")
+  .split("\n")
+  .map((line) => `    ${line}`)
+  .join("\n")}
+    EOF
+  - chmod 0600 /srv/yaver/state/.config/opencode/opencode.json
+${workspaceBootstrap}  # ── run the yaver image (the box IS this container) ────────────────
 ${phasePost("pulling-image")}  - docker pull ${shellSingleQuote(image)}
 ${phasePost("starting-agent")}  - |
 ${yaverDockerRun}
@@ -406,16 +460,32 @@ ${healthBeacon}`;
 }
 
 export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
-  const repoCloneSnippet = spec.repoUrl
-    ? `  # Optional starter repo clone — into the non-root yaver user's
-    # $HOME/Workspace (docs §4b), owned by yaver, never root.
-  - |
-    if [ ! -d /home/yaver/Workspace/.git ] && [ -z "$(ls -A /home/yaver/Workspace 2>/dev/null)" ]; then
-      sudo -u yaver git clone ${shellSingleQuote(spec.repoUrl)} /home/yaver/Workspace || echo "[cloud-init] repo clone skipped"
-      chown -R yaver:yaver /home/yaver/Workspace
-    fi
-`
+  const optionalRepoCloneSnippet = spec.repoUrl
+    ? `      clone_one ${shellSingleQuote(spec.repoUrl)} starter\n`
     : "";
+  const repoCloneSnippet = `  # Managed source workspace — the mobile app's project scanner sees
+  # these as normal sibling repos under ~/Workspace. Talos may be private;
+  # the bootstrap is intentionally repeatable so it can succeed later after
+  # GitHub credentials are configured from mobile.
+  - |
+    cat > /usr/local/bin/yaver-bootstrap-workspace <<'SCRIPT'
+    #!/usr/bin/env bash
+    set -u
+    root=/home/yaver/Workspace
+    mkdir -p "$root"
+    chown yaver:yaver "$root"
+    clone_one() {
+      repo="$1"; name="$2"; dest="$root/$name"
+      [ -d "$dest/.git" ] && return 0
+      sudo -u yaver git clone "$repo" "$dest" || echo "[workspace] clone skipped: $repo"
+    }
+    clone_one https://github.com/kivanccakmak/yaver.io.git yaver.io
+    clone_one https://github.com/kivanccakmak/talos.git talos
+${optionalRepoCloneSnippet}    chown -R yaver:yaver "$root" || true
+    SCRIPT
+  - chmod +x /usr/local/bin/yaver-bootstrap-workspace
+  - /usr/local/bin/yaver-bootstrap-workspace || true
+`;
 
   // Hosted tier: run a self-hosted Convex on the box (Docker, official
   // image). Deploys then target the box itself — no Convex Cloud
@@ -552,6 +622,7 @@ runcmd:
   # that TENANT workloads never run as root.
   - echo 'yaver ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/yaver && chmod 0440 /etc/sudoers.d/yaver
   - install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
+  - install -d -o yaver -g yaver -m 0700 /home/yaver/.config/opencode
   - install -d -o yaver -g yaver -m 0755 /home/yaver/Workspace
   - mkdir -p /etc/yaver
   - |
@@ -559,10 +630,19 @@ runcmd:
     {
       "auth_token": ${jsonString(spec.userSessionToken)},
       "convex_site_url": ${jsonString(spec.convexSite)},
-      "device_id": ${jsonString(spec.deviceId)}
+      "device_id": ${jsonString(spec.deviceId)},
+      "public_endpoints": [${jsonString("https://" + spec.hostname)}]
     }
     EOF
   - chown yaver:yaver /home/yaver/.yaver/config.json && chmod 0600 /home/yaver/.yaver/config.json
+  - |
+    cat > /home/yaver/.config/opencode/opencode.json <<'EOF'
+${managedOpenCodeConfigBody("/usr/local/bin/yaver")
+  .split("\n")
+  .map((line) => `    ${line}`)
+  .join("\n")}
+    EOF
+  - chown yaver:yaver /home/yaver/.config/opencode/opencode.json && chmod 0600 /home/yaver/.config/opencode/opencode.json
   - |
     cat > /etc/systemd/system/yaver-agent.service <<'EOF'
     [Unit]

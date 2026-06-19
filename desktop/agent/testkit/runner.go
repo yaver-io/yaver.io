@@ -105,6 +105,16 @@ type RunOptions struct {
 	// the spec's other outputs (so the user can scrub through a
 	// passing run too, not just failures).
 	ForceVideo bool
+
+	// PlaywrightStorageState is an optional storageState JSON path for
+	// target:web-playwright specs. When set, the Playwright sidecar loads it if
+	// present and writes it back at the end of the run, giving remote boxes a
+	// durable per-app login profile without syncing cookies anywhere central.
+	PlaywrightStorageState string
+
+	// PlaywrightTrace enables Playwright trace.zip capture for
+	// target:web-playwright specs. Chromedp targets ignore it.
+	PlaywrightTrace bool
 }
 
 // Run executes a single spec end-to-end and returns the result. The
