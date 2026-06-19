@@ -4036,6 +4036,21 @@ export default function TasksScreen() {
                   {" "}on your machine — it'll show up here automatically.
                 </Text>
 
+                {/* A blank device list often means this sign-in is a
+                    brand-new account, separate from the one the user's
+                    machines are registered under (e.g. signed in with
+                    Apple here but the boxes are under Google). Surfacing
+                    the link flow turns that dead-end into a one-tap fix
+                    instead of leaving the user staring at zero devices. */}
+                <Pressable
+                  style={s.discoverRefreshLink}
+                  onPress={() => taskRouter.navigate("/(tabs)/settings?linkAccount=1" as any)}
+                >
+                  <Text style={[s.discoverRefreshText, { color: c.accent }]}>
+                    Already use Yaver with another sign-in? Link it
+                  </Text>
+                </Pressable>
+
                 <View style={[s.discoverDivider, { backgroundColor: c.border }]} />
                 <Text style={[s.discoverSectionLabel, { color: c.textMuted }]}>Or build on this phone</Text>
 

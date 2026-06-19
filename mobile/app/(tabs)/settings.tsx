@@ -306,6 +306,11 @@ export default function SettingsScreen() {
   const [sandboxSaving, setSandboxSaving] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
+  // Y-offset of the Account section, captured via onLayout. Lets a
+  // deep-link (?linkAccount=1 from the Tasks empty-state "link an
+  // existing account" prompt) scroll straight to the sign-in-method
+  // buttons instead of dumping the user at the top of Settings.
+  const accountSectionY = useRef(0);
 
   // Relay servers
   const [customRelays, setCustomRelays] = useState<RelayServer[]>([]);
@@ -1668,6 +1673,30 @@ export default function SettingsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedProviderParam]);
 
+  // Deep-link from the Tasks empty-state "link an existing account"
+  // prompt (?linkAccount=1). A brand-new account that signed in with a
+  // different provider than its other devices lands here with zero
+  // machines; scroll straight to the sign-in-method buttons so the fix
+  // (link the original provider) is one tap away. onLayout fires before
+  // this on mount, so accountSectionY is populated; the timeout is a
+  // belt-and-suspenders for slow first layout.
+  const linkAccountParam = useLocalSearchParams().linkAccount;
+  const handledLinkAccount = useRef(false);
+  useEffect(() => {
+    if (!linkAccountParam || handledLinkAccount.current) return;
+    handledLinkAccount.current = true;
+    const t = setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, accountSectionY.current - 12), animated: true });
+    }, 350);
+    try {
+      router.setParams({ linkAccount: "" });
+    } catch {
+      // best-effort
+    }
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkAccountParam]);
+
   // Refresh linked identities when the app returns to the foreground.
   // The OAuth link flow sends the user to Safari / Chrome — when they
   // come back we want the "Sign-In Methods" list to reflect reality
@@ -2532,7 +2561,10 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
+        <View
+          style={styles.section}
+          onLayout={(e) => { accountSectionY.current = e.nativeEvent.layout.y; }}
+        >
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Account</Text>
           <View style={[styles.profileCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <View style={[styles.avatar, { backgroundColor: c.accent }]}>
