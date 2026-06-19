@@ -30,6 +30,11 @@ export const OPTIONAL_MORE_TOOLS = [
     description: "Multi-vantage collection and source health.",
   },
   {
+    id: "twin-mode",
+    label: "Twin Mode",
+    description: "Run and record on remote dev surfaces.",
+  },
+  {
     id: "task-packages",
     label: "Task Packages",
     description: "Portable collection/operation task bundles.",

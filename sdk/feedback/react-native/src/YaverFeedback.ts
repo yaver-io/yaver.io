@@ -155,6 +155,7 @@ let shakeDetector: ShakeDetector | null = null;
 let p2pAuthToken: string | null = null;
 let p2pRelayPassword: string = '';
 let reportLaunchInFlight = false;
+let crashReportInFlight = false;
 
 /** Resolve the user's relay password by validating their auth token
  *  against Convex. Used whenever we (re)build the P2PClient so a
@@ -201,6 +202,7 @@ async function resolveRelayPassword(authToken: string, convexUrl?: string): Prom
 /** Ring buffer of captured errors. */
 let errorBuffer: CapturedError[] = [];
 let maxErrors = 5;
+let crashHandlerInstalled = false;
 
 /** Track whether BlackBox was running before disable (to restart on enable). */
 let blackBoxWasStreaming = false;
@@ -298,6 +300,9 @@ export class YaverFeedback {
       }
       maxErrors = cfg.maxCapturedErrors ?? 5;
       errorBuffer = [];
+      if (cfg.crashReporting?.enabled && cfg.crashReporting?.installGlobalHandler) {
+        YaverFeedback.installCrashHandler();
+      }
       return;
     }
     if (config.disableShakeGesture && (!config.quickIcon || config.quickIcon === 'auto')) {
@@ -364,6 +369,9 @@ export class YaverFeedback {
     // Set up error capture buffer size
     maxErrors = cfg.maxCapturedErrors ?? 5;
     errorBuffer = [];
+    if (cfg.crashReporting?.enabled && cfg.crashReporting?.installGlobalHandler) {
+      YaverFeedback.installCrashHandler();
+    }
 
     // Wire up shake detection when trigger is 'shake'
     if (shakeDetector) {
@@ -474,6 +482,40 @@ export class YaverFeedback {
     //   - YaverFeedback.attachError(err) in catch blocks
     //   - YaverFeedback.wrapErrorHandler(existingHandler) to create a
     //     pass-through wrapper they insert into their own error chain
+  }
+
+  /**
+   * Opt-in global crash handler. This wraps the existing React Native
+   * ErrorUtils handler and still calls it, so Sentry/Crashlytics/Bugsnag can
+   * remain the system of record. The SDK only uploads a crash report and,
+   * when configured, asks the agent to create a fix task.
+   */
+  static installCrashHandler(): void {
+    if (crashHandlerInstalled) return;
+    try {
+      const errorUtils = (globalThis as any)?.ErrorUtils;
+      if (!errorUtils?.getGlobalHandler || !errorUtils?.setGlobalHandler) {
+        return;
+      }
+      const next = errorUtils.getGlobalHandler();
+      errorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
+        YaverFeedback.attachError(error, {
+          source: 'global-handler',
+          crashAware: true,
+        });
+        if (errorBuffer.length > 0) {
+          errorBuffer[errorBuffer.length - 1].isFatal = isFatal ?? true;
+        }
+        void YaverFeedback.reportCrash(error, {
+          isFatal: isFatal ?? true,
+          source: 'global-handler',
+        });
+        next?.(error, isFatal);
+      });
+      crashHandlerInstalled = true;
+    } catch (err) {
+      console.warn('[YaverFeedback] installCrashHandler failed:', err);
+    }
   }
 
   /**
@@ -939,6 +981,97 @@ export class YaverFeedback {
       }
       next?.(error, isFatal);
     };
+  }
+
+  /**
+   * Upload a crash-aware feedback bundle. Apps can call this from their own
+   * error boundary/global handler. If crashReporting.autoFix is true, the SDK
+   * also triggers the agent's feedback-fix task; reload delivery still happens
+   * through the existing BlackBox command stream.
+   */
+  static async reportCrash(
+    error: Error,
+    opts?: {
+      isFatal?: boolean;
+      source?: 'manual' | 'global-handler';
+      metadata?: Record<string, unknown>;
+      autoFix?: boolean;
+    },
+  ): Promise<{ reportId?: string; taskId?: string }> {
+    if (!config || !enabled || !config.crashReporting?.enabled) return {};
+    if (crashReportInFlight) return {};
+    crashReportInFlight = true;
+    try {
+      YaverFeedback.attachError(error, {
+        ...(config.crashReporting.metadata || {}),
+        ...(opts?.metadata || {}),
+        crashAware: true,
+      });
+      if (errorBuffer.length > 0) {
+        errorBuffer[errorBuffer.length - 1].isFatal = opts?.isFatal ?? true;
+      }
+
+      if (!config.agentUrl) {
+        await YaverFeedback.discoverAgent();
+      }
+      if (!config.agentUrl) {
+        console.warn('[YaverFeedback] No agent URL — cannot send crash report.');
+        return {};
+      }
+
+      const { Platform, Dimensions } = require('react-native');
+      const { uploadFeedback } = require('./upload');
+      const { width, height } = Dimensions.get('window');
+      let screenshotPath: string | undefined;
+      if (config.crashReporting.captureScreenshot !== false) {
+        try {
+          const { captureScreenshot } = require('./capture');
+          screenshotPath = await captureScreenshot();
+        } catch {}
+      }
+
+      const autoFix = opts?.autoFix ?? config.crashReporting.autoFix === true;
+      const bundle = {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          reportKind: 'crash',
+          device: {
+            platform: Platform.OS,
+            osVersion: String(Platform.Version),
+            model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
+            screenWidth: width,
+            screenHeight: height,
+          },
+          app: {},
+          userNote: '[Crash report]',
+          crash: {
+            message: error.message,
+            isFatal: opts?.isFatal ?? true,
+            source: opts?.source ?? 'manual',
+            autoFixRequested: autoFix,
+          },
+        },
+        screenshots: screenshotPath ? [screenshotPath] : [],
+        errors: errorBuffer.length > 0 ? [...errorBuffer] : undefined,
+      };
+
+      const uploaded = await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle, p2pRelayPassword);
+      const reportId =
+        (uploaded as { id?: string; reportId?: string } | null | undefined)?.id ??
+        (uploaded as { reportId?: string } | null | undefined)?.reportId;
+      let taskId: string | undefined;
+      if (autoFix && reportId) {
+        const client = p2pClient ?? new P2PClient(config.agentUrl, config.authToken ?? '', p2pRelayPassword);
+        const fix = await client.triggerFix(reportId);
+        taskId = fix?.taskId;
+      }
+      return { reportId, taskId };
+    } catch (err) {
+      console.warn('[YaverFeedback] Crash report failed:', err);
+      return {};
+    } finally {
+      crashReportInFlight = false;
+    }
   }
 
   /**

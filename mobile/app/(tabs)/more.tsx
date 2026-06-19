@@ -2931,6 +2931,7 @@ export default function MoreScreen() {
   const handleGatewayGates = useCallback(() => router.navigate("/gateway-gates" as any), [router]);
   const handleCarVoice = useCallback(() => router.navigate("/car-voice-coding" as any), [router]);
   const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
+  const handleTwinMode = useCallback(() => router.navigate("/twin" as any), [router]);
   const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
   const handlePackages = useCallback(() => router.navigate("/packages" as any), [router]);
   const handlePackageAccept = useCallback(() => router.navigate("/package-accept" as any), [router]);
@@ -3370,6 +3371,22 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Data Collection</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"Multi-vantage egress, source health, cross-vantage diff"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
+            </Pressable>
+            ) : null}
+
+            {showOptionalTool("twin-mode") ? (
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleTwinMode}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\u25A3"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Twin Mode</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Run and record Android redroid and web flows on a remote dev machine"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>

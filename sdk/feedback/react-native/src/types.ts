@@ -314,6 +314,26 @@ export interface FeedbackConfig {
    */
   maxCapturedErrors?: number;
   /**
+   * Crash-aware reporting/fixing. Defaults to disabled.
+   *
+   * - enabled: records fatal errors into the SDK error buffer and enables
+   *   explicit `YaverFeedback.reportCrash(error)`.
+   * - installGlobalHandler: opt-in only. Wraps React Native's global ErrorUtils
+   *   handler without suppressing the existing handler. Leave false when Sentry,
+   *   Crashlytics, Bugsnag, or another crash tool owns the global handler.
+   * - autoFix: after uploading a crash report, ask the connected Yaver agent to
+   *   create a fix task. The normal BlackBox command stream can then deliver a
+   *   reload/reload_bundle command after the agent rebuilds.
+   * - captureScreenshot: attach a best-effort screenshot to the crash report.
+   */
+  crashReporting?: {
+    enabled?: boolean;
+    installGlobalHandler?: boolean;
+    autoFix?: boolean;
+    captureScreenshot?: boolean;
+    metadata?: Record<string, unknown>;
+  };
+  /**
    * Which platforms the Build button targets.
    * - 'ios' — build iOS only
    * - 'android' — build Android only
@@ -431,6 +451,18 @@ export interface FeedbackMetadata {
   device: DeviceInfo;
   app: AppInfo;
   userNote?: string;
+  reportKind?: 'feedback' | 'auto-report' | 'crash';
+  crash?: {
+    message: string;
+    isFatal: boolean;
+    source: 'manual' | 'global-handler';
+    autoFixRequested?: boolean;
+  };
+  twin?: {
+    sessionId?: string;
+    surface?: string;
+    artifactDir?: string;
+  };
 }
 
 export interface DeviceInfo {
