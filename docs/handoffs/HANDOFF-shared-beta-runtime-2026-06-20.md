@@ -307,6 +307,82 @@ Two ways, both preserve `/srv/yaver/tenants`:
 
 Rule: only grow on **measured** need (per-tenant disk/CPU observability, task #4).
 
+## Verified 2026-06-20 (real Hetzner, then cleaned up)
+
+- **Close/open preserves data**: cx23 → write `/srv/yaver/tenants/test/app.sqlite.marker`
+  → snapshot → DELETE (zero) → recreate from snapshot → marker recovered EXACTLY.
+  No leftover server/snapshot.
+- **Timing**: OPEN (create+boot+ssh) **49s**, CLOSE (snapshot+delete) **29s**,
+  REOPEN (from snapshot) **36s**. → cold-start ≈ 40-50s, hidden behind the
+  "Setting up your project" UX.
+- **hcloud gotchas**: `cx22` is not a type (use `cx23`/`cpx11`/`cax11`…); `cax11`
+  was out of stock in hel1 (placement error) — controller must try region/type
+  fallbacks. Relay runs on a separate `yaver-relay-free` box (yaver-io ctx), the
+  Talos box `ubuntu-4gb-hel1-1` is in `my-hertzner` ctx.
+
+## Cost (cpx51 32 GB amd64 beta box)
+
+| State | Cost | Note |
+|---|---|---|
+| Idle (scale-to-zero) | ~€0.10-0.20/mo | snapshot only |
+| Active | ~$0.13/hr | only while a beta user codes |
+| Normal (3 friends, bursty) | ~$10-25/mo | active hours + inference |
+| **Worst (box 24/7 + grants drained)** | **~$99/mo** | $83.49 box + 3×$5 inference |
+
+**Attacker adds $0**: `/beta/wake` + the gateway both require a Convex-verified
+beta token — a stranger can neither spin the box up nor drain inference.
+
+## Golden image contents (the beta box must bake ALL of)
+
+cpx51 (32 GB amd64) because it runs these concurrently for a few tenants:
+- yaver agent (with the unwire gate; boot env `YAVER_BETA_HOST=1`)
+- opencode (+ claude/codex binaries for BYO-OAuth lanes)
+- **redroid** (amd64 image + binder: `modprobe binder_linux`; ubuntu 24.04 has
+  CONFIG_ANDROID_BINDERFS) — Android app testing
+- **Playwright + Chromium** (browser automation) and **chromedp** (headless
+  chrome for gateway/collection)
+- Node + Hermes toolchain (Metro + hermesc) for RN/Expo (sfmg/carrotbet/nizam)
+- `/srv/yaver/tenants` (root-owned, 0700 per tenant)
+- the seeded, **secret-scrubbed** sharedProject repos (beta_scrub)
+
+## THE blocker: box-side beta execution data plane (still unbuilt)
+
+Built + verified: control plane (seed/entitlement/no-leak), relay signalling
+(/beta/wake cost-gated), pool controller (dry-run, scale-to-zero), unwire gate,
+gateway keyless-GLM, close/open data preservation. **Missing — the one thing all
+"test user develops X" asks need:** a beta user's mobile/web request actually
+running opencode AS the tenant on the seeded repo. Requires:
+1. Golden image (above), baked once → snapshot = the scale-to-zero "zero" state.
+2. `/beta/push` (or the task path) running opencode as `yv-<id>` with
+   `betaTenantRunnerEnv` (gateway inference, ZERO host secrets), confined to
+   `/srv/yaver/tenants/<id>`.
+3. Repo seeding via beta_broker + beta_scrub (clone scrubbed carrotbet/sfmg/nizam
+   into the tenant; sfmg is 8.6 GB → seed lazily / shallow).
+4. Wire controller real provisionFn/reapFn → cloud_byo_provision(from snapshot)
+   + ci/hcloud snapshot+delete.
+
+## Per-app notes
+
+- **nizam** (1.7 GB, web+mobile hybrid — has dev/mobile:web/test:web-headless):
+  web surface via web_preview, mobile via Hermes push.
+- **carrotbet** (1.1 GB, RN, PRIVATE betting): Hermes; scrub model/creds.
+- **sfmg** (8.6 GB, RN monorepo): heavy — needs the 32 GB box; seed shallow.
+- **yaver** (this repo): meta / self-host.
+- **talos** (PRIVATE business, OCPP, secrets): ⚠️ do NOT share raw. Per
+  CLAUDE.md "Yaver NEVER uses Talos; OCPP+Talos private IP never in public repo."
+  If shared at all, heavily-scrubbed read-only only — recommend NOT a beta share.
+
+## Guest-shared yaver git (requested — design, not built)
+
+Today: `managed_git.go` is single-tenant (owner-home, slug-keyed);
+`beta_managed_git.go` is per-tenant; `beta_broker.go` already pushes a tenant's
+work to `beta/<id>/<ts>` branches without exposing owner creds. "Guests share
+the same yaver git" = ONE shared bare repo + per-guest branches via the broker
+(the model already exists in beta_broker). To wire: a shared (not per-tenant)
+repo root + an HTTP endpoint that routes each guest's commit→push through the
+broker to their branch on the shared repo; reads are shared, writes are
+branch-isolated; no guest gets the owner mirror creds.
+
 ## Stop Conditions
 
 Stop and ask the owner before:
