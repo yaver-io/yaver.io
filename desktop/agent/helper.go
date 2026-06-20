@@ -40,12 +40,18 @@ const defaultHelperSocket = "/run/yaver/helper.sock"
 
 // helperRequest is the wire format (one JSON object per connection).
 type helperRequest struct {
-	Verb    string   `json:"verb"`              // package_install | service | tenant_create | tenant_remove
+	Verb    string   `json:"verb"`              // package_install | service | tenant_create | tenant_remove | tenant_shell
 	Manager string   `json:"manager,omitempty"` // apt | apt-get | dnf | pacman
 	Names   []string `json:"names,omitempty"`   // package names
 	Action  string   `json:"action,omitempty"`  // start|stop|restart|enable|disable
 	Unit    string   `json:"unit,omitempty"`    // systemd unit
 	Tenant  string   `json:"tenant,omitempty"`  // yv-<id>
+	// tenant_shell only: launch an interactive login shell AS the tenant and
+	// hand the PTY master fd back to the agent over SCM_RIGHTS. This is what
+	// lets the agent run with NoNewPrivileges=true (no `sudo -u`).
+	Shell string   `json:"shell,omitempty"`
+	Env   []string `json:"env,omitempty"` // KEY=VALUE overlay (sanitized here)
+	Cwd   string   `json:"cwd,omitempty"`
 }
 
 type helperResponse struct {
@@ -77,7 +83,46 @@ var (
 	rePackage = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]*$`)
 	reTenant  = regexp.MustCompile(`^yv-[a-z0-9]{1,12}$`)
 	reUnit    = regexp.MustCompile(`^[a-zA-Z0-9@._-]+(\.service)?$`)
+	reEnvKey  = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 )
+
+// allowedShells bounds tenant_shell to known login shells (absolute paths only).
+var allowedShells = map[string]bool{
+	"/bin/bash": true, "/usr/bin/bash": true,
+	"/bin/sh": true, "/usr/bin/sh": true,
+	"/bin/zsh": true, "/usr/bin/zsh": true,
+	"/bin/dash": true, "/usr/bin/dash": true,
+	"/usr/bin/fish": true,
+}
+
+func validShell(shell string) error {
+	if !allowedShells[shell] {
+		return fmt.Errorf("disallowed shell %q", shell)
+	}
+	return nil
+}
+
+// sanitizeTenantEnv validates a KEY=VALUE overlay before it is handed to a
+// root-spawned (then uid-dropped) shell: keys must be conventional env names,
+// values must carry no NUL/newline. Rejects the whole batch on any bad entry.
+func sanitizeTenantEnv(env []string) ([]string, error) {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			return nil, fmt.Errorf("malformed env entry %q", kv)
+		}
+		k, v := kv[:i], kv[i+1:]
+		if !reEnvKey.MatchString(k) {
+			return nil, fmt.Errorf("invalid env key %q", k)
+		}
+		if strings.ContainsAny(v, "\x00\n\r") {
+			return nil, fmt.Errorf("env value for %q has control characters", k)
+		}
+		out = append(out, kv)
+	}
+	return out, nil
+}
 
 var serviceActions = map[string]bool{
 	"start": true, "stop": true, "restart": true, "enable": true, "disable": true,
@@ -260,6 +305,18 @@ func (s *helperServer) serveConn(conn net.Conn) {
 	dec := json.NewDecoder(bufio.NewReader(conn))
 	if err := dec.Decode(&req); err != nil {
 		writeResp(conn, helperResponse{Error: "bad request: " + err.Error()})
+		return
+	}
+
+	// tenant_shell is special: it returns a PTY master fd over SCM_RIGHTS, so it
+	// needs the *net.UnixConn rather than the generic JSON reply path.
+	if req.Verb == "tenant_shell" {
+		uc, ok := conn.(*net.UnixConn)
+		if !ok {
+			writeResp(conn, helperResponse{Error: "tenant_shell requires a unix socket"})
+			return
+		}
+		s.serveTenantShell(uc, req)
 		return
 	}
 	writeResp(conn, s.handle(req))

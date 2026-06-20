@@ -43,14 +43,26 @@ Source of truth: **`desktop/agent/install_privilege.go`** (+ `_test.go`).
 - **Install** — `--install-systemd-system --operator` now also writes + enables
   `yaver-helper.service` (root) and the agent unit `Requires` it.
 
-**Step 5 — the remaining blocker to `NoNewPrivileges=true`.** Even on an
-operator node the agent still launches each tenant's interactive shell via
-`sudo -u yv-x` (`tenantShellArgv`). The helper brokers one-shot RPCs but not a
-long-lived PTY, so dropping new-privilege acquisition would break tenant
-shells. Closing this means teaching the helper to fork the tenant shell and
-hand back a PTY fd — then the operator agent unit can finally set
-`NoNewPrivileges=true` and run with **zero** sudo. Until then the helper is a
-validated audit/choke-point + the foundation, not yet the full wall.
+**Step 5 — PTY brokering → `NoNewPrivileges=true` (landed).** The helper now
+also serves a `tenant_shell` verb: it opens a PTY, spawns the tenant's login
+shell with `SysProcAttr.Credential` dropping to the `yv-x` uid/gid + a
+controlling tty, and passes the **PTY master fd** back to the agent over
+**SCM_RIGHTS** (`helper_tenant_linux.go` ↔ `helper_client_fd_unix.go`). The
+agent wraps that fd as a terminal session (`newTerminalSessionFromPTY`) — no
+`sudo -u` anywhere. With every privileged op (package / service / tenant
+lifecycle / **tenant shell**) now brokered, the operator agent unit sets
+**`NoNewPrivileges=true`**: the agent holds zero privilege and a tenant escape
+can never re-acquire root via a setuid binary. The env overlay + shell are
+re-sanitized in the root helper (`sanitizeTenantEnv`, `validShell`) since the
+agent is the thing being contained.
+
+Self-host deliberately keeps `NoNewPrivileges` unset — it's the owner's own box
+and still uses scoped sudo for apt/systemctl/ufw by design.
+
+> Device-verify on a real operator Linux node: setuid + controlling-tty +
+> fd-passing can't be exercised off a root Linux box, so the PTY path carries
+> the same "verify before relying" caveat as the rest of `tenant_osuser.go`.
+> The validators, dispatch, unit generation, and fallbacks are unit-tested.
 
 ### Install surfaces & how the model wires in
 

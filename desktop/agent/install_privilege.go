@@ -166,23 +166,26 @@ if visudo -cf %s >/dev/null 2>&1; then mv %s %s; else rm -f %s; echo 'yaver: sud
 // home; the single ReadWritePaths hole at the agent's own home is what lets it
 // keep working.
 //
-// On operator nodes the one-shot privileged ops (package install, yaver/docker
-// service control, yv-* tenant create/remove) route through the root helper
-// (helper.go) — so the unit Requires yaver-helper.service.
+// On operator nodes ALL privileged ops the agent needs — package install,
+// yaver/docker service control, yv-* tenant create/remove, AND each tenant's
+// interactive shell (PTY brokered over SCM_RIGHTS, step 5) — route through the
+// root helper (helper.go). So the operator agent unit Requires yaver-helper and
+// runs with NoNewPrivileges=true: the agent itself holds zero privilege and a
+// tenant escape can never re-gain root via a setuid binary.
 //
-// NoNewPrivileges is still NOT set, on purpose. The agent launches each tenant's
-// interactive shell via `sudo -u yv-x` (tenantShellArgv); the helper brokers
-// one-shot RPCs but not long-lived PTYs, so dropping new-privilege acquisition
-// would break tenant shells. Brokering PTYs through the helper (then flipping
-// NoNewPrivileges=true) is the remaining step — see docs §step 5.
+// Self-host keeps NoNewPrivileges unset: it's the owner's own box and still
+// uses scoped sudo for apt/systemctl/ufw/etc. by design.
 func hardenedSystemUnit(yaverBin string, operator bool) string {
 	execLine := yaverBin + " serve --debug --work-dir " + yaverSystemHome
 	unitDeps := ""
+	nnp := "# NoNewPrivileges unset: self-host uses scoped sudo (apt/systemctl) by design.\n"
 	if operator {
 		execLine += " --operator --relay-only"
-		// Helper must be up first so tenant create/remove + pkg/service ops have
-		// their root broker available.
+		// Helper must be up first so tenant shell/create/remove + pkg/service ops
+		// have their root broker available.
 		unitDeps = "Requires=" + helperUnitName + "\nAfter=" + helperUnitName + "\n"
+		// Zero-sudo agent: every privileged op now goes through the helper.
+		nnp = "NoNewPrivileges=true\n"
 	}
 	// Operator boxes write tenant homes under /home/yv-* (via the helper as root,
 	// and via `sudo -u` for shells) — mount the whole /home rw there. Single-
@@ -215,12 +218,10 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
-# NoNewPrivileges unset: tenant shells still launch via sudo -u (the helper
-# brokers one-shot ops, not PTYs). Flip to true once PTY brokering lands (step 5).
-
+%s
 [Install]
 WantedBy=multi-user.target
-`, yaverSystemUser, unitDeps, yaverSystemUser, yaverSystemUser, execLine, yaverSystemHome, yaverSystemHome, rwPaths)
+`, yaverSystemUser, unitDeps, yaverSystemUser, yaverSystemUser, execLine, yaverSystemHome, yaverSystemHome, rwPaths, nnp)
 }
 
 // systemUnitPath is the canonical location for the dedicated-user system unit.

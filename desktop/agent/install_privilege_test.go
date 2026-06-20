@@ -101,8 +101,9 @@ func TestHardenedSystemUnit(t *testing.T) {
 			t.Errorf("hardened unit missing %q:\n%s", want, got)
 		}
 	}
+	// Self-host keeps sudo, so NoNewPrivileges must stay off.
 	if strings.Contains(got, "NoNewPrivileges=true") {
-		t.Errorf("NoNewPrivileges=true would break sudo before the helper lands:\n%s", got)
+		t.Errorf("self-host must not set NoNewPrivileges (still uses scoped sudo):\n%s", got)
 	}
 
 	op := hardenedSystemUnit("/usr/bin/yaver", true)
@@ -112,6 +113,13 @@ func TestHardenedSystemUnit(t *testing.T) {
 	// Operator needs to write tenant homes under /home → whole /home is rw.
 	if !strings.Contains(op, "ReadWritePaths=/home ") {
 		t.Errorf("operator unit should mount /home rw for tenant homes:\n%s", op)
+	}
+	// Step 5 payoff: the confined operator agent runs zero-sudo.
+	if !strings.Contains(op, "NoNewPrivileges=true") {
+		t.Errorf("operator unit must set NoNewPrivileges=true (all privileged ops via helper):\n%s", op)
+	}
+	if !strings.Contains(op, "Requires="+helperUnitName) {
+		t.Errorf("operator unit must Require the helper:\n%s", op)
 	}
 }
 

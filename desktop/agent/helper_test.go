@@ -123,6 +123,44 @@ func lastCall(calls [][]string) []string {
 	return calls[len(calls)-1]
 }
 
+// tenant_shell validators: the env overlay and shell are attacker-controlled
+// (the agent we're containing builds them), so the root helper must sanitize.
+func TestValidShell(t *testing.T) {
+	for _, ok := range []string{"/bin/bash", "/usr/bin/zsh", "/bin/sh"} {
+		if err := validShell(ok); err != nil {
+			t.Errorf("shell %q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"bash", "/tmp/evil", "/bin/bash; rm -rf /", "../bin/sh", "/bin/bash -c id", ""} {
+		if err := validShell(bad); err == nil {
+			t.Errorf("dangerous shell %q accepted", bad)
+		}
+	}
+}
+
+func TestSanitizeTenantEnv(t *testing.T) {
+	ok, err := sanitizeTenantEnv([]string{"TERM=xterm-256color", "OPENAI_BASE_URL=https://x/y", "YAVER_HOST_SHARE=1"})
+	if err != nil {
+		t.Fatalf("valid env rejected: %v", err)
+	}
+	if len(ok) != 3 {
+		t.Errorf("expected 3 env entries, got %d", len(ok))
+	}
+	bad := [][]string{
+		{"noequals"},
+		{"=value"},
+		{"lower=1"},         // keys must be conventional upper/underscore
+		{"K E Y=1"},         // space in key
+		{"OK=line1\nline2"}, // newline injection
+		{"OK=a\x00b"},       // NUL
+	}
+	for _, env := range bad {
+		if _, err := sanitizeTenantEnv(env); err == nil {
+			t.Errorf("dangerous env %q accepted", env)
+		}
+	}
+}
+
 // Client shims fall back cleanly when no helper socket is present.
 func TestHelperUnavailableFallback(t *testing.T) {
 	t.Setenv("YAVER_HELPER_SOCKET", "/nonexistent/yaver-helper-test.sock")

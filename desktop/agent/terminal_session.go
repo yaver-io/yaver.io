@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -62,6 +63,32 @@ func (s *HTTPServer) newTerminalSession(cmd *exec.Cmd, onTouch func(bool), hostS
 	return ts, nil
 }
 
+// newTerminalSessionFromPTY adopts a PTY master that was opened elsewhere — in
+// particular, one handed back by the privilege-separated helper for a tenant
+// shell (helper_client_fd_unix.go). There is no local *exec.Cmd to Wait on; the
+// session closes when the master hits EOF (the remote shell exited), handled in
+// readLoop.
+func (s *HTTPServer) newTerminalSessionFromPTY(ptmx *os.File, onTouch func(bool), hostShareID, guestUserID, workspaceDir string) (*terminalSession, error) {
+	if ptmx == nil {
+		return nil, fmt.Errorf("nil pty master")
+	}
+	ts := &terminalSession{
+		id:           uuid.New().String(),
+		cmd:          nil, // helper-owned process; no local Wait
+		ptmx:         ptmx,
+		srv:          s,
+		onTouch:      onTouch,
+		hostShareID:  hostShareID,
+		guestUserID:  guestUserID,
+		workspaceDir: workspaceDir,
+		createdAt:    time.Now(),
+	}
+	s.terminalSessions.Store(ts.id, ts)
+	go ts.readLoop()
+	// No waitLoop: readLoop's EOF path closes the session for cmd-less sessions.
+	return ts, nil
+}
+
 func (s *HTTPServer) terminalSessionByID(id string) (*terminalSession, bool) {
 	v, ok := s.terminalSessions.Load(id)
 	if !ok {
@@ -72,6 +99,9 @@ func (s *HTTPServer) terminalSessionByID(id string) (*terminalSession, bool) {
 }
 
 func (ts *terminalSession) waitLoop() {
+	if ts.cmd == nil {
+		return // helper-brokered session; readLoop's EOF path closes it
+	}
 	_ = ts.cmd.Wait()
 	ts.close(true)
 }
@@ -177,13 +207,18 @@ func (ts *terminalSession) close(remove bool) {
 		ts.detachTimer = nil
 	}
 	ptmx := ts.ptmx
-	process := ts.cmd.Process
+	var process *os.Process
+	if ts.cmd != nil { // helper-brokered sessions have no local cmd
+		process = ts.cmd.Process
+	}
 	ts.mu.Unlock()
 
 	if conn != nil {
 		_ = conn.Close()
 	}
 	if ptmx != nil {
+		// Closing the master sends SIGHUP to the tenant shell's session (the
+		// helper reaps it); for local cmds we also Kill below.
 		_ = ptmx.Close()
 	}
 	if process != nil {
@@ -241,6 +276,11 @@ func (ts *terminalSession) readLoop() {
 		if err != nil {
 			if err != io.EOF {
 				_ = ts.writeWS(websocket.TextMessage, []byte("pty read err: "+err.Error()))
+			}
+			// Helper-brokered sessions have no local cmd/waitLoop, so the PTY
+			// EOF (remote shell exited) is the only close signal — act on it.
+			if ts.cmd == nil {
+				ts.close(true)
 			}
 			return
 		}

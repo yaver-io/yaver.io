@@ -79,9 +79,48 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 		isHostShare := r.Header.Get("X-Yaver-HostShare") == "true"
 		cwd := r.URL.Query().Get("cwd")
+
+		// STEP 5: on a confined operator node (NoNewPrivileges=true, no sudo)
+		// the tenant's shell is spawned by the root helper, which drops to the
+		// tenant uid and hands us the PTY master fd. Try this first; on any
+		// failure fall through to the sudo path below (non-confined nodes).
+		if s.operatorMode && isHostShare && tenantOSUsersEnabled() && guestUserID != "" && helperAvailable() {
+			if name, home, terr := ensureTenantOSUser(guestUserID); terr == nil {
+				tshell := shell
+				if validShell(tshell) != nil {
+					tshell = "/bin/bash"
+				}
+				tcwd := strings.TrimSpace(cwd)
+				if tcwd == "" {
+					tcwd = home + "/Workspace"
+				}
+				env := append(s.gatewayInjectEnv(guestUserID), "TERM=xterm-256color")
+				if hostShareSessionID != "" {
+					env = append(env,
+						"YAVER_HOST_SHARE=1",
+						"YAVER_HOST_SHARE_SESSION_ID="+hostShareSessionID,
+						"YAVER_HOST_SHARE_GUEST_USER_ID="+guestUserID,
+					)
+				}
+				if ptmx, ferr := helperTenantShellFD(name, tshell, env, tcwd); ferr == nil {
+					if sess, serr := s.newTerminalSessionFromPTY(ptmx, touchSession, hostShareSessionID, guestUserID, ""); serr == nil {
+						ts = sess
+						touchSession(true)
+					} else {
+						_ = ptmx.Close()
+						log.Printf("[OPERATOR] helper tenant PTY session for %s failed (%v); falling back to sudo path", guestUserID, serr)
+					}
+				} else {
+					log.Printf("[OPERATOR] helper tenant shell for %s unavailable (%v); falling back to sudo path", guestUserID, ferr)
+				}
+			}
+		}
+
 		var cmd *exec.Cmd
 		tenantOSUser := ""
 		switch {
+		case ts != nil:
+			// Already started via the privilege-separated helper above.
 		case s.operatorMode && isHostShare && tenantOSUsersEnabled() && guestUserID != "":
 			// OPERATOR FLEET (primary isolation, docs §4b): run the tenant's
 			// shell AS their own unprivileged OS user (yv-<id>), in their
@@ -109,42 +148,44 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			cmd = exec.Command(shell)
 			cmd.Env = append(s.tenantRunnerBaseEnv(guestUserID), "TERM=xterm-256color")
 		}
-		if cmd == nil {
-			cmd = exec.Command(shell)
-			cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-		}
-		workspaceDir := ""
-		if isHostShare {
-			cmd.Env = append(cmd.Env,
-				"YAVER_HOST_SHARE=1",
-				"YAVER_HOST_SHARE_SESSION_ID="+hostShareSessionID,
-				"YAVER_HOST_SHARE_GUEST_USER_ID="+guestUserID,
-			)
-			// When the tenant runs as their own OS user, keep cwd at their
-			// $HOME/Workspace (set above) — don't redirect to the shared
-			// host-share workspace dir.
-			if tenantOSUser == "" && s.hostShareWorkspaceMgr != nil && hostShareSessionID != "" {
-				if ws, err := s.hostShareWorkspaceMgr.EnsureWorkspace(hostShareSessionID); err == nil && ws != nil && strings.TrimSpace(ws.RepoDir) != "" {
-					cwd = ws.RepoDir
-					workspaceDir = ws.RepoDir
-					cmd.Env = append(cmd.Env, "YAVER_HOST_SHARE_WORKSPACE_DIR="+ws.RepoDir)
+		if ts == nil {
+			if cmd == nil {
+				cmd = exec.Command(shell)
+				cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+			}
+			workspaceDir := ""
+			if isHostShare {
+				cmd.Env = append(cmd.Env,
+					"YAVER_HOST_SHARE=1",
+					"YAVER_HOST_SHARE_SESSION_ID="+hostShareSessionID,
+					"YAVER_HOST_SHARE_GUEST_USER_ID="+guestUserID,
+				)
+				// When the tenant runs as their own OS user, keep cwd at their
+				// $HOME/Workspace (set above) — don't redirect to the shared
+				// host-share workspace dir.
+				if tenantOSUser == "" && s.hostShareWorkspaceMgr != nil && hostShareSessionID != "" {
+					if ws, err := s.hostShareWorkspaceMgr.EnsureWorkspace(hostShareSessionID); err == nil && ws != nil && strings.TrimSpace(ws.RepoDir) != "" {
+						cwd = ws.RepoDir
+						workspaceDir = ws.RepoDir
+						cmd.Env = append(cmd.Env, "YAVER_HOST_SHARE_WORKSPACE_DIR="+ws.RepoDir)
+					}
 				}
 			}
+			if cwd != "" {
+				cmd.Dir = cwd
+			}
+			// On Android the agent runs native but the shell must execute inside
+			// the proot Alpine rootfs so claude/codex/node resolve. No-op on every
+			// other platform (gated on YAVER_ANDROID_* env). See sandbox_proot.go.
+			cmd = sandboxWrapCmd(cmd)
+			ts, err = s.newTerminalSession(cmd, touchSession, hostShareSessionID, guestUserID, workspaceDir)
+			if err != nil {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte("pty start failed: "+err.Error()))
+				_ = conn.Close()
+				return
+			}
+			touchSession(true)
 		}
-		if cwd != "" {
-			cmd.Dir = cwd
-		}
-		// On Android the agent runs native but the shell must execute inside
-		// the proot Alpine rootfs so claude/codex/node resolve. No-op on every
-		// other platform (gated on YAVER_ANDROID_* env). See sandbox_proot.go.
-		cmd = sandboxWrapCmd(cmd)
-		ts, err = s.newTerminalSession(cmd, touchSession, hostShareSessionID, guestUserID, workspaceDir)
-		if err != nil {
-			_ = conn.WriteMessage(websocket.TextMessage, []byte("pty start failed: "+err.Error()))
-			_ = conn.Close()
-			return
-		}
-		touchSession(true)
 	}
 
 	if err := ts.attach(conn, resumed); err != nil {
