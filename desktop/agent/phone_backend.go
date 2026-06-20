@@ -109,17 +109,18 @@ type PhoneAppSpec struct {
 
 // PhoneProject is the full metadata of a mini-backend project.
 type PhoneProject struct {
-	Slug      string        `yaml:"slug" json:"slug"`
-	Name      string        `yaml:"name" json:"name"`
-	Template  string        `yaml:"template,omitempty" json:"template,omitempty"`
-	Dir       string        `yaml:"dir" json:"dir"`
-	CreatedAt string        `yaml:"createdAt" json:"createdAt"`
-	UpdatedAt string        `yaml:"updatedAt" json:"updatedAt"`
-	Schema    *PhoneSchema  `yaml:"-" json:"schema,omitempty"`
-	Auth      *PhoneAuth    `yaml:"-" json:"auth,omitempty"`
-	Seed      PhoneSeed     `yaml:"-" json:"seed,omitempty"`
-	App       *PhoneAppSpec `yaml:"-" json:"app,omitempty"`
-	Stats     *PhoneStats   `yaml:"-" json:"stats,omitempty"`
+	Slug       string                 `yaml:"slug" json:"slug"`
+	Name       string                 `yaml:"name" json:"name"`
+	Template   string                 `yaml:"template,omitempty" json:"template,omitempty"`
+	Dir        string                 `yaml:"dir" json:"dir"`
+	CreatedAt  string                 `yaml:"createdAt" json:"createdAt"`
+	UpdatedAt  string                 `yaml:"updatedAt" json:"updatedAt"`
+	ManagedGit *ManagedGitProjectMeta `yaml:"managedGit,omitempty" json:"managedGit,omitempty"`
+	Schema     *PhoneSchema           `yaml:"-" json:"schema,omitempty"`
+	Auth       *PhoneAuth             `yaml:"-" json:"auth,omitempty"`
+	Seed       PhoneSeed              `yaml:"-" json:"seed,omitempty"`
+	App        *PhoneAppSpec          `yaml:"-" json:"app,omitempty"`
+	Stats      *PhoneStats            `yaml:"-" json:"stats,omitempty"`
 }
 
 // PhoneStats are live counts from the SQLite file.
@@ -132,18 +133,19 @@ type PhoneStats struct {
 
 // PhoneCreateSpec is the payload for creating a new project.
 type PhoneCreateSpec struct {
-	Slug          string        `json:"slug"`
-	Name          string        `json:"name"`
-	Template      string        `json:"template,omitempty"`
-	Schema        *PhoneSchema  `json:"schema,omitempty"`
-	Auth          *PhoneAuth    `json:"auth,omitempty"`
-	Seed          PhoneSeed     `json:"seed,omitempty"`
-	App           *PhoneAppSpec `json:"app,omitempty"`
-	Prompt        string        `json:"prompt,omitempty"`
-	Runner        string        `json:"runner,omitempty"`
-	ImportURL     string        `json:"importUrl,omitempty"`
-	ImportContent string        `json:"importContent,omitempty"`
-	ImportTitle   string        `json:"importTitle,omitempty"`
+	Slug          string                   `json:"slug"`
+	Name          string                   `json:"name"`
+	Template      string                   `json:"template,omitempty"`
+	Schema        *PhoneSchema             `json:"schema,omitempty"`
+	Auth          *PhoneAuth               `json:"auth,omitempty"`
+	Seed          PhoneSeed                `json:"seed,omitempty"`
+	App           *PhoneAppSpec            `json:"app,omitempty"`
+	Prompt        string                   `json:"prompt,omitempty"`
+	Runner        string                   `json:"runner,omitempty"`
+	ImportURL     string                   `json:"importUrl,omitempty"`
+	ImportContent string                   `json:"importContent,omitempty"`
+	ImportTitle   string                   `json:"importTitle,omitempty"`
+	ManagedGit    *ManagedGitCreateOptions `json:"managedGit,omitempty"`
 }
 
 var runPhonePromptGenerator = RunAIGenerator
@@ -315,6 +317,17 @@ func CreatePhoneProject(spec PhoneCreateSpec) (*PhoneProject, error) {
 		Auth:    "phone-personas",
 		Env:     map[string]string{"YAVER_PHONE_PROJECT": slug},
 	})
+
+	if spec.ManagedGit != nil && spec.ManagedGit.Enabled {
+		meta, err := EnsureManagedGitForProject(dir, slug, name, spec.ManagedGit)
+		if err != nil {
+			return nil, fmt.Errorf("managed git: %w", err)
+		}
+		if latest, err := LoadPhoneProject(slug); err == nil {
+			latest.ManagedGit = meta
+			_ = savePhoneMeta(latest)
+		}
+	}
 
 	return LoadPhoneProject(slug)
 }

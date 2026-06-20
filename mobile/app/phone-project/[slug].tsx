@@ -76,6 +76,7 @@ export default function PhoneProjectDetailScreen() {
   );
   const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
+  const [gitBusy, setGitBusy] = useState<string | null>(null);
   const [lastDeploy, setLastDeploy] = useState<{ url: string; via?: string } | null>(null);
   const [costHints, setCostHints] = useState<PhoneDeployCostHints | null>(null);
 
@@ -165,6 +166,214 @@ export default function PhoneProjectDetailScreen() {
         },
       },
     ]);
+  }
+
+  async function runManagedGitBackup() {
+    if (!project?.managedGit?.enabled) return;
+    setGitBusy("backup");
+    try {
+      await quicClient.managedGitBackupRun({ slug: project.slug });
+      await load();
+      Alert.alert("Backup saved", "Yaver created a recoverable git backup for this project.");
+    } catch (e: any) {
+      Alert.alert("Backup failed", e?.message ?? "Could not create backup.");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function enableManagedGit() {
+    if (!project) return;
+    setGitBusy("enable");
+    try {
+      await quicClient.managedGitEnable({
+        slug: project.slug,
+        name: project.name,
+        visibility: "private",
+      });
+      await load();
+      Alert.alert("Yaver Git is on", "Yaver will now save versions of this project on the main branch.");
+    } catch (e: any) {
+      Alert.alert("Could not turn on Yaver Git", e?.message ?? "Try again after connecting a Yaver agent.");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function restoreLastManagedGitBackup() {
+    const path = project?.managedGit?.lastBackup?.path;
+    if (!project?.managedGit?.enabled || !path) return;
+    Alert.alert("Restore backup?", "Yaver will restore the last git backup onto the main branch.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Restore",
+        style: "destructive",
+        onPress: async () => {
+          setGitBusy("restore");
+          try {
+            await quicClient.managedGitBackupRestore({ slug: project.slug, bundlePath: path });
+            await load();
+            Alert.alert("Restored", "The project was restored from the last Yaver Git backup.");
+          } catch (e: any) {
+            Alert.alert("Restore failed", e?.message ?? "Could not restore backup.");
+          } finally {
+            setGitBusy(null);
+          }
+        },
+      },
+    ]);
+  }
+
+  async function backupToOwnStorage() {
+    if (!project?.managedGit?.enabled) return;
+    setGitBusy("own-storage");
+    try {
+      const data = await quicClient.sharedStorageProfiles();
+      const profiles = (data?.profiles ?? []) as Array<{ id: string; name?: string; type?: string; available?: boolean; readOnly?: boolean }>;
+      const target = profiles.find((p) =>
+        p.available !== false &&
+        !p.readOnly &&
+        (p.type === "local" || p.type === "storagebox")
+      );
+      if (!target) {
+        Alert.alert("No backup folder", "Add a writable shared storage profile first, such as a folder on your computer or storage box.");
+        return;
+      }
+      await quicClient.managedGitBackupCopy({
+        slug: project.slug,
+        targetKind: "shared-storage",
+        targetId: target.id,
+      });
+      await load();
+      Alert.alert("Backed up", `Yaver copied a recoverable backup to ${target.name || target.id}.`);
+    } catch (e: any) {
+      Alert.alert("Backup failed", e?.message ?? "Could not back up to your storage.");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function backupToDropbox() {
+    if (!project?.managedGit?.enabled) return;
+    setGitBusy("dropbox");
+    try {
+      const status = await quicClient.managedGitDropboxStatus();
+      if (!status?.connected) {
+        const start = await quicClient.managedGitDropboxOAuthStart();
+        if (start?.authUrl) {
+          await Linking.openURL(start.authUrl).catch(() => undefined);
+        }
+        const prompt = (Alert as any).prompt;
+        if (Platform.OS === "ios" && typeof prompt === "function") {
+          prompt(
+            "Dropbox code",
+            "Paste the code Dropbox returned after approval.",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Connect",
+                onPress: async (code: string) => {
+                  if (!code?.trim()) return;
+                  try {
+                    await quicClient.managedGitDropboxOAuthSubmit({ sessionId: start.sessionId, code: code.trim() });
+                    await quicClient.managedGitBackupCopy({ slug: project.slug, targetKind: "dropbox" });
+                    await load();
+                    Alert.alert("Backed up", "Yaver copied a recoverable backup to Dropbox.");
+                  } catch (e: any) {
+                    Alert.alert("Dropbox failed", e?.message ?? "Could not finish Dropbox setup.");
+                  }
+                },
+              },
+            ],
+          );
+          return;
+        }
+        Alert.alert("Dropbox approval opened", "Approve Yaver in Dropbox, then submit the returned code from a Yaver agent or iOS device.");
+        return;
+      }
+      await quicClient.managedGitBackupCopy({ slug: project.slug, targetKind: "dropbox" });
+      await load();
+      Alert.alert("Backed up", "Yaver copied a recoverable backup to Dropbox.");
+    } catch (e: any) {
+      Alert.alert("Dropbox backup failed", e?.message ?? "Could not back up to Dropbox.");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function backupToSelectedBox() {
+    if (!project?.managedGit?.enabled) return;
+    if (!selectedDevMachine) {
+      Alert.alert("No box selected", "Pick or connect a Yaver box first.");
+      return;
+    }
+    const relayHttpUrl = quicClient.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      Alert.alert("Relay required", "Self-hosted backup needs the relay path so this phone can move the bundle between boxes.");
+      return;
+    }
+    setGitBusy("self-hosted");
+    try {
+      const h = quicClient.getAuthHeaders();
+      const src = `${quicClient.baseUrl}/managed-git/backup/download?slug=${encodeURIComponent(project.slug)}`;
+      const bundleRes = await fetch(src, { headers: h });
+      if (!bundleRes.ok) throw new Error(`download HTTP ${bundleRes.status}`);
+      const bundle = await bundleRes.blob();
+      const dst = `${relayHttpUrl.replace(/\/$/, "")}/d/${encodeURIComponent(selectedDevMachine.id)}/managed-git/backup/receive?repoId=${encodeURIComponent(project.managedGit.repoId || project.slug)}`;
+      const put = await fetch(dst, {
+        method: "POST",
+        headers: h,
+        body: bundle,
+      });
+      if (!put.ok) throw new Error(`receive HTTP ${put.status}: ${await put.text().catch(() => "")}`);
+      await load();
+      Alert.alert("Backed up", `Yaver copied a recoverable backup to ${selectedDevMachine.name || selectedDevMachine.id}.`);
+    } catch (e: any) {
+      Alert.alert("Self-hosted backup failed", e?.message ?? "Could not copy backup to your box.");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function mirrorManagedGit(provider: "github" | "gitlab") {
+    if (!project?.managedGit?.enabled) return;
+    setGitBusy(provider);
+    try {
+      const r = await quicClient.managedGitMirrorConnect({
+        slug: project.slug,
+        provider,
+        repoName: project.managedGit.repoId || project.slug,
+        visibility: project.managedGit.visibility === "public" ? "public" : "private",
+        description: project.app?.summary || project.name,
+      });
+      await load();
+      Alert.alert("Mirror ready", `${r.mirror?.fullName ?? project.slug} on ${provider}.com`);
+    } catch (e: any) {
+      Alert.alert(
+        "Mirror failed",
+        e?.message?.includes("token")
+          ? `Connect ${provider} first from Git Accounts, then try again.`
+          : e?.message ?? "Could not create mirror.",
+      );
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function runProjectQualityChecks() {
+    if (!project?.dir) {
+      Alert.alert("Not ready", "Move this project to a Yaver agent before running quality checks.");
+      return;
+    }
+    setGitBusy("quality");
+    try {
+      await quicClient.runAllQualityChecks(project.dir);
+      Alert.alert("Quality checks started", "Yaver is checking the project and will keep the results in the quality history.");
+    } catch (e: any) {
+      Alert.alert("Quality check failed", e?.message ?? "Could not start checks.");
+    } finally {
+      setGitBusy(null);
+    }
   }
 
   function costHintFor(kind: "dev-hw"): PhoneDeployCostHint | null {
@@ -409,6 +618,142 @@ export default function PhoneProjectDetailScreen() {
             </Pressable>
           ) : null}
         </View>
+
+        {project.managedGit?.enabled ? (
+          <View
+            style={[
+              styles.deployResult,
+              {
+                backgroundColor: c.bgCard,
+                borderColor: c.border,
+                marginTop: 10,
+              },
+            ]}
+          >
+            <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>
+              Saved by Yaver
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+              {project.managedGit.visibility} · {project.managedGit.defaultBranch}
+              {project.managedGit.lastCommit ? ` · ${project.managedGit.lastCommit.slice(0, 7)}` : ""}
+            </Text>
+            {project.managedGit.lastBackup ? (
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+                Backup: {new Date(project.managedGit.lastBackup.createdAt).toLocaleString()}
+              </Text>
+            ) : (
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+                No external backup yet.
+              </Text>
+            )}
+            {(project.managedGit.mirrors ?? []).length ? (
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+                Mirrors: {(project.managedGit.mirrors ?? []).map((m) => m.fullName).join(" · ")}
+              </Text>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+              <Pressable
+                onPress={runManagedGitBackup}
+                disabled={!!gitBusy}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy ? 0.65 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                  {gitBusy === "backup" ? "Saving..." : "Backup"}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={restoreLastManagedGitBackup}
+                disabled={!!gitBusy || !project.managedGit.lastBackup}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy || !project.managedGit.lastBackup ? 0.45 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                  {gitBusy === "restore" ? "Restoring..." : "Restore"}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={backupToOwnStorage}
+                disabled={!!gitBusy}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy ? 0.65 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                  {gitBusy === "own-storage" ? "Copying..." : "Own storage"}
+                </Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+              <Pressable
+                onPress={runProjectQualityChecks}
+                disabled={!!gitBusy}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy ? 0.65 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                  {gitBusy === "quality" ? "Checking..." : "Check"}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={backupToDropbox}
+                disabled={!!gitBusy}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy ? 0.65 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                  {gitBusy === "dropbox" ? "Dropbox..." : "Dropbox"}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={backupToSelectedBox}
+                disabled={!!gitBusy}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy ? 0.65 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                  {gitBusy === "self-hosted" ? "Copying..." : "My box"}
+                </Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+              <Pressable
+                onPress={() => mirrorManagedGit("github")}
+                disabled={!!gitBusy}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy ? 0.65 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>GitHub</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => mirrorManagedGit("gitlab")}
+                disabled={!!gitBusy}
+                style={[styles.btnSecondary, { borderColor: c.border, flex: 1, opacity: gitBusy ? 0.65 : 1 }]}
+              >
+                <Text style={[styles.btnText, { color: c.textPrimary }]}>GitLab</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.deployResult,
+              {
+                backgroundColor: c.bgCard,
+                borderColor: c.border,
+                marginTop: 10,
+              },
+            ]}
+          >
+            <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>
+              Code storage
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+              This project is not using Yaver Managed Git yet.
+            </Text>
+            <Pressable
+              onPress={enableManagedGit}
+              disabled={!!gitBusy}
+              style={[styles.btnSecondary, { borderColor: c.border, marginTop: 10, opacity: gitBusy ? 0.65 : 1 }]}
+            >
+              <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                {gitBusy === "enable" ? "Turning on..." : "Turn on Yaver Git"}
+              </Text>
+            </Pressable>
+          </View>
+        )}
 
         <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
           <Pressable

@@ -4862,6 +4862,165 @@ export class QuicClient {
     };
   }
 
+  async managedGitStatus(args: { slug?: string; workDir?: string }): Promise<any | null> {
+    this.assertConnected();
+    const qs = new URLSearchParams();
+    if (args.slug) qs.set('slug', args.slug);
+    if (args.workDir) qs.set('workDir', args.workDir);
+    const res = await fetch(`${this.baseUrl}/managed-git/status?${qs.toString()}`, {
+      headers: this.authHeaders,
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitStatus ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitEnable(args: {
+    slug?: string;
+    workDir?: string;
+    name?: string;
+    visibility?: 'private' | 'unlisted' | 'public';
+  }): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/enable`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitEnable ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitCheckpoint(args: { slug?: string; workDir?: string; message?: string }): Promise<{ ok: boolean; commit: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/checkpoint`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitCheckpoint ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitBackupRun(args: { slug?: string; workDir?: string }): Promise<{ ok: boolean; backup: any }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/backup/run`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitBackupRun ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitBackupCopy(args: {
+    slug?: string;
+    workDir?: string;
+    targetKind?: 'local-folder' | 'shared-storage' | 'dropbox';
+    targetId?: string;
+    destPath?: string;
+  }): Promise<{ ok: boolean; backup: any }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/backup/copy`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitBackupCopy ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitBackupRestore(args: { slug?: string; workDir?: string; bundlePath: string }): Promise<{ ok: boolean; commit: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/backup/restore`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitBackupRestore ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitDropboxStatus(): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/dropbox/status`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitDropboxStatus ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitDropboxOAuthStart(args: { redirectUri?: string } = {}): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/dropbox/oauth/start`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitDropboxOAuthStart ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitDropboxOAuthSubmit(args: { sessionId: string; code: string }): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/dropbox/oauth/submit`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitDropboxOAuthSubmit ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitMirrorConnect(args: {
+    slug?: string;
+    workDir?: string;
+    provider: 'github' | 'gitlab';
+    host?: string;
+    repoName?: string;
+    visibility?: 'private' | 'public';
+    description?: string;
+  }): Promise<{ ok: boolean; mirror: any }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/mirrors/connect`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitMirrorConnect ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
   /** Pop stashed changes. */
   async gitStashPop(workDir?: string): Promise<{success: boolean; output: string}> {
     this.assertConnected();

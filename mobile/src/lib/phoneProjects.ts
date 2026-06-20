@@ -105,11 +105,47 @@ export interface PhoneProject {
   dir: string;
   createdAt: string;
   updatedAt: string;
+  managedGit?: ManagedGitProjectMeta | null;
   schema?: PhoneSchema | null;
   auth?: PhoneAuth | null;
   seed?: PhoneSeed | null;
   app?: PhoneAppSpec | null;
   stats?: PhoneStats | null;
+}
+
+export interface ManagedGitCreateOptions {
+  enabled: boolean;
+  visibility?: "private" | "unlisted" | "public";
+}
+
+export interface ManagedGitBackupMeta {
+  path: string;
+  sizeBytes: number;
+  commit?: string;
+  createdAt: string;
+}
+
+export interface ManagedGitMirrorMeta {
+  provider: "github" | "gitlab" | string;
+  host: string;
+  fullName: string;
+  cloneUrl: string;
+  visibility: string;
+  lastPushAt?: string;
+}
+
+export interface ManagedGitProjectMeta {
+  repoId: string;
+  enabled: boolean;
+  visibility: "private" | "unlisted" | "public" | string;
+  defaultBranch: string;
+  barePath: string;
+  workDir: string;
+  lastCommit?: string;
+  lastBackup?: ManagedGitBackupMeta | null;
+  mirrors?: ManagedGitMirrorMeta[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PhoneTemplate {
@@ -119,12 +155,15 @@ export interface PhoneTemplate {
 }
 
 // Friends-preview share: a host mints `code`; a friend resolves it and
-// Hermes-loads `bundleUrl`, pointed at `hostedConvexUrl` (the host's
-// own backend). Mirrors the agent's /phone/projects/share|join.
+// Hermes-loads `bundleUrl`, pointed at `dataUrl` on the host origin. Mirrors
+// the agent's /phone/projects/share|join.
 export interface PhoneShare {
   code: string;
   slug: string;
   name: string;
+  runtime?: "yaver-serverless-lite" | string;
+  dataUrl?: string;
+  // Legacy optional field kept while older app builds age out.
   hostedConvexUrl?: string;
   bundleUrl: string;
   createdAt: string;
@@ -144,6 +183,7 @@ export interface PhoneCreateSpec {
   importUrl?: string;
   importContent?: string;
   importTitle?: string;
+  managedGit?: ManagedGitCreateOptions;
 }
 
 export type PhonePromoteTarget = string;
@@ -849,9 +889,9 @@ export async function sharePhoneProject(
   return r;
 }
 
-// joinPhoneShare resolves a code → {slug, hostedConvexUrl, bundleUrl}.
-// The caller then fetches bundleUrl and Hermes-loads it against
-// hostedConvexUrl (the host's live backend).
+// joinPhoneShare resolves a code → {slug, runtime, dataUrl, bundleUrl}. The
+// caller then fetches bundleUrl and points the app's data adapter at dataUrl on
+// the host origin.
 export async function joinPhoneShare(code: string): Promise<PhoneShare> {
   const r = await get<PhoneShare & { error?: string }>(
     `/phone/projects/join?code=${encodeURIComponent(code.trim())}`,
@@ -943,6 +983,42 @@ export async function createPhoneProjectAt(
     throw new Error(body || `HTTP ${res.status}`);
   }
   return JSON.parse(body) as PhoneProject;
+}
+
+export async function managedGitMirrorAt(
+  target: PhonePushTarget,
+  args: {
+    slug: string;
+    provider: "github" | "gitlab";
+    host?: string;
+    repoName?: string;
+    visibility?: "private" | "public";
+    description?: string;
+  },
+): Promise<{ ok: boolean; mirror?: any }> {
+  const h = headers();
+  if (!h) throw new Error("no source agent connected");
+  const base = resolvePhonePushTargetBase(target);
+  const overrideToken =
+    target.kind === "yaver-cloud"
+      ? target.cloudAuthToken
+      : target.kind === "custom"
+        ? target.authToken
+        : undefined;
+  const res = await fetch(`${base}/managed-git/mirrors/connect`, {
+    method: "POST",
+    headers: {
+      ...h,
+      ...(overrideToken ? { Authorization: `Bearer ${overrideToken}` } : {}),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(args),
+  });
+  const body = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(body || `HTTP ${res.status}`);
+  }
+  return JSON.parse(body);
 }
 
 function resolvePhonePushTargetBase(target: PhonePushTarget): string {

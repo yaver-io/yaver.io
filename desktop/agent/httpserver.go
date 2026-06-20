@@ -1240,6 +1240,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Phone-first mini backend (in-app SQLite projects, portable to switch-engine targets)
 	s.registerPhoneRoutes(mux)
+	s.registerManagedGitRoutes(mux)
 
 	// Companion compute (yaver.companion.yaml — crons + workers for serverless projects)
 	s.registerCompanionRoutes(mux)
@@ -10597,6 +10598,77 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpStorageList(a.Dir, a.Bucket))
+	case "managed_git_status":
+		var a struct {
+			Slug    string `json:"slug"`
+			WorkDir string `json:"work_dir"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpManagedGitStatus(a.Slug, a.WorkDir))
+	case "managed_git_enable":
+		var a struct {
+			Slug       string `json:"slug"`
+			WorkDir    string `json:"work_dir"`
+			Name       string `json:"name"`
+			Visibility string `json:"visibility"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpManagedGitEnable(a.Slug, a.WorkDir, a.Name, a.Visibility))
+	case "managed_git_checkpoint":
+		var a struct {
+			Slug    string `json:"slug"`
+			WorkDir string `json:"work_dir"`
+			Message string `json:"message"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpManagedGitCheckpoint(a.Slug, a.WorkDir, a.Message))
+	case "managed_git_backup":
+		var a struct {
+			Slug       string `json:"slug"`
+			WorkDir    string `json:"work_dir"`
+			TargetKind string `json:"target_kind"`
+			TargetID   string `json:"target_id"`
+			DestPath   string `json:"dest_path"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpManagedGitBackup(a.Slug, a.WorkDir, a.TargetKind, a.TargetID, a.DestPath))
+	case "managed_git_restore":
+		var a struct {
+			Slug       string `json:"slug"`
+			WorkDir    string `json:"work_dir"`
+			BundlePath string `json:"bundle_path"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpManagedGitRestore(a.Slug, a.WorkDir, a.BundlePath))
+	case "managed_git_mirror":
+		var a struct {
+			Slug        string `json:"slug"`
+			WorkDir     string `json:"work_dir"`
+			Provider    string `json:"provider"`
+			Host        string `json:"host"`
+			RepoName    string `json:"repo_name"`
+			Visibility  string `json:"visibility"`
+			Description string `json:"description"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpManagedGitMirror(a.Slug, a.WorkDir, a.Provider, a.Host, a.RepoName, a.Visibility, a.Description))
+	case "managed_quality_run":
+		var a struct {
+			WorkDir string `json:"work_dir"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if s.qualityMgr == nil {
+			workDir := a.WorkDir
+			if workDir == "" && s.taskMgr != nil {
+				workDir = s.taskMgr.workDir
+			}
+			s.qualityMgr = NewQualityManager(s.execMgr, workDir)
+		}
+		results, err := s.qualityMgr.RunAllQualityChecks(a.WorkDir)
+		if err != nil {
+			return mcpToolJSON(map[string]interface{}{"error": err.Error()})
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "results": results})
 	case "shared_storage_profiles":
 		return mcpToolJSON(mcpSharedStorageProfiles())
 	case "shared_storage_upsert":
