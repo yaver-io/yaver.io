@@ -18,6 +18,19 @@ type tenantRuntime struct {
 	Home    string
 }
 
+// betaHostEnabled reports whether THIS box is a designated beta runtime host.
+// Default false — a general-purpose / owner-personal box (e.g. the Talos box)
+// must never execute beta-tenant code. Only the ephemeral scale-to-zero pool
+// boxes set YAVER_BETA_HOST=1 (baked into their golden image / boot env).
+func betaHostEnabled() bool {
+	switch strings.TrimSpace(strings.ToLower(os.Getenv("YAVER_BETA_HOST"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func runnerNeedsTenantRuntime(runnerID string) bool {
 	switch normalizeRunnerID(runnerID) {
 	case "claude", "codex":
