@@ -337,7 +337,7 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
       if ! id yaver >/dev/null 2>&1; then
-        useradd --create-home --shell /bin/bash --comment "Yaver agent" yaver
+        useradd --system --create-home --home-dir /home/yaver --shell /bin/bash --comment "Yaver agent" yaver
       fi
       if ! command -v node >/dev/null 2>&1; then
         export DEBIAN_FRONTEND=noninteractive

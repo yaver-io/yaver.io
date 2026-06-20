@@ -112,22 +112,24 @@ func bootstrapRemoteHost(ip, rootPassword, projectDir, gitRepo string) ([]string
 	steps = append(steps, "ssh reachable")
 
 	// Install Docker + dependencies, plus a non-root `yaver` user so the agent
-	// and project tree don't squat under /root.
-	bootstrap := `
+	// and project tree don't squat under /root. The sudoers grant is SCOPED
+	// (package + service management) — never NOPASSWD: ALL — so a compromised
+	// or buggy agent cannot `sudo rm -rf /home`. See install_privilege.go and
+	// docs/yaver-install-user-privilege-model.md. This is the user's own remote
+	// dev box (single tenant), so profileSelfHost.
+	bootstrap := fmt.Sprintf(`
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq ca-certificates curl git sudo
-		id yaver >/dev/null 2>&1 || useradd --create-home --shell /bin/bash yaver
+		%s
 		install -d -m 0755 -o yaver -g yaver /home/yaver/project
-		install -m 0440 /dev/stdin /etc/sudoers.d/90-yaver <<'SUDOERS'
-yaver ALL=(ALL) NOPASSWD: ALL
-SUDOERS
+		%s
 		curl -fsSL https://get.docker.com | sh
 		systemctl enable docker && systemctl start docker
 		usermod -aG docker yaver || true
 		curl -fsSL https://yaver.io/install.sh | bash
 		echo 'BOOTSTRAP_OK'
-	`
+	`, ensureYaverUserSnippet(), writeSudoersSnippet(profileSelfHost))
 	if out, err := runSSH(ip, rootPassword, bootstrap); err != nil {
 		return append(steps, "bootstrap failed: "+out), fmt.Errorf("bootstrap: %w", err)
 	}

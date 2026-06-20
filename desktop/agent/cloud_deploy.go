@@ -1419,7 +1419,7 @@ func (m *CloudDeployManager) saveDeployment() error {
 
 // cloudBootstrapScript returns a cloud-init / bash snippet that installs Docker.
 func cloudBootstrapScript() string {
-	return `#!/bin/bash
+	return fmt.Sprintf(`#!/bin/bash
 set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
@@ -1428,11 +1428,15 @@ apt-get install -y -q curl git ca-certificates sudo
 curl -fsSL https://get.docker.com | sh
 systemctl enable --now docker
 # Non-root 'yaver' user (docs §4a): the agent / user workloads must NOT run
-# as root. Login-less system user with a real home so $HOME/Workspace works.
-id yaver >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/yaver --shell /bin/bash yaver
+# as root. System user with a real home so $HOME/Workspace works.
+%s
 # Let yaver drive Docker (rootless is the Phase-2 hardening; for now the
-# docker group is the pragmatic path) and run passwordless sudo for setup.
+# docker group is the pragmatic path).
 usermod -aG docker yaver || true
+# Scoped passwordless sudo (install_privilege.go) — operator profile: tenant
+# lifecycle + package + yaver/docker services only. NEVER NOPASSWD: ALL, so the
+# agent cannot rm a home, stop sshd, or userdel a human account.
+%s
 # Canonical project home for the yaver user (docs §4b): $HOME/Workspace.
 install -d -o yaver -g yaver -m 0755 /home/yaver/Workspace
 # Firewall
@@ -1440,7 +1444,7 @@ ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
-`
+`, ensureYaverUserSnippet(), writeSudoersSnippet(profileOperator))
 }
 
 // defaultServices returns standard services based on detected stack.

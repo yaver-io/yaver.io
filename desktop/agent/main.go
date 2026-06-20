@@ -2124,7 +2124,8 @@ func runServe(args []string) {
 	recoveryPolicy := fs.String("recovery-policy", "", "Recovery ingress policy: open (default) or private. 'private' blocks /auth/recover on direct public HTTP and allows only LAN/loopback, Tailscale, private relay, or HTTPS Cloudflare Tunnel.")
 	tlsPort := fs.Int("tls-port", 18443, "HTTPS server port (0 to disable)")
 	noTLS := fs.Bool("no-tls", false, "Disable HTTPS server")
-	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service, then exit")
+	installSystemd := fs.Bool("install-systemd", false, "Install and enable systemd user service (runs as the invoking user), then exit")
+	installSystemdSystem := fs.Bool("install-systemd-system", false, "Install a hardened SYSTEM systemd unit that runs as a dedicated non-root 'yaver' user with scoped sudo (for dedicated/shared boxes; requires root), then exit")
 	installLaunchdDaemon := fs.Bool("install-launchd-daemon", false, "Install a macOS LaunchDaemon for boot-before-login headless start, then exit")
 	noAutopilot := fs.Bool("no-autopilot", false, "Disable auto-driving mode (enabled by default)")
 	iosInstall := fs.String("ios-install", "", "iOS install method: auto (default), native (xcodebuild+xcrun), bundle (Hermes push)")
@@ -2152,6 +2153,10 @@ func runServe(args []string) {
 	// Install systemd service and exit
 	if *installSystemd {
 		installSystemdService()
+		return
+	}
+	if *installSystemdSystem {
+		installSystemdSystemService(*operator)
 		return
 	}
 	if *installLaunchdDaemon {
