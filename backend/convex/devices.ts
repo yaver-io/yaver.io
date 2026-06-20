@@ -4,8 +4,8 @@ import { Doc } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
 import {
   getLegacyGuestAccess,
-  listActiveInfraGrantsForGuest,
   listGrantedDeviceIdsForGrant,
+  listVisibleInfraGrantsForGuest,
 } from "./access";
 import { recommendPlacement } from "./edgePlacement";
 import {
@@ -1219,7 +1219,9 @@ export const listMyDevices = query({
       recoveryPosture: d.recoveryPosture,
     }));
 
-    const scopedGrants = await listActiveInfraGrantsForGuest(ctx, session.user._id);
+    // Device LIST (UI) must drop hidden beta grants — a beta user must never see
+    // the owner's box/identity here. Access/routing paths keep the active variant.
+    const scopedGrants = await listVisibleInfraGrantsForGuest(ctx, session.user._id);
     const scopedHosts = new Set<string>();
 
     for (const grant of scopedGrants) {
