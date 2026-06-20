@@ -275,3 +275,33 @@ export function extractJsonObject(text: string): string {
   }
   return "{}";
 }
+
+/** Lightweight connectivity check ("pong") for a provider — a 1-token
+ *  /chat/completions call. Used by the Mobile Sandbox create flow to show a
+ *  live "Connecting to GLM → ✓" checklist step so setup feels real. Returns
+ *  true on a 2xx, false on any error/timeout. Never throws. */
+export async function pingProvider(opts: {
+  flavor: OpenAiFlavor;
+  apiKey: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  if (!opts.apiKey) return false;
+  const d = FLAVOR_DEFAULTS[opts.flavor];
+  const f = opts.fetchImpl ?? fetch;
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 12000);
+  try {
+    const res = await f(`${d.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` },
+      body: JSON.stringify({ model: d.model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
+      signal: ctrl.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(to);
+  }
+}

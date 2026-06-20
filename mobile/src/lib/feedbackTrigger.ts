@@ -77,6 +77,12 @@ async function maybeLaunchFeedbackFromShake(source: FeedbackLaunchSource, userId
 }
 
 export function startFeedbackShakeBridge(userId?: string | null): () => void {
+  // Web has no accelerometer native module — shake-to-feedback is a no-op there
+  // (the browser preview is dev-only). Guard avoids a boot crash:
+  // "this._nativeModule.addListener is not a function".
+  if (Platform.OS === "web") {
+    return () => {};
+  }
   let lastMagnitude = 0;
   let appState: AppStateStatus = AppState.currentState;
   const appStateSub = AppState.addEventListener("change", async (nextState) => {

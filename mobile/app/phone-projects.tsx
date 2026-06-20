@@ -25,6 +25,7 @@ import { buildImportedConversationBrief, mergeImportedConversationPrompt } from 
 import { getManagedSubscription } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { quicClient } from "../src/lib/quic";
+import { pingProvider } from "../src/lib/llmOpenAI";
 import {
   PhoneProject,
   PhonePushTarget,
@@ -64,6 +65,22 @@ type SurveyAnswers = {
   theme?: "minimal" | "playful" | "professional";
   palette?: "slate" | "zinc" | "blue" | "emerald" | "rose" | "amber" | "violet" | "neutral";
 };
+
+// Canva-style brand palettes: tap a palette to set primary + secondary at once,
+// or tap an individual swatch. No hex typing required.
+const SWATCHES = [
+  "#6C5CE7", "#0066FF", "#00B894", "#00CEC9", "#0984E3",
+  "#E17055", "#D63031", "#E84393", "#FD79A8", "#FDCB6E",
+  "#F39C12", "#2D3436", "#636E72", "#1ABC9C", "#9B59B6",
+];
+const PALETTES: { name: string; primary: string; secondary: string }[] = [
+  { name: "Indigo", primary: "#6C5CE7", secondary: "#A29BFE" },
+  { name: "Ocean", primary: "#0066FF", secondary: "#00CEC9" },
+  { name: "Forest", primary: "#00B894", secondary: "#55EFC4" },
+  { name: "Sunset", primary: "#E17055", secondary: "#FDCB6E" },
+  { name: "Berry", primary: "#E84393", secondary: "#FD79A8" },
+  { name: "Slate", primary: "#2D3436", secondary: "#636E72" },
+];
 
 const SURVEY_QUESTIONS: Array<{
   key: keyof SurveyAnswers;
@@ -199,6 +216,13 @@ export default function PhoneProjectsScreen() {
   const [analyzingImport, setAnalyzingImport] = useState(false);
   const [runner, setRunner] = useState<string>("");
   const [creating, setCreating] = useState(false);
+  // Live "starting" checklist shown while a project spins up, so creation feels
+  // real: AI connectivity (GLM/OpenAI pong) → runtime → generate → init.
+  const [createSteps, setCreateSteps] = useState<
+    { key: string; label: string; status: "pending" | "running" | "done" | "skipped" }[]
+  >([]);
+  const markStep = (key: string, status: "pending" | "running" | "done" | "skipped") =>
+    setCreateSteps((prev) => prev.map((s) => (s.key === key ? { ...s, status } : s)));
   const [gitMode, setGitMode] = useState<GitMode>("skip");
   const [step, setStep] = useState(0);
   const [codingMode, setCodingMode] = useState<CodingMode>(connected ? "runner" : "phone");
@@ -241,6 +265,16 @@ export default function PhoneProjectsScreen() {
   // override for users who already know the exact brand colour.
   // Loose validation only (CSS hex shape); blank means "no override".
   const [primaryHex, setPrimaryHex] = useState("");
+  // Canva-style secondary/accent colour, chosen via swatches (no hex typing).
+  const [secondaryHex, setSecondaryHex] = useState("");
+  // "Setting up your project" checklist (step 4) — GLM pong + connect, run on
+  // entry so the project feels like it's spinning up before the user describes it.
+  const [setupSteps, setSetupSteps] = useState<
+    { key: string; label: string; status: "pending" | "running" | "done" | "skipped" }[]
+  >([]);
+  const setupRanRef = useRef(false);
+  const markSetup = (key: string, status: "pending" | "running" | "done" | "skipped") =>
+    setSetupSteps((prev) => prev.map((s) => (s.key === key ? { ...s, status } : s)));
   // Optional refinement loop: after the user types a description,
   // they can tap "Refine with AI" to have the LLM check whether
   // 1-3 follow-up questions would meaningfully shape the schema.
@@ -257,6 +291,37 @@ export default function PhoneProjectsScreen() {
     [devices, activeDevice?.id],
   );
   const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
+  // Run the "Setting up your project" checklist. Triggered deterministically
+  // from the Next button when advancing onto step 4 (and from the effect as a
+  // backup) — GLM pong + runtime, so the project feels like it's spinning up.
+  const runSetup = useCallback(() => {
+    if (setupRanRef.current) return;
+    setupRanRef.current = true;
+    const key = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
+    const providerLabel = mobileAiProvider === "glm" ? "GLM" : "OpenAI";
+    const runtimeLabel =
+      startMode === "this-phone" ? "Preparing on-device runtime"
+      : startMode === "yaver-cloud" ? "Connecting Yaver Cloud"
+      : "Connecting remote dev runner";
+    setSetupSteps([
+      { key: "ai", label: `Connecting to ${providerLabel}`, status: key ? "pending" : "skipped" },
+      { key: "runtime", label: runtimeLabel, status: "pending" },
+    ]);
+    void (async () => {
+      if (key) {
+        markSetup("ai", "running");
+        await pingProvider({ flavor: mobileAiProvider as "openai" | "glm", apiKey: key });
+        markSetup("ai", "done");
+      }
+      markSetup("runtime", "running");
+      await new Promise((r) => setTimeout(r, 600));
+      markSetup("runtime", "done");
+    })();
+  }, [mobileAiProvider, glmKey, openAiKey, startMode]);
+  useEffect(() => {
+    if (step === 4) runSetup();
+    else setupRanRef.current = false;
+  }, [step, runSetup]);
   useEffect(() => {
     if (!selectedDevMachineId && devMachines.length) {
       setSelectedDevMachineId(devMachines[0].id);
@@ -452,6 +517,7 @@ export default function PhoneProjectsScreen() {
     const brandLines: string[] = [];
     if (logoUrl.trim()) brandLines.push(`Logo URL: ${logoUrl.trim()}`);
     if (primaryHex.trim()) brandLines.push(`Primary color: ${primaryHex.trim()}`);
+    if (secondaryHex.trim()) brandLines.push(`Secondary color: ${secondaryHex.trim()}`);
     const brandParagraph = brandLines.length > 0 ? `[Brand]\n${brandLines.join("\n")}\n` : "";
     // Clarifying-question answers (if the user used the Refine pass
     // and typed answers) get folded in as a [Clarifications] block
@@ -491,6 +557,13 @@ export default function PhoneProjectsScreen() {
       return;
     }
     setCreating(true);
+    // AI/runtime connectivity already ran on the "Setting up your project" step.
+    // The create-time checklist covers the build phase: generate + init.
+    const onPhoneGen = codingMode === "phone" && !!effectivePrompt.trim();
+    setCreateSteps([
+      { key: "gen", label: "Generating starter files", status: onPhoneGen ? "pending" : "skipped" },
+      { key: "init", label: "Initializing project", status: "pending" },
+    ]);
     try {
       if (codingMode === "phone" && effectivePrompt.trim() && openAiKey.trim()) {
         await saveLocalSecret(LOCAL_KEYS.openAiApiKey, openAiKey.trim());
@@ -501,6 +574,7 @@ export default function PhoneProjectsScreen() {
       if (codingMode === "phone" && effectivePrompt.trim()) {
         await saveLocalSecret(LOCAL_KEYS.mobileCodingProvider, mobileAiProvider);
       }
+      if (onPhoneGen) markStep("gen", "running");
       const draft =
         codingMode === "phone" && effectivePrompt.trim()
           ? await generatePhoneProjectDraftFromPrompt({
@@ -511,6 +585,8 @@ export default function PhoneProjectsScreen() {
               template,
             })
           : {};
+      if (onPhoneGen) markStep("gen", "done");
+      markStep("init", "running");
       const spec = {
         name: name.trim() || importedBrief?.suggestedName || "Imported Project",
         template: draft.template ?? (prompt.trim() ? undefined : template),
@@ -565,6 +641,9 @@ export default function PhoneProjectsScreen() {
       }
 
       if (!p) throw new Error("target returned no project");
+      markStep("init", "done");
+      // brief beat so the user sees the full checklist complete before nav
+      await new Promise((r) => setTimeout(r, 600));
 
       // Real GitHub / GitLab repo creation when the user picked
       // "Configure now" in step 1. Best-effort: we surface the
@@ -793,7 +872,9 @@ export default function PhoneProjectsScreen() {
                 "2. Git (optional)",
                 "3. Where should it run?",
                 "4. Quick survey (optional)",
-                "5. Describe the app",
+                "5. Setting up your project",
+                "6. Branding (optional)",
+                "7. Describe the app",
               ][step]}
             </Text>
             <Text style={[styles.stepSubtitle, { color: c.textMuted }]}>
@@ -802,11 +883,13 @@ export default function PhoneProjectsScreen() {
                 "GitHub or GitLab, public or private. You can skip — Yaver works without git.",
                 "Choose this phone, your connected machine, another online box, or Yaver Cloud.",
                 "Five quick multiple-choice questions. Skip if you'd rather just type.",
+                "Getting things ready — checking AI and your runtime.",
+                "Pick a colour palette and logo (optional). You can skip.",
                 "Required. Tell Yaver what you're building, in your own words.",
               ][step]}
             </Text>
             <View style={styles.stepDots}>
-              {[0, 1, 2, 3, 4].map((value) => (
+              {[0, 1, 2, 3, 4, 5, 6].map((value) => (
                 <View
                   key={value}
                   style={[
@@ -1325,12 +1408,38 @@ export default function PhoneProjectsScreen() {
             ) : null}
 
             {step === 4 ? (
-              // Description is mandatory — the create() flow gates on
-              // a non-empty prompt OR a non-empty importedConversation
-              // brief, so the user can't ship a no-context skeleton.
-              // Survey answers (if taken) appear above the textarea
-              // as a plain-text recap, and get prepended to the
-              // prompt at submit time via buildSurveyParagraph().
+              <>
+                <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border }]}>
+                  <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>Setting up your project</Text>
+                  {(setupSteps.length
+                    ? setupSteps
+                    : [
+                        { key: "ai", label: "Connecting to AI", status: "pending" as const },
+                        { key: "runtime", label: "Preparing runtime", status: "pending" as const },
+                      ]
+                  )
+                    .filter((s) => s.status !== "skipped")
+                    .map((s) => (
+                      <View key={s.key} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}>
+                        <Text style={{ width: 26, fontSize: 16 }}>
+                          {s.status === "done" ? "✅" : s.status === "running" ? "⏳" : "○"}
+                        </Text>
+                        <Text style={{ color: s.status === "done" ? c.textPrimary : c.textMuted, fontSize: 14 }}>
+                          {s.label}
+                          {s.key === "ai" && s.status === "done" ? " — pong ✓" : ""}
+                        </Text>
+                      </View>
+                    ))}
+                  <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
+                    {setupSteps.length > 0 && setupSteps.every((s) => s.status === "done" || s.status === "skipped")
+                      ? "Ready — tap Next to add branding."
+                      : "Hang tight…"}
+                  </Text>
+                </View>
+              </>
+            ) : null}
+
+            {step === 5 ? (
               <>
                 {!surveySkipped && Object.keys(surveyAnswers).length > 0 ? (
                   <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginBottom: 12 }]}>
@@ -1406,17 +1515,73 @@ export default function PhoneProjectsScreen() {
                     Paste a public URL or tap 📷 to pick from your photos.
                   </Text>
                 )}
-                <Text style={[styles.label, { color: c.textMuted }]}>Primary color (optional)</Text>
-                <TextInput
-                  value={primaryHex}
-                  onChangeText={setPrimaryHex}
-                  placeholder="#0066ff — overrides the palette pick"
-                  placeholderTextColor={c.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  spellCheck={false}
-                  style={[styles.input, { color: c.textPrimary, borderColor: c.border, marginBottom: 12 }]}
-                />
+                <Text style={[styles.label, { color: c.textMuted, marginTop: 4 }]}>Colour palette</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                  {PALETTES.map((pal) => {
+                    const sel = primaryHex === pal.primary && secondaryHex === pal.secondary;
+                    return (
+                      <Pressable
+                        key={pal.name}
+                        onPress={() => { setPrimaryHex(pal.primary); setSecondaryHex(pal.secondary); }}
+                        style={{
+                          borderWidth: 2,
+                          borderColor: sel ? c.accent : c.border,
+                          borderRadius: 12,
+                          paddingVertical: 6,
+                          paddingHorizontal: 8,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                          backgroundColor: c.bg,
+                        }}
+                      >
+                        <View style={{ width: 18, height: 18, borderRadius: 5, backgroundColor: pal.primary }} />
+                        <View style={{ width: 18, height: 18, borderRadius: 5, backgroundColor: pal.secondary }} />
+                        <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "600" }}>{pal.name}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Text style={[styles.label, { color: c.textMuted }]}>Primary colour</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                  {SWATCHES.map((hex) => (
+                    <Pressable
+                      key={`p${hex}`}
+                      onPress={() => setPrimaryHex(hex)}
+                      style={{
+                        width: 32, height: 32, borderRadius: 9, backgroundColor: hex,
+                        borderWidth: primaryHex === hex ? 3 : 1,
+                        borderColor: primaryHex === hex ? c.textPrimary : c.border,
+                      }}
+                    />
+                  ))}
+                </View>
+                <Text style={[styles.label, { color: c.textMuted }]}>Secondary colour</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                  {SWATCHES.map((hex) => (
+                    <Pressable
+                      key={`s${hex}`}
+                      onPress={() => setSecondaryHex(hex)}
+                      style={{
+                        width: 32, height: 32, borderRadius: 9, backgroundColor: hex,
+                        borderWidth: secondaryHex === hex ? 3 : 1,
+                        borderColor: secondaryHex === hex ? c.textPrimary : c.border,
+                      }}
+                    />
+                  ))}
+                </View>
+                {primaryHex || secondaryHex ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 }}>
+                    <Text style={{ color: c.textMuted, fontSize: 12 }}>Selected:</Text>
+                    {primaryHex ? <View style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: primaryHex }} /> : null}
+                    {secondaryHex ? <View style={{ width: 22, height: 22, borderRadius: 6, backgroundColor: secondaryHex }} /> : null}
+                  </View>
+                ) : null}
+              </>
+            ) : null}
+
+            {step === 6 ? (
+              <>
                 <Text style={[styles.label, { color: c.textMuted }]}>Describe the app *</Text>
                 <TextInput
                   value={prompt}
@@ -1564,6 +1729,17 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       availableRunners,
       runner,
       runnerChoiceEnabled,
+      setupSteps,
+      primaryHex,
+      secondaryHex,
+      logoUrl,
+      surveyAnswers,
+      surveySkipped,
+      surveyIndex,
+      refineQuestions,
+      refineAnswers,
+      refineLoading,
+      refineUsed,
     ],
   );
 
@@ -1583,7 +1759,7 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
     const descOk = prompt.trim().length > 0 || importedConversation.trim().length > 0;
     const canAdvance = step === 0 ? nameOk : placementOk;
     const primaryLabel =
-      step < 4
+      step < 6
         ? !canAdvance && step === 0
           ? "Name required"
           : !canAdvance && step === 2
@@ -1600,6 +1776,36 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
           : "Create sandbox";
 
     return (
+      <>
+      {creating && createSteps.length > 0 ? (
+        <View
+          style={{
+            paddingHorizontal: 16,
+            paddingTop: 12,
+            paddingBottom: 8,
+            backgroundColor: c.bg,
+            borderTopColor: c.border,
+            borderTopWidth: 1,
+          }}
+        >
+          <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: "700", marginBottom: 8, letterSpacing: 0.5 }}>
+            SETTING UP YOUR PROJECT
+          </Text>
+          {createSteps
+            .filter((s) => s.status !== "skipped")
+            .map((s) => (
+              <View key={s.key} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 5 }}>
+                <Text style={{ width: 24, fontSize: 15 }}>
+                  {s.status === "done" ? "✅" : s.status === "running" ? "⏳" : "○"}
+                </Text>
+                <Text style={{ color: s.status === "done" ? c.textPrimary : c.textSecondary, fontSize: 14 }}>
+                  {s.label}
+                  {s.key === "ai" && s.status === "done" ? " — pong ✓" : ""}
+                </Text>
+              </View>
+            ))}
+        </View>
+      ) : null}
       <View
         style={[
           styles.wizardFooter,
@@ -1622,10 +1828,14 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
         >
           <Text style={[styles.btnText, { color: c.textPrimary }]}>{step === 0 ? "Cancel" : "Back"}</Text>
         </Pressable>
-        {step < 4 ? (
+        {step < 6 ? (
           <Pressable
             disabled={!canAdvance}
-            onPress={() => setStep((prev) => Math.min(4, prev + 1))}
+            onPress={() => {
+              const next = Math.min(6, step + 1);
+              if (next === 4) runSetup();
+              setStep(next);
+            }}
             style={[
               styles.btn,
               { backgroundColor: c.accent, flex: 1, opacity: canAdvance ? 1 : 0.4 },
@@ -1650,11 +1860,14 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
           </Pressable>
         )}
       </View>
+      </>
     );
   }, [
     activeRunnerDevice,
     c,
     creating,
+    createSteps,
+    runSetup,
     importedConversation,
     insets.bottom,
     name,
