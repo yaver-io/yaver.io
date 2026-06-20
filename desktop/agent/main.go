@@ -7530,7 +7530,7 @@ func runSSHWrap(args []string) {
 	// If the input was an alias ("test") and resolved to a device, try
 	// resolving SSH against the device's canonical name FIRST so users
 	// who already have a Host entry for the registered name (e.g.
-	// `Host yaver-test-ephemeral 157.180.114.179`) get a hit. Falling
+	// `Host yaver-test-ephemeral <ip>`) get a hit. Falling
 	// straight back to `ssh test` would skip that.
 	resolutionHints := []string{hostPart}
 	if resolvedDevice != nil {

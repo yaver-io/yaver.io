@@ -1,6 +1,6 @@
 import { cronJobs } from "convex/server";
 
-// All cron schedules moved to Hetzner (ubuntu-4gb-hel1-1, 37.27.184.85).
+// All cron schedules moved to a self-hosted box (the yaver-test-ephemeral box).
 // Systemd timers POST to /crons/run with a bearer token (CRON_TRIGGER_SECRET).
 // See convex/http.ts for the trigger endpoint and convex/cronSecret.ts for
 // the shared auth helper.
