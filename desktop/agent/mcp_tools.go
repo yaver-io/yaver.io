@@ -1444,6 +1444,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"type":        "string",
 						"description": "Optional SDK device id to scope the broadcast to. Empty/omitted = broadcast to ALL subscribed devices. Used by the Path-C cross-device flow where Phone A drives a reload on Phone B.",
 					},
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional owned Yaver agent device id/name/alias that should perform the reload. Use this for remote boxes; target_device_id is only the receiving mobile SDK session.",
+					},
 					"mode": map[string]interface{}{
 						"type":        "string",
 						"description": "Reload mode: \"dev\" (Metro fast-refresh, default) or \"bundle\" (push pre-built bundle).",
@@ -3968,10 +3972,12 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"session_id": map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
-					"headful":    map[string]interface{}{"type": "boolean", "description": "Show browser window visibly (default: false, headless)"},
-					"proxy_url":  map[string]interface{}{"type": "string", "description": "Egress proxy for this session's vantage, e.g. http://host:8080 or socks5://host:1080. Omit for machine-native egress. Only use proxies/peers the user owns or is entitled to; never to defeat a geo/IP block."},
-					"profile":    map[string]interface{}{"type": "string", "description": "F2 persistent profile (name or absolute path). Reuses a user-data-dir so cookies + Cloudflare clearance PERSIST across runs. Pass the SAME profile name to browser_interactive_start: a human solves the challenge once in the visible co-browse window, then this (often headless) session reuses that saved clearance. Omit for a throwaway session."},
+					"session_id":     map[string]interface{}{"type": "string", "description": "Custom session ID (auto-generated if omitted)"},
+					"headful":        map[string]interface{}{"type": "boolean", "description": "Show browser window visibly (default: false, headless)"},
+					"proxy_url":      map[string]interface{}{"type": "string", "description": "Egress proxy for this session's vantage, e.g. http://host:8080 or socks5://host:1080. Omit for machine-native egress. Only use proxies/peers the user owns or is entitled to; never to defeat a geo/IP block."},
+					"profile":        map[string]interface{}{"type": "string", "description": "F2 persistent profile (name or absolute path). Reuses a user-data-dir so cookies + Cloudflare clearance PERSIST across runs. Pass the SAME profile name to browser_interactive_start: a human solves the challenge once in the visible co-browse window, then this (often headless) session reuses that saved clearance. Omit for a throwaway session."},
+					"record":         map[string]interface{}{"type": "boolean", "description": "Record this session to an MP4 video of everything the agent does in it (headless-safe). The response returns clip_id + clip_url; the clip finalizes on browser_close and is served (Range-enabled) at /vibing/preview/clip/<clip_id>. Requires ffmpeg on PATH. Use this to return a video of a web task run."},
+					"record_seconds": map[string]interface{}{"type": "number", "description": "Optional safety cap (seconds) for recording; defaults to a 600s cap. Recording normally stops at browser_close, not this cap."},
 				},
 			},
 		},

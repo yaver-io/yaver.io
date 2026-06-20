@@ -47,6 +47,30 @@ func MaybeRecordTaskSummary(t *Task) {
 	source := autoDetectVideoSource(t)
 	project := videoProjectForTask(t)
 
+	// Browser tasks are recorded LIVE — browser_open in the agent's process
+	// captures the agent's own session (see browser_video.go) and drops a
+	// task→clip marker. There's no post-finish replay to start here; just link
+	// the clip the agent recorded so the task view surfaces it. The clip serves
+	// cross-process via the disk fallback in handleVibePreviewClip.
+	if source == string(VibeClipSourceBrowser) {
+		clipID, ok := readTaskClipMarker(t.ID)
+		if !ok {
+			log.Printf("[task-video] %s: no browser clip recorded for this task — skipping", t.ID)
+			return
+		}
+		status := "recording"
+		if _, _, done := findClipOnDisk(clipID); done {
+			status = "ready"
+		}
+		t.VideoClipID = clipID
+		t.VideoStatus = status
+		if tm := ActiveTaskManager(); tm != nil {
+			tm.SetTaskVideoState(t.ID, clipID, status)
+		}
+		log.Printf("[task-video] %s: linked browser clip %s (status=%s)", t.ID, clipID, status)
+		return
+	}
+
 	rec, err := mgr.StartClip(VibeClipStartOpts{
 		Project:        project,
 		Source:         VibeClipSource(source),

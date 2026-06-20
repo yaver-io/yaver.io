@@ -1661,6 +1661,12 @@ func taskEnv(task *Task) []string {
 		if strings.TrimSpace(task.ID) != "" {
 			env = append(env, "YAVER_TASK_ID="+task.ID)
 		}
+		// Video on + a web task → record every browser session the agent opens
+		// automatically (browser_open reads this; see the MCP handler). The clip
+		// is linked back to the task via a marker on completion.
+		if task.VideoEnabled && autoDetectVideoSource(task) == string(VibeClipSourceBrowser) {
+			env = append(env, "YAVER_TASK_RECORD_BROWSER=1")
+		}
 		switch task.Source {
 		case terminalLocalTaskSource, "attach", "cli":
 			env = append(env, "YAVER_SESSION_MODE=terminal", "YAVER_SOURCE_SURFACE=terminal", "YAVER_WORKSPACE_LOCATION=local")

@@ -95,18 +95,17 @@ func (s *HTTPServer) handleVibePreviewClips(w http.ResponseWriter, r *http.Reque
 }
 
 // handleVibePreviewClip — GET /vibing/preview/clip/<id>[/poster]
-//                       POST /vibing/preview/clip/<id>/fix
+//
+//	POST /vibing/preview/clip/<id>/fix
 //
 // Streams the MP4 with Range support via http.ServeContent. The poster
 // suffix returns the JPEG thumbnail. The /fix suffix dispatches to
 // handleVibePreviewClipFix which closes the clip → feedback → fix-task
 // loop (see vibe_preview_clip_fix.go).
 func (s *HTTPServer) handleVibePreviewClip(w http.ResponseWriter, r *http.Request) {
-	if s.vibePreviewMgr == nil {
-		jsonError(w, http.StatusServiceUnavailable, "vibe preview not initialised")
-		return
-	}
-
+	// Note: no hard requirement on s.vibePreviewMgr here — a clip recorded by a
+	// task agent's separate process isn't in this daemon's in-memory map, so we
+	// fall back to resolving it by id from the canonical disk layout below.
 	tail := strings.TrimPrefix(r.URL.Path, "/vibing/preview/clip/")
 	tail = strings.Trim(tail, "/ ")
 	if tail == "" {
@@ -139,24 +138,42 @@ func (s *HTTPServer) handleVibePreviewClip(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rec := s.vibePreviewMgr.ClipByID(id)
-	if rec == nil {
-		jsonError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	if rec.Status != "ready" {
-		jsonError(w, http.StatusConflict, "clip not ready (status: "+rec.Status+")")
-		return
+	var rec *VibeClipRecord
+	if s.vibePreviewMgr != nil {
+		rec = s.vibePreviewMgr.ClipByID(id)
 	}
 
-	path := rec.Path
-	contentType := "video/mp4"
-	if wantPoster {
-		path = rec.PosterPath
-		contentType = "image/jpeg"
-		if path == "" {
-			jsonError(w, http.StatusNotFound, "no poster (ffmpeg may be missing)")
+	var path, contentType string
+	if rec != nil {
+		if rec.Status != "ready" {
+			jsonError(w, http.StatusConflict, "clip not ready (status: "+rec.Status+")")
 			return
+		}
+		if wantPoster {
+			path, contentType = rec.PosterPath, "image/jpeg"
+			if path == "" {
+				jsonError(w, http.StatusNotFound, "no poster (ffmpeg may be missing)")
+				return
+			}
+		} else {
+			path, contentType = rec.Path, "video/mp4"
+		}
+	} else {
+		// Cross-process fallback: a clip recorded by a task agent's process is
+		// on the canonical disk layout but not in this daemon's map. Resolve by id.
+		mp4, poster, ok := findClipOnDisk(id)
+		if !ok {
+			jsonError(w, http.StatusNotFound, "clip not found")
+			return
+		}
+		if wantPoster {
+			if poster == "" {
+				jsonError(w, http.StatusNotFound, "no poster (ffmpeg may be missing)")
+				return
+			}
+			path, contentType = poster, "image/jpeg"
+		} else {
+			path, contentType = mp4, "video/mp4"
 		}
 	}
 

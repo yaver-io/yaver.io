@@ -328,8 +328,13 @@ func newClipRecorder(clipID, project string, source VibeClipSource, mp4Path, pos
 		rec.cmd = exec.CommandContext(ctx, "sleep", strconv.Itoa(durMaxSec+5))
 
 	case VibeClipSourceBrowser:
+		// Browser clips are recorded against a live chromedp session (the one the
+		// agent drives), not from this session-less path. Open the session with
+		// recording on: browser_open(record=true) → BrowserVideoRecorder (see
+		// browser_video.go); the clip finalizes on browser_close and serves at
+		// /vibing/preview/clip/<id>, same as sim/emulator clips.
 		cancel()
-		return nil, fmt.Errorf("browser source uses the frame stream — record via /vibing/preview/start mode=live")
+		return nil, fmt.Errorf("browser source records via browser_open(record=true), not vibe_preview_clip_record — the clip is tied to the live browser session")
 	default:
 		cancel()
 		return nil, fmt.Errorf("unknown clip source %q", source)

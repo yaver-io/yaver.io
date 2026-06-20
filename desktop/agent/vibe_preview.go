@@ -37,8 +37,8 @@ type VibePreviewProfile struct {
 	FPS     float64 `json:"fps"`
 	Width   int     `json:"width"`
 	Height  int     `json:"height"`
-	Quality int     `json:"quality"`     // JPEG 1-100; 0 = keep PNG
-	MaxKB   int     `json:"maxFrameKB"`  // throttle target; 0 = unbounded
+	Quality int     `json:"quality"`    // JPEG 1-100; 0 = keep PNG
+	MaxKB   int     `json:"maxFrameKB"` // throttle target; 0 = unbounded
 }
 
 // vibePreviewProfiles is the set of named profiles. Selection rules in
@@ -73,9 +73,10 @@ func ProfileFor(name, netMode string) VibePreviewProfile {
 // ─── Session + frame record ──────────────────────────────────────────────────
 
 // VibePreviewMode controls capture cadence semantics.
-//   live         — capture at profile.FPS continuously
-//   change-only  — capture only when an external trigger fires (Phase 2+)
-//   summary-only — capture only for before/after diffs (Phase 4+)
+//
+//	live         — capture at profile.FPS continuously
+//	change-only  — capture only when an external trigger fires (Phase 2+)
+//	summary-only — capture only for before/after diffs (Phase 4+)
 type VibePreviewMode string
 
 const (
@@ -140,9 +141,10 @@ type VibeClipRecord struct {
 	EndedAt     time.Time `json:"endedAt,omitempty"`
 	DurationSec float64   `json:"durationSec,omitempty"`
 	SizeBytes   int64     `json:"sizeBytes,omitempty"`
-	Status      string    `json:"status"` // recording|ready|failed
-	Path        string    `json:"-"`       // on-disk MP4 path; never JSON-leaked
-	PosterPath  string    `json:"-"`       // on-disk poster JPG; never JSON-leaked
+	Status      string    `json:"status"`             // recording|ready|failed
+	Path        string    `json:"-"`                  // on-disk MP4 path; never JSON-leaked
+	PosterPath  string    `json:"-"`                  // on-disk poster JPG; never JSON-leaked
+	ShareURL    string    `json:"shareUrl,omitempty"` // durable presigned URL (P4) when object storage is configured; outlives the box
 	Err         string    `json:"err,omitempty"`
 }
 

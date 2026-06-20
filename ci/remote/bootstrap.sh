@@ -236,6 +236,18 @@ apt-get install -y \
   gstreamer1.0-plugins-bad gstreamer1.0-libav \
   xvfb x11-utils dbus-x11
 
+log "chromium for the browser-video recorder (browser_video.go)"
+# The agent records its web tasks to MP4 headlessly (CDP screenshot loop →
+# ffmpeg, no Xvfb). chromedp finds the browser via findChromePath
+# (google-chrome / chromium / chromium-browser on PATH). Ubuntu 24.04 has no
+# usable chromium .deb (Google Chrome ships no arm64 build, and `chromium` is a
+# snap shim), so this is BEST-EFFORT and must never abort the image build:
+# a missing browser only disables video recording, not the box. The Debian
+# container image (Dockerfile.yaver-cloud) gets a proper chromium .deb instead.
+apt-get install -y chromium-browser fonts-liberation \
+  || apt-get install -y chromium fonts-liberation \
+  || log "chromium unavailable on this distro/arch — browser video recording disabled"
+
 log "qemu (TCG fallback for android emulator on no-KVM hosts)"
 # Hetzner cloud doesn't expose /dev/kvm; the emulator uses TCG (pure
 # software). qemu-system-arm provides the runtime; binfmt-support

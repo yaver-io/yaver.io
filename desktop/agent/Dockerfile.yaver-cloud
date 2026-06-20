@@ -65,11 +65,17 @@ ENV PATH="/usr/local/go/bin:/root/go/bin:/root/.cargo/bin:/usr/local/bin:${PATH}
 ENV HOME=/root
 
 # ── System packages ──────────────────────────────────────────────────
+# chromium + ffmpeg power the browser-video recorder (browser_video.go): a
+# managed box records the agent's web tasks to MP4 headlessly (no Xvfb — CDP
+# CaptureScreenshot renders offscreen). chromedp finds /usr/bin/chromium via
+# findChromePath; ffmpeg/ffprobe encode the clip + poster. fonts-liberation
+# keeps recorded text legible.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl wget ca-certificates gnupg2 openssh-client \
       build-essential cmake pkg-config \
       python3 python3-pip python3-venv \
       zip unzip jq tree ripgrep tmux file \
+      chromium ffmpeg fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # ── GitHub CLI (gh) ──────────────────────────────────────────────────

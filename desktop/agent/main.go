@@ -3231,6 +3231,9 @@ func runServe(args []string) {
 	httpServer.devServerMgr = NewDevServerManager()
 	httpServer.browserMgr = NewBrowserManager()
 	httpServer.vibePreviewMgr = NewVibePreviewManager(httpServer.browserMgr)
+	// Let browser_open(record=true) register recorded sessions as clips that
+	// reuse the vibe-preview clip store + /vibing/preview/clip/<id> serving.
+	httpServer.browserMgr.SetVibePreviewManager(httpServer.vibePreviewMgr)
 	// Register as the global accessor so callers can find it without
 	// threading a reference through every code path.
 	SetActiveVibePreviewManager(httpServer.vibePreviewMgr)
@@ -9525,6 +9528,54 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	lastPublicEndpoints := publicEndpointsWithAutoIP(cfgAtStart, heartbeatPort)
 	authExpiredLogged := false
 
+	// Self-heal: if our token is valid (not 401) but the backend keeps
+	// rejecting the heartbeat as if this device doesn't exist — the device row
+	// was pruned, the account was reset, or a backend hiccup deregistered us —
+	// the agent would otherwise loop on 500s forever (observed in the field:
+	// "device <id> not registered" + "heartbeat failed (status 500)" every 30s,
+	// invisible in every UI). After a few consecutive non-auth failures we
+	// re-register under the same valid token (idempotent upsert by deviceId),
+	// which restores the device row and makes the box reachable again.
+	heartbeatFailStreak := 0
+	var lastReRegister time.Time
+	const heartbeatReRegisterAfter = 3 // consecutive non-401 failures
+	const heartbeatReRegisterCooldown = 2 * time.Minute
+	reRegisterSelf := func(quicHost string, quicPort int, publicEndpoints []string, recovery RecoveryTransportPosture) bool {
+		hostname, _ := os.Hostname()
+		var pub string
+		if k, _ := LoadOrGenerateKeys(); k != nil {
+			pub = k.PublicKeyBase64()
+		}
+		rotated, err := RegisterDevice(baseURL, RegisterDeviceRequest{
+			Token:           currentToken(),
+			DeviceID:        deviceID,
+			Name:            hostname,
+			Platform:        runtime.GOOS,
+			PublicKey:       pub,
+			QuicHost:        quicHost,
+			QuicPort:        quicPort,
+			PublicEndpoints: publicEndpoints,
+			HardwareID:      HardwareID(),
+			HardwareProfile: cachedHardwareProfile(),
+			RecoveryPosture: &recovery,
+			AgentVersion:    version,
+		})
+		lastReRegister = time.Now()
+		if err != nil {
+			log.Printf("[heartbeat] self-heal re-register failed: %v", err)
+			return false
+		}
+		if rotated != "" && rotated != currentToken() {
+			if cfgNow, _ := LoadConfig(); cfgNow != nil {
+				if e := SetAuthToken(cfgNow, rotated); e != nil {
+					log.Printf("[heartbeat] self-heal: persist re-register token: %v", e)
+				}
+			}
+		}
+		log.Printf("[heartbeat] self-heal: device re-registered after %d consecutive failures", heartbeatFailStreak)
+		return true
+	}
+
 	// Notify Convex that this device's auth has gone bad mid-session, so
 	// web/mobile clients see needsAuth=true on the device row and can
 	// surface a re-auth UI without waiting for a reboot's bootstrap dance.
@@ -9630,8 +9681,19 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				}
 			} else {
 				log.Printf("heartbeat failed: %v", err)
+				// Non-auth failure with a token we believe is valid. If this
+				// keeps happening, the backend no longer knows this device —
+				// re-register to heal it (idempotent upsert).
+				heartbeatFailStreak++
+				if heartbeatFailStreak >= heartbeatReRegisterAfter && time.Since(lastReRegister) >= heartbeatReRegisterCooldown {
+					log.Printf("[heartbeat] %d consecutive non-auth failures — attempting self-heal re-register", heartbeatFailStreak)
+					if reRegisterSelf(currentIP, heartbeatPort, currentPublicEndpoints, currentRecoveryPosture) {
+						heartbeatFailStreak = 0
+					}
+				}
 			}
 		} else {
+			heartbeatFailStreak = 0
 			if err := syncConnectionPreferencesFromConvex(syncedPrefs); err != nil {
 				log.Printf("[heartbeat] connection preference sync failed: %v", err)
 			}
@@ -10697,6 +10759,13 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 
 		data, _ := json.Marshal(resp)
 		fmt.Println(string(data))
+	}
+
+	// stdin closed → the agent finished. Finalize any in-progress browser
+	// recordings so the task's video is a complete, playable MP4 (faststart
+	// moov atom written) instead of a process-killed fragment.
+	if srv.browserMgr != nil {
+		srv.browserMgr.Stop()
 	}
 }
 

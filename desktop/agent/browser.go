@@ -27,6 +27,37 @@ type BrowserManager struct {
 	sessions map[string]*BrowserSession
 	eventCh  chan BrowserEvent // broadcast to SSE listeners
 	stopCh   chan struct{}
+	// vpm is the clip store/recorder sink. Set via SetVibePreviewManager after
+	// construction (both managers are created together in main.go). When set,
+	// browser_open(record=true) records the session to an MP4 clip.
+	vpm *VibePreviewManager
+}
+
+// SetVibePreviewManager wires the clip store so recorded browser sessions
+// register as VibeClipRecords (reusing /vibing/preview/clip/<id> serving).
+func (bm *BrowserManager) SetVibePreviewManager(vpm *VibePreviewManager) {
+	bm.mu.Lock()
+	bm.vpm = vpm
+	bm.mu.Unlock()
+}
+
+// ensureVPM sets a clip sink if none is wired yet, preferring the first non-nil
+// fallback (e.g. the daemon's manager) and otherwise creating a local one. Used
+// by browser_open so record=true works in the stdio-child process too, where
+// no manager was wired at startup. No-op if one is already set.
+func (bm *BrowserManager) ensureVPM(fallbacks ...*VibePreviewManager) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	if bm.vpm != nil {
+		return
+	}
+	for _, f := range fallbacks {
+		if f != nil {
+			bm.vpm = f
+			return
+		}
+	}
+	bm.vpm = NewVibePreviewManager(bm)
 }
 
 // BrowserSession wraps a persistent chromedp context.
@@ -43,9 +74,11 @@ type BrowserSession struct {
 	EgressIP      string    `json:"egressIp,omitempty"` // last observed egress IP for this vantage
 	ViewW         int       `json:"viewW,omitempty"`
 	ViewH         int       `json:"viewH,omitempty"`
+	RecordClipID  string    `json:"recordClipId,omitempty"` // set when this session is being recorded
 	allocCancel   context.CancelFunc
 	browserCtx    context.Context
 	browserCancel context.CancelFunc
+	recorder      *BrowserVideoRecorder // non-nil while recording; finalized on close
 }
 
 // BrowserEvent is pushed to SSE listeners after each action.
@@ -81,15 +114,23 @@ func NewBrowserManager() *BrowserManager {
 	return bm
 }
 
-// Stop shuts down all sessions and the cleanup goroutine.
+// Stop shuts down all sessions and the cleanup goroutine, finalizing any
+// in-progress recordings first.
 func (bm *BrowserManager) Stop() {
 	close(bm.stopCh)
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
+	all := make([]*BrowserSession, 0, len(bm.sessions))
 	for id, s := range bm.sessions {
+		all = append(all, s)
+		delete(bm.sessions, id)
+	}
+	bm.mu.Unlock()
+	for _, s := range all {
+		if s.recorder != nil {
+			s.recorder.Stop()
+		}
 		s.browserCancel()
 		s.allocCancel()
-		delete(bm.sessions, id)
 	}
 }
 
@@ -101,20 +142,29 @@ func (bm *BrowserManager) cleanupLoop() {
 		case <-bm.stopCh:
 			return
 		case <-ticker.C:
+			// Collect expired sessions under the lock; finalize (Stop waits on
+			// ffmpeg) + tear down outside it so the manager isn't blocked.
+			var expired []*BrowserSession
 			bm.mu.Lock()
 			for id, s := range bm.sessions {
 				if time.Since(s.LastUsedAt) > SessionIdleTimeout {
-					s.browserCancel()
-					s.allocCancel()
 					delete(bm.sessions, id)
-					bm.emit(BrowserEvent{
-						Type:      "closed",
-						SessionID: id,
-						Message:   "session timed out after idle",
-					})
+					expired = append(expired, s)
 				}
 			}
 			bm.mu.Unlock()
+			for _, s := range expired {
+				if s.recorder != nil {
+					s.recorder.Stop()
+				}
+				s.browserCancel()
+				s.allocCancel()
+				bm.emit(BrowserEvent{
+					Type:      "closed",
+					SessionID: s.ID,
+					Message:   "session timed out after idle",
+				})
+			}
 		}
 	}
 }
@@ -234,6 +284,47 @@ func (bm *BrowserManager) OpenSessionWithProfile(id string, headful bool, proxyU
 	return nil
 }
 
+// StartRecording begins recording an open session to an MP4 clip. Returns the
+// clip ID; the clip is served at /vibing/preview/clip/<id> once finalized
+// (on CloseSession, idle timeout, or the safety duration cap). durMaxSec<=0
+// uses the safety cap. Idempotent: a second call returns the existing clip ID.
+func (bm *BrowserManager) StartRecording(sessionID string, durMaxSec int) (string, error) {
+	bm.mu.RLock()
+	vpm := bm.vpm
+	bm.mu.RUnlock()
+	if vpm == nil {
+		return "", fmt.Errorf("recording unavailable: preview manager not initialised")
+	}
+	s, err := bm.getSession(sessionID)
+	if err != nil {
+		return "", err
+	}
+	bm.mu.RLock()
+	existing := s.recorder
+	existingID := s.RecordClipID
+	bm.mu.RUnlock()
+	if existing != nil {
+		return existingID, nil
+	}
+	// Start the recorder outside the lock (it spawns ffmpeg + registers the clip).
+	r, err := startBrowserRecording(vpm, s.browserCtx, sessionID, durMaxSec)
+	if err != nil {
+		return "", err
+	}
+	bm.mu.Lock()
+	// Lost-race guard: another caller may have attached a recorder meanwhile.
+	if s.recorder != nil {
+		id := s.RecordClipID
+		bm.mu.Unlock()
+		r.Stop() // discard the duplicate
+		return id, nil
+	}
+	s.recorder = r
+	s.RecordClipID = r.clipID
+	bm.mu.Unlock()
+	return r.clipID, nil
+}
+
 // redactProxyCreds strips any user:pass@ userinfo from a proxy URL so it is safe
 // to log, emit as an event, or return over HTTP. Proxy credentials belong in the
 // vault, never in logs or session listings.
@@ -248,19 +339,25 @@ func redactProxyCreds(proxyURL string) string {
 	return proxyURL
 }
 
-// CloseSession shuts down a browser instance.
+// CloseSession shuts down a browser instance. If the session is being recorded,
+// the clip is finalized FIRST (so in-flight frames flush) before Chrome is
+// torn down. Stop()/cancel happen outside the lock — Stop waits on ffmpeg.
 func (bm *BrowserManager) CloseSession(id string) error {
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
 	s, ok := bm.sessions[id]
 	if !ok {
+		bm.mu.Unlock()
 		return fmt.Errorf("browser session %q not found", id)
 	}
+	delete(bm.sessions, id)
+	rec := s.recorder
+	bm.mu.Unlock()
 
+	if rec != nil {
+		rec.Stop() // finalize MP4 before the CDP context goes away
+	}
 	s.browserCancel()
 	s.allocCancel()
-	delete(bm.sessions, id)
 
 	bm.emit(BrowserEvent{
 		Type:      "closed",

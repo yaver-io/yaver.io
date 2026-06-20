@@ -287,6 +287,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Authenticated
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
 	mux.HandleFunc("/tasks/", s.auth(s.handleTaskByID))
+	// Mobile Sandbox → remote runner (GLM): edit the phone-only sandbox tree on
+	// this box. See sandbox_remote.go.
+	mux.HandleFunc("/sandbox/run", s.auth(s.handleSandboxRun))
 	mux.HandleFunc("/chain", s.auth(s.handleChainCreate))
 	mux.HandleFunc("/chain/", s.auth(s.handleChainStatus))
 	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
@@ -5796,6 +5799,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			PreferredDevice string                 `json:"preferred_device"`
 			AllowedDevices  []string               `json:"allowed_devices"`
 			AllowedRunners  []string               `json:"allowed_runners"`
+			HybridDegree    int                    `json:"hybrid_degree"`
 			Nodes           []mcpAgentGraphNodeArg `json:"nodes"`
 		}
 		json.Unmarshal(call.Arguments, &args)
@@ -5821,6 +5825,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			PreferredDevice: args.PreferredDevice,
 			AllowedDevices:  args.AllowedDevices,
 			AllowedRunners:  args.AllowedRunners,
+			HybridDegree:    args.HybridDegree,
 			Nodes:           nodes,
 		}
 		run, err := s.agentGraphMgr.CreateRun(req)
@@ -7854,6 +7859,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "mobile_hermes_reload":
 		var args mobileHermesReloadArgs
 		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.DeviceID) != "" {
+			out, err := proxyToDeviceJSON(context.Background(), "mobile_hermes_reload", strings.TrimSpace(args.DeviceID), http.MethodPost, "/dev/reload", mobileHermesReloadBody(args))
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("mobile_hermes_reload: %v", err))
+			}
+			if _, has := out["changeClass"]; !has {
+				out["changeClass"] = "unknown"
+			}
+			if _, has := out["ok"]; !has {
+				out["ok"] = true
+			}
+			return mcpToolJSON(out)
+		}
 		return mcpToolJSON(mcpMobileHermesReload(args))
 	case "device_broadcast_command":
 		var args deviceBroadcastCommandArgs
@@ -14469,16 +14487,30 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	// --- Browser Automation ---
 	case "browser_open":
+		// Lazy-init so browser tools (and recording) work in the stdio-child
+		// process a task agent runs in, not just the daemon. Matches
+		// browser_interactive_start's lazy-init.
 		if s.browserMgr == nil {
-			return mcpToolError("Browser automation not available. Ensure Chrome/Chromium is installed.")
+			s.browserMgr = NewBrowserManager()
 		}
+		// Ensure a clip sink so record=true can register/finalize a clip even in
+		// the child (prefer the daemon's manager when present).
+		s.browserMgr.ensureVPM(s.vibePreviewMgr, ActiveVibePreviewManager())
 		var args struct {
-			SessionID string `json:"session_id"`
-			Headful   bool   `json:"headful"`
-			ProxyURL  string `json:"proxy_url"`
-			Profile   string `json:"profile"` // F2: persistent profile name/path (shares clearance with co-browse)
+			SessionID     string `json:"session_id"`
+			Headful       bool   `json:"headful"`
+			ProxyURL      string `json:"proxy_url"`
+			Profile       string `json:"profile"` // F2: persistent profile name/path (shares clearance with co-browse)
+			Record        bool   `json:"record"`
+			RecordSeconds int    `json:"record_seconds"`
 		}
 		json.Unmarshal(call.Arguments, &args)
+		// Inside a task launched with video on, the runner sets
+		// YAVER_TASK_RECORD_BROWSER=1 so every browser session is recorded
+		// automatically — the agent doesn't have to opt in per call.
+		if !args.Record && os.Getenv("YAVER_TASK_RECORD_BROWSER") == "1" {
+			args.Record = true
+		}
 		if args.SessionID == "" {
 			args.SessionID = fmt.Sprintf("browser-%d", time.Now().UnixMilli()%100000)
 		}
@@ -14502,6 +14534,27 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			"headful":    args.Headful,
 			"status":     "open",
 			"message":    "Browser session opened. Use browser_navigate to go to a URL.",
+		}
+		if args.Record {
+			clipID, rerr := s.browserMgr.StartRecording(args.SessionID, args.RecordSeconds)
+			if rerr != nil {
+				resp["record_error"] = rerr.Error()
+			} else {
+				resp["recording"] = true
+				resp["clip_id"] = clipID
+				resp["clip_url"] = "/vibing/preview/clip/" + clipID
+				resp["message"] = "Browser session opened and recording. Use browser_navigate; the video finalizes on browser_close at clip_url."
+				// Attribute the clip to the in-flight task so the user's task
+				// view surfaces it. The marker carries the id across to the
+				// daemon (which owns the persisted Task); SetTaskVideoState
+				// covers the in-daemon case directly.
+				if taskID := strings.TrimSpace(os.Getenv("YAVER_TASK_ID")); taskID != "" {
+					writeTaskClipMarker(taskID, clipID)
+					if tm := ActiveTaskManager(); tm != nil {
+						tm.SetTaskVideoState(taskID, clipID, "recording")
+					}
+				}
+			}
 		}
 		if args.ProxyURL != "" {
 			resp["egress"] = "proxy"

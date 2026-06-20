@@ -28,6 +28,11 @@ packages:
 runcmd:
   - mkdir -p /var/lib/yaver /var/log/yaver
   - chmod 0755 /var/lib/yaver /var/log/yaver
+  # chromium for the browser-video recorder (browser_video.go) — best-effort:
+  # a missing browser only disables video recording. Not in the declarative
+  # `packages:` list so a snap-install hiccup can't degrade cloud-init. The
+  # Debian container image (Dockerfile.yaver-cloud) gets a proper chromium .deb.
+  - sh -c 'apt-get install -y chromium-browser fonts-liberation || apt-get install -y chromium fonts-liberation || true'
   - systemctl daemon-reload
   - systemctl enable yaver-cloud-firstboot.service
   - systemctl start yaver-cloud-firstboot.service
