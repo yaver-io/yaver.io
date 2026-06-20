@@ -1648,9 +1648,26 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 	return task, nil
 }
 
+// isRootProcess reports whether the agent runs as uid 0. os.Geteuid returns -1
+// on Windows, so this is false there (correct — the root caveat is Unix-only).
+func isRootProcess() bool { return os.Geteuid() == 0 }
+
 func taskEnv(task *Task) []string {
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "PATH="+expandedPath())
+	// Claude Code (and the glm runner, which is the claude binary) refuses
+	// `--dangerously-skip-permissions` when running as root unless IS_SANDBOX=1
+	// is set ("cannot be used with root/sudo privileges for security reasons").
+	// Many cloud boxes run the agent as root via systemd, so without this every
+	// claude/glm/trio-hybrid task silently fails there. The agent IS the
+	// sandbox/automation context this flag is meant for. This is a SAFETY NET:
+	// the preferred posture for remote dev is a NON-ROOT runtime user (see the
+	// non-root-remote-dev follow-up) — but until provisioning defaults to that,
+	// root boxes must still work. Gated on root so non-root machines keep
+	// claude's normal behavior; codex/opencode ignore the var.
+	if isRootProcess() {
+		env = append(env, "IS_SANDBOX=1")
+	}
 	if task != nil {
 		env = append(env, "YAVER_TASK_SOURCE="+strings.TrimSpace(task.Source))
 		// Stdio MCP children read YAVER_TASK_ID to know which task to

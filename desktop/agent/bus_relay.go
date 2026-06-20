@@ -33,14 +33,49 @@ import (
 )
 
 type relayBusTransport struct {
-	relayURL      string // e.g. https://public.yaver.io
+	relayURL  string // e.g. https://public.yaver.io
+	authToken string // user bearer
+
+	pwMu          sync.Mutex // guards relayPassword (publish + subscribe race)
 	relayPassword string
-	authToken     string // user bearer
 
 	b      *Bus
 	client *http.Client
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+}
+
+// currentPassword returns the live relay password (may have been refreshed
+// after a Convex-side rotation; see refreshPasswordIfStale).
+func (t *relayBusTransport) currentPassword() string {
+	t.pwMu.Lock()
+	defer t.pwMu.Unlock()
+	return t.relayPassword
+}
+
+// refreshPasswordIfStale mirrors the relay-tunnel recovery: when the relay
+// rejects us with an invalid-password error (Convex rotated the per-user
+// password server-side, our cached one is dead), refetch the fresh password
+// from /settings and swap it in. Without this the bus loops forever on 401
+// (observed in the field: `[bus-relay] subscribe lost: HTTP 401: invalid relay
+// password` every 30s while the QUIC tunnel — which DOES refetch — was fine).
+// Returns true when the password actually changed.
+func (t *relayBusTransport) refreshPasswordIfStale(ctx context.Context, err error) bool {
+	if !looksLikeStaleRelayPassword(err) {
+		return false
+	}
+	fresh := refreshRelayPasswordFromConvex(ctx)
+	if fresh == "" {
+		return false
+	}
+	t.pwMu.Lock()
+	changed := fresh != t.relayPassword
+	t.relayPassword = fresh
+	t.pwMu.Unlock()
+	if changed {
+		fmt.Printf("[bus-relay] refetched fresh relay password from Convex /settings; retrying\n")
+	}
+	return changed
 }
 
 // NewRelayBusTransport constructs the transport but does not start
@@ -92,8 +127,8 @@ func (t *relayBusTransport) Publish(ctx context.Context, evt BusEvent) error {
 	if t.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+t.authToken)
 	}
-	if t.relayPassword != "" {
-		req.Header.Set("X-Relay-Password", t.relayPassword)
+	if pw := t.currentPassword(); pw != "" {
+		req.Header.Set("X-Relay-Password", pw)
 	}
 	// Tight timeout — this is not the SSE call.
 	pubCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -106,7 +141,10 @@ func (t *relayBusTransport) Publish(ctx context.Context, evt BusEvent) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("bus/publish: HTTP %d: %s", resp.StatusCode, string(msg))
+		pubErr := fmt.Errorf("bus/publish: HTTP %d: %s", resp.StatusCode, string(msg))
+		// Heal a rotated relay password so the next publish/subscribe succeeds.
+		t.refreshPasswordIfStale(ctx, pubErr)
+		return pubErr
 	}
 	io.Copy(io.Discard, resp.Body)
 	return nil
@@ -131,6 +169,12 @@ func (t *relayBusTransport) subscribeLoop(ctx context.Context) {
 		if err := t.subscribeOnce(ctx); err != nil && ctx.Err() == nil {
 			// Log once per loss, not per retry.
 			fmt.Printf("[bus-relay] subscribe lost: %v (retry in %s)\n", err, backoff)
+			// Recover from a Convex-rotated relay password instead of
+			// looping forever on 401. On success, retry immediately.
+			if t.refreshPasswordIfStale(ctx, err) {
+				backoff = time.Second
+				continue
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -158,8 +202,8 @@ func (t *relayBusTransport) subscribeOnce(ctx context.Context) error {
 	if t.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+t.authToken)
 	}
-	if t.relayPassword != "" {
-		req.Header.Set("X-Relay-Password", t.relayPassword)
+	if pw := t.currentPassword(); pw != "" {
+		req.Header.Set("X-Relay-Password", pw)
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
