@@ -25,9 +25,32 @@ Source of truth: **`desktop/agent/install_privilege.go`** (+ `_test.go`).
   `ReadWritePaths` hole at the agent's own home — so the agent process itself
   cannot touch `/etc`, `/usr`, or any other user's home.
 
-Not yet done: **step 4**, the privilege-separated helper (agent runs
-`NoNewPrivileges=true`, zero sudo). `NoNewPrivileges` is deliberately left
-unset because the agent still escalates via sudo until the helper exists.
+**Step 4 (privilege-separated helper) — landed for the one-shot ops:**
+
+- **`helper.go`** — a root helper (`yaver __privileged-helper`) listening on a
+  Unix socket at `/run/yaver/helper.sock`. It exposes a FIXED, validated RPC
+  surface: `package_install`, `service` (scoped per profile), `tenant_create`,
+  `tenant_remove`. It never trusts the agent — every request is re-validated
+  here (package-name regex, service scope, `yv-<≤12 alnum>` tenant pattern) and
+  every command is run by argv (no shell). The socket is `0660 root:yaver` and
+  the accept loop checks the caller's uid via **SO_PEERCRED** (Linux-only;
+  fail-closed elsewhere). `helper_peercred_{linux,other}.go` split keeps the
+  Mac build compiling.
+- **`helper_client.go`** — `privilegedSystemctl` / `privilegedPackageInstall` /
+  `privilegedTenant{Create,Remove}`: helper-first when the socket exists,
+  scoped-sudo fallback otherwise. Wired into `mcp_sysadmin.go` (systemctl),
+  `mcp_registries.go` (apt), and `tenant_osuser.go` (tenant lifecycle).
+- **Install** — `--install-systemd-system --operator` now also writes + enables
+  `yaver-helper.service` (root) and the agent unit `Requires` it.
+
+**Step 5 — the remaining blocker to `NoNewPrivileges=true`.** Even on an
+operator node the agent still launches each tenant's interactive shell via
+`sudo -u yv-x` (`tenantShellArgv`). The helper brokers one-shot RPCs but not a
+long-lived PTY, so dropping new-privilege acquisition would break tenant
+shells. Closing this means teaching the helper to fork the tenant shell and
+hand back a PTY fd — then the operator agent unit can finally set
+`NoNewPrivileges=true` and run with **zero** sudo. Until then the helper is a
+validated audit/choke-point + the foundation, not yet the full wall.
 
 ### Install surfaces & how the model wires in
 

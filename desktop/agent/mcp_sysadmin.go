@@ -525,36 +525,14 @@ func mcpSystemctl(action, unit string) interface{} {
 	case "status":
 		out, _ := runCmd("systemctl", "status", unit, "--no-pager")
 		return map[string]interface{}{"status": out}
-	case "start":
-		out, err := runCmd("sudo", "systemctl", "start", unit)
+	case "start", "stop", "restart", "enable", "disable":
+		// Helper-first (privilege-separated root helper on confined operator
+		// nodes), scoped-sudo fallback elsewhere. See helper_client.go.
+		out, err := privilegedSystemctl(action, unit)
 		if err != nil {
 			return map[string]interface{}{"error": err.Error(), "output": out}
 		}
-		return map[string]interface{}{"ok": true, "started": unit}
-	case "stop":
-		out, err := runCmd("sudo", "systemctl", "stop", unit)
-		if err != nil {
-			return map[string]interface{}{"error": err.Error(), "output": out}
-		}
-		return map[string]interface{}{"ok": true, "stopped": unit}
-	case "restart":
-		out, err := runCmd("sudo", "systemctl", "restart", unit)
-		if err != nil {
-			return map[string]interface{}{"error": err.Error(), "output": out}
-		}
-		return map[string]interface{}{"ok": true, "restarted": unit}
-	case "enable":
-		out, err := runCmd("sudo", "systemctl", "enable", unit)
-		if err != nil {
-			return map[string]interface{}{"error": err.Error(), "output": out}
-		}
-		return map[string]interface{}{"ok": true, "enabled": unit}
-	case "disable":
-		out, err := runCmd("sudo", "systemctl", "disable", unit)
-		if err != nil {
-			return map[string]interface{}{"error": err.Error(), "output": out}
-		}
-		return map[string]interface{}{"ok": true, "disabled": unit}
+		return map[string]interface{}{"ok": true, "action": action, "unit": unit}
 	case "list":
 		out, _ := runCmd("systemctl", "list-units", "--type=service", "--no-pager", "--no-legend")
 		return map[string]interface{}{"services": out}

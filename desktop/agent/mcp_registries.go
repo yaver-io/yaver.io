@@ -529,7 +529,13 @@ func mcpPkgInstall(manager, pkg string, global bool) interface{} {
 		args = []string{"install", pkg}
 		return pkgRun("gem", args)
 	case "apt":
-		return pkgRun("sudo", []string{"apt", "install", "-y", pkg})
+		// Helper-first (root helper validates the package name + execs as root
+		// on confined operator nodes), scoped-sudo fallback elsewhere.
+		out, err := privilegedPackageInstall("apt", []string{pkg})
+		if err != nil {
+			return map[string]interface{}{"error": err.Error(), "output": out}
+		}
+		return map[string]interface{}{"ok": true, "output": out}
 	case "flutter", "dart":
 		args = []string{"pub", "add", pkg}
 		return pkgRun("dart", args)

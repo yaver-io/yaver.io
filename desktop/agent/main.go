@@ -356,6 +356,10 @@ func main() {
 		runConnect(os.Args[2:])
 	case "serve":
 		runServe(os.Args[2:])
+	case "__privileged-helper":
+		// Internal: the root-side privilege-separated helper (helper.go). Started
+		// by yaver-helper.service on operator nodes; not a user-facing command.
+		runPrivilegedHelper(os.Args[2:])
 	case "register-url":
 		runRegisterURLCmd(os.Args[2:])
 	case "push":

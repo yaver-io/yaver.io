@@ -166,17 +166,27 @@ if visudo -cf %s >/dev/null 2>&1; then mv %s %s; else rm -f %s; echo 'yaver: sud
 // home; the single ReadWritePaths hole at the agent's own home is what lets it
 // keep working.
 //
-// NoNewPrivileges is deliberately NOT set: the agent still escalates via sudo
-// (apt, systemctl, tenant management) until the privilege-separated helper
-// lands (docs §step 4). Flip it to true the day that helper ships.
+// On operator nodes the one-shot privileged ops (package install, yaver/docker
+// service control, yv-* tenant create/remove) route through the root helper
+// (helper.go) — so the unit Requires yaver-helper.service.
+//
+// NoNewPrivileges is still NOT set, on purpose. The agent launches each tenant's
+// interactive shell via `sudo -u yv-x` (tenantShellArgv); the helper brokers
+// one-shot RPCs but not long-lived PTYs, so dropping new-privilege acquisition
+// would break tenant shells. Brokering PTYs through the helper (then flipping
+// NoNewPrivileges=true) is the remaining step — see docs §step 5.
 func hardenedSystemUnit(yaverBin string, operator bool) string {
 	execLine := yaverBin + " serve --debug --work-dir " + yaverSystemHome
+	unitDeps := ""
 	if operator {
 		execLine += " --operator --relay-only"
+		// Helper must be up first so tenant create/remove + pkg/service ops have
+		// their root broker available.
+		unitDeps = "Requires=" + helperUnitName + "\nAfter=" + helperUnitName + "\n"
 	}
-	// Operator boxes also write tenant homes under /home/yv-*; those writes go
-	// through sudo→root (unconfined), but mount the whole /home rw on operator
-	// nodes so any direct bookkeeping under a tenant home also succeeds.
+	// Operator boxes write tenant homes under /home/yv-* (via the helper as root,
+	// and via `sudo -u` for shells) — mount the whole /home rw there. Single-
+	// tenant boxes only need the agent's own home writable.
 	rwPaths := yaverSystemHome + " /var/lib/yaver /var/log/yaver"
 	if operator {
 		rwPaths = "/home /var/lib/yaver /var/log/yaver"
@@ -185,7 +195,7 @@ func hardenedSystemUnit(yaverBin string, operator bool) string {
 Description=Yaver Agent (dedicated %s user, hardened)
 After=network-online.target
 Wants=network-online.target
-
+%s
 [Service]
 Type=simple
 User=%s
@@ -205,16 +215,49 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
-# NoNewPrivileges intentionally unset: the agent still needs sudo (apt /
-# systemctl / tenant mgmt) until the privileged helper lands. Flip to true then.
+# NoNewPrivileges unset: tenant shells still launch via sudo -u (the helper
+# brokers one-shot ops, not PTYs). Flip to true once PTY brokering lands (step 5).
 
 [Install]
 WantedBy=multi-user.target
-`, yaverSystemUser, yaverSystemUser, yaverSystemUser, execLine, yaverSystemHome, yaverSystemHome, rwPaths)
+`, yaverSystemUser, unitDeps, yaverSystemUser, yaverSystemUser, execLine, yaverSystemHome, yaverSystemHome, rwPaths)
 }
 
 // systemUnitPath is the canonical location for the dedicated-user system unit.
 const systemUnitPath = "/etc/systemd/system/yaver.service"
+
+// helperUnitName / helperUnitPath — the root-side privilege-separated helper.
+const (
+	helperUnitName = "yaver-helper.service"
+	helperUnitPath = "/etc/systemd/system/" + helperUnitName
+)
+
+// helperSystemUnit returns the /etc/systemd/system/yaver-helper.service that
+// runs the root helper (helper.go). It is the ONLY component that runs as root
+// on an operator node; RuntimeDirectory=yaver gives it /run/yaver (root:yaver
+// 0750) to host the socket, and the helper itself locks the socket to 0660.
+func helperSystemUnit(yaverBin string) string {
+	return fmt.Sprintf(`[Unit]
+Description=Yaver privilege-separated root helper (validated RPC for the unprivileged agent)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%s __privileged-helper --socket /run/yaver/helper.sock --operator
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=yaver
+RuntimeDirectoryMode=0750
+# Minimal root surface: no extra capabilities beyond what useradd/systemctl need.
+ProtectSystem=strict
+ReadWritePaths=/home /var/lib/yaver
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
+`, yaverBin)
+}
 
 // installSystemdSystemService provisions a dedicated-box install: a non-root
 // `yaver` system user, a scoped sudoers drop-in, and a hardened SYSTEM systemd
@@ -270,11 +313,25 @@ func installSystemdSystemService(operator bool) {
 	fmt.Printf("Created: %s (User=%s, ProtectSystem=strict)\n", systemUnitPath, yaverSystemUser)
 	fmt.Printf("Created: %s (scoped sudo — no NOPASSWD: ALL)\n", yaverSudoersPath)
 
-	for _, c := range [][]string{
-		{"systemctl", "daemon-reload"},
-		{"systemctl", "enable", "yaver"},
-		{"systemctl", "start", "yaver"},
-	} {
+	// 5. Operator nodes also get the privilege-separated root helper so the
+	//    agent's one-shot privileged ops (pkg/service/tenant) go through a
+	//    validated root broker instead of broad sudo.
+	enableUnits := []string{"yaver"}
+	if operator {
+		if err := os.WriteFile(helperUnitPath, []byte(helperSystemUnit(yaverBin)), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", helperUnitPath, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created: %s (root privilege-separated helper)\n", helperUnitPath)
+		// Start the helper before the agent (the agent unit Requires it).
+		enableUnits = []string{"yaver-helper", "yaver"}
+	}
+
+	cmds := [][]string{{"systemctl", "daemon-reload"}}
+	for _, u := range enableUnits {
+		cmds = append(cmds, []string{"systemctl", "enable", u}, []string{"systemctl", "start", u})
+	}
+	for _, c := range cmds {
 		cmd := exec.Command(c[0], c[1:]...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {

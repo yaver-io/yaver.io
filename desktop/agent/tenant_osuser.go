@@ -43,6 +43,12 @@ func tenantOSUsersEnabled() bool {
 func ensureTenantOSUser(tenantUserID string) (username, home string, err error) {
 	name := tenantUserName(tenantUserID)
 	home = "/home/" + name
+	// Helper-first: on a confined operator node the agent has no sudo, so the
+	// root helper does the privileged useradd + Workspace creation. Falls
+	// through to the sudo path when no helper is installed.
+	if handled, herr := privilegedTenantCreate(name); handled {
+		return name, home, herr
+	}
 	if _, lookErr := user.Lookup(name); lookErr == nil {
 		// Already exists — just make sure Workspace is there.
 		if e := sudoRun("install", "-d", "-o", name, "-g", name, "-m", "0700", home+"/Workspace"); e != nil {
@@ -65,6 +71,14 @@ func ensureTenantOSUser(tenantUserID string) (username, home string, err error) 
 // is success. This is the OS-level half of "removable allocation".
 func removeTenantOSUser(tenantUserID string) error {
 	name := tenantUserName(tenantUserID)
+	// Helper-first (see ensureTenantOSUser). The helper itself short-circuits a
+	// missing user to success, so this is the full removal on confined nodes.
+	if handled, herr := privilegedTenantRemove(name); handled {
+		if herr == nil {
+			log.Printf("[OPERATOR] removed tenant OS user %s via helper (home + Workspace wiped)", name)
+		}
+		return herr
+	}
 	if _, err := user.Lookup(name); err != nil {
 		return nil // already gone
 	}
