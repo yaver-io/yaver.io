@@ -33,19 +33,20 @@ import (
 // change-type --keep-disk or snapshot→recreate-bigger (see the handoff).
 
 const (
-	// Beta box must run BOTH redroid (containerized Android for app testing) AND
-	// Hermes (Metro + hermesc for RN/Expo like sfmg/carrotbet). That means:
-	//   - amd64 (cpx/cx line) — redroid's stable images are x86_64; arm64 (cax)
-	//     redroid is less proven. So NOT a cax box.
-	//   - real RAM — redroid (~3-4 GB/instance) + a Hermes build (~8-12 GB peak)
-	//     on a shared box → 16 GB is tight, 32 GB comfortable.
-	//   - the golden image must enable binder (modprobe binder_linux / binderfs;
-	//     ubuntu 24.04 has CONFIG_ANDROID_BINDERFS) + the amd64 redroid image.
-	// → cpx51 (16 vCPU / 32 GB, amd64). Scale-to-zero keeps idle ≈ €0.10/mo, so
-	// the bigger box only costs while a beta user is actively coding/testing.
-	defaultBetaPoolSKU    = "cpx51" // 16 vCPU / 32 GB amd64 — redroid + Hermes
-	defaultBetaPoolRegion = "nbg1"  // cax/cpx stock tends to be better than hel1
-	defaultBetaMaxIdleSec = 1200    // 20 min idle → reap (hysteresis vs cold-start thrash)
+	// VALIDATION default (2026-06-20): 5 non-concurrent beta users → one
+	// scale-to-zero box. 8 GB RAM is plenty: a Hermes build (Metro+hermesc) for
+	// an RN app like sfmg needs ~2-4 GB (sfmg's 8.6 GB is DISK — node_modules +
+	// build artifacts — NOT RAM; seed source only + npm install on the box). So:
+	//   - cax21 (4 vCPU / 8 GB arm64) — cheapest, opencode + node + Hermes +
+	//     Playwright all run on arm64.
+	//   - redroid is DEFERRED: Hetzner cloud ships no binder module (needs
+	//     linux-modules-extra + amd64) — validate the loop with web preview +
+	//     Hermes first; add an amd64 redroid box later if needed.
+	// HARD RULE (CLAUDE.md): metered, never monthly — the controller ALWAYS
+	// snapshot+deletes on idle; no box is ever left running to hit the monthly cap.
+	defaultBetaPoolSKU    = "cax21" // 4 vCPU / 8 GB arm64 — validation floor (configurable)
+	defaultBetaPoolRegion = "nbg1"
+	defaultBetaMaxIdleSec = 1200    // 20 min idle → snapshot+delete (metered, never monthly)
 	betaPoolTickSec       = 15
 )
 

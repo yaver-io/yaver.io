@@ -25,6 +25,17 @@ changing those.
 ## Hard rules
 
 - **Never push or commit without explicit user permission.**
+- **Hetzner = metered, NEVER monthly. Never leave a server running.** Hetzner
+  bills servers hourly (metered) up to the monthly cap, and bills even
+  **stopped** servers — only **deleting** a server stops the meter. NEVER launch
+  a Hetzner box and leave it running (or merely stopped) to accrue the monthly
+  charge. Every provisioned box MUST be **scale-to-zero**: snapshot + **DELETE**
+  when idle, recreate from the snapshot on demand. You pay only for active hours
+  + cheap snapshot storage (~€0.01/GB/mo). No always-on servers for beta/dev/
+  test. Before provisioning, confirm the snapshot+delete teardown path exists;
+  delete every test/builder box the moment it's done. The user's standing
+  directive (2026-06-20): "always pay metered, never ever launch something
+  Hetzner will charge monthly automatically."
 - **Do no harm to third parties — it is not our purpose.** Yaver exists to lower
   the *user's own* dev/ops cost, not to attack, scrape-abuse, or burden anyone
   else's infrastructure. A datacenter IP (Hetzner/AWS/…) that hammers a third
