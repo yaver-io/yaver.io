@@ -22,7 +22,7 @@ import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { isCloudPreviewUser } from "../src/lib/cloudPreview";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
-import { getManagedSubscription } from "../src/lib/subscription";
+import { getManagedSubscription, isBetaUser } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { quicClient } from "../src/lib/quic";
 import { pingProvider } from "../src/lib/llmOpenAI";
@@ -42,10 +42,11 @@ import {
   listPhoneTemplates,
   sharePhoneProject,
   joinPhoneShare,
+  managedGitMirrorAt,
 } from "../src/lib/phoneProjects";
 
 type StartMode = "this-phone" | "current-agent" | "dev-hw" | "yaver-cloud";
-type GitMode = "skip" | "later" | "providers-now";
+type GitMode = "yaver-managed" | "skip" | "providers-now";
 type CodingMode = "phone" | "runner";
 type MobileAiProvider = "openai" | "glm";
 type GitProvider = "github" | "gitlab";
@@ -223,10 +224,14 @@ export default function PhoneProjectsScreen() {
   >([]);
   const markStep = (key: string, status: "pending" | "running" | "done" | "skipped") =>
     setCreateSteps((prev) => prev.map((s) => (s.key === key ? { ...s, status } : s)));
-  const [gitMode, setGitMode] = useState<GitMode>("skip");
+  const [gitMode, setGitMode] = useState<GitMode>("yaver-managed");
   const [step, setStep] = useState(0);
   const [codingMode, setCodingMode] = useState<CodingMode>(connected ? "runner" : "phone");
   const [mobileAiProvider, setMobileAiProvider] = useState<MobileAiProvider>("openai");
+  // Beta soft-launch: beta users get managed inference (owner's GLM via the
+  // gateway) with NO key entry. "managed" = beta path; "byo" = bring-your-own key.
+  const [isBeta, setIsBeta] = useState(false);
+  const [inferenceMode, setInferenceMode] = useState<"managed" | "byo">("byo");
   const [openAiKey, setOpenAiKey] = useState("");
   const [glmKey, setGlmKey] = useState("");
   const mobileAiProviderTouchedRef = useRef(false);
@@ -417,6 +422,9 @@ export default function PhoneProjectsScreen() {
         && summary.machines.some((machine) => machine.status !== "stopped");
       const hasSubscription = !!summary.subscription;
       setHasManagedCloud(hasMachine || hasSubscription);
+      const beta = isBetaUser(summary);
+      setIsBeta(beta);
+      if (beta) setInferenceMode("managed"); // beta users default to managed inference (no key)
     })();
     return () => {
       cancelled = true;
@@ -537,8 +545,10 @@ export default function PhoneProjectsScreen() {
     const effectivePrompt = [surveyParagraph, brandParagraph, refineParagraph, baseDescription]
       .filter(Boolean)
       .join("\n");
+    const betaManaged = isBeta && inferenceMode === "managed";
     const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
-    if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey) {
+    // Beta-managed inference needs no phone key — the gateway runs GLM for the user.
+    if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey && !betaManaged) {
       Alert.alert(
         `${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} key required`,
         `On-phone prompt or thread import needs your ${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} API key.`,
@@ -599,8 +609,13 @@ export default function PhoneProjectsScreen() {
         importUrl: !effectivePrompt && importedConversation.trim() ? importedBrief?.sourceUrl : undefined,
         importContent: !effectivePrompt && importedConversation.trim() ? importedConversation.trim() : undefined,
         importTitle: !effectivePrompt && importedConversation.trim() ? importedBrief?.title : undefined,
+        managedGit:
+          startMode !== "this-phone" && gitMode !== "skip"
+            ? { enabled: true, visibility: repoVisibility }
+            : undefined,
       };
       let p: PhoneProject | null = null;
+      let createdTarget: PhonePushTarget | null = null;
 
       if (startMode === "this-phone") {
         p = await createLocalPhoneProject(spec);
@@ -627,6 +642,7 @@ export default function PhoneProjectsScreen() {
           deviceId: selectedDevMachine.id,
           relayHttpUrl,
         };
+        createdTarget = target;
         p = await createPhoneProjectAt(target, spec);
         await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, selectedDevMachine.name);
       } else {
@@ -636,6 +652,7 @@ export default function PhoneProjectsScreen() {
           cloudBaseUrl: YAVER_CLOUD_BASE,
           cloudAuthToken,
         };
+        createdTarget = target;
         p = await createPhoneProjectAt(target, spec);
         await bindPhoneProjectToTarget(p.slug, target, { slug: p.slug, localUrl: "", browseUrl: "", project: p }, "Yaver Cloud");
       }
@@ -645,26 +662,38 @@ export default function PhoneProjectsScreen() {
       // brief beat so the user sees the full checklist complete before nav
       await new Promise((r) => setTimeout(r, 600));
 
-      // Real GitHub / GitLab repo creation when the user picked
-      // "Configure now" in step 1. Best-effort: we surface the
-      // clone URL via Alert when it succeeds and silently skip
-      // when the agent is too old (returns null) or no PAT is
-      // configured for the chosen provider (the agent returns
-      // 412 which becomes a thrown error; we catch + show it).
-      // The project is already saved at this point — the repo
-      // creation enriches it but doesn't gate it.
+      // GitHub / GitLab is now a mirror on top of Yaver Managed Git.
+      // Best-effort: the project is already saved, versioned, and
+      // checkpointed even if provider auth is missing.
       if (gitMode === "providers-now" && connected) {
         try {
-          const repo = await quicClient.gitProviderRepoCreate({
-            provider: gitProvider,
-            name: (repoName.trim() || repoNameSlug || p.slug),
-            visibility: repoVisibility,
-            description: prompt.trim().slice(0, 200),
-            writeSandbox: true,
-          });
+          let repo: any = null;
+          if (p.managedGit?.enabled) {
+            const mirrorArgs = {
+              slug: p.slug,
+              provider: gitProvider,
+              repoName: (repoName.trim() || repoNameSlug || p.slug),
+              visibility: repoVisibility,
+              description: prompt.trim().slice(0, 200),
+            } as const;
+            const mirrored = createdTarget
+              ? await managedGitMirrorAt(createdTarget, mirrorArgs)
+              : await quicClient.managedGitMirrorConnect(mirrorArgs);
+            repo = mirrored?.mirror
+              ? { fullName: mirrored.mirror.fullName, cloneUrl: mirrored.mirror.cloneUrl, sandboxWritten: false }
+              : null;
+          } else {
+            repo = await quicClient.gitProviderRepoCreate({
+              provider: gitProvider,
+              name: (repoName.trim() || repoNameSlug || p.slug),
+              visibility: repoVisibility,
+              description: prompt.trim().slice(0, 200),
+              writeSandbox: true,
+            });
+          }
           if (repo) {
             Alert.alert(
-              "Repo created",
+              "Mirror created",
               `${repo.fullName} on ${gitProvider}.com${repo.sandboxWritten ? "\n\nyaver.workspace.yaml committed — repo flagged as Yaver-sandbox-aware." : ""}\n\n${repo.cloneUrl}`,
             );
           } else {
@@ -677,10 +706,10 @@ export default function PhoneProjectsScreen() {
           // Don't kill the project create on a repo-create failure.
           // Most common cause: no PAT set for the chosen provider.
           Alert.alert(
-            "Project saved, repo not created",
+            "Project saved, mirror not created",
             gitErr?.message?.includes("412")
               ? `No ${gitProvider} token is set up on this machine. Add one from the dashboard's Git tab, then run the wizard's "Configure now" path again or push from the project later.`
-              : (gitErr?.message ?? "Repo creation failed; project itself is saved."),
+              : (gitErr?.message ?? "Mirror creation failed; project itself is saved."),
           );
         }
       }
@@ -688,7 +717,7 @@ export default function PhoneProjectsScreen() {
       setPrompt("");
       setImportedConversation("");
       setRunner(availableRunners[0]?.runnerId ?? "");
-      setGitMode("skip");
+      setGitMode("yaver-managed");
       setRepoName("");
       setLogoUrl("");
       setRefineQuestions([]);
@@ -703,10 +732,10 @@ export default function PhoneProjectsScreen() {
       router.navigate(`/phone-project/${p.slug}` as any);
       if (gitMode !== "skip") {
         Alert.alert(
-          "Git is optional",
-          connected
-            ? "Connect Git Providers when you want Yaver to export or push this monorepo."
-            : "Git setup is optional. Connect a Yaver machine later if you want provider-backed export or push.",
+          "Git is ready",
+          gitMode === "providers-now"
+            ? "Yaver saved the project in managed git and tried to create the external mirror."
+            : "Yaver saved the project in managed git. You can add GitHub, GitLab, Dropbox, or your own computer as backups later.",
         );
         if (gitMode === "providers-now" && connected) {
           router.navigate("/(tabs)/gitproviders" as any);
@@ -869,7 +898,7 @@ export default function PhoneProjectsScreen() {
             <Text style={[styles.stepTitle, { color: c.textPrimary }]}>
               {[
                 "1. Name your app",
-                "2. Git (optional)",
+                "2. Code storage",
                 "3. Where should it run?",
                 "4. Quick survey (optional)",
                 "5. Setting up your project",
@@ -880,7 +909,7 @@ export default function PhoneProjectsScreen() {
             <Text style={[styles.stepSubtitle, { color: c.textMuted }]}>
               {[
                 "You can change this later.",
-                "GitHub or GitLab, public or private. You can skip — Yaver works without git.",
+                "Yaver can manage git for you. Mirror to GitHub or GitLab now or later.",
                 "Choose this phone, your connected machine, another online box, or Yaver Cloud.",
                 "Five quick multiple-choice questions. Skip if you'd rather just type.",
                 "Getting things ready — checking AI and your runtime.",
@@ -930,15 +959,13 @@ export default function PhoneProjectsScreen() {
 
             {step === 1 ? (
               <>
-                {/* Git is optional. Skip path sets gitMode === "skip"
-                 * and the create() flow ignores the provider /
-                 * visibility / repo-name fields. The reasoned default
-                 * is GitHub + private, which is what most solo
-                 * developers want. */}
+                {/* Yaver Managed Git is the default. Provider setup is
+                 * an optional mirror/export path, not a prerequisite. */}
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
                   {[
-                    { id: "skip" as GitMode, label: "Skip git" },
-                    { id: "providers-now" as GitMode, label: "Configure now" },
+                    { id: "yaver-managed" as GitMode, label: "Yaver manages it" },
+                    { id: "providers-now" as GitMode, label: "Mirror now" },
+                    { id: "skip" as GitMode, label: "Skip" },
                   ].map((opt) => {
                     const active = gitMode === opt.id;
                     return (
@@ -961,7 +988,39 @@ export default function PhoneProjectsScreen() {
                     );
                   })}
                 </View>
-                {gitMode !== "skip" ? (
+                {gitMode === "yaver-managed" ? (
+                  <>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 14 }]}>Visibility</Text>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      {([
+                        { id: "private" as RepoVisibility, label: "Private", sub: "Only you" },
+                        { id: "public" as RepoVisibility, label: "Public", sub: "Anyone can read later" },
+                      ]).map((opt) => {
+                        const active = repoVisibility === opt.id;
+                        return (
+                          <Pressable
+                            key={opt.id}
+                            onPress={() => setRepoVisibility(opt.id)}
+                            style={[
+                              styles.choiceCard,
+                              {
+                                backgroundColor: active ? c.accent + "22" : "transparent",
+                                borderColor: active ? c.accent : c.border,
+                                flex: 1,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                            <Text style={[styles.muted, { color: c.textMuted }]}>{opt.sub}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 10 }]}>
+                      Yaver will save versions automatically and can back them up to your computer, Dropbox, GitHub, or GitLab later.
+                    </Text>
+                  </>
+                ) : gitMode === "providers-now" ? (
                   <>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 14 }]}>Provider</Text>
                     <View style={{ flexDirection: "row", gap: 8 }}>
@@ -1027,12 +1086,12 @@ export default function PhoneProjectsScreen() {
                       style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
                     />
                     <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                      Defaults to {repoNameSlug || "the slug of your project name"}. Leave blank to use that.
+                      Yaver creates its own private repo first, then mirrors this repo to {gitProvider}.com. Leave blank to use {repoNameSlug || "the project slug"}.
                     </Text>
                   </>
                 ) : (
                   <Text style={[styles.muted, { color: c.textMuted, marginTop: 12 }]}>
-                    No git for now. You can connect a provider later from the project's Git tab.
+                    No managed git for now. You can turn on Yaver Managed Git or connect a provider later from the project.
                   </Text>
                 )}
               </>
@@ -1094,52 +1153,90 @@ export default function PhoneProjectsScreen() {
 
                 {startMode === "this-phone" ? (
                   <>
-                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>AI provider</Text>
-                    <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
-                      {([
-                        { id: "openai" as MobileAiProvider, label: "OpenAI" },
-                        { id: "glm" as MobileAiProvider, label: "GLM" },
-                      ]).map((provider) => {
-                        const active = mobileAiProvider === provider.id;
-                        return (
-                          <Pressable
-                            key={provider.id}
-                            onPress={() => {
-                              mobileAiProviderTouchedRef.current = true;
-                              setMobileAiProvider(provider.id);
-                            }}
-                            hitSlop={8}
-                            style={[
-                              styles.modeChip,
-                              {
-                                backgroundColor: active ? c.accent : c.bgCard,
-                                borderColor: active ? c.accent : c.border,
-                              },
-                            ]}
-                          >
-                            <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
-                              {provider.label}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>
-                      {mobileAiProvider === "glm" ? "GLM API key" : "OpenAI API key"}
-                    </Text>
-                    <TextInput
-                      value={mobileAiProvider === "glm" ? glmKey : openAiKey}
-                      onChangeText={mobileAiProvider === "glm" ? setGlmKey : setOpenAiKey}
-                      placeholder={mobileAiProvider === "glm" ? "zai_..." : "sk-..."}
-                      placeholderTextColor={c.textMuted}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      spellCheck={false}
-                      style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
-                    />
-                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                      Only needed when you want Yaver to turn a prompt or imported thread into the first draft. Pure template starts work without it.
-                    </Text>
+                    {isBeta ? (
+                      <>
+                        <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Inference</Text>
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                          {([
+                            { id: "managed" as const, label: "Beta access" },
+                            { id: "byo" as const, label: "Use my own key" },
+                          ]).map((m) => {
+                            const active = inferenceMode === m.id;
+                            return (
+                              <Pressable
+                                key={m.id}
+                                onPress={() => setInferenceMode(m.id)}
+                                hitSlop={8}
+                                style={[
+                                  styles.modeChip,
+                                  { backgroundColor: active ? c.accent : c.bgCard, borderColor: active ? c.accent : c.border, flexDirection: "row", alignItems: "center", gap: 7 },
+                                ]}
+                              >
+                                <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: active ? c.bg : c.border, alignItems: "center", justifyContent: "center" }}>
+                                  {active ? <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.bg }} /> : null}
+                                </View>
+                                <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>{m.label}</Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </>
+                    ) : null}
+
+                    {isBeta && inferenceMode === "managed" ? (
+                      <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 12 }]}>
+                        <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>✨ Beta access — managed inference</Text>
+                        <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
+                          Yaver runs the GLM coding model for you — no API key needed. Included in your beta.
+                        </Text>
+                      </View>
+                    ) : (
+                      <>
+                        <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>AI provider</Text>
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                          {([
+                            { id: "openai" as MobileAiProvider, label: "OpenAI" },
+                            { id: "glm" as MobileAiProvider, label: "GLM" },
+                          ]).map((provider) => {
+                            const active = mobileAiProvider === provider.id;
+                            return (
+                              <Pressable
+                                key={provider.id}
+                                onPress={() => {
+                                  mobileAiProviderTouchedRef.current = true;
+                                  setMobileAiProvider(provider.id);
+                                }}
+                                hitSlop={8}
+                                style={[
+                                  styles.modeChip,
+                                  { backgroundColor: active ? c.accent : c.bgCard, borderColor: active ? c.accent : c.border },
+                                ]}
+                              >
+                                <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
+                                  {provider.label}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                        <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>
+                          {mobileAiProvider === "glm" ? "GLM API key" : "OpenAI API key"}
+                        </Text>
+                        <TextInput
+                          value={mobileAiProvider === "glm" ? glmKey : openAiKey}
+                          onChangeText={mobileAiProvider === "glm" ? setGlmKey : setOpenAiKey}
+                          placeholder={mobileAiProvider === "glm" ? "zai_..." : "sk-..."}
+                          placeholderTextColor={c.textMuted}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          spellCheck={false}
+                          style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+                        />
+                        <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+                          Only needed when you want Yaver to turn a prompt or imported thread into the first draft. Pure template starts work without it.
+                        </Text>
+                      </>
+                    )}
                   </>
                 ) : null}
 
@@ -1730,6 +1827,8 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       runner,
       runnerChoiceEnabled,
       setupSteps,
+      isBeta,
+      inferenceMode,
       primaryHex,
       secondaryHex,
       logoUrl,

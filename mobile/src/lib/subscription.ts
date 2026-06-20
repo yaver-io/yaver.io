@@ -33,12 +33,6 @@ export interface ManagedCloudBalanceSummary {
   reservedCents?: number;
 }
 
-export interface CreditPack {
-  id: string;
-  cents: number;
-  label: string;
-}
-
 export interface ManagedCloudUsageEntry {
   machineId?: string | null;
   date: string;
@@ -62,6 +56,19 @@ export interface ManagedCloudUsageSummary {
   ok?: boolean;
   usage: ManagedCloudUsageEntry[];
   topups: ManagedCloudTopupEntry[];
+}
+
+// Beta soft-launch status (mirrors web/lib/subscription.ts). When isBeta, the
+// user gets managed inference (owner's GLM via the gateway) + the owner's box —
+// no key entry. Cosmetic flag; access is enforced server-side (gateway caps +
+// hidden infra grant). See project_beta_invisible_infra_share.
+export interface BetaStatus {
+  isBeta: boolean;
+  plan: string | null;
+  sharedProject: string | null;
+  includedHours: number;
+  usedHours: number;
+  aiEnabled: boolean;
 }
 
 export interface ManagedSubscriptionSummary {
@@ -90,6 +97,12 @@ export interface ManagedSubscriptionSummary {
   prepaidBalanceCents?: number | null;
   currency?: string;
   balance?: ManagedCloudBalanceSummary | null;
+  beta?: BetaStatus | null;
+}
+
+/** Render the beta surface? Cosmetic only — access is enforced server-side. */
+export function isBetaUser(s: ManagedSubscriptionSummary | null | undefined): boolean {
+  return s?.beta?.isBeta === true;
 }
 
 export async function getManagedSubscription(token: string): Promise<ManagedSubscriptionSummary | null> {
@@ -137,14 +150,6 @@ export function startManagedCloudMachine(token: string, machineId: string) {
     token,
     "/billing/yaver-cloud/start",
     { machineId },
-  );
-}
-
-export function devTopUpManagedCloud(token: string, amountCents = 1000) {
-  return managedCloudPost<{ ok: boolean; balanceCents?: number }>(
-    token,
-    "/billing/yaver-cloud/topup-dev",
-    { amountCents },
   );
 }
 
@@ -204,42 +209,4 @@ export async function getManagedCloudUsage(token: string): Promise<ManagedCloudU
   } catch {
     return null;
   }
-}
-
-export async function getCreditPacks(token: string): Promise<CreditPack[]> {
-  try {
-    const res = await fetch(`${getConvexSiteUrl()}/billing/credits/packs`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { packs?: CreditPack[] };
-    return Array.isArray(data.packs) ? data.packs : [];
-  } catch {
-    return [];
-  }
-}
-
-// Create a web checkout for a prepaid credit pack and return its URL.
-// The app NEVER charges in-app (no Apple/Google IAP) — it opens this
-// URL in the system browser, OpenAI-style. On payment the order_created
-// webhook credits the wallet server-side.
-export function createCreditPackCheckout(token: string, packId: string) {
-  return managedCloudPost<{ url: string; packId: string; cents: number; mode: string }>(
-    token,
-    "/billing/credits/checkout",
-    { packId },
-  );
-}
-
-// Prepaid spin-up: provision a new managed box funded by the wallet
-// (no subscription). 402 if the balance can't cover the SKU reserve.
-export function provisionManagedCloud(
-  token: string,
-  opts: { machineType?: "cpu" | "gpu"; region?: "eu" | "us" } = {},
-) {
-  return managedCloudPost<{ ok: boolean; machineId?: string; machineType?: string; region?: string }>(
-    token,
-    "/billing/yaver-cloud/provision",
-    { machineType: opts.machineType ?? "cpu", region: opts.region ?? "eu" },
-  );
 }
