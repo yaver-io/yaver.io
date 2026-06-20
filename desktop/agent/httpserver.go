@@ -287,9 +287,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Authenticated
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
 	mux.HandleFunc("/tasks/", s.auth(s.handleTaskByID))
-	// Mobile Sandbox → remote runner (GLM): edit the phone-only sandbox tree on
-	// this box. See sandbox_remote.go.
-	mux.HandleFunc("/sandbox/run", s.auth(s.handleSandboxRun))
 	mux.HandleFunc("/chain", s.auth(s.handleChainCreate))
 	mux.HandleFunc("/chain/", s.auth(s.handleChainStatus))
 	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
@@ -5799,7 +5796,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			PreferredDevice string                 `json:"preferred_device"`
 			AllowedDevices  []string               `json:"allowed_devices"`
 			AllowedRunners  []string               `json:"allowed_runners"`
-			HybridDegree    int                    `json:"hybrid_degree"`
 			Nodes           []mcpAgentGraphNodeArg `json:"nodes"`
 		}
 		json.Unmarshal(call.Arguments, &args)
@@ -5825,7 +5821,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			PreferredDevice: args.PreferredDevice,
 			AllowedDevices:  args.AllowedDevices,
 			AllowedRunners:  args.AllowedRunners,
-			HybridDegree:    args.HybridDegree,
 			Nodes:           nodes,
 		}
 		run, err := s.agentGraphMgr.CreateRun(req)
@@ -7859,19 +7854,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "mobile_hermes_reload":
 		var args mobileHermesReloadArgs
 		json.Unmarshal(call.Arguments, &args)
-		if strings.TrimSpace(args.DeviceID) != "" {
-			out, err := proxyToDeviceJSON(context.Background(), "mobile_hermes_reload", strings.TrimSpace(args.DeviceID), http.MethodPost, "/dev/reload", mobileHermesReloadBody(args))
-			if err != nil {
-				return mcpToolError(fmt.Sprintf("mobile_hermes_reload: %v", err))
-			}
-			if _, has := out["changeClass"]; !has {
-				out["changeClass"] = "unknown"
-			}
-			if _, has := out["ok"]; !has {
-				out["ok"] = true
-			}
-			return mcpToolJSON(out)
-		}
 		return mcpToolJSON(mcpMobileHermesReload(args))
 	case "device_broadcast_command":
 		var args deviceBroadcastCommandArgs
