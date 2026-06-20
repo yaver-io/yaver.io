@@ -35,16 +35,19 @@ export function markup(machineType: string): number {
 // Back-compat default (cpu) for any external reference. Prefer markup().
 export const MARKUP_X = MARKUP_BY_TYPE.cpu;
 
-// Raw Hetzner COGS basis. Managed SKU = cpx42 €29.99/mo (16GB, the
-// RN/Hermes box — see MACHINE_SPECS in cloudMachines.ts). Stopped =
-// snapshot storage only (~€0.50/mo for a typical image). Cents/hour;
-// monthly ÷ 730. Region/type variance handled by passing an explicit
-// rate later — these are the conservative defaults.
+// Raw Hetzner COGS basis. Managed SKU = cpx51 €54.90/mo (16 vCPU/32 GB,
+// the Talos-grade monorepo box — see MACHINE_SPECS in cloudMachines.ts).
+// Stopped = snapshot storage only (~€0.80/mo for the larger image, still
+// rounds to ~0c/h). Cents/hour; monthly ÷ 730. ⚠️ Keep this in sync with
+// MACHINE_SPECS.cpu.hetznerType and re-verify the price with
+// GET /v1/server_types before HCLOUD_TOKEN goes live. Region/type
+// variance can be passed as an explicit rate later — conservative
+// defaults here.
 const HETZNER_COST_CENTS_PER_HOUR: Record<string, { live: number; stopped: number }> = {
-  // €29.99/mo ≈ 411 c/mo ... (USD ~ ; we bill USD-cents, treat €≈$ for
+  // €54.90/mo ≈ 752 c/mo ... (USD ~ ; we bill USD-cents, treat €≈$ for
   // the wallet — exact FX is a P6/top-up concern, not the meter).
-  cpu: { live: Math.round((2999 / 730)), stopped: Math.round((50 / 730)) },   // ~4.1c/h live, ~0.07c/h stopped
-  gpu: { live: Math.round((19900 / 730)), stopped: Math.round((100 / 730)) }, // GPU tier placeholder
+  cpu: { live: Math.round((5490 / 730)), stopped: Math.round((80 / 730)) },    // ~7.5c/h live, ~0c/h stopped
+  gpu: { live: Math.round((19900 / 730)), stopped: Math.round((100 / 730)) },  // GPU tier placeholder
 };
 
 function rawRate(machineType: string, state: "live" | "stopped"): number {
@@ -72,6 +75,37 @@ export function estimatedHourlyCents(machineType: string): number {
 
 function todayUTC(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
+}
+
+// Billing-period key for the included-hours allowance. Calendar month
+// (UTC) by default; a subscription renewal webhook may instead pass an
+// explicit anniversary key to grantIncludedHours.
+function billingPeriodUTC(now: number): string {
+  return new Date(now).toISOString().slice(0, 7); // "YYYY-MM"
+}
+
+// ── Subscription included hours (base + metered overage) ─────────────
+// Each paid plan grants this many ACTIVE hours per billing period, PER
+// machineType, BEFORE the prepaid wallet (overage) is charged. The
+// included grant makes the monthly price feel calm ("40 hrs included");
+// overage past it is metered from the prepaid wallet at markup x raw and
+// auto-stops when the wallet can no longer afford the rate + snapshot
+// reserve — so neither CPU nor GPU ever runs compute we can't bill.
+// GPU defaults to 0 included (pure prepaid overage) unless a GPU plan
+// grants some. Env-overridable for launch promos without a redeploy:
+//   YAVER_CLOUD_INCLUDED_HOURS_CLOUD_AGENT_CPU=40
+//   YAVER_CLOUD_INCLUDED_HOURS_CLOUD_WORKSPACE_GPU=2
+// 0 / unknown plan ⇒ pure pay-as-you-go (legacy behaviour, unchanged).
+const INCLUDED_HOURS: Record<string, { cpu: number; gpu: number }> = {
+  "cloud-agent": { cpu: 40, gpu: 0 },
+  "cloud-workspace": { cpu: 40, gpu: 0 },
+};
+export function includedHoursForPlan(plan: string, machineType: string): number {
+  const t = machineType === "gpu" ? "gpu" : "cpu";
+  const envKey = `YAVER_CLOUD_INCLUDED_HOURS_${(plan || "").toUpperCase().replace(/-/g, "_")}_${t.toUpperCase()}`;
+  const env = Number(process.env[envKey]);
+  if (Number.isFinite(env) && env >= 0) return env;
+  return INCLUDED_HOURS[plan]?.[t] ?? 0;
 }
 
 // ── Wallet ───────────────────────────────────────────────────────────
@@ -241,6 +275,82 @@ export const getRecentUsage = internalQuery({
   },
 });
 
+// ── Included-hours allowance (subscription base) ─────────────────────
+
+// Grant (or refresh) a plan's included active-hours for a billing period
+// + machineType. Idempotent per (userId, period, machineType): re-grant
+// of the SAME period sets the included ceiling and PRESERVES usedSeconds
+// (a mid-period plan change moves the ceiling without refunding spent
+// time). A NEW period auto-creates a fresh row (usedSeconds 0) = the
+// monthly reset. Call from the subscription activation/renewal webhook
+// (P6, http.ts) or owner-dev tooling — one line, no edit to this file:
+//   internal.cloudLifecycle.grantIncludedHours({ userId, plan })        // cpu, calendar month
+//   internal.cloudLifecycle.grantIncludedHours({ userId, plan, machineType: "gpu", hours: 2 })
+export const grantIncludedHours = internalMutation({
+  args: {
+    userId: v.id("users"),
+    plan: v.string(),
+    machineType: v.optional(v.string()),
+    period: v.optional(v.string()),
+    hours: v.optional(v.number()),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, plan, machineType, period, hours, source }) => {
+    const now = Date.now();
+    const type = machineType === "gpu" ? "gpu" : "cpu";
+    const p = period || billingPeriodUTC(now);
+    const h = hours ?? includedHoursForPlan(plan, type);
+    const includedSeconds = Math.max(0, Math.round(h * 3600));
+    const existing = await ctx.db
+      .query("includedAllowance")
+      .withIndex("by_user_period_type", (q) =>
+        q.eq("userId", userId).eq("period", p).eq("machineType", type),
+      )
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        plan, includedSeconds, source: source ?? existing.source, updatedAt: now,
+      });
+      return { period: p, machineType: type, includedSeconds, usedSeconds: existing.usedSeconds };
+    }
+    await ctx.db.insert("includedAllowance", {
+      userId, period: p, machineType: type, plan,
+      includedSeconds, usedSeconds: 0,
+      source: source ?? "subscription", createdAt: now, updatedAt: now,
+    });
+    return { period: p, machineType: type, includedSeconds, usedSeconds: 0 };
+  },
+});
+
+// Current-period included-hours snapshot for one machineType. Drives the
+// "X of 40 hrs left" fuel-gauge in the wallet UI + the entitlements
+// query. internalQuery (per-user data) — read via the bearer-authed HTTP
+// /billing balance endpoint, same as getWallet.
+export const getAllowance = internalQuery({
+  args: { userId: v.id("users"), machineType: v.optional(v.string()), period: v.optional(v.string()) },
+  handler: async (ctx, { userId, machineType, period }) => {
+    const type = machineType === "gpu" ? "gpu" : "cpu";
+    const p = period || billingPeriodUTC(Date.now());
+    const row = await ctx.db
+      .query("includedAllowance")
+      .withIndex("by_user_period_type", (q) =>
+        q.eq("userId", userId).eq("period", p).eq("machineType", type),
+      )
+      .unique();
+    const includedSeconds = row?.includedSeconds ?? 0;
+    const usedSeconds = row?.usedSeconds ?? 0;
+    return {
+      period: p,
+      machineType: type,
+      plan: row?.plan ?? null,
+      includedSeconds,
+      usedSeconds,
+      remainingSeconds: Math.max(0, includedSeconds - usedSeconds),
+      exists: !!row,
+    };
+  },
+});
+
 // ── Metering ─────────────────────────────────────────────────────────
 
 // Record one billable tick for a machine and deduct from the wallet.
@@ -259,23 +369,57 @@ export const recordUsageAndDeduct = internalMutation({
   handler: async (
     ctx,
     { userId, machineId, machineType, state, seconds, dryRun },
-  ): Promise<{ balanceCents: number; suspend: boolean; charged: number }> => {
+  ): Promise<{ balanceCents: number; suspend: boolean; charged: number; coveredSeconds: number }> => {
     if (seconds <= 0) {
       const w0 = await getWalletInternalRow(ctx, userId);
-      return { balanceCents: w0?.balanceCents ?? 0, suspend: false, charged: 0 };
+      return { balanceCents: w0?.balanceCents ?? 0, suspend: false, charged: 0, coveredSeconds: 0 };
     }
+    const now = Date.now();
     const m = markup(machineType);
     const rateHour = rawRate(machineType, state);
-    const hetznerCostCents = Math.ceil((rateHour * seconds) / 3600);
+
+    // Included-hours first (live only). Consume the subscriber's monthly
+    // active-hour grant for THIS machineType before charging the prepaid
+    // overage wallet. A user with no allowance row (pay-as-you-go) covers
+    // 0 seconds, so everything below is byte-identical to the legacy
+    // wallet path. Stopped (snapshot) ticks never draw the grant — for
+    // cpx-class boxes the raw stopped rate already rounds to ~0c/h, so a
+    // parked workspace is effectively free and the base absorbs it.
+    let coveredSeconds = 0;
+    let remainingIncluded = 0;
+    if (state === "live") {
+      const period = billingPeriodUTC(now);
+      const type = machineType === "gpu" ? "gpu" : "cpu";
+      const allow = await ctx.db
+        .query("includedAllowance")
+        .withIndex("by_user_period_type", (q: any) =>
+          q.eq("userId", userId).eq("period", period).eq("machineType", type),
+        )
+        .unique();
+      if (allow) {
+        const left = Math.max(0, allow.includedSeconds - allow.usedSeconds);
+        coveredSeconds = Math.min(seconds, left);
+        if (coveredSeconds > 0) {
+          await ctx.db.patch(allow._id, {
+            usedSeconds: allow.usedSeconds + coveredSeconds,
+            updatedAt: now,
+          });
+        }
+        remainingIncluded = left - coveredSeconds;
+      }
+    }
+
+    // Only the seconds NOT covered by the included grant hit the wallet.
+    const billableSeconds = seconds - coveredSeconds;
+    const hetznerCostCents = Math.ceil((rateHour * billableSeconds) / 3600);
     const chargedCents = hetznerCostCents * m;
-    const now = Date.now();
 
     await ctx.db.insert("creditUsage", {
       userId,
       machineId,
       date: todayUTC(now),
       state,
-      seconds,
+      seconds, // full tick duration (audit); chargedCents = overage only
       hetznerCostCents,
       chargedCents,
       ratePerHourCents: rateHour * m,
@@ -292,10 +436,17 @@ export const recordUsageAndDeduct = internalMutation({
       updatedAt: now,
     });
 
-    // Auto-stop BEFORE zero: a live box must be force-stopped while it
-    // can still afford the snapshot transition + parked month.
+    // Auto-stop signal. A subscriber with included hours REMAINING never
+    // suspends — the next tick is free. Once the grant is exhausted, the
+    // overage wallet must keep ≥ the snapshot-transition reserve or we
+    // force-stop the box while we still can afford to park it safely.
+    // Pay-as-you-go users have remainingIncluded 0 ⇒ identical to the
+    // legacy floor check. This is the no-risk guarantee for BOTH cpu and
+    // gpu: compute only runs while included OR prepaid can pay for it.
     const floor = state === "live" ? minimumReserveCents(machineType) : 0;
-    return { balanceCents: newBalance, suspend: newBalance <= floor, charged: chargedCents };
+    const outOfIncluded = remainingIncluded <= 0;
+    const suspend = state === "live" && outOfIncluded && newBalance <= floor;
+    return { balanceCents: newBalance, suspend, charged: chargedCents, coveredSeconds };
   },
 });
 
@@ -359,9 +510,9 @@ const HETZNER_API = "https://api.hetzner.cloud/v1";
 
 function hetznerServerType(machineType: string): string {
   if (machineType === "cpu") {
-    return process.env.YAVER_CLOUD_CPU_TYPE || "cpx42"; // 16GB RN/Hermes SKU
+    return process.env.YAVER_CLOUD_CPU_TYPE || "cpx51"; // 32GB Talos-grade monorepo SKU
   }
-  return process.env.YAVER_CLOUD_GPU_TYPE || "cpx42";
+  return process.env.YAVER_CLOUD_GPU_TYPE || "cpx51";
 }
 function hetznerLocation(region: string | undefined): string {
   return region === "us" ? "ash" : "nbg1";
@@ -493,7 +644,7 @@ export const meterTick = internalAction({
         await ctx.runMutation(internal.cloudMachines.setStatus, {
           machineId: m.machineId,
           status: "suspended",
-          errorMessage: "prepaid balance below safe floor — auto-stopping (top up to resume)",
+          errorMessage: "monthly included hours used up and prepaid overage balance below safe floor — auto-stopping (top up or wait for next period to resume)",
         });
         suspended++;
       }

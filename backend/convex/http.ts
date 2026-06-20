@@ -215,6 +215,14 @@ function creditPackVariantEnvName(id: string): string {
   return `CREDIT_PACK_${id.toUpperCase()}_VARIANT_ID`;
 }
 
+type CloudPurchasePlanId = "cloud-agent" | "cloud-workspace";
+
+function normalizeCloudPurchasePlan(value: unknown): CloudPurchasePlanId {
+  const normalized = String(value || "").trim();
+  if (normalized === "cloud-workspace") return "cloud-workspace";
+  return "cloud-agent";
+}
+
 // Resolve a pack from the LemonSqueezy variant id that was ACTUALLY
 // purchased (it rides in the signed webhook payload, so a buyer can't
 // forge which pack they bought). This is the authoritative resolution —
@@ -485,6 +493,7 @@ for (const path of [
   "/byo/machines",
   "/gateway/policy", "/gateway/policy/set",
   "/gateway/token/mint", "/gateway/token/revoke", "/gateway/token/rotate",
+  "/beta/create-user",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage",
@@ -551,6 +560,69 @@ http.route({
       token,
       userId: publicUser?.userId ?? String(userId),
       userDocId: String(userId),
+    });
+  }),
+});
+
+/** POST /beta/create-user — OWNER ONLY. One-shot: create an email/password
+ *  account (if it doesn't exist) AND seed full invisible beta access
+ *  (GLM gateway grant + caps + included hours + hidden box grant +
+ *  sharedProject). Reuses the real hashPassword path so the account logs in
+ *  normally. Owner-gated by the cloud-preview allowlist (the same gate as
+ *  every money route). Body: { email, password, fullName?, sharedProject? }.
+ *
+ *  NOTE: this provisions ACCESS GRANTS only. The actual coding/push/
+ *  isolation experience requires the box-side data-plane (partition +
+ *  two-repo push broker), which is not deployed yet — a created user can
+ *  sign in and see the Beta surface but cannot push/isolate until that
+ *  lands. See beta-invisible-infra-share-design.md. */
+http.route({
+  path: "/beta/create-user",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const session = await ctx.runQuery(api.auth.validateSession, {
+      tokenHash: await sha256Hex(authHeader.slice(7)),
+    });
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
+      return errorResponse("Owner only", 403);
+    }
+
+    const body = await request.json();
+    const { email, password, fullName, sharedProject } = body ?? {};
+    if (!email || !password) return errorResponse("email + password required", 400);
+    if (String(password).length < 8) return errorResponse("password must be ≥ 8 chars", 400);
+    const normEmail = String(email).toLowerCase().trim();
+
+    let userDocId;
+    let created = false;
+    const existing = await ctx.runQuery(api.auth.lookupEmailUser, { email: normEmail });
+    if (existing) {
+      userDocId = existing._id;
+    } else {
+      const passwordHash = await hashPassword(String(password));
+      userDocId = await ctx.runMutation(api.auth.createEmailUser, {
+        email: normEmail,
+        fullName: String(fullName || "Beta Tester").trim(),
+        passwordHash,
+      });
+      created = true;
+    }
+
+    const seed = await ctx.runAction(internal.betaAccess.seedBetaUser, {
+      guestUserId: userDocId,
+      sharedProject: sharedProject ? String(sharedProject) : undefined,
+    });
+
+    return jsonResponse({
+      ok: true,
+      email: normEmail,
+      userDocId: String(userDocId),
+      accountCreated: created,
+      sharedProject: sharedProject ? String(sharedProject) : null,
+      seed,
     });
   }),
 });
@@ -3876,9 +3948,10 @@ http.route({
       case "subscription_resumed": {
         const productType = payload.meta?.custom_data?.product_type || "relay";
         const machineType = payload.meta?.custom_data?.machine_type === "gpu" ? "gpu" : "cpu";
+        const cloudPlanId = normalizeCloudPurchasePlan(payload.meta?.custom_data?.plan_id);
         const isCloudPreviewProduct = productType === "yaver-cloud";
         const plan = isCloudPreviewProduct
-          ? `yaver-cloud-${machineType}`
+          ? cloudPlanId
           : data.variant_name?.includes("yearly")
             ? "relay-yearly"
             : "relay-monthly";
@@ -3993,11 +4066,12 @@ http.route({
       case "subscription_payment_failed": {
         const productType = payload.meta?.custom_data?.product_type || "relay";
         const machineType = payload.meta?.custom_data?.machine_type === "gpu" ? "gpu" : "cpu";
+        const cloudPlanId = normalizeCloudPurchasePlan(payload.meta?.custom_data?.plan_id);
         await ctx.runMutation(internal.subscriptions.upsertFromWebhook, {
           lemonSqueezyId,
           lemonSqueezyCustomerId: customerId,
           userId: user._id,
-          plan: productType === "relay" ? "relay-monthly" : `yaver-cloud-${machineType}`,
+          plan: productType === "relay" ? "relay-monthly" : productType === "yaver-cloud" ? cloudPlanId : `yaver-cloud-${machineType}`,
           status: "past_due",
           currentPeriodEnd: Date.now(),
         });
@@ -4070,13 +4144,14 @@ http.route({
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
 
-    let body: { region?: string; machineType?: string } = {};
+    let body: { region?: string; machineType?: string; planId?: string } = {};
     try {
       body = await request.json();
     } catch {
       // allow empty body
     }
     const region = (body.region ?? "eu").trim() || "eu";
+    const planId = normalizeCloudPurchasePlan(body.planId);
 
     try {
       const url = await createLemonSqueezyCheckout({
@@ -4084,11 +4159,12 @@ http.route({
         custom: {
           user_email: session.email,
           product_type: "yaver-cloud",
+          plan_id: planId,
           machine_type: body.machineType === "gpu" ? "gpu" : "cpu",
           region,
         },
       });
-      return jsonResponse({ url, mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
+      return jsonResponse({ url, planId, mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(message, 500);
@@ -4556,7 +4632,7 @@ http.route({
  *  402 if the wallet can't cover the safe reserve for this SKU. The
  *  real Hetzner create is still gated on HCLOUD_TOKEN inside
  *  cloudMachines.provision (fail-closed in prod). Body:
- *  { machineType?: "cpu"|"gpu", region?: "eu"|"us" }. */
+ *  { machineType?: "cpu"|"gpu", region?: "eu"|"us", planId?: "cloud-agent"|"cloud-workspace" }. */
 http.route({
   path: "/billing/yaver-cloud/provision",
   method: "POST",
@@ -4566,7 +4642,7 @@ http.route({
     if (!cloudAccessAllowed(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
-    let body: { machineType?: string; region?: string } = {};
+    let body: { machineType?: string; region?: string; planId?: string } = {};
     try {
       body = await request.json();
     } catch {
@@ -4574,6 +4650,7 @@ http.route({
     }
     const machineType = body.machineType === "gpu" ? "gpu" : "cpu";
     const region = (body.region ?? "eu").trim() === "us" ? "us" : "eu";
+    const planId = normalizeCloudPurchasePlan(body.planId);
 
     // Anti-fan-out (public repo — a buyer must not turn credit for ONE
     // box into N boxes by firing concurrent provisions). Count the
@@ -4617,7 +4694,7 @@ http.route({
         // No subscriptionId: this is a prepaid (wallet-funded) box.
         tier: "byok",
       });
-      return jsonResponse({ ok: true, machineId, machineType, region, mode: "prepaid" });
+      return jsonResponse({ ok: true, machineId, machineType, region, planId, mode: "prepaid" });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : String(error), 500);
     }
@@ -4763,11 +4840,12 @@ http.route({
     const userDocId = await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
     if (!userDocId) return errorResponse("User not found", 404);
 
-    const [subscription, relay, machines, wallet] = await Promise.all([
+    const [subscription, relay, machines, wallet, beta] = await Promise.all([
       ctx.runQuery(api.subscriptions.getByUser, { userId: userDocId }),
       ctx.runQuery(api.managedRelays.getByUser, { userId: userDocId }),
       ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId }),
       ctx.runQuery(internal.cloudLifecycle.getWallet, { userId: userDocId }),
+      ctx.runQuery(internal.betaAccess.getBetaStatus, { userId: userDocId }),
     ]);
 
     return jsonResponse({
@@ -4795,6 +4873,10 @@ http.route({
       prepaidBalanceCents: wallet.balanceCents,
       currency: wallet.currency,
       balance: wallet,
+      // Beta entitlement (invisible-infra-share). When isBeta, clients
+      // render the Beta workspace view (project + vibe box) and the "Beta"
+      // badge — never the infra/guest/device details (those stay hidden).
+      beta,
       relay: relay ? {
         status: relay.status,
         domain: relay.domain,
@@ -5149,7 +5231,7 @@ Rules:
 - If the question is NOT about Yaver, politely say: "I can only help with Yaver-related questions. Check out yaver.io/docs for guides, or yaver.io/faq for common questions."
 - Never make up features that don't exist.
 - Key links: yaver.io/docs, yaver.io/manuals, yaver.io/download, yaver.io/manuals/integrations
-- Yaver is fully free and open-source — no paid tiers, no subscriptions. We may add optional managed offerings later, but at launch nothing is for sale.
+- Yaver's open-source stack is free to self-host. Optional Yaver Cloud is web-billed managed infrastructure: saved cloud workspaces, private relay, and auto-stop. The mobile app controls already-owned machines and does not sell managed cloud inside the app stores.
 - Privacy-first: code never leaves the developer's machines. Relay is pass-through, encrypted.`;
 
     try {

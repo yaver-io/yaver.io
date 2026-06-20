@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -52,6 +53,8 @@ type helperRequest struct {
 	Shell string   `json:"shell,omitempty"`
 	Env   []string `json:"env,omitempty"` // KEY=VALUE overlay (sanitized here)
 	Cwd   string   `json:"cwd,omitempty"`
+	Root  string   `json:"root,omitempty"` // tenant_create override, e.g. /srv/yaver/tenants/<id>
+	Home  string   `json:"home,omitempty"` // tenant_create override, e.g. <root>/home
 }
 
 type helperResponse struct {
@@ -207,13 +210,43 @@ func (s *helperServer) handle(req helperRequest) helperResponse {
 			return helperResponse{Error: err.Error()}
 		}
 		home := "/home/" + req.Tenant
+		root := home
+		if strings.TrimSpace(req.Home) != "" {
+			home = filepath.Clean(req.Home)
+		}
+		if strings.TrimSpace(req.Root) != "" {
+			root = filepath.Clean(req.Root)
+		}
+		if !filepath.IsAbs(root) || !filepath.IsAbs(home) || (home != root && !strings.HasPrefix(home, root+string(filepath.Separator))) {
+			return helperResponse{Error: "tenant root/home must be absolute and home must be under root"}
+		}
+		if root != "/home/"+req.Tenant {
+			base := filepath.Clean(betaTenantRoot)
+			rel, relErr := filepath.Rel(base, root)
+			if relErr != nil || rel == "." || strings.HasPrefix(rel, "..") || strings.Contains(rel, string(filepath.Separator)) {
+				return helperResponse{Error: "tenant root must be the canonical /home/yv-* or /srv/yaver/tenants/<id> path"}
+			}
+			for _, r := range rel {
+				if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+					return helperResponse{Error: "tenant root id contains invalid characters"}
+				}
+			}
+		}
 		if _, lookErr := user.Lookup(req.Tenant); lookErr != nil {
-			if out, err := s.exec("useradd", "--create-home", "--home-dir", home, "--shell", "/bin/bash", req.Tenant); err != nil {
+			if out, err := s.exec("useradd", "--system", "--no-create-home", "--home-dir", home, "--shell", "/bin/bash", req.Tenant); err != nil {
 				return resp(out, err)
 			}
 		}
-		out, err := s.exec("install", "-d", "-o", req.Tenant, "-g", req.Tenant, "-m", "0700", home+"/Workspace")
-		return resp(out, err)
+		dirs := []string{root, home, filepath.Join(root, "workspace"), filepath.Join(home, ".claude"), filepath.Join(home, ".codex")}
+		if root == home {
+			dirs = append(dirs, filepath.Join(home, "Workspace"))
+		}
+		for _, dir := range dirs {
+			if out, err := s.exec("install", "-d", "-o", req.Tenant, "-g", req.Tenant, "-m", "0700", dir); err != nil {
+				return resp(out, err)
+			}
+		}
+		return helperResponse{OK: true}
 
 	case "tenant_remove":
 		if err := validTenant(req.Tenant); err != nil {

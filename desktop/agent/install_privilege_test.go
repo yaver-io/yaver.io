@@ -66,6 +66,12 @@ func TestOperatorProfileIsTight(t *testing.T) {
 	if strings.Contains(got, "userdel -r *") || strings.Contains(got, "userdel *") {
 		t.Errorf("operator userdel is not tenant-scoped:\n%s", got)
 	}
+	if !strings.Contains(got, yaverSystemUser+" ALL=(yv-*) NOPASSWD: YAVER_TENANT_RUN") {
+		t.Errorf("operator must be able to drop into yv-* tenants without root:\n%s", got)
+	}
+	if strings.Contains(got, yaverSystemUser+" ALL=(ALL) NOPASSWD:") {
+		t.Errorf("operator must not grant all run-as targets:\n%s", got)
+	}
 }
 
 // Self-host may manage arbitrary services (it's the owner's own box).
@@ -110,16 +116,23 @@ func TestHardenedSystemUnit(t *testing.T) {
 	if !strings.Contains(op, "--operator") {
 		t.Errorf("operator unit missing --operator flag:\n%s", op)
 	}
-	// Operator needs to write tenant homes under /home → whole /home is rw.
-	if !strings.Contains(op, "ReadWritePaths=/home ") {
-		t.Errorf("operator unit should mount /home rw for tenant homes:\n%s", op)
+	// Operator needs legacy /home and the beta tenant root writable.
+	if !strings.Contains(op, "ReadWritePaths=/home /srv/yaver/tenants ") {
+		t.Errorf("operator unit should mount tenant roots rw:\n%s", op)
 	}
-	// Step 5 payoff: the confined operator agent runs zero-sudo.
+	// Operator keeps sudo available only for dropping into yv-* tenants.
 	if !strings.Contains(op, "NoNewPrivileges=true") {
-		t.Errorf("operator unit must set NoNewPrivileges=true (all privileged ops via helper):\n%s", op)
+		// expected: no NoNewPrivileges hardening because sudo -u yv-* needs setuid.
+	} else {
+		t.Errorf("operator unit must not set NoNewPrivileges=true while tenant launch uses sudo -u yv-*:\n%s", op)
 	}
 	if !strings.Contains(op, "Requires="+helperUnitName) {
 		t.Errorf("operator unit must Require the helper:\n%s", op)
+	}
+
+	helper := helperSystemUnit("/usr/bin/yaver")
+	if !strings.Contains(helper, "ReadWritePaths=/home /srv/yaver/tenants /var/lib/yaver") {
+		t.Errorf("helper unit should be able to create beta tenant roots:\n%s", helper)
 	}
 }
 

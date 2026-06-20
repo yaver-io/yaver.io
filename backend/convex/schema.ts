@@ -1418,6 +1418,22 @@ export default defineSchema({
     // Provenance: set when this grant was created by a support-link redemption
     // (vs a normal host→guest invite), so the UI can label it "support".
     origin: v.optional(v.string()), // "support-link" | undefined
+    // Invisible owner-infra share (beta soft-launch — see
+    // beta-invisible-infra-share-design.md). `hidden` grants are honored by
+    // ACCESS-CONTROL queries (listActiveInfraGrantsForGuest etc. — so the
+    // beta user can actually reach the box) but skipped by UI-LISTING
+    // queries (listVisibleInfraGrantsForGuest — so the beta user never sees
+    // the device/guest relationship). The HOST still sees them. `beta`
+    // marks rows created by the owner-gated betaAccess.seedBetaUser for
+    // audit/cleanup. Set ONLY by that owner-gated path.
+    hidden: v.optional(v.boolean()),
+    beta: v.optional(v.boolean()),
+    // Which owner project to seed into this tenant's partition (e.g.
+    // "sfmg" / "carrotbet"). Non-secret label only — the box-side seeder
+    // resolves it to a repo, SCRUBS its secrets (.env/keys/*.pem/vault),
+    // clones into the tenant dir, and the two-repo broker pushes to
+    // beta/<id>/* with the owner's git creds. Unset = scratch sandbox.
+    sharedProject: v.optional(v.string()),
   })
     .index("by_hostUserId", ["hostUserId"])
     .index("by_guestUserId", ["guestUserId"])
@@ -1863,6 +1879,36 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_user", ["userId", "createdAt"])
     .index("by_order", ["orderId"]),
+
+  // ── Subscription included-hours allowance (Phase 1 base + overage) ──
+  // A paid plan (cloud-agent / cloud-workspace) grants N ACTIVE cloud
+  // hours per billing period BEFORE the prepaid wallet (overage) is
+  // touched. Allowance is PER machineType ("cpu" / "gpu") so the SAME
+  // base+overage model covers both: e.g. 40 CPU-hours + 0 GPU-hours
+  // (GPU is then pure prepaid overage), or a GPU plan that grants a few
+  // GPU-hours too. One row per (userId, period, machineType). `period`
+  // is the billing key ("YYYY-MM" calendar month by default; a renewal
+  // webhook may pass an anniversary key). A new period = a fresh row
+  // with usedSeconds 0 = the monthly reset (no reset cron — the meter
+  // reads the current-period row; the renewal webhook grants it). A user
+  // with NO row for a type is pure pay-as-you-go for that type (legacy
+  // wallet behaviour, unchanged). Risk control is the existing wallet
+  // floor + canStart gate: once included is spent, the box only keeps
+  // running while the prepaid wallet can still afford the metered rate
+  // PLUS the snapshot-transition reserve, else it auto-stops — so we
+  // never run compute we can't bill. Counter/id/label only — same
+  // Convex-allowed class as creditUsage. Owned by cloudLifecycle.ts.
+  includedAllowance: defineTable({
+    userId: v.id("users"),
+    period: v.string(),                 // "YYYY-MM" (UTC) or billing-period key
+    machineType: v.string(),            // "cpu" | "gpu"
+    plan: v.string(),                   // "cloud-agent" | "cloud-workspace" | ...
+    includedSeconds: v.number(),        // granted live seconds this period
+    usedSeconds: v.number(),            // live seconds consumed this period
+    source: v.optional(v.string()),     // "subscription" | "owner-dev" | "grant"
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_period_type", ["userId", "period", "machineType"]),
 
   // ── Yaver Gateway: per-user limits (OPERATOR-set, user-IMMUTABLE) ───
   // The free public-compute tier lends the operator's GLM key through the

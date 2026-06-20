@@ -37,6 +37,7 @@ type runnerBrowserAuthStartRequest struct {
 type runnerBrowserAuthSession struct {
 	ID             string `json:"id"`
 	Runner         string `json:"runner"`
+	TenantUserID   string `json:"tenantUserId,omitempty"`
 	Method         string `json:"method"`
 	Status         string `json:"status"`
 	OpenURL        string `json:"openUrl,omitempty"`
@@ -85,16 +86,21 @@ func normalizeBrowserAuthLine(line string) string {
 	return strings.TrimSpace(line)
 }
 
-func newRunnerBrowserAuthSession(runner string) *runnerBrowserAuthSessionState {
+func newRunnerBrowserAuthSession(runner string, tr tenantRuntime) *runnerBrowserAuthSessionState {
 	now := time.Now().UnixMilli()
-	id := fmt.Sprintf("%s-%d", runner, now)
+	idPrefix := runner
+	if tr.Enabled {
+		idPrefix = runner + "-" + betaSanitizeRef(tr.UserID)
+	}
+	id := fmt.Sprintf("%s-%d", idPrefix, now)
 	return &runnerBrowserAuthSessionState{
 		runnerBrowserAuthSession: runnerBrowserAuthSession{
-			ID:        id,
-			Runner:    runner,
-			Status:    "starting",
-			StartedAt: now,
-			UpdatedAt: now,
+			ID:           id,
+			Runner:       runner,
+			TenantUserID: tr.UserID,
+			Status:       "starting",
+			StartedAt:    now,
+			UpdatedAt:    now,
 		},
 	}
 }
@@ -131,15 +137,22 @@ func (s *runnerBrowserAuthSessionState) update(fn func(*runnerBrowserAuthSession
 	s.runnerBrowserAuthSession.UpdatedAt = time.Now().UnixMilli()
 }
 
-func runnerBrowserAuthCommand(runner string) (method string, cmd *exec.Cmd, err error) {
+func runnerBrowserAuthCommand(runner string, tr tenantRuntime) (method string, cmd *exec.Cmd, err error) {
 	switch normalizeRunnerAuthName(runner) {
 	case "codex":
 		bin := resolveRunnerBinary("codex")
 		if bin == "" {
 			return "", nil, fmt.Errorf("codex CLI not found on this machine (looked in PATH, ~/.npm-global/bin, ~/.local/bin, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin, and the user login shell). Run `npm i -g @openai/codex` and try again.")
 		}
-		cmd = exec.Command(bin, "login", "--device-auth")
-		cmd.Env = append(cmd.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
+		if tr.Enabled {
+			cmd, err = tr.command(context.Background(), tr.Home, bin, []string{"login", "--device-auth"}, append(tr.authEnv(), "CI=1", "NO_COLOR=1", "TERM=dumb"))
+			if err != nil {
+				return "", nil, err
+			}
+		} else {
+			cmd = exec.Command(bin, "login", "--device-auth")
+			cmd.Env = append(cmd.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
+		}
 		return "device-auth", cmd, nil
 	case "claude":
 		bin := resolveRunnerBinary("claude")
@@ -161,11 +174,18 @@ func runnerBrowserAuthCommand(runner string) (method string, cmd *exec.Cmd, err 
 		// session that gates Keychain access; without this, OAuth saves
 		// to Keychain only and subsequent tasks still 401 because the
 		// daemon's Keychain access is broken.
-		cmd = exec.Command(bin, "auth", "login", "--claudeai")
-		cmd.Env = append(cmd.Environ(),
-			"CI=1", "NO_COLOR=1", "TERM=dumb",
-			"CLAUDE_CONFIG_DIR="+filepath.Join(os.Getenv("HOME"), ".claude"),
-		)
+		if tr.Enabled {
+			cmd, err = tr.command(context.Background(), tr.Home, bin, []string{"auth", "login", "--claudeai"}, append(tr.authEnv(), "CI=1", "NO_COLOR=1", "TERM=dumb"))
+			if err != nil {
+				return "", nil, err
+			}
+		} else {
+			cmd = exec.Command(bin, "auth", "login", "--claudeai")
+			cmd.Env = append(cmd.Environ(),
+				"CI=1", "NO_COLOR=1", "TERM=dumb",
+				"CLAUDE_CONFIG_DIR="+filepath.Join(os.Getenv("HOME"), ".claude"),
+			)
+		}
 		return "oauth", cmd, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported runner %q (want claude or codex)", runner)
@@ -220,8 +240,9 @@ func scanRunnerBrowserAuthOutput(sess *runnerBrowserAuthSessionState, reader io.
 // fresh session so we never keep two `claude auth login` processes alive
 // at once (each holds its own PKCE verifier — a code pasted into the new
 // session would otherwise risk being exchanged against the old verifier).
-func cancelStaleRunnerBrowserAuthSessions(runner string) {
+func cancelStaleRunnerBrowserAuthSessions(runner string, tenantUserID string) {
 	runner = normalizeRunnerAuthName(runner)
+	tenantUserID = strings.TrimSpace(tenantUserID)
 	runnerBrowserAuthSessions.Range(func(_, v any) bool {
 		st, ok := v.(*runnerBrowserAuthSessionState)
 		if !ok {
@@ -229,6 +250,9 @@ func cancelStaleRunnerBrowserAuthSessions(runner string) {
 		}
 		snap := st.snapshot()
 		if normalizeRunnerAuthName(snap.Runner) != runner {
+			return true
+		}
+		if strings.TrimSpace(snap.TenantUserID) != tenantUserID {
 			return true
 		}
 		switch snap.Status {
@@ -243,7 +267,7 @@ func cancelStaleRunnerBrowserAuthSessions(runner string) {
 	})
 }
 
-func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBrowserAuthSessionState, error) {
+func startRunnerBrowserAuthSession(runner string, tr tenantRuntime, onTerminal func()) (*runnerBrowserAuthSessionState, error) {
 	runner = normalizeRunnerAuthName(runner)
 	// Reap any still-running auth process for the SAME runner before
 	// spawning a new one. A prior session can be orphaned when the
@@ -253,9 +277,14 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 	// long since discarded. Leaving it alive both leaks a process and
 	// causes a code pasted into a FRESH session to be exchanged against
 	// the wrong verifier. One live auth session per runner is correct.
-	cancelStaleRunnerBrowserAuthSessions(runner)
-	sess := newRunnerBrowserAuthSession(runner)
-	method, cmd, err := runnerBrowserAuthCommand(runner)
+	cancelStaleRunnerBrowserAuthSessions(runner, tr.UserID)
+	if tr.Enabled {
+		if err := tr.prepare(); err != nil {
+			return nil, err
+		}
+	}
+	sess := newRunnerBrowserAuthSession(runner, tr)
+	method, cmd, err := runnerBrowserAuthCommand(runner, tr)
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +471,8 @@ func (s *HTTPServer) handleRunnerBrowserAuthStart(w http.ResponseWriter, r *http
 		jsonError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	sess, err := startRunnerBrowserAuthSession(req.Runner, s.TriggerHeartbeat)
+	tr := runnerAuthTenantRuntimeFromRequest(r)
+	sess, err := startRunnerBrowserAuthSession(req.Runner, tr, s.TriggerHeartbeat)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -451,6 +481,17 @@ func (s *HTTPServer) handleRunnerBrowserAuthStart(w http.ResponseWriter, r *http
 		"ok":      true,
 		"session": sess.snapshot(),
 	})
+}
+
+func runnerAuthTenantRuntimeFromRequest(r *http.Request) tenantRuntime {
+	if r == nil {
+		return tenantRuntime{}
+	}
+	guestID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
+	if guestID == "" {
+		return tenantRuntime{}
+	}
+	return tenantRuntimeForGuest(guestID)
 }
 
 func (s *HTTPServer) handleRunnerBrowserAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -648,10 +689,21 @@ func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r 
 		jsonError(w, http.StatusBadRequest, "credentialsJson is not valid JSON: "+err.Error())
 		return
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		jsonError(w, http.StatusInternalServerError, "cannot resolve $HOME on this machine")
-		return
+	tr := runnerAuthTenantRuntimeFromRequest(r)
+	home := ""
+	if tr.Enabled {
+		if err := tr.prepare(); err != nil {
+			jsonError(w, http.StatusInternalServerError, "tenant runtime: "+err.Error())
+			return
+		}
+		home = tr.Home
+	} else {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil || home == "" {
+			jsonError(w, http.StatusInternalServerError, "cannot resolve $HOME on this machine")
+			return
+		}
 	}
 	var dest string
 	switch runner {
@@ -660,13 +712,20 @@ func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r 
 	case "codex":
 		dest = filepath.Join(home, ".codex", "auth.json")
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
-		jsonError(w, http.StatusInternalServerError, "mkdir "+filepath.Dir(dest)+": "+err.Error())
-		return
-	}
-	if err := os.WriteFile(dest, []byte(creds), 0o600); err != nil {
-		jsonError(w, http.StatusInternalServerError, "write "+dest+": "+err.Error())
-		return
+	if tr.Enabled {
+		if err := writeTenantCredentialFile(tr, dest, []byte(creds)); err != nil {
+			jsonError(w, http.StatusInternalServerError, "write tenant credentials: "+err.Error())
+			return
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+			jsonError(w, http.StatusInternalServerError, "mkdir "+filepath.Dir(dest)+": "+err.Error())
+			return
+		}
+		if err := os.WriteFile(dest, []byte(creds), 0o600); err != nil {
+			jsonError(w, http.StatusInternalServerError, "write "+dest+": "+err.Error())
+			return
+		}
 	}
 	// Reset the auth-failure override so the runner status pill flips
 	// back to ✓ signed in on the next poll instead of waiting for a
@@ -679,4 +738,49 @@ func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r 
 		"path":   dest,
 		"bytes":  len(creds),
 	})
+}
+
+func writeTenantCredentialFile(tr tenantRuntime, dest string, data []byte) error {
+	if !tr.Enabled {
+		return fmt.Errorf("tenant runtime not enabled")
+	}
+	cleanDest := filepath.Clean(dest)
+	if cleanDest != tr.Home && !strings.HasPrefix(cleanDest, filepath.Clean(tr.Home)+string(filepath.Separator)) {
+		return fmt.Errorf("credential destination %s is outside tenant home %s", cleanDest, tr.Home)
+	}
+	tmp, err := os.CreateTemp("", "yaver-tenant-cred-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		return err
+	}
+	if os.Geteuid() == 0 {
+		if err := os.MkdirAll(filepath.Dir(cleanDest), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(cleanDest, data, 0o600); err != nil {
+			return err
+		}
+		if out, err := exec.Command("chown", tr.User+":"+tr.User, cleanDest).CombinedOutput(); err != nil {
+			return fmt.Errorf("chown: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	if out, err := exec.Command("sudo", "-n", "install", "-d", "-o", tr.User, "-g", tr.User, "-m", "0700", filepath.Dir(cleanDest)).CombinedOutput(); err != nil {
+		return fmt.Errorf("sudo install dir: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("sudo", "-n", "install", "-o", tr.User, "-g", tr.User, "-m", "0600", tmpPath, cleanDest).CombinedOutput(); err != nil {
+		return fmt.Errorf("sudo install credential: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

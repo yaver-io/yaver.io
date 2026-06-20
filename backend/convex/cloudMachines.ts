@@ -1,7 +1,7 @@
 import { mutation, query, internalMutation, internalAction, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
-import { listActiveInfraGrantsForGuest, listGrantedMachineIdsForGrant } from "./access";
+import { listGrantedMachineIdsForGrant, listVisibleInfraGrantsForGuest } from "./access";
 import { randomHex, sha256Hex } from "./auth";
 
 // Machine specs by type. The Hetzner server_type strings are what you pass
@@ -10,20 +10,28 @@ const MACHINE_SPECS = {
   cpu: {
     // History: cx42 DEPRECATED (422 "server type 106 is deprecated");
     // cpx41 non-deprecated but US-only stock; ccx33 (dedicated) works
-    // EU+US but costs €73.99/mo — unviable vs the $/mo price.
-    // cpx42 (shared AMD, 8 vCPU/16 GB/320 GB, x86=amd64, €29.99/mo)
-    // is the chosen balance: enough RAM for RN/Hermes (Metro+hermesc,
-    // no swap) at a price the SKU can sustain. Orderable in fsn1,
-    // nbg1, hel1, sin — NOT ash/hil, so the eu→fsn1 map below works
-    // but a us-region purchase needs a separate type/location (see
-    // the region→location map; us currently falls back to ash which
-    // has NO cpx42 → must be handled before selling a us SKU).
-    // Re-verify with GET /v1/datacenters .server_types.available
-    // (by type id) before changing — "priced" != "orderable".
-    hetznerType: "cpx42",    // 8 vCPU, 16 GB RAM, 320 GB, amd64 (shared)
-    vcpu: 8,
-    ramGb: 16,
-    diskGb: 320,
+    // EU+US but costs €73.99/mo. cpx42 (8 vCPU/16 GB) was the prior
+    // default — fine for a single RN/Hermes app, but TIGHT for a real
+    // monorepo (Talos-class: workspace install + monorepo-wide tsc +
+    // a Metro instance can collectively exceed 16 GB and OOM-kill mid
+    // build, which surfaces to the user as "the agent crashed"). So
+    // the default is now the 32 GB tier: ONE box that comfortably
+    // satisfies a monorepo, not just a toy app. cpx51 (shared AMD,
+    // 16 vCPU/32 GB/360 GB, x86=amd64) is the target SKU.
+    //
+    // ⚠️ VERIFY before HCLOUD_TOKEN goes live (prod is fail-closed
+    // dry-run until then): "priced" != "orderable". Re-check the exact
+    // type string + per-region stock with
+    //   GET /v1/datacenters .server_types.available
+    // and the price with GET /v1/server_types. The hetznerType is also
+    // env-overridable at runtime via YAVER_CLOUD_CPU_TYPE (see
+    // cloudLifecycle.hetznerServerType) so a region/stock swap needs no
+    // redeploy. us-region still falls back to ash in the region→location
+    // map — confirm the chosen type is orderable there too.
+    hetznerType: "cpx51",    // 16 vCPU, 32 GB RAM, 360 GB, amd64 (shared)
+    vcpu: 16,
+    ramGb: 32,
+    diskGb: 360,
     arch: "amd64" as const,
   },
   gpu: {
@@ -609,18 +617,16 @@ runcmd:
   - ufw allow 4433/udp
   - ufw --force enable || true
 
-  # ── Managed Yaver agent bootstrap (NON-ROOT, docs §4a/§4b) ────────
-  # The agent runs as a dedicated unprivileged 'yaver' user so a tenant
-  # who escapes containment lands on a normal uid, not root. The TLS
-  # reconciler below stays a SEPARATE root unit (nginx/certbot need root);
-  # it only proxies to the agent on loopback:18080, so the agent's user
-  # is irrelevant to cert work.
+  # ── Managed Yaver agent bootstrap (operator tenant runtime) ────────
+  # The agent runs as a dedicated unprivileged 'yaver' user. Claude/Codex
+  # beta guests are launched as separate yv-* Unix users with isolated
+  # HOME/CLAUDE_CONFIG_DIR/CODEX_HOME under /srv/yaver/tenants/<id>.
+  # The TLS reconciler below stays a separate root unit (nginx/certbot
+  # need root); it only proxies to the agent on loopback:18080.
   - id yaver >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/yaver --shell /bin/bash yaver
   - usermod -aG docker yaver || true
-  # Passwordless sudo for setup tasks the managed agent may need (package
-  # installs, service control) — the agent is trusted; the non-root win is
-  # that TENANT workloads never run as root.
-  - echo 'yaver ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/yaver && chmod 0440 /etc/sudoers.d/yaver
+  - install -d -o root -g root -m 0755 /srv /srv/yaver
+  - install -d -o root -g root -m 0711 /srv/yaver/tenants
   - install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
   - install -d -o yaver -g yaver -m 0700 /home/yaver/.config/opencode
   - install -d -o yaver -g yaver -m 0755 /home/yaver/Workspace
@@ -643,30 +649,9 @@ ${managedOpenCodeConfigBody("/usr/local/bin/yaver")
   .join("\n")}
     EOF
   - chown yaver:yaver /home/yaver/.config/opencode/opencode.json && chmod 0600 /home/yaver/.config/opencode/opencode.json
-  - |
-    cat > /etc/systemd/system/yaver-agent.service <<'EOF'
-    [Unit]
-    Description=Yaver managed cloud agent
-    Wants=network-online.target
-    After=network-online.target docker.service
-
-    [Service]
-    Type=simple
-    User=yaver
-    Group=yaver
-    WorkingDirectory=/home/yaver/Workspace
-    Environment=HOME=/home/yaver
-    Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/yaver/.cargo/bin:/usr/local/go/bin
-    Environment=YAVER_HOSTNAME=${jsonString(spec.hostname)}
-    ExecStart=/usr/local/bin/yaver serve --debug --port 18080
-    Restart=always
-    RestartSec=5
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
+  - /usr/local/bin/yaver serve --install-systemd-system --operator || echo "[cloud-init] yaver operator service install skipped"
 ${repoCloneSnippet}  - systemctl daemon-reload
-  - systemctl enable --now yaver-agent
+  - systemctl enable --now yaver-helper yaver || true
 
   # ── TLS reconciler ─────────────────────────────────────────────
   - |
@@ -747,7 +732,7 @@ ${repoCloneSnippet}  - systemctl daemon-reload
     cat > /etc/systemd/system/yaver-tls.service <<'EOF'
     [Unit]
     Description=Yaver TLS reconciler
-    After=network-online.target nginx.service yaver-agent.service
+    After=network-online.target nginx.service yaver.service
     [Service]
     Type=oneshot
     ExecStart=/usr/local/bin/yaver-tls-reconciler
@@ -797,7 +782,9 @@ export const listForUser = query({
     }
 
     const grantedMachines: typeof owned = [];
-    const grants = await listActiveInfraGrantsForGuest(ctx, userId);
+    // Machine LIST (UI) drops hidden beta grants — beta users never see the
+    // owner's box here. Routing/access paths keep the active variant.
+    const grants = await listVisibleInfraGrantsForGuest(ctx, userId);
     for (const grant of grants) {
       if (grant.shareAllMachines) {
         const hostMachines = await ctx.db

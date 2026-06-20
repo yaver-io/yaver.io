@@ -96,7 +96,10 @@ export const listActiveManaged = internalQuery({
       .withIndex("by_status", (q) => q.eq("status", "active"))
       .collect();
     return rows
-      .filter((s) => typeof s.plan === "string" && s.plan.startsWith("yaver-cloud"))
+      .filter((s) =>
+        typeof s.plan === "string" &&
+        (s.plan.startsWith("yaver-cloud") || s.plan === "cloud-agent" || s.plan === "cloud-workspace")
+      )
       .map((s) => ({
         subscriptionId: s._id,
         userId: s.userId,

@@ -98,6 +98,11 @@ func yaverSudoersContent(p privilegeProfile) string {
 			"/usr/bin/pkill -KILL -u yv-*", "/bin/pkill -KILL -u yv-*",
 			"/usr/bin/install -d -o yv-* -g yv-* -m 0700 /home/yv-*",
 		}
+		// Tenant process launch: the agent may drop privileges into a yv-* user
+		// and run an env-clean command there. This is not a root grant.
+		tenantRun := []string{
+			"/usr/bin/env *", "/bin/env *",
+		}
 		// Services: only yaver's own units + docker. NOT arbitrary systemctl —
 		// an operator agent must not be able to stop sshd or other tenants'
 		// adjacent services.
@@ -110,8 +115,9 @@ func yaverSudoersContent(p privilegeProfile) string {
 		return sudoersFile([][2]string{
 			{"YAVER_PKG", strings.Join(pkg, ", ")},
 			{"YAVER_TENANT", strings.Join(tenant, ", ")},
+			{"YAVER_TENANT_RUN", strings.Join(tenantRun, ", ")},
 			{"YAVER_SVC", strings.Join(svc, ", ")},
-		}, []string{"YAVER_PKG", "YAVER_TENANT", "YAVER_SVC"})
+		}, []string{"YAVER_PKG", "YAVER_TENANT", "YAVER_SVC"}, []string{"YAVER_TENANT_RUN"})
 
 	default: // profileSelfHost
 		// The box owner's own machine: package mgmt + full service control are
@@ -124,13 +130,13 @@ func yaverSudoersContent(p privilegeProfile) string {
 		return sudoersFile([][2]string{
 			{"YAVER_PKG", strings.Join(pkg, ", ")},
 			{"YAVER_SVC", strings.Join(svc, ", ")},
-		}, []string{"YAVER_PKG", "YAVER_SVC"})
+		}, []string{"YAVER_PKG", "YAVER_SVC"}, nil)
 	}
 }
 
 // sudoersFile assembles Cmnd_Alias lines + the single grant line, with a header
 // explaining the model. aliasOrder fixes the grant ordering for stable tests.
-func sudoersFile(aliases [][2]string, aliasOrder []string) string {
+func sudoersFile(aliases [][2]string, rootAliasOrder []string, tenantAliasOrder []string) string {
 	var b strings.Builder
 	b.WriteString("# Managed by Yaver — see docs/yaver-install-user-privilege-model.md\n")
 	b.WriteString("# Scoped grant (NOT NOPASSWD: ALL). The yaver user can install\n")
@@ -139,7 +145,12 @@ func sudoersFile(aliases [][2]string, aliasOrder []string) string {
 	for _, a := range aliases {
 		fmt.Fprintf(&b, "Cmnd_Alias %s = %s\n", a[0], a[1])
 	}
-	fmt.Fprintf(&b, "%s ALL=(root) NOPASSWD: %s\n", yaverSystemUser, strings.Join(aliasOrder, ", "))
+	if len(rootAliasOrder) > 0 {
+		fmt.Fprintf(&b, "%s ALL=(root) NOPASSWD: %s\n", yaverSystemUser, strings.Join(rootAliasOrder, ", "))
+	}
+	if len(tenantAliasOrder) > 0 {
+		fmt.Fprintf(&b, "%s ALL=(yv-*) NOPASSWD: %s\n", yaverSystemUser, strings.Join(tenantAliasOrder, ", "))
+	}
 	return b.String()
 }
 
@@ -166,15 +177,16 @@ if visudo -cf %s >/dev/null 2>&1; then mv %s %s; else rm -f %s; echo 'yaver: sud
 // home; the single ReadWritePaths hole at the agent's own home is what lets it
 // keep working.
 //
-// On operator nodes ALL privileged ops the agent needs — package install,
-// yaver/docker service control, yv-* tenant create/remove, AND each tenant's
-// interactive shell (PTY brokered over SCM_RIGHTS, step 5) — route through the
-// root helper (helper.go). So the operator agent unit Requires yaver-helper and
-// runs with NoNewPrivileges=true: the agent itself holds zero privilege and a
-// tenant escape can never re-gain root via a setuid binary.
+// On operator nodes root-level privileged ops the agent needs — package
+// install, yaver/docker service control, yv-* tenant create/remove — should
+// route through the root helper (helper.go). The operator agent unit Requires
+// yaver-helper, while keeping scoped sudo available for one purpose: dropping
+// into yv-* tenant users to launch their coding CLI processes.
 //
 // Self-host keeps NoNewPrivileges unset: it's the owner's own box and still
-// uses scoped sudo for apt/systemctl/ufw/etc. by design.
+// uses scoped sudo for apt/systemctl/ufw/etc. by design. Operator mode keeps
+// scoped sudo available only for dropping into yv-* tenant users; root-level
+// privileged work is expected to go through the helper.
 func hardenedSystemUnit(yaverBin string, operator bool) string {
 	execLine := yaverBin + " serve --debug --work-dir " + yaverSystemHome
 	unitDeps := ""
@@ -184,15 +196,16 @@ func hardenedSystemUnit(yaverBin string, operator bool) string {
 		// Helper must be up first so tenant shell/create/remove + pkg/service ops
 		// have their root broker available.
 		unitDeps = "Requires=" + helperUnitName + "\nAfter=" + helperUnitName + "\n"
-		// Zero-sudo agent: every privileged op now goes through the helper.
-		nnp = "NoNewPrivileges=true\n"
+		// Keep setuid sudo available only for `sudo -u yv-* ...`; the operator
+		// sudoers profile does not grant arbitrary root shell access.
+		nnp = "# NoNewPrivileges unset: operator uses scoped sudo only to drop into yv-* tenants.\n"
 	}
-	// Operator boxes write tenant homes under /home/yv-* (via the helper as root,
-	// and via `sudo -u` for shells) — mount the whole /home rw there. Single-
-	// tenant boxes only need the agent's own home writable.
+	// Operator boxes keep tenant homes under /srv/yaver/tenants/<id>/home.
+	// /home remains writable for legacy yv-* tenants and existing shell paths.
+	// Single-tenant boxes only need the agent's own home writable.
 	rwPaths := yaverSystemHome + " /var/lib/yaver /var/log/yaver"
 	if operator {
-		rwPaths = "/home /var/lib/yaver /var/log/yaver"
+		rwPaths = "/home /srv/yaver/tenants /var/lib/yaver /var/log/yaver"
 	}
 	return fmt.Sprintf(`[Unit]
 Description=Yaver Agent (dedicated %s user, hardened)
@@ -251,7 +264,7 @@ RuntimeDirectory=yaver
 RuntimeDirectoryMode=0750
 # Minimal root surface: no extra capabilities beyond what useradd/systemctl need.
 ProtectSystem=strict
-ReadWritePaths=/home /var/lib/yaver
+ReadWritePaths=/home /srv/yaver/tenants /var/lib/yaver
 ProtectKernelModules=true
 ProtectControlGroups=true
 
@@ -300,6 +313,9 @@ func installSystemdSystemService(operator bool) {
 	// 3. State + log dirs owned by the yaver user.
 	_ = runRootShell(fmt.Sprintf("install -d -o %s -g %s -m 0750 /var/lib/yaver /var/log/yaver",
 		yaverSystemUser, yaverSystemUser))
+	if operator {
+		_ = runRootShell("install -d -o root -g root -m 0755 /srv /srv/yaver && install -d -o root -g root -m 0711 /srv/yaver/tenants")
+	}
 
 	// 4. Hardened system unit.
 	unit := hardenedSystemUnit(yaverBin, operator)

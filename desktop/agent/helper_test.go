@@ -99,6 +99,9 @@ func TestHandleDispatch(t *testing.T) {
 	if got := lastCall(calls); strings.Join(got, " ") != "systemctl restart yaver" {
 		t.Errorf("service argv = %v", got)
 	}
+	if r := srv.handle(helperRequest{Verb: "tenant_create", Tenant: "yv-alice", Root: "/srv/yaver/tenants/alice", Home: "/srv/yaver/tenants/alice/home"}); !r.OK {
+		t.Errorf("tenant_create rejected beta tenant root: %v", r.Error)
+	}
 
 	// Rejected requests must NOT reach the executor.
 	before := len(calls)
@@ -107,6 +110,9 @@ func TestHandleDispatch(t *testing.T) {
 	}
 	if r := srv.handle(helperRequest{Verb: "tenant_remove", Tenant: "root"}); r.OK {
 		t.Errorf("tenant_remove targeted root — must be refused")
+	}
+	if r := srv.handle(helperRequest{Verb: "tenant_create", Tenant: "yv-alice", Root: "/etc/yaver/alice", Home: "/etc/yaver/alice/home"}); r.OK {
+		t.Errorf("tenant_create accepted non-tenant root")
 	}
 	if r := srv.handle(helperRequest{Verb: "wat"}); r.OK {
 		t.Errorf("unknown verb accepted")

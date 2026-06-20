@@ -33,9 +33,12 @@ test("buildManagedCloudInit writes managed agent config and service", () => {
   assert.match(cloudInit, /"enabled_providers": \[\n\s+"zai-coding-plan"\n\s+\]/);
   assert.match(cloudInit, /"default_agent": "build"/);
   assert.match(cloudInit, /"command": \[\n\s+"\/usr\/local\/bin\/yaver",\n\s+"mcp"\n\s+\]/);
-  assert.match(cloudInit, /cat > \/etc\/systemd\/system\/yaver-agent\.service/);
-  assert.match(cloudInit, /ExecStart=\/usr\/local\/bin\/yaver serve --debug --port 18080/);
-  assert.match(cloudInit, /systemctl enable --now yaver-agent/);
+  assert.match(cloudInit, /\/usr\/local\/bin\/yaver serve --install-systemd-system --operator/);
+  assert.match(cloudInit, /install -d -o root -g root -m 0711 \/srv\/yaver\/tenants/);
+  assert.match(cloudInit, /systemctl enable --now yaver-helper yaver/);
+  assert.match(cloudInit, /After=network-online\.target nginx\.service yaver\.service/);
+  assert.doesNotMatch(cloudInit, /cat > \/etc\/systemd\/system\/yaver-agent\.service/);
+  assert.doesNotMatch(cloudInit, /NOPASSWD:ALL/);
   assert.match(cloudInit, /cat > \/usr\/local\/bin\/yaver-bootstrap-workspace/);
   assert.match(cloudInit, /clone_one https:\/\/github\.com\/kivanccakmak\/yaver\.io\.git yaver\.io/);
   assert.match(cloudInit, /clone_one https:\/\/github\.com\/kivanccakmak\/talos\.git talos/);

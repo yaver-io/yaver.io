@@ -2399,7 +2399,23 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 	// Determine working directory
 	taskDir := tm.effectiveTaskWorkDir(task)
-	if err := CheckRunnerReady(runner, taskDir); err != nil {
+	tenantRT := tenantRuntimeForTask(task)
+	if tenantRT.Enabled {
+		if err := CheckRunnerBinary(runner.Command); err != nil {
+			cancel()
+			return fmt.Errorf("runner not ready: %w", err)
+		}
+		if normalizeRunnerID(runner.RunnerID) == "codex" {
+			if err := codexLinuxSandboxPrereqErrorFunc(); err != "" {
+				cancel()
+				return fmt.Errorf("runner not ready: %s", err)
+			}
+		}
+		if err := tenantRT.prepare(); err != nil {
+			cancel()
+			return fmt.Errorf("tenant runtime: %w", err)
+		}
+	} else if err := CheckRunnerReady(runner, taskDir); err != nil {
 		cancel()
 		return fmt.Errorf("runner not ready: %w", err)
 	}
@@ -2412,6 +2428,9 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			useContainer = true
 		} else if task.GuestUserID == "" && tm.ContainerizeHost {
 			useContainer = true
+		}
+		if tenantRT.Enabled {
+			useContainer = false
 		}
 		// Hosted coding CLIs like Codex / Claude Code / OpenCode / Aider are
 		// installed and authenticated on the host machine, not inside Yaver's
@@ -2506,18 +2525,42 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		// Opt-in via YAVER_TMUX_RUNNER=<session-name>; falls through to
 		// direct exec when off, tmux missing, or session absent.
 		var cmd *exec.Cmd
+		var err error
 		var tmuxEnvAdditions []string
 		if session := tmuxRunnerReady(); session != "" && tmuxRunnerEligible(runner.RunnerID) {
-			log.Printf("[task %s] tmux mode: dispatching %s into session %q",
-				task.ID, runner.Command, session)
-			cmd, tmuxEnvAdditions = buildTmuxRunnerCommand(ctx, session, task.ID, runner.Command, args)
+			if tenantRT.Enabled {
+				log.Printf("[task %s] tmux mode disabled for tenant runtime %s", task.ID, tenantRT.User)
+				cmd, err = tenantRT.command(ctx, taskDir, runner.Command, args, tenantRT.taskEnv(task))
+				if err != nil {
+					cancel()
+					return fmt.Errorf("tenant command: %w", err)
+				}
+			} else {
+				log.Printf("[task %s] tmux mode: dispatching %s into session %q",
+					task.ID, runner.Command, session)
+				cmd, tmuxEnvAdditions = buildTmuxRunnerCommand(ctx, session, task.ID, runner.Command, args)
+			}
 		} else {
-			cmd = exec.CommandContext(ctx, runner.Command, args...)
+			if tenantRT.Enabled {
+				cmd, err = tenantRT.command(ctx, taskDir, runner.Command, args, tenantRT.taskEnv(task))
+				if err != nil {
+					cancel()
+					return fmt.Errorf("tenant command: %w", err)
+				}
+			} else {
+				cmd = exec.CommandContext(ctx, runner.Command, args...)
+			}
 		}
-		cmd.Dir = taskDir
+		if !tenantRT.Enabled {
+			cmd.Dir = taskDir
+		}
 
 		// Ensure common tool paths are in PATH for background processes.
-		cmd.Env = taskEnv(task)
+		if tenantRT.Enabled {
+			cmd.Env = append(os.Environ(), "PATH="+expandedPath())
+		} else {
+			cmd.Env = taskEnv(task)
+		}
 		if len(tmuxEnvAdditions) > 0 {
 			cmd.Env = append(cmd.Env, tmuxEnvAdditions...)
 		}
