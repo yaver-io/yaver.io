@@ -32,11 +32,12 @@ import (
 )
 
 type mobileHermesReloadArgs struct {
+	DeviceID       string `json:"device_id,omitempty"`
 	TargetDeviceID string `json:"target_device_id,omitempty"`
 	Mode           string `json:"mode,omitempty"`
 }
 
-func mcpMobileHermesReload(args mobileHermesReloadArgs) interface{} {
+func mobileHermesReloadBody(args mobileHermesReloadArgs) map[string]interface{} {
 	body := map[string]interface{}{}
 	if mode := strings.TrimSpace(args.Mode); mode != "" {
 		body["mode"] = mode
@@ -47,6 +48,11 @@ func mcpMobileHermesReload(args mobileHermesReloadArgs) interface{} {
 		// future agent rev can pick it up without an MCP-side bump.
 		body["targetDeviceId"] = id
 	}
+	return body
+}
+
+func mcpMobileHermesReload(args mobileHermesReloadArgs) interface{} {
+	body := mobileHermesReloadBody(args)
 
 	resp, err := localAgentRequest("POST", "/dev/reload", body)
 	if err != nil {

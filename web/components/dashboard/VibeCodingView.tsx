@@ -252,6 +252,11 @@ export default function VibeCodingView({
   const [activeGraphRunId, setActiveGraphRunId] = useState<string | null>(null);
   const [graphRun, setGraphRun] = useState<AgentGraphRun | null>(null);
   const [graphNodeOutput, setGraphNodeOutput] = useState("");
+  // Cost mode for multi-step graph runs: 0 = single-model (default, your plan),
+  // 2 = duo (Claude Code + GLM), 3 = trio (Claude Code + Codex + GLM). Spreads
+  // independent slices across the lanes — coherence stays on the flat
+  // subscription plans, parallel overflow spills to the cheap GLM apikey lane.
+  const [hybridDegree, setHybridDegree] = useState<number>(0);
   const [composer, setComposer] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
   // Video summary toggle — when on, the agent records a short MP4 demo
@@ -652,6 +657,7 @@ export default function VibeCodingView({
         runner: selectedRunner || undefined,
         model: selectedModel || undefined,
         template: "ask",
+        hybridDegree: hybridDegree || undefined,
       });
       if (!res.ok || !res.run) {
         setBusy(res.error || "Failed to start deep ask.");
@@ -1863,6 +1869,23 @@ export default function VibeCodingView({
                     ? "Deep ask · investigate → answer → verify"
                     : activeTask?.title || "New coding session"}
                 </div>
+                {!activeGraphRunId ? (
+                  <div
+                    className="flex items-center gap-0.5 rounded-md border border-surface-700 bg-surface-950 p-0.5"
+                    title="Cost mode for multi-step (deep ask / graph) runs. Single = your subscription plan only. Duo = Claude Code + GLM. Trio = Claude Code + Codex + GLM. Coherence-critical work stays on the flat subscription plans; parallel overflow spills to the cheap GLM apikey lane."
+                  >
+                    {([[0, "Single"], [2, "Duo"], [3, "Trio"]] as [number, string][]).map(([deg, label]) => (
+                      <button
+                        key={deg}
+                        type="button"
+                        onClick={() => setHybridDegree(deg)}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors ${hybridDegree === deg ? "bg-sky-500/20 text-sky-600 dark:text-sky-300" : "text-surface-400 hover:text-surface-200"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 {activeGraphRunId ? (
                   <button
                     onClick={() => {

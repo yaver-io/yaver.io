@@ -57,6 +57,7 @@ import type * as projectShares from "../projectShares.js";
 import type * as provisionRelay from "../provisionRelay.js";
 import type * as provisioning from "../provisioning.js";
 import type * as publishJobs from "../publishJobs.js";
+import type * as pushNotifications from "../pushNotifications.js";
 import type * as runnerUsage from "../runnerUsage.js";
 import type * as seed from "../seed.js";
 import type * as shortcuts from "../shortcuts.js";
@@ -125,6 +126,7 @@ declare const fullApi: ApiFromModules<{
   provisionRelay: typeof provisionRelay;
   provisioning: typeof provisioning;
   publishJobs: typeof publishJobs;
+  pushNotifications: typeof pushNotifications;
   runnerUsage: typeof runnerUsage;
   seed: typeof seed;
   shortcuts: typeof shortcuts;

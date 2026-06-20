@@ -19,6 +19,7 @@ const NONE: CodingBackendAvailability = {
   anthropicKey: false,
   openaiKey: false,
   glmKey: false,
+  remoteRunner: false,
 };
 
 test("backendMeta resolves and rejects unknown", () => {
@@ -74,4 +75,23 @@ test("resolveBackend auto with nothing configured returns null id", () => {
   const r = resolveBackend("auto", NONE);
   assert.equal(r.id, null);
   assert.equal(r.auto, true);
+});
+
+test("remote runner backend is usable only when a box is connected", () => {
+  assert.equal(backendMeta("remote").kind, "cloud");
+  assert.equal(backendMeta("remote").requiresKey, undefined); // box holds the key
+  assert.equal(backendUsable("remote", NONE), false);
+  assert.equal(backendUsable("remote", { ...NONE, remoteRunner: true }), true);
+  assert.ok(usableBackends({ ...NONE, remoteRunner: true }).includes("remote"));
+});
+
+test("remote runner is NEVER auto-picked (explicit choice only)", () => {
+  // Even when a box is the only thing available, auto stays null — routing to a
+  // box must be deliberate.
+  assert.equal(resolveAutoBackend({ ...NONE, remoteRunner: true }), null);
+  // Picking it explicitly honors it; if the box drops, fall back to auto.
+  assert.equal(resolveBackend("remote", { ...NONE, remoteRunner: true }).id, "remote");
+  const dropped = resolveBackend("remote", { ...NONE, glmKey: true });
+  assert.equal(dropped.id, "glm");
+  assert.equal(dropped.fellBackFrom, "remote");
 });

@@ -30,6 +30,8 @@ import { createAnthropicProvider } from "./llmAnthropic";
 import { createClaudeSubscriptionProvider } from "./llmClaudeSubscription";
 import { createOpenAiProvider } from "./llmOpenAI";
 import { createLocalProvider } from "./llmLocal";
+import { createRemoteProvider } from "./llmRemote";
+import { quicClient } from "./quic";
 import { hasSubscription } from "./subscriptionStore";
 import { engineAvailable, loadModel, type LoadedModel } from "./localAgent/engine";
 import { MODEL_REGISTRY, type ModelEntry } from "./localAgent/models";
@@ -40,7 +42,7 @@ const FS = FileSystem as any;
 
 // ── Preference (which backend the user picked) ──────────────────────
 
-const VALID_PREFS = new Set<CodingBackendPref>(["auto", "local", "subscription", "anthropic", "openai", "glm"]);
+const VALID_PREFS = new Set<CodingBackendPref>(["auto", "local", "subscription", "anthropic", "openai", "glm", "remote"]);
 
 export async function loadCodingBackendPref(): Promise<CodingBackendPref> {
   const raw = await getLocalSecret(LOCAL_KEYS.mobileCodingProvider);
@@ -116,6 +118,11 @@ export async function loadCodingAvailability(): Promise<CodingBackendAvailabilit
     anthropicKey: !!anthropic?.trim(),
     openaiKey: !!openai?.trim(),
     glmKey: !!glm?.trim(),
+    // The remote GLM runner needs a connected box to dispatch to. We don't
+    // probe the box's GLM config here (that surfaces as an error at run time
+    // with a clear "configure ZAI_API_KEY on the box" message) — connectivity
+    // is the gate for offering the option.
+    remoteRunner: quicClient.isConnected,
   };
 }
 
@@ -188,6 +195,14 @@ export async function makeProvider(
     case "glm": {
       const key = (await getLocalSecret(LOCAL_KEYS.glmApiKey))?.trim();
       return key ? createOpenAiProvider({ flavor: "glm", apiKey: key }) : null;
+    }
+    case "remote": {
+      // No phone-side key — the box runs the GLM runner with its own z.ai
+      // credential. Requires a live connection; null if the box dropped.
+      if (!quicClient.isConnected) return null;
+      return createRemoteProvider({
+        dispatch: (body) => quicClient.sandboxRun(body),
+      });
     }
     case "local": {
       const model = await getLoadedCoder();

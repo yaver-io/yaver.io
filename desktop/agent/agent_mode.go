@@ -123,7 +123,13 @@ type AgentGraphCreateRequest struct {
 	PreferredDevice string               `json:"preferredDevice,omitempty"`
 	AllowedDevices  []string             `json:"allowedDevices,omitempty"`
 	AllowedRunners  []string             `json:"allowedRunners,omitempty"`
-	Nodes           []AgentGraphNodeSpec `json:"nodes,omitempty"`
+	// HybridDegree selects the cost-aware duo/trio routing: 0 = default
+	// (unconstrained rotation), 2 = duo (claude-code subscription + glm apikey),
+	// 3 = trio (claude-code + codex subscription + glm apikey). Independent
+	// slices spread across the selected lanes — coherence work stays on the flat
+	// subscription plans, parallel overflow spills to the cheap glm apikey lane.
+	HybridDegree int                  `json:"hybridDegree,omitempty"`
+	Nodes        []AgentGraphNodeSpec `json:"nodes,omitempty"`
 }
 
 type AgentGraphManager struct {

@@ -37,6 +37,10 @@ export default function AgentModeScreen() {
   const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [template, setTemplate] = useState<"full" | "ship">("full");
   const [maxParallel, setMaxParallel] = useState("2");
+  // Cost mode: 0 = single-model (your plan), 2 = duo (Claude Code + GLM),
+  // 3 = trio (Claude Code + Codex + GLM). Independent slices spread across the
+  // lanes; coherence stays on the flat plans, overflow spills to cheap GLM.
+  const [hybridDegree, setHybridDegree] = useState(0);
 
   const refresh = useCallback(async () => {
     if (!isConnected) return;
@@ -83,6 +87,7 @@ export default function AgentModeScreen() {
         maxParallel: Math.max(1, parseInt(maxParallel || "2", 10) || 2),
         preferredDevice: selectedDevices.length == 1 ? selectedDevices[0] : undefined,
         allowedDevices: selectedDevices,
+        hybridDegree: hybridDegree || undefined,
       });
       if (!res.ok) {
         Alert.alert("Start failed", res.error || "Could not create agent graph");
@@ -93,7 +98,7 @@ export default function AgentModeScreen() {
     } finally {
       setStarting(false);
     }
-  }, [workDir, prompt, name, runner, template, maxParallel, selectedDevices, refresh]);
+  }, [workDir, prompt, name, runner, template, maxParallel, selectedDevices, hybridDegree, refresh]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={[]}>
@@ -146,6 +151,22 @@ export default function AgentModeScreen() {
               <TextInput value={maxParallel} onChangeText={setMaxParallel} keyboardType="number-pad" style={[styles.input, { color: c.textPrimary, borderColor: c.border }]} />
             </View>
           </View>
+
+          <Text style={[styles.label, { color: c.textPrimary }]}>Cost Mode</Text>
+          <View style={styles.segmentRow}>
+            {([[0, "Single"], [2, "Duo"], [3, "Trio"]] as [number, string][]).map(([deg, label]) => (
+              <Pressable
+                key={deg}
+                onPress={() => setHybridDegree(deg)}
+                style={[styles.segment, { borderColor: c.border, backgroundColor: hybridDegree === deg ? c.accent : c.bg }]}
+              >
+                <Text style={{ color: hybridDegree === deg ? "#fff" : c.textPrimary, fontWeight: "600" }}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={[styles.subtitle, { color: c.textMuted, marginTop: 4 }]}>
+            Single = your subscription plan only. Duo = Claude Code + GLM. Trio = Claude Code + Codex + GLM. Coherence-critical work stays on the flat plans; parallel overflow spills to the cheap GLM apikey lane.
+          </Text>
 
           {!!runners.length && (
             <>

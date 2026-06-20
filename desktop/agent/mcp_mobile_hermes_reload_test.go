@@ -113,15 +113,35 @@ func TestMobileHermesReloadArgs_JSONTags(t *testing.T) {
 	// with `target_device_id` and `mode`. If somebody renames the Go
 	// fields without updating the tool schema, the MCP call silently
 	// drops the args. Catch that here.
-	raw := []byte(`{"target_device_id":"dev-B","mode":"dev"}`)
+	raw := []byte(`{"device_id":"box-1","target_device_id":"dev-B","mode":"dev"}`)
 	var args mobileHermesReloadArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
 		t.Fatalf("unmarshal: %v", err)
+	}
+	if args.DeviceID != "box-1" {
+		t.Fatalf("DeviceID = %q; want box-1 (json tag drift?)", args.DeviceID)
 	}
 	if args.TargetDeviceID != "dev-B" {
 		t.Fatalf("TargetDeviceID = %q; want dev-B (json tag drift?)", args.TargetDeviceID)
 	}
 	if args.Mode != "dev" {
 		t.Fatalf("Mode = %q; want dev (json tag drift?)", args.Mode)
+	}
+}
+
+func TestMobileHermesReloadBody_SeparatesAgentDeviceFromSdkTarget(t *testing.T) {
+	body := mobileHermesReloadBody(mobileHermesReloadArgs{
+		DeviceID:       "box-1",
+		TargetDeviceID: "phone-sdk-1",
+		Mode:           "bundle",
+	})
+	if _, leaked := body["device_id"]; leaked {
+		t.Fatalf("body leaked device_id to /dev/reload: %#v", body)
+	}
+	if got := body["targetDeviceId"]; got != "phone-sdk-1" {
+		t.Fatalf("targetDeviceId = %#v; want phone-sdk-1", got)
+	}
+	if got := body["mode"]; got != "bundle" {
+		t.Fatalf("mode = %#v; want bundle", got)
 	}
 }

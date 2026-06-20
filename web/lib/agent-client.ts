@@ -2359,6 +2359,9 @@ export class AgentClient {
     preferredDevice?: string;
     allowedDevices?: string[];
     allowedRunners?: string[];
+    // Cost-aware duo/trio routing: 0/undefined = default (single-model),
+    // 2 = duo (claude-code + glm), 3 = trio (claude-code + codex + glm).
+    hybridDegree?: number;
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -2375,6 +2378,7 @@ export class AgentClient {
         preferredDevice: params.preferredDevice ?? "",
         allowedDevices: params.allowedDevices ?? [],
         allowedRunners: params.allowedRunners ?? [],
+        hybridDegree: params.hybridDegree ?? 0,
       }),
     });
     const data = await res.json().catch(() => ({}));

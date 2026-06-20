@@ -147,6 +147,8 @@ function labelForBackend(id: CodingBackendId): string {
       return "OpenAI (BYO key)";
     case "glm":
       return "GLM (BYO key)";
+    case "remote":
+      return "Remote runner (GLM)";
   }
 }
 

@@ -185,6 +185,42 @@ For a solo dev, the cheapest correct setup is **not** trio mode — it's:
 That's the efficient frontier. Trio-splitting a single interactive coding task
 on your laptop would make it **slower and more error-prone**, not cheaper.
 
+## 5e. Implementation status (2026-06-20)
+
+**Built + unit-tested + UI-wired (this change):**
+- `glm` is now a first-class mesh runner: capability detection
+  (`console_machines.go` loop adds `glm`), rotation
+  (`inferPreferredRunnerCandidates` offers glm for bulk/overflow),
+  model selection (`choosePlacementModel` → `glm-5.2`), and shared-machine
+  apikey gating (`runnerNeedsHostedAPIKey`).
+- Cost-tier model: `runnerCostTier` (subscription vs apikey) +
+  `hybridLaneSet`/`filterRunnerLanes` + `AgentGraphCreateRequest.HybridDegree`
+  (0 = single-model/default, 2 = duo claude-code+glm, 3 = trio +codex). The
+  existing per-run load balancer spreads independent slices across the lanes;
+  coherence stays on the flat subscription plans, parallel overflow spills to
+  the cheap glm apikey lane.
+- Unit tests: `agent_mesh_hybrid_test.go` (all pass). `go build` + cross-build
+  `GOOS=linux GOARCH=arm64` both green.
+- UI: web `VibeCodingView` Single/Duo/Trio selector + `agent-client`
+  `hybridDegree`; mobile Agent Mode "Cost Mode" segment + `quic.ts`
+  `hybridDegree`. Both tsc-clean.
+
+**OPEN — blocks the runtime payoff, must be resolved by a live run:**
+- *Does the `claude` binary honor the z.ai `ANTHROPIC_BASE_URL`/
+  `ANTHROPIC_AUTH_TOKEN` override when a `--claudeai` subscription login is
+  present?* If it prefers the stored subscription OAuth, the `glm` runner
+  silently falls back to Anthropic on any subscription machine (observed: a
+  claude+glm-5.2 task hit Anthropic and failed "model glm-5.2 may not exist"
+  even with the override in the vault). The glm lane then only works on boxes
+  **without** a claude login. Fix candidates if confirmed: launch the glm
+  runner with a cleared claude credential store / a flag that forces the
+  apikey path, or run glm via opencode's anthropic provider instead of the
+  claude binary.
+- Live e2e (Hetzner) not yet run: blocked by CLI auth/vault flapping
+  (token-rotation re-locks: `not authenticated` / `wrong passphrase`) and the
+  box being exec-unreachable at test time. Binary is cross-compiled and ready
+  at `/tmp/yaver-glm-arm64`.
+
 ## 6. Bottom line
 
 - **The platform is real** (DAG, placement, remote autopilot, worktree

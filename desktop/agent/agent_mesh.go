@@ -239,9 +239,16 @@ func placementTargetMatchesMachine(targets []string, m MachineInfo) bool {
 }
 
 func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m MachineInfo, state *meshPlannerState) (int, string, string) {
-	runner := chooseCandidateRunner(node, m)
+	runner := chooseCandidateRunner(req, node, m)
 	score := 0
 	reasons := []string{}
+	if tier := runnerCostTier(runner); runner != "" {
+		if tier == "subscription" {
+			reasons = append(reasons, "subscription lane ("+runner+", flat plan)")
+		} else {
+			reasons = append(reasons, "cheap apikey lane ("+runner+", parallel overflow)")
+		}
+	}
 	if m.IsLocal {
 		score += 5
 		reasons = append(reasons, "local machine available")
@@ -407,7 +414,7 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 	return score, runner, fmt.Sprintf("selected %s for %s", m.Name, node.Kind)
 }
 
-func chooseCandidateRunner(node AgentGraphNodeSpec, m MachineInfo) string {
+func chooseCandidateRunner(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m MachineInfo) string {
 	runner := normalizedPlacementRunner(node.Runner)
 	if runner != "" {
 		return runner
@@ -423,6 +430,10 @@ func chooseCandidateRunner(node AgentGraphNodeSpec, m MachineInfo) string {
 	if sticky := normalizedPlacementRunner(node.PriorRunner); sticky != "" && !stringSliceContainsNormalized(candidates, sticky) {
 		candidates = append([]string{sticky}, candidates...)
 	}
+	// Hybrid duo/trio: constrain the rotation to the requested runner lanes
+	// (one/both subscription lanes + the cheap apikey lane) so independent
+	// slices spread across exactly those backends.
+	candidates = filterRunnerLanes(candidates, hybridLaneSet(req.HybridDegree))
 	if len(node.AllowedRunners) > 0 {
 		allowed := map[string]bool{}
 		for _, r := range node.AllowedRunners {
@@ -447,31 +458,99 @@ func chooseCandidateRunner(node AgentGraphNodeSpec, m MachineInfo) string {
 	return ""
 }
 
+// inferPreferredRunnerCandidates returns the cost-aware runner preference order
+// for a node. The ordering encodes the hybrid duo/trio cost model: spend the
+// flat-rate SUBSCRIPTION lanes (claude-code, codex — marginal $≈0 but capped at
+// one instance per machine) first, then spill overflow/parallel slices to the
+// cheap metered APIKEY lane (glm). The per-run load balancer in
+// scoreNodePlacement (runnerAssignments penalty + machineRunnerGlobalLimit=1 for
+// claude/codex) routes the 2nd+ concurrent slice of a kind onto glm, so N
+// independent slices spread across claude-code + codex + glm automatically.
 func inferPreferredRunnerCandidates(node AgentGraphNodeSpec) []string {
 	intent := nodeIntent(node)
 	if node.DesignPoints >= 0.8 {
-		return []string{"claude-code", "codex", "opencode"}
+		// Plan/coherence: strongest subscription model first; glm is the cheap
+		// fallback when the subscription lane is already busy.
+		return []string{"claude-code", "codex", "glm", "opencode"}
 	}
 	if node.BuildPoints >= 0.8 {
-		return []string{"codex", "opencode", "claude-code"}
+		// Bulk implement: free subscription lane first, then the cheap apikey
+		// overflow lane before paying nothing extra falls back to claude-code.
+		return []string{"codex", "glm", "opencode", "claude-code"}
 	}
 	if node.VerifyPoints >= 0.8 {
-		return []string{"codex", "claude-code", "opencode"}
+		return []string{"codex", "claude-code", "glm", "opencode"}
 	}
 	if strings.Contains(intent, "local llm") || strings.Contains(intent, "byok") {
-		return []string{"opencode", "codex", "claude-code"}
+		return []string{"opencode", "glm", "codex", "claude-code"}
 	}
 	if strings.Contains(intent, "testflight") || strings.Contains(intent, "ios") {
+		// iOS/TestFlight needs first-party Claude tooling on macOS; keep glm out.
 		return []string{"claude-code", "codex", "opencode"}
 	}
 	switch node.Kind {
 	case AgentNodeChat:
-		return []string{"claude-code", "codex", "opencode"}
+		return []string{"claude-code", "codex", "glm", "opencode"}
 	case AgentNodeAutoIdeas:
-		return []string{"claude-code", "codex", "opencode"}
+		return []string{"claude-code", "codex", "glm", "opencode"}
 	default:
-		return []string{"claude-code", "codex"}
+		return []string{"claude-code", "codex", "glm"}
 	}
+}
+
+// runnerCostTier classifies how a runner is billed for the operator. The hybrid
+// planner uses this to keep coherence-critical work on the flat subscription
+// plans and push parallel overflow onto the cheap metered apikey lane.
+//
+//	subscription — claude-code, codex: flat plan, marginal $≈0, rate-limited
+//	apikey       — glm, opencode, others: metered per-token, parallelizable
+func runnerCostTier(runner string) string {
+	switch normalizedPlacementRunner(runner) {
+	case "claude-code", "codex":
+		return "subscription"
+	default:
+		return "apikey"
+	}
+}
+
+// hybridLaneSet maps a duo/trio degree to the runner lanes a hybrid run may
+// spread independent slices across, or nil for the default unconstrained
+// rotation. duo (2) = one subscription lane + the cheap apikey lane; trio (3) =
+// both subscription lanes + apikey. Degrees ≥3 keep the trio lane set.
+func hybridLaneSet(degree int) map[string]bool {
+	switch {
+	case degree <= 0:
+		return nil
+	case degree == 1:
+		return map[string]bool{"claude-code": true}
+	case degree == 2:
+		return map[string]bool{"claude-code": true, "glm": true}
+	default:
+		return map[string]bool{"claude-code": true, "codex": true, "glm": true}
+	}
+}
+
+// filterRunnerLanes keeps only candidates inside the hybrid lane set, preserving
+// the cost-aware order. If none of the preferred candidates are in the lane set,
+// it falls back to the lane set itself (stable order) so the slice still places.
+func filterRunnerLanes(candidates []string, lanes map[string]bool) []string {
+	if lanes == nil {
+		return candidates
+	}
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if lanes[normalizedPlacementRunner(c)] {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		for _, r := range []string{"claude-code", "codex", "glm"} {
+			if lanes[r] {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
 }
 
 func normalizedPlacementRunner(runner string) string {
@@ -495,6 +574,11 @@ func choosePlacementModel(node AgentGraphNodeSpec, runner string) string {
 			return "claude-opus-4-6"
 		}
 		return "claude-sonnet-4-6"
+	case "glm":
+		// z.ai's GLM speaks the Anthropic wire protocol through the claude
+		// binary; glm-5.2 is the current coding model (≈94% of Opus on
+		// SWE-bench at ~1/3 the cost — the cheap apikey overflow lane).
+		return "glm-5.2"
 	default:
 		return ""
 	}
@@ -530,7 +614,7 @@ func machineSupportsAndroid(caps *MachineCapabilities) bool {
 // host's API key or a guest-provided key to run on a shared machine.
 func runnerNeedsHostedAPIKey(runner string) bool {
 	switch normalizedPlacementRunner(runner) {
-	case "claude-code", "codex", "opencode":
+	case "claude-code", "codex", "opencode", "glm":
 		return true
 	default:
 		return false

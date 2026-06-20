@@ -8,17 +8,21 @@
 // *identity* of those backends and the deterministic "auto" selection so the
 // UI and the RN factory (codingBackendStore.ts) stay thin and auditable.
 //
-// "remote runner on a connected box" is a DIFFERENT mode (the create-wizard's
-// codingMode="runner" — quicClient.sendTask) that edits files on the remote
-// machine, not the phone sandbox. It is intentionally NOT one of these
-// backends: these are the engines that touch the local sandbox tree.
+// NOTE: "runner" coding mode (the create-wizard's codingMode="runner" —
+// quicClient.sendTask) edits files in a repo ON the remote machine and is a
+// different feature. The "remote" backend below is distinct: it round-trips the
+// PHONE SANDBOX's own files to a connected box, runs the GLM runner there, and
+// applies the resulting EditPlan back to the local sandbox tree — so the engine
+// runs remotely but the edited tree stays the phone's.
 
 /** The concrete coding engines that produce an EditPlan for the local sandbox.
  *  "subscription" = Claude on the user's Max/Pro PLAN via the mirrored OAuth
  *  token (claudeSubscription.ts). It is NOT a BYO API key: it draws from the
  *  flat-rate subscription at zero marginal cost, which is why iOS prefers it
- *  over the metered "anthropic" key. */
-export type CodingBackendId = "local" | "subscription" | "anthropic" | "openai" | "glm";
+ *  over the metered "anthropic" key.
+ *  "remote" = ship the sandbox to a connected box and let its GLM runner edit
+ *  it (the box holds the z.ai credential, not the phone). */
+export type CodingBackendId = "local" | "subscription" | "anthropic" | "openai" | "glm" | "remote";
 
 /** What the user has chosen. "auto" = let resolveAutoBackend pick per availability. */
 export type CodingBackendPref = "auto" | CodingBackendId;
@@ -69,6 +73,12 @@ export const CODING_BACKENDS: readonly CodingBackendMeta[] = [
     note: "Zhipu GLM via your own API key. Cheap, capable.",
     requiresKey: "glm",
   },
+  {
+    id: "remote",
+    label: "Remote runner (GLM)",
+    kind: "cloud",
+    note: "Runs the GLM coding agent on a connected box and applies its edits back to this sandbox. The box holds the key — your phone doesn't. Requires a connected device.",
+  },
 ] as const;
 
 export function backendMeta(id: CodingBackendId): CodingBackendMeta {
@@ -87,6 +97,8 @@ export interface CodingBackendAvailability {
   anthropicKey: boolean;
   openaiKey: boolean;
   glmKey: boolean;
+  /** A box is connected that can run the remote GLM runner. */
+  remoteRunner: boolean;
 }
 
 // COMPLIANCE — the subscription token is CLI-ONLY.
@@ -113,6 +125,8 @@ export function backendUsable(id: CodingBackendId, av: CodingBackendAvailability
       return av.openaiKey;
     case "glm":
       return av.glmKey;
+    case "remote":
+      return av.remoteRunner;
   }
 }
 
@@ -130,6 +144,9 @@ export function usableBackends(av: CodingBackendAvailability): CodingBackendId[]
  *   3. Other BYO metered keys the user configured: Anthropic → OpenAI.
  *   4. null when nothing is configured (UI prompts the user to add a key, or to
  *      pair a box / enable Android proot to use the real CLI on their plan).
+ * "remote" is intentionally NEVER auto-picked — routing a sandbox edit to a box
+ * (uses the user's machine + network) must be an explicit choice, not a silent
+ * fallback. The user selects it deliberately in the backend chooser.
  */
 export function resolveAutoBackend(av: CodingBackendAvailability): CodingBackendId | null {
   if (av.localModelReady) return "local";

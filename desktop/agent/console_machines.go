@@ -209,7 +209,7 @@ func detectMachineCapabilities(workDir string) *MachineCapabilities {
 		Hardware: DetectHardware(),
 		Profile:  loadMachineProfile(workDir),
 	}
-	for _, id := range []string{"claude", "codex", "aider", "aider-ollama", "ollama", "opencode"} {
+	for _, id := range []string{"claude", "codex", "glm", "aider", "aider-ollama", "ollama", "opencode"} {
 		cfg := GetRunnerConfig(id)
 		if cfg.RunnerID == "" || cfg.Command == "" {
 			continue

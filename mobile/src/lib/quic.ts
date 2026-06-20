@@ -26,6 +26,7 @@ import { cacheTaskList, cacheTaskOutput, getCachedTaskList, getDeletedTaskIds } 
 import { beaconListener } from "./beacon";
 import NetInfo from "@react-native-community/netinfo";
 import type { BuildInfo, BuildSummary } from "./builds";
+import type { RemoteSandboxRequest, RemoteSandboxResponse } from "./llmRemote";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -8329,6 +8330,9 @@ export class QuicClient {
     preferredDevice?: string;
     allowedDevices?: string[];
     allowedRunners?: string[];
+    // Cost-aware duo/trio routing: 0/undefined = single-model (your plan),
+    // 2 = duo (claude-code + glm), 3 = trio (claude-code + codex + glm).
+    hybridDegree?: number;
   }): Promise<{ ok: boolean; run?: AgentGraphRun; error?: string }> {
     try {
       const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -8345,6 +8349,7 @@ export class QuicClient {
           preferredDevice: params.preferredDevice ?? "",
           allowedDevices: params.allowedDevices ?? [],
           allowedRunners: params.allowedRunners ?? [],
+          hybridDegree: params.hybridDegree ?? 0,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -8353,6 +8358,34 @@ export class QuicClient {
     } catch (e: any) {
       return { ok: false, error: e?.message ?? "network error" };
     }
+  }
+
+  /** Mobile Sandbox → remote runner (GLM). Ship the phone sandbox's files +
+   *  prompt to the connected box's POST /sandbox/run; it runs the GLM runner
+   *  over a throwaway workdir and returns an EditPlan-shaped diff. See
+   *  desktop/agent/sandbox_remote.go and llmRemote.ts. The box-side run can take
+   *  minutes, so the client timeout is the requested budget + a buffer. */
+  async sandboxRun(body: RemoteSandboxRequest): Promise<RemoteSandboxResponse> {
+    const budgetMs = body.timeoutMs && body.timeoutMs > 0 ? body.timeoutMs : 180000;
+    const res = await this.fetchWithTimeout(
+      `${this.baseUrl}/sandbox/run`,
+      {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      budgetMs + 30000,
+    );
+    const data = (await res.json().catch(() => ({}))) as RemoteSandboxResponse;
+    if (!res.ok) {
+      return {
+        ok: false,
+        edits: data?.edits ?? [],
+        error: data?.error || `HTTP ${res.status}`,
+        runner: "glm",
+      };
+    }
+    return data;
   }
 
   async stopAgentGraph(id: string): Promise<boolean> {

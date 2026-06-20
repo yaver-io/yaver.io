@@ -13,6 +13,7 @@ const NONE: CodingBackendAvailability = {
   anthropicKey: false,
   openaiKey: false,
   glmKey: false,
+  remoteRunner: false,
 };
 const PLAN: CodingBackendAvailability = { ...NONE, claudeSubscription: true };
 const GLM: CodingBackendAvailability = { ...NONE, glmKey: true };
