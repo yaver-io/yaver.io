@@ -821,6 +821,47 @@ export interface GitBranchRow {
   current: boolean;
 }
 
+export interface ManagedGitBackupMeta {
+  path: string;
+  target?: string;
+  sizeBytes: number;
+  commit?: string;
+  createdAt: string;
+}
+
+export interface ManagedGitExternalBackupMeta {
+  targetKind: "local-folder" | "shared-storage" | "dropbox" | string;
+  targetId?: string;
+  path: string;
+  sizeBytes: number;
+  commit?: string;
+  createdAt: string;
+}
+
+export interface ManagedGitMirrorMeta {
+  provider: "github" | "gitlab" | string;
+  host: string;
+  fullName: string;
+  cloneUrl: string;
+  visibility: string;
+  lastPushAt?: string;
+}
+
+export interface ManagedGitProjectMeta {
+  repoId: string;
+  enabled: boolean;
+  visibility: "private" | "unlisted" | "public" | string;
+  defaultBranch: string;
+  barePath: string;
+  workDir: string;
+  lastCommit?: string;
+  lastBackup?: ManagedGitBackupMeta | null;
+  externalBackups?: ManagedGitExternalBackupMeta[];
+  mirrors?: ManagedGitMirrorMeta[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RunnerAuthSetParams {
   runner: "claude" | "claude-code" | "codex" | "opencode";
   openaiApiKey?: string;
@@ -6628,6 +6669,119 @@ export class AgentClient {
     });
     return res.json();
   }
+
+  async managedGitStatus(args: { slug?: string; workDir?: string }): Promise<ManagedGitProjectMeta | null> {
+    this.assertConnected();
+    const qs = new URLSearchParams();
+    if (args.slug) qs.set("slug", args.slug);
+    if (args.workDir) qs.set("workDir", args.workDir);
+    const res = await fetch(`${this.baseUrl}/managed-git/status?${qs.toString()}`, {
+      headers: this.authHeaders,
+    });
+    if (res.status === 404) return null;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitStatus ${res.status}`);
+    return data as ManagedGitProjectMeta;
+  }
+
+  async managedGitEnable(args: {
+    slug?: string;
+    workDir?: string;
+    name?: string;
+    visibility?: "private" | "unlisted" | "public";
+  }): Promise<ManagedGitProjectMeta> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/enable`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitEnable ${res.status}`);
+    return data as ManagedGitProjectMeta;
+  }
+
+  async managedGitBackupRun(args: { slug?: string; workDir?: string }): Promise<{ ok: boolean; backup: ManagedGitBackupMeta }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/backup/run`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitBackupRun ${res.status}`);
+    return data as { ok: boolean; backup: ManagedGitBackupMeta };
+  }
+
+  async managedGitBackupCopy(args: {
+    slug?: string;
+    workDir?: string;
+    targetKind?: "local-folder" | "shared-storage" | "dropbox";
+    targetId?: string;
+    destPath?: string;
+  }): Promise<{ ok: boolean; backup: ManagedGitBackupMeta | ManagedGitExternalBackupMeta }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/backup/copy`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitBackupCopy ${res.status}`);
+    return data as { ok: boolean; backup: ManagedGitBackupMeta | ManagedGitExternalBackupMeta };
+  }
+
+  async managedGitDropboxStatus(): Promise<{ connected: boolean; accountId?: string; scope?: string; updatedAt?: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/dropbox/status`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitDropboxStatus ${res.status}`);
+    return data;
+  }
+
+  async managedGitDropboxOAuthStart(args: { redirectUri?: string } = {}): Promise<{ sessionId: string; authUrl: string; redirectUri?: string; expiresAt?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/dropbox/oauth/start`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitDropboxOAuthStart ${res.status}`);
+    return data;
+  }
+
+  async managedGitDropboxOAuthSubmit(args: { sessionId: string; code: string }): Promise<{ ok: boolean; accountId?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/dropbox/oauth/submit`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitDropboxOAuthSubmit ${res.status}`);
+    return data;
+  }
+
+  async managedGitMirrorConnect(args: {
+    slug?: string;
+    workDir?: string;
+    provider: "github" | "gitlab";
+    host?: string;
+    repoName?: string;
+    visibility?: "private" | "public";
+    description?: string;
+  }): Promise<{ ok: boolean; mirror: ManagedGitMirrorMeta }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/mirrors/connect`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitMirrorConnect ${res.status}`);
+    return data as { ok: boolean; mirror: ManagedGitMirrorMeta };
+  }
   // Build an agent endpoint URL, peer-proxying when `target` is a remote
   // deviceId. Mirrors machineOnboardingApply's pattern (line ~2001) and
   // relies on the agent's generic /peer/<id>/<path> handler so the
@@ -7197,6 +7351,7 @@ export interface PhoneProject {
   dir: string;
   createdAt: string;
   updatedAt: string;
+  managedGit?: ManagedGitProjectMeta | null;
   schema?: PhoneSchema | null;
   auth?: PhoneAuth | null;
   seed?: PhoneSeed | null;

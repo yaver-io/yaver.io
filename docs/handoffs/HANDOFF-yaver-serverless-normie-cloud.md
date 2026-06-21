@@ -325,13 +325,16 @@ simple and conservative.
 
 Current repo COGS basis:
 
-- Shared beta server: `cpx51` modeled at `€54.90/mo` in
-  `backend/convex/cloudLifecycle.ts`.
-- Compute hourly equivalent: `€54.90 / 730 = €0.0752/hour`.
-- For a single always-on shared beta server, the server burn is about
-  `€54.90/mo total`, not per user. At 100 users that is `€0.55/user/mo`.
-- Add snapshots/backups/logs/egress buffer: budget `€10-€25/mo` for this
-  first shared box unless usage proves higher.
+- Shared beta server: `cpx62` modeled at about `$152.99/mo` in
+  `backend/convex/cloudLifecycle.ts` after checking `hcloud describe cpx62`
+  on 2026-06-20. This is the current EU 16 vCPU / 32 GB regular-performance
+  SKU; old `cpx51` is deprecated/unavailable for new EU boxes.
+- Compute hourly equivalent: `$152.99 / 730 = $0.2096/hour`.
+- For a single always-on shared beta server, server burn is about
+  `$153/mo total`, not per user. At 100 users that is `$1.53/user/mo`.
+- Add snapshots/backups/logs/egress buffer: budget `$25-$50/mo` for this
+  first shared box unless usage proves higher. Planning server baseline:
+  `$180-$205/mo`.
 
 Included inference budget:
 
@@ -347,10 +350,10 @@ Included inference budget:
 
 | Scenario | Server | Inference | Total burn | Burn/user |
 |---|---:|---:|---:|---:|
-| Light beta | ~€70 incl. buffer | $50 | ~$125 | ~$1.25 |
-| Normal beta | ~€70 incl. buffer | $100 | ~$175 | ~$1.75 |
-| Heavy beta | ~€70 incl. buffer | $200 | ~$275 | ~$2.75 |
-| Max capped grant | ~€70 incl. buffer | $500 | ~$575 | ~$5.75 |
+| Light beta | ~$180 incl. buffer | $50 | ~$230 | ~$2.30 |
+| Normal beta | ~$180 incl. buffer | $100 | ~$280 | ~$2.80 |
+| Heavy beta | ~$180 incl. buffer | $200 | ~$380 | ~$3.80 |
+| Max capped grant | ~$180 incl. buffer | $500 | ~$680 | ~$6.80 |
 
 Currency is mixed in the source systems; for planning, treating `€1 ~= $1`
 is close enough. Re-run with exact FX and current Hetzner/z.ai prices before
@@ -369,10 +372,12 @@ The bad business is per-user always-on dedicated servers; the good business is:
 
 If 100 beta users produce:
 
-- 5 paid users at `$19/mo`: revenue `$95/mo`; normal beta burn roughly covered.
-- 10 paid users at `$19/mo`: revenue `$190/mo`; normal beta slightly profitable.
-- 20 paid users at `$19/mo`: revenue `$380/mo`; enough to absorb heavy beta.
-- 10 paid users at `$29/mo`: revenue `$290/mo`; covers heavy-ish shared beta.
+- 10 paid users at `$19/mo`: revenue `$190/mo`; server baseline covered, but
+  normal inference burn is not fully covered.
+- 15 paid users at `$19/mo`: revenue `$285/mo`; normal beta roughly covered.
+- 20 paid users at `$19/mo`: revenue `$380/mo`; heavy beta roughly covered.
+- 10 paid users at `$29/mo`: revenue `$290/mo`; normal beta roughly covered.
+- 14 paid users at `$29/mo`: revenue `$406/mo`; heavy beta roughly covered.
 
 For the later dedicated-user SKU, never include an always-on `cpx51` at a low
 consumer price. Use an included-hours model:
@@ -384,10 +389,10 @@ consumer price. Use an included-hours model:
 
 Rule of thumb:
 
-- Shared beta CAC target: keep cash burn under `$2/user/mo` normal case.
-- Hard cap: `$5-$6/user/mo` if everyone spends the full inference grant.
-- Paid conversion needs roughly `10% at $19/mo` or `7% at $29/mo` to make the
-  first 100-user cohort viable before labor/support costs.
+- Shared beta CAC target: keep cash burn around `$3/user/mo` normal case.
+- Hard cap: about `$7/user/mo` if everyone spends the full inference grant.
+- Paid conversion needs roughly `15% at $19/mo` or `10% at $29/mo` to make
+  the first 100-user cohort viable before labor/support costs.
 
 ## Claude Code Tickets
 

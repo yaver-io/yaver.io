@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// PhoneShare is a short join code for a phone-sandbox project so a
-// friend can pull + Hermes-load it, pointed at the host's OWN hosted
-// Convex (if this box runs one — Phase 1/3). It is the friends-preview
-// half of the normie loop: "I built it, my friends try it".
+// PhoneShare is a short join code for a phone-sandbox project so a friend can
+// pull + Hermes-load it against the host's Yaver Serverless Lite data API. It
+// is the friends-preview half of the normie loop: "I built it, my friends try
+// it", before TestFlight or app-store distribution.
 //
 // P2P only: the record lives on this agent under
 // ~/.yaver/phone-projects/_shares/, never in Convex (privacy contract —
@@ -22,9 +22,11 @@ type PhoneShare struct {
 	Code string `json:"code"`
 	Slug string `json:"slug"`
 	Name string `json:"name"`
-	// The backend the friend's Hermes-loaded copy should talk to. On a
-	// hosted-tier box this is the box's own self-hosted Convex (so the
-	// friend shares the host's live data); empty on a plain box.
+	// Runtime and dataUrl tell the friend's Hermes-loaded copy which backend
+	// adapter to use. Keep hostedConvexUrl only as a legacy optional field for
+	// older clients that have not yet moved to Yaver Serverless Lite.
+	Runtime         string `json:"runtime,omitempty"`
+	DataURL         string `json:"dataUrl,omitempty"`
 	HostedConvexURL string `json:"hostedConvexUrl,omitempty"`
 	// Relative path the friend fetches the bundle from (the .zip twin,
 	// data included so the preview is populated).
@@ -57,11 +59,10 @@ func phoneShareBundleURL(slug string) string {
 	return fmt.Sprintf("/phone/projects/export?slug=%s&format=zip&includeData=1", slug)
 }
 
-// CreatePhoneShare mints a join code for an existing project. Default
-// TTL 24h. The hosted Convex URL is resolved with the SAME precedence
-// as the Hermes bundle env (project override → on-box
-// /etc/yaver/convex-selfhosted.json) so a friend hits exactly the
-// backend the dev's own build uses.
+// CreatePhoneShare mints a join code for an existing project. Default TTL 24h.
+// The share is placement-neutral: the friend uses the host agent's origin plus
+// dataUrl, whether the host is a laptop, self-hosted box, or Yaver managed
+// cloud.
 func CreatePhoneShare(slug string, ttl time.Duration) (*PhoneShare, error) {
 	p, err := LoadPhoneProject(slug)
 	if err != nil {
@@ -70,23 +71,20 @@ func CreatePhoneShare(slug string, ttl time.Duration) (*PhoneShare, error) {
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	convexURL := ""
-	if env := hostedConvexBuildEnv(p.Dir); len(env) > 0 {
-		convexURL = strings.TrimPrefix(env[0], "EXPO_PUBLIC_CONVEX_URL=")
-	}
 	dir, err := phoneSharesDir()
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
 	sh := &PhoneShare{
-		Code:            generatePairCode(), // shared alphabet (no 0/O/1/I)
-		Slug:            p.Slug,
-		Name:            p.Name,
-		HostedConvexURL: convexURL,
-		BundleURL:       phoneShareBundleURL(p.Slug),
-		CreatedAt:       now.UTC().Format(time.RFC3339),
-		ExpiresAt:       now.Add(ttl).UTC().Format(time.RFC3339),
+		Code:      generatePairCode(), // shared alphabet (no 0/O/1/I)
+		Slug:      p.Slug,
+		Name:      p.Name,
+		Runtime:   "yaver-serverless-lite",
+		DataURL:   "/data/" + p.Slug,
+		BundleURL: phoneShareBundleURL(p.Slug),
+		CreatedAt: now.UTC().Format(time.RFC3339),
+		ExpiresAt: now.Add(ttl).UTC().Format(time.RFC3339),
 	}
 	b, _ := json.MarshalIndent(sh, "", "  ")
 	if err := os.WriteFile(filepath.Join(dir, sh.Code+".json"), b, 0o600); err != nil {

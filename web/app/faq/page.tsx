@@ -17,7 +17,7 @@ const faqs = [
       },
       {
         q: "Do I need API keys?",
-        a: "Depends on the agent. Cloud agents like Claude Code or Codex need their own API keys or subscriptions. Local models via Ollama need nothing — just download the model and go. Yaver itself has no API keys and no paid tiers.",
+        a: "Self-hosted Yaver does not need Yaver API keys. Your chosen coding agent may need its own login, subscription, or API key. Optional Yaver Cloud is web-billed managed infrastructure for a saved workspace and private relay; the mobile app controls existing machines and does not sell cloud access inside the app.",
       },
       {
         q: "Don't some agents already have remote access?",

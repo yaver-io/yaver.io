@@ -85,6 +85,16 @@ func TestExportImportRoundtrip(t *testing.T) {
 	if len(bundle) == 0 {
 		t.Fatal("empty bundle")
 	}
+	if !bundleContainsFile(t, bundle, "yaver.serverless.yaml") {
+		t.Fatal("expected bundle to include yaver.serverless.yaml")
+	}
+	manifest := bundleFileContent(t, bundle, "yaver.serverless.yaml")
+	if !strings.Contains(manifest, "runtime: yaver-serverless-lite") {
+		t.Fatalf("serverless manifest missing runtime: %s", manifest)
+	}
+	if strings.Contains(strings.ToLower(manifest), "convex") {
+		t.Fatalf("serverless manifest should not mention convex: %s", manifest)
+	}
 
 	if err := DeletePhoneProject(origSlug); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -235,6 +245,9 @@ func TestExportIncludeDataBundlesSQLiteFile(t *testing.T) {
 	if !bundleContainsFile(t, bundle, "local.db") {
 		t.Fatal("expected bundle to include local.db")
 	}
+	if !bundleContainsFile(t, bundle, "data/app.sqlite") {
+		t.Fatal("expected bundle to include canonical data/app.sqlite")
+	}
 }
 
 func TestImportWithIncludedDataPreservesRuntimeRows(t *testing.T) {
@@ -272,6 +285,74 @@ func TestImportWithIncludedDataPreservesRuntimeRows(t *testing.T) {
 	b, _ := json.Marshal(res)
 	if !strings.Contains(string(b), `"count(*)":1`) {
 		t.Fatalf("expected runtime row to survive import, got %s", string(b))
+	}
+}
+
+func TestImportAcceptsCanonicalDataSQLiteWithoutLegacyLocalDB(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Canonical DB", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	adapter, err := PhoneAdapter(p.Slug)
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	if _, err := adapter.Insert("todos", map[string]interface{}{
+		"id": "canonical-only", "title": "canonical sqlite row", "done": false,
+	}); err != nil {
+		t.Fatalf("insert runtime row: %v", err)
+	}
+	bundle, err := ExportPhoneProjectWithOptions(p.Slug, PhoneExportOptions{IncludeData: true})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	parts, top, err := decodeBundleParts(bundle)
+	if err != nil {
+		t.Fatalf("decode bundle: %v", err)
+	}
+	delete(parts, "local.db")
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, content := range parts {
+		hdr := &tar.Header{
+			Name: filepath.ToSlash(filepath.Join(top, name)),
+			Size: int64(len(content)),
+			Mode: 0o644,
+		}
+		if strings.HasSuffix(name, ".sqlite") {
+			hdr.Mode = 0o600
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			t.Fatalf("write body: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	_ = DeletePhoneProject(p.Slug)
+	imp, err := ImportPhoneProject(buf.Bytes(), PhoneImportOptions{})
+	if err != nil {
+		t.Fatalf("import canonical-only bundle: %v", err)
+	}
+	adapter2, err := PhoneAdapter(imp.Slug)
+	if err != nil {
+		t.Fatalf("adapter2: %v", err)
+	}
+	res, err := adapter2.Query(`SELECT count(*) FROM todos WHERE id='canonical-only'`, nil)
+	if err != nil {
+		t.Fatalf("query canonical row: %v", err)
+	}
+	b, _ := json.Marshal(res)
+	if !strings.Contains(string(b), `"count(*)":1`) {
+		t.Fatalf("expected canonical data/app.sqlite row to survive import, got %s", string(b))
 	}
 }
 
@@ -343,6 +424,27 @@ func TestHandlePhoneExport_IncludeDataQuery(t *testing.T) {
 	}
 	if !bundleContainsFile(t, w.Body.Bytes(), "local.db") {
 		t.Fatal("expected export response bundle to include local.db")
+	}
+}
+
+func TestHandlePhoneExport_HEADReturnsSizeOnly(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Export Head", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	srv := &HTTPServer{}
+	req := httptest.NewRequest(http.MethodHead, "/phone/projects/export?slug="+p.Slug+"&includeData=true", nil)
+	w := httptest.NewRecorder()
+	srv.handlePhoneExport(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Length"); got == "" || got == "0" {
+		t.Fatalf("expected positive Content-Length, got %q", got)
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("HEAD should not write a response body, got %d bytes", w.Body.Len())
 	}
 }
 

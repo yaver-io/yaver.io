@@ -108,11 +108,11 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Does Yaver manage my servers?",
-    a: "No. The default path is your phone sandbox first, then your own machine, dev box, or VPS. Everything is self-host. We may add optional managed features (relay, dev machines, CI) later for people who don't want to run their own — but at launch there are no paid offerings.",
+    a: "The default path is your phone sandbox first, then your own machine, dev box, or VPS. Self-hosted Yaver stays free. Optional Yaver Cloud is managed infrastructure bought on the web: a saved cloud workspace, private relay, and agent runtime that auto-stops when idle. The mobile app controls machines you already own or already bought; it does not sell managed cloud inside the App Store or Play Store app.",
   },
   {
-    q: "Is this really free?",
-    a: "Yes. The whole stack — mobile app, CLI, agent, web dashboard, SDKs, and relay — is free and open source. The repo uses a split license: FSL-1.1 core that auto-converts to Apache-2.0 two years per release, Apache-2.0 SDKs from day one. No paid tiers, no subscriptions, no upsell.",
+    q: "What is free, and what is paid?",
+    a: "The open-source stack is free: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. Optional Yaver Cloud is paid infrastructure for people who do not want to run their own always-reachable workspace. It is purchased on the web, auto-stops when idle, and keeps the workspace saved.",
   },
   {
     q: "What if I already use Vercel or Supabase Cloud?",
@@ -863,6 +863,104 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
   );
 }
 
+function CloudInfraSection() {
+  const plans = [
+    {
+      name: "Cloud Agent",
+      price: "$19",
+      unit: "starter credit",
+      badge: "Included model",
+      tone: "border-emerald-500/35 bg-emerald-500/5",
+      text: "Managed coding workspace with an included agent model. Connect GitHub, ask for changes from your phone, preview, and let Yaver stop the machine when idle.",
+      items: [
+        "Saved cloud workspace",
+        "Managed coding agent",
+        "GitHub projects preserved",
+        "Auto-stop when idle",
+        "Web purchase, mobile control",
+      ],
+      cta: "Start Cloud Agent",
+    },
+    {
+      name: "Cloud Workspace",
+      price: "$9",
+      unit: "starter credit",
+      badge: "BYO Claude / Codex",
+      tone: "border-indigo-500/35 bg-indigo-500/5",
+      text: "For people already paying Claude Code, Codex, ChatGPT, OpenRouter, or another provider. Yaver gives your agent a private reachable workspace.",
+      items: [
+        "Bring your own AI account",
+        "Private Yaver relay included",
+        "Saved runner auth and repos",
+        "Phone and web access",
+        "Auto-stop when idle",
+      ],
+      cta: "Start Workspace",
+    },
+  ];
+
+  return (
+    <section id="cloud" className="border-t border-surface-800/60 px-6 py-20">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-4 text-center">
+          <span className="inline-block rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
+            Optional managed infrastructure
+          </span>
+        </div>
+        <h2 className="mb-4 text-center text-2xl font-bold text-surface-50 md:text-3xl">
+          Buy a cloud coding workspace, not a mobile subscription.
+        </h2>
+        <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
+          Self-hosted Yaver stays free. Yaver Cloud is paid infrastructure:
+          a saved workspace, private reachability, and an agent runtime that
+          shuts itself down when idle. Checkout happens on the web; the mobile
+          app only controls workspaces you already own.
+        </p>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {plans.map((plan) => (
+            <div key={plan.name} className={`rounded-2xl border p-5 ${plan.tone}`}>
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-lg font-bold text-surface-50">{plan.name}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-surface-400">{plan.text}</p>
+                </div>
+                <span className="rounded-full border border-surface-700 bg-surface-950/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-surface-300">
+                  {plan.badge}
+                </span>
+              </div>
+              <div className="mb-4 flex items-baseline gap-2">
+                <span className="text-4xl font-bold text-surface-50">{plan.price}</span>
+                <span className="text-sm text-surface-400">{plan.unit}</span>
+              </div>
+              <ul className="mb-5 space-y-2 text-sm text-surface-300">
+                {plan.items.map((item) => (
+                  <li key={item} className="flex gap-2">
+                    <span className="text-emerald-400">✓</span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <Link
+                href="/dashboard?cloud=1"
+                className="inline-flex w-full items-center justify-center rounded-lg bg-surface-100 px-4 py-2.5 text-sm font-semibold text-surface-950 transition-colors hover:bg-white"
+              >
+                {plan.cta}
+              </Link>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 rounded-xl border border-surface-800 bg-surface-900/50 p-4 text-xs leading-relaxed text-surface-400">
+          Yaver Cloud is web-billed infrastructure credit, not an in-app mobile
+          purchase. The App Store / Play Store app can start, stop, monitor,
+          and recover your workspace after you have bought it on the web.
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ResourceCardsSection() {
   const cards = [
     {
@@ -1195,6 +1293,8 @@ export default function HomePage() {
       {/* Secondary DemoSection (tabbed: Full Loop / Auto Test) removed —
           the hero video above is the single viral artifact; a second
           video area below it competed for attention. */}
+
+      <CloudInfraSection />
 
       {/* ── Section 3: Get Started ── */}
       <section id="get-started" className="border-t border-surface-800/60 px-6 py-16">
@@ -1670,9 +1770,9 @@ return (
           </div>
 
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
-            <p><strong className="text-surface-100">A solo developer runs the whole stack at $0.</strong></p>
+            <p><strong className="text-surface-100">A solo developer can run the open-source stack at $0.</strong></p>
             <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi.</p>
-            <p>Everything is free and open source. Self-host the entire stack — no accounts, no paid tiers, no usage caps.</p>
+            <p>Self-host the entire stack for free. Yaver Cloud is optional managed infrastructure for people who want Yaver to run the workspace and private relay for them.</p>
             <p className="mt-4 text-surface-500">
               The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}
               <strong className="text-surface-300">FSL-1.1</strong> (auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}

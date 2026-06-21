@@ -15,6 +15,8 @@ import {
 } from "@/lib/agent-client";
 import { useDevices, type Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
+import { useAgentConnected } from "@/lib/sandbox/useAgentConnected";
+import BrowserSandbox from "./BrowserSandbox";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "@/lib/conversation-import";
 import { getSelfHostedRuntimeBaseUrl, getSelfHostedRuntimeLabel, getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 
@@ -107,6 +109,11 @@ export default function PhoneProjectsView() {
   // Deploy state (roadmap §Wedge Demo)
   const { token } = useAuth();
   const { devices } = useDevices(token);
+  // Browser-local sandbox vs agent-relay view. Default to local when no agent
+  // is connected; a connected user can still opt into the browser sandbox.
+  const agentConnected = useAgentConnected();
+  const [forceLocal, setForceLocal] = useState(false);
+  const localMode = forceLocal || !agentConnected;
   // Yaver Cloud deploy path is hidden at launch — no paid features yet.
   const canUseCloudPreview = false;
   const canUseYaverCloud = false;
@@ -440,10 +447,41 @@ export default function PhoneProjectsView() {
     }
   }
 
+  const modeBar = (
+    <div className="flex items-center gap-1 rounded-full border border-surface-800 bg-surface-950 p-1 text-xs">
+      <button
+        onClick={() => setForceLocal(true)}
+        className={`rounded-full px-3 py-1 transition ${localMode ? "bg-indigo-600 text-white" : "text-surface-400 hover:text-surface-200"}`}
+      >
+        🖥️ This browser
+      </button>
+      <button
+        onClick={() => setForceLocal(false)}
+        disabled={!agentConnected}
+        title={agentConnected ? "" : "No agent connected"}
+        className={`rounded-full px-3 py-1 transition disabled:opacity-40 ${!localMode ? "bg-indigo-600 text-white" : "text-surface-400 hover:text-surface-200"}`}
+      >
+        ☁️ Connected agent
+      </button>
+    </div>
+  );
+
+  if (localMode) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex justify-end">{modeBar}</div>
+        <BrowserSandbox />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6">
-      <div>
+      <div className="flex items-start justify-between gap-3">
         <h1 className="text-xl font-semibold text-surface-100">Phone Backend</h1>
+        {modeBar}
+      </div>
+      <div>
         <p className="mt-1 text-sm text-surface-400">
           SQLite-backed mini backend hosted on your Mac, editable from the phone.
           Each project is a portable manifest — promote it to Convex, Supabase,

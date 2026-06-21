@@ -990,6 +990,95 @@ type phoneExportFile struct {
 	Mode    int64
 }
 
+type yaverServerlessManifest struct {
+	Version    int                         `yaml:"version" json:"version"`
+	Runtime    string                      `yaml:"runtime" json:"runtime"`
+	Name       string                      `yaml:"name" json:"name"`
+	Slug       string                      `yaml:"slug" json:"slug"`
+	Database   yaverServerlessDatabase     `yaml:"database" json:"database"`
+	Auth       yaverServerlessAuth         `yaml:"auth" json:"auth"`
+	API        yaverServerlessAPI          `yaml:"api" json:"api"`
+	Placements []string                    `yaml:"placements" json:"placements"`
+	Export     yaverServerlessExport       `yaml:"export" json:"export"`
+	Tables     []yaverServerlessTableBrief `yaml:"tables,omitempty" json:"tables,omitempty"`
+}
+
+type yaverServerlessDatabase struct {
+	Engine string `yaml:"engine" json:"engine"`
+	File   string `yaml:"file" json:"file"`
+	Schema string `yaml:"schema" json:"schema"`
+}
+
+type yaverServerlessAuth struct {
+	Mode   string `yaml:"mode" json:"mode"`
+	Config string `yaml:"config" json:"config"`
+}
+
+type yaverServerlessAPI struct {
+	BasePath string                      `yaml:"basePath" json:"basePath"`
+	DataPath string                      `yaml:"dataPath" json:"dataPath"`
+	Routes   []yaverServerlessRouteBrief `yaml:"routes,omitempty" json:"routes,omitempty"`
+}
+
+type yaverServerlessRouteBrief struct {
+	Method string `yaml:"method" json:"method"`
+	Path   string `yaml:"path" json:"path"`
+}
+
+type yaverServerlessExport struct {
+	IncludesData bool   `yaml:"includesData" json:"includesData"`
+	Secrets      string `yaml:"secrets" json:"secrets"`
+}
+
+type yaverServerlessTableBrief struct {
+	Name    string   `yaml:"name" json:"name"`
+	Columns []string `yaml:"columns" json:"columns"`
+}
+
+func phoneServerlessManifest(p *PhoneProject, opts PhoneExportOptions) ([]byte, error) {
+	m := yaverServerlessManifest{
+		Version: 1,
+		Runtime: "yaver-serverless-lite",
+		Name:    p.Name,
+		Slug:    p.Slug,
+		Database: yaverServerlessDatabase{
+			Engine: "sqlite",
+			File:   "data/app.sqlite",
+			Schema: "schema.yaml",
+		},
+		Auth: yaverServerlessAuth{
+			Mode:   "local",
+			Config: "auth.yaml",
+		},
+		API: yaverServerlessAPI{
+			BasePath: "/p/" + p.Slug,
+			DataPath: "/data/" + p.Slug,
+		},
+		Placements: []string{"mobile-sandbox", "self-hosted", "yaver-managed-cloud"},
+		Export: yaverServerlessExport{
+			IncludesData: opts.IncludeData,
+			Secrets:      "excluded-by-default",
+		},
+	}
+	if p.Schema != nil {
+		for _, t := range p.Schema.Tables {
+			tb := yaverServerlessTableBrief{Name: t.Name}
+			for _, c := range t.Columns {
+				tb.Columns = append(tb.Columns, c.Name)
+			}
+			m.Tables = append(m.Tables, tb)
+			m.API.Routes = append(m.API.Routes,
+				yaverServerlessRouteBrief{Method: "GET", Path: "/data/" + t.Name},
+				yaverServerlessRouteBrief{Method: "POST", Path: "/data/" + t.Name},
+				yaverServerlessRouteBrief{Method: "GET", Path: "/data/" + t.Name + "/:id"},
+				yaverServerlessRouteBrief{Method: "PATCH", Path: "/data/" + t.Name + "/:id"},
+				yaverServerlessRouteBrief{Method: "DELETE", Path: "/data/" + t.Name + "/:id"},
+			)
+		}
+	}
+	return yaml.Marshal(m)
+}
+
 // collectPhoneExportFiles is the single source of truth for what an
 // exported sandbox contains — consumed by both the .tgz and .zip
 // writers so they stay identical.
@@ -997,6 +1086,9 @@ func collectPhoneExportFiles(p *PhoneProject, opts PhoneExportOptions) []phoneEx
 	files := []phoneExportFile{}
 	add := func(name string, content []byte, mode int64) {
 		files = append(files, phoneExportFile{Name: name, Content: content, Mode: mode})
+	}
+	if b, err := phoneServerlessManifest(p, opts); err == nil {
+		add("yaver.serverless.yaml", b, 0o644)
 	}
 	if b, err := os.ReadFile(filepath.Join(p.Dir, ".yaver", "config.yaml")); err == nil {
 		add(".yaver/config.yaml", b, 0o644)
@@ -1018,6 +1110,9 @@ func collectPhoneExportFiles(p *PhoneProject, opts PhoneExportOptions) []phoneEx
 	}
 	if opts.IncludeData {
 		if b, err := os.ReadFile(dbFilePath(p.Dir)); err == nil {
+			add("data/app.sqlite", b, 0o600)
+			// Legacy compatibility for older importers and tests. New Yaver
+			// Serverless bundles treat data/app.sqlite as canonical.
 			add("local.db", b, 0o600)
 		}
 	}
@@ -1120,9 +1215,11 @@ func ExportPhoneProjectZip(slug string, opts PhoneExportOptions) ([]byte, error)
 func phoneReadme(p *PhoneProject, opts PhoneExportOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", p.Name)
-	fmt.Fprintf(&b, "Yaver phone-first mini-backend project (slug: `%s`).\n\n", p.Slug)
+	fmt.Fprintf(&b, "Yaver Serverless Lite project (slug: `%s`).\n\n", p.Slug)
 	fmt.Fprintf(&b, "Created: %s  \nLast updated: %s\n\n", p.CreatedAt, p.UpdatedAt)
+	b.WriteString("This bundle is importable into the mobile sandbox, a self-hosted `yaver serve`, or Yaver managed cloud. It is not a Convex export.\n\n")
 	b.WriteString("## Files\n\n")
+	b.WriteString("- `yaver.serverless.yaml` — portable Yaver Serverless Lite manifest\n")
 	b.WriteString("- `.yaver/config.yaml` — backend config (SQLite)\n")
 	b.WriteString("- `.yaver/project.yaml` — declarative manifest (see `yaver apply`)\n")
 	b.WriteString("- `schema.yaml` — portable schema DSL\n")
@@ -1131,19 +1228,22 @@ func phoneReadme(p *PhoneProject, opts PhoneExportOptions) string {
 	b.WriteString("- `app.yaml` — portable phone UI plan\n")
 	b.WriteString("- `schema.sql` / `schema.postgres.sql` — generated DDL for non-Yaver imports\n\n")
 	if opts.IncludeData {
-		b.WriteString("- `local.db` — live SQLite runtime rows for zero-loss promotion\n\n")
+		b.WriteString("- `data/app.sqlite` — canonical live SQLite runtime rows for zero-loss moves\n")
+		b.WriteString("- `local.db` — legacy compatibility copy of the same SQLite data\n\n")
 	}
 	if opts.Containerize {
 		b.WriteString("- `Dockerfile` / `docker-compose.yml` — containerized Yaver-lite backend export\n")
 		b.WriteString("- `.env.example` / `.dockerignore` — container deploy helpers\n\n")
 	}
 	b.WriteString("- `.gitignore` — short-path git repo hygiene for exported sandboxes\n\n")
-	b.WriteString("## Promoting to a real backend\n\n")
-	b.WriteString("```\nyaver switch plan --to supabase-cloud\nyaver switch plan --to convex-cloud\nyaver switch plan --to postgres-neon\n```\n\n")
-	b.WriteString("Or open the project in the Yaver desktop app and pick a target from the switch engine UI.\n")
-	b.WriteString("\n## Git + SQLite short path\n\n")
+	b.WriteString("## Run it somewhere else\n\n")
+	b.WriteString("Self-hosted and Yaver managed cloud use the same receive endpoint:\n\n")
+	b.WriteString("```bash\nyaver phone push " + p.Slug + " --to http://127.0.0.1:18080 --include-data\n")
+	b.WriteString("yaver phone push " + p.Slug + " --to https://<your-yaver-cloud> --include-data\n```\n\n")
+	b.WriteString("External database/platform switches can still be planned later, but they are not the default sandbox lifecycle.\n\n")
+	b.WriteString("## Git + SQLite short path\n\n")
 	b.WriteString("```bash\ngit init\ngit add .\ngit commit -m \"Import Yaver mobile sandbox\"\n```\n\n")
-	b.WriteString("If `local.db` is included, this is enough to move the same SQLite-backed sandbox onto your laptop or server.\n")
+	b.WriteString("If `data/app.sqlite` is included, this is enough to move the same SQLite-backed sandbox onto your laptop or server.\n")
 	if opts.Containerize {
 		b.WriteString("\n## Containerized short path\n\n")
 		b.WriteString("```bash\ndocker compose up -d --build\n```\n\n")
@@ -1169,7 +1269,7 @@ func phoneAgentsDoc(p *PhoneProject, opts PhoneExportOptions) string {
 
 	b.WriteString("## Stack\n\n")
 	b.WriteString("- Frontend: React Native (Expo). Runs inside the Yaver container via Hermes push, or standalone.\n")
-	b.WriteString("- Backend: a portable mini-backend (SQLite now). Schema/auth/seed are declarative — see the files below.\n\n")
+	b.WriteString("- Backend: Yaver Serverless Lite (SQLite now). Schema/auth/seed are declarative — see the files below.\n\n")
 
 	if p.Schema != nil && len(p.Schema.Tables) > 0 {
 		b.WriteString("## Data model\n\n")
@@ -1191,28 +1291,29 @@ func phoneAgentsDoc(p *PhoneProject, opts PhoneExportOptions) string {
 	}
 
 	b.WriteString("## Backend / runtime\n\n")
-	b.WriteString("- **Local / dev:** the Yaver agent serves the SQLite mini-backend; `local.db` (if present) holds real runtime rows.\n")
-	b.WriteString("- **Yaver Cloud / hosted box:** the box runs its own self-hosted Convex. The app reads its backend URL from the `EXPO_PUBLIC_CONVEX_URL` env var, which Yaver bakes into the bundle automatically on a hosted box — you do **not** hardcode a URL or manage a deploy key.\n")
-	b.WriteString("- **Deploy the backend (hosted, zero config):** `yaver deploy --target=selfhosted` (resolves the on-box admin key itself).\n")
-	b.WriteString("- **Deploy the backend (bring-your-own Convex Cloud):** set `CONVEX_DEPLOY_KEY`, then `yaver deploy --target=convex`.\n\n")
+	b.WriteString("- **Mobile sandbox:** local adapter over Expo SQLite using the same schema and app plan.\n")
+	b.WriteString("- **Self-hosted:** `yaver serve` imports this bundle and serves the SQLite-backed `/data/<slug>/<table>` API.\n")
+	b.WriteString("- **Yaver managed cloud:** the managed Hetzner cell runs the same `yaver serve` receive path behind TLS.\n")
+	b.WriteString("- **No Convex import/export:** Convex can remain Yaver's control plane, but this app's runtime data stays in the Yaver Serverless bundle.\n\n")
 
 	b.WriteString("## Files\n\n")
+	b.WriteString("- `yaver.serverless.yaml` — portable runtime manifest\n")
 	b.WriteString("- `schema.yaml` / `schema.sql` — data model (source of truth + DDL)\n")
 	b.WriteString("- `app.yaml` — screen/UI plan\n")
 	b.WriteString("- `auth.yaml` — auth personas\n")
 	b.WriteString("- `seed.json` — fixture rows\n")
 	if opts.IncludeData {
-		b.WriteString("- `local.db` — live SQLite state (zero-loss continuation)\n")
+		b.WriteString("- `data/app.sqlite` — live SQLite state (zero-loss continuation)\n")
 	}
 	b.WriteString("- `.yaver/project.yaml` — declarative manifest (`yaver apply`)\n")
 	if opts.Containerize {
 		b.WriteString("- `Dockerfile` / `docker-compose.yml` — containerized backend\n")
 	}
 	b.WriteString("\n## How to continue (suggested)\n\n")
-	b.WriteString("1. `yaver apply` (or import `schema.sql`) to materialise the backend.\n")
+	b.WriteString("1. Import the bundle into the target `yaver serve` with `/phone/projects/receive` or `yaver phone push`.\n")
 	b.WriteString("2. Implement/extend the screens listed above against the data model.\n")
 	b.WriteString("3. Keep the schema in `schema.yaml` authoritative — regenerate DDL, don't hand-edit `schema.sql`.\n")
-	b.WriteString("4. On a Yaver Cloud box, the backend is already wired (`EXPO_PUBLIC_CONVEX_URL`). Just build/Hermes-push to preview.\n")
+	b.WriteString("4. On Yaver managed cloud, use the returned project URL as the app's HTTP adapter base.\n")
 	return b.String()
 }
 
@@ -1713,7 +1814,10 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 	}
 	var liveDB []byte
 	if !opts.SkipSeed {
-		liveDB = parts["local.db"]
+		liveDB = parts["data/app.sqlite"]
+		if len(liveDB) == 0 {
+			liveDB = parts["local.db"]
+		}
 	}
 	oauthProviders := parts["oauth-providers.yaml"]
 
@@ -1751,7 +1855,7 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 	}
 	for name, content := range parts {
 		switch name {
-		case "schema.yaml", "auth.yaml", "seed.json", "app.yaml", "local.db",
+		case "schema.yaml", "auth.yaml", "seed.json", "app.yaml", "local.db", "data/app.sqlite", "yaver.serverless.yaml",
 			"oauth-providers.yaml", ".yaver/config.yaml", ".yaver/project.yaml":
 			continue
 		}
@@ -1765,6 +1869,15 @@ func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, err
 		}
 		if err := os.WriteFile(dst, content, 0o644); err != nil {
 			return nil, fmt.Errorf("restore extra file %s: %w", name, err)
+		}
+	}
+	// p.Stats were computed by CreatePhoneProject from the seed BEFORE the live
+	// DB was restored above. When a live DB shipped, reload so the returned
+	// project (and the /phone/projects/receive response) reports the true row
+	// counts of the restored data, not the seed.
+	if len(liveDB) > 0 {
+		if reloaded, lerr := LoadPhoneProject(slug); lerr == nil {
+			p = reloaded
 		}
 	}
 	return p, nil

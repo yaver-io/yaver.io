@@ -39,6 +39,34 @@ interface ManagedMachine {
   runnersAuthorized?: boolean;
 }
 
+type CloudPlanId = "cloud-agent" | "cloud-workspace";
+
+const CLOUD_PLANS: Array<{
+  id: CloudPlanId;
+  name: string;
+  price: string;
+  label: string;
+  detail: string;
+  bullets: string[];
+}> = [
+  {
+    id: "cloud-agent",
+    name: "Cloud Agent",
+    price: "$19",
+    label: "starter credit",
+    detail: "Included managed model for normal users who just want the agent to work.",
+    bullets: ["Saved workspace", "Included coding model", "Auto-stop when idle"],
+  },
+  {
+    id: "cloud-workspace",
+    name: "Cloud Workspace",
+    price: "$9",
+    label: "starter credit",
+    detail: "Bring Claude Code, Codex, OpenRouter, or another account you already pay for.",
+    bullets: ["BYO AI account", "Private Yaver relay", "Auto-stop when idle"],
+  },
+];
+
 // Per-machine actions (D3 git connect/push, D4 dev-loop, D5 deploy).
 // Every action targets the box's EXPLICIT agent deviceId — never a
 // guessed/fuzzy target (credentials + exec). Disabled until the box
@@ -395,6 +423,7 @@ export function ManagedCloudPanel({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<CloudPlanId>("cloud-agent");
   // CPU is the only shipped tier. GPU / KVM-emulator / iOS-Mac aren't
   // implemented, so there's no machine-type picker on the index — the
   // full catalog (when those land) lives on a dedicated checkout page,
@@ -411,7 +440,7 @@ export function ManagedCloudPanel({
       const res = await fetch(`${CONVEX_URL}/billing/yaver-cloud/checkout`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineType, region }),
+        body: JSON.stringify({ machineType, region, planId: selectedPlan }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.url) {
@@ -633,9 +662,48 @@ export function ManagedCloudPanel({
       {open ? (
         <div className="mt-3 space-y-3">
           <p className="text-xs text-slate-500 dark:text-surface-400">
-            Managed boxes provisioned by Yaver, billed from prepaid credit. Your
-            self-hosted devices are listed below.
+            Optional managed infrastructure bought on the web. The mobile app
+            can control an existing workspace, but checkout stays out of the
+            App Store / Play Store app.
           </p>
+
+          <div className="grid gap-2 md:grid-cols-2">
+            {CLOUD_PLANS.map((plan) => {
+              const activePlan = selectedPlan === plan.id;
+              return (
+                <button
+                  key={plan.id}
+                  onClick={() => setSelectedPlan(plan.id)}
+                  className={`rounded-lg border p-3 text-left transition-colors ${
+                    activePlan
+                      ? "border-emerald-500/60 bg-emerald-500/10"
+                      : "border-slate-300 bg-white/40 hover:border-sky-500/50 dark:border-surface-700 dark:bg-[rgba(12,12,16,0.5)]"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-bold text-slate-800 dark:text-surface-100">{plan.name}</p>
+                      <p className="mt-0.5 text-[11px] text-slate-500 dark:text-surface-400">{plan.detail}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-slate-900 dark:text-surface-50">{plan.price}</p>
+                      <p className="text-[10px] text-slate-400">{plan.label}</p>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {plan.bullets.map((item) => (
+                      <span
+                        key={item}
+                        className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-surface-300"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
 
           {/* Prepaid wallet — OpenAI-style credit. Top up on the web
               (no app-store billing); spend it on compute. */}
@@ -675,7 +743,9 @@ export function ManagedCloudPanel({
               </span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-[11px] text-slate-500 dark:text-surface-400">Spin up a CPU box</span>
+              <span className="text-[11px] text-slate-500 dark:text-surface-400">
+                Start selected infrastructure
+              </span>
               <span className="flex gap-1">
                 {["eu", "us"].map((r) => (
                   <button
@@ -693,7 +763,7 @@ export function ManagedCloudPanel({
               </span>
               <button
                 disabled={busy}
-                onClick={() => post("/billing/yaver-cloud/provision", { machineType, region })}
+                onClick={() => post("/billing/yaver-cloud/provision", { machineType, region, planId: selectedPlan })}
                 className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
               >
                 {busy ? "…" : "Spin up (prepaid)"}
@@ -703,15 +773,16 @@ export function ManagedCloudPanel({
                   disabled={busy}
                   onClick={() => void buy()}
                   className="rounded-md border border-slate-300 px-3 py-1 text-xs font-semibold disabled:opacity-50 dark:border-surface-700"
-                  title="Subscription checkout (owner/dev path)"
+                  title="Web checkout (owner/dev path)"
                 >
-                  {busy ? "…" : "Buy → subscription"}
+                  {busy ? "…" : "Web checkout"}
                 </button>
               ) : null}
             </div>
             <p className="mt-1.5 text-[10px] text-slate-400">
-              Bills from your balance — no subscription. GPU, emulator and iOS
-              tiers are coming soon.
+              Bills from web-purchased cloud credit. Auto-stop keeps forgotten
+              workspaces from running indefinitely. GPU, emulator and iOS tiers
+              are not part of the launch purchase path.
             </p>
           </div>
 

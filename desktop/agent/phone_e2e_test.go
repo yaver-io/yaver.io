@@ -6,33 +6,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // TestFullSandboxLoop_E2E drives the ENTIRE normie loop through the
-// real HTTP handlers (no mocks, real archive + SQLite, repo test
-// convention): create → export(.zip + AGENTS.md) → receive over SSE on
-// a simulated hosted box → share → join → zero-BYOK selfhosted deploy
-// script. This is the integrated proof the per-layer unit tests don't
-// give on their own; it permanently guards the chain.
+// real HTTP handlers (no mocks, real archive + SQLite, repo test convention):
+// create → export(.zip + AGENTS.md) → receive over SSE on a simulated hosted
+// box → share → join. This is the integrated proof the per-layer unit tests
+// don't give on their own; it permanently guards the chain.
 func TestFullSandboxLoop_E2E(t *testing.T) {
 	setupPhoneTestHome(t)
 	srv := &HTTPServer{token: "t"}
-
-	// Simulate a hosted-tier box: the cred file Phase-1 cloud-init
-	// would have written. Drives the Phase-3 bundle env, the SSE
-	// "hosted" event, the share's hostedConvexUrl.
-	credDir := t.TempDir()
-	credFile := filepath.Join(credDir, "convex-selfhosted.json")
-	const hostedURL = "https://box-e2e.cloud.yaver.io/_convex-api"
-	if err := os.WriteFile(credFile,
-		[]byte(`{"url":"`+hostedURL+`","adminKey":"E2E-ADMIN-KEY-SECRET"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CONVEX_SELFHOSTED_FILE", credFile)
 
 	auth := func(r *http.Request) *http.Request {
 		r.Header.Set("Authorization", "Bearer t")
@@ -82,7 +68,7 @@ func TestFullSandboxLoop_E2E(t *testing.T) {
 		t.Fatalf("receive: %d %s", w.Code, w.Body.String())
 	}
 	seen := map[string]bool{}
-	var hostedConvexInStream string
+	var hostedRuntime, hostedDataURL string
 	sc := bufio.NewScanner(bytes.NewReader(w.Body.Bytes()))
 	for sc.Scan() {
 		line := strings.TrimPrefix(sc.Text(), "data: ")
@@ -96,7 +82,8 @@ func TestFullSandboxLoop_E2E(t *testing.T) {
 		typ, _ := ev["type"].(string)
 		seen[typ] = true
 		if typ == "hosted" {
-			hostedConvexInStream, _ = ev["convexUrl"].(string)
+			hostedRuntime, _ = ev["runtime"].(string)
+			hostedDataURL, _ = ev["dataUrl"].(string)
 		}
 		if typ == "error" {
 			t.Fatalf("receive stream error event: %v", ev["error"])
@@ -107,15 +94,15 @@ func TestFullSandboxLoop_E2E(t *testing.T) {
 			t.Errorf("SSE stream missing %q event (saw %v)", want, seen)
 		}
 	}
-	if hostedConvexInStream != hostedURL {
-		t.Errorf("hosted event convexUrl = %q, want %q", hostedConvexInStream, hostedURL)
+	if hostedRuntime != "yaver-serverless-lite" || hostedDataURL != "/data/e2e-clone" {
+		t.Errorf("hosted event = runtime %q dataUrl %q", hostedRuntime, hostedDataURL)
 	}
-	// The admin key must NEVER appear anywhere in the stream.
-	if strings.Contains(w.Body.String(), "E2E-ADMIN-KEY-SECRET") {
-		t.Fatal("admin key leaked into the receive SSE stream")
+	if strings.Contains(strings.ToLower(w.Body.String()), "convex") {
+		t.Fatal("receive SSE stream should not expose Convex wiring for serverless-lite")
 	}
 
-	// 4. Share the original project → join code carries the host URL.
+	// 4. Share the original project → join code carries the Yaver Serverless
+	// data path the friend should use on the host origin.
 	w = httptest.NewRecorder()
 	srv.handlePhoneShare(w, auth(httptest.NewRequest("POST", "/phone/projects/share",
 		strings.NewReader(`{"slug":"`+slug+`"}`))))
@@ -126,7 +113,7 @@ func TestFullSandboxLoop_E2E(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &sh); err != nil {
 		t.Fatalf("share decode: %v", err)
 	}
-	if sh.Code == "" || sh.HostedConvexURL != hostedURL {
+	if sh.Code == "" || sh.Runtime != "yaver-serverless-lite" || sh.DataURL != "/data/"+slug {
 		t.Fatalf("bad share: %+v", sh)
 	}
 
@@ -141,23 +128,7 @@ func TestFullSandboxLoop_E2E(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &joined); err != nil {
 		t.Fatalf("join decode: %v", err)
 	}
-	if joined.Slug != slug || joined.HostedConvexURL != hostedURL || joined.BundleURL == "" {
+	if joined.Slug != slug || joined.Runtime != "yaver-serverless-lite" || joined.DataURL != "/data/"+slug || joined.BundleURL == "" {
 		t.Fatalf("join resolved wrong: %+v", joined)
-	}
-
-	// 6. The zero-BYOK selfhosted deploy script ties it together.
-	script, err := GenerateDeployScript(DeployScriptSpec{
-		App: slug, Stack: "convex", Target: "selfhosted", Path: "/srv/yaver/workspace",
-	})
-	if err != nil {
-		t.Fatalf("selfhosted deploy script: %v", err)
-	}
-	for _, want := range []string{"/etc/yaver/convex-selfhosted.json", "npx convex deploy --yes"} {
-		if !strings.Contains(script, want) {
-			t.Errorf("deploy script missing %q", want)
-		}
-	}
-	if strings.Contains(script, "CONVEX_DEPLOY_KEY") {
-		t.Error("selfhosted deploy must be zero-BYOK (no CONVEX_DEPLOY_KEY)")
 	}
 }

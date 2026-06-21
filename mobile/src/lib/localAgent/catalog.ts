@@ -95,7 +95,7 @@ export const ACTION_CATALOG: ActionSpec[] = [
   { id: "device.remove", description: "Permanently remove a device from the account.", tier: "BLOCKED", needsDevice: true, via: "context" },
   { id: "cloud.destroy", description: "Destroy a managed cloud machine.", tier: "BLOCKED", needsDevice: true, via: "ops", opsVerb: "cloud_destroy" },
   { id: "destroy", description: "Destroy remote infrastructure.", tier: "BLOCKED", needsDevice: true, via: "ops", opsVerb: "destroy" },
-  { id: "provision", description: "Provision/buy a new managed cloud machine.", tier: "BLOCKED", needsDevice: false, via: "ops", opsVerb: "provision" },
+  { id: "provision", description: "Create managed cloud infrastructure (web-only; blocked in mobile).", tier: "BLOCKED", needsDevice: false, via: "ops", opsVerb: "provision" },
   { id: "scale", description: "Scale a deployment (add replicas/resources).", tier: "BLOCKED", needsDevice: true, via: "ops", opsVerb: "scale" },
   { id: "secrets.write", description: "Write a vault/1Password secret.", tier: "BLOCKED", needsDevice: true, via: "ops", opsVerb: "secrets" },
 ];

@@ -397,12 +397,17 @@ func (s *HTTPServer) handlePhoneExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	safe := strings.ReplaceAll(Slugify(slug), "/", "")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	if zipFmt {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, safe))
 	} else {
 		w.Header().Set("Content-Type", "application/gzip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tgz"`, safe))
+	}
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -516,14 +521,14 @@ func (s *HTTPServer) handlePhoneReceive(w http.ResponseWriter, r *http.Request) 
 			tables = len(proj.Schema.Tables)
 		}
 		send("materialized", map[string]interface{}{"slug": proj.Slug, "tables": tables})
-		// Hosted-tier box: tell the phone which backend the app will
-		// use (auto-wired) so it can show "running on <url>".
-		if env := hostedConvexBuildEnv(proj.Dir); len(env) > 0 {
-			send("hosted", map[string]interface{}{
-				"convexUrl": strings.TrimPrefix(env[0], "EXPO_PUBLIC_CONVEX_URL="),
-				"deploy":    "yaver deploy --target=selfhosted",
-			})
-		}
+		// Hosted-tier box: tell the phone this landed as a Yaver
+		// Serverless project. The client already knows the target base URL;
+		// keep the event placement-neutral and free of backend-vendor env.
+		send("hosted", map[string]interface{}{
+			"runtime": "yaver-serverless-lite",
+			"dataUrl": fmt.Sprintf("/data/%s", proj.Slug),
+			"deploy":  "imported",
+		})
 		send("ready", map[string]interface{}{
 			"project":   proj,
 			"slug":      proj.Slug,

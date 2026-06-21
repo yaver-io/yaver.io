@@ -68,8 +68,8 @@ func keysOf(m map[string]string) []string {
 
 // The export must ship an AGENTS.md handoff and offer a .zip twin
 // (identical contents) so the sandbox is droppable into a coding agent
-// AND Yaver-Cloud-compatible (the handoff explains the hosted backend
-// wiring). Found wiring the "export to coding agent" ask.
+// AND Yaver-managed-cloud-compatible. Found wiring the "export to coding
+// agent" ask.
 func TestPhoneExport_AgentsDocAndZipParity(t *testing.T) {
 	setupPhoneTestHome(t)
 	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Agent Handoff", Template: "todos"})
@@ -102,11 +102,12 @@ func TestPhoneExport_AgentsDocAndZipParity(t *testing.T) {
 		t.Error("AGENTS.md differs between .tgz and .zip — formats drifted")
 	}
 
-	// Handoff must be Yaver-Cloud-compatible + describe the real app.
+	// Handoff must be Yaver Serverless compatible + describe the real app.
 	for _, want := range []string{
-		"EXPO_PUBLIC_CONVEX_URL",
-		"Yaver Cloud",
-		"yaver deploy --target=selfhosted",
+		"Yaver Serverless Lite",
+		"Yaver managed cloud",
+		"No Convex import/export",
+		"data/app.sqlite",
 		"todos",
 	} {
 		if !strings.Contains(tAgents, want) {

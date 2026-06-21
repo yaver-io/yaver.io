@@ -77,6 +77,8 @@ export default function PhoneProjectDetailScreen() {
   const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
   const [gitBusy, setGitBusy] = useState<string | null>(null);
+  const [dropboxOAuth, setDropboxOAuth] = useState<{ sessionId: string; authUrl?: string } | null>(null);
+  const [dropboxCode, setDropboxCode] = useState("");
   const [lastDeploy, setLastDeploy] = useState<{ url: string; via?: string } | null>(null);
   const [costHints, setCostHints] = useState<PhoneDeployCostHints | null>(null);
 
@@ -260,35 +262,12 @@ export default function PhoneProjectDetailScreen() {
       const status = await quicClient.managedGitDropboxStatus();
       if (!status?.connected) {
         const start = await quicClient.managedGitDropboxOAuthStart();
+        setDropboxOAuth({ sessionId: start.sessionId, authUrl: start.authUrl });
+        setDropboxCode("");
         if (start?.authUrl) {
           await Linking.openURL(start.authUrl).catch(() => undefined);
         }
-        const prompt = (Alert as any).prompt;
-        if (Platform.OS === "ios" && typeof prompt === "function") {
-          prompt(
-            "Dropbox code",
-            "Paste the code Dropbox returned after approval.",
-            [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Connect",
-                onPress: async (code: string) => {
-                  if (!code?.trim()) return;
-                  try {
-                    await quicClient.managedGitDropboxOAuthSubmit({ sessionId: start.sessionId, code: code.trim() });
-                    await quicClient.managedGitBackupCopy({ slug: project.slug, targetKind: "dropbox" });
-                    await load();
-                    Alert.alert("Backed up", "Yaver copied a recoverable backup to Dropbox.");
-                  } catch (e: any) {
-                    Alert.alert("Dropbox failed", e?.message ?? "Could not finish Dropbox setup.");
-                  }
-                },
-              },
-            ],
-          );
-          return;
-        }
-        Alert.alert("Dropbox approval opened", "Approve Yaver in Dropbox, then submit the returned code from a Yaver agent or iOS device.");
+        Alert.alert("Dropbox approval opened", "Approve Yaver in Dropbox, then paste the returned code here. Dropbox is an extra copy; Yaver Git stays on.");
         return;
       }
       await quicClient.managedGitBackupCopy({ slug: project.slug, targetKind: "dropbox" });
@@ -296,6 +275,26 @@ export default function PhoneProjectDetailScreen() {
       Alert.alert("Backed up", "Yaver copied a recoverable backup to Dropbox.");
     } catch (e: any) {
       Alert.alert("Dropbox backup failed", e?.message ?? "Could not back up to Dropbox.");
+    } finally {
+      setGitBusy(null);
+    }
+  }
+
+  async function finishDropboxOAuth() {
+    if (!project?.managedGit?.enabled || !dropboxOAuth || !dropboxCode.trim()) return;
+    setGitBusy("dropbox-connect");
+    try {
+      await quicClient.managedGitDropboxOAuthSubmit({
+        sessionId: dropboxOAuth.sessionId,
+        code: dropboxCode.trim(),
+      });
+      await quicClient.managedGitBackupCopy({ slug: project.slug, targetKind: "dropbox" });
+      setDropboxOAuth(null);
+      setDropboxCode("");
+      await load();
+      Alert.alert("Dropbox synced", "Yaver copied a recoverable git backup to Dropbox. Other backups and mirrors can stay enabled too.");
+    } catch (e: any) {
+      Alert.alert("Dropbox failed", e?.message ?? "Could not finish Dropbox setup.");
     } finally {
       setGitBusy(null);
     }
@@ -651,6 +650,55 @@ export default function PhoneProjectDetailScreen() {
                 Mirrors: {(project.managedGit.mirrors ?? []).map((m) => m.fullName).join(" · ")}
               </Text>
             ) : null}
+            {(project.managedGit.externalBackups ?? []).length ? (
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+                Copies: {Array.from(new Set((project.managedGit.externalBackups ?? []).map((b) => backupTargetLabel(b.targetKind)))).join(" · ")}
+              </Text>
+            ) : null}
+            <View style={[styles.syncGuide, { borderColor: c.border, backgroundColor: c.bg }]}>
+              <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>
+                Sync copies are additive
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+                Yaver keeps the repo on the main branch. Dropbox, your own storage, a self-hosted box, GitHub, and GitLab can all be turned on together for recovery or later migration.
+              </Text>
+            </View>
+            {dropboxOAuth ? (
+              <View style={[styles.syncGuide, { borderColor: c.border, backgroundColor: c.bg }]}>
+                <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>
+                  Finish Dropbox from this phone
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+                  After approving Yaver in Dropbox, paste the returned code below. Yaver will immediately upload a recoverable git bundle.
+                </Text>
+                <TextInput
+                  value={dropboxCode}
+                  onChangeText={setDropboxCode}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  placeholder="Dropbox code"
+                  placeholderTextColor={c.textMuted}
+                  style={[styles.codeField, { borderColor: c.border, color: c.textPrimary }]}
+                />
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                  <Pressable
+                    onPress={() => dropboxOAuth.authUrl && Linking.openURL(dropboxOAuth.authUrl).catch(() => undefined)}
+                    style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
+                  >
+                    <Text style={[styles.btnText, { color: c.textPrimary }]}>Open Dropbox</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={finishDropboxOAuth}
+                    disabled={!dropboxCode.trim() || !!gitBusy}
+                    style={[styles.btn, { backgroundColor: c.accent, flex: 1, opacity: !dropboxCode.trim() || gitBusy ? 0.55 : 1 }]}
+                  >
+                    <Text style={{ color: c.bg, fontWeight: "700" }}>
+                      {gitBusy === "dropbox-connect" ? "Syncing..." : "Connect & sync"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
             <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
               <Pressable
                 onPress={runManagedGitBackup}
@@ -741,7 +789,7 @@ export default function PhoneProjectDetailScreen() {
               Code storage
             </Text>
             <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
-              This project is not using Yaver Managed Git yet.
+              Turn on Yaver Git first, then add Dropbox, your own computer, a self-hosted box, GitHub, and GitLab as extra copies. They are mutually inclusive.
             </Text>
             <Pressable
               onPress={enableManagedGit}
@@ -1015,6 +1063,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function backupTargetLabel(kind?: string): string {
+  switch (kind) {
+    case "dropbox":
+      return "Dropbox";
+    case "shared-storage":
+      return "Own storage";
+    case "local-folder":
+      return "Local folder";
+    default:
+      return kind || "Backup";
+  }
+}
+
 const styles = StyleSheet.create({
   h1: { fontSize: 24, fontWeight: "700" },
   section: {
@@ -1053,6 +1114,20 @@ const styles = StyleSheet.create({
     minHeight: 90,
     fontSize: 13,
     textAlignVertical: "top",
+  },
+  codeField: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginTop: 8,
+    fontSize: 13,
+  },
+  syncGuide: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
   },
   btn: { paddingVertical: 12, borderRadius: 8, alignItems: "center" },
   btnSecondary: { paddingVertical: 10, borderRadius: 8, alignItems: "center", borderWidth: 1 },

@@ -1,6 +1,8 @@
 "use client";
 
 import { useAuth } from "@/lib/use-auth";
+import { useBetaStatus } from "@/lib/useBetaStatus";
+import BetaWorkspaceView from "@/components/dashboard/BetaWorkspaceView";
 import { useDevices, usePendingClaims, setDeviceAlias, type Device } from "@/lib/use-devices";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import RemoteDesktopModal from "@/components/dashboard/RemoteDesktopModal";
@@ -737,6 +739,7 @@ const CONNECTION_REQUIRED_TABS = new Set<string>([
 export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, sessionExpired, logout } = useAuth();
+  const { beta: betaStatus } = useBetaStatus(token);
   const { devices, refreshDevices, hiddenIds } = useDevices(token);
   // Bootstrap-pending claims — boxes that joined the user's relay but
   // don't have a Convex devices row yet. Surfaced to the user so a
@@ -1948,6 +1951,27 @@ export default function DashboardPage() {
     { id: "appletv", label: "Apple TV", icon: "\uD83D\uDCFA" },
   ];
 
+  // Beta users get the focused Beta workspace INSTEAD of the full
+  // dashboard \u2014 same coding engine (VibeCodingView), none of the infra/
+  // device/guest/git chrome. The invisible owner-infra share is enforced
+  // server-side; this is just which surface renders. Placed after all
+  // hooks + auth guards, so hook order is unaffected.
+  if (betaStatus?.isBeta) {
+    return (
+      <BetaWorkspaceView
+        token={token}
+        beta={betaStatus}
+        devices={devices}
+        connectedDevice={connectedDevice}
+        connState={connState}
+        onSelectDevice={connectToDevice}
+        mobileWorkers={mobileWorkers}
+        selectedPreviewTarget={selectedPreviewTarget}
+        onSelectPreviewTarget={handleSelectPreviewTarget}
+      />
+    );
+  }
+
   return (
     <div className="dashboard-shell relative flex min-h-[100vh] flex-col md:h-[100vh] md:min-h-0 md:flex-row">
       <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-60 border-r border-white/5 md:block" />
@@ -2739,8 +2763,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <h2 className="text-lg font-semibold text-surface-100">Yaver Cloud</h2>
               <p className="mt-1 text-xs text-surface-500">
-                Managed boxes provisioned by Yaver, billed from prepaid credit.
-                Top up, spin up, and manage your cloud machines here.
+                Optional web-billed infrastructure: saved cloud workspaces,
+                private relay, and auto-stop. Self-hosted Yaver remains free.
               </p>
               <ManagedCloudPanel token={token} standalone />
             </div>

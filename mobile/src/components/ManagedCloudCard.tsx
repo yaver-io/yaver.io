@@ -6,18 +6,14 @@
 // project_managed_cloud_onboarding_gap.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, Pressable, Alert, ActivityIndicator, Linking } from "react-native";
+import { View, Text, Pressable, Alert, ActivityIndicator } from "react-native";
 import { getConvexSiteUrl } from "../lib/auth";
 import {
-  createCreditPackCheckout,
-  getCreditPacks,
   getManagedCloudBalance,
   getManagedCloudUsage,
   getManagedSubscription,
-  provisionManagedCloud,
   startManagedCloudMachine,
   stopManagedCloudMachine,
-  type CreditPack,
   type ManagedCloudBalanceSummary,
   type ManagedCloudUsageSummary,
   type ManagedSubscriptionSummary,
@@ -45,7 +41,6 @@ export default function ManagedCloudCard({
   const [data, setData] = useState<ManagedSubscriptionSummary | null>(null);
   const [balance, setBalance] = useState<ManagedCloudBalanceSummary | null>(null);
   const [usage, setUsage] = useState<ManagedCloudUsageSummary | null>(null);
-  const [packs, setPacks] = useState<CreditPack[]>([]);
   const [access, setAccess] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showLedger, setShowLedger] = useState(false);
@@ -74,12 +69,6 @@ export default function ManagedCloudCard({
     return () => clearInterval(iv);
   }, [load]);
 
-  // Lazily fetch the credit-pack catalog once access is confirmed.
-  useEffect(() => {
-    if (!token || access !== true || packs.length) return;
-    void getCreditPacks(token).then(setPacks);
-  }, [token, access, packs.length]);
-
   // Private preview / launch-gated: render nothing for non-access users
   // or while access is still unknown (never flash to a non-access user).
   if (!token || access !== true) return null;
@@ -101,7 +90,7 @@ export default function ManagedCloudCard({
   const decommission = (id: string, resourceId?: string) => {
     Alert.alert(
       "Decommission box?",
-      `Decommissions the cloud resource (${resourceId ?? "—"}), stops billing, and cancels the subscription. Cannot be undone.`,
+      `Decommissions the cloud resource (${resourceId ?? "—"}) and stops managed-infrastructure billing. Cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -157,67 +146,6 @@ export default function ManagedCloudCard({
     }
   };
 
-  // Add credit, OpenAI-style: open a web checkout in the system browser
-  // (NEVER an in-app purchase — keeps Apple/Google billing policy out of
-  // it; compute is remote IaaS, sold on the web). On payment the
-  // order_created webhook credits the wallet; balance refreshes on the
-  // next poll.
-  const addCredit = async (packId: string) => {
-    setBusy(`pack:${packId}`);
-    try {
-      const r = await createCreditPackCheckout(token, packId);
-      if (r?.url) {
-        await Linking.openURL(r.url);
-        Alert.alert(
-          "Finish in your browser",
-          "Complete the payment in the browser that just opened. Your balance updates here automatically once the payment clears.",
-        );
-      } else {
-        throw new Error("No checkout URL returned");
-      }
-    } catch (e: any) {
-      Alert.alert("Couldn't start top-up", e?.message || "Try again in a moment.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const spinUp = (machineType: "cpu" | "gpu") => {
-    // The running estimate the wallet reports tracks a CPU box; don't show it
-    // for GPU (GPU bills at a higher rate). Keep GPU copy rate-agnostic.
-    const rateLine =
-      machineType === "cpu"
-        ? `billed from your prepaid balance (~${money(balance?.estimatedHourlyCents)}/hr running)`
-        : "billed from your prepaid balance at the GPU rate (higher than CPU)";
-    Alert.alert(
-      "Spin up a box?",
-      `Provisions a new ${machineType.toUpperCase()} cloud box, ${rateLine}. You can pause it anytime — paused costs ~€0.50/mo.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Spin up",
-          onPress: async () => {
-            setBusy(`spinup:${machineType}`);
-            try {
-              await provisionManagedCloud(token, { machineType });
-              await load();
-            } catch (e: any) {
-              const msg = e?.message || "";
-              Alert.alert(
-                msg.toLowerCase().includes("balance") ? "Add credit first" : "Couldn't spin up",
-                msg.toLowerCase().includes("balance")
-                  ? "Your prepaid balance is too low to safely run a box. Add credit, then try again."
-                  : msg || "Yaver couldn't provision a box right now. Try again.",
-              );
-            } finally {
-              setBusy(null);
-            }
-          },
-        },
-      ],
-    );
-  };
-
   return (
     <View style={[{ borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 14, gap: 8, backgroundColor: c.surface }]}>
       <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "700" }}>
@@ -226,7 +154,7 @@ export default function ManagedCloudCard({
       <Text style={{ color: c.textMuted, fontSize: 11 }}>
         {sub
           ? `Managed cloud · ${sub.status}`
-          : "No managed cloud machine is active on this account."}
+          : "No Yaver Cloud workspace is active on this account."}
       </Text>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "800" }}>
@@ -244,88 +172,18 @@ export default function ManagedCloudCard({
         ) : null}
       </View>
 
-      {/* Add credit — OpenAI-style web top-up (no in-app purchase). */}
-      <View style={{ gap: 4 }}>
-        <Text style={{ color: c.textMuted, fontSize: 11 }}>Add credit</Text>
-        <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-          {(packs.length
-            ? packs
-            : [
-                { id: "p10", cents: 1000, label: "$10" },
-                { id: "p25", cents: 2500, label: "$25" },
-                { id: "p50", cents: 5000, label: "$50" },
-              ]
-          ).map((p) => (
-            <Pressable
-              key={p.id}
-              disabled={busy !== null}
-              onPress={() => addCredit(p.id)}
-              style={{
-                opacity: busy ? 0.5 : 1,
-                borderWidth: 1,
-                borderColor: "#0ea5e9",
-                borderRadius: 8,
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-              }}
-            >
-              {busy === `pack:${p.id}` ? (
-                <ActivityIndicator size="small" color="#0ea5e9" />
-              ) : (
-                <Text style={{ color: "#0ea5e9", fontSize: 13, fontWeight: "700" }}>
-                  + {p.label}
-                </Text>
-              )}
-            </Pressable>
-          ))}
-        </View>
-        <Text style={{ color: c.textMuted, fontSize: 10 }}>
-          Opens a secure checkout in your browser. Credit is added when payment clears.
+      <View style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, gap: 4 }}>
+        <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>
+          Web-billed infrastructure
+        </Text>
+        <Text style={{ color: c.textMuted, fontSize: 10, lineHeight: 15 }}>
+          Yaver Cloud checkout, credits, and new workspace purchases live on
+          the web. This app only controls cloud workspaces already active on
+          your account: resume, pause, monitor, and finish setup.
         </Text>
       </View>
 
-      {/* Spin up a new box from prepaid balance. */}
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        <Pressable
-          disabled={busy !== null}
-          onPress={() => spinUp("cpu")}
-          style={{
-            opacity: busy ? 0.5 : 1,
-            borderWidth: 1,
-            borderColor: "#059669",
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-          }}
-        >
-          {busy === "spinup:cpu" ? (
-            <ActivityIndicator size="small" color="#059669" />
-          ) : (
-            <Text style={{ color: "#059669", fontSize: 13, fontWeight: "700" }}>
-              ＋ Spin up CPU box
-            </Text>
-          )}
-        </Pressable>
-        <Pressable
-          disabled={busy !== null}
-          onPress={() => spinUp("gpu")}
-          style={{
-            opacity: busy ? 0.5 : 1,
-            borderWidth: 1,
-            borderColor: "#7c3aed",
-            borderRadius: 8,
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-          }}
-        >
-          {busy === "spinup:gpu" ? (
-            <ActivityIndicator size="small" color="#7c3aed" />
-          ) : (
-            <Text style={{ color: "#7c3aed", fontSize: 13, fontWeight: "700" }}>
-              ＋ Spin up GPU box
-            </Text>
-          )}
-        </Pressable>
         {usage && (usage.usage.length || usage.topups.length) ? (
           <Pressable onPress={() => setShowLedger((s) => !s)} style={{ paddingVertical: 6, paddingHorizontal: 6 }}>
             <Text style={{ color: c.textMuted, fontSize: 11 }}>

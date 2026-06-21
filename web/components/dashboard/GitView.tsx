@@ -7,6 +7,7 @@ import {
   agentClient,
   type GitBranchRow,
   type GitCommitRow,
+  type ManagedGitProjectMeta,
   type GitProviderStatusRow,
   type GitRemoteRepo,
   type GitStatusRow,
@@ -144,6 +145,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
   const [gitStatus, setGitStatus] = useState<GitStatusRow | null>(null);
   const [gitBranches, setGitBranches] = useState<GitBranchRow[]>([]);
   const [gitCommits, setGitCommits] = useState<GitCommitRow[]>([]);
+  const [managedGit, setManagedGit] = useState<ManagedGitProjectMeta | null>(null);
   const [projectActions, setProjectActions] = useState<ProjectAction[]>([]);
 
   const [providers, setProviders] = useState<GitProviderStatusRow[]>([]);
@@ -155,6 +157,8 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
   const [linkedGitProviders, setLinkedGitProviders] = useState<string[]>([]);
   const [linkingGitProvider, setLinkingGitProvider] = useState<"github" | "gitlab" | null>(null);
   const [gitLinkError, setGitLinkError] = useState<string | null>(null);
+  const [dropboxFlow, setDropboxFlow] = useState<{ sessionId: string; authUrl: string } | null>(null);
+  const [dropboxCode, setDropboxCode] = useState("");
 
   const [busy, setBusy] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -252,22 +256,25 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
       setGitStatus(null);
       setGitBranches([]);
       setGitCommits([]);
+      setManagedGit(null);
       setProjectActions([]);
       return;
     }
     let cancelled = false;
     const refresh = async () => {
       try {
-        const [status, branches, commits, actionsResult] = await Promise.all([
+        const [status, branches, commits, actionsResult, managed] = await Promise.all([
           agentClient.gitStatus(expandedProjectPath).catch(() => null),
           agentClient.gitBranches(expandedProjectPath).catch(() => []),
           agentClient.gitLog(expandedProjectPath, 5).catch(() => []),
           agentClient.getProjectActions(expandedProjectPath).catch(() => ({ actions: [] })),
+          agentClient.managedGitStatus({ workDir: expandedProjectPath }).catch(() => null),
         ]);
         if (cancelled) return;
         setGitStatus(status);
         setGitBranches(branches);
         setGitCommits(commits);
+        setManagedGit(managed);
         setProjectActions(Array.isArray(actionsResult?.actions) ? actionsResult.actions : []);
       } catch (error) {
         if (!cancelled) setBusy(error instanceof Error ? error.message : String(error));
@@ -491,6 +498,103 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
     }
   }
 
+  async function refreshManagedGit() {
+    if (!expandedProjectPath) return;
+    const managed = await agentClient.managedGitStatus({ workDir: expandedProjectPath }).catch(() => null);
+    setManagedGit(managed);
+  }
+
+  async function enableManagedGitForProject(): Promise<ManagedGitProjectMeta | null> {
+    if (!expandedProject) return null;
+    try {
+      setBusy(`Turning on Yaver Git for ${expandedProject.name}…`);
+      const meta = await agentClient.managedGitEnable({
+        workDir: expandedProject.path,
+        name: expandedProject.name,
+        visibility: "private",
+      });
+      setManagedGit(meta);
+      setBusy("Yaver Git is on. Dropbox, GitHub, GitLab, and local backups can all be added together.");
+      return meta;
+    } catch (error) {
+      setBusy(error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
+
+  async function runManagedGitBackup(targetKind?: "dropbox") {
+    if (!expandedProject) return;
+    try {
+      if (!managedGit?.enabled) {
+        const meta = await enableManagedGitForProject();
+        if (!meta?.enabled) return;
+      }
+      if (targetKind === "dropbox") {
+        const status = await agentClient.managedGitDropboxStatus();
+        if (!status.connected) {
+          const start = await agentClient.managedGitDropboxOAuthStart();
+          setDropboxFlow({ sessionId: start.sessionId, authUrl: start.authUrl });
+          setDropboxCode("");
+          if (typeof window !== "undefined") window.open(start.authUrl, "_blank", "noopener,noreferrer");
+          setBusy("Dropbox approval opened. Paste the returned code here to finish from the web UI.");
+          return;
+        }
+        await agentClient.managedGitBackupCopy({ workDir: expandedProject.path, targetKind: "dropbox" });
+        setBusy("Copied a recoverable Yaver Git bundle to Dropbox.");
+      } else {
+        await agentClient.managedGitBackupRun({ workDir: expandedProject.path });
+        setBusy("Created a local recoverable Yaver Git bundle.");
+      }
+      await refreshManagedGit();
+    } catch (error) {
+      setBusy(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function finishDropboxSync() {
+    if (!expandedProject || !dropboxFlow || !dropboxCode.trim()) return;
+    try {
+      setBusy("Connecting Dropbox and syncing Yaver Git…");
+      await agentClient.managedGitDropboxOAuthSubmit({
+        sessionId: dropboxFlow.sessionId,
+        code: dropboxCode.trim(),
+      });
+      await agentClient.managedGitBackupCopy({ workDir: expandedProject.path, targetKind: "dropbox" });
+      setDropboxFlow(null);
+      setDropboxCode("");
+      await refreshManagedGit();
+      setBusy("Dropbox is connected and has a recoverable git bundle. Other mirrors remain available.");
+    } catch (error) {
+      setBusy(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function mirrorManagedGit(provider: "github" | "gitlab") {
+    if (!expandedProject) return;
+    try {
+      if (!managedGit?.enabled) {
+        const meta = await enableManagedGitForProject();
+        if (!meta?.enabled) return;
+      }
+      const repoName = (managedGit?.repoId || expandedProject.name || "yaver-project")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      const result = await agentClient.managedGitMirrorConnect({
+        workDir: expandedProject.path,
+        provider,
+        repoName,
+        visibility: "private",
+        description: `${expandedProject.name} managed by Yaver Git`,
+      });
+      await refreshManagedGit();
+      setBusy(`Mirrored Yaver Git to ${result.mirror?.fullName || provider}.`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setBusy(msg.includes("token") ? `Connect ${provider} under Clone From Remotes, then try the mirror again.` : msg);
+    }
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-surface-800 bg-surface-900/60 px-4 py-3">
@@ -685,6 +789,112 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                               sub={status?.clean ? "no local changes" : "changed files on this machine"}
                             />
                             <StatCard label="Branch" value={status?.branch || project.branch || "none"} sub="active branch" />
+                          </div>
+
+                          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Yaver Git Sync</div>
+                                <div className="mt-1 text-sm font-semibold text-surface-100">
+                                  {managedGit?.enabled ? "Managed repo is on" : "Turn on zero-config repo storage"}
+                                </div>
+                                <div className="mt-1 max-w-2xl text-xs leading-5 text-surface-500">
+                                  Yaver Git keeps this project on a managed main branch. Dropbox, GitHub, GitLab, local folders, and self-hosted boxes are extra copies you can enable together for recovery or later migration.
+                                </div>
+                              </div>
+                              <MiniPill>{managedGit?.enabled ? managedGit.visibility : "not enabled"}</MiniPill>
+                            </div>
+
+                            {managedGit?.enabled ? (
+                              <div className="mt-3 flex flex-wrap gap-1.5">
+                                <MiniPill>{managedGit.defaultBranch || "main"}</MiniPill>
+                                {managedGit.lastCommit ? <MiniPill>{managedGit.lastCommit.slice(0, 7)}</MiniPill> : null}
+                                {managedGit.lastBackup ? <MiniPill>local backup</MiniPill> : null}
+                                {(managedGit.externalBackups ?? []).map((backup, index) => (
+                                  <MiniPill key={`${backup.targetKind}:${backup.path}:${index}`}>
+                                    {managedBackupLabel(backup.targetKind)}
+                                  </MiniPill>
+                                ))}
+                                {(managedGit.mirrors ?? []).map((mirror) => (
+                                  <MiniPill key={`${mirror.provider}:${mirror.fullName}`}>
+                                    {mirror.provider}: {mirror.fullName}
+                                  </MiniPill>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {dropboxFlow ? (
+                              <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+                                <div className="text-xs font-semibold text-amber-800 dark:text-amber-100">Finish Dropbox from this browser</div>
+                                <div className="mt-1 text-[11px] leading-5 text-surface-400">
+                                  Approve Yaver in Dropbox, then paste the returned code. This uploads a git bundle and does not disable other mirrors.
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <a
+                                    href={dropboxFlow.authUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="rounded-xl border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                                  >
+                                    Open Dropbox
+                                  </a>
+                                  <input
+                                    value={dropboxCode}
+                                    onChange={(event) => setDropboxCode(event.target.value)}
+                                    placeholder="Dropbox code"
+                                    className="min-w-56 flex-1 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => void finishDropboxSync()}
+                                    disabled={!dropboxCode.trim()}
+                                    className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/15 disabled:opacity-40 dark:text-emerald-100"
+                                  >
+                                    Connect & sync
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {!managedGit?.enabled ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void enableManagedGitForProject()}
+                                  className="rounded-xl border border-brand/40 bg-brand-soft/40 px-3 py-2 text-xs font-semibold text-brand-softFg hover:border-brand/60 hover:bg-brand-soft"
+                                >
+                                  Turn on Yaver Git
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => void runManagedGitBackup()}
+                                className="rounded-xl border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                              >
+                                Local backup
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void runManagedGitBackup("dropbox")}
+                                className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs font-semibold text-sky-800 hover:bg-sky-500/15 dark:text-sky-100"
+                              >
+                                Dropbox
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void mirrorManagedGit("github")}
+                                className="rounded-xl border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                              >
+                                Mirror GitHub
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void mirrorManagedGit("gitlab")}
+                                className="rounded-xl border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-500/15 dark:text-orange-100"
+                              >
+                                Mirror GitLab
+                              </button>
+                            </div>
                           </div>
                         </div>
 
@@ -1130,6 +1340,19 @@ function StatPill({
       {label}: {value}
     </span>
   );
+}
+
+function managedBackupLabel(kind?: string) {
+  switch (kind) {
+    case "dropbox":
+      return "Dropbox";
+    case "shared-storage":
+      return "Own storage";
+    case "local-folder":
+      return "Local folder";
+    default:
+      return kind || "Backup";
+  }
 }
 
 function MiniPill({ children }: { children: ReactNode }) {

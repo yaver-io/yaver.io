@@ -168,6 +168,24 @@ func TestPhoneProjectExportReceiveBetweenAgents(t *testing.T) {
 		t.Fatal("phone project didn't land on agent B after export → receive")
 	}
 
+	// 4b. Runtime proof: the target agent serves the imported app's data API.
+	withIsolatedHome(t, homeB, func() {
+		req, _ := http.NewRequest("GET", urlB+"/data/"+createdSlug+"/todos", nil)
+		req.Header.Set("Authorization", "Bearer owner-B")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("B data API: %v", err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			t.Fatalf("B data API: HTTP %d — %s", resp.StatusCode, string(raw))
+		}
+		if !bytes.Contains(raw, []byte("Buy milk")) {
+			t.Fatalf("B data API did not expose imported rows: %s", string(raw))
+		}
+	})
+
 	// 5. Receive a SECOND time should hit the conflict path unless
 	//    the client explicitly asks for overwrite.
 	withIsolatedHome(t, homeB, func() {

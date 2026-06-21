@@ -9,26 +9,16 @@ import (
 	"time"
 )
 
-// The friends-preview share/join contract: a host mints a code for a
-// project; a friend resolves it to {slug, hostedConvexUrl, bundleUrl}
-// and Hermes-loads against the host's own backend. Codes are P2P
-// (on-agent files), case-insensitive, and self-expire.
+// The friends-preview share/join contract: a host mints a code for a project;
+// a friend resolves it to {slug, runtime, dataUrl, bundleUrl} and Hermes-loads
+// against the host's Yaver Serverless Lite backend. Codes are P2P (on-agent
+// files), case-insensitive, and self-expire.
 func TestPhoneShare_CreateResolveExpire(t *testing.T) {
 	setupPhoneTestHome(t)
 	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Share Me", Template: "todos"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-
-	// Hosted-tier box: the share must carry the box's Convex URL so the
-	// friend hits the host's live data.
-	credDir := t.TempDir()
-	credFile := filepath.Join(credDir, "convex-selfhosted.json")
-	if err := os.WriteFile(credFile,
-		[]byte(`{"url":"https://hostbox.cloud.yaver.io/_convex-api","adminKey":"x"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CONVEX_SELFHOSTED_FILE", credFile)
 
 	sh, err := CreatePhoneShare(p.Slug, time.Hour)
 	if err != nil {
@@ -40,8 +30,14 @@ func TestPhoneShare_CreateResolveExpire(t *testing.T) {
 	if sh.Slug != p.Slug {
 		t.Errorf("slug = %q, want %q", sh.Slug, p.Slug)
 	}
-	if sh.HostedConvexURL != "https://hostbox.cloud.yaver.io/_convex-api" {
-		t.Errorf("hosted Convex URL not captured: %q", sh.HostedConvexURL)
+	if sh.Runtime != "yaver-serverless-lite" {
+		t.Errorf("runtime = %q, want yaver-serverless-lite", sh.Runtime)
+	}
+	if sh.DataURL != "/data/"+p.Slug {
+		t.Errorf("dataUrl = %q, want /data/%s", sh.DataURL, p.Slug)
+	}
+	if sh.HostedConvexURL != "" {
+		t.Errorf("legacy hostedConvexUrl should be empty for serverless shares: %q", sh.HostedConvexURL)
 	}
 	if sh.BundleURL == "" || sh.BundleURL[:1] != "/" {
 		t.Errorf("bundleUrl should be a relative path: %q", sh.BundleURL)
@@ -52,7 +48,7 @@ func TestPhoneShare_CreateResolveExpire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if got.Slug != p.Slug || got.HostedConvexURL != sh.HostedConvexURL {
+	if got.Slug != p.Slug || got.Runtime != sh.Runtime || got.DataURL != sh.DataURL {
 		t.Errorf("resolved share mismatch: %+v", got)
 	}
 

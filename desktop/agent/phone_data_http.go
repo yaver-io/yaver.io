@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Public data API — the runtime surface a third-party RN/web app hits from
@@ -155,6 +156,28 @@ func (s *HTTPServer) phoneDataOwnerAuthorized(r *http.Request) bool {
 	if IsPairedToken(token) {
 		TouchPairedToken(token)
 		return true
+	}
+	// Owner's current on-disk token (handles drift from s.token across a
+	// restart / rotation), same as the main s.auth wrapper.
+	if s.tokenIsOwner(token) {
+		return true
+	}
+	// A Convex-validated session token belonging to the owner. Without this,
+	// an owner using a *different* valid session (e.g. the web dashboard /
+	// browser sandbox token, not the agent's stored token) could deploy via
+	// /phone/projects/receive but be rejected reading their own /data — the
+	// main wrapper accepts it, so /data must too. Cached like the main path
+	// so the hosted data API doesn't round-trip Convex per request.
+	if s.convexURL != "" && s.ownerUserID != "" {
+		if cached, ok := s.tokenCache.Load(token); ok {
+			if info, _ := cached.(*cachedTokenInfo); info != nil && !info.isSdk && info.userID == s.ownerUserID {
+				return true
+			}
+		}
+		if uid, err := ValidateTokenUser(s.convexURL, token); err == nil && uid == s.ownerUserID {
+			s.tokenCache.Store(token, &cachedTokenInfo{userID: uid, isSdk: false, storedAt: time.Now()})
+			return true
+		}
 	}
 	return false
 }
