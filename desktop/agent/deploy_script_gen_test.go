@@ -110,6 +110,53 @@ func TestGenerateDeployScriptPlaystore(t *testing.T) {
 	}
 }
 
+func TestGenerateDeployScriptPlaystoreMultiTenant(t *testing.T) {
+	// A CUSTOMER's Play deploy must target THEIR OWN package (read from
+	// gradle) + track via env — never Yaver's hardcoded io.yaver.mobile.
+	script, err := GenerateDeployScript(DeployScriptSpec{
+		App: "customerapp", Stack: "react-native-expo", Target: "playstore", Path: "/tmp/customerapp",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployScript: %v", err)
+	}
+	for _, s := range []string{
+		"applicationId", // reads the app's own package id
+		"export PLAY_PACKAGE_NAME=",
+		`export PLAY_TRACK="${PLAY_TRACK:-internal}"`,
+		"export AAB_PATH=",
+	} {
+		if !strings.Contains(script, s) {
+			t.Errorf("playstore script missing %q", s)
+		}
+	}
+	if strings.Contains(script, "io.yaver.mobile") {
+		t.Error("playstore script must NOT hardcode io.yaver.mobile (multi-tenant)")
+	}
+}
+
+func TestGenerateDeployScriptPlaystoreProduction(t *testing.T) {
+	script, err := GenerateDeployScript(DeployScriptSpec{
+		App: "customerapp", Stack: "react-native-expo", Target: "playstore-production", Path: "/tmp/customerapp",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployScript: %v", err)
+	}
+	for _, s := range []string{
+		`export PLAY_TRACK="${PLAY_TRACK:-production}"`,
+		"bundleRelease",
+		"export PLAY_PACKAGE_NAME=",
+		// FP path scoped to the production target — no /tmp collision with internal.
+		"FP=/tmp/yaver-deploy-customerapp-playstore-production.fp",
+	} {
+		if !strings.Contains(script, s) {
+			t.Errorf("playstore-production script missing %q", s)
+		}
+	}
+	if strings.Contains(script, `"${PLAY_TRACK:-internal}"`) {
+		t.Error("production template must flip the default track to production")
+	}
+}
+
 func TestGenerateDeployScriptUnknown(t *testing.T) {
 	_, err := GenerateDeployScript(DeployScriptSpec{
 		App:    "x",
@@ -227,8 +274,8 @@ func TestGenerateDeployScriptConvexSelfHosted(t *testing.T) {
 		t.Fatalf("GenerateDeployScript(selfhosted): %v", err)
 	}
 	mustContain := []string{
-		"/etc/yaver/convex-selfhosted.json",         // on-box cred file
-		"CONVEX_SELF_HOSTED_URL",                     // self-hosted env, not deploy key
+		"/etc/yaver/convex-selfhosted.json", // on-box cred file
+		"CONVEX_SELF_HOSTED_URL",            // self-hosted env, not deploy key
 		"CONVEX_SELF_HOSTED_ADMIN_KEY",
 		"npx convex deploy --yes",
 		`cd "/srv/yaver/workspace"`,

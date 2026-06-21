@@ -5,12 +5,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ROUTES, resolveRoute, costCents } from "./pricing";
 
-test("auto resolves to the cheapest-capable chain (GLM first)", () => {
+test("auto leads with a PAY-PER-TOKEN provider, not the flat coding plan", () => {
   const chain = resolveRoute("auto");
   assert.equal(chain, ROUTES.auto);
-  assert.equal(chain[0].provider, "zai");
-  assert.equal(chain[0].model, "glm-4.6");
+  // P2 staleness fix: the primary must NOT be the flat z.ai coding plan.
+  assert.notEqual(chain[0].provider, "zai", "coding plan must not be primary");
   assert.ok(chain.length >= 2, "chain must have a fallback");
+  // The coding plan is acceptable only as a LAST-RESORT overflow entry.
+  const codingIdx = chain.findIndex((u) => u.provider === "zai");
+  if (codingIdx !== -1) {
+    assert.equal(codingIdx, chain.length - 1, "coding plan must be last resort");
+  }
 });
 
 test("missing/empty model falls back to auto", () => {
@@ -38,11 +43,11 @@ test("unknown model falls back to the full auto chain (never empty)", () => {
 });
 
 test("costCents computes input+output COGS per million tokens", () => {
-  const u = ROUTES.auto[0]; // glm: in 60c/M, out 220c/M (placeholders)
-  // 1M in + 1M out = 60 + 220 = 280 cents
-  assert.equal(costCents(u, 1_000_000, 1_000_000), 280);
+  const u = ROUTES.auto[0]; // primary (rate-agnostic so a retune can't break this)
+  // 1M in + 1M out = (in + out) cents
+  assert.equal(costCents(u, 1_000_000, 1_000_000), u.inCentsPerM + u.outCentsPerM);
   // proportional + fractional (not rounded here — Convex ceils at debit)
-  assert.equal(costCents(u, 500_000, 0), 30);
+  assert.equal(costCents(u, 500_000, 0), u.inCentsPerM / 2);
   assert.equal(costCents(u, 0, 0), 0);
 });
 

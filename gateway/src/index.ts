@@ -32,9 +32,13 @@ export interface Env {
   MAX_CENTS_PER_REQUEST: string;  // refuse if worst-case > this
   MAX_CENTS_PER_HOUR?: string;    // rolling per-user hourly cap (0/unset = off)
   USER_METER?: DurableObjectNamespace; // per-user cap + sub-cent carry (optional)
-  // Upstream provider keys (referenced by Upstream.keyEnv):
-  ZAI_API_KEY: string;
-  DEEPINFRA_API_KEY: string;
+  // Upstream provider keys (referenced by Upstream.keyEnv). Set whichever
+  // you use; callUpstream skips any upstream whose key is unset, so the
+  // set of configured keys IS the provider selection (pay-per-token first).
+  ZAI_API_KEY: string;          // z.ai Coding Plan (flat) — free/beta tier
+  ZAI_PAYG_API_KEY?: string;    // z.ai pay-as-you-go (/api/paas/v4)
+  DEEPINFRA_API_KEY: string;    // pay-per-token primary (default)
+  TOGETHER_API_KEY?: string;    // pay-per-token alternate
   [k: string]: unknown;
 }
 
@@ -170,9 +174,12 @@ async function callUpstream(
         headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
         body: JSON.stringify({ ...payload, model: u.model }),
       });
-      // Fall through only on upstream-side failures, not 4xx (bad request
-      // would fail identically on every candidate).
-      if (res.status >= 500) continue;
+      // Fall through on upstream-side failures: 5xx, AND 429 (rate-limit/
+      // quota — the coding-plan "staleness": a throttled upstream must
+      // fail over to the next provider, never be returned to the user) and
+      // 408 (upstream timeout). Other 4xx (400/401/403) are not retried —
+      // a bad request / bad key fails identically on the next candidate.
+      if (res.status >= 500 || res.status === 429 || res.status === 408) continue;
       return { res, upstream: u };
     } catch {
       continue; // network/timeout → next candidate

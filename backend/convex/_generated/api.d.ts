@@ -52,6 +52,7 @@ import type * as packages from "../packages.js";
 import type * as passkeys from "../passkeys.js";
 import type * as passkeysDb from "../passkeysDb.js";
 import type * as pendingDeviceClaims from "../pendingDeviceClaims.js";
+import type * as plans from "../plans.js";
 import type * as platformConfig from "../platformConfig.js";
 import type * as privacyMigrations from "../privacyMigrations.js";
 import type * as projectShares from "../projectShares.js";
@@ -122,6 +123,7 @@ declare const fullApi: ApiFromModules<{
   passkeys: typeof passkeys;
   passkeysDb: typeof passkeysDb;
   pendingDeviceClaims: typeof pendingDeviceClaims;
+  plans: typeof plans;
   platformConfig: typeof platformConfig;
   privacyMigrations: typeof privacyMigrations;
   projectShares: typeof projectShares;

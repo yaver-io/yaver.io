@@ -2628,6 +2628,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		now := time.Now()
 		task.StartedAt = &now
 		task.Status = TaskStatusRunning
+		reportMachineActivity() // idle auto-shutdown: managed box is in use
 
 		trackForkedPID(cmd.Process.Pid)
 
@@ -3662,6 +3663,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	now := time.Now()
 	task.StartedAt = &now
 	task.Status = TaskStatusRunning
+	reportMachineActivity() // idle auto-shutdown: managed box is in use
 
 	if runner.OutputMode == "raw" {
 		go tm.readRawOutput(task, stdout, stderr)

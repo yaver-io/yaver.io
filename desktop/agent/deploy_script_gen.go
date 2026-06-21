@@ -237,8 +237,17 @@ fi
 
 echo "✓ AAB ready: $(pwd)/$AAB (versionCode $EFFECTIVE_VC)"
 
+# Multi-tenant upload target: read the CUSTOMER's own applicationId from
+# their gradle and ship to THEIR package — never Yaver's hardcoded one.
+# The upload helper (upload-playstore.py) reads these from the env, so the
+# same helper serves every customer's app + track.
+APP_ID=$(grep -E 'applicationId' "$GRADLE_FILE" | head -1 | sed -E 's/.*applicationId[[:space:]]*"?([A-Za-z0-9_.]+)"?.*/\1/')
+export PLAY_PACKAGE_NAME="${PLAY_PACKAGE_NAME:-$APP_ID}"
+export PLAY_TRACK="${PLAY_TRACK:-internal}"
+export AAB_PATH="$(pwd)/$AAB"
+
 if [ -n "${PLAY_STORE_KEY_FILE:-}" ] && [ -f "$PLAY_STORE_KEY_FILE" ]; then
-  echo "Uploading to Play internal testing..."
+  echo "Uploading $PLAY_PACKAGE_NAME to Play $PLAY_TRACK track..."
   if python3 "$(dirname "$0")/upload-playstore.py" 2>&1 | tail -5; then
     # Upload succeeded — clear the fingerprint so the next invocation
     # builds fresh. Deliberate: we don't delete the AAB (gradle will
@@ -321,6 +330,25 @@ echo "✓ Convex deployed (self-hosted — this box, no Convex Cloud)."
 	// nextjs:cloudflare, convex:convex (BYOK), and convex:selfhosted
 	// (hosted tier — this box's own Convex). Re-add publishing
 	// templates only if the lean stack expands again.
+}
+
+// Register the Play Store PRODUCTION-track target as a sibling of the
+// internal-track "playstore" template — same resumable Gradle build, just
+// the production track. This is the user-facing "google-play" (production)
+// vs "google-play-internal-test" distinction. Derived from the internal
+// template so the resumable-AAB + multi-tenant package logic lives in ONE
+// place: only the default track flips (internal → production). A customer
+// can still override per run with PLAY_TRACK.
+func init() {
+	base, ok := deployTemplates["react-native-expo:playstore"]
+	if !ok {
+		return
+	}
+	prod := base
+	prod.Target = "playstore-production"
+	prod.Description = "Android Play Store (PRODUCTION track): Gradle bundleRelease + AAB upload to the production track of the app's OWN package. Same resumable build as the internal target."
+	prod.Body = strings.ReplaceAll(base.Body, `"${PLAY_TRACK:-internal}"`, `"${PLAY_TRACK:-production}"`)
+	deployTemplates["react-native-expo:playstore-production"] = prod
 }
 
 // DeployTemplateKey returns the map key for a (stack, target) pair.

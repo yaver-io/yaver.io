@@ -1216,6 +1216,50 @@ export const setStatus = internalMutation({
   },
 });
 
+// Bump last-meaningful-activity (idle auto-shutdown signal). Called by
+// the box agent via the machine-token /machine/activity route when it
+// runs a task / has an interactive session, and by the gateway on
+// inference. THROTTLED: only writes when the prior stamp is older than
+// ~60s, so a busy box doesn't generate a write per request. Idle sweep
+// reads this; lastHealthCheck (liveness) is deliberately NOT the signal —
+// an unused box still heartbeats and would never auto-pause.
+export const touchActivity = internalMutation({
+  args: { machineId: v.id("cloudMachines") },
+  handler: async (ctx, { machineId }) => {
+    const m = await ctx.db.get(machineId);
+    if (!m) return { ok: false };
+    const now = Date.now();
+    const prev = (m as any).lastActivityAt ?? 0;
+    if (now - prev < 60_000) return { ok: true, throttled: true };
+    await ctx.db.patch(machineId, { lastActivityAt: now });
+    return { ok: true };
+  },
+});
+
+// Bump activity for ALL of a user's active managed boxes — the gateway
+// path has a userId (inference request) but not a machineId. Keeps a
+// hosted user's box warm while they use managed AI even before the agent
+// reports task activity. Throttled per-row by touchActivity's guard via
+// an inline check (cheap: a user has ~1 box).
+export const touchActivityForUser = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const now = Date.now();
+    const rows = await ctx.db
+      .query("cloudMachines")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    let bumped = 0;
+    for (const m of rows) {
+      if (m.status !== "active" || ((m as any).origin ?? "managed") !== "managed") continue;
+      if (now - ((m as any).lastActivityAt ?? 0) < 60_000) continue;
+      await ctx.db.patch(m._id, { lastActivityAt: now });
+      bumped++;
+    }
+    return { ok: true, bumped };
+  },
+});
+
 // First-class onboarding phase. Called server-side (provision /
 // healthCheck bookends) AND by the box cloud-init via the
 // machine-token /machine/phase route between steps. Idempotent /

@@ -108,6 +108,21 @@ var buildTargets = map[string]buildTarget{
 			"PLAY_STORE_KEY_FILE",
 		},
 	},
+	"playstore-production": {
+		Name:        "playstore-production",
+		Stack:       "react-native-expo",
+		Description: "Build release AAB with Gradle and upload to the Google Play PRODUCTION track.",
+		Tools: []buildTool{
+			{Name: "java", VersionFlag: "-version", Required: true, InstallHint: "brew install openjdk@17 (Java 17 required)"},
+			{Name: "python3", VersionFlag: "--version", Required: true, InstallHint: "brew install python3 (for upload-playstore.py)"},
+		},
+		Secrets: []string{
+			"ANDROID_KEYSTORE_PASSWORD",
+			"ANDROID_KEY_ALIAS",
+			"ANDROID_KEY_PASSWORD",
+			"PLAY_STORE_KEY_FILE",
+		},
+	},
 	"testflight": {
 		Name:        "testflight",
 		Stack:       "react-native-expo",

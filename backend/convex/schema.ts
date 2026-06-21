@@ -1257,6 +1257,14 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     lastHealthCheck: v.optional(v.number()),
+    // Last MEANINGFUL user activity (task run, exec/shell, inference) on
+    // this box — distinct from lastHealthCheck (agent liveness: an idle
+    // box still heartbeats). Bumped by the box agent via /machine/activity
+    // and by the gateway on inference. Drives idle auto-shutdown
+    // (cloudLifecycle.idleSweep): a box idle past the threshold is paused
+    // (snapshot+delete) so we never bill Hetzner hours nobody is using.
+    // Privacy-safe: a single timestamp, no payload.
+    lastActivityAt: v.optional(v.number()),
     errorMessage: v.optional(v.string()),
     // Hash of a long-lived machine-auth token generated at provisioning
     // time. The plaintext is placed on the box in /etc/yaver/machine.json

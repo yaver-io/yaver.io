@@ -47,6 +47,17 @@ interface Wallet {
   lowBalance?: boolean;
   lastTopupAt?: number;
   lastMeteredAt?: number;
+  allowance?: {
+    plan?: string | null;
+    includedSeconds: number;
+    usedSeconds: number;
+    remainingSeconds: number;
+  };
+  inference?: {
+    enabled: boolean;
+    dailyCapCents: number;
+    spentTodayCents: number;
+  };
 }
 interface Cockpit {
   windowChargedCents: number;
@@ -394,6 +405,87 @@ export default function BillingView({ token }: { token: string | null | undefine
               </div>
             </div>
           </div>
+        </Section>
+      ) : null}
+
+      {/* ── 1b · Included this month ───────────────────────────────── */}
+      {hasCredit !== false &&
+      ((wallet?.allowance?.includedSeconds ?? 0) > 0 || wallet?.inference) ? (
+        <Section title="Included this month">
+          {/* Active-hours fuel gauge — covered by the flat plan before the
+              wallet (overage) is ever touched. */}
+          {(wallet?.allowance?.includedSeconds ?? 0) > 0
+            ? (() => {
+                const inc = wallet!.allowance!.includedSeconds;
+                const used = Math.min(wallet!.allowance!.usedSeconds, inc);
+                const pct = Math.min(100, Math.round((used / inc) * 100));
+                const remH = (Math.max(0, inc - used) / 3600).toFixed(1);
+                const incH = Math.round(inc / 3600);
+                return (
+                  <div className="mb-3">
+                    <div className="mb-1 flex items-center justify-between text-xs">
+                      <span className="font-medium text-slate-700 dark:text-surface-200">
+                        Active hours
+                      </span>
+                      <span className="tabular-nums text-slate-500 dark:text-surface-400">
+                        {remH}h left of {incH}h
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-surface-800">
+                      <div
+                        className={`h-full rounded-full ${pct >= 100 ? "bg-amber-500" : "bg-sky-500"}`}
+                        style={{ width: `${Math.max(2, pct)}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-[10px] text-slate-400 dark:text-surface-500">
+                      Box time past your included hours is billed from the
+                      balance above, then the box auto-pauses if it can&apos;t.
+                    </p>
+                  </div>
+                );
+              })()
+            : null}
+
+          {/* Managed-AI status — included-with-balance, pay-as-you-go, or
+              BYOK (gateway disabled ⇒ user supplies their own key). */}
+          {wallet?.inference ? (
+            wallet.inference.enabled ? (
+              wallet.inference.dailyCapCents > 0 ? (
+                (() => {
+                  const cap = wallet.inference.dailyCapCents;
+                  const spent = Math.min(wallet.inference.spentTodayCents, cap);
+                  const pct = Math.min(100, Math.round((spent / cap) * 100));
+                  return (
+                    <div>
+                      <div className="mb-1 flex items-center justify-between text-xs">
+                        <span className="font-medium text-slate-700 dark:text-surface-200">
+                          Managed AI · today
+                        </span>
+                        <span className="tabular-nums text-slate-500 dark:text-surface-400">
+                          {money(spent)} of {money(cap)}/day
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-surface-800">
+                        <div
+                          className={`h-full rounded-full ${pct >= 100 ? "bg-amber-500" : "bg-violet-500"}`}
+                          style={{ width: `${Math.max(2, pct)}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
+                <p className="text-xs text-slate-500 dark:text-surface-400">
+                  Managed AI · pay-as-you-go from your balance.
+                </p>
+              )
+            ) : (
+              <p className="text-xs text-slate-500 dark:text-surface-400">
+                Managed AI off · bring your own key (BYOK) — set it under
+                Tools → runner.
+              </p>
+            )
+          ) : null}
         </Section>
       ) : null}
 

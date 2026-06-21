@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Upload AAB to Google Play Internal Testing track."""
+"""Upload an AAB to a Google Play track.
+
+Multi-tenant: PLAY_PACKAGE_NAME + PLAY_TRACK are env-overridable so the
+SAME helper ships a CUSTOMER's app to THEIR package/track (driven by the
+generated deploy script), not just Yaver's own. Defaults preserve the
+original Yaver self-deploy behaviour (io.yaver.mobile, internal track).
+"""
 
 import os
 import shutil
@@ -15,11 +21,14 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-PACKAGE = "io.yaver.mobile"
+# Package + track are env-overridable for multi-tenant customer deploys;
+# defaults keep Yaver's own self-deploy working unchanged.
+PACKAGE = os.environ.get("PLAY_PACKAGE_NAME", "io.yaver.mobile")
 KEY_FILE = os.environ.get("PLAY_STORE_KEY_FILE", "")
 AAB_PATH = os.path.join(os.path.dirname(__file__), "..", "mobile", "android", "app", "build", "outputs", "bundle", "release", "app-release.aab")
 AAB_PATH = os.environ.get("AAB_PATH", AAB_PATH)
-TRACK = "internal"
+# internal | alpha | beta | production (Google Play track names).
+TRACK = os.environ.get("PLAY_TRACK", "internal")
 
 SCOPES = ["https://www.googleapis.com/auth/androidpublisher"]
 

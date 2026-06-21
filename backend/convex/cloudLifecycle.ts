@@ -505,6 +505,7 @@ type LifecycleResult = {
   requiredCents?: number;
 };
 type MeterResult = { metered: number; suspended: number; dryRun: boolean };
+type IdleSweepResult = { checked: number; paused: number; enabled: boolean; dryRun: boolean };
 
 const HETZNER_API = "https://api.hetzner.cloud/v1";
 
@@ -703,6 +704,69 @@ export const pauseMachine = internalAction({
       machineId, status: "paused", lastSnapshotId: snapId,
     });
     return { ok: true, status: "paused", snapshotId: snapId, dryRun: false };
+  },
+});
+
+// ── Idle auto-shutdown (margin protection) ───────────────────────────
+//
+// A running managed box bills Hetzner every hour even when nobody uses
+// it — the single biggest silent margin leak (and a violation of the
+// scale-to-zero rule). idleSweep pauses (snapshot+delete) any ACTIVE
+// managed box whose last MEANINGFUL activity (lastActivityAt — task /
+// exec / inference, NOT mere agent liveness) is older than the threshold.
+// The user resumes on demand (existing resumeMachine / web "resume").
+//
+// DEFAULT OFF (enabled=false) until the box agent reports activity via
+// /machine/activity — otherwise we'd pause boxes that ARE in use but not
+// yet reporting. pauseMachine is itself fail-closed on HCLOUD_TOKEN, so
+// even enabled it's a dry-run state transition until the token is set.
+
+// Read-only candidates: active managed boxes + their effective last-
+// activity stamp (fall back to provisionPhaseAt/createdAt for boxes that
+// predate the field, so a brand-new box isn't paused before it reports).
+export const listIdleCandidates = internalQuery({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<Array<{ machineId: any; lastActivityAt: number }>> => {
+    const rows = await ctx.db.query("cloudMachines").collect();
+    return rows
+      .filter((m: any) => m.status === "active" && (m.origin ?? "managed") === "managed")
+      .map((m: any) => ({
+        machineId: m._id,
+        lastActivityAt: m.lastActivityAt ?? m.provisionPhaseAt ?? m.createdAt ?? 0,
+      }));
+  },
+});
+
+export const idleSweep = internalAction({
+  args: {
+    enabled: v.optional(v.boolean()),
+    idleMinutes: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { enabled, idleMinutes, dryRun }): Promise<IdleSweepResult> => {
+    const on = enabled === true;
+    const sim = dryRun !== false; // mirror meterTick: default simulate
+    if (!on) return { checked: 0, paused: 0, enabled: false, dryRun: sim };
+    const mins = Number.isFinite(idleMinutes) && (idleMinutes as number) > 0 ? (idleMinutes as number) : 45;
+    const cutoff = Date.now() - mins * 60_000;
+    const candidates = await ctx.runQuery(internal.cloudLifecycle.listIdleCandidates, {});
+    let checked = 0;
+    let paused = 0;
+    for (const c of candidates) {
+      checked++;
+      if (c.lastActivityAt > cutoff) continue; // still active recently
+      // pauseMachine snapshots then deletes; it is fail-closed on
+      // HCLOUD_TOKEN (dry-run state transition if unset) and aborts the
+      // delete if the snapshot fails — never loses the box.
+      await ctx.runAction(internal.cloudLifecycle.pauseMachine, {
+        machineId: c.machineId,
+        dryRun: sim,
+      });
+      paused++;
+    }
+    return { checked, paused, enabled: true, dryRun: sim };
   },
 });
 

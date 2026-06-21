@@ -3967,6 +3967,25 @@ http.route({
           currentPeriodEnd: periodEnd,
         });
 
+        // Apply plan entitlements (included active-hours + gateway
+        // inference policy + monthly wallet budget) for managed-cloud
+        // products on EVERY active create/update/resume — idempotent per
+        // billing period, so monthly renewals refresh the allowance and a
+        // re-delivered webhook never double-credits. Relay subs are
+        // unaffected. tier mirrors the provision branch below
+        // (custom_data.tier="hosted" ⇒ managed AI on; absent ⇒ byok).
+        const isManagedProduct =
+          productType === "cpu" || productType === "gpu" || isCloudPreviewProduct;
+        if (isManagedProduct && status === "active") {
+          const tier = payload.meta?.custom_data?.tier === "hosted" ? "hosted" : "byok";
+          await ctx.scheduler.runAfter(0, internal.plans.applyPlanEntitlements, {
+            userId: user._id,
+            subscriptionId: lemonSqueezyId,
+            tier,
+            plan,
+          });
+        }
+
         // If new subscription, provision the appropriate resource
         if (eventName === "subscription_created") {
           const region = payload.meta?.custom_data?.region || "eu";
@@ -4029,6 +4048,13 @@ http.route({
       case "subscription_cancelled":
       case "subscription_expired": {
         const sub = await ctx.runMutation(internal.subscriptions.cancel, { lemonSqueezyId });
+
+        // Revoke managed-inference entitlement immediately (disable the
+        // gateway policy) so a lapsed subscriber can't keep spending our
+        // gateway key on leftover balance. Box teardown happens below.
+        await ctx.scheduler.runAfter(0, internal.plans.revokePlanEntitlements, {
+          userId: user._id,
+        });
 
         // Tear the box down on BOTH cancel and expiry. A managed box
         // costs Yaver money every hour it runs; the moment the user
@@ -4421,6 +4447,16 @@ http.route({
     // SKU; the floor is the safe minimum reserve for it.
     const hourlyCents = estimatedHourlyCents("cpu");
     const reservedCents = minimumReserveCents("cpu");
+    // Included-this-month fuel gauges: the plan's included active-hours
+    // (X of 40h left) and the managed-AI day's spend vs cap. Lets the UI
+    // show what the flat price already covers before the wallet is touched.
+    const allowance = await ctx.runQuery(internal.cloudLifecycle.getAllowance, {
+      userId: session.userDocId as any,
+      machineType: "cpu",
+    });
+    const pol = await ctx.runQuery(internal.gatewayPolicy.getAuthContext, {
+      userId: session.userDocId as any,
+    });
     return jsonResponse({
       ok: true,
       ...wallet,
@@ -4428,6 +4464,17 @@ http.route({
       estimatedHourlyCents: hourlyCents,
       reservedCents,
       lowBalance: wallet.balanceCents <= reservedCents,
+      allowance: {
+        plan: allowance.plan,
+        includedSeconds: allowance.includedSeconds,
+        usedSeconds: allowance.usedSeconds,
+        remainingSeconds: allowance.remainingSeconds,
+      },
+      inference: {
+        enabled: pol.enabled,
+        dailyCapCents: pol.dailyCapCents,
+        spentTodayCents: pol.spentTodayCents,
+      },
     });
   }),
 });
@@ -6606,6 +6653,27 @@ http.route({
   }),
 });
 
+/** POST /machine/activity — the box agent pings this when it does real
+ *  work (task run / exec / interactive session) so idle auto-shutdown
+ *  (cloudLifecycle.idleSweep) doesn't pause a box that's actually in use.
+ *  Machine-token authed (same as /machine/phase). Throttled server-side
+ *  (touchActivity only writes when the prior stamp is >60s old). */
+http.route({
+  path: "/machine/activity",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const qs = new URL(request.url).searchParams;
+    const body = await request.json().catch(() => ({} as any));
+    const machineId = qs.get("machineId") ?? body.machineId ?? null;
+    const auth = await authenticateMachineRequest(ctx, request, machineId);
+    if (!auth.ok) return errorResponse(auth.error, auth.status);
+    await ctx.runMutation(internal.cloudMachines.touchActivity, {
+      machineId: auth.machine._id,
+    });
+    return jsonResponse({ ok: true });
+  }),
+});
+
 /** POST /machine/tls-issued — reconciler reports a successful cert issue. */
 http.route({
   path: "/machine/tls-issued",
@@ -6706,6 +6774,15 @@ http.route({
     const dailyExceeded =
       (pol.dailyCapCents ?? 0) > 0 && pol.spentTodayCents >= (pol.dailyCapCents ?? 0);
     const allow = pol.enabled && wallet.balanceCents > 0 && !dailyExceeded;
+
+    // Inference is meaningful activity — keep the user's managed box warm
+    // so idle auto-shutdown doesn't pause it mid-session. Fire-and-forget
+    // (no added latency); throttled write inside touchActivityForUser.
+    if (allow) {
+      await ctx.scheduler.runAfter(0, internal.cloudMachines.touchActivityForUser, {
+        userId: userId as any,
+      });
+    }
 
     return jsonResponse({
       ok: true,
@@ -6987,6 +7064,19 @@ const runCron = httpAction(async (ctx, req) => {
       // their dashboard. 24h is enough for a real claim while still
       // bounding the table.
       await ctx.scheduler.runAfter(0, internal.pendingDeviceClaims.sweepStale, {});
+      break;
+    case "cloudIdleSweep":
+      // Idle auto-shutdown (P1.4): pause active managed boxes with no
+      // meaningful activity past the threshold so we never bill Hetzner
+      // hours nobody is using. DEFAULT OFF (YAVER_CLOUD_IDLE_ENABLE) until
+      // the box agent reports activity via /machine/activity; even on, the
+      // pause is HCLOUD_TOKEN/dryRun fail-closed. Schedule this on the
+      // Hetzner cron timers like the others (every 10–15 min is plenty).
+      await ctx.scheduler.runAfter(0, internal.cloudLifecycle.idleSweep, {
+        enabled: parseBooleanEnv(process.env.YAVER_CLOUD_IDLE_ENABLE, false),
+        idleMinutes: Number(process.env.YAVER_CLOUD_IDLE_MINUTES) || 45,
+        dryRun: !parseBooleanEnv(process.env.YAVER_CLOUD_METER_LIVE, false),
+      });
       break;
     case "reconcileManagedSubscriptions":
       // RECOVERY: re-provision any active managed subscription with no
