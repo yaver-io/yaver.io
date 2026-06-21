@@ -24,7 +24,7 @@ import {
   listLocalTables,
   listLocalTemplates,
 } from "@/lib/sandbox/localProjects";
-import { deployLocalProjectToCloud } from "@/lib/sandbox/deploy";
+import { createServerlessShare, deployLocalProjectToCloud } from "@/lib/sandbox/deploy";
 import { draftProjectFromPrompt } from "@/lib/sandbox/aiDraft";
 import { gatewayConfigured } from "@/lib/sandbox/gateway";
 import { buildPreviewSrcdoc } from "@/lib/sandbox/preview";
@@ -107,6 +107,8 @@ export default function BrowserSandbox() {
   const [showPreview, setShowPreview] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [lastDeploy, setLastDeploy] = useState<{ url: string } | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const [share, setShare] = useState<{ code: string; link: string } | null>(null);
 
   const showNotice = useCallback((type: "ok" | "error", text: string) => {
     setNotice({ type, text });
@@ -136,6 +138,7 @@ export default function BrowserSandbox() {
     async (slug: string) => {
       setShowPreview(false);
       setLastDeploy(null);
+      setShare(null);
       // Fetch directly (not from the `projects` closure, which may be stale
       // right after create()).
       const proj = await getLocalProject(slug);
@@ -251,6 +254,29 @@ export default function BrowserSandbox() {
       showNotice("error", clean(e, "Deploy failed — target may be unreachable."));
     } finally {
       setDeploying(false);
+    }
+  }
+
+  async function doShare() {
+    if (!selected) return;
+    const baseUrl = getYaverCloudBaseUrl();
+    if (!baseUrl) {
+      showNotice("error", "No Yaver Cloud URL configured for this build.");
+      return;
+    }
+    setSharing(true);
+    try {
+      const res = await createServerlessShare({ baseUrl, token: token ?? undefined, slug: selected.slug });
+      if (res.ok && res.code && res.link) {
+        setShare({ code: res.code, link: res.link });
+        showNotice("ok", "Share link ready — friends can open the app, no account needed.");
+      } else {
+        showNotice("error", res.error ?? "Could not create share. Deploy first, then share.");
+      }
+    } catch (e) {
+      showNotice("error", clean(e, "Share failed."));
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -432,14 +458,36 @@ export default function BrowserSandbox() {
               </div>
 
               {lastDeploy ? (
-                <a
-                  href={lastDeploy.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-200 hover:bg-emerald-500/15"
-                >
-                  ✓ Deployed — <span className="underline">{lastDeploy.url}</span>
-                </a>
+                <div className="flex flex-col gap-2">
+                  <a
+                    href={lastDeploy.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-200 hover:bg-emerald-500/15"
+                  >
+                    ✓ Deployed — <span className="underline">{lastDeploy.url}</span>
+                  </a>
+                  <div className="flex items-center gap-2">
+                    <button
+                      disabled={sharing}
+                      onClick={() => void doShare()}
+                      className="rounded border border-indigo-500 px-3 py-1.5 text-sm text-indigo-300 hover:bg-indigo-500/10 disabled:opacity-50"
+                    >
+                      {sharing ? "Creating link…" : "Share with a friend"}
+                    </button>
+                    <span className="text-xs text-surface-500">Friends open the app — no account, no install.</span>
+                  </div>
+                  {share ? (
+                    <div className="rounded border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-100">
+                      <div>
+                        Code: <span className="font-mono font-semibold">{share.code}</span>
+                      </div>
+                      <a href={share.link} target="_blank" rel="noreferrer" className="mt-1 block break-all underline">
+                        {share.link}
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
 
               {showPreview ? <LivePreview slug={selected.slug} onMutate={onPreviewMutate} /> : null}

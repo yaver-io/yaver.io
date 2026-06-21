@@ -78,3 +78,48 @@ export async function deployLocalProjectToCloud(opts: CloudDeployOptions): Promi
     dataUrl: body.dataUrl || `${base}/data/${encodeURIComponent(slug)}`,
   };
 }
+
+export interface ShareResult {
+  ok: boolean;
+  code?: string;
+  /** A link a friend can open in any browser to RUN the app (read-only). */
+  link?: string;
+  error?: string;
+}
+
+/**
+ * Create a friend-preview share on a serverless target (the project must be
+ * deployed there first). Returns a join code + a public /a link that runs the
+ * app against the host's /data API with a scoped read-only token.
+ */
+export async function createServerlessShare(opts: {
+  baseUrl: string;
+  token?: string;
+  slug: string;
+  ttlMinutes?: number;
+}): Promise<ShareResult> {
+  const base = opts.baseUrl.replace(/\/$/, "");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  let res: Response;
+  try {
+    res = await fetch(`${base}/phone/projects/share`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ slug: opts.slug, ttlMinutes: opts.ttlMinutes ?? 1440 }),
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  if (!res.ok) {
+    return { ok: false, error: `share failed (${res.status})` };
+  }
+  const sh = (await res.json()) as { code?: string };
+  if (!sh.code) return { ok: false, error: "no share code returned" };
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return {
+    ok: true,
+    code: sh.code,
+    link: `${origin}/a?host=${encodeURIComponent(base)}&code=${encodeURIComponent(sh.code)}`,
+  };
+}

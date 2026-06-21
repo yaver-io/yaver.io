@@ -31,8 +31,19 @@ type PhoneShare struct {
 	// Relative path the friend fetches the bundle from (the .zip twin,
 	// data included so the preview is populated).
 	BundleURL string `json:"bundleUrl"`
-	CreatedAt string `json:"createdAt"`
-	ExpiresAt string `json:"expiresAt"`
+	// DataToken is a scoped READ-ONLY pp_ token bound to this project, minted
+	// at share time. The friend uses it as the Bearer against DataURL so they
+	// can read the app's live data WITHOUT the owner's session and WITHOUT
+	// write access. This is what makes "friends open & use the app" work for
+	// accounts other than the owner's.
+	DataToken string `json:"dataToken,omitempty"`
+	// Schema + App let a friend's client render the actual app (screens + table
+	// columns) without any owner-scoped fetch — everything needed to RUN the
+	// app against DataURL is in the join payload.
+	Schema    *PhoneSchema  `json:"schema,omitempty"`
+	App       *PhoneAppSpec `json:"app,omitempty"`
+	CreatedAt string        `json:"createdAt"`
+	ExpiresAt string        `json:"expiresAt"`
 }
 
 // ErrPhoneShareNotFound is returned for an unknown or expired code.
@@ -75,6 +86,14 @@ func CreatePhoneShare(slug string, ttl time.Duration) (*PhoneShare, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Mint a scoped read-only data token so the friend can read /data without
+	// the owner's session and without write access. Best-effort: if minting
+	// fails the share still works for owner-side previews, just without a
+	// friend data credential.
+	var dataToken string
+	if mint, mErr := MintPhoneProjectTokenScoped(p.Slug, "friend-preview (read-only)", true); mErr == nil {
+		dataToken = mint.Raw
+	}
 	now := time.Now()
 	sh := &PhoneShare{
 		Code:      generatePairCode(), // shared alphabet (no 0/O/1/I)
@@ -83,6 +102,9 @@ func CreatePhoneShare(slug string, ttl time.Duration) (*PhoneShare, error) {
 		Runtime:   "yaver-serverless-lite",
 		DataURL:   "/data/" + p.Slug,
 		BundleURL: phoneShareBundleURL(p.Slug),
+		DataToken: dataToken,
+		Schema:    p.Schema,
+		App:       p.App,
 		CreatedAt: now.UTC().Format(time.RFC3339),
 		ExpiresAt: now.Add(ttl).UTC().Format(time.RFC3339),
 	}

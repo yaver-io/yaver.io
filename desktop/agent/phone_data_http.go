@@ -73,7 +73,7 @@ func (s *HTTPServer) phoneDataRouter(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		_, boundSlug, err := ValidatePhoneProjectToken(raw)
+		tok, boundSlug, err := ValidatePhoneProjectToken(raw)
 		if err != nil {
 			jsonError(w, http.StatusUnauthorized, "invalid API key")
 			return
@@ -82,6 +82,13 @@ func (s *HTTPServer) phoneDataRouter(w http.ResponseWriter, r *http.Request) {
 		// cross-project reads via a guessed slug.
 		if boundSlug != slug {
 			jsonError(w, http.StatusForbidden, "this API key does not authorize that project")
+			return
+		}
+		// Read-only scope (friend-preview tokens): allow GET only. Reject any
+		// mutation so a shared friend can browse the app's data but never
+		// change it.
+		if tok != nil && tok.ReadOnly && r.Method != http.MethodGet {
+			jsonError(w, http.StatusForbidden, "this API key is read-only")
 			return
 		}
 	}

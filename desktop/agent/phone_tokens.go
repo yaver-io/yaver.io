@@ -40,6 +40,10 @@ type PhoneProjectToken struct {
 	Hash      string `yaml:"hash,omitempty" json:"-"`        // sha256(raw), never JSON-serialized
 	CreatedAt string `yaml:"createdAt" json:"createdAt"`
 	LastUsed  string `yaml:"lastUsed,omitempty" json:"lastUsed,omitempty"`
+	// ReadOnly tokens authorize only GET on /data/<slug>/* — friend-preview
+	// shares mint one so a friend can read the app's data without being able
+	// to mutate it. Writes (POST/PATCH/DELETE) are rejected with 403.
+	ReadOnly bool `yaml:"readOnly,omitempty" json:"readOnly,omitempty"`
 }
 
 // PhoneProjectTokenMint is the one-shot response when a new token is
@@ -87,10 +91,16 @@ func hashRawToken(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// MintPhoneProjectToken issues a new token. Returns the raw token in the
-// response ONCE — callers must display it to the user immediately; Yaver
-// never stores or re-surfaces the plaintext.
+// MintPhoneProjectToken issues a new full-access token. Returns the raw token
+// in the response ONCE — callers must display it to the user immediately;
+// Yaver never stores or re-surfaces the plaintext.
 func MintPhoneProjectToken(slug, label string) (*PhoneProjectTokenMint, error) {
+	return MintPhoneProjectTokenScoped(slug, label, false)
+}
+
+// MintPhoneProjectTokenScoped issues a token with an explicit read-only flag.
+// Friend-preview shares mint read-only tokens (CreatePhoneShare).
+func MintPhoneProjectTokenScoped(slug, label string, readOnly bool) (*PhoneProjectTokenMint, error) {
 	slug = Slugify(slug)
 	if slug == "" {
 		return nil, errors.New("slug required")
@@ -128,6 +138,7 @@ func MintPhoneProjectToken(slug, label string) (*PhoneProjectTokenMint, error) {
 		Label:     label,
 		Hash:      hashRawToken(full),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		ReadOnly:  readOnly,
 	}
 	f, err := loadPhoneTokens(dir)
 	if err != nil {

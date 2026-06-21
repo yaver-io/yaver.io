@@ -42,6 +42,7 @@ function call(op: string, extra: Partial<Req> = {}): Promise<unknown> {
 const app = (window as any).__YAVER_APP__ || { schema: { tables: [] }, app: {} };
 const schema = app.schema || { tables: [] };
 const appSpec = app.app || {};
+const readOnly = !!app.readOnly;
 const root = document.getElementById("root")!;
 
 function tablesForNav(): string[] {
@@ -87,7 +88,9 @@ async function render() {
 
   // Add-row controls. A plain div + button (NOT a <form>) — the iframe sandbox
   // is allow-scripts only, which blocks form submission; a button onclick is
-  // unaffected and keeps the sandbox maximally locked down.
+  // unaffected and keeps the sandbox maximally locked down. Skipped entirely in
+  // read-only mode (friend preview) so there's nothing to attempt-and-fail.
+  if (readOnly) { void renderRows(); return; }
   const formEl = document.createElement("div");
   formEl.className = "addform";
   const inputs: Record<string, HTMLInputElement> = {};
@@ -119,59 +122,64 @@ async function render() {
   formEl.appendChild(submit);
   root.appendChild(formEl);
 
-  // Rows table.
-  let rows: Array<Record<string, unknown>> = [];
-  try { rows = (await call("list", { table: active, limit: 200 })) as any[]; }
-  catch (e) {
-    const err = document.createElement("p");
-    err.className = "muted";
-    err.textContent = "Could not load rows: " + (e as Error).message;
-    root.appendChild(err);
-    return;
-  }
+  await renderRows();
 
-  if (!rows.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = screen?.emptyState || "No rows yet.";
-    root.appendChild(empty);
-    return;
-  }
-
-  const pk = (cols.find((c) => c.primary)?.name) || Object.keys(rows[0])[0];
-  const table = document.createElement("table");
-  const thead = document.createElement("thead");
-  const htr = document.createElement("tr");
-  for (const k of Object.keys(rows[0])) {
-    const th = document.createElement("th");
-    th.textContent = k;
-    htr.appendChild(th);
-  }
-  htr.appendChild(document.createElement("th"));
-  thead.appendChild(htr);
-  table.appendChild(thead);
-  const tbody = document.createElement("tbody");
-  for (const r of rows) {
-    const tr = document.createElement("tr");
-    for (const v of Object.values(r)) {
-      const td = document.createElement("td");
-      td.textContent = v === null || v === undefined ? "—" : String(v);
-      tr.appendChild(td);
+  async function renderRows() {
+    let rows: Array<Record<string, unknown>> = [];
+    try { rows = (await call("list", { table: active, limit: 200 })) as any[]; }
+    catch (e) {
+      const err = document.createElement("p");
+      err.className = "muted";
+      err.textContent = "Could not load rows: " + (e as Error).message;
+      root.appendChild(err);
+      return;
     }
-    const actTd = document.createElement("td");
-    const del = document.createElement("button");
-    del.textContent = "×";
-    del.className = "del";
-    del.onclick = async () => {
-      try { await call("delete", { table: active, rowId: r[pk] }); await render(); }
-      catch (e) { alert("Delete failed: " + (e as Error).message); }
-    };
-    actTd.appendChild(del);
-    tr.appendChild(actTd);
-    tbody.appendChild(tr);
+
+    if (!rows.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = screen?.emptyState || "No rows yet.";
+      root.appendChild(empty);
+      return;
+    }
+
+    const pk = (cols.find((c) => c.primary)?.name) || Object.keys(rows[0])[0];
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    for (const k of Object.keys(rows[0])) {
+      const th = document.createElement("th");
+      th.textContent = k;
+      htr.appendChild(th);
+    }
+    if (!readOnly) htr.appendChild(document.createElement("th"));
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      for (const v of Object.values(r)) {
+        const td = document.createElement("td");
+        td.textContent = v === null || v === undefined ? "—" : String(v);
+        tr.appendChild(td);
+      }
+      if (!readOnly) {
+        const actTd = document.createElement("td");
+        const del = document.createElement("button");
+        del.textContent = "×";
+        del.className = "del";
+        del.onclick = async () => {
+          try { await call("delete", { table: active, rowId: r[pk] }); await render(); }
+          catch (e) { alert("Delete failed: " + (e as Error).message); }
+        };
+        actTd.appendChild(del);
+        tr.appendChild(actTd);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    root.appendChild(table);
   }
-  table.appendChild(tbody);
-  root.appendChild(table);
 }
 
 void render();
@@ -215,10 +223,15 @@ function escapeForScript(json: string): string {
   return json.replace(/</g, "\\u003c");
 }
 
-/** Build the full iframe srcdoc for a project's preview. */
-export async function buildPreviewSrcdoc(schema: PhoneSchema, app: PhoneAppSpec): Promise<string> {
+/** Build the full iframe srcdoc for a project's preview. readOnly hides all
+ * mutation controls (used for friend "USE the app" previews). */
+export async function buildPreviewSrcdoc(
+  schema: PhoneSchema,
+  app: PhoneAppSpec,
+  opts?: { readOnly?: boolean },
+): Promise<string> {
   const script = await buildPreviewScript();
-  const data = escapeForScript(JSON.stringify({ schema, app }));
+  const data = escapeForScript(JSON.stringify({ schema, app, readOnly: !!opts?.readOnly }));
   return `<!doctype html><html><head><meta charset="utf-8"><style>${STYLES}</style></head>
 <body><div id="root"></div>
 <script>window.__YAVER_APP__ = ${data};</script>

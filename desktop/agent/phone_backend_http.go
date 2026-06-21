@@ -31,7 +31,12 @@ func (s *HTTPServer) registerPhoneRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/phone/projects/promote", s.auth(s.handlePhonePromote))
 	mux.HandleFunc("/phone/projects/receive", s.auth(s.handlePhoneReceive))
 	mux.HandleFunc("/phone/projects/share", s.auth(s.handlePhoneShare))
-	mux.HandleFunc("/phone/projects/join", s.auth(s.handlePhoneJoin))
+	// Join is intentionally PUBLIC: a friend on a different account (or none)
+	// resolves a share by code, and the code itself is the credential (like a
+	// pp_ data token). The handler only maps code → share; the share carries a
+	// scoped READ-ONLY data token. Codes are short-lived (TTL) and single-
+	// project. Owner-gating this would make "friends open the app" impossible.
+	mux.HandleFunc("/phone/projects/join", s.handlePhoneJoin)
 	mux.HandleFunc("/phone/projects/oauth", s.auth(s.handlePhoneOAuth))
 	mux.HandleFunc("/phone/projects/cost-hint", s.auth(s.handlePhoneCostHint))
 }
