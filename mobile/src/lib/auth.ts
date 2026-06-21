@@ -672,6 +672,10 @@ export const LOCAL_KEYS = {
   // Device-local override for the gateway origin, used to point at the
   // deployed Worker for testing before /api/mobile-config advertises it.
   gatewayUrl: `${LOCAL_KEY_PREFIX}gateway_url`,
+  // Scoped ygw_ inference token for the managed/beta lane (keyless GLM via the
+  // gateway). Minted server-side for beta users; the raw upstream key never
+  // reaches the device. Used by the sandbox generation when inferenceMode=managed.
+  managedInferenceToken: `${LOCAL_KEY_PREFIX}managed_inference_token`,
 } as const;
 
 export async function getLocalSecret(key: string): Promise<string | null> {

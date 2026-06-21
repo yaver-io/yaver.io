@@ -593,11 +593,22 @@ export default function PhoneProjectsScreen() {
         await saveLocalSecret(LOCAL_KEYS.mobileCodingProvider, mobileAiProvider);
       }
       if (onPhoneGen) markStep("gen", "running");
+      // Managed/beta lane: route generation through the Yaver gateway (keyless
+      // GLM via the owner's key + scoped ygw_ token). Falls back to BYO if the
+      // managed creds aren't present. gatewayUrl is runtime-config (not hardcoded).
+      let managedGen: { baseUrl: string; apiKey: string } | null = null;
+      if (betaManaged) {
+        const gwUrl = (await getLocalSecret(LOCAL_KEYS.gatewayUrl))?.trim();
+        const mTok = (await getLocalSecret(LOCAL_KEYS.managedInferenceToken))?.trim();
+        if (gwUrl && mTok) managedGen = { baseUrl: gwUrl, apiKey: mTok };
+      }
       const draft =
         codingMode === "phone" && effectivePrompt.trim()
           ? await generatePhoneProjectDraftFromPrompt({
-              provider: mobileAiProvider,
-              apiKey: activePhoneKey,
+              provider: managedGen ? "glm" : mobileAiProvider,
+              apiKey: managedGen ? managedGen.apiKey : activePhoneKey,
+              baseUrl: managedGen?.baseUrl,
+              model: managedGen ? "glm-4.6" : undefined,
               name: name.trim(),
               prompt: effectivePrompt,
               template,

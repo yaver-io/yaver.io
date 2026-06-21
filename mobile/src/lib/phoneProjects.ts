@@ -120,6 +120,16 @@ export interface ManagedGitCreateOptions {
 
 export interface ManagedGitBackupMeta {
   path: string;
+  target?: string;
+  sizeBytes: number;
+  commit?: string;
+  createdAt: string;
+}
+
+export interface ManagedGitExternalBackupMeta {
+  targetKind: "local-folder" | "shared-storage" | "dropbox" | string;
+  targetId?: string;
+  path: string;
   sizeBytes: number;
   commit?: string;
   createdAt: string;
@@ -143,6 +153,7 @@ export interface ManagedGitProjectMeta {
   workDir: string;
   lastCommit?: string;
   lastBackup?: ManagedGitBackupMeta | null;
+  externalBackups?: ManagedGitExternalBackupMeta[];
   mirrors?: ManagedGitMirrorMeta[];
   createdAt: string;
   updatedAt: string;
@@ -653,6 +664,12 @@ export async function generatePhoneProjectDraftFromPrompt(args: {
   name: string;
   prompt: string;
   template?: string;
+  // Managed/beta inference: route generation through the Yaver gateway (keyless
+  // GLM via the owner's key). baseUrl is a runtime-config value (never hardcoded
+  // — infra hostnames stay out of the repo), apiKey is the user's scoped ygw_
+  // token, model overrides the default. Gateway is OpenAI-compatible.
+  baseUrl?: string;
+  model?: string;
 }): Promise<PhoneProjectDraft> {
   const key = args.apiKey.trim();
   const prompt = args.prompt.trim();
@@ -661,11 +678,13 @@ export async function generatePhoneProjectDraftFromPrompt(args: {
     throw new Error(provider === "glm" ? "GLM API key is required" : "OpenAI API key is required");
   }
   if (!prompt) return {};
-  const endpoint =
-    provider === "glm"
+  const managedBase = args.baseUrl?.trim().replace(/\/+$/, "");
+  const endpoint = managedBase
+    ? `${managedBase}/chat/completions`
+    : provider === "glm"
       ? "https://api.z.ai/api/coding/paas/v4/chat/completions"
       : "https://api.openai.com/v1/chat/completions";
-  const model = provider === "glm" ? "glm-4.7" : "gpt-4.1-mini";
+  const model = args.model?.trim() || (provider === "glm" ? "glm-4.7" : "gpt-4.1-mini");
   const providerName = provider === "glm" ? "GLM" : "OpenAI";
   const res = await fetch(endpoint, {
     method: "POST",
