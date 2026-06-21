@@ -186,7 +186,8 @@ func runAssets(args []string) {
 		}
 	}
 
-	plan := buildCapturePlan(BuildStoreListing(path), outDir)
+	listing := BuildStoreListing(path)
+	plan := buildCapturePlan(listing, outDir)
 	if len(plan) == 0 {
 		fmt.Println("No screenshot slots required.")
 		return
@@ -211,8 +212,15 @@ func runAssets(args []string) {
 	}
 	ok, fail := 0, 0
 	for _, t := range plan {
-		if t.SuggestedDevice == "" { // feature graphic etc. — composed elsewhere
-			fmt.Printf("  ⤷ %s %s is composed, not captured — skipping\n", t.Platform, t.DeviceClass)
+		if t.SuggestedDevice == "" { // composed (e.g. feature graphic), not a device capture
+			img := GenerateFeatureGraphic(listing.AppName, listing.Subtitle, t.Width, t.Height)
+			if err := writePNG(img, t.OutFile); err != nil {
+				fmt.Printf("  ✗ %s %s (composed): %v\n", t.Platform, t.DeviceClass, err)
+				fail++
+				continue
+			}
+			fmt.Printf("  ✓ %s %s (composed) → %s\n", t.Platform, t.DeviceClass, t.OutFile)
+			ok++
 			continue
 		}
 		if err := captureOne(t, iosUDID, androidSerial); err != nil {
