@@ -61,6 +61,42 @@ func TestManagedGitCreateCheckpointAndBackup(t *testing.T) {
 	}
 }
 
+// Mirror-on-push and sync must be safe no-ops when no mirror is connected (the
+// common case) — and a checkpoint must still succeed.
+func TestManagedGitSyncNoMirrorIsSafe(t *testing.T) {
+	if _, err := osexec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("HOME", t.TempDir())
+	workDir := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(filepath.Join(workDir, ".yaver"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("# Demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureManagedGitForProject(workDir, "demo", "Demo", &ManagedGitCreateOptions{Enabled: true, Visibility: "private"}); err != nil {
+		t.Fatalf("EnsureManagedGitForProject: %v", err)
+	}
+	if got := ManagedGitMirrorSyncAll(workDir); got != nil {
+		t.Fatalf("mirror-on-push with no mirror should be nil, got %+v", got)
+	}
+	res, err := ManagedGitMirrorPull(workDir)
+	if err != nil {
+		t.Fatalf("ManagedGitMirrorPull no-mirror: %v", err)
+	}
+	if res != "no-mirror" {
+		t.Fatalf("expected no-mirror, got %q", res)
+	}
+	// checkpoint (which now calls mirror-on-push) must still succeed
+	if err := os.WriteFile(filepath.Join(workDir, "x.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ManagedGitCheckpoint(workDir, "yaver: with no mirror"); err != nil {
+		t.Fatalf("checkpoint with no mirror: %v", err)
+	}
+}
+
 func TestCreateTodoPhoneProjectWithManagedGitLifecycle(t *testing.T) {
 	if _, err := osexec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

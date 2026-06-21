@@ -545,6 +545,85 @@ func ManagedGitMirrorSyncAll(workDir string) []ManagedGitMirrorMeta {
 	return synced
 }
 
+// ManagedGitMirrorPull is the inbound half of bidirectional sync: fetch the
+// primary connected mirror and merge it into the working repo. On a merge
+// conflict it invokes the AI runner (resolveManagedGitConflict) to resolve and
+// commit; if that fails the merge is aborted (repo left clean) and the conflict
+// is reported. Owner-side only (uses the owner's stored provider tokens).
+// Returns one of: no-mirror | up-to-date | merged | conflict-resolved.
+func ManagedGitMirrorPull(workDir string) (string, error) {
+	meta, err := LoadManagedGitMeta(workDir)
+	if err != nil {
+		return "", err
+	}
+	if len(meta.Mirrors) == 0 {
+		return "no-mirror", nil
+	}
+	m := meta.Mirrors[0] // primary mirror
+	providers, _ := loadGitProviders()
+	var token, username string
+	for _, p := range providers {
+		if p.Provider == m.Provider && p.Host == m.Host {
+			token = p.Token
+			username = p.Username
+			break
+		}
+	}
+	if token == "" {
+		return "", fmt.Errorf("no %s token on this machine for sync", m.Provider)
+	}
+	url := credentialedGitURL(m.Provider, m.Host, username, token, m.FullName)
+	redact := func(s string) string { return strings.ReplaceAll(s, token, "<redacted>") }
+	if out, err := managedGitCmd(workDir, "fetch", url, "main"); err != nil {
+		return "", fmt.Errorf("sync fetch: %s: %w", redact(out), err)
+	}
+	// Nothing new upstream?
+	if ahead, _ := managedGitCmd(workDir, "rev-list", "--count", "HEAD..FETCH_HEAD"); strings.TrimSpace(ahead) == "0" {
+		return "up-to-date", nil
+	}
+	if out, err := managedGitCmd(workDir, "merge", "--no-edit", "FETCH_HEAD"); err != nil {
+		// Distinguish a real conflict from other merge errors.
+		check, _ := managedGitCmd(workDir, "diff", "--check")
+		if strings.Contains(check, "conflict") || strings.Contains(out, "CONFLICT") {
+			if rerr := resolveManagedGitConflict(workDir); rerr != nil {
+				_, _ = managedGitCmd(workDir, "merge", "--abort")
+				return "conflict-unresolved", rerr
+			}
+			ManagedGitMirrorSyncAll(workDir) // push the resolved merge back out
+			return "conflict-resolved", nil
+		}
+		return "", fmt.Errorf("sync merge: %s: %w", redact(out), err)
+	}
+	return "merged", nil
+}
+
+// resolveManagedGitConflict runs the AI coding runner (opencode) on a repo that
+// is mid-conflict, asking it to produce a coherent merge, then stages + commits.
+// Best-effort: if opencode is absent/unauthed or markers remain, it errors and
+// the caller aborts the merge — never leaves a broken tree. Keeps normies out of
+// rebase/merge hell ([[BETA-TEST-PLAN advanced yaver-git]]).
+func resolveManagedGitConflict(workDir string) error {
+	prompt := "Resolve ALL git merge conflicts in this repository. Edit each " +
+		"conflicted file into a single coherent result, removing every conflict " +
+		"marker (<<<<<<<, =======, >>>>>>>). Prefer keeping both sides' " +
+		"functionality where it makes sense. Do NOT run any git commands."
+	cmd := osexec.Command("opencode", "run", prompt)
+	cmd.Dir = workDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ai resolve (opencode): %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	if out, _ := managedGitCmd(workDir, "diff", "--check"); strings.TrimSpace(out) != "" {
+		return fmt.Errorf("conflict markers remain after ai resolve")
+	}
+	if out, err := managedGitCmd(workDir, "add", "-A"); err != nil {
+		return fmt.Errorf("git add: %s: %w", out, err)
+	}
+	if out, err := managedGitCmd(workDir, "commit", "--no-edit"); err != nil {
+		return fmt.Errorf("git commit: %s: %w", out, err)
+	}
+	return nil
+}
+
 func upsertManagedGitMirror(items []ManagedGitMirrorMeta, next ManagedGitMirrorMeta) []ManagedGitMirrorMeta {
 	for i := range items {
 		if items[i].Provider == next.Provider && items[i].Host == next.Host && items[i].FullName == next.FullName {
@@ -587,6 +666,7 @@ func (s *HTTPServer) registerManagedGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/managed-git/backup/receive", s.auth(s.handleManagedGitBackupReceive))
 	mux.HandleFunc("/managed-git/backup/restore", s.auth(s.handleManagedGitBackupRestore))
 	mux.HandleFunc("/managed-git/mirrors/connect", s.auth(s.handleManagedGitMirrorConnect))
+	mux.HandleFunc("/managed-git/sync", s.auth(s.handleManagedGitSync))
 	mux.HandleFunc("/managed-git/visibility", s.auth(s.handleManagedGitVisibility))
 	mux.HandleFunc("/managed-git/dropbox/oauth/start", s.auth(s.handleManagedGitDropboxOAuthStart))
 	mux.HandleFunc("/managed-git/dropbox/oauth/submit", s.auth(s.handleManagedGitDropboxOAuthSubmit))
@@ -630,6 +710,36 @@ func (s *HTTPServer) handleManagedGitEnable(w http.ResponseWriter, r *http.Reque
 		_ = savePhoneMeta(p)
 	}
 	jsonReply(w, http.StatusOK, meta)
+}
+
+// handleManagedGitSync runs a full bidirectional sync: push local checkpoints to
+// connected mirrors (outbound), then fetch + merge remote changes (inbound) with
+// AI conflict resolution. No-op-safe when no mirror is connected.
+func (s *HTTPServer) handleManagedGitSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Slug    string `json:"slug"`
+		WorkDir string `json:"workDir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		jsonError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	workDir, err := managedGitWorkDir(body.Slug, body.WorkDir)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	pushed := ManagedGitMirrorSyncAll(workDir) // outbound
+	result, err := ManagedGitMirrorPull(workDir) // inbound (+ AI-resolve on conflict)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"ok": true, "result": result, "mirrorsPushed": len(pushed)})
 }
 
 func (s *HTTPServer) handleManagedGitStatus(w http.ResponseWriter, r *http.Request) {
