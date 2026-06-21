@@ -59,9 +59,11 @@ func tenantRuntimeForTask(task *Task) tenantRuntime {
 	if task == nil || strings.TrimSpace(task.GuestUserID) == "" || !task.GuestRequireIsolation {
 		return tenantRuntime{}
 	}
-	if !runnerNeedsTenantRuntime(firstNonEmpty(task.RunnerID, task.runner.RunnerID)) {
-		return tenantRuntime{}
-	}
+	// GuestRequireIsolation = this task MUST run confined as a tenant, REGARDLESS
+	// of runner. Beta is opencode-only; the earlier runner gate (claude/codex
+	// only) silently left isolation-required opencode tasks UNCONFINED — a hole.
+	// claude/codex still land here and additionally get their confined HOME
+	// (CLAUDE_CONFIG_DIR/CODEX_HOME) via authEnv.
 	return tenantRuntimeForGuest(task.GuestUserID)
 }
 

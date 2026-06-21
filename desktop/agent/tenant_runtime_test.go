@@ -32,7 +32,7 @@ func TestTenantRuntimeSeparatesClaudeAndCodexHomes(t *testing.T) {
 	}
 }
 
-func TestTenantRuntimeForTaskOnlyForIsolatedClaudeCodexGuests(t *testing.T) {
+func TestTenantRuntimeForTaskIsolatedGuests(t *testing.T) {
 	cases := []struct {
 		name   string
 		task   *Task
@@ -40,7 +40,9 @@ func TestTenantRuntimeForTaskOnlyForIsolatedClaudeCodexGuests(t *testing.T) {
 	}{
 		{name: "owner", task: &Task{RunnerID: "codex"}, expect: false},
 		{name: "guest no isolation", task: &Task{GuestUserID: "u1", RunnerID: "codex"}, expect: false},
-		{name: "guest opencode", task: &Task{GuestUserID: "u1", GuestRequireIsolation: true, RunnerID: "opencode"}, expect: false},
+		// Beta is opencode-only: an isolation-required opencode guest MUST be
+		// confined as a tenant (previously a hole — it ran unconfined).
+		{name: "guest opencode isolated", task: &Task{GuestUserID: "u1", GuestRequireIsolation: true, RunnerID: "opencode"}, expect: true},
 		{name: "guest codex", task: &Task{GuestUserID: "u1", GuestRequireIsolation: true, RunnerID: "codex"}, expect: true},
 		{name: "guest claude-code alias", task: &Task{GuestUserID: "u1", GuestRequireIsolation: true, RunnerID: "claude-code"}, expect: true},
 	}
