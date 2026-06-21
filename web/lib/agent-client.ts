@@ -263,6 +263,52 @@ export interface StoreTask {
   status: "done" | "todo" | "action" | "blocked" | "unknown";
 }
 
+// Capability/permissions plan (mirrors Go capabilities.go, GET /capabilities).
+export interface CapabilityFinding {
+  id: string;
+  title: string;
+  detected: boolean;
+  matchedSignals?: string[];
+  iosPlistUsage?: Record<string, string>;
+  iosEntitlements?: string[];
+  androidPermissions?: string[];
+  consoleForms?: string[];
+  notes?: string;
+}
+export interface ManifestPlan {
+  capabilities: CapabilityFinding[];
+  iosPlistUsage: Record<string, string>;
+  iosEntitlements: string[];
+  androidPermissions: string[];
+  consoleForms: string[];
+  needsUsageStrings: string[];
+}
+
+// Canonical store listing (mirrors Go store_listing.go, GET /listing).
+export interface DataCollection {
+  category: string;
+  appleType: string;
+  googleType: string;
+  purposes: string[];
+  linkedToUser: boolean;
+  usedForTracking: boolean;
+  source: string;
+}
+export interface StoreListing {
+  appName: string;
+  subtitle: string;
+  bundleId: string;
+  packageName: string;
+  version: string;
+  description: string;
+  keywords?: string[];
+  whatsNew?: string;
+  privacy: DataCollection[];
+  consoleForms: string[];
+  screenshots: { platform: string; deviceClass: string; width: number; height: number; minCount: number }[];
+  derivation: { detectedCapabilities: string[]; sdks: string[]; notes: string[] };
+}
+
 export type CompanyAIWorkKind =
   | "app-code"
   | "erp-flow"
@@ -4873,6 +4919,20 @@ export class AgentClient {
     return Array.isArray(data?.tasks) ? (data.tasks as StoreTask[]) : [];
   }
 
+  // Required permissions/capabilities inferred from the project's code.
+  async getCapabilities(path?: string): Promise<ManifestPlan | null> {
+    const q = path ? `?path=${encodeURIComponent(path)}` : "";
+    const res = await this.agentFetch(`/capabilities${q}`);
+    return (await res.json().catch(() => null)) as ManifestPlan | null;
+  }
+
+  // Canonical store listing derived from code (identity + truthful privacy).
+  async getListing(path?: string): Promise<StoreListing | null> {
+    const q = path ? `?path=${encodeURIComponent(path)}` : "";
+    const res = await this.agentFetch(`/listing${q}`);
+    return (await res.json().catch(() => null)) as StoreListing | null;
+  }
+
   async companionDetect(repo: string): Promise<CompanionDetectResult> {
     const res = await this.agentFetch(`/companion/detect?repo=${encodeURIComponent(repo)}`);
     const data = await res.json().catch(() => ({}));
@@ -7374,6 +7434,9 @@ export interface PhoneNodeUi {
   title?: string;
   reorderable?: boolean;
   swipeDelete?: boolean;
+  /** Turn a list node into a kanban board grouped by this column. End users
+   * drag cards between columns; the move persists by updating the column. */
+  board?: { groupBy: string };
 }
 /** The mini-figma design layer for an app: top-to-bottom widget order + per-node
  * overrides. Lives inside the app spec so it persists and ships in the bundle. */
