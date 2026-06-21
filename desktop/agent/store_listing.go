@@ -244,6 +244,10 @@ func sortedDepSubset(deps map[string]bool) []string {
 // ── CLI ──────────────────────────────────────────────────────────────
 
 func runListing(args []string) {
+	if len(args) > 0 && args[0] == "push" {
+		runListingPush(args[1:])
+		return
+	}
 	jsonOut := false
 	path := "."
 	for i := 0; i < len(args); i++ {
