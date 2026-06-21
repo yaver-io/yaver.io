@@ -45,9 +45,9 @@ const (
 	//     → sys.boot_completed=1 (Android 13). Bake these into the golden image.
 	// HARD RULE (CLAUDE.md): metered, never monthly — the controller ALWAYS
 	// snapshot+deletes on idle; no box is ever left running to hit the monthly cap.
-	defaultBetaPoolSKU    = "cx33" // 4 vCPU / 8 GB x86 — redroid-capable, validation floor
+	defaultBetaPoolSKU    = "cx33" // 4 vCPU / 8 GB x86 ($8.99/mo) — redroid-capable
 	defaultBetaPoolRegion = "nbg1"
-	defaultBetaMaxIdleSec = 1200   // 20 min idle → snapshot+delete (metered, never monthly)
+	defaultBetaMaxIdleSec = 1200   // 20 min idle → POWER OFF (managed-cloud pause; box+data persist; fast ~15s resume)
 	betaPoolTickSec       = 15
 )
 
@@ -128,29 +128,34 @@ func (c *betaPoolController) setState(phase, boxAddr string, activity bool) erro
 	return nil
 }
 
+// provision = POWER ON the managed-cloud beta box (create it once from the
+// golden snapshot if it doesn't exist yet, then power on). The box PERSISTS —
+// this is the managed-cloud model: a paid box that pauses, not an ephemeral one.
 func (c *betaPoolController) provision() (string, error) {
 	if c.provisionFn != nil {
 		return c.provisionFn()
 	}
 	if c.hcloudToken == "" {
-		log.Printf("[betapool] DRY-RUN: would provision %s in %s (HCLOUD_TOKEN unset) with YAVER_BETA_HOST=1", c.sku, c.region)
+		log.Printf("[betapool] DRY-RUN: would POWER ON the beta box (create once from golden snapshot if absent; HCLOUD_TOKEN unset)")
 		return "dry-run-box", nil
 	}
-	// Real provisioning is a deliberate, separately-wired step (cloud_byo_provision
-	// from a golden snapshot + cloud-init YAVER_BETA_HOST=1). Fail closed rather
-	// than half-provision: a token alone must not silently start spending.
-	return "", fmt.Errorf("betapool: real provisioning not wired (set provisionFn); refusing to spend")
+	return "", fmt.Errorf("betapool: real power-on not wired (set provisionFn); refusing to act")
 }
 
+// reap = POWER OFF the managed-cloud beta box (NOT delete). Box + data persist
+// for a fast ~15s resume. NOTE: Hetzner bills a powered-off server at the full
+// rate (~$8.99/mo for cx33) — power-off is a managed-cloud "pause" (the paying
+// user's cost), NOT a cost-to-zero. To stop billing entirely you must DELETE
+// (snapshot preserves data) — that's the scale-to-zero path, chosen per-product.
 func (c *betaPoolController) reap(addr string) error {
 	if c.reapFn != nil {
 		return c.reapFn(addr)
 	}
 	if c.hcloudToken == "" {
-		log.Printf("[betapool] DRY-RUN: would snapshot+delete %q (HCLOUD_TOKEN unset)", addr)
+		log.Printf("[betapool] DRY-RUN: would POWER OFF %q (managed-cloud pause; box+data persist; still billed ~$8.99/mo)", addr)
 		return nil
 	}
-	return fmt.Errorf("betapool: real reap not wired (set reapFn)")
+	return fmt.Errorf("betapool: real power-off not wired (set reapFn)")
 }
 
 // tick performs one decision cycle. Returns the action taken (for logs/tests).
