@@ -277,6 +277,10 @@ func buildManifestPlan(projectDir string) ManifestPlan {
 // ── CLI ──────────────────────────────────────────────────────────────
 
 func runCaps(args []string) {
+	if len(args) > 0 && args[0] == "generate" {
+		runCapsGenerate(args[1:])
+		return
+	}
 	jsonOut := false
 	path := "."
 	var sub string
