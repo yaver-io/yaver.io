@@ -72,3 +72,26 @@ P1 (golden image) → P2 (tenant exec) → P3 nizam first (smallest hybrid) → 
 - One box at a time; reap/delete after each phase (don't leave cpx51 running).
 - `HCLOUD_TOKEN` stays out of prod control plane until P2 controller verified (so prod never auto-provisions mid-build).
 - Every provisioned box deleted at phase end; snapshots pruned except the golden one.
+
+## Advanced yaver-git (requested 2026-06-21) — spec
+
+Owner's accumulated asks for yaver-git. Privacy first: managed-git bare repos are
+LOCAL + credential-free; mirrors go to PRIVATE GitHub/GitLab repos only, NEVER
+public (talos especially). Tenant pushes never carry creds (beta_broker model).
+
+1. **Mirror-on-push** (NEW — not built): a `post-receive` hook on the managed-git
+   bare repo → if a mirror is connected (`ManagedGitMirrorToProvider` /
+   `/managed-git/mirrors/connect` already exist, MANUAL today) → auto-`git push`
+   to the GitHub/GitLab mirror. Start with the OWNER's account (owner holds the
+   creds; the hook runs owner-side, NOT in a tenant's credential-free push).
+2. **AI-runner merge-conflict resolution** (NEW): when a push/sync conflicts,
+   spawn an opencode/runner task to resolve the conflict, then continue. Keeps
+   normies out of rebase/merge hell.
+3. **Bidirectional mirror sync** (NEW): periodic/triggered sync managed-git ↔
+   mirror (pull remote changes in too), with the AI-runner resolver on conflict.
+4. **Isolation invariants** (enforced): per-tenant 0700 partition
+   (/srv/yaver/tenants/<userId>) → beta users never see each other's repos;
+   talos only in the owner/test account's grant; mirror tokens redacted from
+   errors; tenant never gets mirror creds (broker pushes owner-side).
+
+Build order: (1) mirror-on-push for owner → (2) AI conflict resolver → (3) sync.
