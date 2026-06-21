@@ -22,7 +22,7 @@ import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { isCloudPreviewUser } from "../src/lib/cloudPreview";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
-import { getManagedSubscription, isBetaUser } from "../src/lib/subscription";
+import { fetchBetaInferenceToken, getManagedSubscription, isBetaUser } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { quicClient } from "../src/lib/quic";
 import { pingProvider } from "../src/lib/llmOpenAI";
@@ -432,7 +432,18 @@ export default function PhoneProjectsScreen() {
       const beta = isBetaUser(summary);
       setIsBeta(beta);
       setIsOwner(!!summary.cloudPreviewOwner);
-      if (beta) setInferenceMode("managed"); // beta users default to managed inference (no key)
+      if (beta) {
+        setInferenceMode("managed"); // beta users default to managed inference (no key)
+        // Self-service: fetch + store the scoped managed-inference token + gateway
+        // URL so the sandbox generation's managed lane works with no manual setup.
+        if (token) {
+          void fetchBetaInferenceToken(token).then((creds) => {
+            if (cancelled || !creds) return;
+            void saveLocalSecret(LOCAL_KEYS.managedInferenceToken, creds.token);
+            void saveLocalSecret(LOCAL_KEYS.gatewayUrl, creds.gatewayUrl);
+          });
+        }
+      }
     })();
     return () => {
       cancelled = true;

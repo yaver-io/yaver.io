@@ -7947,4 +7947,43 @@ http.route({
   }),
 });
 
+// POST /beta/inference-token — a beta user exchanges their session for a scoped
+// inference token (ygw_) + the gateway URL, so the mobile/web client can use
+// managed (keyless) GLM without ever holding the upstream key. Gated on beta
+// status; the raw token is returned ONCE (only its hash is stored).
+http.route({
+  path: "/beta/inference-token",
+  method: "OPTIONS",
+  handler: httpAction(async () => corsPreflightResponse()),
+});
+http.route({
+  path: "/beta/inference-token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const beta = await ctx.runQuery(internal.betaAccess.getBetaStatus, {
+      userId: session.userDocId as any,
+    });
+    if (!beta?.isBeta || !beta?.aiEnabled) {
+      return errorResponse("Not a beta user", 403);
+    }
+    const raw =
+      "ygw_" +
+      crypto.randomUUID().replace(/-/g, "") +
+      crypto.randomUUID().replace(/-/g, "");
+    const tokenHash = await sha256Hex(raw);
+    await ctx.runMutation(internal.gatewayTokens.mintInternal, {
+      userId: session.userDocId as any,
+      tokenHash,
+      scope: "inference",
+      label: "beta-client",
+    });
+    return jsonResponse({
+      token: raw,
+      gatewayUrl: process.env.GATEWAY_PUBLIC_URL ?? "",
+    });
+  }),
+});
+
 export default http;

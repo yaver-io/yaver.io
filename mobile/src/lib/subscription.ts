@@ -105,6 +105,26 @@ export function isBetaUser(s: ManagedSubscriptionSummary | null | undefined): bo
   return s?.beta?.isBeta === true;
 }
 
+/** Exchange a beta user's session for a scoped managed-inference token + gateway
+ * URL (keyless GLM). Returns null for non-beta / errors. The raw token is only
+ * returned here; store it locally for the sandbox generation's managed lane. */
+export async function fetchBetaInferenceToken(
+  token: string,
+): Promise<{ token: string; gatewayUrl: string } | null> {
+  try {
+    const res = await fetch(`${getConvexSiteUrl()}/beta/inference-token`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { token?: string; gatewayUrl?: string };
+    if (!data.token || !data.gatewayUrl) return null;
+    return { token: data.token, gatewayUrl: data.gatewayUrl };
+  } catch {
+    return null;
+  }
+}
+
 export async function getManagedSubscription(token: string): Promise<ManagedSubscriptionSummary | null> {
   try {
     const res = await fetch(`${getConvexSiteUrl()}/subscription`, {
