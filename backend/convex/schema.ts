@@ -1385,6 +1385,23 @@ export default defineSchema({
 
   // Explicit infra grants — hosts can share selected devices/machines with
   // another user without giving them blanket access to the whole account.
+  // Pre-seeded beta invites by email. The owner whitelists an email; when that
+  // person signs up with ANY OAuth provider, /subscription detects the pending
+  // invite and offers it. They APPROVE in the app (consent to managed AI + the
+  // shared box) → the real beta grant is created. No silent grant.
+  betaInvites: defineTable({
+    email: v.string(), // normalized lowercase
+    sharedProject: v.optional(v.string()),
+    grantCents: v.optional(v.number()),
+    includedHours: v.optional(v.number()),
+    allowedRunners: v.optional(v.array(v.string())),
+    hostUserId: v.optional(v.id("users")),
+    inviterName: v.optional(v.string()),
+    status: v.string(), // "pending" | "accepted"
+    createdAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+  }).index("by_email", ["email"]),
+
   infraAccessGrants: defineTable({
     hostUserId: v.id("users"),
     guestUserId: v.id("users"),

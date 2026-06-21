@@ -259,6 +259,35 @@ export const getBetaStatus = internalQuery({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .unique();
     const isBeta = !!betaAllow || !!grant;
+    // Pre-seeded invite offer: if NOT yet beta but the owner whitelisted this
+    // user's email, surface the offer so the app can show a consent card
+    // ("<inviter> invited you to Yaver Beta — approve managed AI + shared box").
+    // The real grant is created only on approval (acceptBetaInvite), never here.
+    let betaInvite: {
+      pending: boolean;
+      inviterName: string;
+      sharedProject: string | null;
+      includedHours: number;
+    } | null = null;
+    if (!isBeta) {
+      const u = await ctx.db.get(userId);
+      const email = ((u as any)?.email ?? "").trim().toLowerCase();
+      if (email) {
+        const inv = await ctx.db
+          .query("betaInvites")
+          .withIndex("by_email", (q) => q.eq("email", email))
+          .filter((q) => q.eq(q.field("status"), "pending"))
+          .first();
+        if (inv) {
+          betaInvite = {
+            pending: true,
+            inviterName: inv.inviterName ?? "Yaver",
+            sharedProject: inv.sharedProject ?? null,
+            includedHours: inv.includedHours ?? DEFAULT_BETA_INCLUDED_HOURS,
+          };
+        }
+      }
+    }
     // Deploy target: the host's beta box (deviceId + relay URL) so the beta
     // user's deploy button can push the serverless bundle to it via the relay —
     // WITHOUT the box appearing in their device list (the hidden-grant rule).
@@ -283,6 +312,7 @@ export const getBetaStatus = internalQuery({
       usedHours: betaAllow ? Math.round(betaAllow.usedSeconds / 3600) : 0,
       aiEnabled: policy?.enabled ?? false,
       deployTarget,
+      betaInvite,
     };
   },
 });
@@ -296,6 +326,89 @@ type SeedByEmailResult =
 // sign in once, then re-run). Run:
 //   npx convex run betaAccess:seedBetaUserByEmail \
 //     '{"email":"dsahinbas@gmail.com","sharedProject":"carrotbet"}'
+// Whitelist an email for beta. When that person signs up (ANY OAuth provider),
+// /subscription surfaces the offer; they approve in-app → acceptBetaInvite grants
+// it. Idempotent per email (re-invite updates the params).
+export const inviteBetaByEmail = internalMutation({
+  args: {
+    email: v.string(),
+    sharedProject: v.optional(v.string()),
+    grantCents: v.optional(v.number()),
+    includedHours: v.optional(v.number()),
+    allowedRunners: v.optional(v.array(v.string())),
+    hostUserId: v.optional(v.id("users")),
+    inviterName: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const email = args.email.trim().toLowerCase();
+    const existing = await ctx.db
+      .query("betaInvites")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .first();
+    const fields = {
+      email,
+      sharedProject: args.sharedProject,
+      grantCents: args.grantCents,
+      includedHours: args.includedHours,
+      allowedRunners: args.allowedRunners,
+      hostUserId: args.hostUserId,
+      inviterName: args.inviterName,
+      status: "pending" as const,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, fields);
+      return { ok: true, id: String(existing._id), updated: true };
+    }
+    const id = await ctx.db.insert("betaInvites", { ...fields, createdAt: Date.now() });
+    return { ok: true, id: String(id) };
+  },
+});
+
+// Resolve a user → their pending invite (by email). Used by acceptBetaInvite.
+export const getPendingInviteForUser = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const u = await ctx.db.get(userId);
+    const email = ((u as any)?.email ?? "").trim().toLowerCase();
+    if (!email) return null;
+    const inv = await ctx.db
+      .query("betaInvites")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .filter((q) => q.eq(q.field("status"), "pending"))
+      .first();
+    return inv ?? null;
+  },
+});
+
+export const markInviteAccepted = internalMutation({
+  args: { inviteId: v.id("betaInvites") },
+  handler: async (ctx, { inviteId }) => {
+    await ctx.db.patch(inviteId, { status: "accepted", acceptedAt: Date.now() });
+    return { ok: true };
+  },
+});
+
+// User-approved beta consent. Called by POST /beta/consent for the authenticated
+// user: finds their pending invite → seeds the real grant (managed AI + box) →
+// marks the invite accepted. Requires a pending invite (no self-granting).
+export const acceptBetaInvite = internalAction({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }): Promise<{ ok: boolean; reason?: string }> => {
+    const inv = await ctx.runQuery(internal.betaAccess.getPendingInviteForUser, { userId });
+    if (!inv) return { ok: false, reason: "no pending invite" };
+    await ctx.runAction(internal.betaAccess.seedBetaUser, {
+      guestUserId: userId,
+      hostUserId: inv.hostUserId,
+      sharedProject: inv.sharedProject,
+      grantCents: inv.grantCents,
+      includedHours: inv.includedHours,
+      allowedRunners: inv.allowedRunners,
+    });
+    await ctx.runMutation(internal.betaAccess.markInviteAccepted, { inviteId: inv._id });
+    return { ok: true };
+  },
+});
+
 export const seedBetaUserByEmail = internalAction({
   args: {
     email: v.string(),

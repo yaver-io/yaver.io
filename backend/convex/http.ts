@@ -7986,4 +7986,25 @@ http.route({
   }),
 });
 
+// POST /beta/consent — the authenticated user approves a pre-seeded beta invite
+// (consent to managed AI + the shared box). The real grant is created only here.
+http.route({
+  path: "/beta/consent",
+  method: "OPTIONS",
+  handler: httpAction(async () => corsPreflightResponse()),
+});
+http.route({
+  path: "/beta/consent",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const result = await ctx.runAction(internal.betaAccess.acceptBetaInvite, {
+      userId: session.userDocId as any,
+    });
+    if (!result.ok) return errorResponse(result.reason ?? "No pending invite", 404);
+    return jsonResponse({ ok: true });
+  }),
+});
+
 export default http;
