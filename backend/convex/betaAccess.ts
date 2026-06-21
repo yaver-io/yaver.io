@@ -259,6 +259,22 @@ export const getBetaStatus = internalQuery({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .unique();
     const isBeta = !!betaAllow || !!grant;
+    // Deploy target: the host's beta box (deviceId + relay URL) so the beta
+    // user's deploy button can push the serverless bundle to it via the relay —
+    // WITHOUT the box appearing in their device list (the hidden-grant rule).
+    // Identified by the beta-cloud deviceId prefix among the host's devices.
+    let deployTarget: { deviceId: string; relayHttpUrl: string } | null = null;
+    if (grant) {
+      const hostDevices = await ctx.db
+        .query("devices")
+        .withIndex("by_userId", (q) => q.eq("userId", grant.hostUserId))
+        .collect();
+      const box = hostDevices.find((d) => (d.deviceId ?? "").startsWith("beta-cloud"));
+      const relayUrl = (process.env.RELAY_PUBLIC_URL ?? "").trim();
+      if (box && relayUrl) {
+        deployTarget = { deviceId: box.deviceId, relayHttpUrl: relayUrl };
+      }
+    }
     return {
       isBeta,
       plan: isBeta ? "beta" : null,
@@ -266,6 +282,7 @@ export const getBetaStatus = internalQuery({
       includedHours: betaAllow ? Math.round(betaAllow.includedSeconds / 3600) : 0,
       usedHours: betaAllow ? Math.round(betaAllow.usedSeconds / 3600) : 0,
       aiEnabled: policy?.enabled ?? false,
+      deployTarget,
     };
   },
 });

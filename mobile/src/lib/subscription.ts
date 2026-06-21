@@ -69,6 +69,7 @@ export interface BetaStatus {
   includedHours: number;
   usedHours: number;
   aiEnabled: boolean;
+  deployTarget?: { deviceId: string; relayHttpUrl: string } | null;
 }
 
 export interface ManagedSubscriptionSummary {
