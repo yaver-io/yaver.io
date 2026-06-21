@@ -231,6 +231,13 @@ export default function PhoneProjectsScreen() {
   // Beta soft-launch: beta users get managed inference (owner's GLM via the
   // gateway) with NO key entry. "managed" = beta path; "byo" = bring-your-own key.
   const [isBeta, setIsBeta] = useState(false);
+  // Owner (kivanc.cakmak@icloud.com / cloudPreviewOwner) can flip a local "Beta
+  // preview" toggle to dogfood the beta experience WITHOUT being permanently
+  // seeded/force-gated. Keyless GLM works for the owner via their cloud-access
+  // session (the gateway authorizes cloud-access tokens). showBeta drives the UI.
+  const [isOwner, setIsOwner] = useState(false);
+  const [betaPreview, setBetaPreview] = useState(false);
+  const showBeta = isBeta || betaPreview;
   const [inferenceMode, setInferenceMode] = useState<"managed" | "byo">("byo");
   const [openAiKey, setOpenAiKey] = useState("");
   const [glmKey, setGlmKey] = useState("");
@@ -424,6 +431,7 @@ export default function PhoneProjectsScreen() {
       setHasManagedCloud(hasMachine || hasSubscription);
       const beta = isBetaUser(summary);
       setIsBeta(beta);
+      setIsOwner(!!summary.cloudPreviewOwner);
       if (beta) setInferenceMode("managed"); // beta users default to managed inference (no key)
     })();
     return () => {
@@ -545,7 +553,7 @@ export default function PhoneProjectsScreen() {
     const effectivePrompt = [surveyParagraph, brandParagraph, refineParagraph, baseDescription]
       .filter(Boolean)
       .join("\n");
-    const betaManaged = isBeta && inferenceMode === "managed";
+    const betaManaged = showBeta && inferenceMode === "managed";
     const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
     // Beta-managed inference needs no phone key — the gateway runs GLM for the user.
     if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey && !betaManaged) {
@@ -1153,7 +1161,47 @@ export default function PhoneProjectsScreen() {
 
                 {startMode === "this-phone" ? (
                   <>
-                    {isBeta ? (
+                    {isOwner && !isBeta ? (
+                      <Pressable
+                        onPress={() => {
+                          const next = !betaPreview;
+                          setBetaPreview(next);
+                          if (next) setInferenceMode("managed");
+                        }}
+                        hitSlop={8}
+                        style={[
+                          styles.reviewCard,
+                          {
+                            backgroundColor: betaPreview ? c.accent : c.bg,
+                            borderColor: betaPreview ? c.accent : c.border,
+                            marginTop: 12,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                          },
+                        ]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.reviewTitle, { color: betaPreview ? c.bg : c.textPrimary }]}>
+                            🧪 Beta preview mode
+                          </Text>
+                          <Text style={[styles.muted, { color: betaPreview ? c.bg : c.textMuted, marginTop: 2 }]}>
+                            Owner only — try the beta experience (managed GLM, no key). Doesn't change your account.
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            width: 44, height: 26, borderRadius: 13, padding: 3,
+                            backgroundColor: betaPreview ? c.bg : c.border,
+                            alignItems: betaPreview ? "flex-end" : "flex-start",
+                          }}
+                        >
+                          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: betaPreview ? c.accent : c.bgCard }} />
+                        </View>
+                      </Pressable>
+                    ) : null}
+
+                    {showBeta ? (
                       <>
                         <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Inference</Text>
                         <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
@@ -1183,7 +1231,7 @@ export default function PhoneProjectsScreen() {
                       </>
                     ) : null}
 
-                    {isBeta && inferenceMode === "managed" ? (
+                    {showBeta && inferenceMode === "managed" ? (
                       <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 12 }]}>
                         <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>✨ Beta access — managed inference</Text>
                         <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
@@ -1828,6 +1876,9 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       runnerChoiceEnabled,
       setupSteps,
       isBeta,
+      showBeta,
+      betaPreview,
+      isOwner,
       inferenceMode,
       primaryHex,
       secondaryHex,
