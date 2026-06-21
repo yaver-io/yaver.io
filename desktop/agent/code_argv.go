@@ -51,6 +51,7 @@ var safeArgvSubcommands = map[string]string{
 	"discover":   "scan the local network for yaver agents",
 	"vault":      "project-scoped secrets (list/get/env/projects/sync)",
 	"deploy":     "deploy ship / templates / runs / diagnose",
+	"stores":     "store-onboarding concierge (account / keys / TestFlight / IAP / sign-in)",
 	"workspace":  "yaver.workspace.yaml apps / status / scaffold",
 	"ops":        "verb-based grand MCP API (info / status / verbs / ...)",
 	"status":     "agent status",

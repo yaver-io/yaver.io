@@ -56,6 +56,7 @@ import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE } from "@/components/dashboard/DevicesView";
 import BillingView from "@/components/dashboard/BillingView";
+import StoresView from "@/components/dashboard/StoresView";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
 import { CapabilityShelf } from "@/components/dashboard/CapabilityShelf";
 import StudioPanel from "@/components/dashboard/StudioPanel";
@@ -830,7 +831,7 @@ export default function DashboardPage() {
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "cloud" | "build" | "arm" | "appletv" | "packages">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "stores" | "cloud" | "build" | "arm" | "appletv" | "packages">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -2067,6 +2068,7 @@ export default function DashboardPage() {
               { id: "guests",   label: "Guests",   icon: "👥" },
               { id: "vault",    label: "Vault",    icon: "🔐" },
               { id: "billing",  label: "Billing",  icon: "💳" },
+              { id: "stores",   label: "Publish",  icon: "🚀" },
             ] as const).map((it) => (
               <button
                 key={it.id}
@@ -2767,6 +2769,8 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
           ) : activeTab === "billing" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><BillingView token={token} /></div>
+          ) : activeTab === "stores" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><StoresView token={token} /></div>
           ) : activeTab === "build" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <h2 className="text-lg font-semibold text-surface-100">Build your app</h2>

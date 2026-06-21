@@ -2927,6 +2927,7 @@ export default function MoreScreen() {
   const handleRobot = useCallback(() => router.navigate("/(tabs)/robot" as any), [router]);
   const handlePrinter = useCallback(() => router.navigate("/printer" as any), [router]);
   const handleCircuit = useCallback(() => router.navigate("/circuit" as any), [router]);
+  const handleStores = useCallback(() => router.navigate("/stores" as any), [router]);
   const handleEvStations = useCallback(() => router.navigate("/ev-stations" as any), [router]);
   const handleGatewayGates = useCallback(() => router.navigate("/gateway-gates" as any), [router]);
   const handleCarVoice = useCallback(() => router.navigate("/car-voice-coding" as any), [router]);
@@ -3294,6 +3295,20 @@ export default function MoreScreen() {
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203a"}</Text>
             </Pressable>
             ) : null}
+
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleStores}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"🚀"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Publish to the stores</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Account, keys, TestFlight, IAP, sign-in — guided + links"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+            </Pressable>
 
             {showOptionalTool("circuit") ? (
             <Pressable

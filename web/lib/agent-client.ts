@@ -246,6 +246,23 @@ export interface CompanionProjectSummary {
   updatedAt: string;
 }
 
+// One step in the store-onboarding concierge (mirrors Go setup_guide.go,
+// served by the agent GET /stores). automation: auto | assisted | manual;
+// status: done | todo | action | blocked | unknown.
+export interface StoreTask {
+  id: string;
+  platform: "apple" | "google" | "both";
+  title: string;
+  summary: string;
+  automation: "auto" | "assisted" | "manual";
+  routeUrl?: string;
+  steps?: string[];
+  needsSecret?: string[];
+  dependsOn?: string[];
+  yaverCmd?: string;
+  status: "done" | "todo" | "action" | "blocked" | "unknown";
+}
+
 export type CompanyAIWorkKind =
   | "app-code"
   | "erp-flow"
@@ -4847,6 +4864,15 @@ export class AgentClient {
     return Array.isArray(data?.projects) ? (data.projects as CompanionProjectSummary[]) : [];
   }
 
+  // Store-onboarding concierge catalogue + best-effort status (agent is the
+  // single source of truth; the UI only renders + routes to the official
+  // Apple/Google URLs each task carries).
+  async getStores(): Promise<StoreTask[]> {
+    const res = await this.agentFetch("/stores");
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.tasks) ? (data.tasks as StoreTask[]) : [];
+  }
+
   async companionDetect(repo: string): Promise<CompanionDetectResult> {
     const res = await this.agentFetch(`/companion/detect?repo=${encodeURIComponent(repo)}`);
     const data = await res.json().catch(() => ({}));
@@ -7339,10 +7365,27 @@ export interface PhoneScreenSpec {
   emptyState?: string;
   actions?: PhoneScreenAction[];
 }
+/** Per-node design overrides, keyed by the widget node id stamped via
+ * data-ynode (e.g. "quickadd", "title"). reorderable/swipeDelete are END-USER
+ * (runtime) affordances the builder opts into — "yaver draggable mode or not". */
+export interface PhoneNodeUi {
+  hidden?: boolean;
+  marginTop?: number;
+  title?: string;
+  reorderable?: boolean;
+  swipeDelete?: boolean;
+}
+/** The mini-figma design layer for an app: top-to-bottom widget order + per-node
+ * overrides. Lives inside the app spec so it persists and ships in the bundle. */
+export interface PhoneDesign {
+  layout?: string[];
+  ui?: Record<string, PhoneNodeUi>;
+}
 export interface PhoneAppSpec {
   summary?: string;
   primaryEntity?: string;
   screens?: PhoneScreenSpec[];
+  design?: PhoneDesign;
 }
 export interface PhoneProject {
   slug: string;

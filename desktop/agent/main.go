@@ -499,6 +499,8 @@ func main() {
 		runExpo(os.Args[2:])
 	case "deploy":
 		runDeploy(os.Args[2:])
+	case "stores":
+		runStores(os.Args[2:])
 	case "test":
 		runTest(os.Args[2:])
 	case "autotest":
