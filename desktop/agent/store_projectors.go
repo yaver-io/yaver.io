@@ -141,7 +141,10 @@ func buildPushPlan(store string, l StoreListing) (PushPlan, error) {
 func runListingPush(args []string) {
 	store := ""
 	path := "."
+	project := ""
 	jsonOut := false
+	live := false
+	apply := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--store":
@@ -154,18 +157,31 @@ func runListingPush(args []string) {
 				path = args[i+1]
 				i++
 			}
+		case "--project":
+			if i+1 < len(args) {
+				project = args[i+1]
+				i++
+			}
 		case "--json":
 			jsonOut = true
+		case "--live":
+			live = true
+		case "--apply":
+			apply = true
 		case "-h", "--help":
-			fmt.Println("Usage: yaver listing push --store apple|google [--path DIR] [--json]")
-			fmt.Println("  Shows the push plan (dry-run): which listing fields Yaver pushes via API")
-			fmt.Println("  and which are Console-only (drafted + routed). Live push needs your store")
-			fmt.Println("  creds in the vault (ASC .p8 / Play service account).")
+			fmt.Println("Usage: yaver listing push --store apple|google [--path DIR] [--project P] [--live] [--json]")
+			fmt.Println("  default   dry-run: which fields Yaver pushes via API vs Console-only (routed)")
+			fmt.Println("  --live    verify your store creds (vault) + connectivity, report readiness")
+			fmt.Println("  --apply   (guarded) attempt live writes — not enabled until test-verified")
 			return
 		}
 	}
 	if store == "" {
 		fmt.Fprintln(os.Stderr, "Error: --store apple|google is required")
+		return
+	}
+	if live || apply {
+		runListingPushLive(store, project, path, apply)
 		return
 	}
 	plan, err := buildPushPlan(store, BuildStoreListing(path))
