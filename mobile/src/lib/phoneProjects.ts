@@ -174,6 +174,11 @@ export interface PhoneShare {
   name: string;
   runtime?: "yaver-serverless-lite" | string;
   dataUrl?: string;
+  // Scoped READ-ONLY data token + embedded schema/app so a friend can render
+  // and read the app without owner auth (set by CreatePhoneShare on the host).
+  dataToken?: string;
+  schema?: PhoneSchema | null;
+  app?: PhoneAppSpec | null;
   // Legacy optional field kept while older app builds age out.
   hostedConvexUrl?: string;
   bundleUrl: string;

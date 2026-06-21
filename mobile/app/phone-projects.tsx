@@ -865,8 +865,10 @@ export default function PhoneProjectsScreen() {
           [
             {
               text: "Open",
-              onPress: () =>
-                router.navigate(`/phone-project/${sh.slug}` as any),
+              // Run the app (generic serverless-lite renderer, read-only) rather
+              // than the raw data browser — this is the "friend uses the app"
+              // experience.
+              onPress: () => router.navigate(`/run-app?slug=${sh.slug}` as any),
             },
             { text: "Later", style: "cancel" },
           ],
