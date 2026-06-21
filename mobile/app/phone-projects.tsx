@@ -22,7 +22,7 @@ import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { isCloudPreviewUser } from "../src/lib/cloudPreview";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
-import { fetchBetaInferenceToken, getManagedSubscription, isBetaUser } from "../src/lib/subscription";
+import { acceptBetaInvite, fetchBetaInferenceToken, getManagedSubscription, isBetaUser } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { quicClient } from "../src/lib/quic";
 import { pingProvider } from "../src/lib/llmOpenAI";
@@ -237,6 +237,9 @@ export default function PhoneProjectsScreen() {
   // session (the gateway authorizes cloud-access tokens). showBeta drives the UI.
   const [isOwner, setIsOwner] = useState(false);
   const [betaPreview, setBetaPreview] = useState(false);
+  const [betaInvite, setBetaInvite] = useState<{ inviterName: string; sharedProject: string | null; includedHours: number } | null>(null);
+  const [betaReload, setBetaReload] = useState(0);
+  const [approvingBeta, setApprovingBeta] = useState(false);
   const showBeta = isBeta || betaPreview;
   const [inferenceMode, setInferenceMode] = useState<"managed" | "byo">("byo");
   const [openAiKey, setOpenAiKey] = useState("");
@@ -432,6 +435,8 @@ export default function PhoneProjectsScreen() {
       const beta = isBetaUser(summary);
       setIsBeta(beta);
       setIsOwner(!!summary.cloudPreviewOwner);
+      const invite = summary.beta?.betaInvite;
+      setBetaInvite(invite?.pending ? { inviterName: invite.inviterName, sharedProject: invite.sharedProject, includedHours: invite.includedHours } : null);
       if (beta) {
         setInferenceMode("managed"); // beta users default to managed inference (no key)
         // Self-service: fetch + store the scoped managed-inference token + gateway
@@ -448,7 +453,21 @@ export default function PhoneProjectsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, betaReload]);
+
+  const onApproveBeta = async () => {
+    if (!token || approvingBeta) return;
+    setApprovingBeta(true);
+    const ok = await acceptBetaInvite(token);
+    setApprovingBeta(false);
+    if (ok) {
+      setBetaInvite(null);
+      setBetaReload((n) => n + 1); // refetch → isBeta + managed inference now active
+    } else {
+      Alert.alert("Could not activate", "Please try again in a moment.");
+    }
+  };
+
   useEffect(() => {
     if (!runnerChoiceEnabled && codingMode === "runner") {
       setCodingMode("phone");
@@ -2084,6 +2103,23 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       style={{ flex: 1, backgroundColor: c.bg }}
     >
       <AppScreenHeader title="Mobile Sandbox" onBack={() => router.back()} />
+      {betaInvite ? (
+        <View style={{ margin: 16, marginBottom: 0, padding: 16, borderRadius: 14, backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.accent }}>
+          <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 16 }}>
+            ✨ {betaInvite.inviterName} invited you to Yaver Beta
+          </Text>
+          <Text style={{ color: c.textMuted, marginTop: 6, lineHeight: 19 }}>
+            Approve to enable managed AI — no API key needed — and {betaInvite.includedHours} hours on a shared Yaver box. Build a sandbox app on your phone and deploy it to Yaver Serverless.
+          </Text>
+          <Pressable
+            onPress={onApproveBeta}
+            disabled={approvingBeta}
+            style={{ marginTop: 12, backgroundColor: c.accent, borderRadius: 10, paddingVertical: 11, alignItems: "center", opacity: approvingBeta ? 0.6 : 1 }}
+          >
+            <Text style={{ color: c.bg, fontWeight: "700" }}>{approvingBeta ? "Activating…" : "Approve beta access"}</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <FlatList
         data={projects}
         keyExtractor={(p) => p.slug}

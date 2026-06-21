@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/use-auth";
 import { useBetaStatus } from "@/lib/useBetaStatus";
+import { acceptBetaInvite } from "@/lib/subscription";
 import BetaWorkspaceView from "@/components/dashboard/BetaWorkspaceView";
 import { useDevices, usePendingClaims, setDeviceAlias, type Device } from "@/lib/use-devices";
 import WebShellModal from "@/components/dashboard/WebShellModal";
@@ -1956,6 +1957,35 @@ export default function DashboardPage() {
   // device/guest/git chrome. The invisible owner-infra share is enforced
   // server-side; this is just which surface renders. Placed after all
   // hooks + auth guards, so hook order is unaffected.
+  // Pending pre-seeded invite (whitelisted email, not yet approved): show the
+  // consent card. Approving creates the real grant; reload flips to the beta
+  // workspace. (Placed before the isBeta gate; after all hooks.)
+  if (betaStatus?.betaInvite?.pending && !betaStatus.isBeta) {
+    const inv = betaStatus.betaInvite;
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "#0b0b0f" }}>
+        <div style={{ maxWidth: 460, width: "100%", padding: 28, borderRadius: 16, background: "#15151c", border: "1px solid #6d5efc" }}>
+          <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, margin: 0 }}>
+            ✨ {inv.inviterName} invited you to Yaver Beta
+          </h2>
+          <p style={{ color: "#a6a6b3", marginTop: 10, lineHeight: 1.5 }}>
+            Approve to enable managed AI — no API key needed — and {inv.includedHours} hours on a shared Yaver box. Build a sandbox app and deploy it to Yaver Serverless, right from here.
+          </p>
+          <button
+            onClick={async () => {
+              if (!token) return;
+              const ok = await acceptBetaInvite(token);
+              if (ok) window.location.reload();
+            }}
+            style={{ marginTop: 18, width: "100%", padding: "12px 16px", borderRadius: 10, border: "none", background: "#6d5efc", color: "#fff", fontWeight: 700, cursor: "pointer" }}
+          >
+            Approve beta access
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (betaStatus?.isBeta) {
     return (
       <BetaWorkspaceView

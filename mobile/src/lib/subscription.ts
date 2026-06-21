@@ -70,6 +70,28 @@ export interface BetaStatus {
   usedHours: number;
   aiEnabled: boolean;
   deployTarget?: { deviceId: string; relayHttpUrl: string } | null;
+  // Pending pre-seeded invite (whitelisted email, not yet approved). When set,
+  // show a consent card; approve via acceptBetaInvite to activate the grant.
+  betaInvite?: {
+    pending: boolean;
+    inviterName: string;
+    sharedProject: string | null;
+    includedHours: number;
+  } | null;
+}
+
+/** Approve a pending beta invite (consent to managed AI + the shared box).
+ * Returns true on success. The caller should refetch the subscription after. */
+export async function acceptBetaInvite(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getConvexSiteUrl()}/beta/consent`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export interface ManagedSubscriptionSummary {

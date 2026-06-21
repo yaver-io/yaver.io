@@ -23,6 +23,14 @@ export interface BetaStatus {
   includedHours: number;
   usedHours: number;
   aiEnabled: boolean;
+  // Pending pre-seeded invite (whitelisted email, not yet approved). Show a
+  // consent card; approve via acceptBetaInvite to activate the grant.
+  betaInvite?: {
+    pending: boolean;
+    inviterName: string;
+    sharedProject: string | null;
+    includedHours: number;
+  } | null;
 }
 
 export interface ManagedSubscriptionSummary {
@@ -47,6 +55,19 @@ export interface ManagedSubscriptionSummary {
 // the actual access is enforced server-side (gateway caps + hidden grant).
 export function isBetaUser(s: ManagedSubscriptionSummary | null | undefined): boolean {
   return s?.beta?.isBeta === true;
+}
+
+/** Approve a pending beta invite (consent to managed AI + the shared box). */
+export async function acceptBetaInvite(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${CONVEX_URL}/beta/consent`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function getManagedSubscription(token: string): Promise<ManagedSubscriptionSummary | null> {
