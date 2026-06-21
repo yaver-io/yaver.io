@@ -53,6 +53,7 @@ var safeArgvSubcommands = map[string]string{
 	"deploy":     "deploy ship / templates / runs / diagnose",
 	"stores":     "store-onboarding concierge (account / keys / TestFlight / IAP / sign-in)",
 	"caps":       "infer iOS/Android permissions + Info.plist/entitlements from your code",
+	"listing":    "derive a store listing (identity + truthful privacy/data-safety) from code",
 	"workspace":  "yaver.workspace.yaml apps / status / scaffold",
 	"ops":        "verb-based grand MCP API (info / status / verbs / ...)",
 	"status":     "agent status",

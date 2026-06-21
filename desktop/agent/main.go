@@ -503,6 +503,8 @@ func main() {
 		runStores(os.Args[2:])
 	case "caps":
 		runCaps(os.Args[2:])
+	case "listing":
+		runListing(os.Args[2:])
 	case "test":
 		runTest(os.Args[2:])
 	case "autotest":
