@@ -43,10 +43,21 @@ function num(v: string | undefined, d: number): number {
   return Number.isFinite(n) && n > 0 ? n : d;
 }
 
+// CORS: the gateway is called from browser clients (web dashboard + the mobile
+// web preview) as well as native RN. Without these headers a browser fetch is
+// blocked and the managed-inference call fails silently. Tokens are the auth, so
+// "*" origin is acceptable (the bearer still gates every request).
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, GET, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type",
+  "access-control-max-age": "86400",
+};
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...CORS },
   });
 }
 
@@ -173,6 +184,9 @@ async function callUpstream(
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS });
+    }
     if (request.method === "GET" && url.pathname === "/healthz") {
       return json({ ok: true });
     }
@@ -291,6 +305,7 @@ export default {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
         connection: "keep-alive",
+        ...CORS,
       },
     });
   },
