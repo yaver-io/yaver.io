@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	osexec "os/exec"
@@ -231,6 +232,9 @@ func ManagedGitCheckpoint(workDir, message string) (string, error) {
 		meta.LastCommit = commit
 		_ = SaveManagedGitMeta(workDir, meta)
 	}
+	// mirror-on-push: if the user connected GitHub/GitLab mirrors, propagate this
+	// checkpoint there too (owner-side, best-effort). No-op when no mirrors.
+	ManagedGitMirrorSyncAll(workDir)
 	return commit, nil
 }
 
@@ -494,6 +498,51 @@ func ManagedGitMirrorToProvider(workDir, provider, host, repoName, visibility, d
 		return nil, err
 	}
 	return &mirror, nil
+}
+
+// ManagedGitMirrorSyncAll pushes the current HEAD to every connected mirror
+// (mirror-on-push). Best-effort: a mirror failure is logged (token redacted),
+// never fatal — the local managed checkpoint already succeeded. Owner-side ONLY:
+// it uses the owner's stored provider tokens (loadGitProviders); a tenant's
+// credential-free push never reaches here, so mirror creds never leak to guests.
+func ManagedGitMirrorSyncAll(workDir string) []ManagedGitMirrorMeta {
+	meta, err := LoadManagedGitMeta(workDir)
+	if err != nil || len(meta.Mirrors) == 0 {
+		return nil
+	}
+	providers, _ := loadGitProviders()
+	var synced []ManagedGitMirrorMeta
+	for _, m := range meta.Mirrors {
+		var token, username string
+		for _, p := range providers {
+			if p.Provider == m.Provider && p.Host == m.Host {
+				token = p.Token
+				username = p.Username
+				break
+			}
+		}
+		if token == "" {
+			log.Printf("[managed-git] mirror-on-push %s/%s: no token on this machine, skip", m.Provider, m.FullName)
+			continue
+		}
+		url := credentialedGitURL(m.Provider, m.Host, username, token, m.FullName)
+		if out, err := managedGitCmd(workDir, "push", url, "HEAD:main"); err != nil {
+			safe := strings.ReplaceAll(out, token, "<redacted>")
+			log.Printf("[managed-git] mirror-on-push %s/%s failed: %s: %v", m.Provider, m.FullName, safe, err)
+			continue
+		}
+		m.LastPushAt = time.Now().UTC().Format(time.RFC3339)
+		synced = append(synced, m)
+	}
+	if len(synced) > 0 {
+		if fresh, err := LoadManagedGitMeta(workDir); err == nil {
+			for _, u := range synced {
+				fresh.Mirrors = upsertManagedGitMirror(fresh.Mirrors, u)
+			}
+			_ = SaveManagedGitMeta(workDir, fresh)
+		}
+	}
+	return synced
 }
 
 func upsertManagedGitMirror(items []ManagedGitMirrorMeta, next ManagedGitMirrorMeta) []ManagedGitMirrorMeta {
