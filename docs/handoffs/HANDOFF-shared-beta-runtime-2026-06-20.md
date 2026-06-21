@@ -337,8 +337,11 @@ beta token — a stranger can neither spin the box up nor drain inference.
 cpx51 (32 GB amd64) because it runs these concurrently for a few tenants:
 - yaver agent (with the unwire gate; boot env `YAVER_BETA_HOST=1`)
 - opencode (+ claude/codex binaries for BYO-OAuth lanes)
-- **redroid** (amd64 image + binder: `modprobe binder_linux`; ubuntu 24.04 has
-  CONFIG_ANDROID_BINDERFS) — Android app testing
+- **redroid** — VERIFIED on Hetzner cloud 2026-06-21 (x86/cx33, 8GB booted
+  Android 13): `apt install linux-modules-extra-$(uname -r)` → `modprobe
+  binder_linux devices="binder,hwbinder,vndbinder"` → `mount -t binder binder
+  /dev/binderfs` → `docker run --privileged -v /dev/binderfs:/dev/binderfs
+  redroid/redroid:13.0.0` → sys.boot_completed=1. x86 only (arm redroid unproven).
 - **Playwright + Chromium** (browser automation) and **chromedp** (headless
   chrome for gateway/collection)
 - Node + Hermes toolchain (Metro + hermesc) for RN/Expo (sfmg/carrotbet/nizam)

@@ -34,19 +34,20 @@ import (
 
 const (
 	// VALIDATION default (2026-06-20): 5 non-concurrent beta users → one
-	// scale-to-zero box. 8 GB RAM is plenty: a Hermes build (Metro+hermesc) for
-	// an RN app like sfmg needs ~2-4 GB (sfmg's 8.6 GB is DISK — node_modules +
-	// build artifacts — NOT RAM; seed source only + npm install on the box). So:
-	//   - cax21 (4 vCPU / 8 GB arm64) — cheapest, opencode + node + Hermes +
-	//     Playwright all run on arm64.
-	//   - redroid is DEFERRED: Hetzner cloud ships no binder module (needs
-	//     linux-modules-extra + amd64) — validate the loop with web preview +
-	//     Hermes first; add an amd64 redroid box later if needed.
+	// scale-to-zero box. 8 GB is plenty (sfmg's 8.6 GB is DISK — node_modules +
+	// build artifacts — NOT RAM; Hermes needs ~2-4 GB; seed source only).
+	//   - cx33 (4 vCPU / 8 GB x86): x86 is REQUIRED for redroid, provisioned
+	//     reliably in stock probes (cax/arm was flaky), and 8 GB booted Android.
+	//   - redroid VERIFIED on Hetzner cloud (2026-06-21): apt install
+	//     linux-modules-extra-$(uname -r) → modprobe binder_linux
+	//     devices="binder,hwbinder,vndbinder" → mount -t binder binder
+	//     /dev/binderfs → docker run --privileged redroid/redroid:13.0.0
+	//     → sys.boot_completed=1 (Android 13). Bake these into the golden image.
 	// HARD RULE (CLAUDE.md): metered, never monthly — the controller ALWAYS
 	// snapshot+deletes on idle; no box is ever left running to hit the monthly cap.
-	defaultBetaPoolSKU    = "cax21" // 4 vCPU / 8 GB arm64 — validation floor (configurable)
+	defaultBetaPoolSKU    = "cx33" // 4 vCPU / 8 GB x86 — redroid-capable, validation floor
 	defaultBetaPoolRegion = "nbg1"
-	defaultBetaMaxIdleSec = 1200    // 20 min idle → snapshot+delete (metered, never monthly)
+	defaultBetaMaxIdleSec = 1200   // 20 min idle → snapshot+delete (metered, never monthly)
 	betaPoolTickSec       = 15
 )
 
