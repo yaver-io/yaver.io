@@ -984,7 +984,6 @@ export default function PhoneProjectsScreen() {
                   {[
                     { id: "yaver-managed" as GitMode, label: "Yaver manages it" },
                     { id: "providers-now" as GitMode, label: "Mirror now" },
-                    { id: "skip" as GitMode, label: "Skip" },
                   ].map((opt) => {
                     const active = gitMode === opt.id;
                     return (
@@ -1000,13 +999,40 @@ export default function PhoneProjectsScreen() {
                           },
                         ]}
                       >
-                        <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600", textAlign: "center" }}>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600", textAlign: "center" }}
+                        >
                           {opt.label}
                         </Text>
                       </Pressable>
                     );
                   })}
                 </View>
+                {/* Skip — a subtle full-width option at the bottom, not an equal third */}
+                <Pressable
+                  onPress={() => setGitMode("skip")}
+                  style={{
+                    marginTop: 8,
+                    paddingVertical: 9,
+                    alignItems: "center",
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: gitMode === "skip" ? c.accent : c.border,
+                    backgroundColor: gitMode === "skip" ? c.accent : "transparent",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: gitMode === "skip" ? c.bg : c.textMuted,
+                      fontSize: 13,
+                      fontWeight: gitMode === "skip" ? "600" : "400",
+                    }}
+                  >
+                    Skip for now
+                  </Text>
+                </Pressable>
                 {gitMode === "yaver-managed" ? (
                   <>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 14 }]}>Visibility</Text>
@@ -1197,7 +1223,7 @@ export default function PhoneProjectsScreen() {
                             🧪 Beta preview mode
                           </Text>
                           <Text style={[styles.muted, { color: betaPreview ? c.bg : c.textMuted, marginTop: 2 }]}>
-                            Owner only — try the beta experience (managed GLM, no key). Doesn't change your account.
+                            Owner only — try the beta experience (beta access, no key). Doesn't change your account.
                           </Text>
                         </View>
                         <View
@@ -1244,9 +1270,9 @@ export default function PhoneProjectsScreen() {
 
                     {showBeta && inferenceMode === "managed" ? (
                       <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 12 }]}>
-                        <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>✨ Beta access — managed inference</Text>
+                        <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>✨ Beta access</Text>
                         <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-                          Yaver runs the GLM coding model for you — no API key needed. Included in your beta.
+                          Included in your beta — no API key needed.
                         </Text>
                       </View>
                     ) : (
