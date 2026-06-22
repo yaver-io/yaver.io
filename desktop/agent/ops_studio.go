@@ -25,14 +25,18 @@ func init() {
 	}
 
 	reg("studio_permission_prose",
-		"Generate the Play Console permission-justification prose + demo-video shot-list for an app permission (e.g. FOREGROUND_SERVICE_SPECIAL_USE). Offline static analysis of AndroidManifest.xml — no device.",
+		"Generate the Play Console permission-justification prose + demo-video shot-list for an app permission (e.g. FOREGROUND_SERVICE_SPECIAL_USE). Offline static analysis of AndroidManifest.xml — no device. Set useCase:true (with whatRuns/progressText/completionText) for the stronger NARRATIVE prose that argues necessity (a real task that would be killed mid-run without the foreground service). Works for any app.",
 		func(c OpsContext, payload json.RawMessage) OpsResult {
 			var req struct {
-				Permission string `json:"permission"`
-				Path       string `json:"path"`
-				Manifest   string `json:"manifest"`
-				App        string `json:"app"`
-				What       string `json:"what"`
+				Permission     string `json:"permission"`
+				Path           string `json:"path"`
+				Manifest       string `json:"manifest"`
+				App            string `json:"app"`
+				What           string `json:"what"`
+				UseCase        bool   `json:"useCase"`
+				WhatRuns       string `json:"whatRuns"`
+				ProgressText   string `json:"progressText"`
+				CompletionText string `json:"completionText"`
 			}
 			if len(payload) > 0 {
 				if err := json.Unmarshal(payload, &req); err != nil {
@@ -64,7 +68,20 @@ func init() {
 			if appName == "" {
 				appName = "The app"
 			}
-			j := studio.GenerateJustification(facts, appName, req.What)
+			var j studio.Justification
+			if req.UseCase {
+				whatRuns := strings.TrimSpace(req.WhatRuns)
+				if whatRuns == "" {
+					whatRuns = req.What
+				}
+				j = studio.GenerateUseCaseJustification(facts, appName, studio.UseCaseConfig{
+					WhatRuns:       whatRuns,
+					ProgressText:   req.ProgressText,
+					CompletionText: req.CompletionText,
+				})
+			} else {
+				j = studio.GenerateJustification(facts, appName, req.What)
+			}
 			service := ""
 			if facts.Service != nil {
 				service = facts.Service.Name
@@ -86,12 +103,44 @@ func init() {
 		})
 
 	reg("studio_job_start",
-		"Start an async app-compliance capture job (records a permission-justification demo video on a redroid surface). Returns a jobId; poll studio_job_status. Needs apk + hostWorkDir (+ sshHost for an on-prem runner; omit for the managed-cloud farm box).",
+		"Start an async app-compliance capture job (records a permission-justification demo video on a redroid surface). Returns a jobId; poll studio_job_status. Needs apk + hostWorkDir (+ sshHost for an on-prem runner; omit for the managed-cloud farm box). Pass a useCase object {whatRuns, startButtonText, stopButtonText, progressText, completionText, taskActions[]} to record the NARRATIVE video (gives a real task → shows work → backgrounds → task-finished notification) instead of the mechanical proof. Generic: any third-party app supplies its own apk/package/manifest + useCase strings.",
 		func(c OpsContext, payload json.RawMessage) OpsResult {
 			var req studioPermissionJobRequest
 			if len(payload) > 0 {
 				if err := json.Unmarshal(payload, &req); err != nil {
 					return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+				}
+			}
+			job, err := studioJobs.startPermissionVideo(req)
+			if err != nil {
+				return OpsResult{OK: false, Code: "start_failed", Error: err.Error()}
+			}
+			return OpsResult{OK: true, Initial: job.snapshot()}
+		})
+
+	reg("studio_permission_video",
+		"First-class one-call recorder for a Google Play permission-justification VIDEO. Defaults to the NARRATIVE use-case story (start a real task → show it working → background the app → 'task finished' notification → stop) which is what reviewers need for FOREGROUND_SERVICE_SPECIAL_USE; pass mechanical:true for the bare start→notify→stop proof. Works for Yaver itself AND any third-party app (supply apk, package, manifest, permission). Needs apk + hostWorkDir (+ sshHost for on-prem; omit for managed cloud). Returns a jobId; poll studio_job_status; the artifact is fetchable at /studio/jobs/<id>/captioned (or /raw).",
+		func(c OpsContext, payload json.RawMessage) OpsResult {
+			var req studioPermissionJobRequest
+			var extra struct {
+				Mechanical bool `json:"mechanical"`
+			}
+			if len(payload) > 0 {
+				if err := json.Unmarshal(payload, &req); err != nil {
+					return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+				}
+				_ = json.Unmarshal(payload, &extra)
+			}
+			if strings.TrimSpace(req.Permission) == "" {
+				req.Permission = "FOREGROUND_SERVICE_SPECIAL_USE"
+			}
+			// Default to the narrative video unless explicitly asked for the
+			// mechanical proof or a useCase was already supplied.
+			if !extra.Mechanical && req.UseCase == nil {
+				req.UseCase = &studioUseCaseReq{
+					WhatRuns:       studioOrDefault(req.What, "an on-device coding agent running a real task"),
+					ProgressText:   "running",
+					CompletionText: "Task finished",
 				}
 			}
 			job, err := studioJobs.startPermissionVideo(req)

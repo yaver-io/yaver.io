@@ -55,11 +55,36 @@ export default function StudioPanel() {
   const [job, setJob] = useState<Job | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // use-case narrative video (the strong FGS justification)
+  const [useCase, setUseCase] = useState(true);
+  const [whatRuns, setWhatRuns] = useState("an on-device coding agent running a real task");
+  const [progressText, setProgressText] = useState("running");
+  const [completionText, setCompletionText] = useState("Task finished");
+
+  // playable artifact (fetched with auth → blob URL)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const videoUrlRef = useRef<string | null>(null);
+
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
     };
   }, []);
+
+  const loadVideo = async (jobId: string) => {
+    try {
+      const res = await agentClient.agentFetch(`/studio/jobs/${jobId}/captioned`);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      videoUrlRef.current = url;
+      setVideoUrl(url);
+    } catch {
+      /* artifact fetch is best-effort */
+    }
+  };
 
   const genProse = async () => {
     if (!agentClient.isConnected) {
@@ -91,6 +116,7 @@ export default function StudioPanel() {
     }
     setMsg(null);
     setJob(null);
+    setVideoUrl(null);
     if (pollRef.current) clearInterval(pollRef.current);
     try {
       const r = await agentClient.callOps("studio_job_start", {
@@ -102,6 +128,13 @@ export default function StudioPanel() {
         sshHost: sshHost.trim() || undefined,
         app: app.trim() || undefined,
         what: what.trim() || undefined,
+        useCase: useCase
+          ? {
+              whatRuns: whatRuns.trim() || undefined,
+              progressText: progressText.trim() || undefined,
+              completionText: completionText.trim() || undefined,
+            }
+          : undefined,
       });
       const j = (r.initial as Job) || null;
       setJob(j);
@@ -113,6 +146,7 @@ export default function StudioPanel() {
             if (sj) setJob(sj);
             if (sj?.state === "completed" || sj?.state === "failed") {
               if (pollRef.current) clearInterval(pollRef.current);
+              if (sj?.state === "completed" && j.id) void loadVideo(j.id);
             }
           } catch {
             /* keep polling */
@@ -205,6 +239,27 @@ export default function StudioPanel() {
             <input className={inp} value={startAction} onChange={(e) => setStartAction(e.target.value)} placeholder="io.yaver.mobile.sandbox.START" />
           </div>
         </div>
+
+        <label className="mt-3 flex items-center gap-2 text-xs text-neutral-300">
+          <input type="checkbox" checked={useCase} onChange={(e) => setUseCase(e.target.checked)} />
+          Use-case narrative (recommended) — runs a real task, backgrounds the app, shows the “task finished” notification. This is what Google Play reviewers need.
+        </label>
+        {useCase && (
+          <div className="mt-2 rounded-md border border-neutral-800 bg-neutral-900 p-2">
+            <div className={lbl}>What the task is</div>
+            <input className={inp} value={whatRuns} onChange={(e) => setWhatRuns(e.target.value)} placeholder="an on-device coding agent running a real task" />
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <div className={lbl}>Working text (WaitText)</div>
+                <input className={inp} value={progressText} onChange={(e) => setProgressText(e.target.value)} placeholder="running" />
+              </div>
+              <div className="flex-1">
+                <div className={lbl}>Finished text (notification)</div>
+                <input className={inp} value={completionText} onChange={(e) => setCompletionText(e.target.value)} placeholder="Task finished" />
+              </div>
+            </div>
+          </div>
+        )}
         <button
           onClick={startRecord}
           disabled={recording}
@@ -227,9 +282,27 @@ export default function StudioPanel() {
               {(job.log || []).slice(-12).join("\n")}
             </pre>
             {job.state === "completed" && job.artifacts && (
-              <div className="mt-2 text-xs text-blue-400">
-                {job.artifacts.captionedMp4 || job.artifacts.mp4}
-                <span className="text-neutral-500"> · saved on the device{job.artifacts.captionCount ? ` · ${job.artifacts.captionCount} captions` : ""}</span>
+              <div className="mt-2 space-y-2">
+                {videoUrl ? (
+                  <video src={videoUrl} controls playsInline className="w-full max-w-sm rounded-md border border-neutral-800" />
+                ) : (
+                  <div className="text-xs text-neutral-500">loading video…</div>
+                )}
+                <div className="flex items-center gap-3 text-xs">
+                  {videoUrl && (
+                    <a href={videoUrl} download={`permission-${permission}.mp4`} className="text-blue-400 underline">
+                      Download MP4
+                    </a>
+                  )}
+                  {job.id && (
+                    <button onClick={() => void loadVideo(job.id!)} className="text-neutral-400 underline">
+                      Reload
+                    </button>
+                  )}
+                  <span className="text-neutral-600">
+                    {job.artifacts.captionCount ? `${job.artifacts.captionCount} captions` : ""}
+                  </span>
+                </div>
               </div>
             )}
           </div>

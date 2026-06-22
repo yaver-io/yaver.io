@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# shoot-fgs-usecase-video.sh — produce the Google Play FOREGROUND_SERVICE_SPECIAL_USE
+# *use-case narrative* justification video end to end, on a disposable x86 Hetzner
+# box, then DELETE the box. This is the unattended driver behind the
+# shoot-fgs-video.yml workflow (where GLM_API_KEY + HCLOUD_TOKEN come from repo
+# secrets), but it also runs locally if those are exported.
+#
+# The video story (real, not faked): start the on-device sandbox (FGS) → give the
+# on-device agent a real coding task (GLM when a key is present) → show it working
+# → background the app (captioned: Android would kill it mid-task without the FGS)
+# → the task finishes in the background and posts a "task finished" notification →
+# stop. The studio capture layer (desktop/agent/studio + UseCaseProofSteps) drives
+# and records it; we only orchestrate the box + build here.
+#
+# COST SAFETY (CLAUDE.md hard rule): the box is metered and is ALWAYS deleted on
+# exit (trap) and by a hard watchdog — a hang can never bill indefinitely.
+#
+# Required env:
+#   HCLOUD_TOKEN                 Hetzner API token (the box).
+#   HCLOUD_SSH_PRIVATE_KEY_PATH  private key whose public half is a named hcloud key.
+#   HCLOUD_SSH_KEY_NAME          that named key in hcloud (default: yaver-ci).
+# Optional env:
+#   GLM_API_KEY / ZAI_API_KEY    z.ai key → the recorded task uses the `glm` runner.
+#                                Absent → a real key-free shell/build task is used.
+#   YAVER_SESSION_TOKEN          a mobile session token to inject (skips UI sign-in).
+#   OUT_DIR                      where to copy artifacts (default: ./fgs-shoot-out).
+#   CI_SERVER_TYPE/LOCATION      box shape (default cx33 / hel1 — x86 for redroid).
+#   MAX_RUNTIME_SEC              watchdog kill (default 5400 = 90 min).
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HCLOUD_DIR="$REPO_ROOT/ci/hcloud"
+OUT_DIR="${OUT_DIR:-$REPO_ROOT/fgs-shoot-out}"
+LOG="${LOG:-$OUT_DIR/shoot.log}"
+mkdir -p "$OUT_DIR"
+
+export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cx33}"     # x86 REQUIRED for redroid
+export CI_SERVER_LOCATION="${CI_SERVER_LOCATION:-hel1}"
+export CI_SERVER_IMAGE="${CI_SERVER_IMAGE:-ubuntu-24.04}"
+export CI_SERVER_NAME="${CI_SERVER_NAME:-yaver-fgs-shoot-$(date +%s 2>/dev/null || echo run)}"
+export HCLOUD_SSH_KEY_NAME="${HCLOUD_SSH_KEY_NAME:-yaver-ci}"
+export REPO_ROOT
+MAX_RUNTIME_SEC="${MAX_RUNTIME_SEC:-5400}"
+
+say() { printf '\n[shoot %s] %s\n' "$(date +%H:%M:%S 2>/dev/null || echo --)" "$*" | tee -a "$LOG"; }
+die() { say "FATAL: $*"; exit 1; }
+
+: "${HCLOUD_TOKEN:?HCLOUD_TOKEN required}"
+: "${HCLOUD_SSH_PRIVATE_KEY_PATH:?HCLOUD_SSH_PRIVATE_KEY_PATH required}"
+export HCLOUD_TOKEN HCLOUD_SSH_PRIVATE_KEY_PATH
+
+# --- bulletproof teardown: delete the box on ANY exit -----------------------
+cleanup() {
+  local code=$?
+  say "cleanup (exit=$code) — deleting box $CI_SERVER_NAME"
+  bash "$HCLOUD_DIR/delete-server.sh" >>"$LOG" 2>&1 || say "delete-server returned nonzero (may be gone)"
+  # belt-and-suspenders: delete by name directly too
+  local id
+  id="$(hcloud server list -o noheader -o columns=id,name 2>/dev/null | awk -v n="$CI_SERVER_NAME" '$2==n{print $1}')"
+  [ -n "$id" ] && hcloud server delete "$id" >>"$LOG" 2>&1 || true
+  say "cleanup done"
+}
+trap cleanup EXIT INT TERM
+
+# --- hard watchdog: a hung run cannot bill forever --------------------------
+( sleep "$MAX_RUNTIME_SEC"; say "WATCHDOG: ${MAX_RUNTIME_SEC}s elapsed — killing run"; kill -TERM $$ 2>/dev/null ) &
+WATCHDOG_PID=$!
+disown "$WATCHDOG_PID" 2>/dev/null || true
+
+SSH_OPTS=(-i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
+rsh() { ssh "${SSH_OPTS[@]}" "root@$IP" "$@"; }
+
+# ---------------------------------------------------------------------------
+say "PHASE 1 — provision $CI_SERVER_NAME ($CI_SERVER_TYPE/$CI_SERVER_LOCATION)"
+bash "$HCLOUD_DIR/create-server.sh" >>"$LOG" 2>&1 || die "provision failed"
+IP="$(cat "$REPO_ROOT/ci/.artifacts/server-ip")"
+say "box ip=$IP"
+bash "$HCLOUD_DIR/wait-for-ssh.sh" >>"$LOG" 2>&1 || die "ssh never ready"
+
+say "PHASE 2 — bootstrap toolchain (docker, sdk, ndk, go, node, ffmpeg)"
+# bootstrap.sh installs most of it; ensure the extras the shoot needs.
+rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "bootstrap step had warnings (continuing)"
+  set -x
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq docker.io ffmpeg openjdk-17-jdk-headless unzip curl rsync linux-modules-extra-$(uname -r) || true
+  systemctl enable --now docker || true
+REMOTE
+
+say "PHASE 3 — sync repo to box"
+bash "$HCLOUD_DIR/sync-repo.sh" >>"$LOG" 2>&1 || die "repo sync failed"
+
+say "PHASE 4 — build x86_64 sandbox payload + debug APK (heavy, ~30-45m)"
+# build-android-sandbox.sh ABI=x86_64 cross-compiles libyaver + fetches proot into
+# jniLibs/x86_64; then gradle assembleDebug bakes them + the new Kotlin in.
+rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "APK build had warnings (check log)"
+  set -x
+  cd /opt/yaver
+  # toolchains (best-effort; bootstrap may already have them)
+  command -v go >/dev/null || (curl -sL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go)
+  yes | sdkmanager --install "ndk;27.1.12297006" "platforms;android-35" "build-tools;35.0.0" 2>/dev/null || true
+  export ANDROID_NDK_HOME="$(ls -d $ANDROID_HOME/ndk/*/ 2>/dev/null | tail -1)"
+  ABI=x86_64 bash scripts/build-android-sandbox.sh || echo "sandbox-payload-FAILED"
+  cd mobile && npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+  npx expo prebuild --platform android --no-install || true
+  cd android && ./gradlew assembleDebug --no-daemon || echo "gradle-FAILED"
+  find /opt/yaver/mobile/android -name '*.apk' -path '*debug*' -print
+REMOTE
+
+say "PHASE 5 — boot redroid, install APK, drive the use-case capture, record"
+# This phase reuses the agent's studio capture layer over the local runner ON the
+# box. The agent binary + studio package run there; we invoke the recorder with
+# the narrative use-case config. See desktop/agent/studio + ops_studio.go.
+rsh "GLM_API_KEY='${GLM_API_KEY:-${ZAI_API_KEY:-}}' YAVER_SESSION_TOKEN='${YAVER_SESSION_TOKEN:-}' bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "capture phase had warnings (check log)"
+  set -x
+  cd /opt/yaver
+  # load binder for redroid (privileged helper, no host change needed)
+  modprobe binder_linux devices="binder,hwbinder,vndbinder" 2>/dev/null || \
+    docker run --rm --privileged -v /lib/modules:/lib/modules debian:bookworm-slim \
+      bash -c 'apt-get update -qq && apt-get install -y -qq kmod && modprobe binder_linux devices=binder,hwbinder,vndbinder' || true
+  APK="$(find /opt/yaver/mobile/android -name '*.apk' -path '*debug*' | head -1)"
+  echo "APK=$APK"
+  [ -n "$APK" ] || { echo "no APK built — aborting capture"; exit 3; }
+  mkdir -p /root/redroid-data
+  # Build the agent for linux/amd64 so we can run the studio recorder on the box.
+  ( cd desktop/agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/yaver-agent . ) || echo "agent-build-FAILED"
+  # The studio recorder reads its narrative job spec from a file; write it.
+  cat > /root/fgs-job.json <<JOB
+{
+  "permission": "FOREGROUND_SERVICE_SPECIAL_USE",
+  "path": "/opt/yaver/mobile",
+  "manifest": "/opt/yaver/mobile/android/app/src/main/AndroidManifest.xml",
+  "app": "Yaver",
+  "apk": "$APK",
+  "package": "io.yaver.mobile",
+  "activity": ".MainActivity",
+  "startAction": "io.yaver.mobile.sandbox.START",
+  "hostWorkDir": "/root/redroid-data",
+  "maxSec": 90,
+  "useCase": {
+    "whatRuns": "an on-device coding agent running a real task",
+    "progressText": "running",
+    "completionText": "Task finished",
+    "taskActions": [
+      {"kind":"taptext","text":"Tasks","caption":"Give the on-device agent a real task","sec":3},
+      {"kind":"type","text":"create a hello world node script and run it","sec":2},
+      {"kind":"key","text":"ENTER","sec":2}
+    ]
+  }
+}
+JOB
+  # The recorder subcommand drives RedroidSurface + UseCaseProofSteps and writes
+  # permission-demo(-captioned).mp4 + justification.md next to the job file.
+  yaver-agent studio permission-video --capture --job /root/fgs-job.json --out /root/fgs-out || echo "recorder-FAILED (see log)"
+  ls -la /root/fgs-out 2>/dev/null || true
+REMOTE
+
+say "PHASE 6 — pull artifacts"
+mkdir -p "$OUT_DIR"
+scp "${SSH_OPTS[@]}" -r "root@$IP:/root/fgs-out/*" "$OUT_DIR/" >>"$LOG" 2>&1 || say "no artifacts to pull (capture likely failed — see $LOG)"
+say "artifacts in $OUT_DIR:"; ls -la "$OUT_DIR" | tee -a "$LOG"
+
+say "DONE — box will be deleted by trap"

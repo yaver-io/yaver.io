@@ -102,6 +102,14 @@ export type StudioJob = {
   };
 };
 
+export type StudioUseCase = {
+  whatRuns?: string;
+  startButtonText?: string;
+  stopButtonText?: string;
+  progressText?: string;
+  completionText?: string;
+};
+
 export type StartJobArgs = {
   permission: string;
   apk: string; // app artifact built for the surface arch
@@ -114,6 +122,9 @@ export type StartJobArgs = {
   app?: string;
   what?: string;
   maxSec?: number;
+  // when set, records the NARRATIVE use-case video (real task → background →
+  // "task finished" notification) instead of the mechanical proof.
+  useCase?: StudioUseCase;
 };
 
 export const studioClient = {

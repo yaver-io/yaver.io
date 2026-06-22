@@ -61,6 +61,30 @@ class SandboxModule(private val ctx: ReactApplicationContext) :
     }
   }
 
+  /** Post the dismissible "task finished" notification (the FGS-justification
+   *  payoff). Called from JS when an on-device task transitions to a terminal
+   *  status while the app may be backgrounded. */
+  @ReactMethod
+  fun notifyTaskFinished(title: String, status: String, promise: Promise) {
+    try {
+      SandboxService.postTaskFinished(ctx, title, status)
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("notify_failed", e.message, e)
+    }
+  }
+
+  /** Reflect the running task in the ongoing foreground notification. */
+  @ReactMethod
+  fun setTaskStatus(text: String, promise: Promise) {
+    try {
+      SandboxService.updateStatus(ctx, text)
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("status_failed", e.message, e)
+    }
+  }
+
   @ReactMethod
   fun openFactoryResetSettings(promise: Promise) {
     try {

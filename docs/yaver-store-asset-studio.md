@@ -388,6 +388,47 @@ cross-platform.
 
 ---
 
+## 8a. Narrative use-case permission video (2026-06-22)
+
+The original P0 recorded a *mechanical* proof (start service → notification →
+home → stop). Reviewers need the **use case**, so there is now a narrative
+variant that records a real, justifying story and is the default for the
+first-class verb:
+
+- `studio.UseCaseProofSteps` / `studio.UseCaseConfig` (flow.go) +
+  `GenerateUseCaseJustification` (prose.go): open → start the feature → **give a
+  real task** (`TaskSteps`, JSON-drivable via `taskActions`) → `WaitText`
+  proof-of-work → expand the foreground notification → **background the app**
+  (the captioned WHY: Android would kill the process and lose the in-flight
+  work) → wait for completion in the background → reveal the **“task finished”
+  notification** → stop. Captions + prose name the actual work, not generic
+  steps. No new Driver verbs were needed.
+- App side: `SandboxService.postTaskFinished` posts a dismissible Android
+  completion notification (channel `yaver_tasks`, self-scoping to the hosting
+  device), `updateStatus` reflects the running task in the ongoing FGS
+  notification. Bridged via `YaverSandbox.notifyTaskFinished/setTaskStatus`,
+  wired in the mobile Tasks screen on terminal task transitions.
+
+**MCP / ops verbs (Yaver and any third-party app — supply your own
+apk/package/manifest):**
+
+- `studio_permission_video` — first-class one-call recorder. Defaults to the
+  narrative video; `mechanical:true` for the bare proof. Fields: `permission`,
+  `apk`, `package`, `manifest`, `activity`, `hostWorkDir`, `sshHost`, plus
+  `useCase{whatRuns, startButtonText, stopButtonText, progressText,
+  completionText, taskActions[]}`.
+- `studio_job_start` — same, lower-level (pass `useCase` explicitly).
+- `studio_permission_prose` — add `useCase:true` for the narrative prose.
+- `studio_job_status` — poll; artifacts now fetchable over HTTP:
+  `GET /studio/jobs/<id>/captioned` (or `/raw`, `/justification`) — Range-enabled
+  so the web/mobile UI can stream/seek/download the recorded MP4.
+
+**Publish requirement wiring:** `buildPermVideoCheck` (publish_status.go) detects
+a declared `FOREGROUND_SERVICE_SPECIAL_USE` and adds a `permission-video`
+blocker to the readiness checklist (the "Ready to ship?" banner) until a video
+exists — committed under `yaver-store-assets/` or produced by a completed studio
+job — with the exact generate command.
+
 ## 8. Permission-video subsystem (the wedge, P0)
 
 New surface; everything else is integration. Steps:

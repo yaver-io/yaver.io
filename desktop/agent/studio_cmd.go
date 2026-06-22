@@ -72,7 +72,15 @@ func runStudioPermission(args []string) {
 	hostWorkDir := fs.String("host-workdir", "", "Absolute dir on the surface host for the redroid /data bind-mount + file exchange")
 	image := fs.String("redroid-image", "redroid/redroid:13.0.0-latest", "redroid image")
 	maxSec := fs.Int("max-sec", 0, "Max recording seconds (0 = derive from flow)")
+	job := fs.String("job", "", "Path to a JSON job spec (studioPermissionJobRequest, incl. useCase narrative). When set, records straight from it — used by the unattended shoot pipeline.")
 	fs.Parse(args)
+
+	// --job: drive the whole narrative capture from a JSON spec (the shoot
+	// pipeline path). Reuses the same request + use-case builder the MCP uses.
+	if jp := strings.TrimSpace(*job); jp != "" {
+		runStudioPermissionFromJob(jp, strings.TrimSpace(*out))
+		return
+	}
 
 	if strings.TrimSpace(*permission) == "" {
 		fmt.Fprintln(os.Stderr, "Pass --permission (e.g. --permission FOREGROUND_SERVICE_SPECIAL_USE).")
@@ -203,6 +211,106 @@ func runStudioPermission(args []string) {
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "  (skipped captioning: %v — ship %s + captions.json)\n", cerr, filepath.Base(mp4Path))
+	}
+}
+
+// runStudioPermissionFromJob records the (narrative) permission video straight
+// from a JSON job spec — the path the unattended shoot pipeline
+// (scripts/shoot-fgs-usecase-video.sh) uses. It mirrors studioJobManager.run
+// but synchronously, writing artifacts into outDir.
+func runStudioPermissionFromJob(jobPath, outDir string) {
+	raw, err := os.ReadFile(jobPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read job %s: %v\n", jobPath, err)
+		os.Exit(1)
+	}
+	var req studioPermissionJobRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		fmt.Fprintf(os.Stderr, "parse job: %v\n", err)
+		os.Exit(1)
+	}
+	if outDir == "" {
+		outDir = "."
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir %s: %v\n", outDir, err)
+		os.Exit(1)
+	}
+
+	manifestPath := strings.TrimSpace(req.Manifest)
+	if manifestPath == "" {
+		manifestPath = findAndroidManifest(strings.TrimSpace(req.Path))
+	}
+	if manifestPath == "" {
+		fmt.Fprintln(os.Stderr, "could not find AndroidManifest.xml — set manifest in the job")
+		os.Exit(1)
+	}
+	facts, err := studio.AnalyzeAndroidManifest(manifestPath, req.Permission)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "analyze manifest: %v\n", err)
+		os.Exit(1)
+	}
+	facts.TriggerHint = studio.FindTrigger(strings.TrimSpace(req.Path), facts)
+
+	pkgID := strings.TrimSpace(req.Package)
+	if pkgID == "" {
+		pkgID = readAndroidPackage(manifestPath)
+	}
+	if pkgID == "" {
+		fmt.Fprintln(os.Stderr, "could not determine package — set package in the job")
+		os.Exit(1)
+	}
+	appName := strings.TrimSpace(req.App)
+	if appName == "" {
+		appName = "The app"
+	}
+
+	var runner studio.Runner = studio.LocalRunner{}
+	if h := strings.TrimSpace(req.SSHHost); h != "" {
+		runner = studio.SSHRunner{Host: h, Opts: strings.Fields(req.SSHOpts)}
+	}
+	surface := &studio.RedroidSurface{
+		R: runner, Image: req.Image, HostWorkDir: req.HostWorkDir,
+		Log: func(m string) { fmt.Fprintf(os.Stderr, "  [redroid] %s\n", m) },
+	}
+	spec := studio.PermissionVideoSpec{
+		App:          studio.App{Package: pkgID, Activity: studioOrDefault(req.Activity, ".MainActivity")},
+		ArtifactPath: req.APK,
+		Facts:        facts,
+		StartAction:  req.StartAction,
+		MaxSec:       req.MaxSec,
+	}
+	if req.UseCase != nil {
+		cfg := buildUseCaseConfig(req.UseCase)
+		spec.UseCase = &cfg
+		fmt.Fprintf(os.Stderr, "→ narrative use-case video: %s\n", studioOrDefault(req.UseCase.WhatRuns, "real on-device task"))
+	}
+
+	fmt.Fprintf(os.Stderr, "→ capturing on %s (redroid) …\n", runner.Label())
+	mp4, cues, j2, cerr := studio.CapturePermissionVideo(context.Background(), surface, spec, appName, req.What)
+
+	// Always write the prose.
+	_ = os.WriteFile(filepath.Join(outDir, "justification.md"), []byte(j2.Markdown(facts.Permission)), 0o644)
+	if cerr != nil {
+		fmt.Fprintf(os.Stderr, "capture failed: %v\n", cerr)
+		os.Exit(1)
+	}
+	mp4Path := filepath.Join(outDir, "permission-demo.mp4")
+	if err := os.WriteFile(mp4Path, mp4, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "write mp4: %v\n", err)
+		os.Exit(1)
+	}
+	cuesJSON, _ := json.MarshalIndent(cues, "", "  ")
+	_ = os.WriteFile(filepath.Join(outDir, "captions.json"), cuesJSON, 0o644)
+	fmt.Fprintf(os.Stderr, "✓ recorded %s (%d bytes, %d cues)\n", mp4Path, len(mp4), len(cues))
+
+	if capped, e := studio.CaptionMP4(context.Background(), mp4, cues, "", ""); e == nil {
+		capPath := filepath.Join(outDir, "permission-demo-captioned.mp4")
+		if os.WriteFile(capPath, capped, 0o644) == nil {
+			fmt.Fprintf(os.Stderr, "✓ captioned %s (%d bytes)\n", capPath, len(capped))
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "  (captioning skipped: %v)\n", e)
 	}
 }
 

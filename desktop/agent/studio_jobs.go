@@ -121,6 +121,43 @@ func (m *studioJobManager) list() []map[string]any {
 	return out
 }
 
+// latestPermissionVideo returns the on-disk path of the most recent COMPLETED
+// permission-video job for the given permission (captioned preferred), or "" if
+// none. Used by the publish readiness checklist to tell whether the FGS
+// justification video requirement is satisfied. perm may be short or FQ.
+func (m *studioJobManager) latestPermissionVideo(perm string) string {
+	want := studio.NormalizePermission(perm)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var best *studioJob
+	for _, j := range m.jobs {
+		j.mu.Lock()
+		ok := j.Kind == "permission-video" && j.State == studioCompleted &&
+			(want == "" || j.Permission == want)
+		fin := j.FinishedAt
+		j.mu.Unlock()
+		if !ok {
+			continue
+		}
+		if best == nil || fin.After(best.FinishedAt) {
+			best = j
+		}
+	}
+	if best == nil {
+		return ""
+	}
+	best.mu.Lock()
+	defer best.mu.Unlock()
+	for _, p := range []string{best.CaptionedMP4Path, best.MP4Path} {
+		if p != "" {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
 func (m *studioJobManager) newJob(kind, permission string) *studioJob {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -147,6 +184,80 @@ type studioPermissionJobRequest struct {
 	HostWorkDir string `json:"hostWorkDir"`
 	Image       string `json:"image"`
 	MaxSec      int    `json:"maxSec"`
+
+	// UseCase, when present, records the NARRATIVE permission video (gives a real
+	// task, shows it working, backgrounds the app, shows the finished
+	// notification) instead of the mechanical start→notify→stop proof. This is
+	// what Google Play actually wants for FOREGROUND_SERVICE_SPECIAL_USE. Generic:
+	// any app supplies its own affordances + proof strings.
+	UseCase *studioUseCaseReq `json:"useCase,omitempty"`
+}
+
+// studioUseCaseReq is the JSON-drivable form of studio.UseCaseConfig. TaskActions
+// are converted into driver steps so the narrative can be authored from the
+// MCP/UI without Go code (works for third-party apps).
+type studioUseCaseReq struct {
+	WhatRuns        string           `json:"whatRuns"`
+	StartButtonText string           `json:"startButtonText"`
+	StopButtonText  string           `json:"stopButtonText"`
+	ProgressText    string           `json:"progressText"`
+	CompletionText  string           `json:"completionText"`
+	WaitProgressSec int              `json:"waitProgressSec"`
+	WaitDoneSec     int              `json:"waitDoneSec"`
+	TaskActions     []studioUCAction `json:"taskActions"`
+}
+
+// studioUCAction is one declarative driver action used to give the app a real
+// task (e.g. navigate to a Tasks tab, type a prompt, submit).
+type studioUCAction struct {
+	Kind    string `json:"kind"` // tapText | type | key | waitText | expand | collapse | home | back
+	Text    string `json:"text"`
+	Sec     int    `json:"sec"`     // for waitText timeout / hold
+	Caption string `json:"caption"` // optional on-screen caption
+}
+
+func buildUseCaseConfig(uc *studioUseCaseReq) studio.UseCaseConfig {
+	cfg := studio.UseCaseConfig{
+		WhatRuns:        uc.WhatRuns,
+		StartButtonText: uc.StartButtonText,
+		StopButtonText:  uc.StopButtonText,
+		ProgressText:    uc.ProgressText,
+		CompletionText:  uc.CompletionText,
+		WaitProgressSec: uc.WaitProgressSec,
+		WaitDoneSec:     uc.WaitDoneSec,
+	}
+	for _, a := range uc.TaskActions {
+		a := a
+		hold := a.Sec
+		if hold <= 0 {
+			hold = 2
+		}
+		var run func(ctx context.Context, d studio.Driver) error
+		switch strings.ToLower(strings.TrimSpace(a.Kind)) {
+		case "taptext":
+			run = func(ctx context.Context, d studio.Driver) error { return d.TapText(ctx, a.Text) }
+		case "type":
+			run = func(ctx context.Context, d studio.Driver) error { return d.Type(ctx, a.Text) }
+		case "key":
+			run = func(ctx context.Context, d studio.Driver) error { return d.Key(ctx, a.Text) }
+		case "waittext":
+			to := a.Sec
+			if to <= 0 {
+				to = 30
+			}
+			run = func(ctx context.Context, d studio.Driver) error { return d.WaitText(ctx, a.Text, to) }
+		case "expand":
+			run = func(ctx context.Context, d studio.Driver) error { return d.ExpandNotifications(ctx) }
+		case "collapse":
+			run = func(ctx context.Context, d studio.Driver) error { return d.CollapseNotifications(ctx) }
+		case "home":
+			run = func(ctx context.Context, d studio.Driver) error { return d.Home(ctx) }
+		case "back":
+			run = func(ctx context.Context, d studio.Driver) error { return d.Back(ctx) }
+		}
+		cfg.TaskSteps = append(cfg.TaskSteps, studio.Step{Caption: a.Caption, Run: run, HoldSec: hold})
+	}
+	return cfg
 }
 
 // startPermissionVideo validates the request, creates a job, and runs the
@@ -233,6 +344,11 @@ func (m *studioJobManager) runPermissionVideo(job *studioJob, req studioPermissi
 		Facts:        facts,
 		StartAction:  req.StartAction,
 		MaxSec:       req.MaxSec,
+	}
+	if req.UseCase != nil {
+		cfg := buildUseCaseConfig(req.UseCase)
+		spec.UseCase = &cfg
+		job.log("", "narrative use-case video: "+studioOrDefault(req.UseCase.WhatRuns, "real on-device task"))
 	}
 
 	ctx := context.Background()

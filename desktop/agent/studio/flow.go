@@ -3,6 +3,7 @@ package studio
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -81,6 +82,47 @@ type PermissionVideoSpec struct {
 	// the service is started directly (am start-foreground-service) — still valid
 	// permission-use evidence, just without the in-app tap.
 	MaxSec int
+
+	// UseCase, when non-nil, switches the capture from the mechanical proof
+	// (start→notify→home→stop) to a narrative that demonstrates WHY the
+	// foreground service is required: it runs a real, long-running user task,
+	// backgrounds the app while the task is still working, and shows the
+	// "task finished" notification as the payoff. This is what a Play reviewer
+	// needs to see for FOREGROUND_SERVICE_SPECIAL_USE — a mechanical clip that
+	// just toggles a notification does not justify the permission.
+	UseCase *UseCaseConfig
+}
+
+// UseCaseConfig parameterizes the narrative permission video. It is data-driven
+// so the same engine works for Yaver's own on-device coding agent and for any
+// third-party app: the caller supplies the human description of the work, the
+// in-app affordances, and the on-screen/notification strings that prove the
+// task is genuinely running and then finishing.
+type UseCaseConfig struct {
+	// WhatRuns is the human description of the long-running work, woven into
+	// captions and prose, e.g. "an on-device coding agent running a real task".
+	WhatRuns string
+	// StartButtonText, when set, is tapped in the app UI to start the feature
+	// (TapText). When empty the service is started directly via
+	// StartForegroundService(component, StartAction) — use this when the feature
+	// is awkward to reach by UI on the capture surface.
+	StartButtonText string
+	// StopButtonText, when set, is tapped to stop; otherwise StopService is used.
+	StopButtonText string
+	// TaskSteps are caller-injected steps that give the app a REAL task after the
+	// service is up (e.g. navigate to the Tasks tab, type a prompt, submit, or —
+	// more robustly on a flaky emulator — POST the task to the on-device agent).
+	// Each step carries its own caption.
+	TaskSteps []Step
+	// ProgressText is a string that appears on screen or in the notification
+	// while the task is working; the flow WaitTexts for it as proof of real work.
+	ProgressText string
+	// CompletionText is the "task finished" string (typically the completion
+	// notification text); the flow WaitTexts for it as the payoff.
+	CompletionText string
+	// WaitProgressSec / WaitDoneSec bound the two waits (defaults 30 / 150).
+	WaitProgressSec int
+	WaitDoneSec     int
 }
 
 // PermissionProofSteps builds the reviewer scene: open → (sign in) → (navigate) →
@@ -143,6 +185,147 @@ func PermissionProofSteps(spec PermissionVideoSpec) []Step {
 	return steps
 }
 
+// UseCaseProofSteps builds the narrative scene that actually justifies the
+// permission: open → (sign in) → (navigate) → start the feature → give it a
+// REAL task → show the task working → expand the foreground notification (the
+// process is alive) → background the app while the task is still running (this
+// is the crux: without the foreground service Android would kill the process and
+// lose the in-flight work) → wait for the task to finish in the background →
+// show the "task finished" notification → stop. Captions name the actual work so
+// a reviewer understands the use case, not just the mechanics.
+func UseCaseProofSteps(spec PermissionVideoSpec, cfg UseCaseConfig) []Step {
+	work := strings.TrimSpace(cfg.WhatRuns)
+	if work == "" {
+		work = "a long-running, user-started task"
+	}
+	progressWait := cfg.WaitProgressSec
+	if progressWait <= 0 {
+		progressWait = 30
+	}
+	doneWait := cfg.WaitDoneSec
+	if doneWait <= 0 {
+		doneWait = 150
+	}
+
+	steps := []Step{{
+		Caption: "1. Open " + appLabel(spec) + " — an on-device tool",
+		Run:     func(ctx context.Context, d Driver) error { return d.Launch(ctx, spec.App) },
+		HoldSec: 5,
+	}}
+	if spec.Account != nil {
+		steps = append(steps, AccountSignInSteps(*spec.Account)...)
+	}
+	steps = append(steps, spec.NavSteps...)
+
+	component := ""
+	if spec.Facts != nil && spec.Facts.Service != nil {
+		component = spec.App.Package + "/" + spec.Facts.Service.Name
+	}
+
+	// Start the feature (the foreground service).
+	if cfg.StartButtonText != "" {
+		btn := cfg.StartButtonText
+		steps = append(steps, Step{
+			Caption: "2. The user starts " + work,
+			Run:     func(ctx context.Context, d Driver) error { return d.TapText(ctx, btn) },
+			HoldSec: 4,
+		})
+	} else if component != "" {
+		steps = append(steps, Step{
+			Caption: "2. The user starts " + work,
+			Run: func(ctx context.Context, d Driver) error {
+				return d.StartForegroundService(ctx, component, spec.StartAction)
+			},
+			HoldSec: 4,
+		})
+	}
+
+	// Give it a real task (caller-injected; carries its own captions).
+	steps = append(steps, cfg.TaskSteps...)
+
+	// Prove the task is genuinely working.
+	if cfg.ProgressText != "" {
+		pt := cfg.ProgressText
+		steps = append(steps, Step{
+			Caption: "3. The task is doing real work — this can take minutes",
+			Run:     func(ctx context.Context, d Driver) error { return d.WaitText(ctx, pt, progressWait) },
+			HoldSec: 4,
+		})
+	} else {
+		steps = append(steps, Step{Caption: "3. The task is doing real work — this can take minutes", HoldSec: 5})
+	}
+
+	// The foreground notification proves the process is kept alive.
+	steps = append(steps, Step{
+		Caption: "4. A foreground notification shows it running — Android keeps the process alive",
+		Run:     func(ctx context.Context, d Driver) error { return d.ExpandNotifications(ctx) },
+		HoldSec: 5,
+	})
+
+	// Background the app — the WHY.
+	steps = append(steps, Step{
+		Caption: "5. We leave the app. Without a foreground service Android would kill this mid-task and lose the work",
+		Run: func(ctx context.Context, d Driver) error {
+			_ = d.CollapseNotifications(ctx)
+			return d.Home(ctx)
+		},
+		HoldSec: 5,
+	})
+
+	// Wait for completion in the background, then reveal the finished notification.
+	if cfg.CompletionText != "" {
+		ct := cfg.CompletionText
+		steps = append(steps,
+			Step{
+				Caption: "6. The task keeps running in the background and finishes",
+				Run:     func(ctx context.Context, d Driver) error { return d.WaitText(ctx, ct, doneWait) },
+				HoldSec: 2,
+			},
+			Step{
+				Caption: "7. A “task finished” notification confirms the work completed while backgrounded",
+				Run:     func(ctx context.Context, d Driver) error { return d.ExpandNotifications(ctx) },
+				HoldSec: 5,
+			},
+		)
+	} else {
+		steps = append(steps, Step{
+			Caption: "6. The task keeps running while backgrounded and finishes",
+			Run:     func(ctx context.Context, d Driver) error { return d.ExpandNotifications(ctx) },
+			HoldSec: 5,
+		})
+	}
+
+	// Stop — user is always in control.
+	if cfg.StopButtonText != "" {
+		btn := cfg.StopButtonText
+		steps = append(steps, Step{
+			Caption: "8. The user can stop the agent anytime — the service and notification end",
+			Run: func(ctx context.Context, d Driver) error {
+				_ = d.CollapseNotifications(ctx)
+				return d.TapText(ctx, btn)
+			},
+			HoldSec: 4,
+		})
+	} else if component != "" {
+		steps = append(steps, Step{
+			Caption: "8. The user can stop the agent anytime — the service and notification end",
+			Run: func(ctx context.Context, d Driver) error {
+				_ = d.CollapseNotifications(ctx)
+				return d.StopService(ctx, component)
+			},
+			HoldSec: 4,
+		})
+	}
+	return steps
+}
+
+func appLabel(spec PermissionVideoSpec) string {
+	if spec.App.Package != "" {
+		return simpleClass(spec.App.Package)
+	}
+	return "the app"
+}
+
 // AccountSignInSteps turns an AccountSpec into best-effort UI steps. The default
 // here matches Yaver's auth screen (provider buttons + "Continue with Email").
 // For other apps the caller overrides via NavSteps. When the provider needs a
@@ -194,7 +377,11 @@ func AccountSignInSteps(a AccountSpec) []Step {
 func CapturePermissionVideo(ctx context.Context, surface CaptureSurface, spec PermissionVideoSpec, appName, whatRuns string) ([]byte, []Cue, Justification, error) {
 	var j Justification
 	if spec.Facts != nil {
-		j = GenerateJustification(spec.Facts, appName, whatRuns)
+		if spec.UseCase != nil {
+			j = GenerateUseCaseJustification(spec.Facts, appName, *spec.UseCase)
+		} else {
+			j = GenerateJustification(spec.Facts, appName, whatRuns)
+		}
 	}
 	if err := surface.Provision(ctx); err != nil {
 		return nil, nil, j, fmt.Errorf("provision: %w", err)
@@ -206,6 +393,10 @@ func CapturePermissionVideo(ctx context.Context, surface CaptureSurface, spec Pe
 			return nil, nil, j, fmt.Errorf("install: %w", err)
 		}
 	}
-	mp4, cues, err := RunFlowRecording(ctx, surface, PermissionProofSteps(spec), spec.MaxSec)
+	steps := PermissionProofSteps(spec)
+	if spec.UseCase != nil {
+		steps = UseCaseProofSteps(spec, *spec.UseCase)
+	}
+	mp4, cues, err := RunFlowRecording(ctx, surface, steps, spec.MaxSec)
 	return mp4, cues, j, err
 }

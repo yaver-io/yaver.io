@@ -47,6 +47,12 @@ export default function StudioScreen() {
   const [startAction, setStartAction] = useState("");
   const [job, setJob] = useState<StudioJob | null>(null);
 
+  // Use-case narrative video (the strong FGS justification).
+  const [useCase, setUseCase] = useState(true);
+  const [whatRuns, setWhatRuns] = useState("an on-device coding agent running a real task");
+  const [progressText, setProgressText] = useState("running");
+  const [completionText, setCompletionText] = useState("Task finished");
+
   useEffect(() => {
     getStudioDeviceId().then((id) => {
       if (id) setDeviceId(id);
@@ -90,6 +96,13 @@ export default function StudioScreen() {
         sshHost: sshHost.trim() || undefined,
         app: app.trim() || undefined,
         what: what.trim() || undefined,
+        useCase: useCase
+          ? {
+              whatRuns: whatRuns.trim() || undefined,
+              progressText: progressText.trim() || undefined,
+              completionText: completionText.trim() || undefined,
+            }
+          : undefined,
       });
       if (j?.ok === false) setErr(j.error || "failed to start");
       else setJob(j);
@@ -260,6 +273,28 @@ export default function StudioScreen() {
           <TextInput style={input} value={sshHost} onChangeText={setSshHost} placeholder="user@10.0.0.45" placeholderTextColor={c.textMuted} autoCapitalize="none" />
           <Text style={label}>FGS start action (optional)</Text>
           <TextInput style={input} value={startAction} onChangeText={setStartAction} placeholder="io.yaver.mobile.sandbox.START" placeholderTextColor={c.textMuted} autoCapitalize="none" />
+
+          <Pressable
+            onPress={() => setUseCase((v) => !v)}
+            style={{ flexDirection: "row", alignItems: "center", marginTop: 14 }}
+          >
+            <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: c.accent, backgroundColor: useCase ? c.accent : "transparent", marginRight: 8, alignItems: "center", justifyContent: "center" }}>
+              {useCase && <Text style={{ color: "#fff", fontSize: 12 }}>✓</Text>}
+            </View>
+            <Text style={{ color: c.textPrimary, fontSize: 13, flex: 1 }}>
+              Use-case narrative (recommended) — runs a real task, backgrounds the app, shows the “task finished” notification
+            </Text>
+          </Pressable>
+          {useCase && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={label}>What the task is</Text>
+              <TextInput style={input} value={whatRuns} onChangeText={setWhatRuns} placeholder="an on-device coding agent running a real task" placeholderTextColor={c.textMuted} />
+              <Text style={label}>Working text (WaitText)</Text>
+              <TextInput style={input} value={progressText} onChangeText={setProgressText} placeholder="running" placeholderTextColor={c.textMuted} autoCapitalize="none" />
+              <Text style={label}>Finished text (notification)</Text>
+              <TextInput style={input} value={completionText} onChangeText={setCompletionText} placeholder="Task finished" placeholderTextColor={c.textMuted} />
+            </View>
+          )}
 
           <Pressable
             onPress={startRecord}

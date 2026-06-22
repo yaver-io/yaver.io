@@ -70,6 +70,82 @@ class SandboxService : Service() {
 
     /** The dir Android extracted the jniLibs into, executable on disk. */
     fun nativeLibDir(ctx: Context): String = ctx.applicationInfo.nativeLibraryDir
+
+    private const val CHANNEL_TASKS = "yaver_tasks"
+    private const val TASK_NOTIF_BASE = 8348
+
+    /** Create both channels: the ongoing FGS channel (LOW) and the dismissible
+     *  task-update channel (DEFAULT, so completion is actually visible). */
+    fun createChannels(ctx: Context) {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+      val nm = ctx.getSystemService(NotificationManager::class.java)
+      if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+        nm.createNotificationChannel(
+          NotificationChannel(CHANNEL_ID, "Yaver sandbox", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "The on-device coding agent is running"
+            setShowBadge(false)
+          },
+        )
+      }
+      if (nm.getNotificationChannel(CHANNEL_TASKS) == null) {
+        nm.createNotificationChannel(
+          NotificationChannel(CHANNEL_TASKS, "Yaver tasks", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "On-device coding-agent task updates"
+          },
+        )
+      }
+    }
+
+    /** Reflect the active task in the ongoing foreground notification (so the
+     *  reviewer/user sees WHAT is running, not just "sandbox running"). No-op
+     *  unless the service is actually up. */
+    fun updateStatus(ctx: Context, text: String) {
+      if (!running) return
+      createChannels(ctx)
+      val n = NotificationCompat.Builder(ctx, CHANNEL_ID)
+        .setContentTitle("Yaver")
+        .setContentText(if (text.isNotEmpty()) text else "Yaver sandbox running")
+        .setSmallIcon(ctx.applicationInfo.icon)
+        .setOngoing(true)
+        .setPriority(NotificationCompat.PRIORITY_LOW)
+        .build()
+      ctx.getSystemService(NotificationManager::class.java).notify(NOTIF_ID, n)
+    }
+
+    /** The payoff: a dismissible "task finished" notification proving the
+     *  foreground service kept the on-device coding task alive while the app was
+     *  backgrounded, and completed it. This is the core justification a Google
+     *  Play reviewer needs for FOREGROUND_SERVICE_SPECIAL_USE / on_device_coding_agent. */
+    fun postTaskFinished(ctx: Context, title: String, status: String) {
+      // Self-scoping: only the device actually hosting the on-device sandbox
+      // posts a "task finished" notification, so viewing a remote box's tasks
+      // from this phone never mis-fires a local notification.
+      if (!running) return
+      createChannels(ctx)
+      val s = status.lowercase()
+      val ok = s.isEmpty() || s == "completed" || s == "review" || s == "done"
+      val icon = when {
+        ok -> "✅"
+        s == "failed" -> "❌"
+        else -> "⏹"
+      }
+      val heading = when {
+        ok -> "Task finished"
+        s == "failed" -> "Task failed"
+        else -> "Task stopped"
+      }
+      val body = if (title.isNotEmpty()) title else "Your on-device coding task is done"
+      val n = NotificationCompat.Builder(ctx, CHANNEL_TASKS)
+        .setContentTitle("$icon $heading")
+        .setContentText(body)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+        .setSmallIcon(ctx.applicationInfo.icon)
+        .setAutoCancel(true)
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .build()
+      val id = TASK_NOTIF_BASE + (Math.abs(title.hashCode()) % 1000)
+      ctx.getSystemService(NotificationManager::class.java).notify(id, n)
+    }
   }
 
   private var proc: Process? = null
@@ -211,16 +287,7 @@ class SandboxService : Service() {
     getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(PREF_HOME_HOST, enabled).apply()
   }
 
-  private fun createChannel() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    val nm = getSystemService(NotificationManager::class.java)
-    if (nm.getNotificationChannel(CHANNEL_ID) != null) return
-    val ch = NotificationChannel(CHANNEL_ID, "Yaver sandbox", NotificationManager.IMPORTANCE_LOW).apply {
-      description = "The on-device coding agent is running"
-      setShowBadge(false)
-    }
-    nm.createNotificationChannel(ch)
-  }
+  private fun createChannel() = createChannels(this)
 
   private fun buildNotification(text: String): Notification {
     return NotificationCompat.Builder(this, CHANNEL_ID)

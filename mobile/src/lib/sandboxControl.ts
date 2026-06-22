@@ -29,6 +29,8 @@ const Native = (NativeModules as any).YaverSandbox as
       openFactoryResetSettings(): Promise<boolean>;
       status(): Promise<SandboxNativeStatus>;
       installRootfs(url: string, sha256: string, version: string, force: boolean): Promise<boolean>;
+      notifyTaskFinished(title: string, status: string): Promise<boolean>;
+      setTaskStatus(text: string): Promise<boolean>;
     }
   | undefined;
 
@@ -59,6 +61,28 @@ export async function sandboxStatus(): Promise<SandboxNativeStatus | null> {
     return await Native.status();
   } catch {
     return null;
+  }
+}
+
+/** Post a native "task finished" notification from the on-device sandbox
+ *  service (the FOREGROUND_SERVICE_SPECIAL_USE justification payoff). Safe no-op
+ *  off Android / when the module isn't linked. */
+export async function notifySandboxTaskFinished(title: string, status: string): Promise<void> {
+  if (!Native?.notifyTaskFinished) return;
+  try {
+    await Native.notifyTaskFinished(title, status);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Reflect the running task in the ongoing foreground notification. */
+export async function setSandboxTaskStatus(text: string): Promise<void> {
+  if (!Native?.setTaskStatus) return;
+  try {
+    await Native.setTaskStatus(text);
+  } catch {
+    /* best-effort */
   }
 }
 

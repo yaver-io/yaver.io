@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/yaver-io/agent/studio"
@@ -126,19 +127,66 @@ func (s *HTTPServer) handleStudioJobStart(w http.ResponseWriter, r *http.Request
 	jsonReply(w, http.StatusAccepted, job.snapshot())
 }
 
-// GET /studio/jobs            — list jobs
-// GET /studio/jobs/<id>       — one job's live status
+// GET /studio/jobs                    — list jobs
+// GET /studio/jobs/<id>               — one job's live status
+// GET /studio/jobs/<id>/captioned     — the captioned MP4 (falls back to raw)
+// GET /studio/jobs/<id>/raw           — the raw MP4
+// GET /studio/jobs/<id>/justification — the justification markdown
+// The artifact routes let the web + mobile UI actually PLAY / DOWNLOAD the video
+// the agent recorded, instead of only showing a device-local path.
 func (s *HTTPServer) handleStudioJobStatus(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/studio/jobs/")
-	id = strings.Trim(id, "/")
-	if id == "" {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/studio/jobs/"), "/")
+	if rest == "" {
 		jsonReply(w, http.StatusOK, map[string]any{"jobs": studioJobs.list()})
 		return
+	}
+	id := rest
+	asset := ""
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		id, asset = rest[:i], rest[i+1:]
 	}
 	job := studioJobs.get(id)
 	if job == nil {
 		jsonReply(w, http.StatusNotFound, map[string]string{"error": "no such job"})
 		return
 	}
-	jsonReply(w, http.StatusOK, job.snapshot())
+	if asset == "" {
+		jsonReply(w, http.StatusOK, job.snapshot())
+		return
+	}
+	s.serveStudioArtifact(w, r, job, asset)
+}
+
+func (s *HTTPServer) serveStudioArtifact(w http.ResponseWriter, r *http.Request, job *studioJob, asset string) {
+	job.mu.Lock()
+	captioned, raw, just := job.CaptionedMP4Path, job.MP4Path, job.JustificationPath
+	job.mu.Unlock()
+
+	path, ctype := "", "application/octet-stream"
+	switch strings.ToLower(asset) {
+	case "captioned", "video", "mp4":
+		path = captioned
+		if path == "" {
+			path = raw
+		}
+		ctype = "video/mp4"
+	case "raw":
+		path, ctype = raw, "video/mp4"
+	case "justification", "md":
+		path, ctype = just, "text/markdown; charset=utf-8"
+	default:
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "unknown asset: " + asset})
+		return
+	}
+	if path == "" {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "artifact not ready"})
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "artifact missing on disk"})
+		return
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, path) // ServeFile handles Range requests → video seeking works
 }

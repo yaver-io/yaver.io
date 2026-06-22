@@ -111,6 +111,80 @@ func GenerateJustification(facts *PermissionFacts, appName, whatRuns string) Jus
 	return j
 }
 
+// GenerateUseCaseJustification builds prose + a shot-list for the NARRATIVE
+// permission video (UseCaseProofSteps). Unlike GenerateJustification it names the
+// real task, the proof-of-work, and the completion payoff — matching what the
+// reviewer actually sees on screen, and arguing the necessity (Android would kill
+// the process mid-task without the foreground service) rather than just toggling
+// a notification.
+func GenerateUseCaseJustification(facts *PermissionFacts, appName string, cfg UseCaseConfig) Justification {
+	// Start from the deterministic base (warnings, type handling) so callers get
+	// the same manifest checks, then override prose/shot-list with the narrative.
+	j := GenerateJustification(facts, appName, cfg.WhatRuns)
+	if facts == nil {
+		return j
+	}
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		appName = "The app"
+	}
+	work := strings.TrimSpace(cfg.WhatRuns)
+	if work == "" {
+		work = "a long-running, user-started task"
+	}
+	serviceName := ""
+	if facts.Service != nil {
+		serviceName = facts.Service.Name
+	}
+
+	j.TaskOther = fmt.Sprintf("On-device tool: the user starts %s; it runs to completion with an ongoing notification and a completion notification, and the user can stop it at any time.", work)
+	j.Description = useCaseDescription(appName, work, serviceName, facts)
+
+	progress := "the task shows live progress"
+	if strings.TrimSpace(cfg.ProgressText) != "" {
+		progress = fmt.Sprintf("the task shows live progress (\"%s\")", strings.TrimSpace(cfg.ProgressText))
+	}
+	done := "the user gets a “task finished” notification"
+	if strings.TrimSpace(cfg.CompletionText) != "" {
+		done = fmt.Sprintf("the user gets a “%s” notification", strings.TrimSpace(cfg.CompletionText))
+	}
+	j.ShotList = []string{
+		fmt.Sprintf("1. User opens %s and starts %s", appName, work),
+		fmt.Sprintf("2. The task begins real work — %s", progress),
+		"3. The ongoing foreground notification shows the process is being kept alive",
+		"4. User leaves the app — without the foreground service Android would kill the process and lose the in-flight work",
+		"5. The task keeps running in the background and completes",
+		fmt.Sprintf("6. %s while the app is backgrounded", done),
+		"7. User can stop the task anytime — the service and notification end",
+	}
+	return j
+}
+
+func useCaseDescription(appName, work, serviceName string, facts *PermissionFacts) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s is an on-device tool. When the user explicitly starts a task, %s runs %s. ", appName, appName, work)
+	b.WriteString("The work is stateful and can take minutes: it streams progress to the user through an ongoing notification, and posts a completion notification when it finishes.\n\n")
+
+	b.WriteString("The task must run in a foreground service and cannot be paused, deferred, or restarted: it is a single, user-initiated session that holds in-flight state and live connections. ")
+	b.WriteString("If the OS froze or killed the process when the user switched away — which Android does to ordinary background work within seconds — the running task would be lost and the user's work discarded. ")
+	if serviceName != "" {
+		fmt.Fprintf(&b, "The service is %s; ", simpleClass(serviceName))
+	}
+	b.WriteString("the foreground state and wake lock exist specifically so the user-started session survives while the app is backgrounded, and the user remains in control via the persistent notification and an in-app Stop control.\n\n")
+
+	if facts.FGSType == "specialUse" {
+		b.WriteString("This use case is not covered by any standard foreground service type (it is not media playback, location, data sync, camera, microphone, phone call, connected device, health, or remote messaging). ")
+		if facts.SpecialUseSubtype != "" {
+			fmt.Fprintf(&b, "It is declared as specialUse with the subtype \"%s\".", facts.SpecialUseSubtype)
+		} else {
+			b.WriteString("It is declared as specialUse.")
+		}
+	} else {
+		fmt.Fprintf(&b, "It is declared with foregroundServiceType=%q.", facts.FGSType)
+	}
+	return b.String()
+}
+
 func specialUseDescription(appName, work, serviceName, subtype string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s starts a foreground service when the user explicitly enables the feature. ", appName)

@@ -11,7 +11,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/yaver-io/agent/studio"
 )
 
 type CheckStatus struct {
@@ -27,8 +30,19 @@ type PublishReadiness struct {
 	Blockers []string      `json:"blockers"`
 }
 
+// permVideoCheck describes the FOREGROUND_SERVICE_SPECIAL_USE (or other
+// video-gated) permission requirement: Play rejects these submissions without a
+// justification video, so when the manifest declares one and no video exists yet
+// it is a real, surfaced blocker — with the exact command to produce it.
+type permVideoCheck struct {
+	Needed    bool   // a video-gated FGS permission is declared
+	Perm      string // short permission name, e.g. FOREGROUND_SERVICE_SPECIAL_USE
+	HaveVideo bool
+	VideoPath string
+}
+
 // assemblePublishReadiness is the pure verdict from gathered inputs.
-func assemblePublishReadiness(iosGaps, androidGaps []string, l StoreListing, missingAssets []string, appleAuth, googleAuth bool) PublishReadiness {
+func assemblePublishReadiness(iosGaps, androidGaps []string, l StoreListing, missingAssets []string, appleAuth, googleAuth bool, pv *permVideoCheck) PublishReadiness {
 	var r PublishReadiness
 	add := func(name string, ok, blocker bool, detail string) {
 		r.Checks = append(r.Checks, CheckStatus{Name: name, OK: ok, Blocker: blocker, Detail: detail})
@@ -58,6 +72,18 @@ func assemblePublishReadiness(iosGaps, androidGaps []string, l StoreListing, mis
 		add("assets", false, true, "missing: "+strings.Join(missingAssets, ", ")+" (yaver assets capture)")
 	} else {
 		add("assets", true, true, "all required sizes present")
+	}
+
+	// Permission-justification video — Google Play requires it for
+	// FOREGROUND_SERVICE_SPECIAL_USE (and similar). A declared, video-gated
+	// permission with no video will be rejected ⇒ blocker, with the command to
+	// generate the narrative use-case video.
+	if pv != nil && pv.Needed {
+		if pv.HaveVideo {
+			add("permission-video", true, true, pv.Perm+": justification video ready ("+pv.VideoPath+")")
+		} else {
+			add("permission-video", false, true, pv.Perm+" needs a justification demo video for Google Play — run: yaver studio permission-video --permission "+pv.Perm+" --use-case")
+		}
 	}
 
 	// Store auth — needed only for live push, not a submission blocker.
@@ -107,7 +133,41 @@ func buildPublishReadiness(path, assetsDir string) PublishReadiness {
 	appleAuth := have["APP_STORE_KEY_PATH"] && have["APP_STORE_KEY_ID"] && have["APP_STORE_KEY_ISSUER"]
 	googleAuth := have["PLAY_STORE_KEY_FILE"]
 
-	return assemblePublishReadiness(iosGaps, andGaps, listing, missing, appleAuth, googleAuth)
+	pv := buildPermVideoCheck(resolveProjectDirOr(path), assetsDir)
+
+	return assemblePublishReadiness(iosGaps, andGaps, listing, missing, appleAuth, googleAuth, pv)
+}
+
+// buildPermVideoCheck detects a video-gated FGS permission in the Android
+// manifest (currently FOREGROUND_SERVICE_SPECIAL_USE — the one Play always
+// gates on a demo video) and reports whether a justification video exists yet
+// (a committed asset under assetsDir, or a completed studio job this session).
+func buildPermVideoCheck(projectDir, assetsDir string) *permVideoCheck {
+	manifestPath := findAndroidManifest(projectDir)
+	if manifestPath == "" {
+		return nil
+	}
+	const perm = "FOREGROUND_SERVICE_SPECIAL_USE"
+	facts, err := studio.AnalyzeAndroidManifest(manifestPath, perm)
+	if err != nil || facts == nil || !facts.Declared {
+		return nil
+	}
+	pv := &permVideoCheck{Needed: true, Perm: perm}
+	// committed-asset convention first, then a completed studio job this session.
+	for _, c := range []string{
+		filepath.Join(assetsDir, "permission-"+perm+".mp4"),
+		filepath.Join(assetsDir, "permission-demo-captioned.mp4"),
+		filepath.Join(assetsDir, "permission-demo.mp4"),
+	} {
+		if _, e := os.Stat(c); e == nil {
+			pv.HaveVideo, pv.VideoPath = true, c
+			return pv
+		}
+	}
+	if p := studioJobs.latestPermissionVideo(perm); p != "" {
+		pv.HaveVideo, pv.VideoPath = true, p
+	}
+	return pv
 }
 
 // resolveProjectDirOr uses an explicit path when given, else the workspace/cwd

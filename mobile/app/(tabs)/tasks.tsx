@@ -75,6 +75,11 @@ import {
 } from "../../src/lib/commandEvents";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { taskHaptics } from "../../src/lib/taskHaptics";
+import {
+  isSandboxSupported,
+  notifySandboxTaskFinished,
+  setSandboxTaskStatus,
+} from "../../src/lib/sandboxControl";
 import { MessageBubble } from "../../src/components/MessageBubble";
 import { openTaskBus } from "../../src/lib/runningTasksBus";
 import { ErrorMessage, detectSmartRetry } from "../../src/components/ErrorMessage";
@@ -2299,6 +2304,32 @@ export default function TasksScreen() {
     }
     lastHapticTaskStatusRef.current = newKey;
   }, [selectedTask?.id, selectedTask?.status]);
+
+  // On-device sandbox notifications: when a task running on THIS phone's
+  // sandbox transitions, reflect it in the ongoing foreground notification and
+  // post a dismissible "task finished" notification on completion. This is the
+  // user-facing payoff that justifies FOREGROUND_SERVICE_SPECIAL_USE — the work
+  // keeps running and notifies even while the app is backgrounded. The native
+  // side self-scopes (only fires when this device hosts the sandbox).
+  const sandboxNotifRef = useRef<Map<string, TaskStatus>>(new Map());
+  useEffect(() => {
+    if (!isSandboxSupported()) return;
+    for (const t of tasks) {
+      const prev = sandboxNotifRef.current.get(t.id);
+      if (prev === t.status) continue;
+      sandboxNotifRef.current.set(t.id, t.status);
+      if (t.status === "running") {
+        void setSandboxTaskStatus(`Running: ${t.title || "coding task"}`);
+      } else if (
+        t.status === "completed" ||
+        t.status === "review" ||
+        t.status === "failed" ||
+        t.status === "stopped"
+      ) {
+        void notifySandboxTaskFinished(t.title || "Coding task", t.status);
+      }
+    }
+  }, [tasks]);
 
   // Auto-scroll to bottom when keyboard appears (prevents last message from being hidden)
   useEffect(() => {

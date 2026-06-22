@@ -1,0 +1,87 @@
+name: shoot-fgs-video
+
+# Record the Google Play FOREGROUND_SERVICE_SPECIAL_USE *use-case narrative*
+# justification video on a disposable x86 Hetzner box, then DELETE the box.
+# Manual-only (workflow_dispatch). Uses repo secrets for the GLM key + Hetzner
+# access — this is the one place those secrets can be consumed, which is why the
+# shoot runs here rather than locally. The orchestrator
+# (scripts/shoot-fgs-usecase-video.sh) always tears the box down (trap +
+# watchdog); the always() step below is a backstop.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh_key_name:
+        description: "hcloud named SSH key matching HCLOUD_SSH_PRIVATE_KEY"
+        required: false
+        default: "yaver-ci-relay-bootstrap"
+      server_type:
+        description: "Hetzner server type (x86 required for redroid)"
+        required: false
+        default: "cx33"
+      location:
+        description: "Hetzner location"
+        required: false
+        default: "hel1"
+
+concurrency:
+  group: shoot-fgs-video
+  cancel-in-progress: false
+
+jobs:
+  shoot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling (hcloud, jq, rsync)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq rsync openssh-client
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin hcloud
+          hcloud version
+
+      - name: Write SSH key
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" > ~/.ssh/hetzner_ci
+          chmod 600 ~/.ssh/hetzner_ci
+
+      - name: Shoot the video (provision → build → record → delete)
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          HCLOUD_SSH_PRIVATE_KEY_PATH: /home/runner/.ssh/hetzner_ci
+          HCLOUD_SSH_KEY_NAME: ${{ github.event.inputs.ssh_key_name }}
+          CI_SERVER_TYPE: ${{ github.event.inputs.server_type }}
+          CI_SERVER_LOCATION: ${{ github.event.inputs.location }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          OUT_DIR: ${{ github.workspace }}/fgs-shoot-out
+          MAX_RUNTIME_SEC: "6000"
+        run: bash scripts/shoot-fgs-usecase-video.sh
+
+      - name: Upload artifacts (video + justification + log)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fgs-usecase-video
+          path: |
+            fgs-shoot-out/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Backstop teardown (always)
+        if: always()
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          # The orchestrator already deletes the box; this catches a runner-killed
+          # case. Delete any server whose name starts with the shoot prefix.
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin hcloud 2>/dev/null || true
+          for id in $(hcloud server list -o noheader -o columns=id,name 2>/dev/null | awk '$2 ~ /^yaver-fgs-shoot-/ {print $1}'); do
+            echo "backstop: deleting leftover server $id"
+            hcloud server delete "$id" || true
+          done
