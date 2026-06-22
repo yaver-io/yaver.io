@@ -34,7 +34,7 @@ OUT_DIR="${OUT_DIR:-$REPO_ROOT/fgs-shoot-out}"
 LOG="${LOG:-$OUT_DIR/shoot.log}"
 mkdir -p "$OUT_DIR"
 
-export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cx33}"     # x86 REQUIRED for redroid
+export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cpx41}"    # x86 (redroid) + 16GB for the RN gradle build
 export CI_SERVER_LOCATION="${CI_SERVER_LOCATION:-hel1}"
 export CI_SERVER_IMAGE="${CI_SERVER_IMAGE:-ubuntu-24.04}"
 export CI_SERVER_NAME="${CI_SERVER_NAME:-yaver-fgs-shoot-$(date +%s 2>/dev/null || echo run)}"
@@ -84,6 +84,11 @@ say "PHASE 2 — install x86 toolchain (docker, node, go1.26, jdk17, android sdk
 rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || die "toolchain install failed (see log)"
   set -ex
   export DEBIAN_FRONTEND=noninteractive
+  # swap so the gradle/kotlin daemons aren't OOM-killed mid-build (run 4 died on
+  # "Gradle daemon disappeared" = OOM). Cheap insurance even on a 16GB box.
+  if ! swapon --show | grep -q .; then
+    fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
+  fi
   apt-get update -qq
   # critical packages MUST succeed (set -e aborts → die); kernel-module pkg is
   # best-effort (often unavailable for the exact running kernel — must not take
@@ -164,8 +169,10 @@ rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "APK build had warnings (check log
   ls -la mobile/android/app/src/main/jniLibs/x86_64/ 2>/dev/null || echo "no x86_64 jniLibs"
   # 4) debug APK, gradle capped to the box RAM
   cd mobile/android
-  printf 'org.gradle.jvmargs=-Xmx4g\norg.gradle.daemon=false\n' >> gradle.properties
-  ./gradlew :app:assembleDebug --no-daemon --stacktrace || echo "gradle-FAILED"
+  # bound memory: heap + single worker + no parallel + no RN per-arch duplication
+  # (we only need x86_64) to avoid the OOM that killed run 4.
+  printf 'org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\norg.gradle.daemon=false\norg.gradle.parallel=false\norg.gradle.workers.max=2\nreactNativeArchitectures=x86_64\n' >> gradle.properties
+  ./gradlew :app:assembleDebug --no-daemon --stacktrace --max-workers=2 || echo "gradle-FAILED"
   find /opt/yaver/mobile/android -name '*.apk' -path '*debug*' -print
 REMOTE
 
