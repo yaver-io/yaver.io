@@ -167,6 +167,13 @@ type BuildDoctorReport struct {
 	// for the multi-machine deploy picker: a remote box with a green
 	// toolchain but no source tree shouldn't claim ok=true.
 	ProjectStatus *BuildProjectStatus `json:"projectStatus,omitempty"`
+	// PermissionsComplete is set for RN store targets when app.json is
+	// statically readable: true if every permission/usage string the code
+	// needs is already declared. nil ⇒ not checked (e.g. app.config.js only).
+	PermissionsComplete *bool `json:"permissionsComplete,omitempty"`
+	// MissingDeclarations lists the iOS usage strings / Android permissions
+	// the code requires but app.json doesn't declare (run `yaver caps generate`).
+	MissingDeclarations []string `json:"missingDeclarations,omitempty"`
 }
 
 type BuildToolResult struct {
@@ -269,6 +276,10 @@ func RunBuildDoctor(target, project string, vs *VaultStore) (BuildDoctorReport, 
 	// get a redundant deep probe (and so the deep-fail notes appear
 	// AFTER the basic ones in the human report).
 	runDeepChecks(&report, target, project, vs)
+
+	// Permissions preflight: catch missing Info.plist usage strings / Android
+	// permissions BEFORE a store upload (the top rejection + crash causes).
+	checkManifestCompleteness(&report, target, project)
 
 	if !report.OK && len(report.Notes) == 0 {
 		report.Notes = append(report.Notes, "Install the missing required tools, then re-run `yaver doctor build`.")
