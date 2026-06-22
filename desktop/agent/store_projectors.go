@@ -145,6 +145,7 @@ func runListingPush(args []string) {
 	jsonOut := false
 	live := false
 	apply := false
+	confirmed := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--store":
@@ -168,6 +169,8 @@ func runListingPush(args []string) {
 			live = true
 		case "--apply":
 			apply = true
+		case "--yes":
+			confirmed = true
 		case "-h", "--help":
 			fmt.Println("Usage: yaver listing push --store apple|google [--path DIR] [--project P] [--live] [--json]")
 			fmt.Println("  default   dry-run: which fields Yaver pushes via API vs Console-only (routed)")
@@ -181,7 +184,7 @@ func runListingPush(args []string) {
 		return
 	}
 	if live || apply {
-		runListingPushLive(store, project, path, apply)
+		runListingPushLive(store, project, path, apply, confirmed)
 		return
 	}
 	plan, err := buildPushPlan(store, BuildStoreListing(path))

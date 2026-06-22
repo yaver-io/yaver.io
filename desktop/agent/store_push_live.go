@@ -199,14 +199,16 @@ func verifyGoogleAuth(sa *googleSA, nowUnix int64) error {
 }
 
 // runListingPushLive is the `--live` path: verify creds + connectivity, report
-// readiness. Writes stay guarded (--apply, not yet enabled) — never blind.
-func runListingPushLive(store, project, path string, apply bool) {
+// readiness, and (with --apply --yes) write the editable draft listing.
+func runListingPushLive(store, project, path string, apply, confirmed bool) {
 	now := time.Now().Unix()
-	plan, err := buildPushPlan(store, BuildStoreListing(path))
+	listing := BuildStoreListing(path)
+	plan, err := buildPushPlan(store, listing)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
+	write := apply && confirmed
 	switch store {
 	case "apple", "ios":
 		c, err := resolveAppleASCCreds(project)
@@ -220,6 +222,13 @@ func runListingPushLive(store, project, path string, apply bool) {
 			return
 		}
 		fmt.Printf("✓ App Store Connect authenticated (key %s, %d app(s) visible).\n", c.KeyID, n)
+		if write {
+			fmt.Println("  Writing the editable draft listing (en-US)…")
+			if err := applyAppleListing(c, listing, "en-US", now); err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ write failed: %v\n", err)
+				return
+			}
+		}
 	case "google", "android", "play":
 		sa, err := resolveGoogleSA(project)
 		if err != nil {
@@ -231,14 +240,25 @@ func runListingPushLive(store, project, path string, apply bool) {
 			return
 		}
 		fmt.Printf("✓ Google Play authenticated (%s).\n", sa.ClientEmail)
+		if write {
+			fmt.Println("  Writing the draft listing (en-US)…")
+			if err := applyGoogleListing(sa, listing, "en-US", now); err != nil {
+				fmt.Fprintf(os.Stderr, "  ✗ write failed: %v\n", err)
+				return
+			}
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown store %q\n", store)
 		return
 	}
-	fmt.Printf("  %d field(s) ready to push via API, %d via the Console.\n", plan.AutomatableCount, plan.ConsoleCount)
-	if apply {
-		fmt.Println("  ⚠ --apply: live writes are not enabled yet (must be verified against a test account first).")
-	} else {
-		fmt.Println("  Verified auth only. Live writes are guarded pending test-account verification.")
+	fmt.Printf("  %d field(s) pushable via API, %d via the Console.\n", plan.AutomatableCount, plan.ConsoleCount)
+	switch {
+	case write:
+		fmt.Println("  ✓ Draft listing updated. Review in the store console, then submit for review yourself.")
+		fmt.Println("  ⚠ Live-write path is UNVERIFIED against a real account in this build — check the result.")
+	case apply && !confirmed:
+		fmt.Println("  --apply needs --yes to actually write. (It writes only the editable DRAFT, never submits.)")
+	default:
+		fmt.Println("  Verified auth only. Add --apply --yes to write the draft listing.")
 	}
 }
