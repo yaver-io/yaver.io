@@ -55,6 +55,7 @@ var safeArgvSubcommands = map[string]string{
 	"caps":       "infer iOS/Android permissions + Info.plist/entitlements from your code",
 	"listing":    "derive a store listing (identity + truthful privacy/data-safety) from code",
 	"assets":     "capture store screenshots from a simulator/redroid at exact sizes",
+	"keys":       "generate signing material (Android keystore / iOS CSR) + SHA-1 → vault",
 	"workspace":  "yaver.workspace.yaml apps / status / scaffold",
 	"ops":        "verb-based grand MCP API (info / status / verbs / ...)",
 	"status":     "agent status",

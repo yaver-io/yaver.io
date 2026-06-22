@@ -507,6 +507,8 @@ func main() {
 		runListing(os.Args[2:])
 	case "assets":
 		runAssets(os.Args[2:])
+	case "keys":
+		runKeys(os.Args[2:])
 	case "test":
 		runTest(os.Args[2:])
 	case "autotest":
