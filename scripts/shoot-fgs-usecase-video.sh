@@ -34,7 +34,7 @@ OUT_DIR="${OUT_DIR:-$REPO_ROOT/fgs-shoot-out}"
 LOG="${LOG:-$OUT_DIR/shoot.log}"
 mkdir -p "$OUT_DIR"
 
-export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cpx41}"    # x86 (redroid) + 16GB for the RN gradle build
+export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cpx42}"    # x86 (redroid) + 16GB for the RN gradle build
 export CI_SERVER_LOCATION="${CI_SERVER_LOCATION:-hel1}"
 export CI_SERVER_IMAGE="${CI_SERVER_IMAGE:-ubuntu-24.04}"
 export CI_SERVER_NAME="${CI_SERVER_NAME:-yaver-fgs-shoot-$(date +%s 2>/dev/null || echo run)}"
@@ -71,8 +71,21 @@ SSH_OPTS=(-i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserK
 rsh() { ssh "${SSH_OPTS[@]}" "root@$IP" "$@"; }
 
 # ---------------------------------------------------------------------------
-say "PHASE 1 — provision $CI_SERVER_NAME ($CI_SERVER_TYPE/$CI_SERVER_LOCATION)"
-bash "$HCLOUD_DIR/create-server.sh" >>"$LOG" 2>&1 || die "provision failed"
+say "PHASE 1 — provision $CI_SERVER_NAME (want $CI_SERVER_TYPE/$CI_SERVER_LOCATION; will fall back)"
+# Hetzner capacity/availability varies by type×location (cpx42 got deprecated,
+# arm cax is often sold out). Try a few 16GB x86 types across locations.
+provisioned=""
+for combo in \
+  "$CI_SERVER_TYPE:$CI_SERVER_LOCATION" \
+  "cpx42:hel1" "cpx42:nbg1" "cpx42:fsn1" \
+  "cx43:nbg1" "cx43:fsn1" "cx43:hel1" \
+  "ccx23:hel1" "ccx23:nbg1"; do
+  CI_SERVER_TYPE="${combo%%:*}"; CI_SERVER_LOCATION="${combo##*:}"
+  export CI_SERVER_TYPE CI_SERVER_LOCATION
+  say "trying $CI_SERVER_TYPE/$CI_SERVER_LOCATION"
+  if bash "$HCLOUD_DIR/create-server.sh" >>"$LOG" 2>&1; then provisioned=1; break; fi
+done
+[ -n "$provisioned" ] || die "provision failed across all type/location fallbacks"
 IP="$(cat "$REPO_ROOT/ci/.artifacts/server-ip")"
 say "box ip=$IP"
 bash "$HCLOUD_DIR/wait-for-ssh.sh" >>"$LOG" 2>&1 || die "ssh never ready"

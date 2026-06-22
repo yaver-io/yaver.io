@@ -18,7 +18,7 @@ on:
       server_type:
         description: "Hetzner server type (x86 required for redroid; 16GB+ for the RN gradle build)"
         required: false
-        default: "cpx41"
+        default: "cpx42"
       location:
         description: "Hetzner location"
         required: false
