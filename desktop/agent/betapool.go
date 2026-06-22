@@ -17,8 +17,8 @@ import (
 // betapool.go — the owner-side controller for the scale-to-zero shared beta
 // runtime. It polls the relay's /beta/state, and:
 //
-//   phase "waking"  → provision ONE pool box → POST phase "up" + boxAddr
-//   phase "up" + idle ≥ maxIdle → reap (snapshot+delete) → POST phase "down"
+//   phase "waking"  → provision (power on the persistent box) → POST "up" + boxAddr
+//   phase "up" + idle ≥ maxIdle → reap (POWER OFF — pause; box+data persist) → "down"
 //
 // COST SAFETY:
 //   - It only ever acts on signals the relay already gated to verified beta
@@ -44,8 +44,12 @@ const (
 	//     devices="binder,hwbinder,vndbinder" → mount -t binder binder
 	//     /dev/binderfs → docker run --privileged redroid/redroid:13.0.0
 	//     → sys.boot_completed=1 (Android 13). Bake these into the golden image.
-	// HARD RULE (CLAUDE.md): metered, never monthly — the controller ALWAYS
-	// snapshot+deletes on idle; no box is ever left running to hit the monthly cap.
+	// BETA BOX MODEL (user directive 2026-06-22): the beta box is a managed-cloud
+	// PAUSE — the relay reports idle and the controller POWERS IT OFF (not delete),
+	// so it + its data persist for a ~15s resume. A powered-off Hetzner box is
+	// still billed monthly; this is the deliberate, chosen tradeoff for the beta
+	// box (fast resume > cost-to-zero). The metered/scale-to-zero DELETE rule still
+	// governs ephemeral shoot/test boxes (yaver-fgs-shoot-*, test-ephemeral).
 	defaultBetaPoolSKU    = "cx33" // 4 vCPU / 8 GB x86 ($8.99/mo) — redroid-capable
 	defaultBetaPoolRegion = "nbg1"
 	defaultBetaMaxIdleSec = 1200 // 20 min idle → POWER OFF (managed-cloud pause; box+data persist; fast ~15s resume)
