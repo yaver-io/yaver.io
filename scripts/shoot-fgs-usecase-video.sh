@@ -77,14 +77,44 @@ IP="$(cat "$REPO_ROOT/ci/.artifacts/server-ip")"
 say "box ip=$IP"
 bash "$HCLOUD_DIR/wait-for-ssh.sh" >>"$LOG" 2>&1 || die "ssh never ready"
 
-say "PHASE 2 — bootstrap toolchain (docker, sdk, ndk, go, node, ffmpeg)"
-# bootstrap.sh installs most of it; ensure the extras the shoot needs.
-rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "bootstrap step had warnings (continuing)"
-  set -x
+say "PHASE 2 — install x86 toolchain (docker, node, go1.26, jdk17, android sdk+ndk, ffmpeg)"
+# NB: ci/remote/bootstrap.sh is hardcoded arm64 (the old cax box), so we install
+# the x86 toolchain explicitly here. Each later ssh phase sources the env file
+# this writes (non-login ssh shells don't read /etc/profile.d automatically).
+rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || die "toolchain install failed (see log)"
+  set -ex
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq docker.io ffmpeg openjdk-17-jdk-headless unzip curl rsync linux-modules-extra-$(uname -r) || true
+  apt-get install -y -qq ca-certificates curl gnupg unzip rsync git ffmpeg openjdk-17-jdk-headless \
+    linux-modules-extra-$(uname -r) || true
+  # docker
+  command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
   systemctl enable --now docker || true
+  # node 20
+  command -v node >/dev/null || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - ; apt-get install -y -qq nodejs ; }
+  # go 1.26 (amd64) — agent go.mod requires 1.26
+  /usr/local/go/bin/go version 2>/dev/null | grep -q go1.26 || \
+    curl -fsSL https://go.dev/dl/go1.26.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+  ln -sf /usr/local/go/bin/go /usr/local/bin/go
+  # android sdk: cmdline-tools → platform-tools + platform-35 + build-tools + ndk
+  export ANDROID_HOME=/opt/android-sdk
+  mkdir -p "$ANDROID_HOME/cmdline-tools"
+  if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+    curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmt.zip
+    unzip -q -o /tmp/cmt.zip -d "$ANDROID_HOME/cmdline-tools/"
+    mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+  fi
+  SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+  yes | "$SDKM" --licenses >/dev/null 2>&1 || true
+  "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006" >/dev/null 2>&1 || \
+    "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+  cat >/etc/profile.d/yaver-shoot.sh <<'EOP'
+export ANDROID_HOME=/opt/android-sdk
+export ANDROID_SDK_ROOT=/opt/android-sdk
+export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.1.12297006
+export PATH="$PATH:/usr/local/go/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools"
+EOP
+  echo "toolchain: $(docker --version) | $(node --version) | $(go version) | java $(java -version 2>&1|head -1)"
 REMOTE
 
 say "PHASE 3 — sync repo to box"
@@ -95,15 +125,18 @@ say "PHASE 4 — build x86_64 sandbox payload + debug APK (heavy, ~30-45m)"
 # jniLibs/x86_64; then gradle assembleDebug bakes them + the new Kotlin in.
 rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "APK build had warnings (check log)"
   set -x
+  . /etc/profile.d/yaver-shoot.sh
   cd /opt/yaver
-  # toolchains (best-effort; bootstrap may already have them)
-  command -v go >/dev/null || (curl -sL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | tar -C /usr/local -xz && ln -sf /usr/local/go/bin/go /usr/local/bin/go)
-  yes | sdkmanager --install "ndk;27.1.12297006" "platforms;android-35" "build-tools;35.0.0" 2>/dev/null || true
-  export ANDROID_NDK_HOME="$(ls -d $ANDROID_HOME/ndk/*/ 2>/dev/null | tail -1)"
+  # 1) cross-compile libyaver(x86_64)+proot into mobile jniLibs/x86_64
   ABI=x86_64 bash scripts/build-android-sandbox.sh || echo "sandbox-payload-FAILED"
-  cd mobile && npm ci --legacy-peer-deps || npm install --legacy-peer-deps
-  npx expo prebuild --platform android --no-install || true
-  cd android && ./gradlew assembleDebug --no-daemon || echo "gradle-FAILED"
+  ls -la mobile/android/app/src/main/jniLibs/x86_64/ 2>/dev/null || echo "no x86_64 jniLibs"
+  # 2) JS deps + native project + debug APK
+  cd mobile
+  npm ci --legacy-peer-deps || npm install --legacy-peer-deps || echo "npm-FAILED"
+  npx expo prebuild --platform android --no-install || echo "prebuild-FAILED"
+  # keep gradle within the box's RAM
+  mkdir -p android && printf 'org.gradle.jvmargs=-Xmx4g\norg.gradle.daemon=false\n' >> android/gradle.properties
+  ( cd android && ./gradlew :app:assembleDebug --no-daemon --stacktrace ) || echo "gradle-FAILED"
   find /opt/yaver/mobile/android -name '*.apk' -path '*debug*' -print
 REMOTE
 
@@ -113,6 +146,7 @@ say "PHASE 5 — boot redroid, install APK, drive the use-case capture, record"
 # the narrative use-case config. See desktop/agent/studio + ops_studio.go.
 rsh "GLM_API_KEY='${GLM_API_KEY:-${ZAI_API_KEY:-}}' YAVER_SESSION_TOKEN='${YAVER_SESSION_TOKEN:-}' bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "capture phase had warnings (check log)"
   set -x
+  . /etc/profile.d/yaver-shoot.sh
   cd /opt/yaver
   # load binder for redroid (privileged helper, no host change needed)
   modprobe binder_linux devices="binder,hwbinder,vndbinder" 2>/dev/null || \
