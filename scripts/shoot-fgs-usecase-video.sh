@@ -41,17 +41,34 @@ export CI_SERVER_NAME="${CI_SERVER_NAME:-yaver-fgs-shoot-$(date +%s 2>/dev/null 
 export HCLOUD_SSH_KEY_NAME="${HCLOUD_SSH_KEY_NAME:-yaver-ci}"
 export REPO_ROOT
 MAX_RUNTIME_SEC="${MAX_RUNTIME_SEC:-5400}"
+# BETA_BOX: reuse an existing PERSISTENT box (the warm beta box) instead of a
+# throwaway. In this mode PHASE 1 powers it ON (no create) and cleanup powers it
+# OFF (NEVER delete) — caches persist for fast iteration. Empty = ephemeral box
+# (provision + delete).
+BETA_BOX="${BETA_BOX:-}"
 
 say() { printf '\n[shoot %s] %s\n' "$(date +%H:%M:%S 2>/dev/null || echo --)" "$*" | tee -a "$LOG"; }
 die() { say "FATAL: $*"; exit 1; }
 
-: "${HCLOUD_TOKEN:?HCLOUD_TOKEN required}"
 : "${HCLOUD_SSH_PRIVATE_KEY_PATH:?HCLOUD_SSH_PRIVATE_KEY_PATH required}"
-export HCLOUD_TOKEN HCLOUD_SSH_PRIVATE_KEY_PATH
+# BETA mode uses the local `hcloud` CLI config (active context), so no token env
+# is needed. Ephemeral mode (create/delete via common.sh) requires HCLOUD_TOKEN.
+if [ -z "$BETA_BOX" ]; then
+  : "${HCLOUD_TOKEN:?HCLOUD_TOKEN required (or set BETA_BOX to use the hcloud CLI config)}"
+fi
+[ -n "${HCLOUD_TOKEN:-}" ] && export HCLOUD_TOKEN
+export HCLOUD_SSH_PRIVATE_KEY_PATH
 
 # --- bulletproof teardown: delete the box on ANY exit -----------------------
 cleanup() {
   local code=$?
+  if [ -n "$BETA_BOX" ]; then
+    # Persistent beta box: POWER OFF, never delete (box+data persist).
+    say "cleanup (exit=$code) — powering OFF $BETA_BOX (NOT deleting)"
+    hcloud server poweroff "$BETA_BOX" >>"$LOG" 2>&1 || say "poweroff returned nonzero"
+    say "cleanup done"
+    return
+  fi
   say "cleanup (exit=$code) — deleting box $CI_SERVER_NAME"
   bash "$HCLOUD_DIR/delete-server.sh" >>"$LOG" 2>&1 || say "delete-server returned nonzero (may be gone)"
   # belt-and-suspenders: delete by name directly too
@@ -71,6 +88,17 @@ SSH_OPTS=(-i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserK
 rsh() { ssh "${SSH_OPTS[@]}" "root@$IP" "$@"; }
 
 # ---------------------------------------------------------------------------
+if [ -n "$BETA_BOX" ]; then
+  say "PHASE 1 — power ON existing warm box $BETA_BOX (no create; will power off, never delete)"
+  hcloud server poweron "$BETA_BOX" >>"$LOG" 2>&1 || say "poweron returned nonzero (maybe already on)"
+  for i in $(seq 1 30); do
+    IP="$(hcloud server ip "$BETA_BOX" 2>/dev/null)"
+    [ -n "$IP" ] && ssh "${SSH_OPTS[@]}" -o BatchMode=yes "root@$IP" 'echo READY' 2>/dev/null | grep -q READY && break
+    sleep 4
+  done
+  [ -n "$IP" ] || die "could not resolve/reach $BETA_BOX"
+  say "beta box ip=$IP"
+else
 say "PHASE 1 — provision $CI_SERVER_NAME (want $CI_SERVER_TYPE/$CI_SERVER_LOCATION; will fall back)"
 # Hetzner capacity/availability varies by type×location (cpx42 got deprecated,
 # arm cax is often sold out). Try a few 16GB x86 types across locations.
@@ -89,6 +117,7 @@ done
 IP="$(cat "$REPO_ROOT/ci/.artifacts/server-ip")"
 say "box ip=$IP"
 bash "$HCLOUD_DIR/wait-for-ssh.sh" >>"$LOG" 2>&1 || die "ssh never ready"
+fi
 
 say "PHASE 2 — install x86 toolchain (docker, node, go1.26, jdk17, android sdk+ndk, ffmpeg)"
 # NB: ci/remote/bootstrap.sh is hardcoded arm64 (the old cax box), so we install
