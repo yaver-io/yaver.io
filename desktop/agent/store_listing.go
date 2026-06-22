@@ -252,6 +252,10 @@ func runListing(args []string) {
 		runListingDraft(args[1:])
 		return
 	}
+	if len(args) > 0 && args[0] == "status" {
+		runListingStatus(args[1:])
+		return
+	}
 	jsonOut := false
 	path := "."
 	for i := 0; i < len(args); i++ {

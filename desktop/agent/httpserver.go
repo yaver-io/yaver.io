@@ -297,6 +297,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/stores", s.auth(s.handleStores))
 	mux.HandleFunc("/capabilities", s.auth(s.handleCapabilities))
 	mux.HandleFunc("/listing", s.auth(s.handleListing))
+	mux.HandleFunc("/publish/status", s.auth(s.handlePublishStatus))
 	mux.HandleFunc("/info", s.auth(s.handleInfo))
 	mux.HandleFunc("/hardware/refresh", s.auth(s.handleHardwareRefresh))
 	mux.HandleFunc("/self-check", s.auth(s.handleSelfCheck))
