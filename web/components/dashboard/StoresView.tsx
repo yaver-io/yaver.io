@@ -14,6 +14,7 @@ import {
   type StoreTask,
   type ManifestPlan,
   type StoreListing,
+  type PublishReadiness,
 } from "@/lib/agent-client";
 
 type Section = "setup" | "permissions" | "listing";
@@ -207,16 +208,23 @@ export default function StoresView({ token: _token, path }: { token?: string | n
   const [stores, setStores] = useState<StoreTask[] | null>(null);
   const [caps, setCaps] = useState<ManifestPlan | null>(null);
   const [listing, setListing] = useState<StoreListing | null>(null);
+  const [readiness, setReadiness] = useState<PublishReadiness | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
     try {
       const c = new AgentClient();
-      const [s, cp, l] = await Promise.all([c.getStores(), c.getCapabilities(path), c.getListing(path)]);
+      const [s, cp, l, rd] = await Promise.all([
+        c.getStores(),
+        c.getCapabilities(path),
+        c.getListing(path),
+        c.getPublishStatus(path),
+      ]);
       setStores(s);
       setCaps(cp);
       setListing(l);
+      setReadiness(rd);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setStores([]);
@@ -242,6 +250,27 @@ export default function StoresView({ token: _token, path }: { token?: string | n
           parts only you can do (identity, payment, review), it opens the exact official page.
         </p>
       </div>
+
+      {readiness ? (
+        <div
+          className={`rounded-xl border px-4 py-3 ${
+            readiness.ready
+              ? "border-emerald-500/30 bg-emerald-500/5"
+              : "border-amber-500/30 bg-amber-500/5"
+          }`}
+        >
+          <div className={`text-sm font-semibold ${readiness.ready ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
+            {readiness.ready ? "✓ Ready to submit" : `✗ ${readiness.blockers.length} blocker${readiness.blockers.length === 1 ? "" : "s"} before you can ship`}
+          </div>
+          {!readiness.ready && readiness.blockers.length > 0 ? (
+            <ul className="mt-1.5 space-y-0.5 text-xs text-amber-700/90 dark:text-amber-300/90">
+              {readiness.blockers.map((b, i) => (
+                <li key={i}>• {b}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex gap-1 rounded-lg bg-slate-100 p-1 dark:bg-surface-900">
         {TABS.map((t) => (

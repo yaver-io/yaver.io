@@ -309,6 +309,19 @@ export interface StoreListing {
   derivation: { detectedCapabilities: string[]; sdks: string[]; notes: string[] };
 }
 
+// One "ready to ship?" verdict (mirrors Go publish_status.go, /publish/status).
+export interface PublishCheck {
+  name: string;
+  ok: boolean;
+  blocker: boolean;
+  detail: string;
+}
+export interface PublishReadiness {
+  checks: PublishCheck[];
+  ready: boolean;
+  blockers: string[];
+}
+
 export type CompanyAIWorkKind =
   | "app-code"
   | "erp-flow"
@@ -4933,6 +4946,13 @@ export class AgentClient {
     return (await res.json().catch(() => null)) as StoreListing | null;
   }
 
+  // One "ready to ship?" verdict aggregating every publish check.
+  async getPublishStatus(path?: string): Promise<PublishReadiness | null> {
+    const q = path ? `?path=${encodeURIComponent(path)}` : "";
+    const res = await this.agentFetch(`/publish/status${q}`);
+    return (await res.json().catch(() => null)) as PublishReadiness | null;
+  }
+
   async companionDetect(repo: string): Promise<CompanionDetectResult> {
     const res = await this.agentFetch(`/companion/detect?repo=${encodeURIComponent(repo)}`);
     const data = await res.json().catch(() => ({}));
@@ -7133,6 +7153,43 @@ export class AgentClient {
     return (await res.json()) as PhoneProject;
   }
 
+  /** Read the mini-figma design layer (layout + per-node overrides) for an
+   * agent-hosted project. The design rides in app.yaml, so it ships on deploy. */
+  async getPhoneDesign(slug: string): Promise<PhoneDesign | null> {
+    if (!this.isConnected || !this.baseUrl) return null;
+    const res = await fetch(`${this.baseUrl}/phone/projects/design?slug=${encodeURIComponent(slug)}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as PhoneDesign;
+  }
+
+  /** Apply design patches over the relay (same shape as the local sandbox / MCP).
+   * Returns the new design layer. */
+  async patchPhoneDesign(slug: string, patches: PhoneDesignPatch[]): Promise<PhoneDesign | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/design`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, patches }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as PhoneDesign;
+  }
+
+  /** Replace the whole design layer over the relay (used by the design studio's
+   * snapshot save). */
+  async setPhoneDesign(slug: string, design: PhoneDesign): Promise<PhoneDesign | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/phone/projects/design`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug, design }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as PhoneDesign;
+  }
+
   async setPhoneAuth(slug: string, auth: PhoneAuth): Promise<boolean> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/phone/projects/auth`, {
@@ -7444,6 +7501,12 @@ export interface PhoneDesign {
   layout?: string[];
   ui?: Record<string, PhoneNodeUi>;
 }
+/** One structured edit to the design layer — the lingua franca shared by the
+ * overlay, the inspector, AI prompting, and the relay/MCP path. */
+export type PhoneDesignPatch =
+  | { op: "set"; nodeId: string; props: PhoneNodeUi }
+  | { op: "move"; nodeId: string; beforeId: string | null }
+  | { op: "enable"; nodeId: string; affordance: "reorder" | "swipe" };
 export interface PhoneAppSpec {
   summary?: string;
   primaryEntity?: string;
@@ -7461,6 +7524,7 @@ export interface PhoneProject {
   schema?: PhoneSchema | null;
   auth?: PhoneAuth | null;
   seed?: PhoneSeed | null;
+  app?: PhoneAppSpec | null;
   stats?: PhoneStats | null;
 }
 export interface PhoneTemplate {
