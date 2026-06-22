@@ -172,9 +172,18 @@ rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "APK build had warnings (check log
   cd /opt/yaver/mobile
   # 1) JS deps
   npm ci --legacy-peer-deps || npm install --legacy-peer-deps || echo "npm-FAILED"
+  # 1b) preserve the committed AndroidManifest.xml (declares SandboxService +
+  #     FOREGROUND_SERVICE_SPECIAL_USE + subtype) — `prebuild --clean` regenerates
+  #     it and DROPS the hand-declared service (run 6: analyzer found no service →
+  #     FGS never started → no notification). Mirrors CLAUDE.md cold-start "restore
+  #     force-tracked overlays after prebuild".
+  cp android/app/src/main/AndroidManifest.xml /tmp/yaver-manifest.bak
   # 2) regenerate a COMPLETE native android project (--clean: the repo only
   #    force-tracks a few overlay files, so reuse fails at settings.gradle).
   npx expo prebuild --platform android --clean --no-install || echo "prebuild-FAILED"
+  # 2b) restore the real manifest over the regenerated one
+  cp /tmp/yaver-manifest.bak android/app/src/main/AndroidManifest.xml
+  grep -q FOREGROUND_SERVICE_SPECIAL_USE android/app/src/main/AndroidManifest.xml && echo "manifest: SandboxService restored" || echo "manifest: WARN service missing"
   # 3) cross-compile libyaver(x86_64)+proot into jniLibs/x86_64 AFTER prebuild
   #    (prebuild --clean would otherwise wipe them).
   cd /opt/yaver
@@ -193,7 +202,7 @@ say "PHASE 5 — boot redroid, install APK, drive the use-case capture, record"
 # This phase reuses the agent's studio capture layer over the local runner ON the
 # box. The agent binary + studio package run there; we invoke the recorder with
 # the narrative use-case config. See desktop/agent/studio + ops_studio.go.
-rsh "GLM_API_KEY='${GLM_API_KEY:-${ZAI_API_KEY:-}}' YAVER_SESSION_TOKEN='${YAVER_SESSION_TOKEN:-}' bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "capture phase had warnings (check log)"
+rsh "GLM_API_KEY='${GLM_API_KEY:-${ZAI_API_KEY:-}}' YAVER_SESSION_TOKEN='${YAVER_SESSION_TOKEN:-}' SHOOT_MODE='${SHOOT_MODE:-fgs}' bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "capture phase had warnings (check log)"
   set -x
   . /etc/profile.d/yaver-shoot.sh
   cd /opt/yaver
@@ -208,6 +217,16 @@ rsh "GLM_API_KEY='${GLM_API_KEY:-${ZAI_API_KEY:-}}' YAVER_SESSION_TOKEN='${YAVER
   # Build the agent for linux/amd64 so we can run the studio recorder on the box.
   ( cd desktop/agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /usr/local/bin/yaver-agent . ) || echo "agent-build-FAILED"
   # The studio recorder reads its narrative job spec from a file; write it.
+  # SHOOT_MODE=fgs (default): start the foreground service DIRECTLY (no sign-in)
+  #   → real Yaver foreground notification + clean use-case captions, no failing
+  #     in-app task steps. This is the ship-now FGS justification video.
+  # SHOOT_MODE=glm: drive the Tasks UI to run a real GLM coding task (needs the
+  #   on-redroid sign-in gate solved first — the follow-up iteration).
+  if [ "${SHOOT_MODE:-fgs}" = "glm" ]; then
+    USECASE='{"whatRuns":"an on-device coding agent running a real task","progressText":"running","completionText":"Task finished","taskActions":[{"kind":"taptext","text":"Tasks","caption":"Give the on-device agent a real task","sec":3},{"kind":"type","text":"create a hello world node script and run it","sec":2},{"kind":"key","text":"ENTER","sec":2}]}'
+  else
+    USECASE='{"whatRuns":"the on-device coding agent (the Yaver sandbox) the user starts"}'
+  fi
   cat > /root/fgs-job.json <<JOB
 {
   "permission": "FOREGROUND_SERVICE_SPECIAL_USE",
@@ -220,16 +239,7 @@ rsh "GLM_API_KEY='${GLM_API_KEY:-${ZAI_API_KEY:-}}' YAVER_SESSION_TOKEN='${YAVER
   "startAction": "io.yaver.mobile.sandbox.START",
   "hostWorkDir": "/root/redroid-data",
   "maxSec": 90,
-  "useCase": {
-    "whatRuns": "an on-device coding agent running a real task",
-    "progressText": "running",
-    "completionText": "Task finished",
-    "taskActions": [
-      {"kind":"taptext","text":"Tasks","caption":"Give the on-device agent a real task","sec":3},
-      {"kind":"type","text":"create a hello world node script and run it","sec":2},
-      {"kind":"key","text":"ENTER","sec":2}
-    ]
-  }
+  "useCase": $USECASE
 }
 JOB
   # The recorder subcommand drives RedroidSurface + UseCaseProofSteps and writes
