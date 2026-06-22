@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -47,18 +48,20 @@ const (
 	// snapshot+deletes on idle; no box is ever left running to hit the monthly cap.
 	defaultBetaPoolSKU    = "cx33" // 4 vCPU / 8 GB x86 ($8.99/mo) — redroid-capable
 	defaultBetaPoolRegion = "nbg1"
-	defaultBetaMaxIdleSec = 1200   // 20 min idle → POWER OFF (managed-cloud pause; box+data persist; fast ~15s resume)
+	defaultBetaMaxIdleSec = 1200 // 20 min idle → POWER OFF (managed-cloud pause; box+data persist; fast ~15s resume)
 	betaPoolTickSec       = 15
 )
 
 type betaPoolController struct {
-	relayBase   string // e.g. https://relay.example/ (YAVER_BETA_RELAY)
-	adminToken  string // RELAY_ADMIN_TOKEN — writes /beta/state
-	hcloudToken string // HCLOUD_TOKEN — empty ⇒ dry-run (no spend)
-	sku         string
-	region      string
-	maxIdleSec  int64
-	httpc       *http.Client
+	relayBase    string // e.g. https://relay.example/ (YAVER_BETA_RELAY)
+	adminToken   string // RELAY_ADMIN_TOKEN — writes /beta/state
+	hcloudToken  string // HCLOUD_TOKEN — empty ⇒ dry-run (no spend)
+	betaBoxName  string // YAVER_BETA_BOX_NAME — the persistent beta box to pause/resume
+	hcloudAPIURL string // Hetzner API base (overridable for tests)
+	sku          string
+	region       string
+	maxIdleSec   int64
+	httpc        *http.Client
 
 	// Injectable seams. Defaults are dry-run; a real deployment wires these to
 	// cloud_byo_provision (create from golden snapshot, cloud-init
@@ -71,14 +74,16 @@ type betaPoolController struct {
 
 func newBetaPoolController() *betaPoolController {
 	c := &betaPoolController{
-		relayBase:   strings.TrimRight(os.Getenv("YAVER_BETA_RELAY"), "/"),
-		adminToken:  strings.TrimSpace(os.Getenv("RELAY_ADMIN_TOKEN")),
-		hcloudToken: strings.TrimSpace(os.Getenv("HCLOUD_TOKEN")),
-		sku:         firstNonEmpty(strings.TrimSpace(os.Getenv("YAVER_BETA_POOL_SKU")), defaultBetaPoolSKU),
-		region:      firstNonEmpty(strings.TrimSpace(os.Getenv("YAVER_BETA_POOL_REGION")), defaultBetaPoolRegion),
-		maxIdleSec:  defaultBetaMaxIdleSec,
-		httpc:       &http.Client{Timeout: 20 * time.Second},
-		nowFn:       func() int64 { return time.Now().Unix() },
+		relayBase:    strings.TrimRight(os.Getenv("YAVER_BETA_RELAY"), "/"),
+		adminToken:   strings.TrimSpace(os.Getenv("RELAY_ADMIN_TOKEN")),
+		hcloudToken:  strings.TrimSpace(os.Getenv("HCLOUD_TOKEN")),
+		betaBoxName:  firstNonEmpty(strings.TrimSpace(os.Getenv("YAVER_BETA_BOX_NAME")), "yaver-beta-cloud"),
+		hcloudAPIURL: firstNonEmpty(strings.TrimSpace(os.Getenv("HCLOUD_API_URL")), "https://api.hetzner.cloud/v1"),
+		sku:          firstNonEmpty(strings.TrimSpace(os.Getenv("YAVER_BETA_POOL_SKU")), defaultBetaPoolSKU),
+		region:       firstNonEmpty(strings.TrimSpace(os.Getenv("YAVER_BETA_POOL_REGION")), defaultBetaPoolRegion),
+		maxIdleSec:   defaultBetaMaxIdleSec,
+		httpc:        &http.Client{Timeout: 20 * time.Second},
+		nowFn:        func() int64 { return time.Now().Unix() },
 	}
 	return c
 }
@@ -139,7 +144,26 @@ func (c *betaPoolController) provision() (string, error) {
 		log.Printf("[betapool] DRY-RUN: would POWER ON the beta box (create once from golden snapshot if absent; HCLOUD_TOKEN unset)")
 		return "dry-run-box", nil
 	}
-	return "", fmt.Errorf("betapool: real power-on not wired (set provisionFn); refusing to act")
+	// Real power-on: the beta box persists, so wake = poweron (no create).
+	id, status, ip, err := c.hcloudFindBox()
+	if err != nil {
+		return "", fmt.Errorf("betapool power-on: %w", err)
+	}
+	if status != "running" {
+		if err := c.hcloudAction(id, "poweron"); err != nil {
+			return "", fmt.Errorf("betapool poweron: %w", err)
+		}
+		// poll until running (≤ ~60s) so callers get a usable box addr
+		for i := 0; i < 30; i++ {
+			time.Sleep(2 * time.Second)
+			if _, s, p, e := c.hcloudFindBox(); e == nil && s == "running" {
+				ip = p
+				break
+			}
+		}
+	}
+	log.Printf("[betapool] POWERED ON %s (%s)", c.betaBoxName, ip)
+	return ip, nil
 }
 
 // reap = POWER OFF the managed-cloud beta box (NOT delete). Box + data persist
@@ -155,7 +179,70 @@ func (c *betaPoolController) reap(addr string) error {
 		log.Printf("[betapool] DRY-RUN: would POWER OFF %q (managed-cloud pause; box+data persist; still billed ~$8.99/mo)", addr)
 		return nil
 	}
-	return fmt.Errorf("betapool: real power-off not wired (set reapFn)")
+	// Real power-off (NOT delete): the relay reports idle → we pause the box,
+	// preserving it + its data for a fast resume. This is the user's directive:
+	// "relay will down it if nobody uses (not delete, power off)".
+	id, status, _, err := c.hcloudFindBox()
+	if err != nil {
+		return fmt.Errorf("betapool power-off: %w", err)
+	}
+	if status == "off" {
+		return nil // already paused
+	}
+	if err := c.hcloudAction(id, "poweroff"); err != nil {
+		return fmt.Errorf("betapool poweroff: %w", err)
+	}
+	log.Printf("[betapool] POWERED OFF %s (idle) — box+data persist, fast resume", c.betaBoxName)
+	return nil
+}
+
+// hcloudFindBox resolves the persistent beta box by name → (id, status, ipv4).
+func (c *betaPoolController) hcloudFindBox() (int64, string, string, error) {
+	req, _ := http.NewRequest(http.MethodGet, c.hcloudAPIURL+"/servers?name="+url.QueryEscape(c.betaBoxName), nil)
+	req.Header.Set("Authorization", "Bearer "+c.hcloudToken)
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return 0, "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, "", "", fmt.Errorf("hcloud servers list → %d", resp.StatusCode)
+	}
+	var out struct {
+		Servers []struct {
+			ID        int64  `json:"id"`
+			Status    string `json:"status"`
+			PublicNet struct {
+				IPv4 struct {
+					IP string `json:"ip"`
+				} `json:"ipv4"`
+			} `json:"public_net"`
+		} `json:"servers"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return 0, "", "", err
+	}
+	if len(out.Servers) == 0 {
+		return 0, "", "", fmt.Errorf("beta box %q not found", c.betaBoxName)
+	}
+	s := out.Servers[0]
+	return s.ID, s.Status, s.PublicNet.IPv4.IP, nil
+}
+
+// hcloudAction POSTs a power action (poweron|poweroff) for a server id.
+func (c *betaPoolController) hcloudAction(id int64, action string) error {
+	endpoint := fmt.Sprintf("%s/servers/%d/actions/%s", c.hcloudAPIURL, id, action)
+	req, _ := http.NewRequest(http.MethodPost, endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+c.hcloudToken)
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("hcloud %s → %d", action, resp.StatusCode)
+	}
+	return nil
 }
 
 // tick performs one decision cycle. Returns the action taken (for logs/tests).
