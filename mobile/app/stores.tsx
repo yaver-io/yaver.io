@@ -44,6 +44,7 @@ export default function StoresScreen() {
   const [stores, setStores] = useState<StoreTask[] | null>(null);
   const [caps, setCaps] = useState<ManifestPlan | null>(null);
   const [listing, setListing] = useState<StoreListing | null>(null);
+  const [readiness, setReadiness] = useState<{ ready: boolean; blockers: string[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -59,10 +60,11 @@ export default function StoresScreen() {
       return res.json().catch(() => null);
     };
     try {
-      const [s, cp, l] = await Promise.all([get("/stores"), get("/capabilities"), get("/listing")]);
+      const [s, cp, l, rd] = await Promise.all([get("/stores"), get("/capabilities"), get("/listing"), get("/publish/status")]);
       setStores(Array.isArray(s?.tasks) ? s.tasks : []);
       setCaps(cp);
       setListing(l);
+      setReadiness(rd && typeof rd.ready === "boolean" ? rd : null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setStores([]);
@@ -87,6 +89,16 @@ export default function StoresScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
+        {readiness ? (
+          <View style={[styles.banner, { backgroundColor: readiness.ready ? c.successBg : c.warnBg, borderColor: readiness.ready ? c.successBorder : c.warnBorder }]}>
+            <Text style={{ color: readiness.ready ? c.success : c.warn, fontWeight: "700", fontSize: 13 }}>
+              {readiness.ready ? "✓ Ready to submit" : `✗ ${readiness.blockers.length} blocker(s) before you can ship`}
+            </Text>
+            {!readiness.ready ? readiness.blockers.map((b, i) => (
+              <Text key={i} style={{ color: c.warn, fontSize: 11, marginTop: 2 }}>• {b}</Text>
+            )) : null}
+          </View>
+        ) : null}
         {err ? (
           <View style={[styles.banner, { backgroundColor: c.warnBg, borderColor: c.warnBorder }]}>
             <Text style={{ color: c.warn, fontSize: 12 }}>{err}</Text>
