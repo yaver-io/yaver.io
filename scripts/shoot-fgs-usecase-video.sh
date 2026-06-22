@@ -85,8 +85,11 @@ rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || die "toolchain install failed (see log
   set -ex
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq ca-certificates curl gnupg unzip rsync git ffmpeg openjdk-17-jdk-headless \
-    linux-modules-extra-$(uname -r) || true
+  # critical packages MUST succeed (set -e aborts → die); kernel-module pkg is
+  # best-effort (often unavailable for the exact running kernel — must not take
+  # unzip/ffmpeg down with it).
+  apt-get install -y -qq ca-certificates curl gnupg unzip rsync git ffmpeg openjdk-17-jdk-headless
+  apt-get install -y -qq "linux-modules-extra-$(uname -r)" || echo "WARN: linux-modules-extra unavailable (redroid binder load will use the privileged-helper path)"
   # docker
   command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
   systemctl enable --now docker || true
