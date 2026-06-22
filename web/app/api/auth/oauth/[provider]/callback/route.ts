@@ -73,6 +73,9 @@ async function handleCallback(
 ) {
   const state = decodeOAuthState(stateParam);
   await logToConvex(provider, "callback_start", "info", `OAuth callback started`, `client=${state.client || "web"}`);
+  if (state.client === "sdk" && !state.openerOrigin) {
+    return errorRedirect("SDK origin is not allowed.");
+  }
 
   let tokens;
   try {
@@ -268,11 +271,13 @@ async function handleCallback(
   // SDK client (yaver-feedback-web popup): redirect to a page that
   // window.opener.postMessage(token) and closes itself.
   if (state.client === "sdk") {
+    const openerOrigin = state.openerOrigin;
+    if (!openerOrigin) {
+      return errorRedirect("SDK origin is not allowed.");
+    }
     const sdkUrl = new URL("/auth/sdk-callback", baseUrl);
     sdkUrl.searchParams.set("token", token);
-    if (state.openerOrigin) {
-      sdkUrl.searchParams.set("openerOrigin", state.openerOrigin);
-    }
+    sdkUrl.searchParams.set("openerOrigin", openerOrigin);
     await logToConvex(provider, "redirect", "info", "Redirecting to SDK popup callback");
     return NextResponse.redirect(sdkUrl.toString(), 303);
   }

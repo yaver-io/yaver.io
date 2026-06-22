@@ -101,7 +101,10 @@ type OAuthState = {
   intent?: "signin" | "link";
   linkToken?: string;
   openerOrigin?: string;
+  iat?: number;
 };
+
+const OAUTH_STATE_MAX_AGE_MS = 30 * 60 * 1000;
 
 export function sanitizeReturnTo(value?: string | null): string | undefined {
   if (!value) return undefined;
@@ -116,18 +119,108 @@ export function sanitizeOpenerOrigin(value?: string | null): string | undefined 
   try {
     const url = new URL(trimmed);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-    return url.origin;
+    const origin = url.origin;
+    if (!isAllowedSdkOpenerOrigin(origin)) return undefined;
+    return origin;
   } catch {
     return undefined;
   }
 }
 
 export function encodeOAuthState(state: OAuthState): string {
-  return Buffer.from(JSON.stringify(state)).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({ ...state, iat: Date.now() })
+  ).toString("base64url");
+  return `${payload}.${signOAuthState(payload)}`;
 }
 
 export function decodeOAuthState(encoded: string): OAuthState {
-  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf-8"));
+  const parts = encoded.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error("Invalid OAuth state.");
+  }
+  const [payload, signature] = parts;
+  const expected = signOAuthState(payload);
+  const receivedBuf = Buffer.from(signature, "base64url");
+  const expectedBuf = Buffer.from(expected, "base64url");
+  if (
+    receivedBuf.length !== expectedBuf.length ||
+    !crypto.timingSafeEqual(receivedBuf, expectedBuf)
+  ) {
+    throw new Error("Invalid OAuth state signature.");
+  }
+
+  const state = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8")) as OAuthState;
+  if (!state.iat || Date.now() - state.iat > OAUTH_STATE_MAX_AGE_MS || state.iat > Date.now() + 60_000) {
+    throw new Error("OAuth state expired.");
+  }
+  return state;
+}
+
+function signOAuthState(payload: string): string {
+  return crypto.createHmac("sha256", oauthStateSecret()).update(payload).digest("base64url");
+}
+
+function oauthStateSecret(): string {
+  const explicit = process.env.OAUTH_STATE_SECRET?.trim();
+  if (explicit) return explicit;
+  const material = [
+    process.env.OAUTH_GOOGLE_CLIENT_SECRET,
+    process.env.OAUTH_MICROSOFT_CLIENT_SECRET,
+    process.env.OAUTH_APPLE_CLIENT_SECRET,
+    process.env.OAUTH_GITHUB_CLIENT_SECRET,
+    process.env.OAUTH_GITLAB_CLIENT_SECRET,
+    process.env.NEXT_PUBLIC_BASE_URL,
+  ].filter((value): value is string => !!value && value.trim().length > 0).join("|");
+  if (!material) throw new Error("OAUTH_STATE_SECRET is required for OAuth state signing.");
+  return material;
+}
+
+function isAllowedSdkOpenerOrigin(origin: string): boolean {
+  const allowed = [
+    process.env.YAVER_SDK_ALLOWED_ORIGINS,
+    process.env.NEXT_PUBLIC_YAVER_SDK_ALLOWED_ORIGINS,
+  ]
+    .flatMap((value) => (value || "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  try {
+    allowed.push(new URL(getBaseUrl()).origin);
+  } catch {
+    // Ignore malformed deployment base URLs here; callback URL generation will fail separately.
+  }
+
+  if (allowed.some((pattern) => sdkOriginMatches(pattern, origin))) return true;
+  if (process.env.NODE_ENV !== "production" && isLocalDevOrigin(origin)) return true;
+  return false;
+}
+
+function sdkOriginMatches(pattern: string, origin: string): boolean {
+  try {
+    const target = new URL(origin);
+    if (!pattern.includes("*")) {
+      return new URL(pattern).origin === target.origin;
+    }
+    if (!pattern.startsWith("http://*.") && !pattern.startsWith("https://*.")) {
+      return false;
+    }
+    const scheme = pattern.startsWith("https://*.") ? "https:" : "http:";
+    const suffix = pattern.slice(pattern.indexOf("*.") + 1).replace(/\/.*$/, "").toLowerCase();
+    return target.protocol === scheme && target.hostname.toLowerCase().endsWith(suffix);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== "http:" && protocol !== "https:") return false;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
 }
 
 export function buildAuthorizationUrl(provider: OAuthProvider, state: string): string {

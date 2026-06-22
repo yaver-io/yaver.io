@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
  * Popup callback page for the yaver-feedback-web SDK.
  *
  * The SDK opens `/api/auth/oauth/<provider>?client=sdk` in a popup window.
- * After OAuth completes, the callback redirects here with `?token=...`.
+ * After OAuth completes, the callback redirects here with `?token=...&openerOrigin=...`.
  * This page calls `window.opener.postMessage({ type: 'yaver-feedback-auth', token })`
  * and closes itself, completing the SDK login flow.
  */
@@ -17,13 +17,13 @@ function SdkCallbackHandler() {
 
   const getTargetOrigin = () => {
     const raw = searchParams.get("openerOrigin");
-    if (!raw) return "*";
+    if (!raw) return null;
     try {
       const url = new URL(raw);
-      if (url.protocol !== "http:" && url.protocol !== "https:") return "*";
+      if (url.protocol !== "http:" && url.protocol !== "https:") return null;
       return url.origin;
     } catch {
-      return "*";
+      return null;
     }
   };
 
@@ -34,14 +34,21 @@ function SdkCallbackHandler() {
 
     if (errParam) {
       setError(errParam);
-      try {
-        window.opener?.postMessage(
-          { type: "yaver-feedback-auth", error: errParam },
-          targetOrigin,
-        );
-      } catch {
-        // opener may be blocked
+      if (targetOrigin) {
+        try {
+          window.opener?.postMessage(
+            { type: "yaver-feedback-auth", error: errParam },
+            targetOrigin,
+          );
+        } catch {
+          // opener may be blocked
+        }
       }
+      return;
+    }
+
+    if (!targetOrigin) {
+      setError("Missing trusted opener origin.");
       return;
     }
 

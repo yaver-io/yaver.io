@@ -443,6 +443,57 @@ async function createSessionToken(
   return token;
 }
 
+// Best-effort per-instance login throttling. Convex may run multiple action
+// instances, but this still blocks rapid password spraying against a hot shard.
+type LoginAttempt = {
+  failures: number;
+  resetAt: number;
+  lockedUntil: number;
+};
+
+const loginAttempts = new Map<string, LoginAttempt>();
+const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 5;
+
+function clientIp(request: Request): string {
+  const cf = request.headers.get("CF-Connecting-IP");
+  if (cf) return cf.trim();
+  const forwarded = request.headers.get("X-Forwarded-For");
+  if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
+  return request.headers.get("X-Real-IP")?.trim() || "unknown";
+}
+
+function loginAttemptKey(request: Request, email: string): string {
+  return `${email.toLowerCase().trim()}|${clientIp(request)}`;
+}
+
+function loginLocked(key: string): boolean {
+  const entry = loginAttempts.get(key);
+  if (!entry) return false;
+  const now = Date.now();
+  if (entry.lockedUntil > now) return true;
+  if (entry.resetAt <= now) loginAttempts.delete(key);
+  return false;
+}
+
+function recordLoginFailure(key: string) {
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  const entry: LoginAttempt = current && current.resetAt > now
+    ? current
+    : { failures: 0, resetAt: now + LOGIN_FAILURE_WINDOW_MS, lockedUntil: 0 };
+  entry.failures += 1;
+  if (entry.failures >= LOGIN_MAX_FAILURES) {
+    entry.lockedUntil = now + LOGIN_LOCK_MS;
+  }
+  loginAttempts.set(key, entry);
+}
+
+function clearLoginFailures(key: string) {
+  loginAttempts.delete(key);
+}
+
 // ── CORS Preflight for Auth Endpoints ───────────────────────────────
 // Browsers send OPTIONS preflight when requests include Authorization headers.
 
@@ -639,18 +690,27 @@ http.route({
       return errorResponse("Missing email or password", 400);
     }
 
+    const normEmail = email.toLowerCase().trim();
+    const attemptKey = loginAttemptKey(request, normEmail);
+    if (loginLocked(attemptKey)) {
+      return errorResponse("Too many failed attempts. Try again later.", 429);
+    }
+
     const user = await ctx.runQuery(api.auth.lookupEmailUser, {
-      email: email.toLowerCase().trim(),
+      email: normEmail,
     });
 
     if (!user || !user.passwordHash) {
+      recordLoginFailure(attemptKey);
       return errorResponse("Invalid email or password", 401);
     }
 
     const valid = await verifyPassword(password, user.passwordHash);
     if (!valid) {
+      recordLoginFailure(attemptKey);
       return errorResponse("Invalid email or password", 401);
     }
+    clearLoginFailures(attemptKey);
 
     // Check if 2FA is enabled
     const fullUser = await ctx.runQuery(api.auth.getUserWithTotp, { userId: user._id });

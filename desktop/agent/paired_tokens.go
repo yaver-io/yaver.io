@@ -37,9 +37,9 @@ import (
 
 // PairedToken is one additional accepted auth token.
 type PairedToken struct {
-	TokenHash  string `json:"tokenHash"`         // sha256 prefix, used as id
-	Token      string `json:"token"`             // actual bearer token
-	Label      string `json:"label,omitempty"`   // "laptop", "partner-iphone", etc
+	TokenHash  string `json:"tokenHash"`       // sha256 prefix, used as id
+	Token      string `json:"token,omitempty"` // legacy only; never persisted by current builds
+	Label      string `json:"label,omitempty"` // "laptop", "partner-iphone", etc
 	ConvexURL  string `json:"convexUrl,omitempty"`
 	AddedAt    string `json:"addedAt"`
 	SourceHost string `json:"sourceHost,omitempty"`
@@ -85,6 +85,9 @@ func savePairedTokens(tokens []PairedToken) error {
 	sort.Slice(tokens, func(i, j int) bool {
 		return tokens[i].AddedAt > tokens[j].AddedAt
 	})
+	for i := range tokens {
+		tokens[i].Token = ""
+	}
 	data, err := json.MarshalIndent(map[string]interface{}{
 		"tokens":    tokens,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339),
@@ -138,7 +141,6 @@ func AddPairedToken(token, label, convexURL, sourceHost string) error {
 	}
 	tokens = append(tokens, PairedToken{
 		TokenHash:  fp,
-		Token:      token,
 		Label:      label,
 		ConvexURL:  convexURL,
 		AddedAt:    now,

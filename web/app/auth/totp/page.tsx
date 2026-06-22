@@ -6,12 +6,23 @@ import { CONVEX_URL } from "@/lib/constants";
 import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
 
+function sanitizeCallbackOrigin(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
 function TotpContent() {
   const params = useSearchParams();
   const pendingToken = params.get("pendingToken") || "";
   const client = params.get("client") || "web";
   const returnTo = sanitizeReturnTo(params.get("return"));
-  const openerOrigin = params.get("openerOrigin") || "";
+  const openerOrigin = sanitizeCallbackOrigin(params.get("openerOrigin")) || "";
 
   const [code, setCode] = useState("");
   const [useRecovery, setUseRecovery] = useState(false);
@@ -79,11 +90,14 @@ function TotpContent() {
       }
 
       if (client === "sdk") {
+        if (!openerOrigin) {
+          setErrorMsg("Missing trusted opener origin.");
+          setStatus("error");
+          return;
+        }
         const sdkCallbackUrl = new URL("/auth/sdk-callback", window.location.origin);
         sdkCallbackUrl.searchParams.set("token", token);
-        if (openerOrigin) {
-          sdkCallbackUrl.searchParams.set("openerOrigin", openerOrigin);
-        }
+        sdkCallbackUrl.searchParams.set("openerOrigin", openerOrigin);
         window.location.href = sdkCallbackUrl.toString();
         return;
       }

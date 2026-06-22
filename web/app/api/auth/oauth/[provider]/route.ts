@@ -35,9 +35,20 @@ export async function GET(
   }
 
   const url = new URL(request.url);
-  const client = url.searchParams.get("client") || "web";
+  const requestedClient = url.searchParams.get("client") || "web";
+  const client = ["web", "mobile", "desktop", "sdk"].includes(requestedClient)
+    ? requestedClient
+    : "web";
   const returnTo = sanitizeReturnTo(url.searchParams.get("return"));
-  const openerOrigin = sanitizeOpenerOrigin(url.searchParams.get("origin"));
+  const openerOrigin = client === "sdk"
+    ? sanitizeOpenerOrigin(url.searchParams.get("origin"))
+    : undefined;
+  if (client === "sdk" && !openerOrigin) {
+    return NextResponse.json(
+      { error: "SDK origin is not allowed. Configure YAVER_SDK_ALLOWED_ORIGINS." },
+      { status: 400 }
+    );
+  }
   const intent = url.searchParams.get("intent") === "link" ? "link" : "signin";
   const linkToken = url.searchParams.get("linkToken") || undefined;
 

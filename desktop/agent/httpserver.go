@@ -2575,15 +2575,93 @@ func (s *HTTPServer) trackNewIP(token string, r *http.Request) {
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Yaver-Caller, X-Relay-Password")
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			if !agentCORSOriginAllowed(origin) {
+				if r.Method == http.MethodOptions {
+					http.Error(w, "CORS origin denied", http.StatusForbidden)
+					return
+				}
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", canonicalOrigin(origin))
+				w.Header().Set("Vary", "Origin")
+			}
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func agentCORSOriginAllowed(origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	normalized := parsed.Scheme + "://" + parsed.Host
+	for _, raw := range strings.Split(os.Getenv("YAVER_AGENT_CORS_ORIGINS"), ",") {
+		allowed := strings.TrimSpace(raw)
+		if allowed == "" {
+			continue
+		}
+		if agentCORSOriginMatches(allowed, normalized) {
+			return true
+		}
+	}
+	if normalized == "https://yaver.io" || normalized == "https://www.yaver.io" || agentCORSOriginMatches("https://*.yaver.io", normalized) {
+		return true
+	}
+	host := parsed.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() {
+		return true
+	}
+	return isTailnetIPv4(ip)
+}
+
+func agentCORSOriginMatches(pattern, origin string) bool {
+	if !strings.Contains(pattern, "*") {
+		return canonicalOrigin(pattern) == origin
+	}
+	if !strings.HasPrefix(pattern, "http://*.") && !strings.HasPrefix(pattern, "https://*.") {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	scheme := "http"
+	if strings.HasPrefix(pattern, "https://*.") {
+		scheme = "https"
+	}
+	suffix := strings.ToLower(pattern[strings.Index(pattern, "*.")+1:])
+	if idx := strings.IndexByte(suffix, '/'); idx >= 0 {
+		suffix = suffix[:idx]
+	}
+	return parsed.Scheme == scheme && strings.HasSuffix(strings.ToLower(parsed.Hostname()), suffix)
+}
+
+func canonicalOrigin(origin string) string {
+	parsed, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 // ---------------------------------------------------------------------------

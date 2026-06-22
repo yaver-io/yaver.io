@@ -755,8 +755,8 @@ func TestCORSOnResponse(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	if h := resp.Header.Get("Access-Control-Allow-Origin"); h != "*" {
-		t.Fatalf("expected CORS header *, got %s", h)
+	if h := resp.Header.Get("Access-Control-Allow-Origin"); h != "http://localhost:3000" {
+		t.Fatalf("expected CORS header for request origin, got %s", h)
 	}
 }
 
