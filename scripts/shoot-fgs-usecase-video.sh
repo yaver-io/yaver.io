@@ -111,14 +111,36 @@ rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || die "toolchain install failed (see log
   yes | "$SDKM" --licenses >/dev/null 2>&1 || true
   "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006" >/dev/null 2>&1 || \
     "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+  # NB trailing slash: build-android-sandbox.sh builds CC as "${ANDROID_NDK_HOME}toolchains/..."
   cat >/etc/profile.d/yaver-shoot.sh <<'EOP'
 export ANDROID_HOME=/opt/android-sdk
 export ANDROID_SDK_ROOT=/opt/android-sdk
-export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.1.12297006
+export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.1.12297006/
 export PATH="$PATH:/usr/local/go/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools"
 EOP
   echo "toolchain: $(docker --version) | $(node --version) | $(go version) | java $(java -version 2>&1|head -1)"
 REMOTE
+
+say "PHASE 2.5 — ensure binder_linux (redroid prereq; Hetzner's kernel often lacks a published modules-extra)"
+if rsh "modprobe binder_linux 2>/dev/null && echo HAVE" 2>/dev/null | grep -q HAVE; then
+  say "binder_linux already loadable"
+else
+  say "binder module missing for $(rsh uname -r) — installing a stock kernel + modules-extra and rebooting"
+  rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "kernel install had warnings"
+    set -x
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq linux-generic linux-modules-extra-generic || apt-get install -y -qq linux-image-generic linux-modules-extra-$(uname -r) || true
+REMOTE
+  say "rebooting box to pick up the stock kernel"
+  rsh "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &" || true
+  sleep 25
+  bash "$HCLOUD_DIR/wait-for-ssh.sh" >>"$LOG" 2>&1 || die "box did not come back after reboot"
+  if rsh "modprobe binder_linux 2>/dev/null && echo HAVE" 2>/dev/null | grep -q HAVE; then
+    say "binder_linux loadable after reboot ($(rsh uname -r))"
+  else
+    say "WARNING: binder_linux STILL unavailable after reboot ($(rsh uname -r)) — redroid will fail; consider a pre-baked snapshot"
+  fi
+fi
 
 say "PHASE 3 — sync repo to box"
 bash "$HCLOUD_DIR/sync-repo.sh" >>"$LOG" 2>&1 || die "repo sync failed"
@@ -129,17 +151,21 @@ say "PHASE 4 — build x86_64 sandbox payload + debug APK (heavy, ~30-45m)"
 rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "APK build had warnings (check log)"
   set -x
   . /etc/profile.d/yaver-shoot.sh
+  cd /opt/yaver/mobile
+  # 1) JS deps
+  npm ci --legacy-peer-deps || npm install --legacy-peer-deps || echo "npm-FAILED"
+  # 2) regenerate a COMPLETE native android project (--clean: the repo only
+  #    force-tracks a few overlay files, so reuse fails at settings.gradle).
+  npx expo prebuild --platform android --clean --no-install || echo "prebuild-FAILED"
+  # 3) cross-compile libyaver(x86_64)+proot into jniLibs/x86_64 AFTER prebuild
+  #    (prebuild --clean would otherwise wipe them).
   cd /opt/yaver
-  # 1) cross-compile libyaver(x86_64)+proot into mobile jniLibs/x86_64
   ABI=x86_64 bash scripts/build-android-sandbox.sh || echo "sandbox-payload-FAILED"
   ls -la mobile/android/app/src/main/jniLibs/x86_64/ 2>/dev/null || echo "no x86_64 jniLibs"
-  # 2) JS deps + native project + debug APK
-  cd mobile
-  npm ci --legacy-peer-deps || npm install --legacy-peer-deps || echo "npm-FAILED"
-  npx expo prebuild --platform android --no-install || echo "prebuild-FAILED"
-  # keep gradle within the box's RAM
-  mkdir -p android && printf 'org.gradle.jvmargs=-Xmx4g\norg.gradle.daemon=false\n' >> android/gradle.properties
-  ( cd android && ./gradlew :app:assembleDebug --no-daemon --stacktrace ) || echo "gradle-FAILED"
+  # 4) debug APK, gradle capped to the box RAM
+  cd mobile/android
+  printf 'org.gradle.jvmargs=-Xmx4g\norg.gradle.daemon=false\n' >> gradle.properties
+  ./gradlew :app:assembleDebug --no-daemon --stacktrace || echo "gradle-FAILED"
   find /opt/yaver/mobile/android -name '*.apk' -path '*debug*' -print
 REMOTE
 
