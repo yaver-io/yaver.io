@@ -15,7 +15,7 @@ export const blogPosts: BlogPost[] = [
     date: "2026-06-24",
     published: true,
     description:
-      "The field guide for getting a build into a tester's hands on both stores: the developer accounts you need (Apple Developer Program, Google Play Console), App Store Connect and Play Console roles, internal vs external testers, exactly how a tester downloads via TestFlight or a Play opt-in link, the API keys and service accounts that automate uploads, and Yaver's one-command path to push to both — deploy-testflight.sh and deploy-playstore.sh + upload-playstore.py.",
+      "The field guide for getting a build into a tester's hands on both stores: the developer accounts you need (Apple Developer Program, Google Play Console), App Store Connect and Play Console roles, internal vs external testers, exactly how a tester downloads via TestFlight or a Play opt-in link, the API keys and service accounts that automate uploads, and Yaver's one-command path to push to both — deploy-testflight.sh and deploy-playstore.sh + upload-playstore.py. Plus how Yaver makes the tester/build lifecycle first-class for your own and third-party apps — store_* MCP tools, a web Testers tab, and a mobile screen — driven by the App Store Connect and Google Play Developer APIs, multi-tenant and managed-cloud-ready.",
   },
   {
     slug: "yaver-sdk-developer-guide",

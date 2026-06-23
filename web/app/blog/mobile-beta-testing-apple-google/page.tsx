@@ -508,6 +508,57 @@ PLAY_STORE_KEY_FILE=keys/google-play-service-account.json \\
         </section>
 
         <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">Let Yaver run the tester loop — from MCP, the web, or your phone</h2>
+          <p>
+            Everything above is the manual store path. Yaver also makes the <em>tester and build
+            lifecycle</em> first-class, for <strong className="text-surface-100">your own apps and the
+            third-party apps you ship through Yaver</strong> — driven directly by the{" "}
+            <strong className="text-surface-100">App Store Connect API</strong> and the{" "}
+            <strong className="text-surface-100">Google Play Developer API</strong>, not by clicking
+            around two consoles. The same capability shows up three ways:
+          </p>
+          <ul className="space-y-2 list-disc pl-5">
+            <li>
+              <strong className="text-surface-100">MCP</strong> — a family of {code("store_*")} tools your
+              agent can call: {code("store_tester_list")} / {code("store_tester_invite")} /{" "}
+              {code("store_tester_remove")}, {code("store_group_list")} / {code("store_group_create")},
+              {" "}{code("store_build_list")}, and {code("store_release_promote")}. So &ldquo;invite
+              qa@acme.com to the beta and roll the latest build out&rdquo; is one instruction, not a
+              tab-switch.
+            </li>
+            <li>
+              <strong className="text-surface-100">Web</strong> — the dashboard&apos;s{" "}
+              <em>Publish → Testers</em> tab: see builds, invite/remove testers, and roll out, per store.
+            </li>
+            <li>
+              <strong className="text-surface-100">Mobile</strong> — <em>More → Store Testers</em> on the
+              Yaver app, the same actions from your phone.
+            </li>
+          </ul>
+          <p className="mt-3">
+            It&apos;s <strong className="text-surface-100">multi-tenant by construction</strong>: every
+            call carries a project, and the store credentials (the {code(".p8")} key, the Play
+            service-account JSON) are read from <em>that project&apos;s</em> encrypted vault on the agent
+            — which can be a box on your desk or a Yaver <strong className="text-surface-100">managed-cloud</strong>{" "}
+            instance. So one operator can run beta programs for many apps, each with its own keys, and no
+            secret ever touches our servers.
+          </p>
+          <Block>{`# what the agent does under the hood, per project, over the official APIs
+store_tester_invite { store: "apple",  bundleId: "com.acme.app", email: "qa@acme.com" }
+store_release_promote{ store: "apple",  bundleId: "com.acme.app" }            # assign latest build → group
+store_release_promote{ store: "google", packageName: "com.acme.app",
+                       status: "completed" }                                  # roll the internal track out`}</Block>
+          <p className="mt-3">
+            One honest limit, reflected in the tools themselves: <strong className="text-surface-100">Apple&apos;s
+            API manages individual beta testers</strong> by email; <strong className="text-surface-100">Google&apos;s
+            API manages a track&apos;s Google Groups + rollout</strong>, but the per-email internal-tester
+            list stays Console-only. So the google path binds a Google Group to the track and rolls out;
+            the apple path invites people directly. And a publish can chain straight into a rollout —
+            {" "}<em>build → upload → reach testers</em> — in a single pass.
+          </p>
+        </section>
+
+        <section>
           <h2 className="mb-3 text-xl font-semibold text-surface-100">Faster than a store cycle</h2>
           <p>
             All of the above is for shipping a <em>signed, store-distributed</em> build to people you can
