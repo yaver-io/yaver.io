@@ -91,8 +91,24 @@ trap cleanup EXIT INT TERM
 WATCHDOG_PID=$!
 disown "$WATCHDOG_PID" 2>/dev/null || true
 
-SSH_OPTS=(-i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
+SSH_OPTS=(-i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o TCPKeepAlive=yes)
 rsh() { ssh "${SSH_OPTS[@]}" "root@$IP" "$@"; }
+# rsh_script runs a remote script FILE over ssh up to N times — transient idle
+# drops ("Broken pipe" / "Operation timed out") on long quiet commands shouldn't
+# abort the whole run. A file (not a heredoc) so stdin can be re-fed each retry.
+# Phases are idempotent (toolchain checks command -v; gradle resumes; capture
+# re-runs cleanly).
+rsh_script() {
+  local n="$1" f="$2"
+  local i
+  for i in $(seq 1 "$n"); do
+    if rsh "bash -s" < "$f"; then return 0; fi
+    say "ssh phase failed (attempt $i/$n) — retrying in 20s"
+    sleep 20
+  done
+  return 1
+}
 
 # ---------------------------------------------------------------------------
 if [ -n "$BETA_BOX" ]; then
@@ -134,9 +150,11 @@ say "PHASE 2 — install x86 toolchain (docker, node, go1.26, jdk17, android sdk
 # NB: ci/remote/bootstrap.sh is hardcoded arm64 (the old cax box), so we install
 # the x86 toolchain explicitly here. Each later ssh phase sources the env file
 # this writes (non-login ssh shells don't read /etc/profile.d automatically).
-rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || die "toolchain install failed (see log)"
+cat > /tmp/yaver-shoot-phase2.sh <<'REMOTE'
   set -ex
   export DEBIAN_FRONTEND=noninteractive
+  # wait out any boot-time apt lock (unattended-upgrades) before installing.
+  for _ in $(seq 1 30); do fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break; sleep 5; done
   # swap so the gradle/kotlin daemons aren't OOM-killed mid-build (run 4 died on
   # "Gradle daemon disappeared" = OOM). Cheap insurance even on a 16GB box.
   if ! swapon --show | grep -q .; then
@@ -178,6 +196,7 @@ export PATH="$PATH:/usr/local/go/bin:/opt/android-sdk/cmdline-tools/latest/bin:/
 EOP
   echo "toolchain: $(docker --version) | $(node --version) | $(go version) | java $(java -version 2>&1|head -1)"
 REMOTE
+rsh_script 3 /tmp/yaver-shoot-phase2.sh >>"$LOG" 2>&1 || die "toolchain install failed (see log)"
 
 say "PHASE 2.5 — ensure binder_linux (redroid prereq; Hetzner's kernel often lacks a published modules-extra)"
 if rsh "modprobe binder_linux 2>/dev/null && echo HAVE" 2>/dev/null | grep -q HAVE; then
