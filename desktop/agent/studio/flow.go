@@ -410,8 +410,13 @@ func CapturePermissionVideo(ctx context.Context, surface CaptureSurface, spec Pe
 	// container, so a wrong-looking capture is debuggable from the artifacts.
 	if spec.DiagDir != "" {
 		if lr, ok := surface.Driver().(LogReader); ok {
-			if logs, lerr := lr.Logcat(ctx, 600); lerr == nil {
+			if logs, lerr := lr.Logcat(ctx, 2000); lerr == nil {
 				_ = os.WriteFile(filepath.Join(spec.DiagDir, "logcat.txt"), []byte(logs), 0o644)
+			}
+		}
+		if cr, ok := surface.Driver().(CrashReader); ok {
+			if crash, cerr := cr.CrashLog(ctx); cerr == nil {
+				_ = os.WriteFile(filepath.Join(spec.DiagDir, "crash.txt"), []byte(crash), 0o644)
 			}
 		}
 	}

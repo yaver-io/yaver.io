@@ -78,6 +78,13 @@ type LogReader interface {
 	Logcat(ctx context.Context, lines int) (string, error)
 }
 
+// CrashReader is an optional capability: a surface whose Driver can return the
+// dedicated crash buffer (the durable record of app FATALs), used by DiagDir to
+// pinpoint launch crashes that the main buffer rotates out.
+type CrashReader interface {
+	CrashLog(ctx context.Context) (string, error)
+}
+
 // App identifies the app under capture.
 type App struct {
 	Package  string // android package / iOS bundle id

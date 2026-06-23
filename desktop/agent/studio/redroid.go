@@ -322,6 +322,14 @@ func (d *redroidDriver) Logcat(ctx context.Context, lines int) (string, error) {
 	return d.s.exec(ctx, d.s.de(fmt.Sprintf("logcat -d -t %d", lines)))
 }
 
+// CrashLog returns the dedicated crash buffer (Java FATAL EXCEPTION + native
+// tombstone summaries) — small and durable, unlike the main buffer which the
+// emulator's chatty system logs rotate out. This is what pinpoints why an app
+// dies on launch.
+func (d *redroidDriver) CrashLog(ctx context.Context) (string, error) {
+	return d.s.exec(ctx, d.s.de("logcat -d -b crash"))
+}
+
 var boundsRe = regexp.MustCompile(`\[(\d+),(\d+)\]\[(\d+),(\d+)\]`)
 
 // findTextCenter parses a uiautomator dump for a node whose text/content-desc
