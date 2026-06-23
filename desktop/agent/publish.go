@@ -645,7 +645,8 @@ func (pm *PublishManager) runMobilePublish(run *PublishRun, target PublishTarget
 	if uploadErr != nil {
 		return uploadErr
 	}
-	pm.completeRun(run, fmt.Sprintf("%s uploaded", target.Kind))
+	note := pm.rolloutAfterPublish(run, target)
+	pm.completeRun(run, fmt.Sprintf("%s uploaded%s", target.Kind, note))
 	return nil
 }
 
