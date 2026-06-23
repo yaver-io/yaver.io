@@ -16,9 +16,9 @@ on:
         required: false
         default: "yaver-ci-relay-bootstrap"
       server_type:
-        description: "Hetzner server type (x86 required for redroid; 16GB+ for the RN gradle build)"
+        description: "Hetzner server type (arm64 (cax) so the app runs natively; 16GB+ for the RN gradle build)"
         required: false
-        default: "cpx42"
+        default: "cax31"
       location:
         description: "Hetzner location"
         required: false

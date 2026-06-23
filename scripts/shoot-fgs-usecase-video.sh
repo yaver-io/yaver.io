@@ -34,7 +34,7 @@ OUT_DIR="${OUT_DIR:-$REPO_ROOT/fgs-shoot-out}"
 LOG="${LOG:-$OUT_DIR/shoot.log}"
 mkdir -p "$OUT_DIR"
 
-export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cpx42}"    # x86 (redroid) + 16GB for the RN gradle build
+export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cax31}"    # arm64 (8 vCPU/16GB): the app runs NATIVELY (no x86 crash)
 export CI_SERVER_LOCATION="${CI_SERVER_LOCATION:-hel1}"
 export CI_SERVER_IMAGE="${CI_SERVER_IMAGE:-ubuntu-24.04}"
 export CI_SERVER_NAME="${CI_SERVER_NAME:-yaver-fgs-shoot-$(date +%s 2>/dev/null || echo run)}"
@@ -132,9 +132,9 @@ say "PHASE 1 — provision $CI_SERVER_NAME (want $CI_SERVER_TYPE/$CI_SERVER_LOCA
 provisioned=""
 for combo in \
   "$CI_SERVER_TYPE:$CI_SERVER_LOCATION" \
-  "cpx42:hel1" "cpx42:nbg1" "cpx42:fsn1" \
-  "cx43:nbg1" "cx43:fsn1" "cx43:hel1" \
-  "ccx23:hel1" "ccx23:nbg1"; do
+  "cax31:nbg1" "cax31:fsn1" "cax31:hel1" \
+  "cax41:nbg1" "cax41:fsn1" "cax41:hel1" \
+  "cax21:nbg1" "cax21:fsn1" "cax21:hel1"; do
   CI_SERVER_TYPE="${combo%%:*}"; CI_SERVER_LOCATION="${combo##*:}"
   export CI_SERVER_TYPE CI_SERVER_LOCATION
   say "trying $CI_SERVER_TYPE/$CI_SERVER_LOCATION"
@@ -171,11 +171,16 @@ cat > /tmp/yaver-shoot-phase2.sh <<'REMOTE'
   systemctl enable --now docker || true
   # node 20
   command -v node >/dev/null || { curl -fsSL https://deb.nodesource.com/setup_20.x | bash - ; apt-get install -y -qq nodejs ; }
-  # go 1.26 (amd64) — agent go.mod requires 1.26
+  # arch-aware: arm64 box → arm64 Go + arm64 APK (the app runs NATIVELY, no x86
+  # crash, no NDK cross-compile needed). x86 box → amd64 + NDK (legacy path).
+  ARCH="$(uname -m)"
+  if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then GOARCH=arm64; TARGET_ABI=arm64-v8a; else GOARCH=amd64; TARGET_ABI=x86_64; fi
+  echo "box arch=$ARCH → GOARCH=$GOARCH TARGET_ABI=$TARGET_ABI"
+  # go 1.26 (matching arch) — agent go.mod requires 1.26
   /usr/local/go/bin/go version 2>/dev/null | grep -q go1.26 || \
-    curl -fsSL https://go.dev/dl/go1.26.1.linux-amd64.tar.gz | tar -C /usr/local -xz
+    curl -fsSL "https://go.dev/dl/go1.26.1.linux-${GOARCH}.tar.gz" | tar -C /usr/local -xz
   ln -sf /usr/local/go/bin/go /usr/local/bin/go
-  # android sdk: cmdline-tools → platform-tools + platform-35 + build-tools + ndk
+  # android sdk: cmdline-tools + platform + build-tools (+ ndk ONLY for x86 cross-compile)
   export ANDROID_HOME=/opt/android-sdk
   mkdir -p "$ANDROID_HOME/cmdline-tools"
   if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
@@ -185,15 +190,16 @@ cat > /tmp/yaver-shoot-phase2.sh <<'REMOTE'
   fi
   SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
   yes | "$SDKM" --licenses >/dev/null 2>&1 || true
-  "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006" >/dev/null 2>&1 || \
-    "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
-  # NB trailing slash: build-android-sandbox.sh builds CC as "${ANDROID_NDK_HOME}toolchains/..."
-  cat >/etc/profile.d/yaver-shoot.sh <<'EOP'
-export ANDROID_HOME=/opt/android-sdk
-export ANDROID_SDK_ROOT=/opt/android-sdk
-export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.1.12297006/
-export PATH="$PATH:/usr/local/go/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools"
-EOP
+  NDK_PKG=""; [ "$TARGET_ABI" = "x86_64" ] && NDK_PKG="ndk;27.1.12297006"
+  "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" $NDK_PKG >/dev/null 2>&1 || \
+    "$SDKM" "platform-tools" "platforms;android-35" "build-tools;35.0.0" $NDK_PKG
+  {
+    echo "export ANDROID_HOME=/opt/android-sdk"
+    echo "export ANDROID_SDK_ROOT=/opt/android-sdk"
+    echo "export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.1.12297006/"
+    echo "export TARGET_ABI=$TARGET_ABI"
+    echo 'export PATH="$PATH:/usr/local/go/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools"'
+  } > /etc/profile.d/yaver-shoot.sh
   echo "toolchain: $(docker --version) | $(node --version) | $(go version) | java $(java -version 2>&1|head -1)"
 REMOTE
 rsh_script 3 /tmp/yaver-shoot-phase2.sh >>"$LOG" 2>&1 || die "toolchain install failed (see log)"
@@ -261,13 +267,13 @@ cat > /tmp/yaver-shoot-phase4.sh <<'REMOTE'
   # 3) cross-compile libyaver(x86_64)+proot into jniLibs/x86_64 AFTER prebuild
   #    (prebuild --clean would otherwise wipe them).
   cd /opt/yaver
-  ABI=x86_64 bash scripts/build-android-sandbox.sh || echo "sandbox-payload-FAILED"
-  ls -la mobile/android/app/src/main/jniLibs/x86_64/ 2>/dev/null || echo "no x86_64 jniLibs"
+  ABI="${TARGET_ABI:-arm64-v8a}" bash scripts/build-android-sandbox.sh || echo "sandbox-payload-FAILED"
+  ls -la "mobile/android/app/src/main/jniLibs/${TARGET_ABI:-arm64-v8a}/" 2>/dev/null || echo "no ${TARGET_ABI} jniLibs"
   # 4) debug APK, gradle capped to the box RAM
   cd mobile/android
   # bound memory: heap + single worker + no parallel + no RN per-arch duplication
   # (we only need x86_64) to avoid the OOM that killed run 4.
-  printf 'org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\norg.gradle.daemon=false\norg.gradle.parallel=false\norg.gradle.workers.max=2\nreactNativeArchitectures=x86_64\n' >> gradle.properties
+  printf 'org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g\norg.gradle.daemon=false\norg.gradle.parallel=false\norg.gradle.workers.max=2\nreactNativeArchitectures=%s\n' "${TARGET_ABI:-arm64-v8a}" >> gradle.properties
   ./gradlew :app:assembleDebug --no-daemon --stacktrace --max-workers=2 || echo "gradle-FAILED"
   find /opt/yaver/mobile/android -name '*.apk' -path '*debug*' -print
 REMOTE
