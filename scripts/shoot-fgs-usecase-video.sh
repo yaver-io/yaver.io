@@ -65,8 +65,15 @@ cleanup() {
   if [ -n "$BETA_BOX" ]; then
     # Persistent beta box: POWER OFF, never delete (box+data persist).
     say "cleanup (exit=$code) — powering OFF $BETA_BOX (NOT deleting)"
-    hcloud server poweroff "$BETA_BOX" >>"$LOG" 2>&1 || say "poweroff returned nonzero"
-    say "cleanup done"
+    # retry: the box can be transiently "locked" right after a power action.
+    for i in 1 2 3 4 5; do
+      if hcloud server poweroff "$BETA_BOX" >>"$LOG" 2>&1; then break; fi
+      say "poweroff attempt $i locked/failed — retrying in 10s"
+      sleep 10
+    done
+    # verify it ends up off (never leave the beta box running)
+    st="$(hcloud server list -o noheader -o columns=name,status 2>/dev/null | awk -v n="$BETA_BOX" '$1==n{print $2}')"
+    say "cleanup done — $BETA_BOX status=${st:-unknown}"
     return
   fi
   say "cleanup (exit=$code) — deleting box $CI_SERVER_NAME"
@@ -97,6 +104,10 @@ if [ -n "$BETA_BOX" ]; then
     sleep 4
   done
   [ -n "$IP" ] || die "could not resolve/reach $BETA_BOX"
+  # sync-repo.sh + other helpers read the IP from this file — write the beta IP
+  # so they don't use a stale ephemeral-box IP from a previous run.
+  mkdir -p "$REPO_ROOT/ci/.artifacts"
+  echo "$IP" > "$REPO_ROOT/ci/.artifacts/server-ip"
   say "beta box ip=$IP"
 else
 say "PHASE 1 — provision $CI_SERVER_NAME (want $CI_SERVER_TYPE/$CI_SERVER_LOCATION; will fall back)"
