@@ -147,3 +147,67 @@ func encodePhoneTarballB64(data []byte) string {
 func decodePhoneTarballB64(data string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(data)
 }
+
+func TestMCPPhoneProjectDesignPatchAndGet(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Design Test", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Patch: move quickadd below list, push the title down, enable reorder.
+	patch := `{"slug":"` + p.Slug + `","patches":[` +
+		`{"op":"move","nodeId":"quickadd","beforeId":""},` +
+		`{"op":"set","nodeId":"title","props":{"marginTop":12}},` +
+		`{"op":"enable","nodeId":"list","affordance":"reorder"}` +
+		`]}`
+	handled, result := dispatchPhoneMCP(nil, "phone_project_design_patch", json.RawMessage(patch))
+	if !handled {
+		t.Fatal("expected phone_project_design_patch to be handled")
+	}
+	var patched struct {
+		Slug   string       `json:"slug"`
+		Design *PhoneDesign `json:"design"`
+	}
+	decodeMCPJSONResult(t, result, &patched)
+	if patched.Design == nil {
+		t.Fatal("expected design after patch")
+	}
+	if len(patched.Design.Layout) == 0 || patched.Design.Layout[len(patched.Design.Layout)-1] != "quickadd" {
+		t.Fatalf("expected quickadd moved to end, got layout %v", patched.Design.Layout)
+	}
+	if patched.Design.UI["title"].MarginTop != 12 {
+		t.Fatalf("expected title marginTop=12, got %d", patched.Design.UI["title"].MarginTop)
+	}
+	if !patched.Design.UI["list"].Reorderable {
+		t.Fatal("expected list reorderable enabled")
+	}
+
+	// Get: must read back the same persisted design (round-trips through app.yaml).
+	handled, result = dispatchPhoneMCP(nil, "phone_project_design_get", json.RawMessage(`{"slug":"`+p.Slug+`"}`))
+	if !handled {
+		t.Fatal("expected phone_project_design_get to be handled")
+	}
+	var got struct {
+		Design *PhoneDesign `json:"design"`
+	}
+	decodeMCPJSONResult(t, result, &got)
+	if got.Design == nil || got.Design.UI["title"].MarginTop != 12 {
+		t.Fatalf("design did not persist: %+v", got.Design)
+	}
+
+	// Widget list exposes the curated core nodes.
+	handled, result = dispatchPhoneMCP(nil, "phone_project_widget_list", json.RawMessage(`{"slug":"`+p.Slug+`"}`))
+	if !handled {
+		t.Fatal("expected phone_project_widget_list to be handled")
+	}
+	var wl struct {
+		Widgets []struct {
+			NodeID string `json:"nodeId"`
+		} `json:"widgets"`
+	}
+	decodeMCPJSONResult(t, result, &wl)
+	if len(wl.Widgets) != 4 {
+		t.Fatalf("expected 4 core widgets, got %d", len(wl.Widgets))
+	}
+}

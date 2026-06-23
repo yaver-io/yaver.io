@@ -17,6 +17,10 @@ import { useDevices, type Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
 import { useAgentConnected } from "@/lib/sandbox/useAgentConnected";
 import BrowserSandbox from "./BrowserSandbox";
+import { DesignStudioPanel, type DesignBackend } from "./DesignStudio";
+import { attachAgentBridge } from "@/lib/sandbox/agentDataBridge";
+import { draftDesignPatch } from "@/lib/sandbox/designChat";
+import { gatewayConfigured } from "@/lib/sandbox/gateway";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "@/lib/conversation-import";
 import { getSelfHostedRuntimeBaseUrl, getSelfHostedRuntimeLabel, getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 
@@ -105,10 +109,44 @@ export default function PhoneProjectsView() {
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [insertJSON, setInsertJSON] = useState("{}");
   const [promoting, setPromoting] = useState<string | null>(null);
+  const [showDesign, setShowDesign] = useState(false);
 
   // Deploy state (roadmap §Wedge Demo)
   const { token } = useAuth();
   const { devices } = useDevices(token);
+
+  // Agent-relay backend for the shared design studio: schema/app + design come
+  // from the connected agent over HTTP; edits persist into the project's app.yaml.
+  const designBackend = useMemo<DesignBackend | null>(() => {
+    const slug = selected?.slug;
+    if (!slug) return null;
+    return {
+      loadSchemaApp: async () => {
+        const p = await agentClient.getPhoneProject(slug);
+        if (!p) return null;
+        return { schema: p.schema ?? { tables: [] }, app: p.app ?? {} };
+      },
+      attachData: (onMutate) => attachAgentBridge(slug, { onMutate }),
+      loadDesign: async () => (await agentClient.getPhoneDesign(slug)) ?? {},
+      saveDesign: async (d) => {
+        await agentClient.setPhoneDesign(slug, d);
+      },
+    };
+  }, [selected?.slug]);
+
+  const designColumns = useMemo(() => {
+    const t = selected?.schema?.tables?.find((x) => x.name === activeTable);
+    return t ? t.columns.map((cc) => cc.name) : [];
+  }, [selected, activeTable]);
+
+  const designAi = useMemo(
+    () =>
+      gatewayConfigured() && token
+        ? (text: string, ctx?: { nodeId: string; kind: string }) => draftDesignPatch(text, token, ctx)
+        : undefined,
+    [token],
+  );
+
   // Browser-local sandbox vs agent-relay view. Default to local when no agent
   // is connected; a connected user can still opt into the browser sandbox.
   const agentConnected = useAgentConnected();
@@ -662,6 +700,12 @@ export default function PhoneProjectsView() {
                 </div>
                 <div className="flex gap-2">
                   <button
+                    onClick={() => setShowDesign((v) => !v)}
+                    className="rounded border border-indigo-500 px-3 py-1.5 text-sm text-indigo-300 hover:bg-indigo-500/10"
+                  >
+                    {showDesign ? "Hide design studio" : "Design studio"}
+                  </button>
+                  <button
                     onClick={() => void doExport(selected.slug)}
                     className="rounded border border-surface-700 px-3 py-1.5 text-sm text-surface-200 hover:bg-surface-800"
                   >
@@ -675,6 +719,18 @@ export default function PhoneProjectsView() {
                   </button>
                 </div>
               </div>
+
+              {showDesign && designBackend ? (
+                <DesignStudioPanel
+                  key={selected.slug}
+                  backend={designBackend}
+                  columns={designColumns}
+                  aiDraft={designAi}
+                  onDataMutate={() => {
+                    if (activeTable) void switchTable(activeTable);
+                  }}
+                />
+              ) : null}
 
               <div>
                 <div className="mb-2 text-xs uppercase tracking-wide text-surface-500">Tables</div>

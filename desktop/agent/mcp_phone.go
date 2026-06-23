@@ -59,6 +59,41 @@ func phoneProjectMCPTools() []map[string]interface{} {
 			},
 		},
 		{
+			"name":        "phone_project_widget_list",
+			"description": "List the addressable UI widget nodes of a phone project's app (the mini-figma layer) with their current overrides. Node ids: nav, title, quickadd, list. Use this before phone_project_design_patch to see what you can change.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"slug"},
+				"properties": map[string]interface{}{
+					"slug": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "phone_project_design_get",
+			"description": "Get the mini-figma design layer (layout order + per-node overrides) for a phone project's app.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"slug"},
+				"properties": map[string]interface{}{
+					"slug": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "phone_project_design_patch",
+			"description": "Edit the app layout/design WITHOUT touching schema or data. Pass either `patches` (preferred) or a full `design` object. Node ids: nav, title, quickadd, list. patches[] shapes: {\"op\":\"set\",\"nodeId\":\"quickadd\",\"props\":{\"marginTop\":16,\"hidden\":false,\"title\":\"...\",\"reorderable\":true,\"swipeDelete\":true}} | {\"op\":\"move\",\"nodeId\":\"quickadd\",\"beforeId\":\"list\"} (beforeId empty = end) | {\"op\":\"enable\",\"nodeId\":\"list\",\"affordance\":\"reorder|swipe\"}. This is the spec-patch seam — it never collides with the app's own drag.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"slug"},
+				"properties": map[string]interface{}{
+					"slug":    map[string]interface{}{"type": "string"},
+					"patches": map[string]interface{}{"type": "array", "description": "PhoneDesignPatch[] — preferred"},
+					"design":  map[string]interface{}{"type": "object", "description": "Full PhoneDesign {layout,ui} — replaces the design layer"},
+				},
+			},
+		},
+		{
 			"name":        "phone_project_schema",
 			"description": "Apply a declarative schema update to a phone project. Additive only — adds new tables / columns / indexes. Use the PhoneSchema shape: {tables:[{name,columns:[{name,type,primary,required,unique,default}], indexes:[{columns,unique}]}]}. Column types: text|int|bool|real|timestamp|json|uuid. Defaults: uuid|now|<literal>.",
 			"inputSchema": map[string]interface{}{
@@ -233,6 +268,96 @@ func dispatchPhoneMCP(s *HTTPServer, name string, arguments json.RawMessage) (bo
 			return true, mcpToolError(err.Error())
 		}
 		return true, mcpToolResult(fmt.Sprintf("Deleted phone project %s.", args.Slug))
+
+	case "phone_project_widget_list":
+		var args struct {
+			Slug string `json:"slug"`
+		}
+		_ = json.Unmarshal(arguments, &args)
+		if args.Slug == "" {
+			return true, mcpToolError("slug is required")
+		}
+		p, err := LoadPhoneProject(args.Slug)
+		if err != nil {
+			return true, mcpToolError(err.Error())
+		}
+		var ui map[string]PhoneNodeUI
+		if p.App != nil && p.App.Design != nil {
+			ui = p.App.Design.UI
+		}
+		// The curated core nodes the renderer stamps today.
+		core := []struct {
+			ID, Kind, Label string
+		}{
+			{"nav", "Nav", "Navigation"},
+			{"title", "Header", "Header"},
+			{"quickadd", "QuickAdd", "Quick add"},
+			{"list", "List", "List"},
+		}
+		widgets := make([]map[string]interface{}, 0, len(core))
+		for _, w := range core {
+			entry := map[string]interface{}{"nodeId": w.ID, "kind": w.Kind, "label": w.Label}
+			if ui != nil {
+				if u, ok := ui[w.ID]; ok {
+					entry["props"] = u
+				}
+			}
+			widgets = append(widgets, entry)
+		}
+		return true, mcpToolJSON(map[string]interface{}{"slug": args.Slug, "widgets": widgets})
+
+	case "phone_project_design_get":
+		var args struct {
+			Slug string `json:"slug"`
+		}
+		_ = json.Unmarshal(arguments, &args)
+		if args.Slug == "" {
+			return true, mcpToolError("slug is required")
+		}
+		p, err := LoadPhoneProject(args.Slug)
+		if err != nil {
+			return true, mcpToolError(err.Error())
+		}
+		var design *PhoneDesign
+		if p.App != nil {
+			design = p.App.Design
+		}
+		if design == nil {
+			design = &PhoneDesign{}
+		}
+		return true, mcpToolJSON(map[string]interface{}{"slug": args.Slug, "design": design})
+
+	case "phone_project_design_patch":
+		var args struct {
+			Slug    string             `json:"slug"`
+			Patches []PhoneDesignPatch `json:"patches"`
+			Design  *PhoneDesign       `json:"design"`
+		}
+		_ = json.Unmarshal(arguments, &args)
+		if args.Slug == "" {
+			return true, mcpToolError("slug is required")
+		}
+		if len(args.Patches) == 0 && args.Design == nil {
+			return true, mcpToolError("provide patches[] or a design object")
+		}
+		dir, err := PhoneProjectDir(args.Slug)
+		if err != nil {
+			return true, mcpToolError(err.Error())
+		}
+		app, err := loadPhoneApp(dir)
+		if err != nil || app == nil {
+			app = &PhoneAppSpec{}
+		}
+		if args.Design != nil {
+			app.Design = args.Design
+		}
+		if len(args.Patches) > 0 {
+			app.Design = applyPhoneDesignPatches(app.Design, args.Patches)
+		}
+		if err := savePhoneApp(dir, app); err != nil {
+			return true, mcpToolError(err.Error())
+		}
+		return true, mcpToolJSON(map[string]interface{}{"slug": args.Slug, "design": app.Design})
 
 	case "phone_project_schema":
 		var args struct {

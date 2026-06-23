@@ -29,6 +29,7 @@ func (s *HTTPServer) registerPhoneRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/phone/projects/query", s.auth(s.handlePhoneQuery))
 	mux.HandleFunc("/phone/projects/export", s.auth(s.handlePhoneExport))
 	mux.HandleFunc("/phone/projects/promote", s.auth(s.handlePhonePromote))
+	mux.HandleFunc("/phone/projects/design", s.auth(s.handlePhoneDesign))
 	mux.HandleFunc("/phone/projects/receive", s.auth(s.handlePhoneReceive))
 	mux.HandleFunc("/phone/projects/share", s.auth(s.handlePhoneShare))
 	// Join is intentionally PUBLIC: a friend on a different account (or none)
@@ -146,6 +147,69 @@ func (s *HTTPServer) handlePhoneSchema(w http.ResponseWriter, r *http.Request) {
 		}
 		p, _ := LoadPhoneProject(body.Slug)
 		writeJSON(w, http.StatusOK, p)
+	default:
+		jsonError(w, http.StatusMethodNotAllowed, "GET or POST")
+	}
+}
+
+// handlePhoneDesign reads (GET) or patches (POST) the mini-figma design layer of
+// a phone project's app — the same spec-patch seam the MCP verbs and the local
+// web sandbox use, so design edits work over the relay too.
+func (s *HTTPServer) handlePhoneDesign(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		slug := r.URL.Query().Get("slug")
+		if slug == "" {
+			jsonError(w, http.StatusBadRequest, "slug required")
+			return
+		}
+		p, err := LoadPhoneProject(slug)
+		if err != nil {
+			jsonError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		var design *PhoneDesign
+		if p.App != nil {
+			design = p.App.Design
+		}
+		if design == nil {
+			design = &PhoneDesign{}
+		}
+		writeJSON(w, http.StatusOK, design)
+	case http.MethodPost:
+		var body struct {
+			Slug    string             `json:"slug"`
+			Patches []PhoneDesignPatch `json:"patches"`
+			Design  *PhoneDesign       `json:"design"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+			return
+		}
+		if body.Slug == "" || (len(body.Patches) == 0 && body.Design == nil) {
+			jsonError(w, http.StatusBadRequest, "slug and patches/design required")
+			return
+		}
+		dir, err := PhoneProjectDir(body.Slug)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		app, err := loadPhoneApp(dir)
+		if err != nil || app == nil {
+			app = &PhoneAppSpec{}
+		}
+		if body.Design != nil {
+			app.Design = body.Design
+		}
+		if len(body.Patches) > 0 {
+			app.Design = applyPhoneDesignPatches(app.Design, body.Patches)
+		}
+		if err := savePhoneApp(dir, app); err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, app.Design)
 	default:
 		jsonError(w, http.StatusMethodNotAllowed, "GET or POST")
 	}

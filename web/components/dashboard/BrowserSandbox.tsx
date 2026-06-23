@@ -7,8 +7,8 @@
 // binary, no cloud required until the user deploys. Used when no agent is
 // connected; the agent-relay PhoneProjectsView handles the connected case.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PhoneAppSpec, PhoneProject, PhoneSchema } from "@/lib/agent-client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { PhoneProject } from "@/lib/agent-client";
 import { useAuth } from "@/lib/use-auth";
 import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 import {
@@ -18,17 +18,20 @@ import {
   deleteLocalRow,
   exportLocalBundle,
   getLocalAppAndSchema,
+  getLocalDesign,
   getLocalProject,
   insertLocalRow,
   listLocalProjects,
   listLocalTables,
   listLocalTemplates,
+  setLocalDesign,
 } from "@/lib/sandbox/localProjects";
 import { createServerlessShare, deployLocalProjectToCloud } from "@/lib/sandbox/deploy";
 import { draftProjectFromPrompt } from "@/lib/sandbox/aiDraft";
+import { draftDesignPatch } from "@/lib/sandbox/designChat";
 import { gatewayConfigured } from "@/lib/sandbox/gateway";
-import { buildPreviewSrcdoc } from "@/lib/sandbox/preview";
 import { attachSandboxBridge } from "@/lib/sandbox/dataBridge";
+import { DesignStudioPanel, type DesignBackend } from "@/components/dashboard/DesignStudio";
 
 function formatBytes(n: number): string {
   if (!n) return "0 B";
@@ -42,49 +45,6 @@ function clean(e: unknown, fallback: string): string {
   return raw.trim() && raw.trim().length <= 200 ? raw.trim() : fallback;
 }
 
-// ── Live preview (esbuild bundle in a sandboxed iframe + data bridge) ─────────
-function LivePreview({ slug, onMutate }: { slug: string; onMutate: () => void }) {
-  const [srcDoc, setSrcDoc] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-
-  useEffect(() => {
-    let detach: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      try {
-        const sa = await getLocalAppAndSchema(slug);
-        if (!sa) throw new Error("project not found");
-        const doc = await buildPreviewSrcdoc(sa.schema, sa.app);
-        if (cancelled) return;
-        detach = attachSandboxBridge(slug, { onMutate });
-        setSrcDoc(doc);
-      } catch (e) {
-        if (!cancelled) setErr(clean(e, "Preview failed to build."));
-      }
-    })();
-    return () => {
-      cancelled = true;
-      detach?.();
-    };
-  }, [slug, onMutate]);
-
-  if (err) {
-    return <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{err}</div>;
-  }
-  if (!srcDoc) {
-    return <div className="rounded border border-surface-800 bg-surface-950 p-4 text-sm text-surface-500">Compiling preview…</div>;
-  }
-  return (
-    <iframe
-      ref={iframeRef}
-      title="App preview"
-      sandbox="allow-scripts"
-      srcDoc={srcDoc}
-      className="h-[480px] w-full rounded border border-surface-800 bg-white dark:bg-surface-950"
-    />
-  );
-}
 
 export default function BrowserSandbox() {
   const { token } = useAuth();
@@ -283,6 +243,32 @@ export default function BrowserSandbox() {
   const onPreviewMutate = useCallback(() => {
     if (selected && activeTable) void refreshTable(selected.slug, activeTable);
   }, [selected, activeTable, refreshTable]);
+
+  const activeColumns = useMemo(() => {
+    const t = selected?.schema?.tables?.find((x) => x.name === activeTable);
+    return t ? t.columns.map((c) => c.name) : [];
+  }, [selected, activeTable]);
+
+  // The browser-local backend for the shared design studio. Stable per slug so
+  // the studio reloads design + preview when the selected project changes.
+  const designBackend = useMemo<DesignBackend | null>(() => {
+    const slug = selected?.slug;
+    if (!slug) return null;
+    return {
+      loadSchemaApp: () => getLocalAppAndSchema(slug),
+      attachData: (onMutate) => attachSandboxBridge(slug, { onMutate }),
+      loadDesign: async () => (await getLocalDesign(slug)) ?? {},
+      saveDesign: (d) => setLocalDesign(slug, d),
+    };
+  }, [selected?.slug]);
+
+  const designAi = useMemo(
+    () =>
+      gatewayConfigured() && token
+        ? (text: string, ctx?: { nodeId: string; kind: string }) => draftDesignPatch(text, token, ctx)
+        : undefined,
+    [token],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -490,7 +476,15 @@ export default function BrowserSandbox() {
                 </div>
               ) : null}
 
-              {showPreview ? <LivePreview slug={selected.slug} onMutate={onPreviewMutate} /> : null}
+              {showPreview && designBackend ? (
+                <DesignStudioPanel
+                  key={selected.slug}
+                  backend={designBackend}
+                  columns={activeColumns}
+                  aiDraft={designAi}
+                  onDataMutate={onPreviewMutate}
+                />
+              ) : null}
 
               <div>
                 <div className="mb-2 text-xs uppercase tracking-wide text-surface-500">Tables</div>

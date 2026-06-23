@@ -105,6 +105,133 @@ type PhoneAppSpec struct {
 	Summary       string            `yaml:"summary,omitempty" json:"summary,omitempty"`
 	PrimaryEntity string            `yaml:"primaryEntity,omitempty" json:"primaryEntity,omitempty"`
 	Screens       []PhoneScreenSpec `yaml:"screens,omitempty" json:"screens,omitempty"`
+	// Design is the mini-figma layer (layout order + per-node overrides). It rides
+	// in app.yaml so it persists, ships in the bundle, and renders identically on
+	// web and mobile. See docs/yaver-mini-figma-direct-manipulation.md.
+	Design *PhoneDesign `yaml:"design,omitempty" json:"design,omitempty"`
+}
+
+// PhoneNodeUI is a per-widget override keyed by the renderer's data-ynode id
+// (e.g. "quickadd", "title", "list"). Reorderable/SwipeDelete are END-USER
+// (runtime) affordances the builder opts into ("yaver draggable mode or not").
+type PhoneNodeUI struct {
+	Hidden      bool              `yaml:"hidden,omitempty" json:"hidden,omitempty"`
+	MarginTop   int               `yaml:"marginTop,omitempty" json:"marginTop,omitempty"`
+	Title       string            `yaml:"title,omitempty" json:"title,omitempty"`
+	Reorderable bool              `yaml:"reorderable,omitempty" json:"reorderable,omitempty"`
+	SwipeDelete bool              `yaml:"swipeDelete,omitempty" json:"swipeDelete,omitempty"`
+	Board       *PhoneBoardNodeUI `yaml:"board,omitempty" json:"board,omitempty"`
+}
+
+// PhoneBoardNodeUI turns a list node into a kanban board grouped by a column.
+type PhoneBoardNodeUI struct {
+	GroupBy string `yaml:"groupBy" json:"groupBy"`
+}
+
+// PhoneDesign is the mini-figma design layer: top-to-bottom widget order plus
+// per-node overrides.
+type PhoneDesign struct {
+	Layout []string               `yaml:"layout,omitempty" json:"layout,omitempty"`
+	UI     map[string]PhoneNodeUI `yaml:"ui,omitempty" json:"ui,omitempty"`
+}
+
+// PhoneDesignPatch is one structured edit to the design layer — the lingua
+// franca shared by the overlay, the inspector, and AI prompting (web + MCP).
+//
+//	op "set"    → merge Props into UI[NodeID]
+//	op "move"   → reorder NodeID before BeforeID (empty = end) in Layout
+//	op "enable" → turn on a runtime affordance ("reorder" | "swipe")
+type PhoneDesignPatch struct {
+	Op         string       `json:"op"`
+	NodeID     string       `json:"nodeId"`
+	Props      *PhoneNodeUI `json:"props,omitempty"`
+	BeforeID   string       `json:"beforeId,omitempty"`
+	Affordance string       `json:"affordance,omitempty"`
+}
+
+// applyPhoneDesignPatches applies patches to a design, returning the new design.
+// Mirrors the web host's applyDesignPatches so both surfaces converge.
+func applyPhoneDesignPatches(d *PhoneDesign, patches []PhoneDesignPatch) *PhoneDesign {
+	if d == nil {
+		d = &PhoneDesign{}
+	}
+	if d.UI == nil {
+		d.UI = map[string]PhoneNodeUI{}
+	}
+	for _, p := range patches {
+		if p.NodeID == "" {
+			continue
+		}
+		switch p.Op {
+		case "set":
+			if p.Props == nil {
+				continue
+			}
+			cur := d.UI[p.NodeID]
+			if p.Props.Hidden {
+				cur.Hidden = true
+			}
+			if p.Props.MarginTop != 0 {
+				cur.MarginTop = p.Props.MarginTop
+			}
+			if p.Props.Title != "" {
+				cur.Title = p.Props.Title
+			}
+			if p.Props.Reorderable {
+				cur.Reorderable = true
+			}
+			if p.Props.SwipeDelete {
+				cur.SwipeDelete = true
+			}
+			if p.Props.Board != nil {
+				cur.Board = p.Props.Board
+			}
+			d.UI[p.NodeID] = cur
+		case "move":
+			d.Layout = reorderPhoneLayout(d.Layout, p.NodeID, p.BeforeID)
+		case "enable":
+			cur := d.UI[p.NodeID]
+			if p.Affordance == "reorder" {
+				cur.Reorderable = true
+			} else if p.Affordance == "swipe" {
+				cur.SwipeDelete = true
+			}
+			d.UI[p.NodeID] = cur
+		}
+	}
+	return d
+}
+
+// reorderPhoneLayout moves nodeID to just before beforeID (empty beforeID = end).
+// If the layout is empty it seeds the canonical top-level order first.
+func reorderPhoneLayout(order []string, nodeID, beforeID string) []string {
+	if len(order) == 0 {
+		order = []string{"nav", "title", "quickadd", "list"}
+	}
+	out := make([]string, 0, len(order))
+	for _, id := range order {
+		if id != nodeID {
+			out = append(out, id)
+		}
+	}
+	if beforeID == "" {
+		return append(out, nodeID)
+	}
+	idx := -1
+	for i, id := range out {
+		if id == beforeID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return append(out, nodeID)
+	}
+	res := make([]string, 0, len(out)+1)
+	res = append(res, out[:idx]...)
+	res = append(res, nodeID)
+	res = append(res, out[idx:]...)
+	return res
 }
 
 // PhoneProject is the full metadata of a mini-backend project.

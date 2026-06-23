@@ -167,6 +167,22 @@ export async function getLocalAppAndSchema(
   return { schema: rec.schema ?? { tables: [] }, app: rec.app ?? {} };
 }
 
+/** Read the persisted mini-figma design layer (layout + per-node overrides). */
+export async function getLocalDesign(slug: string): Promise<PhoneAppSpec["design"]> {
+  const rec = await getProject(slug);
+  return rec?.app?.design ?? {};
+}
+
+/** Persist the design layer onto the app spec. No SQLite change — it rides in
+ * app.yaml, so it survives reloads AND ships in the .yaver.tgz on deploy. */
+export async function setLocalDesign(slug: string, design: NonNullable<PhoneAppSpec["design"]>): Promise<void> {
+  const rec = await getProject(slug);
+  if (!rec) throw new Error("project not found");
+  rec.app = { ...(rec.app ?? {}), design };
+  rec.updatedAt = new Date().toISOString();
+  await putProject(rec);
+}
+
 export async function listLocalTables(slug: string): Promise<Array<{ name: string; rowCount?: number }>> {
   const rec = await getProject(slug);
   if (!rec) return [];

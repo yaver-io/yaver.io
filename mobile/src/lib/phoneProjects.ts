@@ -92,10 +92,26 @@ export interface PhoneScreenSpec {
   actions?: PhoneScreenAction[];
 }
 
+// Mini-figma design layer (see docs/yaver-mini-figma-direct-manipulation.md).
+// Authored on web/mobile sandbox; renders identically here because it rides in
+// app.yaml. Node ids the mobile renderer honors: nav, title, list.
+export interface PhoneNodeUi {
+  hidden?: boolean;
+  marginTop?: number;
+  title?: string;
+  reorderable?: boolean;
+  swipeDelete?: boolean;
+  board?: { groupBy: string };
+}
+export interface PhoneDesign {
+  layout?: string[];
+  ui?: Record<string, PhoneNodeUi>;
+}
 export interface PhoneAppSpec {
   summary?: string;
   primaryEntity?: string;
   screens?: PhoneScreenSpec[];
+  design?: PhoneDesign;
 }
 
 export interface PhoneProject {
