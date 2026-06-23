@@ -126,21 +126,28 @@ if [ -n "$BETA_BOX" ]; then
   echo "$IP" > "$REPO_ROOT/ci/.artifacts/server-ip"
   say "beta box ip=$IP"
 else
-say "PHASE 1 — provision $CI_SERVER_NAME (want $CI_SERVER_TYPE/$CI_SERVER_LOCATION; will fall back)"
-# Hetzner capacity/availability varies by type×location (cpx42 got deprecated,
-# arm cax is often sold out). Try a few 16GB x86 types across locations.
+say "PHASE 1 — provision $CI_SERVER_NAME (arm64 cax; will poll for capacity — cax is often sold out)"
+# arm64 cax is REQUIRED (the app crashes on x86) but frequently sold out. Poll
+# the type×location set with backoff for ~12 min — capacity frees up
+# intermittently. resource_unavailable is transient, not a hard failure.
 provisioned=""
-for combo in \
-  "$CI_SERVER_TYPE:$CI_SERVER_LOCATION" \
-  "cax31:nbg1" "cax31:fsn1" "cax31:hel1" \
-  "cax41:nbg1" "cax41:fsn1" "cax41:hel1" \
-  "cax21:nbg1" "cax21:fsn1" "cax21:hel1"; do
-  CI_SERVER_TYPE="${combo%%:*}"; CI_SERVER_LOCATION="${combo##*:}"
-  export CI_SERVER_TYPE CI_SERVER_LOCATION
-  say "trying $CI_SERVER_TYPE/$CI_SERVER_LOCATION"
-  if bash "$HCLOUD_DIR/create-server.sh" >>"$LOG" 2>&1; then provisioned=1; break; fi
+PROV_ROUNDS="${PROV_ROUNDS:-16}"
+for round in $(seq 1 "$PROV_ROUNDS"); do
+  for combo in \
+    "$CI_SERVER_TYPE:$CI_SERVER_LOCATION" \
+    "cax31:nbg1" "cax31:fsn1" "cax31:hel1" \
+    "cax41:nbg1" "cax41:fsn1" "cax41:hel1" \
+    "cax21:nbg1" "cax21:fsn1" "cax21:hel1"; do
+    CI_SERVER_TYPE="${combo%%:*}"; CI_SERVER_LOCATION="${combo##*:}"
+    export CI_SERVER_TYPE CI_SERVER_LOCATION
+    if bash "$HCLOUD_DIR/create-server.sh" >>"$LOG" 2>&1; then
+      provisioned=1; say "got $CI_SERVER_TYPE/$CI_SERVER_LOCATION (round $round)"; break 2
+    fi
+  done
+  say "round $round: all arm64 sold out — waiting 45s for capacity"
+  sleep 45
 done
-[ -n "$provisioned" ] || die "provision failed across all type/location fallbacks"
+[ -n "$provisioned" ] || die "no arm64 capacity after $PROV_ROUNDS rounds (~12 min) — Hetzner cax sold out"
 IP="$(cat "$REPO_ROOT/ci/.artifacts/server-ip")"
 say "box ip=$IP"
 bash "$HCLOUD_DIR/wait-for-ssh.sh" >>"$LOG" 2>&1 || die "ssh never ready"
