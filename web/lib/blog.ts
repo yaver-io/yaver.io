@@ -10,6 +10,14 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "mobile-beta-testing-apple-google",
+    title: "Ship to testers: TestFlight & Google Play internal testing, end to end",
+    date: "2026-06-24",
+    published: true,
+    description:
+      "The field guide for getting a build into a tester's hands on both stores: the developer accounts you need (Apple Developer Program, Google Play Console), App Store Connect and Play Console roles, internal vs external testers, exactly how a tester downloads via TestFlight or a Play opt-in link, the API keys and service accounts that automate uploads, and Yaver's one-command path to push to both — deploy-testflight.sh and deploy-playstore.sh + upload-playstore.py.",
+  },
+  {
     slug: "yaver-sdk-developer-guide",
     title: "Embed Yaver: using yaver-sdk as a library",
     date: "2026-06-05",
