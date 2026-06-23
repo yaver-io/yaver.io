@@ -279,6 +279,7 @@ func runStudioPermissionFromJob(jobPath, outDir string) {
 		Facts:        facts,
 		StartAction:  req.StartAction,
 		MaxSec:       req.MaxSec,
+		DiagDir:      outDir, // write logcat.txt for diagnosis
 	}
 	if req.UseCase != nil {
 		cfg := buildUseCaseConfig(req.UseCase)

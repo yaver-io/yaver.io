@@ -3,6 +3,8 @@ package studio
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -82,6 +84,11 @@ type PermissionVideoSpec struct {
 	// the service is started directly (am start-foreground-service) — still valid
 	// permission-use evidence, just without the in-app tap.
 	MaxSec int
+
+	// DiagDir, when set, writes a logcat tail (logcat.txt) into this dir right
+	// before teardown — so we can diagnose why a capture looked wrong (app crash
+	// on x86 redroid, service not starting, notification suppressed, etc.).
+	DiagDir string
 
 	// UseCase, when non-nil, switches the capture from the mechanical proof
 	// (start→notify→home→stop) to a narrative that demonstrates WHY the
@@ -398,5 +405,15 @@ func CapturePermissionVideo(ctx context.Context, surface CaptureSurface, spec Pe
 		steps = UseCaseProofSteps(spec, *spec.UseCase)
 	}
 	mp4, cues, err := RunFlowRecording(ctx, surface, steps, spec.MaxSec)
+
+	// Diagnostics: capture a logcat tail BEFORE the deferred teardown removes the
+	// container, so a wrong-looking capture is debuggable from the artifacts.
+	if spec.DiagDir != "" {
+		if lr, ok := surface.Driver().(LogReader); ok {
+			if logs, lerr := lr.Logcat(ctx, 600); lerr == nil {
+				_ = os.WriteFile(filepath.Join(spec.DiagDir, "logcat.txt"), []byte(logs), 0o644)
+			}
+		}
+	}
 	return mp4, cues, j, err
 }
