@@ -219,13 +219,28 @@ REMOTE
   fi
 fi
 
-say "PHASE 3 — sync repo to box"
-bash "$HCLOUD_DIR/sync-repo.sh" >>"$LOG" 2>&1 || die "repo sync failed"
+say "PHASE 3 — sync repo on the box (git pull from GitHub — robust, no Mac↔box transfer)"
+# rsync from the Mac kept dropping on the flaky Mac↔box link. Everything is
+# committed to main, so the box pulls directly from GitHub (box→GitHub is
+# reliable). git reset --hard (no clean) preserves node_modules + caches → fast.
+cat > /tmp/yaver-shoot-phase3.sh <<'REMOTE'
+  set -ex
+  if [ -d /opt/yaver/.git ]; then
+    cd /opt/yaver
+    git fetch origin main
+    git reset --hard origin/main
+  else
+    rm -rf /opt/yaver
+    git clone https://github.com/kivanccakmak/yaver.io.git /opt/yaver
+  fi
+  git -C /opt/yaver rev-parse --short HEAD
+REMOTE
+rsh_script 3 /tmp/yaver-shoot-phase3.sh >>"$LOG" 2>&1 || die "git sync failed"
 
 say "PHASE 4 — build x86_64 sandbox payload + debug APK (heavy, ~30-45m)"
 # build-android-sandbox.sh ABI=x86_64 cross-compiles libyaver + fetches proot into
 # jniLibs/x86_64; then gradle assembleDebug bakes them + the new Kotlin in.
-rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "APK build had warnings (check log)"
+cat > /tmp/yaver-shoot-phase4.sh <<'REMOTE'
   set -x
   . /etc/profile.d/yaver-shoot.sh
   cd /opt/yaver/mobile
@@ -256,12 +271,16 @@ rsh "bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "APK build had warnings (check log
   ./gradlew :app:assembleDebug --no-daemon --stacktrace --max-workers=2 || echo "gradle-FAILED"
   find /opt/yaver/mobile/android -name '*.apk' -path '*debug*' -print
 REMOTE
+rsh_script 2 /tmp/yaver-shoot-phase4.sh >>"$LOG" 2>&1 || say "APK build had warnings (check log)"
 
 say "PHASE 5 — boot redroid, install APK, drive the use-case capture, record"
 # This phase reuses the agent's studio capture layer over the local runner ON the
 # box. The agent binary + studio package run there; we invoke the recorder with
 # the narrative use-case config. See desktop/agent/studio + ops_studio.go.
-rsh "GLM_API_KEY='${GLM_API_KEY:-${ZAI_API_KEY:-}}' YAVER_SESSION_TOKEN='${YAVER_SESSION_TOKEN:-}' SHOOT_MODE='${SHOOT_MODE:-fgs}' bash -s" <<'REMOTE' >>"$LOG" 2>&1 || say "capture phase had warnings (check log)"
+# env baked into the script file (so rsh_script can re-feed it on retry).
+{ printf "export GLM_API_KEY=%q YAVER_SESSION_TOKEN=%q SHOOT_MODE=%q\n" \
+    "${GLM_API_KEY:-${ZAI_API_KEY:-}}" "${YAVER_SESSION_TOKEN:-}" "${SHOOT_MODE:-fgs}"
+  cat <<'REMOTE'
   set -x
   . /etc/profile.d/yaver-shoot.sh
   cd /opt/yaver
@@ -306,10 +325,18 @@ JOB
   yaver-agent studio permission-video --capture --job /root/fgs-job.json --out /root/fgs-out || echo "recorder-FAILED (see log)"
   ls -la /root/fgs-out 2>/dev/null || true
 REMOTE
+} > /tmp/yaver-shoot-phase5.sh
+rsh_script 2 /tmp/yaver-shoot-phase5.sh >>"$LOG" 2>&1 || say "capture phase had warnings (check log)"
 
 say "PHASE 6 — pull artifacts"
 mkdir -p "$OUT_DIR"
-scp "${SSH_OPTS[@]}" -r "root@$IP:/root/fgs-out/*" "$OUT_DIR/" >>"$LOG" 2>&1 || say "no artifacts to pull (capture likely failed — see $LOG)"
+pulled=""
+for i in 1 2 3 4; do
+  if scp "${SSH_OPTS[@]}" -r "root@$IP:/root/fgs-out/*" "$OUT_DIR/" >>"$LOG" 2>&1; then pulled=1; break; fi
+  say "artifact pull attempt $i failed (flaky link) — retrying in 10s"
+  sleep 10
+done
+[ -n "$pulled" ] || say "no artifacts pulled (capture likely failed, or link down — see $LOG)"
 say "artifacts in $OUT_DIR:"; ls -la "$OUT_DIR" | tee -a "$LOG"
 
 say "DONE — box will be deleted by trap"
