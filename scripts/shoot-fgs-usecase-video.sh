@@ -34,7 +34,7 @@ OUT_DIR="${OUT_DIR:-$REPO_ROOT/fgs-shoot-out}"
 LOG="${LOG:-$OUT_DIR/shoot.log}"
 mkdir -p "$OUT_DIR"
 
-export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cax31}"    # arm64 (8 vCPU/16GB): the app runs NATIVELY (no x86 crash)
+export CI_SERVER_TYPE="${CI_SERVER_TYPE:-cpx42}"    # x86 (8 vCPU/16GB), always available — the app runs fine once Kotlin sources are restored
 export CI_SERVER_LOCATION="${CI_SERVER_LOCATION:-hel1}"
 export CI_SERVER_IMAGE="${CI_SERVER_IMAGE:-ubuntu-24.04}"
 export CI_SERVER_NAME="${CI_SERVER_NAME:-yaver-fgs-shoot-$(date +%s 2>/dev/null || echo run)}"
@@ -126,28 +126,21 @@ if [ -n "$BETA_BOX" ]; then
   echo "$IP" > "$REPO_ROOT/ci/.artifacts/server-ip"
   say "beta box ip=$IP"
 else
-say "PHASE 1 — provision $CI_SERVER_NAME (arm64 cax; will poll for capacity — cax is often sold out)"
-# arm64 cax is REQUIRED (the app crashes on x86) but frequently sold out. Poll
-# the type×location set with backoff for ~12 min — capacity frees up
-# intermittently. resource_unavailable is transient, not a hard failure.
+say "PHASE 1 — provision $CI_SERVER_NAME (x86; will fall back across types/regions)"
+# x86 is reliably available; the earlier "x86 crash" was actually a missing
+# Kotlin source (prebuild dropped SandboxService), now restored in PHASE 4.
 provisioned=""
-PROV_ROUNDS="${PROV_ROUNDS:-16}"
-for round in $(seq 1 "$PROV_ROUNDS"); do
-  for combo in \
-    "$CI_SERVER_TYPE:$CI_SERVER_LOCATION" \
-    "cax31:nbg1" "cax31:fsn1" "cax31:hel1" \
-    "cax41:nbg1" "cax41:fsn1" "cax41:hel1" \
-    "cax21:nbg1" "cax21:fsn1" "cax21:hel1"; do
-    CI_SERVER_TYPE="${combo%%:*}"; CI_SERVER_LOCATION="${combo##*:}"
-    export CI_SERVER_TYPE CI_SERVER_LOCATION
-    if bash "$HCLOUD_DIR/create-server.sh" >>"$LOG" 2>&1; then
-      provisioned=1; say "got $CI_SERVER_TYPE/$CI_SERVER_LOCATION (round $round)"; break 2
-    fi
-  done
-  say "round $round: all arm64 sold out — waiting 45s for capacity"
-  sleep 45
+for combo in \
+  "$CI_SERVER_TYPE:$CI_SERVER_LOCATION" \
+  "cpx42:hel1" "cpx42:nbg1" "cpx42:fsn1" \
+  "cx43:nbg1" "cx43:fsn1" "cx43:hel1" \
+  "ccx23:hel1" "ccx23:nbg1"; do
+  CI_SERVER_TYPE="${combo%%:*}"; CI_SERVER_LOCATION="${combo##*:}"
+  export CI_SERVER_TYPE CI_SERVER_LOCATION
+  say "trying $CI_SERVER_TYPE/$CI_SERVER_LOCATION"
+  if bash "$HCLOUD_DIR/create-server.sh" >>"$LOG" 2>&1; then provisioned=1; break; fi
 done
-[ -n "$provisioned" ] || die "no arm64 capacity after $PROV_ROUNDS rounds (~12 min) — Hetzner cax sold out"
+[ -n "$provisioned" ] || die "provision failed across all type/location fallbacks"
 IP="$(cat "$REPO_ROOT/ci/.artifacts/server-ip")"
 say "box ip=$IP"
 bash "$HCLOUD_DIR/wait-for-ssh.sh" >>"$LOG" 2>&1 || die "ssh never ready"
@@ -265,12 +258,19 @@ cat > /tmp/yaver-shoot-phase4.sh <<'REMOTE'
   #     FGS never started → no notification). Mirrors CLAUDE.md cold-start "restore
   #     force-tracked overlays after prebuild".
   cp android/app/src/main/AndroidManifest.xml /tmp/yaver-manifest.bak
+  # CRITICAL: back up ALL committed custom Kotlin (MainApplication, the Yaver*
+  # modules, and the sandbox/ package incl. SandboxService) — prebuild --clean
+  # regenerates android/ and DROPS them, which is why SandboxService was missing
+  # → ClassNotFoundException → no notification. Restoring just the manifest (which
+  # only *declares* the service) was the bug.
+  rm -rf /tmp/yaver-java.bak && cp -r android/app/src/main/java /tmp/yaver-java.bak
   # 2) regenerate a COMPLETE native android project (--clean: the repo only
-  #    force-tracks a few overlay files, so reuse fails at settings.gradle).
+  #    force-tracks overlay files, so reuse fails at settings.gradle).
   npx expo prebuild --platform android --clean --no-install || echo "prebuild-FAILED"
-  # 2b) restore the real manifest over the regenerated one
+  # 2b) restore the real manifest + ALL committed Kotlin sources over the regen'd ones
   cp /tmp/yaver-manifest.bak android/app/src/main/AndroidManifest.xml
-  grep -q FOREGROUND_SERVICE_SPECIAL_USE android/app/src/main/AndroidManifest.xml && echo "manifest: SandboxService restored" || echo "manifest: WARN service missing"
+  cp -r /tmp/yaver-java.bak/io android/app/src/main/java/
+  test -f android/app/src/main/java/io/yaver/mobile/sandbox/SandboxService.kt && echo "sources: SandboxService.kt restored" || echo "sources: WARN SandboxService missing"
   # 3) cross-compile libyaver(x86_64)+proot into jniLibs/x86_64 AFTER prebuild
   #    (prebuild --clean would otherwise wipe them).
   cd /opt/yaver

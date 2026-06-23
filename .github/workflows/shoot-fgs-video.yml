@@ -18,7 +18,7 @@ on:
       server_type:
         description: "Hetzner server type (arm64 (cax) so the app runs natively; 16GB+ for the RN gradle build)"
         required: false
-        default: "cax31"
+        default: "cpx42"
       location:
         description: "Hetzner location"
         required: false
