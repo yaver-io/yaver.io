@@ -47,6 +47,23 @@ If an AI coding agent is setting Yaver up for you, read the canonical machine gu
 curl -s https://yaver.io/llms.txt
 ```
 
+## Use from Claude Code, Codex, or opencode (MCP)
+
+Yaver ships an MCP server, so a coding agent can drive your machine directly. You do **not** need a global install first — `npx` pulls the server on first run. Register it once, then ask the agent to call `yaver_lazy_setup`; it surfaces the sign-in link for you to tap and pairs your phone from inside the chat.
+
+```bash
+# Claude Code
+claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp
+
+# Codex
+codex mcp add yaver -- npx -y yaver-cli yaver-mcp
+
+# opencode
+npm install -g yaver-cli && yaver mcp setup opencode
+```
+
+Already installed Yaver globally? `yaver mcp setup claude-code` (or `codex` / `opencode`) writes the same entry, and `yaver auth` auto-registers every installed runner on first sign-in. Yaver is published to the official MCP registry as `io.github.kivanccakmak/yaver`. Full tool list and HTTP/remote setup: [MCP guide](https://yaver.io/docs/mcp).
+
 ## Core Loop
 
 1. Start `yaver serve` on your own machine.

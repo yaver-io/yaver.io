@@ -220,6 +220,35 @@ export default function DownloadPage() {
         </section>
 
         <section className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
+          <h2 className="text-lg font-semibold text-surface-50">
+            Use from Claude Code, Codex, or opencode (MCP)
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-surface-400">
+            Yaver ships an MCP server. No global install needed &mdash; <code>npx</code> pulls it on
+            first run. Register it once, then ask the agent to call <code>yaver_lazy_setup</code>; it
+            surfaces the sign-in link and pairs your phone from inside the chat.
+          </p>
+          <div className="mt-5 space-y-2 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
+            <div className="text-surface-500"># Claude Code</div>
+            <div><span className="text-surface-500">$</span> <span className="select-all">claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp</span></div>
+            <div className="mt-2 text-surface-500"># Codex</div>
+            <div><span className="text-surface-500">$</span> <span className="select-all">codex mcp add yaver -- npx -y yaver-cli yaver-mcp</span></div>
+            <div className="mt-2 text-surface-500"># opencode</div>
+            <div><span className="text-surface-500">$</span> <span className="select-all">npm install -g yaver-cli && yaver mcp setup opencode</span></div>
+          </div>
+          <p className="mt-4 text-xs text-surface-500">
+            Already installed globally? <code>yaver mcp setup claude-code</code> writes the same entry,
+            and <code>yaver auth</code> auto-registers every installed runner on first sign-in.
+            Published to the official MCP registry as <code>io.github.kivanccakmak/yaver</code>. Full
+            tool list and HTTP/remote setup:{" "}
+            <Link href="/docs/mcp" className="underline hover:text-surface-300">
+              MCP guide
+            </Link>
+            .
+          </p>
+        </section>
+
+        <section className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
             Notes
           </p>

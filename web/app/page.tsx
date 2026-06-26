@@ -1335,15 +1335,22 @@ export default function HomePage() {
               </p>
 
               <div className="mt-4 rounded-lg border border-[#6366f1]/30 bg-[#6366f1]/5 p-3">
-                <p className="text-[11px] font-semibold text-[#818cf8]">Not at your dev machine?</p>
+                <p className="text-[11px] font-semibold text-[#818cf8]">Already in Claude Code, Codex, or opencode?</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-surface-400">
-                  If your coding agent (Claude Code, Codex, Cursor, Aider, …) is already running on your dev PC and you only have your phone, paste this one line into the agent chat — it will read the canonical install instructions at <Link href="/llms.txt" className="underline hover:text-surface-300">yaver.io/llms.txt</Link> and set everything up, then surface the sign-in link for you to tap.
+                  Register Yaver as an MCP server — no global install needed, <code>npx</code> pulls it on first run. Then ask the agent to call <code>yaver_lazy_setup</code>; it surfaces the sign-in link for you to tap and pairs your phone from inside the chat.
                 </p>
-                <div className="mt-2 rounded bg-surface-900 p-2">
-                  <code className="text-[11px] text-surface-200 select-all">
-                    Install yaver on this machine using the instructions at https://yaver.io/llms.txt — surface the sign-in URL to me when ready.
-                  </code>
+                <div className="mt-2 space-y-1.5 rounded bg-surface-900 p-2">
+                  <div className="text-[10px] text-surface-500"># Claude Code</div>
+                  <code className="block text-[11px] text-surface-200 select-all">claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp</code>
+                  <div className="text-[10px] text-surface-500"># Codex</div>
+                  <code className="block text-[11px] text-surface-200 select-all">codex mcp add yaver -- npx -y yaver-cli yaver-mcp</code>
+                  <div className="text-[10px] text-surface-500"># opencode</div>
+                  <code className="block text-[11px] text-surface-200 select-all">npm install -g yaver-cli && yaver mcp setup opencode</code>
                 </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-surface-500">
+                  Full tool list and remote/HTTP setup: <Link href="/docs/mcp" className="underline hover:text-surface-300">MCP guide</Link>. Other agents (Cursor, Aider, …) can paste{" "}
+                  <code className="select-all">Install yaver using https://yaver.io/llms.txt — surface the sign-in URL to me when ready.</code>
+                </p>
               </div>
             </div>
 
