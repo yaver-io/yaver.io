@@ -120,7 +120,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "continue_task",
-			"description": "Continue a stopped task with additional input/instructions.",
+			"description": "Continue a stopped or running task with additional input/instructions. Pass device_id to inject the follow-up into a task running on another device's daemon.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"task_id", "input"},
@@ -132,6 +132,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"input": map[string]interface{}{
 						"type":        "string",
 						"description": "Follow-up instructions for the task",
+					},
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional: target device whose daemon runs the task (omit for the local machine)",
 					},
 				},
 			},
@@ -857,7 +861,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "tmux_send_input",
-			"description": "Send keyboard input to an adopted tmux session. The input is sent via tmux send-keys followed by Enter.",
+			"description": "Send keyboard input to an adopted tmux session (e.g. type into a live Claude Code session running in a pane). The input is sent via tmux send-keys followed by Enter. Pass device_id to target a pane on another device.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"task_id", "input"},
@@ -869,6 +873,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"input": map[string]interface{}{
 						"type":        "string",
 						"description": "The text to send to the tmux session",
+					},
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional: target device whose daemon owns the tmux pane (omit for the local machine)",
 					},
 				},
 			},

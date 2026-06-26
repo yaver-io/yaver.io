@@ -21,6 +21,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -146,6 +147,13 @@ func runPublishStoreFacade(args []string) {
 				"Without a remote node, just run it directly (drop --queue).")
 			os.Exit(1)
 		}
+		// iOS archive needs a Mac — fail before enqueuing to a non-Mac node.
+		if targetsContain(targets, "testflight") {
+			if err := preflightTestFlightMachine(deviceID); err != nil {
+				fmt.Fprintln(os.Stderr, err.Error())
+				os.Exit(2)
+			}
+		}
 		os.Exit(enqueuePublishJobCLI(deviceID, resolvedApp, *stack, targets, *watch))
 	}
 
@@ -155,6 +163,14 @@ func runPublishStoreFacade(args []string) {
 	}
 	fmt.Fprintf(os.Stderr, "→ Publishing %s to %s on %s …\n",
 		resolvedApp, strings.Join(targets, " + "), where)
+
+	// Sync remote iOS: still needs a Mac on the other end.
+	if targetsContain(targets, "testflight") && strings.TrimSpace(*machine) != "" {
+		if err := preflightTestFlightMachine(strings.TrimSpace(*machine)); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(2)
+		}
+	}
 
 	if hasPlatformPublishTarget(targets) {
 		if strings.TrimSpace(*machine) != "" {
@@ -176,6 +192,61 @@ func runPublishStoreFacade(args []string) {
 	// way this is /deploy/ship, not a reimplementation.
 	exit := shipToAgent(cfg, resolvedApp, targets, *stack, resolvedPath, *timeout, strings.TrimSpace(*machine))
 	os.Exit(exit)
+}
+
+// machineLooksMac reports whether a MachineInfo can archive+upload iOS.
+func machineLooksMac(m MachineInfo) bool {
+	if m.Capabilities != nil && m.Capabilities.SupportsTestFlight {
+		return true
+	}
+	h := strings.ToLower(m.Platform + " " + m.OS)
+	return strings.Contains(h, "darwin") || strings.Contains(h, "mac")
+}
+
+// preflightTestFlightMachine refuses early when a normie queues an iOS
+// publish to a device that can't archive+upload (anything but a Mac with
+// Xcode). It's advisory: an unknown device is allowed through (we don't
+// block on incomplete inventory), but a clearly-Linux box is rejected with
+// the list of capable Macs so the fix is one copy-paste away.
+func preflightTestFlightMachine(deviceID string) error {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return nil
+	}
+	machines := listAllMachines(context.Background())
+	var capable []string
+	var target *MachineInfo
+	for i := range machines {
+		m := machines[i]
+		if machineLooksMac(m) {
+			capable = append(capable, fmt.Sprintf("%s (%s)", m.DeviceID, m.Name))
+		}
+		if m.DeviceID == deviceID {
+			mm := m
+			target = &mm
+		}
+	}
+	if target == nil {
+		return nil // unknown device — don't block on incomplete inventory
+	}
+	if machineLooksMac(*target) {
+		return nil
+	}
+	hint := "none registered — add a Mac (yaver auth on a macOS box) and try again"
+	if len(capable) > 0 {
+		hint = strings.Join(capable, ", ")
+	}
+	return fmt.Errorf("device %s (%s, %s) can't build for TestFlight — iOS archive+upload needs macOS + Xcode.\nTestFlight-capable Macs: %s",
+		deviceID, target.Name, target.Platform, hint)
+}
+
+func targetsContain(targets []string, want string) bool {
+	for _, t := range targets {
+		if strings.EqualFold(strings.TrimSpace(t), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasPlatformPublishTarget(targets []string) bool {

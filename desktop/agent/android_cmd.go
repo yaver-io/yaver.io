@@ -47,6 +47,13 @@ func runAndroid(args []string) {
 		runAndroidVisible(rest)
 	case "push", "run", "dev":
 		runAndroidPush(rest)
+	case "serve", "publish":
+		// Play-Store-free install serving (LAN + HTTPS via Caddy). args[0] is
+		// the subcommand runAndroidServe expects.
+		runAndroidServe(args)
+	case "apk":
+		// `yaver android apk <serve|publish|status|stop>`
+		runAndroidServe(rest)
 	case "-h", "--help", "help":
 		androidUsage()
 	default:
@@ -66,6 +73,9 @@ func androidUsage() {
 	fmt.Println("  list                           Android devices: paired + visible-unpaired")
 	fmt.Println("  visible                        raw mDNS view (debug)")
 	fmt.Println("  push [path]                    detect framework + push native build to wireless device")
+	fmt.Println("  serve --apk <f>                serve an APK on the LAN for instant install (no Play Store)")
+	fmt.Println("  publish --apk <f> --domain <d> serve an APK over public HTTPS (Caddy) + assetlinks")
+	fmt.Println("  apk status | apk stop          inspect / stop the install server")
 	fmt.Println()
 	fmt.Println("First-time setup, the easy way:")
 	fmt.Println("  yaver android setup")

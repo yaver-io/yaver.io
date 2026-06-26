@@ -17,7 +17,7 @@ import {
   type PublishReadiness,
 } from "@/lib/agent-client";
 
-type Section = "setup" | "permissions" | "listing" | "testers";
+type Section = "setup" | "permissions" | "listing" | "testers" | "apk";
 
 const STATUS: Record<StoreTask["status"], { glyph: string; cls: string }> = {
   done: { glyph: "✓", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
@@ -454,6 +454,7 @@ export default function StoresView({ token: _token, path }: { token?: string | n
     { key: "permissions", label: "Permissions" },
     { key: "listing", label: "Listing" },
     { key: "testers", label: "Testers" },
+    { key: "apk", label: "Install (APK)" },
   ];
 
   return (
@@ -515,10 +516,161 @@ export default function StoresView({ token: _token, path }: { token?: string | n
         caps === null ? <Loading /> : <PermissionsSection plan={caps} />
       ) : section === "testers" ? (
         <TestersSection listing={listing} project={path} />
+      ) : section === "apk" ? (
+        <ApkSection listing={listing} />
       ) : listing === null ? (
         <Loading />
       ) : (
         <ListingSection listing={listing} />
+      )}
+    </div>
+  );
+}
+
+// ApkSection — serve an Android APK for install without the Play Store: on the
+// LAN for instant testing, or over public HTTPS (Caddy + assetlinks) for real
+// distribution. Backed by the android_apk_* ops verbs (desktop/agent/apk_serve.go).
+function ApkSection({ listing }: { listing: StoreListing | null }) {
+  const [apk, setApk] = useState("");
+  const [pkg, setPkg] = useState(listing?.packageName || "");
+  const [versionName, setVersionName] = useState(listing?.version || "");
+  const [versionCode, setVersionCode] = useState("");
+  const [sha256, setSha256] = useState("");
+  const [domain, setDomain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [status, setStatus] = useState<any>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const c = new AgentClient();
+      const r = await c.callOps("android_apk_status", {});
+      setStatus(r.initial || null);
+    } catch {
+      /* device may be offline */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const call = async (verb: string, payload: Record<string, unknown>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const c = new AgentClient();
+      const r = await c.callOps(verb, payload);
+      if (r.ok === false) setMsg(r.error || "failed");
+      else {
+        const i = r.initial || {};
+        setMsg(i.url ? `Serving at ${i.url}${i.assetlinksWarning ? " — " + i.assetlinksWarning : ""}` : "done");
+      }
+      await refresh();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls =
+    "w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm dark:border-surface-700 dark:bg-surface-900";
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-slate-500 dark:text-surface-400">
+        Hand your Android app to real users without the Play Store. <b>Serve</b> = LAN install (open the
+        url on any phone on the same Wi-Fi). <b>Publish</b> = public HTTPS via Caddy with a live
+        <code className="mx-1">/.well-known/assetlinks.json</code> (App Links + passkeys); point a DNS
+        A-record for the domain at this box first. The apk must be a <b>universal</b> APK.
+      </p>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <label className="text-xs text-slate-500 dark:text-surface-400 sm:col-span-2">
+          APK path (on the device)
+          <input className={inputCls} value={apk} onChange={(e) => setApk(e.target.value)} placeholder="/path/to/app-universal.apk" />
+        </label>
+        <label className="text-xs text-slate-500 dark:text-surface-400">
+          Package name
+          <input className={inputCls} value={pkg} onChange={(e) => setPkg(e.target.value)} placeholder="com.acme.app" />
+        </label>
+        <label className="text-xs text-slate-500 dark:text-surface-400">
+          Signing SHA-256 (or vault ANDROID_RELEASE_SHA256)
+          <input className={inputCls} value={sha256} onChange={(e) => setSha256(e.target.value)} placeholder="AA:BB:CC:…" />
+        </label>
+        <label className="text-xs text-slate-500 dark:text-surface-400">
+          Version name
+          <input className={inputCls} value={versionName} onChange={(e) => setVersionName(e.target.value)} placeholder="1.2.3" />
+        </label>
+        <label className="text-xs text-slate-500 dark:text-surface-400">
+          Version code
+          <input className={inputCls} value={versionCode} onChange={(e) => setVersionCode(e.target.value)} placeholder="42" />
+        </label>
+        <label className="text-xs text-slate-500 dark:text-surface-400 sm:col-span-2">
+          Public domain (for HTTPS publish; leave blank for LAN-only)
+          <input className={inputCls} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="apps.example.com" />
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          disabled={busy || !apk}
+          onClick={() => call("android_apk_serve", { apk, app: pkg.split(".").pop(), package: pkg })}
+          className="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50 dark:bg-surface-700"
+        >
+          Serve (LAN)
+        </button>
+        <button
+          disabled={busy || !apk || !versionName || !versionCode}
+          onClick={() =>
+            call("android_apk_publish", {
+              apk,
+              app: pkg.split(".").pop(),
+              package: pkg,
+              versionName,
+              versionCode: Number(versionCode) || 0,
+              sha256: sha256 || undefined,
+              domain: domain || undefined,
+            })
+          }
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          Publish (HTTPS)
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => call("android_apk_stop", {})}
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-50 dark:border-surface-700 dark:text-surface-200"
+        >
+          Stop
+        </button>
+      </div>
+
+      {msg ? <p className="text-xs text-slate-600 dark:text-surface-300">{msg}</p> : null}
+
+      {status?.running ? (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs">
+          <div className="font-semibold text-emerald-700 dark:text-emerald-300">
+            Serving on port {status.port}
+            {status.url ? (
+              <>
+                {" — "}
+                <a href={status.url} target="_blank" rel="noreferrer" className="underline">
+                  {status.url}
+                </a>
+              </>
+            ) : null}
+          </div>
+          {(status.apps || []).map((a: any) => (
+            <div key={a.app} className="mt-1 text-slate-600 dark:text-surface-300">
+              {a.app} v{a.versionName} ({a.versionCode}) — {Math.round((a.size || 0) / 1048576)} MB
+              {a.package ? ` · ${a.package}` : ""}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-slate-400 dark:text-surface-500">Server not running.</p>
       )}
     </div>
   );

@@ -945,6 +945,9 @@ func getWorkspaceMCPTools() []map[string]interface{} {
 				},
 			},
 		},
+		// Android HTTPS serving (Play-Store-free install) is exposed as ops
+		// verbs (android_apk_serve/publish/status/stop) — see apk_serve.go —
+		// so the persistent install server lives in the always-on daemon.
 		// --- Site Generator (WordPress killer) ---
 		{
 			"name":        "site_create",

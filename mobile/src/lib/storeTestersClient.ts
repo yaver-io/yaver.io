@@ -90,4 +90,25 @@ export const storeTestersClient = {
     storeOps<{ builds?: ASCBuild[]; releases?: PlayRelease[] }>(t, "store_build_list", id(i), 20000),
   releasePromote: (t: StoreTarget, i: Ident, opts: { group?: string; status?: string; userFraction?: number } = {}) =>
     storeOps<{ assignedBuild?: ASCBuild; track_state?: any }>(t, "store_release_promote", id(i, opts), 30000),
+
+  // Android HTTPS serving — install an APK without the Play Store (LAN, or
+  // public https via Caddy with assetlinks). Backed by android_apk_* ops verbs.
+  apkServe: (t: StoreTarget, opts: { apk: string; app?: string; package?: string; port?: number }) =>
+    storeOps<ApkServeResult>(t, "android_apk_serve", opts, 30000),
+  apkPublish: (t: StoreTarget, opts: { apk: string; app?: string; package?: string; versionName: string; versionCode: number; sha256?: string; domain?: string; dnsMode?: string; port?: number }) =>
+    storeOps<ApkServeResult>(t, "android_apk_publish", opts, 30000),
+  apkStatus: (t: StoreTarget) =>
+    storeOps<ApkServeResult>(t, "android_apk_status", {}, 15000),
+  apkStop: (t: StoreTarget) =>
+    storeOps<{ ok?: boolean; stopped?: boolean }>(t, "android_apk_stop", {}, 15000),
+};
+
+export type ApkApp = {
+  app: string; file: string; package: string; versionName: string;
+  versionCode: number; sha256?: string[]; size: number; publishedAt: string;
+};
+export type ApkServeResult = {
+  ok?: boolean; mode?: string; url?: string; apkUrl?: string; assetlinks?: string;
+  assetlinksWarning?: string; apps?: ApkApp[]; hint?: string; error?: string;
+  running?: boolean; port?: number; latest?: string;
 };

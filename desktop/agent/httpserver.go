@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -1193,6 +1194,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/domains/list", s.auth(s.handleDomainList))
 	mux.HandleFunc("/domains/add", s.auth(s.handleDomainAdd))
 	mux.HandleFunc("/domains/remove", s.auth(s.handleDomainRemove))
+
+	// Android HTTPS serving (Play-Store-free APK install). These own the
+	// persistent install server, which must live in the daemon (Caddy
+	// reverse-proxies to it). ops verbs proxy here over loopback.
+	mux.HandleFunc("/android/apk/serve", s.auth(s.handleAndroidApkServe))
+	mux.HandleFunc("/android/apk/publish", s.auth(s.handleAndroidApkPublish))
+	mux.HandleFunc("/android/apk/status", s.auth(s.handleAndroidApkStatus))
+	mux.HandleFunc("/android/apk/stop", s.auth(s.handleAndroidApkStop))
 
 	// Log search — see line 186 for the primary registration (handleLogsSearch)
 	mux.HandleFunc("/logs/index/start", s.auth(s.handleLogIndexStart))
@@ -5545,10 +5554,27 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "continue_task":
 		var args struct {
-			TaskID string `json:"task_id"`
-			Input  string `json:"input"`
+			TaskID   string `json:"task_id"`
+			Input    string `json:"input"`
+			DeviceID string `json:"device_id"`
 		}
 		json.Unmarshal(call.Arguments, &args)
+		// Remote: inject the follow-up into a task running on another device's
+		// daemon. Empty/own deviceId → errProxyLocal → run locally below.
+		if dev := strings.TrimSpace(args.DeviceID); dev != "" {
+			body := map[string]any{"input": args.Input}
+			status, raw, err := proxyToDevice(context.Background(), "continue_task", dev, http.MethodPost, "/tasks/"+args.TaskID+"/continue", mustJSONBytes(body))
+			if err == nil {
+				if status >= 300 {
+					return mcpToolError(fmt.Sprintf("continue_task (remote) returned %d: %s", status, string(raw)))
+				}
+				return mcpToolResult(fmt.Sprintf("Follow-up queued into task %s on device %s.", args.TaskID, dev))
+			}
+			if !errors.Is(err, errProxyLocal) {
+				return mcpToolError(fmt.Sprintf("continue_task (remote): %v", err))
+			}
+			// fall through to local
+		}
 		task, err := s.taskMgr.ResumeTask(args.TaskID, args.Input, nil)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("resume failed: %v", err))
@@ -6840,12 +6866,29 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "tmux_send_input":
 		var args struct {
-			TaskID string `json:"task_id"`
-			Input  string `json:"input"`
+			TaskID   string `json:"task_id"`
+			Input    string `json:"input"`
+			DeviceID string `json:"device_id"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.TaskID == "" {
 			return mcpToolError("task_id is required")
+		}
+		// Remote: type into a tmux pane (e.g. a live Claude Code session) on
+		// another device. Empty/own deviceId → errProxyLocal → local below.
+		if dev := strings.TrimSpace(args.DeviceID); dev != "" {
+			body := map[string]any{"taskId": args.TaskID, "input": args.Input}
+			status, raw, err := proxyToDevice(context.Background(), "tmux_send_input", dev, http.MethodPost, "/tmux/input", mustJSONBytes(body))
+			if err == nil {
+				if status >= 300 {
+					return mcpToolError(fmt.Sprintf("tmux_send_input (remote) returned %d: %s", status, string(raw)))
+				}
+				return mcpToolResult(fmt.Sprintf("Input sent to tmux session %s on device %s.", args.TaskID, dev))
+			}
+			if !errors.Is(err, errProxyLocal) {
+				return mcpToolError(fmt.Sprintf("tmux_send_input (remote): %v", err))
+			}
+			// fall through to local
 		}
 		tmuxMgr := s.taskMgr.TmuxMgr
 		if tmuxMgr == nil {

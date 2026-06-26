@@ -2115,7 +2115,13 @@ WantedBy=default.target
 	fmt.Println("Auth token is persisted in ~/.yaver/config.json (run 'yaver auth' once).")
 }
 
+// isDaemonProcess is true inside the always-on `yaver serve` process. Cells
+// whose state must outlive a one-shot CLI / ephemeral `yaver mcp` invocation
+// (e.g. the APK install server) run their core here and proxy from elsewhere.
+var isDaemonProcess bool
+
 func runServe(args []string) {
+	isDaemonProcess = true
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	httpPort := fs.Int("port", 18080, "HTTP server port")
 	quicPort := fs.Int("quic-port", 4433, "QUIC server port (legacy)")
