@@ -34,7 +34,17 @@ import {
   type GuestUsageEntry,
 } from "../../src/lib/guests";
 import { useAuth } from "../../src/context/AuthContext";
+import { isOwnerAccount } from "../../src/lib/owner";
 import { getUserSettings } from "../../src/lib/auth";
+
+// Optional-tool ids that are owner-only (experimental robotics / lab hardware).
+// Hidden from non-owners regardless of the optional-tool preference.
+const OWNER_ONLY_MORE_TOOLS = new Set<string>([
+  "robot-cell",
+  "printer",
+  "circuit",
+  "screw-cell",
+]);
 import { fetchPairInfo, submitPair, parsePairUrl } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { isOptionalMoreToolEnabled, normalizeOptionalMoreTools, type OptionalMoreToolId } from "../../src/lib/moreOptionalTools";
@@ -2897,7 +2907,17 @@ export default function MoreScreen() {
   const { token, user } = useAuth();
   const connected = connectionStatus === "connected";
   const [moreOptionalTools, setMoreOptionalTools] = useState<OptionalMoreToolId[]>([]);
-  const showOptionalTool = useCallback((id: OptionalMoreToolId) => isOptionalMoreToolEnabled(moreOptionalTools, id), [moreOptionalTools]);
+  // Owner-only experimental hardware cells stay hidden for non-owners even if
+  // the optional-tool preference is on, matching the daemon gate
+  // (mcp_owner_gate.go) and the web dashboard gate.
+  const isOwner = isOwnerAccount(user?.email);
+  const showOptionalTool = useCallback(
+    (id: OptionalMoreToolId) => {
+      if (!isOwner && OWNER_ONLY_MORE_TOOLS.has(id)) return false;
+      return isOptionalMoreToolEnabled(moreOptionalTools, id);
+    },
+    [moreOptionalTools, isOwner],
+  );
 
   // Tutorials lives in its own pushed screen now (mobile/app/(tabs)/tutorials.tsx)
   // so the open animation matches Quality Gates and every other More-tab

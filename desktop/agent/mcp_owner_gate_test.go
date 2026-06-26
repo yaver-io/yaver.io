@@ -6,7 +6,8 @@ func TestMcpToolIsOwnerOnly(t *testing.T) {
 	ownerOnly := []string{
 		"robot_status", "robot_camera", "arm_movej", "arm_demo_start",
 		"jig_scad", "circuit_simulate", "circuit_plot", "printer_print",
-		"cad_render", "appletv_remote_key", "appletv_now_playing", "capture_stream",
+		"cad_render", "screw_cell_analytics", "appletv_remote_key",
+		"appletv_now_playing", "capture_stream",
 	}
 	for _, n := range ownerOnly {
 		if !mcpToolIsOwnerOnly(n) {
