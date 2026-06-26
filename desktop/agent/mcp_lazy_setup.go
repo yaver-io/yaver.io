@@ -42,6 +42,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -58,6 +59,15 @@ type LazySetupResult struct {
 	UserEmail string `json:"user_email,omitempty"`
 	Provider  string `json:"provider,omitempty"`
 	DeviceID  string `json:"device_id,omitempty"`
+
+	// DaemonServing reports whether the local Yaver agent is actually
+	// reachable on 127.0.0.1:18080 once Status == "signed_in". This is
+	// the #1 silent first-run failure: the token saves fine, but the
+	// best-effort `yaver serve` fork never came up (locked-down box,
+	// sandbox, missing perms), so the human's phone will NEVER discover
+	// this machine. When false, NextAction tells them to run `yaver
+	// serve` manually instead of falsely reporting "all set".
+	DaemonServing bool `json:"daemon_serving"`
 
 	// Populated when Status == "waiting_sign_in".
 	SignInURL        string `json:"sign_in_url,omitempty"`
@@ -94,15 +104,7 @@ func yaverLazySetup(ctx context.Context, waitSeconds int) (LazySetupResult, erro
 
 	// Fast path: already signed in.
 	if snap := authStatusSnapshot(); snap.SignedIn {
-		out.Status = "signed_in"
-		out.UserEmail = snap.UserEmail
-		out.Provider = snap.Provider
-		out.DeviceID = snap.DeviceID
-		if snap.UserEmail != "" {
-			out.NextAction = "You're signed in as " + snap.UserEmail + ". Open the Yaver mobile app and sign in with the same account — your dev machine will show up in its device list. If the app is not installed yet, use the official download link."
-		} else {
-			out.NextAction = "You're signed in. Open the Yaver mobile app and sign in with the same account — your dev machine will show up in its device list. If the app is not installed yet, use the official download link."
-		}
+		out.applySignedIn(snap)
 		return out, nil
 	}
 
@@ -142,20 +144,7 @@ func yaverLazySetup(ctx context.Context, waitSeconds int) (LazySetupResult, erro
 		if err == nil && strings.EqualFold(pollResult.Status, "authorized") && pollResult.TokenSaved {
 			// Sign-in landed during the wait. Snapshot again to
 			// pick up userEmail, daemon state, etc.
-			snap := authStatusSnapshot()
-			out.Status = "signed_in"
-			out.UserEmail = snap.UserEmail
-			out.Provider = snap.Provider
-			out.DeviceID = snap.DeviceID
-			out.SignInURL = ""
-			out.UserCode = ""
-			out.DeviceCode = ""
-			out.ExpiresInSeconds = 0
-			if snap.UserEmail != "" {
-				out.NextAction = "Signed in as " + snap.UserEmail + ". Now install the Yaver mobile app (TestFlight for iPhone, Play Store for Android) and sign in with the same account — your machine will appear automatically."
-			} else {
-				out.NextAction = "Signed in. Now install the Yaver mobile app and sign in with the same account — your machine will appear automatically."
-			}
+			out.applySignedIn(authStatusSnapshot())
 			return out, nil
 		}
 		select {
@@ -172,4 +161,91 @@ func yaverLazySetup(ctx context.Context, waitSeconds int) (LazySetupResult, erro
 	out.NextAction = "Still waiting for sign-in. Tell the human to tap " + start.URL + " — I'll keep checking."
 	out.Detail = "wait_seconds elapsed with sign-in still pending; call yaver_lazy_setup again to continue"
 	return out, nil
+}
+
+// applySignedIn fills the signed-in fields on the result and runs the
+// daemon-health gate. A human is "signed in" the instant the token lands,
+// but their phone can only discover this machine if the local agent is
+// actually serving (and broadcasting its LAN beacon). That post-auth
+// daemon start is best-effort and fails silently on locked-down or
+// sandboxed boxes — so we verify it here, make ONE start attempt if it's
+// down, and tell the human exactly what to do rather than reporting a
+// false "you're all set".
+func (out *LazySetupResult) applySignedIn(snap AuthStatusSnapshot) {
+	out.Status = "signed_in"
+	out.UserEmail = snap.UserEmail
+	out.Provider = snap.Provider
+	out.DeviceID = snap.DeviceID
+	out.SignInURL = ""
+	out.UserCode = ""
+	out.DeviceCode = ""
+	out.ExpiresInSeconds = 0
+
+	who := strings.TrimSpace(snap.UserEmail)
+	if who == "" {
+		who = "your account"
+	}
+
+	serving := daemonServing()
+	if !serving {
+		// The fork that authFinalizeToken kicks off may have failed or
+		// never ran (e.g. the MCP server started cold and the human
+		// authed without `yaver serve` ever running). Try once, then
+		// give serve a moment to bind its port before judging.
+		safeStartDaemon()
+		serving = waitDaemonServing(6 * time.Second)
+	}
+	out.DaemonServing = serving
+
+	if serving {
+		out.NextAction = "Signed in as " + who + " and your dev machine is online. Open the Yaver mobile app, sign in with the same account, and this machine appears automatically — no codes, no IP to type."
+		return
+	}
+
+	// Honest failure — do NOT claim all-set. This is gap #1 for normies.
+	out.NextAction = "Signed in as " + who + " — but the Yaver agent isn't running yet, so your phone won't be able to find this machine. Open a terminal and run `yaver serve` and leave it running, then open the Yaver mobile app and sign in with the same account."
+	out.Detail = "Auth token is saved, but the local agent is not answering on 127.0.0.1:18080. The post-auth daemon start was attempted and did not come up within 6s — common on locked-down, sandboxed, or permission-restricted machines. Fix: run `yaver serve` manually. Until then, mobile discovery and phone-driven tasks will not work."
+}
+
+// daemonServing probes the local agent's HTTP API once with a short
+// timeout. Returns true if anything answers on 127.0.0.1:18080 — proving
+// the daemon process is up and listening (which is what mobile discovery
+// needs). A stale PID file or a half-dead process yields a connection
+// error and returns false. We accept any HTTP response (not just 200) so
+// a token mismatch doesn't masquerade as "not serving".
+func daemonServing() bool {
+	token := ""
+	if cfg, _ := LoadConfig(); cfg != nil {
+		token = strings.TrimSpace(cfg.AuthToken)
+	}
+	req, err := http.NewRequest("GET", "http://127.0.0.1:18080/info", nil)
+	if err != nil {
+		return false
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return true
+}
+
+// waitDaemonServing polls daemonServing until it succeeds or the budget
+// elapses — giving a freshly-started `yaver serve` a moment to bind its
+// port before we report a false negative.
+func waitDaemonServing(budget time.Duration) bool {
+	deadline := time.Now().Add(budget)
+	for {
+		if daemonServing() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }

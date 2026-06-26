@@ -7999,6 +7999,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolJSON(out)
 		}
 		return mcpToolJSON(mcpMobileHermesReload(args))
+	case "mobile_deploy_to_phone":
+		var args mobileDeployToPhoneArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(s.mobileDeployToPhone(context.Background(), args))
 	case "device_broadcast_command":
 		var args deviceBroadcastCommandArgs
 		json.Unmarshal(call.Arguments, &args)

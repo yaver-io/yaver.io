@@ -1463,6 +1463,39 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				},
 			},
 		},
+		{
+			"name":        "mobile_deploy_to_phone",
+			"description": "One-shot \"put my app on my phone\": take the React Native / Expo app in this directory and get it running inside the Yaver app on the paired phone — no TestFlight, no Xcode, no native install. Chains the whole Hermes flow in order: checks the project (mobile_project_status), installs dependencies if missing (mobile_project_prepare), diagnoses blockers and native-module compatibility (mobile_hermes_doctor), compiles the Hermes bundle (mobile_project_build), and reloads it onto the phone (mobile_hermes_reload). Stops at the first blocker and returns a single next_action sentence plus a per-step trace. This is the verb to call when a human says \"deploy/preview my app on my phone\" — prefer it over calling the five mobile_* tools by hand. The phone must have the Yaver app open and signed in with the same account. Returns { ok, done, steps[], blockers?, next_actions?, next_action }.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"directory": map[string]interface{}{
+						"type":        "string",
+						"description": "Project directory (default: agent work dir). Should be a React Native / Expo app or a monorepo containing one (apps/mobile, mobile/, …).",
+					},
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional owned Yaver device id/name/alias to build on. Empty = this machine (the common case: agent, project, and daemon all local).",
+					},
+					"platform": map[string]interface{}{
+						"type":        "string",
+						"description": "Target platform for the Hermes bundle: \"ios\" (default) or \"android\".",
+					},
+					"framework": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional framework override (expo or react-native); auto-detected when omitted.",
+					},
+					"mode": map[string]interface{}{
+						"type":        "string",
+						"description": "Reload mode passed to the final step: \"dev\" (Metro fast-refresh, default) or \"bundle\".",
+					},
+					"plan_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "When true, run only the fast checks (status/prepare/doctor) and return the ordered remaining steps instead of running the slow build + reload. Use when your tool-call timeout is short.",
+					},
+				},
+			},
+		},
 		// GitHub
 		{"name": "github_prs", "description": "List pull requests from the current repo (requires gh CLI).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Repo directory"}, "state": map[string]interface{}{"type": "string", "description": "Filter: open, closed, merged, all (default: open)"}}}},
 		{"name": "github_issues", "description": "List issues from the current repo (requires gh CLI).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Repo directory"}, "state": map[string]interface{}{"type": "string", "description": "Filter: open, closed, all (default: open)"}}}},
