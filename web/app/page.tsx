@@ -1256,6 +1256,32 @@ export default function HomePage() {
                 npm install -g yaver-cli@latest
               </code>
             </p>
+
+            {/* Already in a coding agent? Register Yaver over MCP — no global
+                install needed; npx pulls it on first run. */}
+            <div className="mt-5 w-full max-w-xl text-left">
+              <p className="mb-2 text-center text-[11px] text-surface-500">
+                Already in Claude Code or Codex? Register Yaver as an MCP server &mdash; no install needed:
+              </p>
+              <div className="space-y-1.5 rounded-lg border border-surface-800 bg-surface-950 px-4 py-3 font-mono text-[12px] leading-relaxed">
+                <div className="text-surface-600">
+                  $ <span className="select-all break-all text-surface-200">claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp</span>
+                </div>
+                <div className="text-surface-600">
+                  $ <span className="select-all break-all text-surface-200">codex mcp add yaver -- npx -y yaver-cli yaver-mcp</span>
+                </div>
+              </div>
+              <p className="mt-2 text-center text-[11px] text-surface-600">
+                Then ask it to call{" "}
+                <code className="select-all rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">
+                  yaver_lazy_setup
+                </code>{" "}
+                &mdash; it surfaces the sign-in link and pairs your phone in-chat.{" "}
+                <Link href="/docs/mcp" className="underline hover:text-surface-300">
+                  opencode &amp; more &rarr;
+                </Link>
+              </p>
+            </div>
           </div>
 
         </div>
