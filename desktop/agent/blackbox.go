@@ -292,30 +292,47 @@ func (s *BlackBoxSession) UnsubscribeCommands(ch chan BlackBoxCommand) {
 	}
 }
 
-// SendCommand pushes a command to all connected SDK devices for this session.
-func (s *BlackBoxSession) SendCommand(cmd BlackBoxCommand) {
+// SendCommand pushes a command to all connected SDK devices for this session
+// and returns the number of live command listeners (open SSE channels) it was
+// delivered to. A return of 0 means this session has an entry in the manager
+// but no phone is currently holding its /blackbox/command-stream open — the
+// signal callers use to avoid reporting a false "delivered to your phone".
+func (s *BlackBoxSession) SendCommand(cmd BlackBoxCommand) int {
 	s.cmdMu.Lock()
 	defer s.cmdMu.Unlock()
 	for _, ch := range s.commandListeners {
 		select {
 		case ch <- cmd:
 		default:
-			// Slow listener — skip
+			// Slow listener — skip the buffered send but still count it as a
+			// connected listener (the SSE channel is open; this drop is
+			// transient back-pressure, not a disconnect).
 		}
 	}
+	return len(s.commandListeners)
 }
 
-// BroadcastCommand pushes a command to ALL connected SDK sessions.
-func (m *BlackBoxManager) BroadcastCommand(cmd BlackBoxCommand) {
+// BroadcastCommand pushes a command to ALL connected SDK sessions and returns
+// the total number of live command listeners it reached. Callers that report
+// success to a human (e.g. "deployed to your phone") should check this: a
+// return of 0 means no phone currently has its command-stream open on THIS
+// agent, so the broadcast went nowhere — common when the coding agent runs on
+// a remote self-hosted box but the phone is paired to a different device.
+func (m *BlackBoxManager) BroadcastCommand(cmd BlackBoxCommand) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	delivered := 0
 	for _, s := range m.sessions {
-		s.SendCommand(cmd)
+		delivered += s.SendCommand(cmd)
 	}
+	return delivered
 }
 
 // SendCommandToDevice pushes a command to a specific connected SDK session.
-// Returns false when the device has no active blackbox session.
+// Returns false when the device has no active blackbox session OR has a
+// session row but no live command-stream listener (so the command would be
+// dropped). A false return lets the reload path fall back to a broadcast
+// instead of silently dropping the command on a stale session.
 func (m *BlackBoxManager) SendCommandToDevice(deviceID string, cmd BlackBoxCommand) bool {
 	if strings.TrimSpace(deviceID) == "" {
 		return false
@@ -328,8 +345,7 @@ func (m *BlackBoxManager) SendCommandToDevice(deviceID string, cmd BlackBoxComma
 		return false
 	}
 
-	session.SendCommand(cmd)
-	return true
+	return session.SendCommand(cmd) > 0
 }
 
 // RecentEvents returns the last N events from the session.

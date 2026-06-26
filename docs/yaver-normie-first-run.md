@@ -97,6 +97,42 @@ calls — for agents with short tool timeouts. `device_id` routes to an owned
 remote box (proxies the per-step endpoints); empty = this machine (the normie
 case). Prefer this verb over calling the five tools by hand.
 
+### Works the same when Claude Code runs on a remote/self-hosted box
+
+The whole reason this is wired over MCP (not a local-only CLI) is the
+self-hoster: Claude Code runs **on a box** (Hetzner / home server / VPS) with
+the Yaver MCP registered there — `claude mcp add yaver -- npx -y yaver-cli
+yaver-mcp` on the box. The human says "put my app on my phone" in that remote
+chat; the agent calls `mobile_deploy_to_phone` with **empty `device_id`**
+(from the box's point of view it *is* local). `build-native` compiles the
+Hermes bundle on the box; `/dev/reload` broadcasts a `reload` command to every
+phone holding a `/blackbox/command-stream` open **on that box**; the phone
+fetches `${box}/dev/native-bundle` and mounts it via `YaverBundleLoader`
+(`mobile/app/(tabs)/_layout.tsx` command handler). No App Store, no Xcode, no
+TestFlight — the app pops up inside the Yaver container.
+
+The one precondition that makes or breaks it: **the phone must be connected to
+the same box the agent is running on** (relay tunnel for off-LAN). The phone
+talks to exactly one agent at a time (`quic.ts` `baseUrl`); if it's paired to
+the user's Mac while the build happens on the box, the broadcast reaches
+nobody.
+
+### Fix shipped: honest "no phone is listening" gate (no false success)
+
+Before this, `/dev/reload`'s `BroadcastCommand` returned nothing, so
+`mobile_deploy_to_phone` reported **"Done — running on your phone"** even when
+zero phones were subscribed to that agent — the exact remote-box failure above,
+reported as success. Now `BlackBoxSession.SendCommand` /
+`BlackBoxManager.BroadcastCommand` return the count of **live command-stream
+listeners**, `/dev/reload` surfaces it as `deliveredTo`, and the deploy verb
+(both local and the `device_id` remote-proxy path) checks it: when
+`deliveredTo == 0` it stops short of `Done` and speaks an honest `next_action`
+— "open Yaver on your phone, sign in with the same account, and connect it to
+THIS machine, then ask me to deploy again." A listener-less session also makes
+`SendCommandToDevice` return false so the scoped path falls back to a broadcast
+instead of dropping the command. (`blackbox.go`, `devserver_http.go`
+`handleDevServerReload`, `mcp_mobile_deploy.go` `reloadDeliveredTo`.)
+
 ## Where a normie gets stuck (honest gaps)
 
 1. **Silent daemon-fork failure** (`mcp_auth_tools.go` best-effort start). He
@@ -137,7 +173,9 @@ discovery needs), so a token mismatch doesn't masquerade as "not serving".
 |---|---|
 | One-shot auth + daemon-health gate | `desktop/agent/mcp_lazy_setup.go` (`yaverLazySetup`, `applySignedIn`, `daemonServing`) |
 | Device-code OAuth + finalize | `desktop/agent/mcp_auth_tools.go` |
-| One-verb phone deploy | `desktop/agent/mcp_mobile_deploy.go` (`mobileDeployToPhone`) |
+| One-verb phone deploy | `desktop/agent/mcp_mobile_deploy.go` (`mobileDeployToPhone`, `mobileDeployToPhoneRemote`, `reloadDeliveredTo`) |
+| Reload delivery count (honesty gate) | `desktop/agent/blackbox.go` (`SendCommand`/`BroadcastCommand`/`SendCommandToDevice` return live-listener counts), `devserver_http.go` `handleDevServerReload` (`deliveredTo`) |
+| Phone command handler (loads bundle from its agent) | `mobile/app/(tabs)/_layout.tsx` (`streamBlackBoxCommands` → `reload`/`open_app`), `mobile/src/lib/quic.ts` (`baseUrl`) |
 | Hermes sub-steps | `desktop/agent/mobile_project_http.go`, `mcp_mobile_hermes_doctor.go`, `mcp_mobile_hermes_reload.go` |
 | Mobile discovery / pairing | `mobile/src/lib/beacon.ts`, `mobile/src/context/DeviceContext.tsx` |
 | Runner spawn + auth inheritance | `desktop/agent/tasks.go`, `provider_keys.go` |

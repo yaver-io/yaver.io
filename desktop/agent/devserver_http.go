@@ -1839,6 +1839,13 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 	// `targetDeviceId`, the command is sent only to that one session
 	// (Path-C cross-device targeting). If no matching session is found
 	// we fall back to a broadcast so the user still gets a reload.
+	// deliveredTo counts the live phone command-listeners (or preview worker)
+	// the reload command actually reached. 0 means nothing on THIS agent is
+	// listening — the reload "succeeded" server-side but no phone saw it. The
+	// MCP deploy verb uses this to avoid telling a human "it's on your phone"
+	// when the phone is paired to a different device (the remote
+	// self-hosted-box case).
+	deliveredTo := 0
 	if s.blackboxMgr != nil {
 		if len(nativeChanges) > 0 {
 			paths := make([]string, 0, len(nativeChanges))
@@ -1855,24 +1862,28 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 				},
 			}
 			if scopedDeviceID != "" && s.blackboxMgr.SendCommandToDevice(scopedDeviceID, cmd) {
+				deliveredTo = 1
 				log.Printf("[dev] reload: native change detected — sent native_rebuild_required to scoped device %s", scopedDeviceID)
 			} else if sent := s.sendCommandToPreviewTarget(cmd); sent {
+				deliveredTo = 1
 				s.syncPreviewWorkerIncident(projectPath, target, true)
 				log.Printf("[dev] reload: native change detected (%d files) — sent native_rebuild_required to preview worker", len(nativeChanges))
 			} else {
 				s.syncPreviewWorkerIncident(projectPath, target, strings.TrimSpace(target.DeviceID) == "")
-				s.blackboxMgr.BroadcastCommand(cmd)
-				log.Printf("[dev] reload: native change detected (%d files) — broadcast native_rebuild_required", len(nativeChanges))
+				deliveredTo = s.blackboxMgr.BroadcastCommand(cmd)
+				log.Printf("[dev] reload: native change detected (%d files) — broadcast native_rebuild_required to %d listener(s)", len(nativeChanges), deliveredTo)
 			}
 		} else if scopedDeviceID != "" && s.blackboxMgr.SendCommandToDevice(scopedDeviceID, BlackBoxCommand{Command: "reload"}) {
+			deliveredTo = 1
 			log.Printf("[dev] Sent reload command to scoped device %s", scopedDeviceID)
 		} else if sent := s.sendPreviewWorkerReloadCommand(); sent {
+			deliveredTo = 1
 			s.syncPreviewWorkerIncident(projectPath, target, true)
 			log.Printf("[dev] Sent targeted preview reload command to preview worker")
 		} else {
 			s.syncPreviewWorkerIncident(projectPath, target, strings.TrimSpace(target.DeviceID) == "")
-			s.blackboxMgr.BroadcastCommand(BlackBoxCommand{Command: "reload"})
-			log.Printf("[dev] Broadcast reload command to connected SDK devices")
+			deliveredTo = s.blackboxMgr.BroadcastCommand(BlackBoxCommand{Command: "reload"})
+			log.Printf("[dev] Broadcast reload command to %d connected SDK listener(s)", deliveredTo)
 		}
 	}
 
@@ -1933,6 +1944,11 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 		"nativeChangesDetected": len(nativeChanges) > 0,
 		"nativeChanges":         nativeChanges,
 		"changeClass":           changeClass, // "js_only" | "native_rebuild_required" | "" (no baseline)
+		// deliveredTo: how many live phone command-listeners (or the preview
+		// worker) actually received the reload. 0 = no phone is listening on
+		// this agent; the caller should tell the human to open Yaver on the
+		// phone and select THIS device rather than report success.
+		"deliveredTo": deliveredTo,
 	}
 	if scopedDeviceID != "" {
 		resp["targetedDeviceId"] = scopedDeviceID

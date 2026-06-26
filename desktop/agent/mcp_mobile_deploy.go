@@ -129,14 +129,28 @@ func (s *HTTPServer) mobileDeployToPhone(ctx context.Context, args mobileDeployT
 	res.add("build", true, "compiled the Hermes bundle")
 
 	// 5) Push the bundle into the Yaver app on the paired phone.
-	if errText := reloadError(mcpMobileHermesReload(mobileHermesReloadArgs{Mode: args.Mode})); errText != "" {
+	reload := mcpMobileHermesReload(mobileHermesReloadArgs{Mode: args.Mode})
+	if errText := reloadError(reload); errText != "" {
 		res.add("reload", false, errText)
 		res.Detail = errText
 		res.NextAction = "Built the bundle, but pushing it to your phone failed. Open the Yaver app on your phone and make sure it's signed in with the same account as this machine, then ask me to reload."
 		return res
 	}
-	res.add("reload", true, "pushed the bundle to the Yaver app on your phone")
 
+	// reloadDeliveredTo==0 means the command was accepted but no phone is
+	// holding a command-stream open on THIS agent — the bundle is built and
+	// served, but nothing picked it up. Most common when the coding agent
+	// runs on a remote self-hosted box and the phone is still paired to a
+	// different device. Report honestly instead of a false "it's on your
+	// phone now".
+	if reloadDeliveredTo(reload) == 0 {
+		res.add("reload", true, "bundle built and served, but no phone is connected to this machine yet")
+		res.OK = true
+		res.NextAction = "Your app is built and ready. To see it: open the Yaver app on your phone, sign in with the same account, and make sure it's connected to THIS machine (the one I'm running on). Then ask me to deploy again and it'll pop up inside Yaver."
+		return res
+	}
+
+	res.add("reload", true, "pushed the bundle to the Yaver app on your phone")
 	res.OK = true
 	res.Done = true
 	res.NextAction = "Done — your app is now running inside the Yaver app on your phone. Open Yaver there to see it. After you change code, just ask me to deploy again to reload."
@@ -176,17 +190,51 @@ func (s *HTTPServer) mobileDeployToPhoneRemote(ctx context.Context, args mobileD
 	}
 	res.add("build", true, "compiled the Hermes bundle on "+dev)
 
-	if _, err := proxyToDeviceJSON(ctx, "mobile_deploy_to_phone", dev, http.MethodPost, "/dev/reload", mobileHermesReloadBody(mobileHermesReloadArgs{Mode: args.Mode})); err != nil {
+	reload, err := proxyToDeviceJSON(ctx, "mobile_deploy_to_phone", dev, http.MethodPost, "/dev/reload", mobileHermesReloadBody(mobileHermesReloadArgs{Mode: args.Mode}))
+	if err != nil {
 		res.add("reload", false, err.Error())
 		res.NextAction = "Built the bundle, but pushing it to your phone failed: " + err.Error() + ". Make sure the Yaver app is open and signed in with the same account."
 		return res
 	}
-	res.add("reload", true, "pushed the bundle to your phone")
 
+	// Same honesty gate as the local path: the bundle was built on the remote
+	// box, but if no phone is connected to THAT box the reload reached nobody.
+	if reloadDeliveredTo(reload) == 0 {
+		res.add("reload", true, "bundle built and served on "+dev+", but no phone is connected to it yet")
+		res.OK = true
+		res.NextAction = "Your app is built on " + dev + ". To see it: open the Yaver app on your phone, sign in with the same account, and connect it to " + dev + ". Then ask me to deploy again."
+		return res
+	}
+
+	res.add("reload", true, "pushed the bundle to your phone")
 	res.OK = true
 	res.Done = true
 	res.NextAction = "Done — your app is now running inside the Yaver app on your phone."
 	return res
+}
+
+// reloadDeliveredTo reads the deliveredTo count off a /dev/reload result
+// (native map or JSON-round-tripped). -1 when the field is absent, so callers
+// can distinguish "0 phones listening" from "this agent build predates the
+// deliveredTo field" — the latter should NOT trigger the honesty gate.
+func reloadDeliveredTo(reload interface{}) int {
+	m, ok := reload.(map[string]interface{})
+	if !ok {
+		return -1
+	}
+	v, has := m["deliveredTo"]
+	if !has {
+		return -1
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64: // JSON numbers decode as float64
+		return int(n)
+	}
+	return -1
 }
 
 // reloadError extracts an error string from the mcpMobileHermesReload
