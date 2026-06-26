@@ -10777,7 +10777,15 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 			// Reuse the same tool list from the HTTP handler
 			resp.Result = srv.getMCPToolsList()
 		case "tools/call":
-			resp.Result = srv.handleMCPToolCall(req.Params)
+			var tc struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(req.Params, &tc)
+			if denied := mcpToolDeniedByOwnerGate(tc.Name); denied != nil {
+				resp.Result = mcpToolError(denied.Reason)
+			} else {
+				resp.Result = srv.handleMCPToolCall(req.Params)
+			}
 		default:
 			resp.Error = &mcpError{Code: -32601, Message: "Method not found: " + req.Method}
 		}

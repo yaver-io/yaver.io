@@ -5377,7 +5377,9 @@ func (s *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
 			Name string `json:"name"`
 		}
 		_ = json.Unmarshal(req.Params, &tc)
-		if denied := mcpToolDeniedByScope(r, tc.Name); denied != nil {
+		if denied := mcpToolDeniedByOwnerGate(tc.Name); denied != nil {
+			resp.Result = mcpToolError(denied.Reason)
+		} else if denied := mcpToolDeniedByScope(r, tc.Name); denied != nil {
 			resp.Result = mcpToolError(denied.Reason)
 		} else {
 			resp.Result = s.handleMCPToolCallWithAddr(req.Params, r.RemoteAddr)

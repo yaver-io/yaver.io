@@ -4520,6 +4520,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// are fetched live (cached) so the mobile/web client and the LLM see them.
 	tools = append(tools, externalMCPToolDefs()...)
 
+	// Owner-only experimental hardware cells (robot/arm/circuit/printer/
+	// appletv/capture) are hidden from non-owners so the default product
+	// surface stays the AI coding/preview/deploy loop. See mcp_owner_gate.go.
+	tools = filterOwnerOnlyTools(tools, currentUserIsOwner())
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

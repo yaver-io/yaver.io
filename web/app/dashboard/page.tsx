@@ -54,7 +54,7 @@ import ReactMarkdown from "react-markdown";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
 import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
-import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE } from "@/components/dashboard/DevicesView";
+import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE, isKivancAccount } from "@/components/dashboard/DevicesView";
 import BillingView from "@/components/dashboard/BillingView";
 import StoresView from "@/components/dashboard/StoresView";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
@@ -1911,7 +1911,13 @@ export default function DashboardPage() {
   const dormantDevices = displayDevices.filter((d) => isDormantUnreachableDevice(d));
   const visibleDevices = displayDevices.filter((d) => !isDormantUnreachableDevice(d));
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
-  const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = [
+  // Owner-only experimental hardware cells. Hidden from non-owners so the
+  // default dashboard stays the AI coding/preview/deploy product. Mirrors the
+  // daemon-side gate (mcp_owner_gate.go) and uses the same NEXT_PUBLIC_YAVER_
+  // OWNER_EMAIL allowlist as isKivancAccount.
+  const isOwnerAccount = isKivancAccount(user?.email);
+  const OWNER_ONLY_TABS = new Set(["arm", "appletv", "robot", "circuit", "printer"]);
+  const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = ([
     { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
     { id: "build", label: "Build", icon: "\uD83D\uDEE0\uFE0F" },
     { id: "cloud", label: "Cloud", icon: "\u2601\uFE0F" },
@@ -1951,7 +1957,9 @@ export default function DashboardPage() {
     { id: "screenlog", label: "Screen Monitor", icon: "\uD83C\uDFA5" },
     { id: "arm", label: "Robot Arm", icon: "\uD83E\uDDBE" },
     { id: "appletv", label: "Apple TV", icon: "\uD83D\uDCFA" },
-  ];
+  ] as { id: typeof activeTab; label: string; icon: string; badge?: number }[]).filter(
+    (t) => isOwnerAccount || !OWNER_ONLY_TABS.has(t.id),
+  );
 
   // Beta users get the focused Beta workspace INSTEAD of the full
   // dashboard \u2014 same coding engine (VibeCodingView), none of the infra/
@@ -2816,9 +2824,9 @@ export default function DashboardPage() {
             </div>
           ) : activeTab === "storage" ? (
             <div className="flex-1 min-h-0 w-full"><StorageView /></div>
-          ) : activeTab === "arm" ? (
+          ) : activeTab === "arm" && isOwnerAccount ? (
             <div className="flex-1 min-h-0 w-full overflow-auto p-4"><ArmCellView devices={devices} token={token} /></div>
-          ) : activeTab === "appletv" ? (
+          ) : activeTab === "appletv" && isOwnerAccount ? (
             <div className="flex-1 min-h-0 w-full overflow-auto p-4"><AppleTVCellView devices={devices} token={token} /></div>
           ) : activeTab === "vault" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto">

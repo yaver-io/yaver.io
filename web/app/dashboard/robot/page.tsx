@@ -7,13 +7,16 @@
 import { useAuth } from "@/lib/use-auth";
 import { useDevices } from "@/lib/use-devices";
 import RobotCellView from "@/components/dashboard/RobotCellView";
+import OwnerGate from "@/components/OwnerGate";
 
 export default function RobotDashboardPage() {
   const { token } = useAuth();
   const { devices } = useDevices(token);
   return (
-    <div className="mx-auto max-w-3xl p-4 sm:p-6">
-      <RobotCellView devices={devices} token={token} />
-    </div>
+    <OwnerGate>
+      <div className="mx-auto max-w-3xl p-4 sm:p-6">
+        <RobotCellView devices={devices} token={token} />
+      </div>
+    </OwnerGate>
   );
 }

@@ -7,13 +7,16 @@
 import { useAuth } from "@/lib/use-auth";
 import { useDevices } from "@/lib/use-devices";
 import ScrewCellView from "@/components/dashboard/ScrewCellView";
+import OwnerGate from "@/components/OwnerGate";
 
 export default function ScrewCellDashboardPage() {
   const { token } = useAuth();
   const { devices } = useDevices(token);
   return (
-    <div className="mx-auto max-w-3xl p-4 sm:p-6">
-      <ScrewCellView devices={devices} token={token} />
-    </div>
+    <OwnerGate>
+      <div className="mx-auto max-w-3xl p-4 sm:p-6">
+        <ScrewCellView devices={devices} token={token} />
+      </div>
+    </OwnerGate>
   );
 }
