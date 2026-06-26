@@ -206,12 +206,25 @@ func writeMasterKeyToKeychain(userID string, key [masterKeyLen]byte) {
 		return
 	}
 	hexKey := hex.EncodeToString(key[:])
-	// -U upserts (update if exists, add if not). -T '' restricts access
-	// to processes invoked by the same user — `security` itself + any
-	// Yaver agent child of the user's login session, the same trust
-	// boundary `gh secret set` / git credential helper rely on.
+	// Delete any prior item first so the -A ACL below is applied
+	// deterministically — a bare `-U` update doesn't reliably rewrite an
+	// existing item's access control list, so a pre-`-A` entry would keep
+	// prompting. Best-effort; missing item is fine.
+	_ = exec.Command("security", "delete-generic-password",
+		"-s", keychainService, "-a", keychainAccount(userID)).Run()
+	// -U upserts (update if exists, add if not). -A makes the item
+	// accessible to any process running as this user WITHOUT a per-access
+	// GUI prompt — gated only by the login keychain being unlocked (i.e.
+	// you are logged in). This is deliberately the SAME trust boundary as
+	// the source-of-truth file ~/.yaver/master.key (mode 0600, readable by
+	// the user's own processes with no prompt), so the keychain mirror is
+	// no weaker than the file it mirrors. Without -A (or with the old,
+	// never-actually-passed `-T ''`), macOS prompts "security wants to use
+	// your confidential information" on every read — the spam the
+	// maintainer asked to kill. See feedback_no_keychain_prompt_spam.
 	cmd := exec.Command("security", "add-generic-password",
 		"-U",
+		"-A",
 		"-s", keychainService,
 		"-a", keychainAccount(userID),
 		"-w", hexKey,
