@@ -8005,6 +8005,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		var args mobileDeployToPhoneArgs
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(s.mobileDeployToPhone(context.Background(), args))
+	case "yaver_billing_status":
+		return mcpYaverBillingStatus()
+	case "yaver_billing_checkout":
+		var args struct {
+			Plan string `json:"plan"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpYaverBillingCheckout(args.Plan)
+	case "yaver_billing_manage":
+		return mcpYaverBillingManage()
 	case "device_broadcast_command":
 		var args deviceBroadcastCommandArgs
 		json.Unmarshal(call.Arguments, &args)
