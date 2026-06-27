@@ -47,6 +47,7 @@ import type * as managedRelays from "../managedRelays.js";
 import type * as managedServices from "../managedServices.js";
 import type * as mesh from "../mesh.js";
 import type * as mobileStreamLogs from "../mobileStreamLogs.js";
+import type * as openrouterKeys from "../openrouterKeys.js";
 import type * as ownerAllowlist from "../ownerAllowlist.js";
 import type * as packages from "../packages.js";
 import type * as passkeys from "../passkeys.js";
@@ -118,6 +119,7 @@ declare const fullApi: ApiFromModules<{
   managedServices: typeof managedServices;
   mesh: typeof mesh;
   mobileStreamLogs: typeof mobileStreamLogs;
+  openrouterKeys: typeof openrouterKeys;
   ownerAllowlist: typeof ownerAllowlist;
   packages: typeof packages;
   passkeys: typeof passkeys;

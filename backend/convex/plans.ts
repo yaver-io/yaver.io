@@ -139,6 +139,22 @@ export const applyPlanEntitlements = internalAction({
       setBy: "plan-activation",
     });
 
+    // 2b) Per-user OpenRouter key. hosted ⇒ ensure a key exists with its
+    //     hard credit limit pinned to our COGS BUDGET (the retail AI wallet
+    //     ÷ inference markup — NOT what the user paid). A per-user key
+    //     spreads OpenRouter's per-key rate limit across the GLM provider
+    //     pool and caps third-party spend below collected revenue. byok ⇒
+    //     disable any existing key (managed inference off). Scheduled so a
+    //     slow OpenRouter API call never blocks the webhook's 200.
+    if (e.gateway.enabled) {
+      await ctx.scheduler.runAfter(0, internal.openrouterKeys.ensureForUser, {
+        userId,
+        monthlyWalletCents: e.monthlyWalletCents,
+      });
+    } else {
+      await ctx.scheduler.runAfter(0, internal.openrouterKeys.disableForUser, { userId });
+    }
+
     // 3) Monthly wallet budget. Idempotent per (subscription, period) via
     //    creditTopups' orderId dedupe — re-fired webhook no-ops, a new
     //    month credits exactly once. NOTE: unspent budget currently rolls
@@ -176,6 +192,75 @@ export const revokePlanEntitlements = internalAction({
       note: "subscription cancelled/expired — managed inference revoked",
       setBy: "plan-activation",
     });
+    // Disable the per-user OpenRouter key at the provider AND drop it from
+    // the gateway KV, so a lapsed subscriber can't keep spending even if a
+    // gateway-policy check were ever bypassed (defense in depth).
+    await ctx.scheduler.runAfter(0, internal.openrouterKeys.disableForUser, { userId });
     return { ok: true };
+  },
+});
+
+// In-app plan switch (Cloud Agent ⇄ Cloud Workspace) initiated by the
+// user from the dashboard — NOT a webhook. Orchestrates three things:
+//   1. LemonSqueezy variant swap so the next renewal bills the new price.
+//   2. The local subscription `plan` label.
+//   3. Entitlements, applied IMMEDIATELY (the chosen UX: a downgrade cuts
+//      managed AI off now; an upgrade turns it on now).
+//
+// DIRECTION-ASYMMETRIC for safety (this orchestrator is reached only via
+// the authed /billing/change-plan route, which scopes to the caller's own
+// subscription):
+//   • DOWNGRADE (→byok): fail-SAFE. Apply byok entitlements immediately
+//     (disable gateway + OpenRouter key) even if the LemonSqueezy swap is
+//     unconfigured or fails — the user simply gets LESS, never free more.
+//     The prepaid wallet is preserved (we never claw back paid credit);
+//     the monthly allowance is idempotent per period so no double-grant.
+//   • UPGRADE (→hosted): fail-CLOSED. Grant managed AI ONLY if the
+//     LemonSqueezy variant swap succeeded (i.e. the user will actually be
+//     billed). If billing isn't wired, refuse — never hand out a paid
+//     OpenRouter key without a charge.
+export const changePlan = internalAction({
+  args: {
+    userId: v.id("users"),
+    lemonSqueezyId: v.optional(v.string()),
+    targetPlan: v.union(v.literal("cloud-agent"), v.literal("cloud-workspace")),
+  },
+  handler: async (
+    ctx,
+    { userId, lemonSqueezyId, targetPlan },
+  ): Promise<{ ok: boolean; tier: PlanTier; billingSynced: boolean; reason?: string }> => {
+    const tier: PlanTier = targetPlan === "cloud-agent" ? "hosted" : "byok";
+
+    // 1) Try to move billing first (matters for BOTH directions, but is a
+    //    hard precondition only for the upgrade).
+    let billingSynced = false;
+    if (lemonSqueezyId) {
+      const swap = await ctx.runAction(internal.http.updateLemonSqueezyVariant, {
+        lemonSqueezyId,
+        tier,
+      });
+      billingSynced = swap.ok;
+    }
+
+    if (tier === "hosted" && !billingSynced) {
+      // Refuse to grant paid managed inference without a billing change.
+      return { ok: false, tier, billingSynced, reason: "billing-not-synced" };
+    }
+
+    // 2) Local plan label (immediate; reconcile + entitlements read this).
+    await ctx.runMutation(internal.subscriptions.setPlan, { userId, plan: targetPlan });
+
+    // 3) Entitlements now. applyPlanEntitlements is idempotent per period:
+    //    the monthly wallet grant dedupes on (subscription, period) so a
+    //    toggle can't farm credit, and byok ⇒ gateway off + OpenRouter key
+    //    disabled (the immediate cutoff), hosted ⇒ key ensured + gateway on.
+    await ctx.runAction(internal.plans.applyPlanEntitlements, {
+      userId,
+      subscriptionId: lemonSqueezyId,
+      tier,
+      plan: targetPlan,
+    });
+
+    return { ok: true, tier, billingSynced };
   },
 });

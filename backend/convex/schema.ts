@@ -1976,6 +1976,43 @@ export default defineSchema({
   }).index("by_hash", ["tokenHash"])
     .index("by_user", ["userId", "createdAt"]),
 
+  // ── Per-user OpenRouter key (METADATA ONLY — raw key never here) ────
+  // A paid hosted (Cloud Agent) seat gets its OWN OpenRouter API key,
+  // minted via OpenRouter's Provisioning API. WHY per-user (not one
+  // shared upstream key): a single GLM/OpenRouter key rate-limits under
+  // many concurrent paying users; a per-user key spreads load across
+  // OpenRouter's GLM provider pool AND carries its own hard credit
+  // `limit` (the margin backstop — set BELOW what the user prepaid, so
+  // "if they finish credit we already made money" holds at the provider
+  // level too). PRIVACY: the raw `sk-or-v1-...` secret lives ONLY in the
+  // gateway Worker's KV (OR_USER_KEYS), NEVER in Convex — this row holds
+  // just OpenRouter's `hash` (an identifier used to PATCH/DELETE the key,
+  // not a bearer), the non-secret name, the limit, and status. Same
+  // counter/id/label class as gatewayTokens; pinned by convex_privacy_test.go.
+  // SECURITY (open-source repo): the code is public, the Convex DATA is
+  // not — but treat this table as if a row could leak. It deliberately
+  // holds NOTHING that authorizes inference: `orHash` is OpenRouter's
+  // management identifier (you still need the operator's PROVISIONING key
+  // to act on it), never the `sk-or-v1-...` secret. Every function that
+  // writes this table is internal-only (no client/mutation surface), so a
+  // tenant can neither mint themselves a key nor raise their own
+  // `limitCents`. The limit itself is set to our COGS budget (margin
+  // already removed — see openrouterKeys.ts), so even a total breach of
+  // the key caps third-party spend well below what the user prepaid.
+  openrouterKeys: defineTable({
+    userId: v.id("users"),
+    orHash: v.string(),                 // OpenRouter key hash (mgmt id, NOT the secret)
+    name: v.string(),                   // "yaver-user-<id>" (non-secret label)
+    limitCents: v.number(),             // OpenRouter-side hard credit cap (monthly reset) = our COGS budget
+    status: v.string(),                 // "active" | "disabled"
+    usageCents: v.optional(v.number()), // mirror of OpenRouter usage_monthly (display; synced)
+    lastSyncedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    disabledAt: v.optional(v.number()),
+  }).index("by_user", ["userId"])
+    .index("by_hash", ["orHash"]),
+
   // ── Generic managed-resource meter (one wallet, many meters) ───────
   // The compute meter (creditUsage above) is SKU-specific and predates
   // this. As Yaver Premium resells more of the stack — inference tokens

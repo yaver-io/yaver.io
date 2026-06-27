@@ -285,6 +285,49 @@ export const cancelLemonSqueezySubscription = internalAction({
   },
 });
 
+// Swap the billed variant of an existing LemonSqueezy subscription so a
+// future renewal charges the new plan's price (Cloud Agent ⇄ Workspace).
+// Target variant id comes from env (YAVER_CLOUD_HOSTED_VARIANT_ID /
+// YAVER_CLOUD_BYOK_VARIANT_ID) so prices retune without a redeploy.
+// Returns {ok}. Best-effort + non-numeric/test ids skipped (mirrors the
+// cancel action). Used by plans.changePlan.
+export const updateLemonSqueezyVariant = internalAction({
+  args: { lemonSqueezyId: v.string(), tier: v.union(v.literal("hosted"), v.literal("byok")) },
+  handler: async (_ctx, { lemonSqueezyId, tier }): Promise<{ ok: boolean; reason?: string }> => {
+    const apiKey = lsEnv("API_KEY");
+    const variantId = lsEnv(tier === "hosted" ? "YAVER_CLOUD_HOSTED_VARIANT_ID" : "YAVER_CLOUD_BYOK_VARIANT_ID");
+    if (!apiKey) return { ok: false, reason: "no-api-key" };
+    if (!variantId) return { ok: false, reason: "variant-unconfigured" };
+    if (!/^[0-9]+$/.test(lemonSqueezyId)) {
+      console.log(`[lemonsqueezy] variant swap skipped — non-numeric id "${lemonSqueezyId}" (test/dev sub)`);
+      return { ok: true, reason: "test-sub" };
+    }
+    try {
+      const resp = await fetch(`https://api.lemonsqueezy.com/v1/subscriptions/${lemonSqueezyId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/vnd.api+json",
+          "Content-Type": "application/vnd.api+json",
+        },
+        body: JSON.stringify({
+          data: {
+            type: "subscriptions",
+            id: lemonSqueezyId,
+            attributes: { variant_id: Number(variantId) },
+          },
+        }),
+      });
+      if (resp.ok) return { ok: true };
+      console.error(`[lemonsqueezy] variant swap HTTP ${resp.status}: ${await resp.text()}`);
+      return { ok: false, reason: `http-${resp.status}` };
+    } catch (e) {
+      console.error("[lemonsqueezy] variant swap failed:", e);
+      return { ok: false, reason: "threw" };
+    }
+  },
+});
+
 async function attachPreviewMachineToSharedServer(
   ctx: { runMutation: (mutation: any, args: any) => Promise<any> },
   machineId: string,
@@ -542,6 +585,8 @@ for (const path of [
   "/billing/yaver-cloud/usage",
   "/billing/credits/checkout",
   "/billing/credits/packs",
+  "/billing/status",
+  "/billing/portal",
   "/managed/cockpit",
   "/managed/burn",
   "/managed/services",
@@ -4243,18 +4288,43 @@ http.route({
     const region = (body.region ?? "eu").trim() || "eu";
     const planId = normalizeCloudPurchasePlan(body.planId);
 
+    // Map the purchased plan to its entitlement tier AND the LS variant to
+    // charge. cloud-agent = $19 included-model = hosted; cloud-workspace =
+    // $9 BYO = byok. The webhook grants hosted entitlements ONLY when
+    // custom_data.tier === "hosted", so the tier MUST be passed here — without
+    // it every purchase silently fell back to byok regardless of plan.
+    const tier: "hosted" | "byok" = planId === "cloud-agent" ? "hosted" : "byok";
+    // hosted MUST have its own variant — never fall back to the byok-priced
+    // default, or a $19 plan would be sold for $9 (silent mis-bill). byok may
+    // fall back to the legacy single SKU (which is byok-priced).
+    let variantId: string | undefined;
+    if (tier === "hosted") {
+      variantId = lsEnv("YAVER_CLOUD_HOSTED_VARIANT_ID");
+      if (!variantId) {
+        return errorResponse(
+          "The Cloud Agent ($19) plan isn't available yet — its LemonSqueezy variant is not configured (set LEMONSQUEEZY_YAVER_CLOUD_HOSTED_VARIANT_ID). Use Cloud Workspace ($9) for now.",
+          503,
+        );
+      }
+    } else {
+      variantId = lsEnv("YAVER_CLOUD_BYOK_VARIANT_ID") ?? lsEnv("YAVER_CLOUD_VARIANT_ID");
+    }
+
     try {
       const url = await createLemonSqueezyCheckout({
         email: session.email,
+        variantId,
+        variantEnvName: tier === "hosted" ? "YAVER_CLOUD_HOSTED_VARIANT_ID" : "YAVER_CLOUD_BYOK_VARIANT_ID",
         custom: {
           user_email: session.email,
           product_type: "yaver-cloud",
           plan_id: planId,
+          tier,
           machine_type: body.machineType === "gpu" ? "gpu" : "cpu",
           region,
         },
       });
-      return jsonResponse({ url, planId, mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
+      return jsonResponse({ url, planId, tier, mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(message, 500);
@@ -4521,6 +4591,9 @@ http.route({
     const pol = await ctx.runQuery(internal.gatewayPolicy.getAuthContext, {
       userId: session.userDocId as any,
     });
+    const orKey = await ctx.runQuery(internal.openrouterKeys.getByUser, {
+      userId: session.userDocId as any,
+    });
     return jsonResponse({
       ok: true,
       ...wallet,
@@ -4539,7 +4612,149 @@ http.route({
         dailyCapCents: pol.dailyCapCents,
         spentTodayCents: pol.spentTodayCents,
       },
+      // Per-user OpenRouter credit (managed inference). Read from the
+      // stored mirror — no live OpenRouter call on this hot path. `limit`
+      // is our COGS budget (margin already removed), so it reads lower than
+      // the retail AI wallet by design. null when the seat has no key (byok).
+      openrouterCredit: orKey
+        ? {
+            limitCents: orKey.limitCents,
+            usageCents: orKey.usageCents ?? 0,
+            remainingCents: Math.max(0, orKey.limitCents - (orKey.usageCents ?? 0)),
+            status: orKey.status,
+          }
+        : null,
     });
+  }),
+});
+
+/** GET /billing/status — buyer-side plan snapshot for the yaver_billing_status
+ *  MCP tool (and any client): subscribed? which tier? active-hours + wallet
+ *  left? Combines the subscription row with the included-allowance, wallet, and
+ *  managed-inference gauges. Available to any authed user (no preview gate) so
+ *  a prospective buyer can always see "no plan yet". */
+http.route({
+  path: "/billing/status",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const sub = await ctx.runQuery(api.subscriptions.getByUser, {
+      userId: session.userDocId as any,
+    });
+    const allowance = await ctx.runQuery(internal.cloudLifecycle.getAllowance, {
+      userId: session.userDocId as any,
+      machineType: "cpu",
+    });
+    const wallet = await ctx.runQuery(internal.cloudLifecycle.getWallet, {
+      userId: session.userDocId as any,
+    });
+    const pol = await ctx.runQuery(internal.gatewayPolicy.getAuthContext, {
+      userId: session.userDocId as any,
+    });
+    const subscribed = !!sub && (sub.status === "active" || sub.status === "past_due");
+    // Managed inference on ⇒ hosted ($19 Agent); else the allowance plan
+    // (byok/beta) or byok when subscribed without a recorded plan.
+    const tier = pol.enabled ? "hosted" : (allowance.plan || (subscribed ? "byok" : null));
+    return jsonResponse({
+      ok: true,
+      subscribed,
+      tier,
+      subscriptionStatus: sub?.status ?? null,
+      currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+      cancelledAt: sub?.cancelledAt ?? null,
+      includedHoursLeft: Math.round((allowance.remainingSeconds / 3600) * 10) / 10,
+      walletCents: wallet.balanceCents,
+      managedInference: pol.enabled === true,
+    });
+  }),
+});
+
+/** GET /billing/portal — the LemonSqueezy customer-portal URL for the user's
+ *  active subscription (update payment / change plan / cancel). Fetched live
+ *  from the LS API so it's always current; portalUrl is null when the user has
+ *  no LS subscription yet, or a non-numeric (test) id, or LS isn't configured —
+ *  callers fall back to the dashboard. */
+http.route({
+  path: "/billing/portal",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const sub = await ctx.runQuery(api.subscriptions.getByUser, {
+      userId: session.userDocId as any,
+    });
+    const lsId = sub?.lemonSqueezyId;
+    const apiKey = lsEnv("API_KEY");
+    if (!lsId || !apiKey) {
+      return jsonResponse({ ok: true, portalUrl: null, reason: lsId ? "billing not configured" : "no active subscription" });
+    }
+    try {
+      const resp = await fetch(`https://api.lemonsqueezy.com/v1/subscriptions/${lsId}`, {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/vnd.api+json" },
+      });
+      if (!resp.ok) {
+        return jsonResponse({ ok: true, portalUrl: null, reason: `lemonsqueezy ${resp.status}` });
+      }
+      const data = await resp.json();
+      const urls = data?.data?.attributes?.urls || {};
+      return jsonResponse({
+        ok: true,
+        portalUrl: urls.customer_portal ?? null,
+        updatePaymentUrl: urls.update_payment_method ?? null,
+      });
+    } catch (e) {
+      return jsonResponse({ ok: true, portalUrl: null, reason: String(e) });
+    }
+  }),
+});
+
+/** POST /billing/yaver-cloud/change-plan — in-app Cloud Agent ⇄ Cloud
+ *  Workspace switch. Body: {plan:"cloud-agent"|"cloud-workspace"}. Scoped
+ *  to the caller's OWN active managed subscription (a user can never move
+ *  another account). Downgrade applies immediately (managed AI off now);
+ *  upgrade requires the LemonSqueezy variant swap to succeed first. */
+http.route({
+  path: "/billing/yaver-cloud/change-plan",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Bad JSON", 400);
+    }
+    const targetPlan = body?.plan;
+    if (targetPlan !== "cloud-agent" && targetPlan !== "cloud-workspace") {
+      return errorResponse("plan must be 'cloud-agent' or 'cloud-workspace'", 400);
+    }
+    const sub = await ctx.runQuery(api.subscriptions.getByUser, {
+      userId: session.userDocId as any,
+    });
+    if (!sub || sub.status !== "active") {
+      return errorResponse("No active managed subscription to change", 400);
+    }
+    if (sub.plan !== "cloud-agent" && sub.plan !== "cloud-workspace") {
+      return errorResponse("Current subscription is not a managed Cloud plan", 400);
+    }
+    if (sub.plan === targetPlan) {
+      return jsonResponse({ ok: true, plan: targetPlan, unchanged: true });
+    }
+    const result = await ctx.runAction(internal.plans.changePlan, {
+      userId: session.userDocId as any,
+      lemonSqueezyId: sub.lemonSqueezyId ?? undefined,
+      targetPlan,
+    });
+    if (!result.ok) {
+      // Upgrade refused because billing isn't wired — surface honestly.
+      return jsonResponse(
+        { ok: false, reason: result.reason ?? "change-failed", plan: sub.plan },
+        409,
+      );
+    }
+    return jsonResponse({ ok: true, plan: targetPlan, tier: result.tier, billingSynced: result.billingSynced });
   }),
 });
 

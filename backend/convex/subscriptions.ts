@@ -178,6 +178,27 @@ export const upsertFromWebhook = internalMutation({
   },
 });
 
+// Persist an in-app plan switch (Cloud Agent ⇄ Cloud Workspace) on the
+// user's governing subscription, immediately. The LemonSqueezy variant
+// swap (so future renewals bill the new price) is handled separately by
+// plans.changePlan; this just moves the local `plan` label that the
+// entitlement + reconcile logic reads. Scoped to ONE user's own sub.
+export const setPlan = internalMutation({
+  args: { userId: v.id("users"), plan: v.string() },
+  handler: async (ctx, { userId, plan }) => {
+    const rows = await ctx.db
+      .query("subscriptions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const sub = rows
+      .filter((s) => s.status === "active")
+      .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))[0];
+    if (!sub) return null;
+    await ctx.db.patch(sub._id, { plan, updatedAt: Date.now() });
+    return { subscriptionId: sub._id, lemonSqueezyId: sub.lemonSqueezyId ?? null };
+  },
+});
+
 // Cancel subscription
 export const cancel = internalMutation({
   args: { lemonSqueezyId: v.string() },
