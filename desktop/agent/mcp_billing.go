@@ -1,18 +1,17 @@
 package main
 
 // mcp_billing.go — buyer-side billing MCP tools. Let a Yaver user, from their
-// terminal coding agent, check their plan and get a payment link for Yaver's
-// own Workspace ($9) / Agent ($19) plans. Thin wrappers over the authed Convex
-// /billing/* endpoints (the daemon already holds the user's token).
+// terminal coding agent, check their plan and get payment / manage links for
+// Yaver's own Workspace ($9) / Agent ($19) plans. Thin wrappers over the authed
+// Convex /billing/* endpoints (the daemon already holds the user's token).
 //
-// NOT to be confused with the lemonsqueezy_* tools, which are SELLER-side
-// (managing the user's OWN store). These buy *Yaver itself*.
+// NOT the lemonsqueezy_* tools, which are SELLER-side (the user's OWN store).
+// These buy *Yaver itself*.
 //
-// Status note: the $19 Agent (hosted) initial-checkout tier wiring + a
-// distinct LS variant are still being finalized server-side (see
-// docs/yaver-mcp-billing.md). Until then yaver_billing_checkout offers the $9
-// Workspace (byok) plan — which bills correctly today — and points Agent buyers
-// at the dashboard rather than minting a mis-billed checkout.
+// Mis-bill safety: the server-side checkout maps plan→tier and REQUIRES a
+// distinct LemonSqueezy variant for the $19 hosted plan — if that variant
+// isn't configured it returns a clean 503, which these tools surface verbatim
+// (never a wrong-priced link). See docs/yaver-mcp-billing.md.
 
 import (
 	"bytes"
@@ -46,145 +45,177 @@ func billingNotSignedIn() interface{} {
 	})
 }
 
-// --- yaver_billing_status ---------------------------------------------------
-
-// mcpYaverBillingStatus reports the user's current plan fuel gauges: included
-// active-hours left this month, prepaid wallet balance, and whether managed
-// inference is on. Backed by the committed /billing/yaver-cloud/balance
-// endpoint. This is the "am I already subscribed / what do I have" read.
-func mcpYaverBillingStatus() interface{} {
+// billingRequest makes an authed call to a /billing/* endpoint and returns the
+// status code + raw body. A nil bodyJSON sends no body (GET).
+func billingRequest(method, path string, bodyJSON []byte) (int, []byte, error) {
 	base, token := billingBaseURL()
 	if token == "" {
-		return billingNotSignedIn()
+		return 0, nil, fmt.Errorf("not signed in")
 	}
-	req, err := newBearerRequest(http.MethodGet, base+"/billing/yaver-cloud/balance", token, nil)
+	var r io.Reader
+	if bodyJSON != nil {
+		r = bytes.NewReader(bodyJSON)
+	}
+	req, err := newBearerRequest(method, base+path, token, r)
 	if err != nil {
-		return mcpToolError(fmt.Sprintf("billing status: %v", err))
+		return 0, nil, err
+	}
+	if bodyJSON != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return mcpToolError(fmt.Sprintf("billing status: %v", err))
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusForbidden {
-		return mcpToolJSON(map[string]interface{}{
-			"signed_in":   true,
-			"available":   false,
-			"next_action": "Yaver Cloud plans aren't enabled on your account yet (private preview).",
-		})
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b, nil
+}
+
+// --- yaver_billing_status ---------------------------------------------------
+
+// mcpYaverBillingStatus reports whether the user is subscribed, which tier,
+// included active-hours left this month, prepaid wallet balance, and whether
+// managed inference is on. The "am I already subscribed" read.
+func mcpYaverBillingStatus() interface{} {
+	if _, token := billingBaseURL(); token == "" {
+		return billingNotSignedIn()
 	}
-	if resp.StatusCode != http.StatusOK {
-		return mcpToolError(fmt.Sprintf("billing status failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body))))
+	code, body, err := billingRequest(http.MethodGet, "/billing/status", nil)
+	if err != nil {
+		return mcpToolError(fmt.Sprintf("billing status: %v", err))
 	}
-	var raw map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if code != http.StatusOK {
+		return mcpToolError(fmt.Sprintf("billing status failed (%d): %s", code, strings.TrimSpace(string(body))))
+	}
+	var s struct {
+		Subscribed         bool     `json:"subscribed"`
+		Tier               *string  `json:"tier"`
+		SubscriptionStatus *string  `json:"subscriptionStatus"`
+		CurrentPeriodEnd   *float64 `json:"currentPeriodEnd"`
+		IncludedHoursLeft  float64  `json:"includedHoursLeft"`
+		WalletCents        float64  `json:"walletCents"`
+		ManagedInference   bool     `json:"managedInference"`
+	}
+	if err := json.Unmarshal(body, &s); err != nil {
 		return mcpToolError(fmt.Sprintf("billing status decode: %v", err))
 	}
-
-	out := map[string]interface{}{"signed_in": true, "available": true}
-	// Wallet (cents → dollars for the human-facing summary).
-	if c, ok := raw["balanceCents"].(float64); ok {
-		out["wallet_cents"] = c
-		out["wallet_usd"] = c / 100.0
+	out := map[string]interface{}{
+		"signed_in":           true,
+		"subscribed":          s.Subscribed,
+		"tier":                s.Tier,
+		"subscription_status": s.SubscriptionStatus,
+		"included_hours_left": s.IncludedHoursLeft,
+		"wallet_usd":          s.WalletCents / 100.0,
+		"managed_inference":   s.ManagedInference,
 	}
-	if lb, ok := raw["lowBalance"].(bool); ok {
-		out["low_balance"] = lb
-	}
-	// Included active-hours this month + tier (allowance.plan ≈ byok/hosted/beta).
-	if al, ok := raw["allowance"].(map[string]interface{}); ok {
-		if plan, ok := al["plan"].(string); ok && plan != "" {
-			out["tier"] = plan
+	if s.Subscribed {
+		tier := "your"
+		if s.Tier != nil && *s.Tier != "" {
+			tier = *s.Tier
 		}
-		if rem, ok := al["remainingSeconds"].(float64); ok {
-			out["included_hours_left"] = rem / 3600.0
-		}
-	}
-	subscribed := out["tier"] != nil && out["tier"] != ""
-	out["subscribed"] = subscribed
-	if subscribed {
-		out["next_action"] = fmt.Sprintf("You're on the %v plan. Use yaver_billing_manage to change or cancel, or yaver_billing_status anytime.", out["tier"])
+		out["next_action"] = fmt.Sprintf("You're on the %s plan. Use yaver_billing_manage to update payment, change plan, or cancel.", tier)
 	} else {
-		out["next_action"] = "No active Yaver plan. Use yaver_billing_checkout to subscribe (Workspace $9 / Agent $19)."
+		out["next_action"] = "No active Yaver plan. Use yaver_billing_checkout to subscribe — Workspace ($9, bring your own Claude/Codex) or Agent ($19, included model)."
 	}
 	return mcpToolJSON(out)
 }
 
 // --- yaver_billing_checkout -------------------------------------------------
 
-// mcpYaverBillingCheckout returns a payment link for the chosen plan. Workspace
-// ($9 BYO) mints a real LemonSqueezy checkout via the committed endpoint. Agent
-// ($19 included-model) is gated until the server-side hosted variant + tier
-// wiring lands (docs/yaver-mcp-billing.md) so we never mint a mis-billed link.
-func mcpYaverBillingCheckout(plan string) interface{} {
-	plan = strings.ToLower(strings.TrimSpace(plan))
-	if plan == "" {
-		plan = "workspace"
+// mcpYaverBillingCheckout returns a LemonSqueezy payment link for the chosen
+// plan. Both tiers go through the server checkout, which sets the correct
+// tier + variant; the $19 Agent surfaces a clean "not configured" message (not
+// a mis-billed link) until its hosted variant is set.
+// billingPlanMap maps a user-facing plan name to its server planId, canonical
+// short name, label, and price. ok=false for anything unrecognized. Pure (no
+// I/O) so it's unit-testable.
+func billingPlanMap(plan string) (planID, short, label, price string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "", "workspace", "byok", "cloud-workspace":
+		return "cloud-workspace", "workspace", "Cloud Workspace", "$9/mo (bring your own Claude/Codex)", true
+	case "agent", "hosted", "cloud-agent":
+		return "cloud-agent", "agent", "Cloud Agent", "$19/mo (included model)", true
+	default:
+		return "", "", "", "", false
 	}
-	if plan != "workspace" && plan != "agent" {
+}
+
+func mcpYaverBillingCheckout(plan string) interface{} {
+	planID, short, label, price, ok := billingPlanMap(plan)
+	if !ok {
 		return mcpToolError(`plan must be "workspace" ($9 BYO) or "agent" ($19 included model)`)
 	}
 
-	if plan == "agent" {
-		// Don't mint a checkout that would silently grant byok entitlements —
-		// surface the dashboard until the hosted variant is wired.
-		return mcpToolJSON(map[string]interface{}{
-			"plan":        "agent",
-			"available":   false,
-			"manage_url":  yaverDashboardURL,
-			"next_action": "The Cloud Agent ($19, included model) plan is being finalized. For now, subscribe to Cloud Workspace ($9, bring your own Claude/Codex) with yaver_billing_checkout plan=\"workspace\", or open " + yaverDashboardURL + " to manage plans.",
-		})
-	}
-
-	base, token := billingBaseURL()
-	if token == "" {
+	if _, token := billingBaseURL(); token == "" {
 		return billingNotSignedIn()
 	}
-	reqBody, _ := json.Marshal(map[string]string{"region": "eu", "planId": "cloud-workspace"})
-	req, err := newBearerRequest(http.MethodPost, base+"/billing/yaver-cloud/checkout", token, bytes.NewReader(reqBody))
+	reqBody, _ := json.Marshal(map[string]string{"region": "eu", "planId": planID})
+	code, body, err := billingRequest(http.MethodPost, "/billing/yaver-cloud/checkout", reqBody)
 	if err != nil {
 		return mcpToolError(fmt.Sprintf("checkout: %v", err))
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return mcpToolError(fmt.Sprintf("checkout: %v", err))
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusForbidden {
+	switch code {
+	case http.StatusOK:
+		var result struct {
+			URL  string `json:"url"`
+			Mode string `json:"mode"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil || strings.TrimSpace(result.URL) == "" {
+			return mcpToolError("checkout URL missing in response")
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"plan":        short,
+			"price":       price,
+			"url":         result.URL,
+			"mode":        firstNonEmpty(result.Mode, "sandbox"),
+			"next_action": fmt.Sprintf("Open this link to subscribe to %s (%s): %s  — pay with the SAME email you signed into Yaver with, or the subscription won't attach to your account.", label, price, result.URL),
+		})
+	case http.StatusForbidden:
 		return mcpToolJSON(map[string]interface{}{
 			"available":   false,
 			"next_action": "Yaver Cloud plans aren't enabled on your account yet (private preview).",
 		})
+	case http.StatusServiceUnavailable:
+		// e.g. the $19 hosted variant isn't configured yet — surface the
+		// server's message verbatim so the agent tells the human accurately.
+		return mcpToolJSON(map[string]interface{}{
+			"plan":        short,
+			"available":   false,
+			"manage_url":  yaverDashboardURL,
+			"next_action": strings.TrimSpace(string(body)),
+		})
+	default:
+		return mcpToolError(fmt.Sprintf("checkout failed (%d): %s", code, strings.TrimSpace(string(body))))
 	}
-	if resp.StatusCode != http.StatusOK {
-		return mcpToolError(fmt.Sprintf("checkout failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body))))
-	}
-	var result struct {
-		URL  string `json:"url"`
-		Mode string `json:"mode"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil || strings.TrimSpace(result.URL) == "" {
-		return mcpToolError("checkout URL missing in response")
-	}
-	return mcpToolJSON(map[string]interface{}{
-		"plan":        "workspace",
-		"price":       "$9/mo",
-		"url":         result.URL,
-		"mode":        firstNonEmpty(result.Mode, "sandbox"),
-		"next_action": "Open this link to subscribe to Cloud Workspace ($9): " + result.URL + "  — pay with the same email you signed into Yaver with, or the subscription won't attach to your account.",
-	})
 }
 
 // --- yaver_billing_manage ---------------------------------------------------
 
 // mcpYaverBillingManage returns where to update payment, change plan, or cancel.
-// LemonSqueezy's customer portal is the system of record (every receipt email
-// links to it); the Yaver dashboard billing tab is the in-product entry.
+// Prefers the live LemonSqueezy customer-portal URL (/billing/portal); falls
+// back to the Yaver dashboard billing tab.
 func mcpYaverBillingManage() interface{} {
+	if _, token := billingBaseURL(); token == "" {
+		return billingNotSignedIn()
+	}
+	code, body, err := billingRequest(http.MethodGet, "/billing/portal", nil)
+	if err == nil && code == http.StatusOK {
+		var p struct {
+			PortalURL        *string `json:"portalUrl"`
+			UpdatePaymentURL *string `json:"updatePaymentUrl"`
+		}
+		if json.Unmarshal(body, &p) == nil && p.PortalURL != nil && *p.PortalURL != "" {
+			return mcpToolJSON(map[string]interface{}{
+				"portal_url":         *p.PortalURL,
+				"update_payment_url": p.UpdatePaymentURL,
+				"next_action":        "Manage your subscription (update payment, change plan, or cancel) here: " + *p.PortalURL,
+			})
+		}
+	}
+	// No active LS subscription (or LS not configured) — point at the dashboard.
 	return mcpToolJSON(map[string]interface{}{
 		"manage_url":  yaverDashboardURL,
-		"next_action": "Manage your subscription (update payment, change plan, or cancel) at " + yaverDashboardURL + " (Billing). Your LemonSqueezy receipt emails also link straight to the customer portal for cancellation.",
+		"next_action": "Manage billing at " + yaverDashboardURL + " (Billing). If you have an active subscription, your LemonSqueezy receipt emails also link to the customer portal to cancel.",
 	})
 }

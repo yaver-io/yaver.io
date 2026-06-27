@@ -41,30 +41,35 @@ func TestBillingToolsRegistered(t *testing.T) {
 	}
 }
 
-// The $19 Agent plan must NOT mint a real checkout until the server-side hosted
-// variant/tier wiring lands — otherwise it silently grants byok ($9)
-// entitlements. The tool must gate it (available:false) and never return a
-// live LemonSqueezy checkout link.
-func TestBillingCheckoutAgentGated(t *testing.T) {
-	txt := billingToolText(t, mcpYaverBillingCheckout("agent"))
-	if !strings.Contains(txt, "\"available\": false") {
-		t.Errorf("agent checkout should be gated (available:false), got: %s", txt)
+// billingPlanMap is the pure plan→variant mapping. The $19/$9 split is
+// security-relevant (wrong planId = wrong charge), so pin it exactly.
+func TestBillingPlanMap(t *testing.T) {
+	cases := []struct {
+		in, planID, short string
+	}{
+		{"", "cloud-workspace", "workspace"},
+		{"workspace", "cloud-workspace", "workspace"},
+		{"byok", "cloud-workspace", "workspace"},
+		{"Workspace", "cloud-workspace", "workspace"},
+		{"agent", "cloud-agent", "agent"},
+		{"hosted", "cloud-agent", "agent"},
+		{"AGENT", "cloud-agent", "agent"},
 	}
-	if strings.Contains(txt, "lemonsqueezy.com/buy") || strings.Contains(txt, "/checkout/") {
-		t.Errorf("agent checkout must NOT mint a live LS checkout URL (mis-bill guard), got: %s", txt)
+	for _, c := range cases {
+		planID, short, _, _, ok := billingPlanMap(c.in)
+		if !ok || planID != c.planID || short != c.short {
+			t.Errorf("billingPlanMap(%q) = (%q,%q,ok=%v), want (%q,%q,true)", c.in, planID, short, ok, c.planID, c.short)
+		}
+	}
+	if _, _, _, _, ok := billingPlanMap("frontier"); ok {
+		t.Error("unknown plan should not be ok")
 	}
 }
 
+// An unrecognized plan must error BEFORE any network call.
 func TestBillingCheckoutInvalidPlan(t *testing.T) {
 	txt := billingToolText(t, mcpYaverBillingCheckout("frontier"))
 	if !strings.Contains(strings.ToLower(txt), "plan must be") {
 		t.Errorf("invalid plan should error, got: %s", txt)
-	}
-}
-
-func TestBillingManageReturnsDashboard(t *testing.T) {
-	txt := billingToolText(t, mcpYaverBillingManage())
-	if !strings.Contains(txt, yaverDashboardURL) {
-		t.Errorf("manage should return the dashboard URL, got: %s", txt)
 	}
 }
