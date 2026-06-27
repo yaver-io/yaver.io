@@ -181,6 +181,9 @@ type UserInfo struct {
 	Email    string `json:"email"`
 	FullName string `json:"fullName"`
 	Provider string `json:"provider"`
+	// IsOwner is the server-computed ownerAllowlist flag. Gates owner-only
+	// experimental hardware-cell MCP tools (mcp_owner_gate.go).
+	IsOwner bool `json:"isOwner"`
 }
 
 // ValidateTokenInfo checks the auth token against Convex and returns full user info.

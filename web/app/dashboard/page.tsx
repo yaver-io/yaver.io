@@ -54,7 +54,7 @@ import ReactMarkdown from "react-markdown";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
 import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
-import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE, isKivancAccount } from "@/components/dashboard/DevicesView";
+import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE } from "@/components/dashboard/DevicesView";
 import BillingView from "@/components/dashboard/BillingView";
 import StoresView from "@/components/dashboard/StoresView";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
@@ -1912,10 +1912,10 @@ export default function DashboardPage() {
   const visibleDevices = displayDevices.filter((d) => !isDormantUnreachableDevice(d));
   const selectedPreviewTarget = mobileWorkers.find((d) => d.id === previewTargetId) || null;
   // Owner-only experimental hardware cells. Hidden from non-owners so the
-  // default dashboard stays the AI coding/preview/deploy product. Mirrors the
-  // daemon-side gate (mcp_owner_gate.go) and uses the same NEXT_PUBLIC_YAVER_
-  // OWNER_EMAIL allowlist as isKivancAccount.
-  const isOwnerAccount = isKivancAccount(user?.email);
+  // default dashboard stays the AI coding/preview/deploy product. Owner status
+  // is the server-computed user.isOwner flag (no owner identity in the bundle);
+  // mirrors the daemon-side gate (mcp_owner_gate.go).
+  const isOwnerAccount = user?.isOwner === true;
   const OWNER_ONLY_TABS = new Set(["arm", "appletv", "robot", "circuit", "printer"]);
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = ([
     { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },

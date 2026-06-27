@@ -354,6 +354,7 @@ async function authenticateRequest(
   avatarUrl?: string;
   surveyCompleted: boolean;
   emailVerified: boolean;
+  isOwner: boolean;
 } | null> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -381,6 +382,9 @@ async function authenticateRequest(
     // by construction; email + passkey signups start unverified and
     // graduate via /auth/verify-email/confirm.
     emailVerified: result.emailVerified === true,
+    // Owner flag drives owner-only hardware-cell visibility on every client
+    // (web/mobile/daemon) without shipping any owner identity to the client.
+    isOwner: (result as { isOwner?: boolean }).isOwner === true,
   };
 }
 

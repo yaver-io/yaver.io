@@ -34,7 +34,6 @@ import {
   type GuestUsageEntry,
 } from "../../src/lib/guests";
 import { useAuth } from "../../src/context/AuthContext";
-import { isOwnerAccount } from "../../src/lib/owner";
 import { getUserSettings } from "../../src/lib/auth";
 
 // Optional-tool ids that are owner-only (experimental robotics / lab hardware).
@@ -2910,7 +2909,7 @@ export default function MoreScreen() {
   // Owner-only experimental hardware cells stay hidden for non-owners even if
   // the optional-tool preference is on, matching the daemon gate
   // (mcp_owner_gate.go) and the web dashboard gate.
-  const isOwner = isOwnerAccount(user?.email);
+  const isOwner = user?.isOwner === true;
   const showOptionalTool = useCallback(
     (id: OptionalMoreToolId) => {
       if (!isOwner && OWNER_ONLY_MORE_TOOLS.has(id)) return false;

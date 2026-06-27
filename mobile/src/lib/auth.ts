@@ -40,6 +40,9 @@ export interface User {
   // methods" banner when this is false. OAuth signup users are
   // verified-by-construction; email + passkey signups start unverified.
   emailVerified?: boolean;
+  // Server-computed owner flag (ownerAllowlist). Gates owner-only experimental
+  // hardware cells in the More menu; no owner identity ships in the app bundle.
+  isOwner?: boolean;
 }
 
 export async function getToken(): Promise<string | null> {
@@ -150,6 +153,7 @@ export async function validateTokenDetailed(token: string): Promise<ValidationRe
         avatarUrl: u.avatarUrl,
         surveyCompleted: u.surveyCompleted ?? false,
         emailVerified: u.emailVerified === true,
+        isOwner: u.isOwner === true,
       };
       return { kind: "valid", user };
     } catch (e) {

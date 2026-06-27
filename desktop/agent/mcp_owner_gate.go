@@ -8,17 +8,16 @@ package main
 // Design:
 //   - Filter by TOOL-NAME PREFIX, not by editing each cell's files. Any NEW
 //     robot_* / arm_* / circuit_* verb added later is hidden automatically.
-//   - Owner identity is ENV-driven (no personal email baked into this public
-//     repo), mirroring backend/convex/ownerAllowlist.ts and the web
-//     NEXT_PUBLIC_YAVER_OWNER_EMAIL gate. Default = no owner configured = the
-//     cells are hidden for everyone (the simplified default). The owner sets
-//     YAVER_OWNER_EMAILS (or the existing CLOUD_PREVIEW_* vars) on their daemon
-//     to reveal them.
+//   - Owner identity is the SERVER-computed flag user.isOwner, delivered on
+//     /auth/validate and surfaced as AuthStatusSnapshot.IsOwner. One source of
+//     truth (backend/convex/ownerAllowlist.ts, set via the CLOUD_PREVIEW_OWNER_*
+//     Convex env) shared by web, mobile, and this daemon — no owner identity is
+//     baked into any client or this public repo. Default (no owner configured)
+//     = nobody is owner = the cells are hidden for everyone (simplified product).
 //   - Applied in two places: the tools/list (so non-owners never SEE the
 //     tools) and the tools/call dispatch (so a guessed name can't be CALLED).
 
 import (
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -54,56 +53,14 @@ func mcpToolIsOwnerOnly(name string) bool {
 
 // --- owner identity (env-driven, mirrors ownerAllowlist.ts) -----------------
 
-func envCSVLower(keys ...string) []string {
-	for _, k := range keys {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-			parts := strings.Split(v, ",")
-			out := make([]string, 0, len(parts))
-			for _, p := range parts {
-				if p = strings.ToLower(strings.TrimSpace(p)); p != "" {
-					out = append(out, p)
-				}
-			}
-			return out
-		}
-	}
-	return nil
-}
-
-func ownerEmails() []string {
-	return envCSVLower("YAVER_OWNER_EMAILS", "YAVER_CLOUD_PREVIEW_EMAILS", "CLOUD_PREVIEW_OWNER_EMAIL")
-}
-
-func ownerUserIDs() []string {
-	return envCSVLower("YAVER_OWNER_USER_IDS", "CLOUD_PREVIEW_OWNER_USER_IDS")
-}
-
-// isOwnerUser reports whether the given identity matches a configured owner.
-// With no owner env set, nobody is the owner (cells stay hidden — the
-// simplified default).
-func isOwnerUser(email, userID string) bool {
-	if e := strings.ToLower(strings.TrimSpace(email)); e != "" {
-		for _, o := range ownerEmails() {
-			if o == e {
-				return true
-			}
-		}
-	}
-	if u := strings.TrimSpace(userID); u != "" {
-		for _, o := range ownerUserIDs() {
-			if u == o {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// currentUserIsOwner resolves the daemon's authenticated user and checks it
-// against the owner allowlist. The verdict is cached: authStatusSnapshot
-// validates the token against Convex (a network call), which we must not do
-// on every tools/call. On a transient failure to resolve the user (offline,
-// not signed in) we reuse the last known verdict, else fail closed (hide).
+// currentUserIsOwner reports whether the daemon's authenticated user is an
+// owner, per the SERVER-computed ownerAllowlist flag delivered on
+// /auth/validate (AuthStatusSnapshot.IsOwner) — one source of truth, no owner
+// identity configured on the client/daemon. The verdict is cached because
+// authStatusSnapshot validates the token against Convex (a network call) and
+// we must not do that on every tools/call. On a transient failure to resolve
+// the user (offline / not signed in) we reuse the last known verdict, else
+// fail closed (hide owner-only tools).
 var (
 	ownerVerdictMu      sync.Mutex
 	ownerVerdictKnown   bool
@@ -123,20 +80,19 @@ func currentUserIsOwner() bool {
 	}
 
 	snap := authStatusSnapshot()
-	if !snap.SignedIn || (strings.TrimSpace(snap.UserEmail) == "" && strings.TrimSpace(snap.UserID) == "") {
-		// Couldn't determine the user. Reuse a prior verdict if we have
-		// one, else fail closed so non-owners never see owner-only tools.
+	if !snap.SignedIn {
+		// Couldn't confirm the user. Reuse a prior verdict if we have one,
+		// else fail closed so non-owners never see owner-only tools.
 		if ownerVerdictKnown {
 			return ownerVerdictValue
 		}
 		return false
 	}
 
-	v := isOwnerUser(snap.UserEmail, snap.UserID)
 	ownerVerdictKnown = true
-	ownerVerdictValue = v
+	ownerVerdictValue = snap.IsOwner
 	ownerVerdictExpires = now.Add(ownerVerdictTTL)
-	return v
+	return snap.IsOwner
 }
 
 // resetOwnerVerdictCache clears the cached owner verdict (tests + sign-out).

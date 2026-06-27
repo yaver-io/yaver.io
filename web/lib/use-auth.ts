@@ -10,6 +10,9 @@ interface User {
   provider?: string;
   avatarUrl?: string;
   surveyCompleted?: boolean;
+  // Server-computed owner flag (ownerAllowlist). Gates owner-only hardware
+  // cells; never carries the owner identity into the client bundle.
+  isOwner?: boolean;
 }
 
 interface AuthState {
@@ -98,6 +101,7 @@ export function useAuth(): AuthState {
           provider: raw.provider,
           avatarUrl: raw.avatarUrl,
           surveyCompleted: raw.surveyCompleted,
+          isOwner: raw.isOwner === true,
         };
         if (!cancelled) {
           setUser(mapped);

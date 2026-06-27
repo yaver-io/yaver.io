@@ -6,12 +6,11 @@
 // from the agent) and the dashboard nav filter.
 import Link from "next/link";
 import { useAuth } from "@/lib/use-auth";
-import { isOwnerAccount } from "@/lib/owner";
 
 export default function OwnerGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
   if (isLoading) return null;
-  if (!isOwnerAccount(user?.email)) {
+  if (user?.isOwner !== true) {
     return (
       <div className="mx-auto max-w-md p-10 text-center text-sm text-surface-400">
         <p className="mb-3 text-base text-surface-200">

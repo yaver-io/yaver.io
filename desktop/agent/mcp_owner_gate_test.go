@@ -62,40 +62,6 @@ func TestFilterOwnerOnlyTools(t *testing.T) {
 	}
 }
 
-func TestIsOwnerUserEnvDriven(t *testing.T) {
-	// No owner env configured → nobody is owner (cells hidden by default).
-	t.Setenv("YAVER_OWNER_EMAILS", "")
-	t.Setenv("YAVER_CLOUD_PREVIEW_EMAILS", "")
-	t.Setenv("CLOUD_PREVIEW_OWNER_EMAIL", "")
-	t.Setenv("YAVER_OWNER_USER_IDS", "")
-	t.Setenv("CLOUD_PREVIEW_OWNER_USER_IDS", "")
-	if isOwnerUser("anyone@example.com", "u_123") {
-		t.Fatal("with no owner env, nobody should be owner")
-	}
-
-	// Owner email configured (case-insensitive, comma list).
-	t.Setenv("YAVER_OWNER_EMAILS", "Owner@Example.com, second@example.com")
-	if !isOwnerUser("owner@example.com", "") {
-		t.Error("configured owner email should match case-insensitively")
-	}
-	if !isOwnerUser("SECOND@example.com", "") {
-		t.Error("second owner email in the list should match")
-	}
-	if isOwnerUser("stranger@example.com", "") {
-		t.Error("non-listed email must not be owner")
-	}
-
-	// Owner by userID (emailless OAuth accounts).
-	t.Setenv("YAVER_OWNER_EMAILS", "")
-	t.Setenv("YAVER_OWNER_USER_IDS", "u_owner_1,u_owner_2")
-	if !isOwnerUser("", "u_owner_2") {
-		t.Error("configured owner userID should match")
-	}
-	if isOwnerUser("", "u_stranger") {
-		t.Error("non-listed userID must not be owner")
-	}
-}
-
 func TestMcpToolDeniedByOwnerGate(t *testing.T) {
 	// Public tool is never gated, regardless of owner verdict cache.
 	if mcpToolDeniedByOwnerGate("create_task") != nil {

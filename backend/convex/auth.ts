@@ -3,6 +3,7 @@ import { mutation, query, internalQuery, QueryCtx, MutationCtx } from "./_genera
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { deleteInfraGrantArtifactsForUser } from "./access";
+import { isOwner } from "./ownerAllowlist";
 import {
   welcomeHtml,
   providerLinkedHtml,
@@ -1276,6 +1277,12 @@ export const validateSession = query({
       surveyCompleted: result.user.surveyCompleted ?? false,
       emailVerified: result.user.emailVerified === true,
       emailVerifiedAt: result.user.emailVerifiedAt,
+      // Owner flag for owner-only experimental hardware cells (robot/arm/
+      // circuit/printer/appletv). Computed server-side from the ownerAllowlist
+      // env (CLOUD_PREVIEW_OWNER_EMAIL / *_USER_IDS) so no owner identity ships
+      // in any client bundle. Clients read user.isOwner; the daemon reads it
+      // from /auth/validate. See mcp_owner_gate.go, OwnerGate.tsx.
+      isOwner: isOwner(result.user.email, result.user.userId),
     };
   },
 });

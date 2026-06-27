@@ -63,6 +63,10 @@ type AuthStatusSnapshot struct {
 	Provider     string `json:"provider,omitempty"`
 	HasToken     bool   `json:"has_token"`
 	Headless     bool   `json:"headless"`
+	// IsOwner is the server-computed ownerAllowlist flag from /auth/validate.
+	// Used by the owner gate (mcp_owner_gate.go) to hide experimental
+	// hardware-cell tools from non-owners.
+	IsOwner bool `json:"is_owner"`
 	// PendingAuth is populated when a device-code flow has been started
 	// but the human hasn't finished signing in on their phone yet. The
 	// coding agent should surface PendingAuth.URL to the human and then
@@ -76,11 +80,11 @@ type AuthStatusSnapshot struct {
 
 // AuthStatusPending describes an in-flight device-code sign-in.
 type AuthStatusPending struct {
-	URL               string `json:"url"`
-	UserCode          string `json:"user_code"`
-	DeviceCode        string `json:"device_code"`
-	ExpiresAtMs       int64  `json:"expires_at_ms"`
-	ExpiresInSeconds  int    `json:"expires_in_seconds"`
+	URL              string `json:"url"`
+	UserCode         string `json:"user_code"`
+	DeviceCode       string `json:"device_code"`
+	ExpiresAtMs      int64  `json:"expires_at_ms"`
+	ExpiresInSeconds int    `json:"expires_in_seconds"`
 }
 
 // authStatusSnapshot inspects the on-disk config and (if a token is present)
@@ -141,6 +145,7 @@ func authStatusSnapshot() AuthStatusSnapshot {
 	snap.UserEmail = info.Email
 	snap.UserFullName = info.FullName
 	snap.Provider = info.Provider
+	snap.IsOwner = info.IsOwner
 	snap.Message = fmt.Sprintf("signed in as %s via %s", firstNonEmpty(info.Email, info.UserID), firstNonEmpty(info.Provider, "oauth"))
 	return snap
 }
@@ -151,15 +156,15 @@ func authStatusSnapshot() AuthStatusSnapshot {
 // URL on any browser (their phone, their laptop, whatever), finishes OAuth,
 // and the coding agent then calls `auth_poll` / `auth_wait` with DeviceCode.
 type AuthStartResult struct {
-	URL         string   `json:"url"`
-	UserCode    string   `json:"user_code"`
-	DeviceCode  string   `json:"device_code"`
-	ExpiresAt   int64    `json:"expires_at_ms"`
-	ExpiresIn   int      `json:"expires_in_seconds"`
-	QRASCII     string   `json:"qr_ascii"`
-	ConvexURL   string   `json:"convex_url"`
+	URL          string   `json:"url"`
+	UserCode     string   `json:"user_code"`
+	DeviceCode   string   `json:"device_code"`
+	ExpiresAt    int64    `json:"expires_at_ms"`
+	ExpiresIn    int      `json:"expires_in_seconds"`
+	QRASCII      string   `json:"qr_ascii"`
+	ConvexURL    string   `json:"convex_url"`
 	Instructions []string `json:"instructions"`
-	Message     string   `json:"message"`
+	Message      string   `json:"message"`
 }
 
 // authStartDeviceCode requests a new device code from Convex and renders
@@ -232,13 +237,13 @@ func authStartDeviceCode(ctx context.Context, convexURLOverride string) (AuthSta
 	})
 
 	return AuthStartResult{
-		URL:         authURL,
-		UserCode:    dc.UserCode,
-		DeviceCode:  dc.DeviceCode,
-		ExpiresAt:   dc.ExpiresAt,
-		ExpiresIn:   int(ttl.Seconds()),
-		QRASCII:     qrBuf.String(),
-		ConvexURL:   convexURL,
+		URL:        authURL,
+		UserCode:   dc.UserCode,
+		DeviceCode: dc.DeviceCode,
+		ExpiresAt:  dc.ExpiresAt,
+		ExpiresIn:  int(ttl.Seconds()),
+		QRASCII:    qrBuf.String(),
+		ConvexURL:  convexURL,
 		Instructions: []string{
 			"1. Open the URL on any device with a browser (your phone works).",
 			"2. Sign in with Apple, Google, or Microsoft.",
