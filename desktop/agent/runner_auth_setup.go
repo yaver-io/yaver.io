@@ -223,7 +223,9 @@ func loginCodexWithAPIKey(_ context.Context, _ string) error {
 func setupRunnerMCP(runner string) ([]string, error) {
 	yaverPath := findYaverBinary()
 	switch normalizeRunnerAuthName(runner) {
-	case "claude":
+	case "claude", "glm":
+		// glm runs the `claude` binary (pointed at a gateway), so its MCP
+		// config is the same Claude Code user config.
 		if _, err := ensureClaudeCodeMCPConfig(yaverPath); err != nil {
 			return nil, err
 		}
@@ -233,6 +235,14 @@ func setupRunnerMCP(runner string) ([]string, error) {
 			return nil, err
 		}
 		return []string{"codex"}, nil
+	case "opencode":
+		// The $19 included-model tier runs opencode; without this it had NO
+		// yaver_* tools on the box. Registers Yaver in opencode.json so the
+		// managed runner gets the full yaver_* tool surface automatically.
+		if _, err := ensureOpenCodeMCPConfig(yaverPath); err != nil {
+			return nil, err
+		}
+		return []string{"opencode"}, nil
 	default:
 		return nil, nil
 	}
