@@ -10027,9 +10027,12 @@ func (rm *relayManager) reloadNow() {
 	log.Printf("[RELAY] Config reloaded: %d relay server(s)", len(servers))
 }
 
-// watchConfig polls config.json and Convex user settings every 30s for relay server changes.
+// watchConfig polls config.json and Convex user settings every 2min for relay
+// server changes. Relay-URL changes are rare admin actions, so a tighter cadence
+// just burned Convex function calls (this /settings poll was our #2 cost driver);
+// SIGHUP -> reloadNow() still gives an instant local reload when needed.
 func (rm *relayManager) watchConfig(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 
 	for {

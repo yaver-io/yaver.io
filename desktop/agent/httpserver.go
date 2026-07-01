@@ -284,6 +284,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Public
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/integrations/whatsapp/command", s.handleWhatsAppCommand)
 
 	// Authenticated
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
@@ -1840,7 +1841,7 @@ func (s *HTTPServer) isApprovedGuest(userID string) bool {
 // cutoff is a handful of seconds even if the mobile app never talks to this agent.
 func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 	prevGuests := map[string]bool{}
-	fetchOnce := func() {
+	fetchOnce := func() bool {
 		if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
 			s.guestUserIDsMu.Lock()
 			s.guestUserIDs = ids
@@ -1875,10 +1876,41 @@ func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 		// Removable-allocation teardown: hard-kill + wipe any host-share slice
 		// no longer active (revoked/ended/expired). Cheap no-op on normal boxes.
 		s.runHostShareReap()
-	}
-	fetchOnce()
 
-	ticker := time.NewTicker(10 * time.Second)
+		// Report whether anyone is actually being shared with, so the caller
+		// can slow the poll down to near-nothing on the (overwhelmingly common)
+		// host that has zero guests.
+		s.guestUserIDsMu.RLock()
+		n := len(s.guestUserIDs)
+		s.guestUserIDsMu.RUnlock()
+		if n == 0 && s.guestConfigMgr != nil {
+			n = len(s.guestConfigMgr.GetAllConfigs())
+		}
+		return n > 0
+	}
+
+	// Adaptive poll interval. The 10s cadence exists only so a host-side
+	// revocation propagates quickly — which is meaningless when there are no
+	// guests to revoke. A 24/7 10s Convex poll on every idle host dominated our
+	// Convex bill (~660K function calls/period). So poll fast ONLY while guests
+	// exist; with none, we just need to notice the FIRST guest being added,
+	// which tolerates minutes. (New-guest flows through THIS agent already call
+	// FetchGuestConfigs immediately, so this only delays guests added from
+	// web/mobile, by at most guestPollIdle.)
+	const (
+		guestPollActive = 10 * time.Second
+		guestPollIdle   = 5 * time.Minute
+	)
+	pollEvery := func(hasGuests bool) time.Duration {
+		if hasGuests {
+			return guestPollActive
+		}
+		return guestPollIdle
+	}
+
+	hasGuests := fetchOnce()
+
+	ticker := time.NewTicker(pollEvery(hasGuests))
 	defer ticker.Stop()
 	// Flush usage less often than the guest-list check — usage is write-heavy.
 	usageTicker := time.NewTicker(60 * time.Second)
@@ -1888,7 +1920,11 @@ func (s *HTTPServer) refreshGuestList(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			fetchOnce()
+			now := fetchOnce()
+			if now != hasGuests {
+				hasGuests = now
+				ticker.Reset(pollEvery(hasGuests))
+			}
 		case <-usageTicker.C:
 			if s.guestConfigMgr != nil {
 				s.guestConfigMgr.FlushUsage(s.convexURL, s.token)
