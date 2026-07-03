@@ -12,6 +12,7 @@ import {
   type CompanionDetectItem,
   type CompanionProjectSummary,
   type CompanionStatus,
+  type MicroserviceWrapResult,
 } from "@/lib/agent-client";
 
 function StatusPill({ status }: { status: string }) {
@@ -41,6 +42,17 @@ export default function CompanionView() {
   const [detectItems, setDetectItems] = useState<CompanionDetectItem[] | null>(null);
   const [manifestYaml, setManifestYaml] = useState("");
   const [arming, setArming] = useState(false);
+  const [svcRepo, setSvcRepo] = useState("");
+  const [svcName, setSvcName] = useState("");
+  const [svcProject, setSvcProject] = useState("");
+  const [svcCommand, setSvcCommand] = useState("");
+  const [svcPort, setSvcPort] = useState("");
+  const [svcEnvFile, setSvcEnvFile] = useState("");
+  const [svcEnvVault, setSvcEnvVault] = useState("");
+  const [svcAIWrap, setSvcAIWrap] = useState(true);
+  const [svcOverwrite, setSvcOverwrite] = useState(false);
+  const [wrapping, setWrapping] = useState(false);
+  const [wrapResult, setWrapResult] = useState<MicroserviceWrapResult | null>(null);
 
   const [statusByProject, setStatusByProject] = useState<Record<string, CompanionStatus>>({});
 
@@ -99,6 +111,55 @@ export default function CompanionView() {
       setArming(false);
     }
   }, [repo, manifestYaml, showNotice, load]);
+
+  const wrapMicroservice = useCallback(async () => {
+    if (!svcRepo.trim() || !svcCommand.trim()) return;
+    setWrapping(true);
+    try {
+      const res = await agentClient.microserviceWrap({
+        repo: svcRepo.trim(),
+        project: svcProject.trim() || undefined,
+        name: svcName.trim() || undefined,
+        command: svcCommand.trim(),
+        port: svcPort.trim() ? Number(svcPort.trim()) : undefined,
+        env_file: svcEnvFile.trim() || undefined,
+        env_vault: svcEnvVault.trim() || undefined,
+        durable: true,
+        write: true,
+        arm: true,
+        overwrite: svcOverwrite,
+        ai_wrap: svcAIWrap,
+        ai_work_kind: "analysis",
+      });
+      setWrapResult(res);
+      if (res.status) setStatusByProject((m) => ({ ...m, [res.status!.project]: res.status! }));
+      showNotice(
+        "ok",
+        res.armed
+          ? `Wrapped and armed ${res.project}.`
+          : res.written
+            ? `Wrote ${res.manifestPath}.`
+            : res.warnings?.[0] || `Prepared ${res.project}.`,
+      );
+      await load();
+    } catch (e) {
+      showNotice("error", e instanceof Error ? e.message : String(e));
+    } finally {
+      setWrapping(false);
+    }
+  }, [
+    svcRepo,
+    svcCommand,
+    svcProject,
+    svcName,
+    svcPort,
+    svcEnvFile,
+    svcEnvVault,
+    svcOverwrite,
+    svcAIWrap,
+    showNotice,
+    load,
+  ]);
 
   const refreshStatus = useCallback(async (project: string) => {
     try {
@@ -209,6 +270,90 @@ export default function CompanionView() {
         )}
       </section>
 
+      {/* Explicit microservice wrapper */}
+      <section className="rounded-lg border border-border bg-surface-950 p-4">
+        <h2 className="text-sm font-medium text-foreground">Wrap a microservice</h2>
+        <p className="mt-1 text-xs text-foreground-muted">
+          Turn a repo command into a durable Yaver companion service, with MCP-visible status and optional AI analysis wrapping.
+        </p>
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <input
+            value={svcRepo}
+            onChange={(e) => setSvcRepo(e.target.value)}
+            placeholder="/absolute/path/to/repo"
+            className="rounded-md border border-border bg-surface-900 px-3 py-2 text-sm text-foreground outline-none focus:border-emerald-500/50 md:col-span-2"
+          />
+          <input
+            value={svcCommand}
+            onChange={(e) => setSvcCommand(e.target.value)}
+            placeholder="npm run worker"
+            className="rounded-md border border-border bg-surface-900 px-3 py-2 text-sm text-foreground outline-none focus:border-emerald-500/50 md:col-span-2"
+          />
+          <input
+            value={svcProject}
+            onChange={(e) => setSvcProject(e.target.value)}
+            placeholder="project slug"
+            className="rounded-md border border-border bg-surface-900 px-3 py-2 text-sm text-foreground outline-none focus:border-emerald-500/50"
+          />
+          <input
+            value={svcName}
+            onChange={(e) => setSvcName(e.target.value)}
+            placeholder="service name"
+            className="rounded-md border border-border bg-surface-900 px-3 py-2 text-sm text-foreground outline-none focus:border-emerald-500/50"
+          />
+          <input
+            value={svcPort}
+            onChange={(e) => setSvcPort(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="port"
+            inputMode="numeric"
+            className="rounded-md border border-border bg-surface-900 px-3 py-2 text-sm text-foreground outline-none focus:border-emerald-500/50"
+          />
+          <input
+            value={svcEnvFile}
+            onChange={(e) => setSvcEnvFile(e.target.value)}
+            placeholder=".env"
+            className="rounded-md border border-border bg-surface-900 px-3 py-2 text-sm text-foreground outline-none focus:border-emerald-500/50"
+          />
+          <input
+            value={svcEnvVault}
+            onChange={(e) => setSvcEnvVault(e.target.value)}
+            placeholder="vault project"
+            className="rounded-md border border-border bg-surface-900 px-3 py-2 text-sm text-foreground outline-none focus:border-emerald-500/50"
+          />
+          <label className="flex items-center gap-2 rounded-md border border-border bg-surface-900 px-3 py-2 text-xs text-foreground-muted">
+            <input type="checkbox" checked={svcAIWrap} onChange={(e) => setSvcAIWrap(e.target.checked)} />
+            AI analysis wrapper
+          </label>
+          <label className="flex items-center gap-2 rounded-md border border-border bg-surface-900 px-3 py-2 text-xs text-foreground-muted">
+            <input type="checkbox" checked={svcOverwrite} onChange={(e) => setSvcOverwrite(e.target.checked)} />
+            Overwrite manifest
+          </label>
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            onClick={wrapMicroservice}
+            disabled={wrapping || !svcRepo.trim() || !svcCommand.trim()}
+            className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {wrapping ? "Wrapping…" : "Write & arm service"}
+          </button>
+        </div>
+        {wrapResult && (
+          <div className="mt-3 rounded-md border border-border bg-surface-900 p-3 text-xs text-foreground-muted">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-foreground">{wrapResult.project}</span>
+              <StatusPill status={wrapResult.armed ? "armed" : wrapResult.written ? "written" : "prepared"} />
+              <code>{wrapResult.manifestPath}</code>
+            </div>
+            {wrapResult.warnings && wrapResult.warnings.length > 0 && (
+              <ul className="mt-2 list-disc pl-5 text-amber-700 dark:text-amber-300">
+                {wrapResult.warnings.map((wn, i) => <li key={i}>{wn}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Active companions */}
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-foreground">Active companions</h2>
@@ -266,6 +411,30 @@ export default function CompanionView() {
                           </td>
                           <td className="py-1 text-foreground-muted">{c.nextRunAt || "—"}</td>
                           <td className="py-1">{c.lastOutcome || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {s && s.services.length > 0 && (
+                  <table className="mt-3 w-full text-left text-xs">
+                    <thead className="text-foreground-muted">
+                      <tr>
+                        <th className="py-1 font-normal">Service</th>
+                        <th className="py-1 font-normal">Durable</th>
+                        <th className="py-1 font-normal">Unit</th>
+                        <th className="py-1 font-normal">State</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-foreground">
+                      {s.services.map((svc) => (
+                        <tr key={svc.name} className="border-t border-border">
+                          <td className="py-1">{svc.name}</td>
+                          <td className="py-1 text-foreground-muted">{svc.durable ? "yes" : "no"}</td>
+                          <td className="py-1 text-foreground-muted">{svc.unit || "—"}</td>
+                          <td className="py-1">
+                            <StatusPill status={svc.running ? "running" : "stopped"} />
+                          </td>
                         </tr>
                       ))}
                     </tbody>

@@ -660,6 +660,67 @@ export interface CapabilitySnapshot {
   targets: Record<string, CapabilityTargetReadiness>;
 }
 
+export interface CompanionCronStatus {
+  name: string;
+  schedule: string;
+  scheduleId?: string;
+  status: string;
+  lastOutcome?: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  proposed?: boolean;
+}
+
+export interface CompanionSvcStatus {
+  name: string;
+  durable: boolean;
+  unit?: string;
+  running: boolean;
+}
+
+export interface CompanionStatus {
+  project: string;
+  enabled: boolean;
+  crons: CompanionCronStatus[];
+  services: CompanionSvcStatus[];
+  warnings?: string[];
+}
+
+export interface MicroserviceWrapRequest {
+  repo: string;
+  project?: string;
+  name?: string;
+  command?: string;
+  workdir?: string;
+  port?: number;
+  env_vault?: string;
+  env_file?: string;
+  durable?: boolean;
+  write?: boolean;
+  arm?: boolean;
+  overwrite?: boolean;
+  use_shell?: boolean;
+  ai_wrap?: boolean;
+  ai_work_kind?: string;
+  base_url_from?: string;
+  health_url?: string;
+  schedule_cron?: string;
+}
+
+export interface MicroserviceWrapResult {
+  ok: boolean;
+  repo: string;
+  project: string;
+  manifestPath: string;
+  manifestYaml: string;
+  existing: boolean;
+  written: boolean;
+  armed: boolean;
+  status?: CompanionStatus;
+  warnings?: string[];
+  next?: string[];
+}
+
 export interface RemoteRuntimeTarget {
   id: string;
   label: string;
@@ -3614,6 +3675,39 @@ export class QuicClient {
       body: JSON.stringify({ action, confirm: true }),
     });
     return res.json();
+  }
+
+  async microserviceWrap(req: MicroserviceWrapRequest, target?: string): Promise<MicroserviceWrapResult> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(this.peerEndpoint(target, "/microservices/wrap"), {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.error) throw new Error(data?.error || `microservices/wrap ${res.status}`);
+    return data as MicroserviceWrapResult;
+  }
+
+  async microserviceStatus(project: string, target?: string): Promise<CompanionStatus> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(this.peerEndpoint(target, `/microservices/status?project=${encodeURIComponent(project)}`), {
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.error) throw new Error(data?.error || `microservices/status ${res.status}`);
+    return (data.status ?? data) as CompanionStatus;
+  }
+
+  async microserviceDown(project: string, target?: string): Promise<void> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(this.peerEndpoint(target, "/microservices/down"), {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ project }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.error) throw new Error(data?.error || `microservices/down ${res.status}`);
   }
 
   async machineRemove(phrase: string): Promise<any> {

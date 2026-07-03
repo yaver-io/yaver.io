@@ -15927,6 +15927,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if handled, result := dispatchCompanionMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
+		if handled, result := dispatchMicroserviceMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
 		// Native build & deploy — iosNative / androidNative / flutter (mcp_native_build.go)
 		if handled, result := dispatchNativeBuildMCP(s, call.Name, call.Arguments); handled {
 			return result

@@ -551,6 +551,8 @@ func main() {
 		runOps(os.Args[2:])
 	case "workspace":
 		runWorkspace(os.Args[2:])
+	case "microservice", "microservices":
+		runMicroservice(os.Args[2:])
 	case "ask":
 		runAsk(os.Args[2:])
 	case "diagnose":
@@ -739,6 +741,8 @@ Usage:
   yaver repo refresh   Re-run project discovery
   yaver workspace merge <repo-or-path>...  Merge split repos into a Yaver monorepo with preserved history
   yaver workspace status   Show monorepo app status from yaver.workspace.yaml
+  yaver microservice wrap --command "npm run worker" --write [--arm]  Wrap a repo worker as a durable Yaver companion
+  yaver microservice detect [--repo DIR]  Propose yaver.companion.yaml for repo workers/crons
   yaver pipeline --test --deploy <target>  Build → test → deploy in one command
   yaver loop add <spec.yaml>   Register an auto-dev loop from a .loop.yaml
   yaver loop list              List registered loops and their status

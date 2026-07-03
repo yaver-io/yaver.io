@@ -245,6 +245,38 @@ export interface CompanionProjectSummary {
   svcCount: number;
   updatedAt: string;
 }
+export interface MicroserviceWrapRequest {
+  repo: string;
+  project?: string;
+  name?: string;
+  command?: string;
+  workdir?: string;
+  port?: number;
+  env_vault?: string;
+  env_file?: string;
+  durable?: boolean;
+  write?: boolean;
+  arm?: boolean;
+  overwrite?: boolean;
+  use_shell?: boolean;
+  ai_wrap?: boolean;
+  ai_work_kind?: string;
+  base_url_from?: string;
+  health_url?: string;
+  schedule_cron?: string;
+}
+export interface MicroserviceWrapResult extends CompanionDetectResult {
+  ok: boolean;
+  repo: string;
+  project: string;
+  manifestPath: string;
+  existing: boolean;
+  written: boolean;
+  armed: boolean;
+  status?: CompanionStatus;
+  warnings?: string[];
+  next?: string[];
+}
 
 // One step in the store-onboarding concierge (mirrors Go setup_guide.go,
 // served by the agent GET /stores). automation: auto | assisted | manual;
@@ -5000,6 +5032,43 @@ export class AgentClient {
     const data = await res.json().catch(() => ({}));
     if (data?.error) throw new Error(data.error);
     return data.status as CompanionStatus;
+  }
+
+  async microserviceDetect(repo: string, project?: string): Promise<MicroserviceWrapResult> {
+    const q = new URLSearchParams({ repo });
+    if (project) q.set("project", project);
+    const res = await this.agentFetch(`/microservices/detect?${q.toString()}`);
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
+    return data as MicroserviceWrapResult;
+  }
+
+  async microserviceWrap(req: MicroserviceWrapRequest): Promise<MicroserviceWrapResult> {
+    const res = await this.agentFetch("/microservices/wrap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
+    return data as MicroserviceWrapResult;
+  }
+
+  async microserviceStatus(project: string): Promise<CompanionStatus> {
+    const res = await this.agentFetch(`/microservices/status?project=${encodeURIComponent(project)}`);
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
+    return (data.status ?? data) as CompanionStatus;
+  }
+
+  async microserviceDown(project: string): Promise<void> {
+    const res = await this.agentFetch("/microservices/down", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) throw new Error(data.error);
   }
 
   /** Get auth headers for direct fetch calls (non-SSE). */

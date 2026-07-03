@@ -26,6 +26,10 @@ func (s *HTTPServer) registerCompanionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/companion/status", s.auth(s.handleCompanionStatus))
 	mux.HandleFunc("/companion/list", s.auth(s.handleCompanionListProjects))
 	mux.HandleFunc("/companion/cron/list", s.auth(s.handleCompanionCronList))
+	mux.HandleFunc("/microservices/detect", s.auth(s.handleMicroserviceDetect))
+	mux.HandleFunc("/microservices/wrap", s.auth(s.handleMicroserviceWrap))
+	mux.HandleFunc("/microservices/status", s.auth(s.handleMicroserviceStatus))
+	mux.HandleFunc("/microservices/down", s.auth(s.handleMicroserviceDown))
 }
 
 // companionEngine returns the wired engine, lazily constructing one if the
@@ -186,6 +190,72 @@ func (s *HTTPServer) handleCompanionCronList(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"crons": status.Crons})
+}
+
+func (s *HTTPServer) handleMicroserviceDetect(w http.ResponseWriter, r *http.Request) {
+	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
+	project := strings.TrimSpace(r.URL.Query().Get("project"))
+	res, err := MicroserviceDetect(repo, project)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *HTTPServer) handleMicroserviceWrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var req MicroserviceWrapRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	res, err := MicroserviceWrap(s, req)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *HTTPServer) handleMicroserviceStatus(w http.ResponseWriter, r *http.Request) {
+	project := strings.TrimSpace(r.URL.Query().Get("project"))
+	if project == "" {
+		jsonError(w, http.StatusBadRequest, "project query param required")
+		return
+	}
+	status, err := s.companionEngine().Status(project)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": status})
+}
+
+func (s *HTTPServer) handleMicroserviceDown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "POST only")
+		return
+	}
+	var body struct {
+		Project string `json:"project"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if strings.TrimSpace(body.Project) == "" {
+		jsonError(w, http.StatusBadRequest, "project required")
+		return
+	}
+	if err := s.companionEngine().Down(body.Project); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
 // listCompanionProjects enumerates the persisted companion state files.

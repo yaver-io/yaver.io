@@ -7,7 +7,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import ManagedCloudCard from "../../src/components/ManagedCloudCard";
-import { quicClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary } from "../../src/lib/quic";
+import { quicClient, type CapabilitySnapshot, type CompanionStatus, type IncidentEvent, type InfraSummary, type MicroserviceWrapResult } from "../../src/lib/quic";
 import { listGuests, type GuestInfo } from "../../src/lib/guests";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
@@ -76,6 +76,16 @@ export default function InfraScreen() {
   const [installLog, setInstallLog] = useState<string[]>([]);
   const [installResult, setInstallResult] = useState<{ tool: string; status: string } | null>(null);
   const cancelStreamRef = useRef<(() => void) | null>(null);
+  const [msRepo, setMsRepo] = useState("");
+  const [msCommand, setMsCommand] = useState("");
+  const [msProject, setMsProject] = useState("");
+  const [msName, setMsName] = useState("");
+  const [msPort, setMsPort] = useState("");
+  const [msEnvFile, setMsEnvFile] = useState("");
+  const [msOverwrite, setMsOverwrite] = useState(false);
+  const [msBusy, setMsBusy] = useState(false);
+  const [msResult, setMsResult] = useState<MicroserviceWrapResult | null>(null);
+  const [msStatus, setMsStatus] = useState<CompanionStatus | null>(null);
   // Sudo prompt coming from an in-flight install. When non-null the
   // mobile sheet opens; the user types the password and we POST it
   // back to /install/sudo. Password lives only in component state.
@@ -262,6 +272,59 @@ export default function InfraScreen() {
       await refresh();
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function wrapMicroservice() {
+    if (!msRepo.trim() || !msCommand.trim() || msBusy) return;
+    setMsBusy(true);
+    try {
+      const res = await quicClient.microserviceWrap({
+        repo: msRepo.trim(),
+        command: msCommand.trim(),
+        project: msProject.trim() || undefined,
+        name: msName.trim() || undefined,
+        port: msPort.trim() ? Number(msPort.trim()) : undefined,
+        env_file: msEnvFile.trim() || undefined,
+        durable: true,
+        write: true,
+        arm: true,
+        overwrite: msOverwrite,
+        ai_wrap: true,
+        ai_work_kind: "analysis",
+      }, target);
+      setMsResult(res);
+      setMsStatus(res.status ?? null);
+      Alert.alert(res.armed ? "Microservice armed" : "Microservice wrapped", res.project);
+    } catch (e: any) {
+      Alert.alert("Microservice failed", e?.message || "Could not wrap microservice");
+    } finally {
+      setMsBusy(false);
+    }
+  }
+
+  async function refreshMicroserviceStatus(project = msResult?.project || msProject.trim()) {
+    if (!project) return;
+    setMsBusy(true);
+    try {
+      setMsStatus(await quicClient.microserviceStatus(project, target));
+    } catch (e: any) {
+      Alert.alert("Status unavailable", e?.message || "Could not load microservice status");
+    } finally {
+      setMsBusy(false);
+    }
+  }
+
+  async function disableMicroservice(project = msResult?.project || msProject.trim()) {
+    if (!project) return;
+    setMsBusy(true);
+    try {
+      await quicClient.microserviceDown(project, target);
+      await refreshMicroserviceStatus(project);
+    } catch (e: any) {
+      Alert.alert("Disable failed", e?.message || "Could not disable microservice");
+    } finally {
+      setMsBusy(false);
     }
   }
 
@@ -603,6 +666,119 @@ export default function InfraScreen() {
 
           <ManagedCloudCard c={c} token={token} />
 
+          <Section c={c} title="Microservices" subtitle="Wrap repo commands as durable Yaver companion services">
+            <View style={{ gap: 8, marginTop: 8 }}>
+              <TextInput
+                value={msRepo}
+                onChangeText={setMsRepo}
+                placeholder="/absolute/path/to/repo"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={input(c)}
+              />
+              <TextInput
+                value={msCommand}
+                onChangeText={setMsCommand}
+                placeholder="npm run worker"
+                placeholderTextColor={c.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={input(c)}
+              />
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <TextInput
+                  value={msProject}
+                  onChangeText={setMsProject}
+                  placeholder="project"
+                  placeholderTextColor={c.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[input(c), { flex: 1 }]}
+                />
+                <TextInput
+                  value={msName}
+                  onChangeText={setMsName}
+                  placeholder="service"
+                  placeholderTextColor={c.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[input(c), { flex: 1 }]}
+                />
+              </View>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <TextInput
+                  value={msPort}
+                  onChangeText={(v) => setMsPort(v.replace(/[^0-9]/g, ""))}
+                  placeholder="port"
+                  placeholderTextColor={c.textMuted}
+                  keyboardType="number-pad"
+                  style={[input(c), { flex: 1 }]}
+                />
+                <TextInput
+                  value={msEnvFile}
+                  onChangeText={setMsEnvFile}
+                  placeholder=".env"
+                  placeholderTextColor={c.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[input(c), { flex: 1 }]}
+                />
+              </View>
+              <Pressable
+                onPress={() => setMsOverwrite((v) => !v)}
+                style={[card(c), { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10 }]}
+              >
+                <View style={{ width: 16, height: 16, borderRadius: 4, borderWidth: 1, borderColor: msOverwrite ? c.accent : c.border, backgroundColor: msOverwrite ? c.accent : "transparent" }} />
+                <Text style={{ color: c.textMuted, fontSize: 12 }}>Overwrite existing yaver.companion.yaml</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void wrapMicroservice()}
+                disabled={msBusy || !msRepo.trim() || !msCommand.trim()}
+                style={[actionBtn(c), { backgroundColor: c.accent, opacity: msBusy || !msRepo.trim() || !msCommand.trim() ? 0.5 : 1 }]}
+              >
+                {msBusy ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "800" }}>Write and arm</Text>}
+              </Pressable>
+            </View>
+            {msResult ? (
+              <View style={[card(c), { gap: 5, marginTop: 10 }]}>
+                <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>{msResult.project}</Text>
+                <Text style={{ color: c.textMuted, fontSize: 10 }} numberOfLines={1}>{msResult.manifestPath}</Text>
+                <Text style={{ color: msResult.armed ? "#22c55e" : c.textMuted, fontSize: 11, fontWeight: "700" }}>
+                  {msResult.armed ? "armed" : msResult.written ? "written" : "prepared"}
+                </Text>
+                {(msResult.warnings || []).map((warning, idx) => (
+                  <Text key={idx} style={{ color: "#f59e0b", fontSize: 11 }}>{warning}</Text>
+                ))}
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                  <Pressable onPress={() => void refreshMicroserviceStatus()} disabled={msBusy} style={[actionBtn(c), { backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.border, flex: 1 }]}>
+                    <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Status</Text>
+                  </Pressable>
+                  <Pressable onPress={() => void disableMicroservice()} disabled={msBusy} style={[actionBtn(c), { backgroundColor: "#ef444422", flex: 1 }]}>
+                    <Text style={{ color: "#ef4444", fontWeight: "700" }}>Disable</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+            {msStatus ? (
+              <View style={{ gap: 8, marginTop: 10 }}>
+                {(msStatus.services || []).map((svc) => (
+                  <View key={svc.name} style={[card(c), { gap: 4 }]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: svc.running ? "#22c55e" : c.textMuted }} />
+                      <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700", flex: 1 }}>{svc.name}</Text>
+                      <Text style={{ color: c.textMuted, fontSize: 10 }}>{svc.durable ? "durable" : "session"}</Text>
+                    </View>
+                    {svc.unit ? <Text style={{ color: c.textMuted, fontSize: 10 }} numberOfLines={1}>{svc.unit}</Text> : null}
+                  </View>
+                ))}
+                {(msStatus.warnings || []).map((warning, idx) => (
+                  <Text key={idx} style={{ color: "#f59e0b", fontSize: 11 }}>{warning}</Text>
+                ))}
+              </View>
+            ) : null}
+          </Section>
+
           <Section c={c} title="Services" subtitle="Managed dev services">
             {(summary.devServices || []).length === 0 ? (
               <Text style={{ color: c.textMuted, fontSize: 12 }}>No dev services configured.</Text>
@@ -837,6 +1013,19 @@ function card(c: any) {
 
 function actionBtn(c: any) {
   return { borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" } as const;
+}
+
+function input(c: any) {
+  return {
+    borderWidth: 1,
+    borderColor: c.border,
+    backgroundColor: c.bg,
+    color: c.textPrimary,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+  } as const;
 }
 
 function targetChip(c: any) {

@@ -4511,6 +4511,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 
 	// Companion compute (crons + workers for serverless projects) — companion.go
 	tools = append(tools, companionMCPTools()...)
+	tools = append(tools, microserviceMCPTools()...)
 
 	// Native build & deploy (iosNative / androidNative / flutter) — native_build.go
 	tools = append(tools, nativeBuildMCPTools()...)
