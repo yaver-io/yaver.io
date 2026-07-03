@@ -852,6 +852,21 @@ export const heartbeat = mutation({
     // Coarse egress region (eu|us|ap|...) for the multi-vantage device picker.
     // Region only — never the egress IP.
     geoRegion: v.optional(v.string()),
+    // Optional batch of CPU/RAM samples piggybacked onto the heartbeat —
+    // replaces the standalone /devices/metrics 60s poll. Each sample carries
+    // its own capture time so 60s sparkline resolution is preserved while the
+    // whole batch is recorded + pruned inline in this one mutation (zero extra
+    // function calls). Older agents omit this and use /devices/metrics.
+    metricsSamples: v.optional(
+      v.array(
+        v.object({
+          cpuPercent: v.number(),
+          memoryUsedMb: v.number(),
+          memoryTotalMb: v.number(),
+          timestampMs: v.number(),
+        })
+      )
+    ),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -932,10 +947,54 @@ export const heartbeat = mutation({
       patch.publishCapabilities = args.publishCapabilities;
     }
     await ctx.db.patch(device._id, patch);
+
+    // Metrics piggyback: record each buffered sample at its own capture time
+    // (mirrors deviceMetrics.report) so the mobile CPU/RAM sparkline keeps
+    // working without a separate call. Prune once per beat, not per sample.
+    if (args.metricsSamples && args.metricsSamples.length > 0) {
+      for (const m of args.metricsSamples) {
+        await ctx.db.insert("deviceMetrics", {
+          deviceId: args.deviceId,
+          timestamp: m.timestampMs,
+          cpuPercent: m.cpuPercent,
+          memoryUsedMb: m.memoryUsedMb,
+          memoryTotalMb: m.memoryTotalMb,
+        });
+      }
+      const cutoff = Date.now() - 60 * 60 * 1000; // keep last 1h, same as before
+      const stale = await ctx.db
+        .query("deviceMetrics")
+        .withIndex("by_deviceId", (q) =>
+          q.eq("deviceId", args.deviceId).lt("timestamp", cutoff)
+        )
+        .collect();
+      for (const entry of stale) {
+        await ctx.db.delete(entry._id);
+      }
+    }
+
+    // Cheap indexed existence checks (both by_device_status → first-row read)
+    // so the agent only polls the rescue/publish claim endpoints when there's
+    // queued work, instead of firing both claim mutations every beat.
+    const pendingRescueRow = await ctx.db
+      .query("agentRescueCommands")
+      .withIndex("by_device_status", (q) =>
+        q.eq("deviceId", args.deviceId).eq("status", "pending")
+      )
+      .first();
+    const pendingPublishRow = await ctx.db
+      .query("publishJobs")
+      .withIndex("by_device_status", (q) =>
+        q.eq("deviceId", args.deviceId).eq("status", "queued")
+      )
+      .first();
+
     return {
       connectionPreferences: (patch.connectionPreferences as Doc<"devices">["connectionPreferences"] | undefined)
         ?? device.connectionPreferences
         ?? [],
+      pendingRescue: pendingRescueRow !== null,
+      pendingPublish: pendingPublishRow !== null,
     };
   },
 });

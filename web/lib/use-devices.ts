@@ -590,12 +590,11 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
     }
   }, [token]);
 
-  useEffect(() => {
-    refreshDevices();
-    // Poll every 10s
-    const iv = setInterval(refreshDevices, 10000);
-    return () => clearInterval(iv);
-  }, [refreshDevices]);
+  // Poll every 30s while the tab is visible, paused when backgrounded. Was a
+  // flat 10s interval that ran even in a forgotten background tab — the single
+  // biggest client-side Convex driver. Live peer presence still comes from the
+  // relay in near-real-time; this poll only refreshes the durable device list.
+  useVisiblePolling(refreshDevices, 30000);
 
   // Filter out hidden devices on the consumer side. We keep them in the raw
   // fetch so the "X hidden — show all" toggle can restore them instantly
@@ -603,6 +602,47 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
   const visible = devices.filter((d) => !hiddenIds.has(d.id));
 
   return { devices: visible, refreshDevices, hiddenIds };
+}
+
+// useVisiblePolling calls `fn` every `intervalMs` while the tab is visible,
+// pauses entirely when the tab is hidden (a backgrounded dashboard shouldn't
+// keep polling Convex forever), and does one immediate refresh on regaining
+// visibility so the UI is fresh the moment you switch back. Passing a changed
+// intervalMs resets the cadence — callers use that for adaptive polling.
+function useVisiblePolling(fn: () => void, intervalMs: number) {
+  useEffect(() => {
+    let iv: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (iv) {
+        clearInterval(iv);
+        iv = null;
+      }
+    };
+    const start = () => {
+      if (!iv) iv = setInterval(fn, intervalMs);
+    };
+    const hidden = () =>
+      typeof document !== "undefined" && document.hidden;
+    const onVisibility = () => {
+      if (hidden()) {
+        stop();
+      } else {
+        fn(); // immediate refresh on return to foreground
+        start();
+      }
+    };
+    fn(); // initial fetch
+    if (!hidden()) start();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      stop();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }, [fn, intervalMs]);
 }
 
 // PendingDeviceClaim mirrors the row shape returned by
@@ -678,13 +718,13 @@ export function usePendingClaims(token: string | null): {
     [token, refreshPending],
   );
 
-  useEffect(() => {
-    refreshPending();
-    // Poll on the same 10s cadence as devices so pending rows appear
-    // and disappear in lockstep with the main list.
-    const iv = setInterval(refreshPending, 10000);
-    return () => clearInterval(iv);
-  }, [refreshPending]);
+  // Adaptive + visibility-aware. A pending row means a bootstrap box is
+  // waiting to be claimed, so poll fast (10s) to keep the Claim CTA snappy.
+  // When there's nothing pending — the overwhelmingly common case — drop to
+  // 60s; a freshly-installed remote box then appears within a minute, which
+  // is plenty. Mirrors the agent-side guest-list idle backoff.
+  const hasPending = pending.length > 0;
+  useVisiblePolling(refreshPending, hasPending ? 10000 : 60000);
 
   return { pending, refreshPending, claimPending };
 }

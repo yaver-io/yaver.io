@@ -2913,8 +2913,11 @@ func runServe(args []string) {
 		log.Printf("       OR: yaver install tmux  (uses the same recipe)")
 	}
 
-	// heartbeatLoop is started after httpServer is created (needs authExpired flag)
-	go metricsLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID)
+	// heartbeatLoop is started after httpServer is created (needs authExpired
+	// flag). CPU/RAM metrics now ride the heartbeat payload instead of a
+	// separate 60s /devices/metrics loop; this goroutine only samples locally
+	// (no Convex call) and caches the latest value for the heartbeat to send.
+	go metricsSamplerLoop(ctx)
 
 	// Periodic auto-update check (every 6 hours when idle)
 	go func() {
@@ -9629,7 +9632,9 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	installedRunnerIDs := collectInstalledRunnerIDs()
 	initialRecoveryPosture := computeRecoveryTransportPosture(cfgAtStart)
 	initialConnectionPreferences := connectionPreferencesForHeartbeat(cfgAtStart, lastIPs, lastPublicEndpoints)
-	if syncedPrefs, err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, lastIP, lastIPs, lastPublicEndpoints, &initialRecoveryPosture, initialConnectionPreferences); err != nil {
+	// Initial beat carries no metrics sample (keeps startup fast — no 1s CPU
+	// sampling on the boot path); metrics start flowing from the first tick.
+	if hbInit, err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, lastIP, lastIPs, lastPublicEndpoints, &initialRecoveryPosture, initialConnectionPreferences, nil); err != nil {
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
@@ -9641,13 +9646,22 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 			log.Printf("initial heartbeat failed: %v", err)
 		}
 	} else {
-		if err := syncConnectionPreferencesFromConvex(syncedPrefs); err != nil {
+		if err := syncConnectionPreferencesFromConvex(hbInit.ConnectionPreferences); err != nil {
 			log.Printf("[heartbeat] connection preference sync failed: %v", err)
 		}
 		log.Println("Initial heartbeat sent.")
 	}
 
-	// Shared body for both the 30 s ticker and out-of-band kicks from
+	// Claim-poll gating: a quiet box no longer fires the rescue + publish
+	// claim mutations every beat. The heartbeat response tells us when
+	// there's queued work; a wall-clock safety sweep force-polls both queues
+	// at most every claimSweepEvery in case a pending flag was ever missed.
+	// Wall-clock (not a beat counter) so out-of-band kicks — which share this
+	// closure — can't shorten the interval. Zero value → sweeps on first beat.
+	const claimSweepEvery = 30 * time.Minute
+	var lastClaimSweep time.Time
+
+	// Shared body for both the 5 min ticker and out-of-band kicks from
 	// handlers that just changed reportable state (runner auth completing,
 	// etc.). Kept as a closure so a kick and a tick are literally the same
 	// code path — no risk of them diverging over time.
@@ -9658,6 +9672,15 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		currentPublicEndpoints := publicEndpointsWithAutoIP(cfgNow, heartbeatPort)
 		runners := taskMgr.GetRunnerInfos()
 		installedRunnerIDs := collectInstalledRunnerIDs()
+		// Non-blocking drain of CPU/RAM samples buffered off-path by
+		// metricsSamplerLoop. Sampling shells out to `top -l 2` (~1-2s) on
+		// macOS, so it must never run inline here — that would stall the
+		// heartbeat select loop and delay eager kicks. nil until the first
+		// sample lands; the beat then just omits metrics.
+		metricsSamples := drainDeviceMetrics()
+		// Effective heartbeat result (nil if the beat + retry both failed);
+		// drives the claim-poll gating at the end of sendOne.
+		var hbResult *HeartbeatResult
 
 		if currentIP != lastIP {
 			log.Printf("[heartbeat] Local IP changed: %s → %s", lastIP, currentIP)
@@ -9674,7 +9697,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 
 		currentRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
 		currentConnectionPreferences := connectionPreferencesForHeartbeat(cfgNow, currentIPs, currentPublicEndpoints)
-		if syncedPrefs, err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &currentRecoveryPosture, currentConnectionPreferences); err != nil {
+		if hbMain, err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &currentRecoveryPosture, currentConnectionPreferences, metricsSamples); err != nil {
 			if errors.Is(err, ErrAuthExpired) {
 				// Try to refresh token first — backend may rotate.
 				if !refreshAndPersist("on-401") {
@@ -9698,10 +9721,13 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 					// Retry heartbeat
 					retryRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
 					retryConnectionPreferences := connectionPreferencesForHeartbeat(cfgNow, currentIPs, currentPublicEndpoints)
-					if retryPrefs, retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &retryRecoveryPosture, retryConnectionPreferences); retryErr != nil {
+					if hbRetry, retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &retryRecoveryPosture, retryConnectionPreferences, metricsSamples); retryErr != nil {
 						log.Printf("heartbeat retry failed: %v", retryErr)
-					} else if err := syncConnectionPreferencesFromConvex(retryPrefs); err != nil {
-						log.Printf("[heartbeat] connection preference sync failed: %v", err)
+					} else {
+						hbResult = hbRetry
+						if err := syncConnectionPreferencesFromConvex(hbRetry.ConnectionPreferences); err != nil {
+							log.Printf("[heartbeat] connection preference sync failed: %v", err)
+						}
 					}
 				}
 			} else {
@@ -9718,8 +9744,9 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				}
 			}
 		} else {
+			hbResult = hbMain
 			heartbeatFailStreak = 0
-			if err := syncConnectionPreferencesFromConvex(syncedPrefs); err != nil {
+			if err := syncConnectionPreferencesFromConvex(hbMain.ConnectionPreferences); err != nil {
 				log.Printf("[heartbeat] connection preference sync failed: %v", err)
 			}
 			if authExpiredLogged {
@@ -9731,15 +9758,29 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				clearAuthExpiredNotify()
 			}
 		}
-		// Claim + execute any rescue command queued in Convex. Always
-		// runs after a successful heartbeat (which proves Convex is
-		// reachable and our token is valid). Best-effort: errors are
-		// logged but never break the heartbeat loop.
-		go claimAndExecuteRescueCommandSingleFlight(baseURL, currentToken(), deviceID)
-		// Same gate: a successful heartbeat proves Convex + token are
-		// good, so this is also when we pull any queued publish job
-		// for this farm node. Best-effort, single-flight per tick.
-		go claimAndExecutePublishJobSingleFlight(baseURL, currentToken(), deviceID)
+		// Claim + execute queued rescue/publish work. A nil hbResult means
+		// the beat + retry both failed (Convex unreachable / auth bad) — the
+		// claim endpoints would fail too, so skip this cycle.
+		if hbResult == nil {
+			return
+		}
+		// Decide whether to poll the claim queues:
+		//   - forceClaimSweep: wall-clock safety net (~30 min).
+		//   - !GatingSupported: backend too old to report flags — poll every
+		//     beat (old behavior) so short-TTL rescue commands aren't stranded.
+		//   - Pending*: backend flagged queued work → poll now.
+		// A quiet box against a new backend makes zero claim calls between
+		// sweeps (was ~17.5k Convex calls/mo/agent).
+		forceClaimSweep := time.Since(lastClaimSweep) >= claimSweepEvery
+		if forceClaimSweep {
+			lastClaimSweep = time.Now()
+		}
+		if forceClaimSweep || !hbResult.GatingSupported || hbResult.PendingRescue {
+			go claimAndExecuteRescueCommandSingleFlight(baseURL, currentToken(), deviceID)
+		}
+		if forceClaimSweep || !hbResult.GatingSupported || hbResult.PendingPublish {
+			go claimAndExecutePublishJobSingleFlight(baseURL, currentToken(), deviceID)
+		}
 	}
 
 	var kickChan <-chan struct{}
@@ -9764,53 +9805,99 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		case <-kickChan:
 			// Eager beat triggered by a handler that changed reportable
 			// state (e.g. remote codex/claude sign-in just finished). The
-			// 30 s ticker is left running — we don't try to reset it, the
+			// 5 min ticker is left running — we don't try to reset it, the
 			// next tick is still a useful freshness signal.
 			sendOne()
 		}
 	}
 }
 
-// metricsLoop collects CPU/RAM every 60s and reports to Convex.
-func metricsLoop(ctx context.Context, baseURL, token, deviceID string) {
+// sampleDeviceMetrics takes a one-shot CPU/RAM snapshot for the heartbeat
+// payload. Replaces the old metricsLoop (a standalone 60s /devices/metrics
+// poll) — metrics now piggyback on the 5-min heartbeat, eliminating ~43.8k
+// Convex calls/mo/agent. Returns a best-effort sample; individual read
+// failures degrade to 0 rather than dropping the whole beat.
+func sampleDeviceMetrics() *DeviceMetricsSample {
+	cpuPct, cpuErr := getCPUPercent()
+	if cpuErr != nil {
+		log.Printf("[metrics] CPU error: %v", cpuErr)
+		cpuPct = 0
+	}
+	memUsed, memErr := getMemoryUsedMB()
+	if memErr != nil {
+		log.Printf("[metrics] Memory used error: %v", memErr)
+		memUsed = 0
+	}
+	memTotal, totalErr := getSystemMemoryMB()
+	if totalErr != nil {
+		log.Printf("[metrics] Memory total error: %v", totalErr)
+		memTotal = 0
+	}
+	return &DeviceMetricsSample{
+		CPUPercent:    cpuPct,
+		MemoryUsedMB:  float64(memUsed),
+		MemoryTotalMB: float64(memTotal),
+	}
+}
+
+// Buffer of CPU/RAM samples taken since the last heartbeat, appended off the
+// heartbeat path by metricsSamplerLoop and drained non-blocking by the beat.
+// Keeps the blocking `top -l 2` sample out of the heartbeat/kick select loop
+// AND preserves 60s sparkline resolution: the beat sends every buffered
+// sample (each with its own capture time) in one call, so Convex writes stay
+// at 12 function-calls/hour while the mobile gauge keeps ~5 points per beat.
+var (
+	metricsBufMu sync.Mutex
+	metricsBuf   []DeviceMetricsSample
+)
+
+// metricsBufMax bounds the buffer so a stalled/failing heartbeat can't grow
+// it without limit (12 = ~12 min at the 60s sample cadence; oldest dropped).
+const metricsBufMax = 12
+
+func appendDeviceMetric(s DeviceMetricsSample) {
+	metricsBufMu.Lock()
+	defer metricsBufMu.Unlock()
+	metricsBuf = append(metricsBuf, s)
+	if len(metricsBuf) > metricsBufMax {
+		metricsBuf = metricsBuf[len(metricsBuf)-metricsBufMax:]
+	}
+}
+
+// drainDeviceMetrics returns the buffered samples and clears the buffer, or
+// nil if none have been taken yet. A dropped batch (heartbeat failed after
+// draining) just loses a few sparkline points — acceptable for a gauge.
+func drainDeviceMetrics() []DeviceMetricsSample {
+	metricsBufMu.Lock()
+	defer metricsBufMu.Unlock()
+	if len(metricsBuf) == 0 {
+		return nil
+	}
+	out := metricsBuf
+	metricsBuf = nil
+	return out
+}
+
+// metricsSamplerLoop samples CPU/RAM every 60s off the heartbeat path and
+// buffers each reading. It does the blocking sampling here (never inline in
+// the beat) and emits the periodic "[metrics] CPU=..% RAM=..MB/..MB" line an
+// operator can tail in agent.log.
+func metricsSamplerLoop(ctx context.Context) {
+	refresh := func() {
+		s := sampleDeviceMetrics()
+		s.TimestampMs = time.Now().UnixMilli()
+		appendDeviceMetric(*s)
+		log.Printf("[metrics] CPU=%.1f%% RAM=%.0fMB/%.0fMB", s.CPUPercent, s.MemoryUsedMB, s.MemoryTotalMB)
+	}
+	refresh() // prime the buffer before the first heartbeat tick
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
-
-	currentToken := func() string {
-		if cfg, err := LoadConfig(); err == nil && cfg != nil && strings.TrimSpace(cfg.AuthToken) != "" {
-			return cfg.AuthToken
-		}
-		return token
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cpuPct, cpuErr := getCPUPercent()
-			if cpuErr != nil {
-				log.Printf("[metrics] CPU error: %v", cpuErr)
-				cpuPct = 0
-			}
-
-			memUsed, memErr := getMemoryUsedMB()
-			if memErr != nil {
-				log.Printf("[metrics] Memory used error: %v", memErr)
-				memUsed = 0
-			}
-
-			memTotal, totalErr := getSystemMemoryMB()
-			if totalErr != nil {
-				log.Printf("[metrics] Memory total error: %v", totalErr)
-				memTotal = 0
-			}
-
-			log.Printf("[metrics] CPU=%.1f%% RAM=%dMB/%dMB", cpuPct, memUsed, memTotal)
-
-			if err := ReportMetrics(baseURL, currentToken(), deviceID, cpuPct, float64(memUsed), float64(memTotal)); err != nil {
-				log.Printf("[metrics] Report failed: %v", err)
-			}
+			refresh()
 		}
 	}
 }

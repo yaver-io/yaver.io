@@ -1605,13 +1605,49 @@ func RegisterDevice(baseURL string, r RegisterDeviceRequest) (string, error) {
 // ErrAuthExpired is returned when a 401 response indicates the token has expired.
 var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 
+// DeviceMetricsSample is an optional CPU/RAM snapshot piggybacked onto a
+// heartbeat. Folding it into the heartbeat (every 5 min) replaces the old
+// standalone metricsLoop that fired /devices/metrics every 60s — ~43.8k
+// Convex calls/mo/agent eliminated, with the mobile sparkline dropping from
+// 60→12 points/hour (still fine for a coarse resource gauge). nil = don't
+// report metrics on this beat.
+type DeviceMetricsSample struct {
+	CPUPercent    float64 `json:"cpuPercent"`
+	MemoryUsedMB  float64 `json:"memoryUsedMb"`
+	MemoryTotalMB float64 `json:"memoryTotalMb"`
+	// Capture time (Unix ms). The heartbeat batches every ~60s sample taken
+	// since the last beat, so the backend records each at its real time
+	// instead of collapsing them to one point — 60s sparkline resolution at
+	// the same 12 heartbeats/hour (no extra Convex function calls).
+	TimestampMs int64 `json:"timestampMs"`
+}
+
+// HeartbeatResult is the parsed /devices/heartbeat response. Beyond the
+// synced connection preferences it carries pendingRescue/pendingPublish
+// flags so the agent only polls the rescue/publish work-queues when Convex
+// says there's actually something waiting (see the claim gating in
+// heartbeatLoop) instead of firing both claim mutations every beat forever.
+//
+// GatingSupported records whether the backend actually returned those flags.
+// A backend that predates claim-poll gating omits them entirely; the agent
+// MUST then fall back to polling the queues every beat (old behavior) — a
+// version-skewed new agent that treated "absent" as "false" would let
+// short-TTL rescue commands (5 min) expire before the periodic fallback
+// sweep (~30 min) ever claimed them, silently breaking remote recovery.
+type HeartbeatResult struct {
+	ConnectionPreferences []ConnectionPreference
+	GatingSupported       bool
+	PendingRescue         bool
+	PendingPublish        bool
+}
+
 // SendHeartbeat sends a heartbeat to the Convex backend so the device stays
 // marked as online. Includes active runner info, a minimal installed-runner
-// inventory, the preferred outbound IP (quicHost), and every reachable
+// inventory, the preferred outbound IP (quicHost), every reachable
 // LAN/Tailscale/Ethernet address the agent has (localIps) so mobile clients
-// can race them in parallel during connect. Returns ErrAuthExpired if the
-// server returns 401.
-func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, installedRunnerIDs []string, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture, connectionPreferences []ConnectionPreference) ([]ConnectionPreference, error) {
+// can race them in parallel during connect, and an optional CPU/RAM sample.
+// Returns ErrAuthExpired if the server returns 401.
+func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, installedRunnerIDs []string, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture, connectionPreferences []ConnectionPreference, metrics []DeviceMetricsSample) (*HeartbeatResult, error) {
 	payload := map[string]interface{}{
 		"deviceId":           deviceID,
 		"runners":            runners,
@@ -1669,6 +1705,12 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	if recoveryPosture != nil {
 		payload["recoveryPosture"] = recoveryPosture
 	}
+	// Piggyback the batched CPU/RAM samples onto the heartbeat instead of a
+	// separate /devices/metrics call. The backend records + prunes them in
+	// the same heartbeat mutation, so this adds zero extra function calls.
+	if len(metrics) > 0 {
+		payload["metricsSamples"] = metrics
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal heartbeat: %w", err)
@@ -1695,48 +1737,32 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	if _, ok := payload["hardwareProfile"]; ok {
 		markHardwareProfileSent()
 	}
+	// Pointer bools so an absent field (old backend, no gating) is
+	// distinguishable from an explicit false (new backend, nothing queued).
 	var heartbeatResp struct {
 		ConnectionPreferences []ConnectionPreference `json:"connectionPreferences"`
+		PendingRescue         *bool                  `json:"pendingRescue"`
+		PendingPublish        *bool                  `json:"pendingPublish"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&heartbeatResp); err != nil {
-		return nil, nil
+		// Beat succeeded (200) but the body was unreadable — return a
+		// non-nil result with gating unsupported so callers fall back to
+		// polling the claim queues rather than silently skipping them.
+		return &HeartbeatResult{}, nil
 	}
-	return heartbeatResp.ConnectionPreferences, nil
+	return &HeartbeatResult{
+		ConnectionPreferences: heartbeatResp.ConnectionPreferences,
+		GatingSupported:       heartbeatResp.PendingRescue != nil || heartbeatResp.PendingPublish != nil,
+		PendingRescue:         heartbeatResp.PendingRescue != nil && *heartbeatResp.PendingRescue,
+		PendingPublish:        heartbeatResp.PendingPublish != nil && *heartbeatResp.PendingPublish,
+	}, nil
 }
 
-// ReportMetrics sends CPU/RAM metrics to Convex.
-func ReportMetrics(baseURL, token, deviceID string, cpuPercent, memUsedMB, memTotalMB float64) error {
-	payload := map[string]interface{}{
-		"deviceId":      deviceID,
-		"cpuPercent":    cpuPercent,
-		"memoryUsedMb":  memUsedMB,
-		"memoryTotalMb": memTotalMB,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal metrics: %w", err)
-	}
-
-	req, err := newBearerRequest("POST", baseURL+"/devices/metrics", token, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create metrics request: %w", err)
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("metrics request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return ErrAuthExpired
-	}
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("metrics failed (status %d): %s", resp.StatusCode, string(respBody))
-	}
-	return nil
-}
+// CPU/RAM metrics are now folded into the heartbeat payload (see
+// SendHeartbeat's DeviceMetricsSample) and recorded by the same heartbeat
+// mutation. The old standalone ReportMetrics → POST /devices/metrics helper
+// was removed to drop a per-60s Convex call; the backend route stays for
+// older agents.
 
 // SendDevLog sends a developer log to Convex (only stored for developer emails).
 func SendDevLog(baseURL, token, email, tag, message string, data map[string]interface{}) {

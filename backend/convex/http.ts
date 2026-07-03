@@ -2146,11 +2146,19 @@ http.route({
         : body.publishCapabilities === null
           ? []
           : undefined,
+      // Batched CPU/RAM samples folded into the heartbeat (replaces the
+      // separate /devices/metrics 60s poll). Validated by the mutation's
+      // array schema; only forwarded when it's actually an array.
+      metricsSamples: Array.isArray(body.metricsSamples) ? body.metricsSamples : undefined,
     });
 
     return jsonResponse({
       ok: true,
       connectionPreferences: heartbeatResult?.connectionPreferences ?? [],
+      // Tell the agent whether to bother polling the claim endpoints this
+      // cycle — a quiet box then makes zero rescue/publish claim calls.
+      pendingRescue: heartbeatResult?.pendingRescue ?? false,
+      pendingPublish: heartbeatResult?.pendingPublish ?? false,
     });
   }),
 });
