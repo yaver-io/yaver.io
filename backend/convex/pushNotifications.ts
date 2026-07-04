@@ -71,16 +71,16 @@ export const sendDeviceAuthPush = action({
     const rows = await ctx.runQuery(internal.pushNotifications.tokensForUser, {
       userId: args.userId,
     });
-    const expo = rows
-      .filter((r) => r.transport === "expo")
-      .map((r) => r.pushToken);
+    const expo = (rows as Array<{ transport: string; pushToken: string }>)
+      .filter((r: { transport: string; pushToken: string }) => r.transport === "expo")
+      .map((r: { transport: string; pushToken: string }) => r.pushToken);
     if (expo.length === 0) {
       console.log(
         "[push] device-auth approval is dormant — no registered push tokens (configure an EAS projectId / native push to activate)",
       );
       return { sent: 0, dormant: true };
     }
-    const messages = expo.map((to) => ({
+    const messages = expo.map((to: string) => ({
       to,
       title: "Approve sign-in",
       body: `${args.machineName || "A machine"} wants to sign in. Tap to approve with Face ID.`,

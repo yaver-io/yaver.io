@@ -72,6 +72,7 @@ import type * as teams from "../teams.js";
 import type * as totp from "../totp.js";
 import type * as userDomains from "../userDomains.js";
 import type * as userSettings from "../userSettings.js";
+import type * as whatsapp from "../whatsapp.js";
 
 import type {
   ApiFromModules,
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   totp: typeof totp;
   userDomains: typeof userDomains;
   userSettings: typeof userSettings;
+  whatsapp: typeof whatsapp;
 }>;
 
 /**

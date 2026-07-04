@@ -1712,6 +1712,54 @@ export default defineSchema({
     .index("by_tokenHash", ["tokenHash"])
     .index("by_userId", ["userId"]),
 
+  // Yaver-owned WhatsApp command intake. Privacy contract: these rows are
+  // routing metadata and receipts only. Raw WhatsApp message text, task
+  // prompts, output, logs, paths, media, and secrets must not be stored here.
+  whatsappInvites: defineTable({
+    userId: v.id("users"),
+    codeHash: v.string(),
+    targetDeviceId: v.string(),
+    projectSlug: v.optional(v.string()),
+    allowedActions: v.array(v.string()), // task | status | reload | build_reload
+    status: v.union(v.literal("active"), v.literal("revoked"), v.literal("expired")),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_codeHash", ["codeHash"]),
+
+  whatsappContacts: defineTable({
+    userId: v.id("users"),
+    phoneHash: v.string(),
+    targetDeviceId: v.string(),
+    projectSlug: v.optional(v.string()),
+    allowedActions: v.array(v.string()),
+    displayName: v.optional(v.string()),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_phoneHash", ["phoneHash"])
+    .index("by_user_phone", ["userId", "phoneHash"]),
+
+  whatsappCommandReceipts: defineTable({
+    userId: v.id("users"),
+    phoneHash: v.string(),
+    waMessageIdHash: v.string(),
+    targetDeviceId: v.string(),
+    projectSlug: v.optional(v.string()),
+    action: v.string(),
+    status: v.string(), // received | delivered | failed | ignored
+    taskId: v.optional(v.string()),
+    errorCode: v.optional(v.string()),
+    createdAt: v.number(),
+    deliveredAt: v.optional(v.number()),
+  })
+    .index("by_waMessageIdHash", ["waMessageIdHash"])
+    .index("by_user_created", ["userId", "createdAt"])
+    .index("by_phone_created", ["phoneHash", "createdAt"]),
+
   // Security events — new device IP alerts, token usage anomalies
   securityEvents: defineTable({
     userId: v.id("users"),

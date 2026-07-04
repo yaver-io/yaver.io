@@ -110,6 +110,27 @@ async function verifyLemonSqueezySignature(body: string, signatureHeader: string
   return diff === 0;
 }
 
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sigBuf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function constantTimeHexEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 function normalizeCloudHost(baseUrl: string): string {
   try {
     return new URL(baseUrl).host;
@@ -8381,6 +8402,220 @@ http.route({
     });
     if (!result.ok) return errorResponse(result.reason ?? "No pending invite", 404);
     return jsonResponse({ ok: true });
+  }),
+});
+
+function classifyWhatsappCommand(text: string): string {
+  const t = text.trim().toLowerCase();
+  if (/^(status|durum|ping)\b/.test(t)) return "status";
+  if (/\b(build|bundle|rebuild|native)\b/.test(t) && /\b(reload|push|yenile)\b/.test(t)) return "build_reload";
+  if (/\b(reload|refresh|yenile|hot reload|hermes)\b/.test(t)) return "reload";
+  return "task";
+}
+
+function extractWhatsappText(msg: any): string {
+  return String(
+    msg?.text?.body ||
+    msg?.interactive?.button_reply?.title ||
+    msg?.button?.text ||
+    "",
+  ).trim();
+}
+
+async function deliverWhatsappCommandToAgent(ctx: any, args: {
+  receiptId: any;
+  userId: any;
+  targetDeviceId: string;
+  projectSlug?: string;
+  action: string;
+  commandText: string;
+}): Promise<boolean> {
+  const secret = (process.env.WHATSAPP_AGENT_INGRESS_SECRET || "").trim();
+  if (!secret) {
+    await ctx.runMutation(internal.whatsapp.receiptFinish, {
+      receiptId: args.receiptId,
+      status: "failed",
+      errorCode: "agent_ingress_secret_missing",
+    });
+    return false;
+  }
+  const endpoint: string | null = await ctx.runQuery(internal.whatsapp.deviceEndpoint, {
+    userId: args.userId,
+    deviceId: args.targetDeviceId,
+  });
+  if (!endpoint) {
+    await ctx.runMutation(internal.whatsapp.receiptFinish, {
+      receiptId: args.receiptId,
+      status: "failed",
+      errorCode: "no_public_endpoint",
+    });
+    return false;
+  }
+  try {
+    const resp = await fetch(`${endpoint}/integrations/whatsapp/command`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Yaver-WhatsApp-Secret": secret,
+      },
+      body: JSON.stringify({
+        source: "whatsapp",
+        action: args.action,
+        commandText: args.commandText,
+        projectSlug: args.projectSlug,
+      }),
+    });
+    let data: any = {};
+    try { data = await resp.json(); } catch { /* ignore */ }
+    await ctx.runMutation(internal.whatsapp.receiptFinish, {
+      receiptId: args.receiptId,
+      status: resp.ok ? "delivered" : "failed",
+      taskId: typeof data?.taskId === "string" ? data.taskId : undefined,
+      errorCode: resp.ok ? undefined : `agent_http_${resp.status}`,
+    });
+    return resp.ok;
+  } catch {
+    await ctx.runMutation(internal.whatsapp.receiptFinish, {
+      receiptId: args.receiptId,
+      status: "failed",
+      errorCode: "agent_fetch_failed",
+    });
+    return false;
+  }
+}
+
+// POST /whatsapp/invite — authenticated developer creates a Yaver-owned
+// WhatsApp join code for one project/device. Returns a wa.me link when
+// WHATSAPP_PUBLIC_NUMBER is configured.
+http.route({
+  path: "/whatsapp/invite",
+  method: "OPTIONS",
+  handler: httpAction(async () => corsPreflightResponse()),
+});
+http.route({
+  path: "/whatsapp/invite",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    if (!body?.targetDeviceId || typeof body.targetDeviceId !== "string") {
+      return errorResponse("targetDeviceId required", 400);
+    }
+    const result = await ctx.runMutation(api.whatsapp.createInvite, {
+      tokenHash,
+      targetDeviceId: body.targetDeviceId,
+      projectSlug: typeof body.projectSlug === "string" ? body.projectSlug : undefined,
+      allowedActions: Array.isArray(body.allowedActions) ? body.allowedActions.map(String) : undefined,
+      ttlHours: typeof body.ttlHours === "number" ? body.ttlHours : undefined,
+    });
+    return jsonResponse(result);
+  }),
+});
+
+// GET /whatsapp/webhook — Meta verification handshake for the Yaver-owned
+// WhatsApp Business Cloud API number.
+http.route({
+  path: "/whatsapp/webhook",
+  method: "GET",
+  handler: httpAction(async (_ctx, request) => {
+    const url = new URL(request.url);
+    const mode = url.searchParams.get("hub.mode");
+    const token = url.searchParams.get("hub.verify_token");
+    const challenge = url.searchParams.get("hub.challenge") || "";
+    const expected = (process.env.WHATSAPP_VERIFY_TOKEN || "").trim();
+    if (mode === "subscribe" && expected && token === expected) {
+      return new Response(challenge, { status: 200, headers: { "Content-Type": "text/plain" } });
+    }
+    return new Response("forbidden", { status: 403 });
+  }),
+});
+
+// POST /whatsapp/webhook — command intake. Raw message text is used only in
+// this action while forwarding inline to the target agent; Convex stores only
+// hashes, routing metadata, and delivery receipts.
+http.route({
+  path: "/whatsapp/webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const raw = await request.text();
+    const appSecret = (process.env.WHATSAPP_APP_SECRET || "").trim();
+    const sigHeader = (request.headers.get("x-hub-signature-256") || "").replace(/^sha256=/i, "").trim().toLowerCase();
+    if (!appSecret) return new Response("not configured", { status: 503 });
+    const expectedSig = await hmacSha256Hex(appSecret, raw);
+    if (!sigHeader || !constantTimeHexEqual(expectedSig, sigHeader)) {
+      return new Response("bad signature", { status: 401 });
+    }
+
+    let body: any = {};
+    try { body = JSON.parse(raw); } catch { return new Response("ok", { status: 200 }); }
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        const value = change.value || {};
+        for (const msg of value.messages || []) {
+          const from = String(msg.from || "");
+          const waMessageId = String(msg.id || crypto.randomUUID());
+          const text = extractWhatsappText(msg);
+          if (!from || !text) continue;
+
+          const join = text.match(/^join\s+([A-Za-z0-9-]{4,32})\b/i);
+          if (join) {
+            const bound = await ctx.runMutation(internal.whatsapp.bindJoinCode, {
+              phone: from,
+              code: join[1],
+              displayName: value.contacts?.[0]?.profile?.name ? String(value.contacts[0].profile.name) : undefined,
+            });
+            await ctx.runAction(internal.whatsapp.sendText, {
+              to: from,
+              body: bound.ok
+                ? "Yaver linked this WhatsApp chat to the developer project. Send feedback or a task request here."
+                : "That Yaver join code is invalid or expired. Ask the developer for a new invite.",
+            });
+            continue;
+          }
+
+          const contact = await ctx.runQuery(internal.whatsapp.resolveContact, { phone: from });
+          if (!contact) continue;
+          const action = classifyWhatsappCommand(text);
+          if (!contact.allowedActions.includes(action)) {
+            await ctx.runAction(internal.whatsapp.sendText, {
+              to: from,
+              body: "This WhatsApp chat is not allowed to run that Yaver action for the project.",
+            });
+            continue;
+          }
+          const receipt = await ctx.runMutation(internal.whatsapp.receiptStart, {
+            userId: contact.userId,
+            phoneHash: contact.phoneHash,
+            waMessageIdHash: await sha256Hex(waMessageId),
+            targetDeviceId: contact.targetDeviceId,
+            projectSlug: contact.projectSlug,
+            action,
+          });
+          if (!receipt.ok || receipt.duplicate) continue;
+          const delivered = await deliverWhatsappCommandToAgent(ctx, {
+            receiptId: receipt.receiptId,
+            userId: contact.userId,
+            targetDeviceId: contact.targetDeviceId,
+            projectSlug: contact.projectSlug,
+            action,
+            commandText: text,
+          });
+          await ctx.runAction(internal.whatsapp.sendText, {
+            to: from,
+            body: !delivered
+              ? "Yaver received this, but the developer machine is not reachable yet."
+              : action === "status"
+              ? "Yaver is checking the developer machine."
+              : action === "reload" || action === "build_reload"
+                ? "Yaver sent the reload request to the developer machine."
+                : "Yaver sent this as a scoped task request to the developer machine.",
+          });
+        }
+      }
+    }
+    return new Response("ok", { status: 200 });
   }),
 });
 
