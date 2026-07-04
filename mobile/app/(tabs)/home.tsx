@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { quicClient } from "../../src/lib/quic";
 import { AgentVoiceButton } from "../../src/components/AgentVoiceButton";
 import { SessionStrip } from "../../src/components/SessionStrip";
@@ -25,6 +26,7 @@ type Summary = {
 
 export default function HomeScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [s, setS] = useState<Summary | null>(null);
@@ -50,7 +52,7 @@ export default function HomeScreen() {
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <AppScreenHeader title="Home" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 40 }, tabletContent]}>
         <Text style={{ color: c.textPrimary, fontSize: 22, fontWeight: "700" }}>{greeting}</Text>
         <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 2 }}>Your machines at a glance</Text>
 

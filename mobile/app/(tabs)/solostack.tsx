@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 
@@ -27,6 +28,7 @@ type Pane = "forms" | "newsletter" | "jobs" | "pdf" | "oauth" | "shortener" | "w
 
 export default function SoloStackScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { connectionStatus } = useDevice();
@@ -226,7 +228,7 @@ export default function SoloStackScreen() {
       {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} />
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+        <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 32 }, tabletContent]}>
           {!connected ? (
             <Text style={{ color: c.textMuted, marginTop: 12 }}>Not connected to an agent.</Text>
           ) : pane === "forms" ? (

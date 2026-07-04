@@ -34,6 +34,7 @@ import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { connectionManager } from "../../src/lib/connectionManager";
 import { spacing } from "../../src/theme/tokens";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 interface Session {
   id: string;
@@ -65,6 +66,9 @@ export default function ScreenlogScreen() {
   const router = useRouter();
   const { activeDevice, devices } = useDevice();
   const { token } = useAuth();
+  // Tablet: keep the monitor column (frames, event log) to a readable
+  // width instead of stretching across the whole landscape display.
+  const tabletContent = useTabletContentStyle("wide");
 
   // Which machine the monitor is pointed at. Defaults to the app-wide active
   // box but the picker can retarget it independently.
@@ -223,7 +227,7 @@ export default function ScreenlogScreen() {
     <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <AppScreenHeader title="Screen Monitor" onBack={() => router.navigate("/(tabs)/more" as any)} />
       <ScrollView
-        contentContainerStyle={{ padding: spacing.md, gap: spacing.md }}
+        contentContainerStyle={[{ padding: spacing.md, gap: spacing.md }, tabletContent]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textSecondary} />}
       >
         {/* Machine picker — point the monitor at any of your devices */}

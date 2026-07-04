@@ -7,6 +7,7 @@ import { ScrollView, Text, TextInput, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useMesh } from "../../src/lib/useMesh";
 import type { ACLRule } from "../../src/lib/meshTypes";
 
@@ -19,6 +20,7 @@ function describeEndpoint(type: ACLRule["srcType"], val: string) {
 
 export default function MeshAccessScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const mesh = useMesh();
   const { rules, saveRules } = mesh;
@@ -26,7 +28,7 @@ export default function MeshAccessScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <AppScreenHeader title="Access rules" onBack={() => router.navigate("/(tabs)/more" as any)} />
-      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 12 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={[{ padding: 16, gap: 12 }, tabletContent]}>
       <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18 }}>
         No rules = open mesh (every node reaches every node). Add a rule and everything not explicitly
         allowed is denied. Rules apply on every device, live.

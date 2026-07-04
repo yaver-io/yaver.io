@@ -5170,7 +5170,7 @@ export default function TasksScreen() {
           <KeyboardAvoidingView
             style={[
               s.chatModalOverlay,
-              tabletDualPane ? { backgroundColor: "rgba(0,0,0,0.18)", flexDirection: "row" } : null,
+              tabletDualPane ? { backgroundColor: c.bg, flexDirection: "row" } : null,
             ]}
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             keyboardVerticalOffset={0}
@@ -5180,10 +5180,70 @@ export default function TasksScreen() {
                 screen so the task list behind it can be tapped to
                 pick a different task. */}
             {tabletDualPane ? (
-              <Pressable
-                style={{ flex: 1 }}
-                onPress={() => setSelectedTask(null)}
-              />
+              // Tablet landscape: a LIVE task list fills the left pane.
+              // Tapping a card swaps the chat on the right WITHOUT
+              // closing it — a true two-pane cockpit, replacing the old
+              // "tap the empty strip to dismiss" half-measure. The +
+              // opens the composer; the ‹ chevron collapses back to the
+              // full-width single-pane list.
+              <View style={[s.cockpitListPane, { backgroundColor: c.bg, borderRightColor: c.border, paddingTop: insets.top + 8 }]}>
+                <View style={s.cockpitListHeader}>
+                  <Text style={[s.cockpitListTitle, { color: c.textPrimary }]}>Tasks</Text>
+                  <View style={{ flex: 1 }} />
+                  <Pressable
+                    hitSlop={10}
+                    style={[s.cockpitListBtn, { backgroundColor: c.accentSoft }]}
+                    onPress={() => {
+                      setNewTaskText("");
+                      setAttachedImages([]);
+                      setInputFromSpeech(false);
+                      pendingOpenTaskRef.current = null;
+                      if (multiTargetMode && (!activeDevice || !isEffectivelyConnected)) {
+                        setPendingTarget(null);
+                        setShowTargetWizard(true);
+                      } else {
+                        setPendingTarget(null);
+                        setShowNewTask(true);
+                      }
+                    }}
+                  >
+                    <Ionicons name="add" size={20} color={c.accent} />
+                  </Pressable>
+                  <Pressable
+                    hitSlop={10}
+                    style={[s.cockpitListBtn, { backgroundColor: c.surfaceMuted }]}
+                    onPress={() => setSelectedTask(null)}
+                  >
+                    <Ionicons name="chevron-back" size={20} color={c.textSecondary} />
+                  </Pressable>
+                </View>
+                <FlatList
+                  data={displayTasks}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={s.cockpitListContent}
+                  showsVerticalScrollIndicator={false}
+                  renderItem={({ item }) => {
+                    const active = item.id === selectedTask?.id;
+                    return (
+                      <View style={[s.cockpitSelWrap, active && { backgroundColor: c.accentSoft }]}>
+                        <TaskCard
+                          item={item}
+                          onPress={() => setSelectedTask(item)}
+                          onDelete={() => handleDeleteTask(item.id)}
+                          onComplete={() => handleCompleteTask(item.id)}
+                        />
+                      </View>
+                    );
+                  }}
+                  ListEmptyComponent={
+                    <View style={{ padding: 24, alignItems: "center" }}>
+                      <Text style={[s.emptySubtitle, { color: c.textMuted, textAlign: "center" }]}>
+                        No tasks yet. Tap + to start one.
+                      </Text>
+                    </View>
+                  }
+                />
+              </View>
             ) : (
               <Pressable style={s.chatModalDismissArea} onPress={() => setSelectedTask(null)} />
             )}
@@ -6233,6 +6293,15 @@ const s = StyleSheet.create({
 
   // ── Chat modal ─────────────────────────────────────────────────────
   chatModalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
+  // Tablet-landscape cockpit: live task list occupying the left pane
+  // beside the chat detail. See the tabletDualPane branch in the chat
+  // modal.
+  cockpitListPane: { flex: 1, borderRightWidth: 1 },
+  cockpitListHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
+  cockpitListTitle: { fontSize: 22, fontWeight: "700" },
+  cockpitListBtn: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  cockpitListContent: { paddingHorizontal: 10, paddingBottom: 48 },
+  cockpitSelWrap: { borderRadius: 17, paddingHorizontal: 3, paddingTop: 3 },
   chatModalDismissArea: { height: 50 },
   chatModal: { flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: "hidden" },
 

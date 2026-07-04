@@ -19,7 +19,7 @@ import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 // failures we route the user through the normal Yaver web OAuth
 // flow rather than surfacing a confusing global "Reclaim" CTA.)
 
-function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
+function TabIcon({ label, focused, showGreenDot, rail }: { label: string; focused: boolean; showGreenDot?: boolean; rail?: boolean }) {
   const c = useColors();
   // One consistent line-icon family across the bar — outline when
   // inactive, solid when active. Avoids the old mismatch where some tabs
@@ -39,8 +39,18 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
     Settings: { on: "settings", off: "settings-outline" },
   };
   const glyph = icons[label] ?? { on: "ellipse", off: "ellipse-outline" };
+  // Expanded landscape rail: icon + label sit side-by-side in a wide
+  // row with a subtle accent pill behind the active item — the desktop
+  // navigator layout the `rail.expandedWidth` token was reserved for.
+  // Bottom bar / portrait keep the compact stacked icon-over-label.
   return (
-    <View style={styles.tabIconWrap}>
+    <View
+      style={[
+        styles.tabIconWrap,
+        rail && styles.tabIconWrapRail,
+        rail && focused && { backgroundColor: c.accent + "1f" },
+      ]}
+    >
       <View style={styles.iconSlot}>
         <Ionicons
           name={focused ? glyph.on : glyph.off}
@@ -60,7 +70,7 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
         // is what forced the label onto a second line / ellipsized the
         // trailing "s". Keep the weight constant so the longest label
         // fits identically whether or not it's the active tab.
-        style={[styles.tabLabel, { color: focused ? c.accent : c.tabInactive }]}
+        style={[styles.tabLabel, rail && styles.tabLabelRail, { color: focused ? c.accent : c.tabInactive }]}
       >
         {label}
       </Text>
@@ -270,8 +280,9 @@ export default function TabLayout() {
               borderRightColor: c.borderSubtle,
               borderRightWidth: 1,
               borderTopWidth: 0,
-              width: 104,
+              width: layout.rail.expandedWidth,
               paddingTop: 16,
+              paddingHorizontal: 10,
             }
           : {
               backgroundColor: "transparent",
@@ -293,7 +304,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: c.tabActive,
         tabBarInactiveTintColor: c.tabInactive,
         tabBarItemStyle: useLeftRail
-          ? { height: 64 }
+          ? { height: 56, marginBottom: 4 }
           : isTabletPortrait
           ? { paddingVertical: 0 }
           : undefined,
@@ -309,7 +320,7 @@ export default function TabLayout() {
           // event slugs, etc.).
           title: "Reload",
           tabBarIcon: ({ focused }) => (
-            <TabIcon label="Reload" focused={focused} showGreenDot={devServerRunning} />
+            <TabIcon label="Reload" focused={focused} showGreenDot={devServerRunning} rail={useLeftRail} />
           ),
         }}
       />
@@ -317,7 +328,7 @@ export default function TabLayout() {
         name="tasks"
         options={{
           title: "Tasks",
-          tabBarIcon: ({ focused }) => <TabIcon label="Tasks" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon label="Tasks" focused={focused} rail={useLeftRail} />,
         }}
       />
       <Tabs.Screen
@@ -325,7 +336,7 @@ export default function TabLayout() {
         options={{
           title: "Projects",
           tabBarIcon: ({ focused }) => (
-            <TabIcon label="Projects" focused={focused} />
+            <TabIcon label="Projects" focused={focused} rail={useLeftRail} />
           ),
         }}
       />
@@ -334,7 +345,7 @@ export default function TabLayout() {
         options={{
           title: "Shortcuts",
           tabBarIcon: ({ focused }) => (
-            <TabIcon label="Shortcuts" focused={focused} />
+            <TabIcon label="Shortcuts" focused={focused} rail={useLeftRail} />
           ),
         }}
       />
@@ -382,7 +393,7 @@ export default function TabLayout() {
         name="more"
         options={{
           title: "More",
-          tabBarIcon: ({ focused }) => <TabIcon label="More" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon label="More" focused={focused} rail={useLeftRail} />,
         }}
       />
       <Tabs.Screen name="dogfood" options={{ href: null, headerShown: false }} />
@@ -424,6 +435,21 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 2, gap: 3 },
+  // Expanded landscape rail: horizontal icon+label row filling the
+  // widened rail, with room for the active-item accent pill.
+  tabIconWrapRail: {
+    flexDirection: "row",
+    justifyContent: "flex-start",
+    alignItems: "center",
+    alignSelf: "stretch",
+    minWidth: 0,
+    paddingTop: 0,
+    paddingLeft: 14,
+    paddingVertical: 8,
+    gap: 12,
+    borderRadius: 12,
+  },
+  tabLabelRail: { marginTop: 0, fontSize: 15, letterSpacing: 0 },
   // Plain centered slot for the glyph — no pill. Active state is conveyed
   // by the accent tint + solid icon, matching iOS-native tab bars.
   iconSlot: {

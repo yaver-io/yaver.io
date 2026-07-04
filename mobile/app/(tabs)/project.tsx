@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, Text
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { quicClient } from "../../src/lib/quic";
 import { AppBackButton } from "../../src/components/AppBackButton";
 
@@ -15,6 +16,7 @@ import { AppBackButton } from "../../src/components/AppBackButton";
 
 export default function ProjectDetailScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ dir?: string }>();
@@ -84,7 +86,7 @@ export default function ProjectDetailScreen() {
         <View style={{ width: 50 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}>
+      <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 40, gap: 12 }, tabletContent]}>
         <TextInput value={dir} onChangeText={setDir} placeholder="project directory" placeholderTextColor={c.textMuted}
           autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
 

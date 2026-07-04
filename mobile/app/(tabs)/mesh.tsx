@@ -11,6 +11,7 @@ import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useAuth } from "../../src/context/AuthContext";
 import { Device, useDevice } from "../../src/context/DeviceContext";
 import { CONVEX_SITE_URL } from "../../src/_core/constants";
@@ -46,6 +47,7 @@ const AUTO_ENABLE_KEY = "mesh:autoEnableAttempted:v1";
 
 export default function MeshHomeScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const { token } = useAuth();
   const mesh = useMesh();
   const { devices } = useDevice();
@@ -350,7 +352,7 @@ export default function MeshHomeScreen() {
       <AppScreenHeader title="Yaver Mesh" onBack={() => router.navigate("/(tabs)/more" as any)} />
       <ScrollView
         style={{ flex: 1, backgroundColor: c.bg }}
-        contentContainerStyle={{ padding: 16, gap: 16 }}
+        contentContainerStyle={[{ padding: 16, gap: 16 }, tabletContent]}
         refreshControl={<RefreshControl refreshing={mesh.loading} onRefresh={() => void mesh.reload()} tintColor={c.textMuted} />}
       >
         <ConnectHero

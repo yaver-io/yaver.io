@@ -8,6 +8,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import {
   wifiBanClient,
   wifiBannedClients,
@@ -36,6 +37,9 @@ export default function ConsoleScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>("overview");
+  // Tablet: clamp the console content column so machine/container
+  // cards and charts don't span the full landscape width.
+  const tabletContent = useTabletContentStyle("wide");
 
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
@@ -49,7 +53,7 @@ export default function ConsoleScreen() {
           ))}
         </ScrollView>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+      <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 32 }, tabletContent]}>
         {tab === "overview" && <OverviewTab c={c} />}
         {tab === "machines" && <MachinesTab c={c} />}
         {tab === "containers" && <ContainersTab c={c} />}

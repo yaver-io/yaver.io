@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useMesh } from "../../src/lib/useMesh";
 import { isSelectableExit, nodeLabel } from "../../src/lib/meshTypes";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
@@ -14,6 +15,7 @@ import { CheckIcon } from "../../src/components/mesh/MeshIcons";
 
 export default function MeshExitScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const { deviceId } = useLocalSearchParams<{ deviceId?: string }>();
   const mesh = useMesh();
 
@@ -33,7 +35,7 @@ export default function MeshExitScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <AppScreenHeader title="Exit node" onBack={() => router.navigate("/(tabs)/more" as any)} />
-      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 8 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={[{ padding: 16, gap: 8 }, tabletContent]}>
       <Text style={{ fontSize: 13, color: c.textMuted, lineHeight: 18, marginBottom: 4 }}>
         {target ? `Send ${nodeLabel(target)}'s internet traffic through another node.` : "Choose an exit node."}
         {" "}Only nodes advertising themselves as exit nodes appear here.

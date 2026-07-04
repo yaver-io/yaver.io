@@ -19,6 +19,7 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import type { MailMessage } from "../../src/lib/quic";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 
 // mail.tsx — AI-boosted inbox. Talks to the agent at /mail/*
 // so nothing touches Convex. Classification chips separate real
@@ -40,6 +41,10 @@ export default function MailScreen() {
   const insets = useSafeAreaInsets();
   const { connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
+  const layout = useResponsiveLayout();
+  // Landscape tablet: inbox list left, message + AI draft right — a
+  // desktop-mail two-pane. Phone/portrait keep the slide-up detail modal.
+  const twoPane = layout.layoutClass === "tablet-landscape";
 
   const [filter, setFilter] = useState<Filter>("personal");
   const [loading, setLoading] = useState(false);
@@ -218,6 +223,84 @@ export default function MailScreen() {
     }
   }, [composeTo, composeSubject, composeBody]);
 
+  const listView = loading ? (
+    <ActivityIndicator style={{ marginTop: 24 }} />
+  ) : (
+    <ScrollView
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
+      contentContainerStyle={{ paddingBottom: 32 }}
+    >
+      {!connected ? (
+        <Text style={{ color: c.textMuted, padding: 24, textAlign: "center" }}>Not connected to an agent.</Text>
+      ) : messages.length === 0 ? (
+        <Text style={{ color: c.textMuted, padding: 24, textAlign: "center" }}>
+          No mail. Tap Connect to wire Gmail or O365.
+        </Text>
+      ) : messages.map((m) => (
+        <Pressable
+          key={m.id}
+          onPress={() => openDraft(m)}
+          style={[s.row, { borderBottomColor: c.border }, twoPane && selected?.id === m.id && { backgroundColor: c.accentSoft }]}
+        >
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={[s.chip, { backgroundColor: CHIP_COLORS[m.classification] }]}>
+                <Text style={s.chipText}>{m.classification[0].toUpperCase()}</Text>
+              </View>
+              <Text style={[s.from, { color: c.textPrimary }]} numberOfLines={1}>{m.fromName || m.from}</Text>
+              <Text style={[s.date, { color: c.textMuted }]}>{shortDate(m.date)}</Text>
+            </View>
+            <Text style={[s.subject, { color: c.textPrimary }]} numberOfLines={1}>{m.subject}</Text>
+            <Text style={[s.snippet, { color: c.textMuted }]} numberOfLines={1}>{m.snippet}</Text>
+          </View>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+
+  const detailBody = (
+    <View style={[s.container, { backgroundColor: c.bg, paddingTop: twoPane ? 0 : insets.top + 12 }]}>
+      <AppScreenHeader
+        title="Reply"
+        onBack={() => setSelected(null)}
+        right={
+          <Pressable onPress={sendDraft} style={{ paddingVertical: 8 }}>
+            <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Send</Text>
+          </Pressable>
+        }
+      />
+      {selected ? (
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <Text style={[s.subject, { color: c.textPrimary, fontSize: 17 }]}>{selected.subject}</Text>
+          <Text style={[s.from, { color: c.textMuted, marginTop: 4 }]}>from {selected.fromName || selected.from}</Text>
+          <Text style={[s.snippet, { color: c.textPrimary, marginTop: 12 }]} numberOfLines={10}>
+            {selected.body || selected.snippet}
+          </Text>
+
+          <Text style={[s.section, { color: c.textPrimary, marginTop: 20 }]}>Draft</Text>
+          {draftPrompt == null ? (
+            <ActivityIndicator />
+          ) : (
+            <>
+              <TextInput
+                multiline
+                value={draftText}
+                onChangeText={setDraftText}
+                placeholder="Write your reply (or paste the AI-generated draft)..."
+                placeholderTextColor={c.textMuted}
+                style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput, height: 200, textAlignVertical: "top" }]}
+              />
+              <Text style={[s.section, { color: c.textPrimary, marginTop: 20 }]}>Prompt (paste into your AI runner)</Text>
+              <View style={[s.promptBox, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                <Text style={{ color: c.textMuted, fontFamily: "Menlo", fontSize: 11 }}>{draftPrompt}</Text>
+              </View>
+            </>
+          )}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+
   return (
     <View style={[s.container, { backgroundColor: c.bg }]}>
       <AppScreenHeader
@@ -243,80 +326,30 @@ export default function MailScreen() {
         </Pressable>
       </View>
 
-      {loading ? (
-        <ActivityIndicator style={{ marginTop: 24 }} />
-      ) : (
-        <ScrollView
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-          contentContainerStyle={{ paddingBottom: 32 }}
-        >
-          {!connected ? (
-            <Text style={{ color: c.textMuted, padding: 24, textAlign: "center" }}>Not connected to an agent.</Text>
-          ) : messages.length === 0 ? (
-            <Text style={{ color: c.textMuted, padding: 24, textAlign: "center" }}>
-              No mail. Tap Connect to wire Gmail or O365.
-            </Text>
-          ) : messages.map((m) => (
-            <Pressable key={m.id} onPress={() => openDraft(m)} style={[s.row, { borderBottomColor: c.border }]}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <View style={[s.chip, { backgroundColor: CHIP_COLORS[m.classification] }]}>
-                    <Text style={s.chipText}>{m.classification[0].toUpperCase()}</Text>
-                  </View>
-                  <Text style={[s.from, { color: c.textPrimary }]} numberOfLines={1}>{m.fromName || m.from}</Text>
-                  <Text style={[s.date, { color: c.textMuted }]}>{shortDate(m.date)}</Text>
-                </View>
-                <Text style={[s.subject, { color: c.textPrimary }]} numberOfLines={1}>{m.subject}</Text>
-                <Text style={[s.snippet, { color: c.textMuted }]} numberOfLines={1}>{m.snippet}</Text>
+      {twoPane ? (
+        <View style={s.split}>
+          <View style={[s.splitList, { borderRightColor: c.border }]}>{listView}</View>
+          <View style={{ flex: 1 }}>
+            {selected ? (
+              detailBody
+            ) : (
+              <View style={s.splitEmpty}>
+                <Text style={{ color: c.textMuted, textAlign: "center" }}>
+                  Select a message to read and draft a reply.
+                </Text>
               </View>
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
-
-      {/* Draft modal */}
-      <Modal visible={!!selected} animationType="slide">
-        <View style={[s.container, { backgroundColor: c.bg, paddingTop: insets.top + 12 }]}>
-          <AppScreenHeader
-            title="Reply"
-            onBack={() => setSelected(null)}
-            right={
-              <Pressable onPress={sendDraft} style={{ paddingVertical: 8 }}>
-                <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Send</Text>
-              </Pressable>
-            }
-          />
-          {selected ? (
-            <ScrollView contentContainerStyle={{ padding: 16 }}>
-              <Text style={[s.subject, { color: c.textPrimary, fontSize: 17 }]}>{selected.subject}</Text>
-              <Text style={[s.from, { color: c.textMuted, marginTop: 4 }]}>from {selected.fromName || selected.from}</Text>
-              <Text style={[s.snippet, { color: c.textPrimary, marginTop: 12 }]} numberOfLines={10}>
-                {selected.body || selected.snippet}
-              </Text>
-
-              <Text style={[s.section, { color: c.textPrimary, marginTop: 20 }]}>Draft</Text>
-              {draftPrompt == null ? (
-                <ActivityIndicator />
-              ) : (
-                <>
-                  <TextInput
-                    multiline
-                    value={draftText}
-                    onChangeText={setDraftText}
-                    placeholder="Write your reply (or paste the AI-generated draft)..."
-                    placeholderTextColor={c.textMuted}
-                    style={[s.input, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bgInput, height: 200, textAlignVertical: "top" }]}
-                  />
-                  <Text style={[s.section, { color: c.textPrimary, marginTop: 20 }]}>Prompt (paste into your AI runner)</Text>
-                  <View style={[s.promptBox, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-                    <Text style={{ color: c.textMuted, fontFamily: "Menlo", fontSize: 11 }}>{draftPrompt}</Text>
-                  </View>
-                </>
-              )}
-            </ScrollView>
-          ) : null}
+            )}
+          </View>
         </View>
-      </Modal>
+      ) : (
+        <>
+          {listView}
+          {/* Draft modal — phone/portrait only; landscape shows it inline */}
+          <Modal visible={!!selected} animationType="slide">
+            {detailBody}
+          </Modal>
+        </>
+      )}
 
       {/* Connect modal */}
       <Modal visible={showConnect} transparent animationType="fade">
@@ -472,6 +505,9 @@ function shortDate(iso: string): string {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
+  split: { flex: 1, flexDirection: "row" },
+  splitList: { width: 360, borderRightWidth: 1 },
+  splitEmpty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1 },
   filterRow: { flexDirection: "row", borderBottomWidth: 1, alignItems: "center" },
   filter: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 2, borderBottomColor: "transparent", alignItems: "center" },

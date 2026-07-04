@@ -16,6 +16,7 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useDevice } from "../../src/context/DeviceContext";
 import { getLocalSecret, LOCAL_KEYS, saveLocalSecret } from "../../src/lib/auth";
 import { quicClient } from "../../src/lib/quic";
@@ -38,6 +39,7 @@ type InputMode = "figma" | "screenshot" | "reference";
 
 export default function DesignModeScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { connectionStatus } = useDevice();
@@ -228,7 +230,7 @@ export default function DesignModeScreen() {
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <AppScreenHeader title="Design Mode" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 40 }, tabletContent]} keyboardShouldPersistTaps="handled">
         <View style={[styles.hero, { backgroundColor: c.bgCard, borderColor: c.border }]}>
           <Text style={[styles.eyebrow, { color: c.accent }]}>Figma + vibing</Text>
           <Text style={[styles.heroTitle, { color: c.textPrimary }]}>Import a frame, write a brief, send it to code</Text>

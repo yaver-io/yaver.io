@@ -16,6 +16,7 @@ import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { AuthenticatedVideoPlayer } from "../../src/components/AuthenticatedVideoPlayer";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 
@@ -30,6 +31,7 @@ type Pane = "clips" | "chat" | "invoices" | "affiliates" | "ab" | "casts";
 
 export default function StudioScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { connectionStatus } = useDevice();
@@ -201,7 +203,7 @@ export default function StudioScreen() {
       ) : !connected ? (
         <Text style={{ color: c.textMuted, textAlign: "center", marginTop: 40 }}>Not connected.</Text>
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
+        <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 48 }, tabletContent]}>
           {pane === "clips" ? (
             <View>
               {!recording && !uploadingMobile ? (

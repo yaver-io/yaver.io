@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { AppBackButton } from "../../src/components/AppBackButton";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 // Native mobile database browser. No WebViews — every tab calls the agent's
 // /backend/* or /storage/* endpoints directly and renders with RN components.
@@ -21,6 +22,10 @@ export default function DataScreen() {
   const [directory, setDirectory] = useState("");
   const [status, setStatus] = useState<any>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  // Clamp the data-browser column on tablet so table rows / query
+  // output don't stretch to a 1300pt reading line. Header + tab bar
+  // stay full-width.
+  const tabletContent = useTabletContentStyle("wide");
   const backendReady = !!status && !status.error && status.kind && status.kind !== "unknown";
 
   useEffect(() => { loadStatus(); }, [directory]);
@@ -46,7 +51,7 @@ export default function DataScreen() {
         </ScrollView>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+      <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 32 }, tabletContent]}>
         <View style={{ marginBottom: 12 }}>
           <TextInput value={directory} onChangeText={setDirectory} placeholder="project dir (blank = cwd)"
             placeholderTextColor={c.textMuted}

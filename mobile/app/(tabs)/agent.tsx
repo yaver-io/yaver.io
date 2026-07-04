@@ -16,6 +16,8 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type AgentGraphRun, type MachineInfo, type RunnerInfo } from "../../src/lib/quic";
 import { describeConnectionStatus } from "../../src/lib/connection";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 export default function AgentModeScreen() {
   const c = useColors();
@@ -23,6 +25,12 @@ export default function AgentModeScreen() {
   const { connectionStatus } = useDevice();
   const params = useLocalSearchParams<{ project?: string; path?: string }>();
   const isConnected = connectionStatus === "connected";
+  const layout = useResponsiveLayout();
+  // Landscape tablet: split the builder form (left) from the live
+  // run list (right) so both are visible at once — the natural
+  // "configure ↔ watch" cockpit. Portrait/phone stay single-column.
+  const twoPane = layout.layoutClass === "tablet-landscape";
+  const tabletContent = useTabletContentStyle("regular");
 
   const [runs, setRuns] = useState<AgentGraphRun[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,19 +108,17 @@ export default function AgentModeScreen() {
     }
   }, [workDir, prompt, name, runner, template, maxParallel, selectedDevices, hybridDegree, refresh]);
 
-  return (
-    <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={[]}>
-      <AppScreenHeader title="Agent Mode" onBack={() => router.navigate("/(tabs)/more" as any)} />
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        contentContainerStyle={styles.content}
-      >
-        <Text style={[styles.title, { color: c.textPrimary }]}>Agent Mode</Text>
-        <Text style={[styles.subtitle, { color: c.textSecondary }]}>
-          Dependency-aware orchestration across chat, autoideas, and autotest.
-        </Text>
+  const intro = (
+    <>
+      <Text style={[styles.title, { color: c.textPrimary }]}>Agent Mode</Text>
+      <Text style={[styles.subtitle, { color: c.textSecondary }]}>
+        Dependency-aware orchestration across chat, autoideas, and autotest.
+      </Text>
+    </>
+  );
 
-        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+  const configCard = (
+    <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
           <Text style={[styles.label, { color: c.textPrimary }]}>Name</Text>
           <TextInput value={name} onChangeText={setName} placeholder="my-project-agent" placeholderTextColor={c.textMuted} style={[styles.input, { color: c.textPrimary, borderColor: c.border }]} />
 
@@ -232,8 +238,11 @@ export default function AgentModeScreen() {
           >
             <Text style={styles.primaryBtnText}>{starting ? "Starting..." : "Start Agent Graph"}</Text>
           </Pressable>
-        </View>
+    </View>
+  );
 
+  const runsList = (
+    <>
         {runs.map((run) => (
           <View key={run.id} style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <View style={styles.headerRow}>
@@ -287,7 +296,48 @@ export default function AgentModeScreen() {
             ))}
           </View>
         ))}
-      </ScrollView>
+    </>
+  );
+
+  const runsEmpty = (
+    <View style={styles.runsEmpty}>
+      <Text style={[styles.subtitle, { color: c.textMuted, textAlign: "center" }]}>
+        No agent graphs running yet. Configure one on the left and tap Start.
+      </Text>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={[styles.root, { backgroundColor: c.bg }]} edges={[]}>
+      <AppScreenHeader title="Agent Mode" onBack={() => router.navigate("/(tabs)/more" as any)} />
+      {twoPane ? (
+        <View style={styles.twoPane}>
+          <ScrollView
+            style={[styles.pane, { borderRightWidth: 1, borderRightColor: c.border }]}
+            contentContainerStyle={styles.content}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+          >
+            {intro}
+            {configCard}
+          </ScrollView>
+          <ScrollView
+            style={styles.pane}
+            contentContainerStyle={styles.content}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+          >
+            {runs.length ? runsList : runsEmpty}
+          </ScrollView>
+        </View>
+      ) : (
+        <ScrollView
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+          contentContainerStyle={[styles.content, tabletContent]}
+        >
+          {intro}
+          {configCard}
+          {runsList}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
@@ -295,6 +345,9 @@ export default function AgentModeScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { padding: 16, gap: 14 },
+  twoPane: { flex: 1, flexDirection: "row" },
+  pane: { flex: 1 },
+  runsEmpty: { padding: 32, alignItems: "center" },
   title: { fontSize: 28, fontWeight: "800" },
   subtitle: { fontSize: 14, lineHeight: 20 },
   card: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },

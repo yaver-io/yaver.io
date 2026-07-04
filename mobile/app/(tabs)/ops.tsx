@@ -4,12 +4,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { quicClient } from "../../src/lib/quic";
 
 type Tab = "deploy" | "backups" | "uptime" | "domains" | "rotate" | "ci" | "alerts" | "errors";
 
 export default function OpsScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>("deploy");
@@ -30,7 +32,7 @@ export default function OpsScreen() {
           ))}
         </ScrollView>
       </View>
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+      <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 32 }, tabletContent]}>
         <View style={{ marginBottom: 12 }}>
           <Text style={{ fontSize: 11, color: c.textMuted, marginBottom: 4, textTransform: "uppercase" }}>Project dir</Text>
           <TextInput value={directory} onChangeText={setDirectory} placeholder="blank = agent cwd"

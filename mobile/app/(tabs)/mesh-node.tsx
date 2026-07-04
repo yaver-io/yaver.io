@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useColors } from "../../src/context/ThemeContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useMesh } from "../../src/lib/useMesh";
 import {
   TAILSCALE_BRIDGE_CIDR,
@@ -30,6 +31,7 @@ function relTime(ts?: number): string | null {
 
 export default function MeshNodeScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("regular");
   const { deviceId } = useLocalSearchParams<{ deviceId?: string }>();
   const mesh = useMesh();
 
@@ -81,7 +83,7 @@ export default function MeshNodeScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <AppScreenHeader title="Node" onBack={() => router.navigate("/(tabs)/more" as any)} />
-      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={[{ padding: 16, gap: 16 }, tabletContent]}>
       {/* Identity */}
       <View style={{ gap: 8 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
