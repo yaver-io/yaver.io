@@ -29,6 +29,8 @@ import {
   type RobotShortcutAction,
 } from "../../src/lib/shortcuts";
 import { runShortcut, type StepPhase } from "../../src/lib/runShortcut";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 // Mobile Shortcuts tab — one-tap, chainable action shortcuts (connect →
 // open → reload, robot cell view/debug/actions). Storage is Convex-synced
@@ -61,6 +63,8 @@ type RunState = { id: string; steps: Record<number, StepPhase>; error?: string }
 export default function ShortcutsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("wide");
   const router = useRouter();
   const { token } = useAuth();
   const { devices, activeDevice, selectDevice, connectionStatus, setPrimaryRunnerForDevice } = useDevice();
@@ -81,6 +85,10 @@ export default function ShortcutsScreen() {
   const [projects, setProjects] = useState<string[]>([]);
   const [runners, setRunners] = useState<{ id: string; name: string; models: { id: string; name: string }[] }[]>([]);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const shortcutCols = layout.layoutClass === "phone" ? 1 : layout.layoutClass === "tablet-portrait" ? 2 : 3;
+  const shortcutCardStyle = shortcutCols > 1
+    ? { width: `${(100 - (shortcutCols - 1) * 1.5) / shortcutCols}%` as const }
+    : null;
 
   // Flattened agent·model options for the runner picker. "Off" (value "")
   // leaves the device's current agent alone. Each combo carries the runner
@@ -290,7 +298,7 @@ export default function ShortcutsScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+        contentContainerStyle={[{ padding: 16, paddingBottom: 40 }, tabletContent]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} />}
       >
         <View style={styles.headerRow}>
@@ -319,7 +327,8 @@ export default function ShortcutsScreen() {
             </Text>
           </View>
         ) : (
-          shortcuts.map((sc) => {
+          <View style={[styles.shortcutGrid, shortcutCols > 1 && styles.shortcutGridTablet]}>
+          {shortcuts.map((sc) => {
             const isRunning = run?.id === sc._id;
             return (
               <Pressable
@@ -330,6 +339,7 @@ export default function ShortcutsScreen() {
                 style={({ pressed }) => [
                   styles.card,
                   { backgroundColor: c.bgCard, borderColor: c.border },
+                  shortcutCardStyle,
                   pressed && { opacity: 0.85 },
                 ]}
               >
@@ -366,7 +376,8 @@ export default function ShortcutsScreen() {
                 )}
               </Pressable>
             );
-          })
+          })}
+          </View>
         )}
 
         <Pressable
@@ -436,7 +447,7 @@ export default function ShortcutsScreen() {
               {saving ? <ActivityIndicator color={c.accent} /> : <Text style={{ color: c.accent, fontSize: 16, fontWeight: "700" }}>Save</Text>}
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 + insets.bottom }}>
+          <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 60 + insets.bottom }, tabletContent]}>
             <Text style={[styles.fieldLabel, { color: c.textMuted }]}>NAME</Text>
             <TextInput
               value={draftName}
@@ -750,6 +761,8 @@ const styles = StyleSheet.create({
   subtle: { fontSize: 13 },
   notice: { flexDirection: "row", alignItems: "center", padding: 12, borderRadius: 12, borderWidth: 1, marginBottom: 16 },
   empty: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 24 },
+  shortcutGrid: { gap: 12 },
+  shortcutGridTablet: { flexDirection: "row", flexWrap: "wrap", alignItems: "stretch" },
   card: { flexDirection: "row", alignItems: "center", padding: 14, borderRadius: 16, borderWidth: 1, marginBottom: 12, gap: 12 },
   cardIcon: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   newButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 14, borderRadius: 14, marginTop: 8 },

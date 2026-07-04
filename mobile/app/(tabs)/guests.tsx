@@ -30,6 +30,7 @@ import {
   type InvitationPreview,
   type PublicUserLookup,
 } from "../../src/lib/guests";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 // Guest access — one mobile screen that covers host (my guests) and guest
 // (join as guest) flows. Hosts can invite by email OR by public user id,
@@ -93,6 +94,7 @@ export default function GuestsScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const tabletContent = useTabletContentStyle("wide");
   const { token } = useAuth();
   const {
     devices,
@@ -442,12 +444,12 @@ export default function GuestsScreen() {
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <AppScreenHeader title="Guest Access" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
 
-      <View style={{ flexDirection: "row", padding: 12, gap: 8 }}>
+      <View style={[{ flexDirection: "row", padding: 12, gap: 8 }, tabletContent]}>
         <ModeBtn c={c} label="My guests" active={mode === "my-guests"} onPress={() => setMode("my-guests")} />
         <ModeBtn c={c} label="Join as guest" active={mode === "join"} onPress={() => setMode("join")} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}>
+      <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 40, gap: 12 }, tabletContent]}>
         {mode === "my-guests" ? (
           <>
             <View style={[card(c), { gap: 10 }]}>

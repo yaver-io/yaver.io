@@ -14,6 +14,7 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import type {
   WizardGenerateResult,
   WizardQuestion,
@@ -509,6 +510,7 @@ function buildInitialInput(question: WizardQuestion | null) {
 export default function NewProjectScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
+  const tabletContent = useTabletContentStyle("wide");
   const router = useRouter();
   const { connectionStatus, devices, selectDevice } = useDevice();
   const connected = connectionStatus === "connected";
@@ -976,7 +978,7 @@ export default function NewProjectScreen() {
       <AppScreenHeader title="Mobile App Builder" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
 
       {!connected ? (
-        <ScrollView contentContainerStyle={{ padding: 20 }}>
+        <ScrollView contentContainerStyle={[{ padding: 20 }, tabletContent]}>
           <Text style={{ color: c.textPrimary, fontSize: 18, fontWeight: "800", marginBottom: 8 }}>
             Connect a dev machine
           </Text>
@@ -1018,7 +1020,7 @@ export default function NewProjectScreen() {
           )}
         </ScrollView>
       ) : result ? (
-        <ScrollView contentContainerStyle={{ padding: 20 }}>
+        <ScrollView contentContainerStyle={[{ padding: 20 }, tabletContent]}>
           <View
             style={[
               styles.completionHero,
@@ -1084,7 +1086,7 @@ export default function NewProjectScreen() {
           <Text style={{ color: c.textMuted, marginTop: 12 }}>Loading builder…</Text>
         </View>
       ) : !question ? (
-        <ScrollView contentContainerStyle={{ padding: 20 }}>
+        <ScrollView contentContainerStyle={[{ padding: 20 }, tabletContent]}>
           {error ? <Text style={{ color: c.error, marginBottom: 12 }}>{error}</Text> : null}
           <Text style={{ color: c.textMuted, marginBottom: 16 }}>
             Could not start the project wizard. The connected agent may be too old for this flow.
@@ -1097,7 +1099,7 @@ export default function NewProjectScreen() {
         <View style={{ flex: 1 }}>
           {renderStageStrip()}
           <ScrollView
-            contentContainerStyle={{ padding: 20, paddingBottom: 36 }}
+            contentContainerStyle={[{ padding: 20, paddingBottom: 36 }, tabletContent]}
             keyboardShouldPersistTaps="handled"
           >
             {renderPreviewCard()}

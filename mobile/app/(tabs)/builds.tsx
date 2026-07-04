@@ -11,6 +11,8 @@ import {
   Text,
   TextInput,
   View,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -25,6 +27,8 @@ import {
   canInstallArtifact,
   installIPA,
 } from "../../src/lib/builds";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 type PublishConfigView = {
   config?: {
@@ -95,7 +99,7 @@ function unityRunPath(run: UnityRunSummary) {
 
 // ── Build Item ──────────────────────────────────────────────────────
 
-function BuildItem({ build, onRefresh }: { build: BuildSummary; onRefresh: () => void }) {
+function BuildItem({ build, onRefresh, style }: { build: BuildSummary; onRefresh: () => void; style?: StyleProp<ViewStyle> }) {
   const c = useColors();
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
@@ -150,7 +154,7 @@ function BuildItem({ build, onRefresh }: { build: BuildSummary; onRefresh: () =>
   const showInstall = build.status === "completed" && build.artifactName && canInstallArtifact(build.artifactName);
 
   return (
-    <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+    <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }, style]}>
       <View style={styles.cardHeader}>
         <Text style={[styles.buildId, { color: c.textMuted }]} numberOfLines={1}>
           {build.id.slice(0, 8)}
@@ -214,6 +218,8 @@ function BuildItem({ build, onRefresh }: { build: BuildSummary; onRefresh: () =>
 
 export default function BuildsScreen() {
   const c = useColors();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("wide");
   const { connectionStatus, activeDevice } = useDevice();
   const [builds, setBuilds] = useState<BuildSummary[]>([]);
   const [publishRuns, setPublishRuns] = useState<Array<{ id: string; targetId: string; status: string; provider: string }>>([]);
@@ -268,6 +274,10 @@ export default function BuildsScreen() {
   const [discovering, setDiscovering] = useState(false);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   const [repoSearch, setRepoSearch] = useState("");
+  const projectCols = layout.layoutClass === "phone" ? 1 : layout.layoutClass === "tablet-portrait" ? 2 : 3;
+  const cardGridItemStyle = projectCols > 1
+    ? { width: `${(100 - (projectCols - 1) * 1.5) / projectCols}%` as const }
+    : null;
 
   useEffect(() => {
     if (!isConnected) { setProjects([]); setDevStatus(null); return; }
@@ -382,7 +392,7 @@ export default function BuildsScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.list}>
+        <ScrollView contentContainerStyle={[styles.list, tabletContent]}>
           {/* ── Machine + Discover ── */}
           {activeDevice && (
             <View style={[styles.machineCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
@@ -423,6 +433,7 @@ export default function BuildsScreen() {
           </View>
 
           {/* ── Project Cards (green = serving, gray = discovered) ── */}
+          <View style={[styles.cardGrid, projectCols > 1 && styles.cardGridTablet]}>
           {projects.filter((p) => {
             if (!repoSearch.trim()) return true;
             const q = repoSearch.toLowerCase();
@@ -439,7 +450,7 @@ export default function BuildsScreen() {
                 style={[styles.repoCard, {
                   backgroundColor: isRunning ? "#0f1a0f" : c.bgCard,
                   borderColor: isRunning ? "#22c55e44" : c.border,
-                }]}
+                }, cardGridItemStyle]}
                 onPress={() => handleStartProject(p.name, p.path)}
                 disabled={isStarting}
               >
@@ -471,6 +482,7 @@ export default function BuildsScreen() {
               </Pressable>
             );
           })}
+          </View>
 
           {projects.length === 0 && !loading && (
             <View style={{ padding: 40, alignItems: "center" }}>
@@ -545,9 +557,9 @@ export default function BuildsScreen() {
               </View>
 
               {publishRuns.length > 0 && (
-                <View style={styles.publishRunsList}>
+                <View style={[styles.publishRunsList, projectCols > 1 && styles.cardGridTablet]}>
                   {publishRuns.slice(0, 8).map((run) => (
-                    <View key={run.id} style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                    <View key={run.id} style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }, cardGridItemStyle]}>
                       <View style={styles.cardHeader}>
                         <Text style={[styles.buildId, { color: c.textMuted }]}>{run.id}</Text>
                         <PlatformBadge platform={run.targetId} />
@@ -566,14 +578,14 @@ export default function BuildsScreen() {
               <View style={[styles.sectionHeader, { marginTop: 16 }]}>
                 <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Unity Runs</Text>
               </View>
-              <View style={styles.publishRunsList}>
+              <View style={[styles.publishRunsList, projectCols > 1 && styles.cardGridTablet]}>
                 {unityRuns.slice(0, 8).map((run, index) => {
                   const pathHint = unityRunPath(run);
                   const status = run.status || (run.ok ? "completed" : "failed");
                   return (
                     <View
                       key={`${run.projectPath || "unity"}-${run.stage || "run"}-${index}`}
-                      style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                      style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }, cardGridItemStyle]}
                     >
                       <View style={styles.cardHeader}>
                         <Text style={[styles.buildId, { color: c.textMuted }]} numberOfLines={1}>
@@ -609,9 +621,11 @@ export default function BuildsScreen() {
               <View style={[styles.sectionHeader, { marginTop: 16 }]}>
                 <Text style={[styles.sectionTitle, { color: c.textMuted }]}>Build Artifacts</Text>
               </View>
-              {builds.map((build) => (
-                <BuildItem key={build.id} build={build} onRefresh={fetchBuilds} />
-              ))}
+              <View style={[styles.publishRunsList, projectCols > 1 && styles.cardGridTablet]}>
+                {builds.map((build) => (
+                  <BuildItem key={build.id} build={build} onRefresh={fetchBuilds} style={cardGridItemStyle} />
+                ))}
+              </View>
             </>
           )}
 
@@ -663,6 +677,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     padding: 12,
+  },
+  cardGrid: {
+    gap: 10,
+  },
+  cardGridTablet: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "stretch",
   },
   cardHeader: {
     flexDirection: "row",

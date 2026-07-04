@@ -16,6 +16,8 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -64,6 +66,8 @@ const STATUS_COLORS: Record<string, string> = {
 export default function QualityGatesScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("wide");
   const router = useRouter();
   const { connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
@@ -151,6 +155,8 @@ export default function QualityGatesScreen() {
   }, [checks]);
 
   const availableChecks = checks.filter((ch) => ch.available);
+  const useSplitPane = layout.layoutClass === "tablet-landscape";
+  const expanded = expandedResult ? results.find((r) => r.id === expandedResult) : null;
 
   const renderResult = ({ item: r }: { item: QualityResult }) => {
     const passed = r.status === "passed" || (r.exitCode === 0 && r.status === "completed");
@@ -191,7 +197,7 @@ export default function QualityGatesScreen() {
             </Text>
           </View>
         </Pressable>
-        {isExpanded && r.output && (
+        {!useSplitPane && isExpanded && r.output && (
           <ScrollView
             style={[st.outputBox, { backgroundColor: c.bg, borderColor: c.border }]}
             nestedScrollEnabled
@@ -270,6 +276,39 @@ export default function QualityGatesScreen() {
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
           <ActivityIndicator color={c.accent} />
         </View>
+      ) : useSplitPane ? (
+        <View style={[st.splitShell, tabletContent]}>
+          <FlatList
+            style={[st.resultsPane, { borderColor: c.border }]}
+            data={results.slice(0, 20)}
+            keyExtractor={(item) => item.id}
+            renderItem={renderResult}
+            ListHeaderComponent={ListHeader}
+            ListEmptyComponent={ListEmpty}
+            contentContainerStyle={st.splitListContent}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} />
+            }
+          />
+          <View style={[st.outputPane, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600", marginBottom: 8 }}>
+              {expanded ? `${TYPE_LABELS[expanded.type] || expanded.type} output` : "Output"}
+            </Text>
+            {expanded?.output ? (
+              <ScrollView style={[st.outputPaneScroll, { backgroundColor: c.bg, borderColor: c.border }]}>
+                <Text style={{ color: c.textMuted, fontSize: 12, fontFamily: "Courier" }}>
+                  {expanded.output}
+                </Text>
+              </ScrollView>
+            ) : (
+              <View style={st.outputPaneEmpty}>
+                <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center" }}>
+                  Select a result with output to inspect logs.
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
       ) : (
         <FlatList
           data={results.slice(0, 20)}
@@ -277,7 +316,7 @@ export default function QualityGatesScreen() {
           renderItem={renderResult}
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={ListEmpty}
-          contentContainerStyle={{ padding: 16, gap: 10 }}
+          contentContainerStyle={[{ padding: 16, gap: 10 }, tabletContent]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} />
           }
@@ -316,6 +355,40 @@ const st = StyleSheet.create({
     borderRadius: 8,
     padding: 10,
     marginTop: 4,
+  },
+  splitShell: {
+    flex: 1,
+    flexDirection: "row",
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  resultsPane: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+  },
+  splitListContent: {
+    padding: 12,
+    gap: 10,
+  },
+  outputPane: {
+    width: 400,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+  },
+  outputPaneScroll: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+  },
+  outputPaneEmpty: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
   },
   btn: {
     paddingHorizontal: 14,

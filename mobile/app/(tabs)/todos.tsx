@@ -7,6 +7,7 @@ import {
   Keyboard,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -19,6 +20,8 @@ import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
 import { getTodos, saveTodos, Todo } from "../../src/lib/storage";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 function uuid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -47,6 +50,8 @@ function PulsingCircle() {
 export default function TodosScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("regular");
   const router = useRouter();
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
@@ -247,6 +252,7 @@ export default function TodosScreen() {
 
   const pending = todos.filter(t => !t.done);
   const done = todos.filter(t => t.done);
+  const useSplitPane = layout.layoutClass === "tablet-landscape";
 
   const renderPendingItem = ({ item }: { item: Todo }) => {
     const isEditing = editingId === item.id;
@@ -344,6 +350,52 @@ export default function TodosScreen() {
     </Pressable>
   );
 
+  const completedSection = done.length > 0 ? (
+    <>
+      <Pressable
+        style={[s.completedHeader, { borderBottomColor: c.border }]}
+        onPress={() => setShowCompleted(!showCompleted)}
+      >
+        <Text style={[s.completedChevron, { color: c.textMuted }]}>
+          {showCompleted ? "\u25BC" : "\u25B6"}
+        </Text>
+        <Text style={[s.completedText, { color: c.textMuted }]}>Completed ({done.length})</Text>
+        <View style={{ flex: 1 }} />
+        <Pressable onPress={handleClearDone} hitSlop={8}>
+          <Text style={[s.clearText, { color: c.accent }]}>Clear</Text>
+        </Pressable>
+      </Pressable>
+      {showCompleted && done.map(item => (
+        <View key={item.id}>{renderDoneItem({ item })}</View>
+      ))}
+    </>
+  ) : (
+    <View style={s.completedEmpty}>
+      <Text style={[s.emptySubtitle, { color: c.textMuted }]}>Completed tasks will appear here.</Text>
+    </View>
+  );
+
+  const pendingList = (
+    <FlatList
+      data={pending}
+      keyExtractor={t => t.id}
+      renderItem={renderPendingItem}
+      contentContainerStyle={[s.listContent, !useSplitPane && tabletContent]}
+      keyboardShouldPersistTaps="handled"
+      ListEmptyComponent={
+        !showInput ? (
+          <View style={s.empty}>
+            <Text style={[s.emptyTitle, { color: c.textPrimary }]}>No tasks yet</Text>
+            <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
+              Tap + to add tasks.{"\n"}Hit Auto-Drive and go to sleep.
+            </Text>
+          </View>
+        ) : null
+      }
+      ListFooterComponent={useSplitPane ? null : completedSection}
+    />
+  );
+
   return (
     <View style={[s.container, { backgroundColor: c.bg }]}>
       <AppScreenHeader
@@ -366,68 +418,54 @@ export default function TodosScreen() {
         }
       />
 
-      {/* Inline input */}
-      {showInput && (
-        <View style={[s.inputRow, { borderBottomColor: c.border }]}>
-          <View style={[s.checkbox, { borderColor: c.textMuted }]} />
-          <TextInput
-            ref={inputRef}
-            style={[s.inputText, { color: c.textPrimary }]}
-            placeholder="New task"
-            placeholderTextColor={c.textMuted}
-            value={newText}
-            onChangeText={setNewText}
-            onSubmitEditing={handleAdd}
-            onBlur={() => { if (!newText.trim()) setShowInput(false); }}
-            returnKeyType="done"
-            autoFocus
-          />
-        </View>
-      )}
-
-      {/* Pending items */}
-      <FlatList
-        data={pending}
-        keyExtractor={t => t.id}
-        renderItem={renderPendingItem}
-        contentContainerStyle={s.listContent}
-        keyboardShouldPersistTaps="handled"
-        ListEmptyComponent={
-          !showInput ? (
-            <View style={s.empty}>
-              <Text style={[s.emptyTitle, { color: c.textPrimary }]}>No tasks yet</Text>
-              <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
-                Tap + to add tasks.{"\n"}Hit Auto-Drive and go to sleep.
-              </Text>
-            </View>
-          ) : null
-        }
-        ListFooterComponent={
-          <>
-            {/* Completed section */}
-            {done.length > 0 && (
-              <>
-                <Pressable
-                  style={[s.completedHeader, { borderBottomColor: c.border }]}
-                  onPress={() => setShowCompleted(!showCompleted)}
-                >
-                  <Text style={[s.completedChevron, { color: c.textMuted }]}>
-                    {showCompleted ? "\u25BC" : "\u25B6"}
-                  </Text>
-                  <Text style={[s.completedText, { color: c.textMuted }]}>Completed ({done.length})</Text>
-                  <View style={{ flex: 1 }} />
-                  <Pressable onPress={handleClearDone} hitSlop={8}>
-                    <Text style={[s.clearText, { color: c.accent }]}>Clear</Text>
-                  </Pressable>
-                </Pressable>
-                {showCompleted && done.map(item => (
-                  <View key={item.id}>{renderDoneItem({ item })}</View>
-                ))}
-              </>
+      {useSplitPane ? (
+        <View style={[s.splitShell, tabletContent]}>
+          <View style={[s.splitMain, { borderColor: c.border }]}>
+            {showInput && (
+              <View style={[s.inputRow, { borderBottomColor: c.border }]}>
+                <View style={[s.checkbox, { borderColor: c.textMuted }]} />
+                <TextInput
+                  ref={inputRef}
+                  style={[s.inputText, { color: c.textPrimary }]}
+                  placeholder="New task"
+                  placeholderTextColor={c.textMuted}
+                  value={newText}
+                  onChangeText={setNewText}
+                  onSubmitEditing={handleAdd}
+                  onBlur={() => { if (!newText.trim()) setShowInput(false); }}
+                  returnKeyType="done"
+                  autoFocus
+                />
+              </View>
             )}
-          </>
-        }
-      />
+            {pendingList}
+          </View>
+          <ScrollView style={[s.completedPane, { borderColor: c.border }]} contentContainerStyle={s.completedPaneContent}>
+            {completedSection}
+          </ScrollView>
+        </View>
+      ) : (
+        <>
+          {showInput && (
+            <View style={[s.inputRow, { borderBottomColor: c.border }, tabletContent]}>
+              <View style={[s.checkbox, { borderColor: c.textMuted }]} />
+              <TextInput
+                ref={inputRef}
+                style={[s.inputText, { color: c.textPrimary }]}
+                placeholder="New task"
+                placeholderTextColor={c.textMuted}
+                value={newText}
+                onChangeText={setNewText}
+                onSubmitEditing={handleAdd}
+                onBlur={() => { if (!newText.trim()) setShowInput(false); }}
+                returnKeyType="done"
+                autoFocus
+              />
+            </View>
+          )}
+          {pendingList}
+        </>
+      )}
 
       {/* FAB */}
       <Pressable
@@ -499,6 +537,31 @@ const s = StyleSheet.create({
   // List
   listContent: {
     paddingBottom: 100,
+  },
+  splitShell: {
+    flex: 1,
+    flexDirection: "row",
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 16,
+  },
+  splitMain: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  completedPane: {
+    width: 320,
+    borderWidth: 1,
+    borderRadius: 12,
+  },
+  completedPaneContent: {
+    paddingBottom: 20,
+  },
+  completedEmpty: {
+    padding: 18,
   },
 
   // Row
