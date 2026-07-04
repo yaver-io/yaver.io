@@ -19,7 +19,7 @@
 // Host: Cloudflare Worker (global edge, native streaming). The relay (Go)
 // is the alternative host if you'd rather keep it in-house.
 
-import { resolveRoute, costCents, type Upstream } from "./pricing";
+import { resolveRoute, costCents, openrouterGlmUpstream, type Upstream } from "./pricing";
 import { meterCheck, meterRecord, UserMeter } from "./limiter";
 
 // Durable Object class must be re-exported from the Worker entry module.
@@ -39,6 +39,12 @@ export interface Env {
   ZAI_PAYG_API_KEY?: string;    // z.ai pay-as-you-go (/api/paas/v4)
   DEEPINFRA_API_KEY: string;    // pay-per-token primary (default)
   TOGETHER_API_KEY?: string;    // pay-per-token alternate
+  // Per-user OpenRouter keys (raw `sk-or-v1-...`), keyed by userId. Written
+  // ONLY by the authenticated /admin/orkey route (backend push); read here
+  // to build a per-user OpenRouter upstream. The raw key lives ONLY in this
+  // KV — never in Convex. Optional: absent ⇒ no per-user route, shared
+  // env-key chain still serves (graceful).
+  OR_USER_KEYS?: KVNamespace;
   [k: string]: unknown;
 }
 
@@ -166,13 +172,17 @@ async function callUpstream(
   payload: any,
 ): Promise<{ res: Response; upstream: Upstream } | null> {
   for (const u of chain) {
-    const key = env[u.keyEnv] as string | undefined;
+    // A per-user route carries its key inline (u.apiKey); a shared route
+    // reads it from a Worker secret (u.keyEnv). Skip any route with no key.
+    const key = u.apiKey || (u.keyEnv ? (env[u.keyEnv] as string | undefined) : undefined);
     if (!key) continue;
     try {
       const res = await fetch(`${u.baseUrl}/chat/completions`, {
         method: "POST",
         headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-        body: JSON.stringify({ ...payload, model: u.model }),
+        // extraBody adds provider-routing prefs (OpenRouter); model is
+        // pinned last so it always wins over anything in extraBody/payload.
+        body: JSON.stringify({ ...payload, ...(u.extraBody ?? {}), model: u.model }),
       });
       // Fall through on upstream-side failures: 5xx, AND 429 (rate-limit/
       // quota — the coding-plan "staleness": a throttled upstream must
@@ -197,6 +207,32 @@ export default {
     if (request.method === "GET" && url.pathname === "/healthz") {
       return json({ ok: true });
     }
+
+    // ── Admin: set/clear a user's OpenRouter key in KV ──────────────
+    // Backend-only (GATEWAY_SHARED_SECRET). Body {userId, key}: a non-null
+    // key is stored; null/absent deletes it (downgrade/cancel). This route
+    // ONLY writes — it never returns a stored key, so a leaked secret can't
+    // be used to exfiltrate other users' keys, only to (re)provision them.
+    if (request.method === "POST" && url.pathname === "/admin/orkey") {
+      const a = request.headers.get("authorization") ?? "";
+      const tok = a.startsWith("Bearer ") ? a.slice(7) : "";
+      if (!env.GATEWAY_SHARED_SECRET || tok !== env.GATEWAY_SHARED_SECRET) {
+        return json({ error: "unauthorized" }, 401);
+      }
+      if (!env.OR_USER_KEYS) return json({ error: "kv_unbound" }, 501);
+      let b: any;
+      try {
+        b = await request.json();
+      } catch {
+        return json({ error: "bad json" }, 400);
+      }
+      const uid = String(b?.userId ?? "");
+      if (!uid) return json({ error: "userId required" }, 400);
+      if (b?.key) await env.OR_USER_KEYS.put(uid, String(b.key));
+      else await env.OR_USER_KEYS.delete(uid);
+      return json({ ok: true });
+    }
+
     if (request.method !== "POST" || !url.pathname.endsWith("/chat/completions")) {
       return json({ error: "not found" }, 404);
     }
@@ -237,7 +273,16 @@ export default {
         : num(env.MAX_CENTS_PER_REQUEST, 50);
     payload.max_tokens = Math.min(payload.max_tokens ?? maxTok, maxTok);
 
-    const chain = resolveRoute(payload.model);
+    let chain = resolveRoute(payload.model);
+    // Hosted (Cloud Agent) seats have their OWN OpenRouter key in KV.
+    // Prepend it as the PRIMARY route so their managed inference runs on a
+    // per-user key (per-user rate limit + per-user COGS cap), with the
+    // shared env-key chain kept as fallback. byok/free users have no KV
+    // entry and use the shared chain unchanged.
+    if (env.OR_USER_KEYS) {
+      const orKey = await env.OR_USER_KEYS.get(session.userId);
+      if (orKey) chain = [openrouterGlmUpstream(orKey), ...chain];
+    }
     const primary = chain[0];
     // Worst-case spend for this request at the primary route. If the
     // wallet can't cover it, refuse rather than risk an overdraft. (We

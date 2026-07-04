@@ -2,9 +2,18 @@
 # proxy for Yaver Premium). Deploy: cd gateway && npx wrangler deploy.
 #
 # Secrets (NOT here — set with `npx wrangler secret put <NAME>`):
-#   GATEWAY_SHARED_SECRET   matches Convex env of the same name
-#   ZAI_API_KEY             z.ai (GLM) upstream key
-#   DEEPINFRA_API_KEY       DeepInfra upstream key
+#   GATEWAY_SHARED_SECRET   matches Convex env of the same name (also gates
+#                           the /admin/orkey route that writes per-user keys)
+#   ZAI_API_KEY             z.ai (GLM) upstream key — shared fallback chain
+#   DEEPINFRA_API_KEY       DeepInfra upstream key — shared fallback chain
+#
+# Per-user OpenRouter keys: the raw `sk-or-v1-...` secrets live in the
+# OR_USER_KEYS KV namespace (below), written ONLY by the backend via the
+# authenticated /admin/orkey route. Create the namespace once and paste its
+# id into the binding below:
+#   npx wrangler kv namespace create OR_USER_KEYS
+# The backend also needs YAVER_GATEWAY_URL (this Worker's URL) and
+# OPENROUTER_PROVISIONING_KEY (a Provisioning/Management key) to mint them.
 #
 # Public vars are fine in [vars]. Tune ceilings without a redeploy via
 # `wrangler secret put` overrides or by editing here + redeploy.
@@ -32,3 +41,11 @@ MAX_CENTS_PER_HOUR = "500"
 # [[migrations]]
 # tag = "v1"
 # new_classes = ["UserMeter"]
+
+# Per-user OpenRouter key store (raw sk-or-v1 secrets, keyed by userId).
+# Uncomment + paste the id from `wrangler kv namespace create OR_USER_KEYS`.
+# Absent ⇒ gateway gracefully serves only the shared env-key chain (no
+# per-user OpenRouter routing).
+# [[kv_namespaces]]
+# binding = "OR_USER_KEYS"
+# id = "<paste-namespace-id>"

@@ -14,10 +14,35 @@ export type Upstream = {
   provider: string;       // managedUsage.provider label (non-secret)
   model: string;          // upstream model id sent on the wire
   baseUrl: string;        // OpenAI-compatible /v1 base
-  keyEnv: string;         // Worker secret holding this provider's key
+  keyEnv: string;         // Worker secret holding this provider's key ("" if apiKey set)
+  apiKey?: string;        // RUNTIME key (per-user route); takes precedence over keyEnv
+  extraBody?: Record<string, unknown>; // merged into the request body (e.g. OpenRouter provider routing)
   inCentsPerM: number;    // input token COGS, cents / 1e6 tokens
   outCentsPerM: number;   // output token COGS
 };
+
+// Per-user OpenRouter upstream, pinned to GLM with provider-level
+// fallback (the "GLM primary, auto-fallback" routing choice). The key is
+// the user's OWN OpenRouter key (minted by the backend's Provisioning API
+// call, stored in this Worker's OR_USER_KEYS KV) — so OpenRouter's
+// per-key rate limit AND per-key credit cap apply PER USER. That is the
+// whole point: a single shared GLM key throttles under load and has no
+// per-user ceiling; a per-user key spreads load across OpenRouter's GLM
+// provider pool and can never overspend the COGS budget we set on it.
+export function openrouterGlmUpstream(apiKey: string): Upstream {
+  return {
+    provider: "openrouter",
+    model: "z-ai/glm-4.6",
+    baseUrl: "https://openrouter.ai/api/v1",
+    keyEnv: "",
+    apiKey,
+    // allow_fallbacks lets OpenRouter move to another GLM provider if the
+    // primary 429s/5xxs, so the user never hard-stalls on one provider.
+    extraBody: { provider: { allow_fallbacks: true } },
+    inCentsPerM: 43,   // GLM-4.6 ~$0.43/M in (OpenRouter pass-through)
+    outCentsPerM: 174, // GLM-4.6 ~$1.74/M out
+  };
+}
 
 // PAY-PER-TOKEN FIRST. The "auto" chain is ordered so a metered,
 // no-quota-wall endpoint is the PRIMARY and the flat z.ai *coding plan*
