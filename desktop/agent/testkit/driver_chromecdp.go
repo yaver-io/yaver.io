@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,6 +98,7 @@ type WebDriver interface {
 	Snapshot(ctx context.Context) (Snapshot, error)
 	Click(ctx context.Context, selector string) error
 	Fill(ctx context.Context, selector, value string) error
+	VisibleText(ctx context.Context, selector string) (string, error)
 	Screenshot(ctx context.Context) ([]byte, error) // PNG; feeds the JPEG/RTP pump
 	Console() []ConsoleMsg
 	Network() []NetEvent
@@ -338,6 +340,17 @@ func (b *cdpBackend) Click(ctx context.Context, selector string) error {
 func (b *cdpBackend) Fill(ctx context.Context, selector, value string) error {
 	return chromedp.Run(b.browserCtx,
 		chromedp.SendKeys(selector, value, chromedp.ByQuery))
+}
+
+func (b *cdpBackend) VisibleText(ctx context.Context, selector string) (string, error) {
+	if strings.TrimSpace(selector) == "" {
+		selector = "body"
+	}
+	var text string
+	if err := chromedp.Run(b.browserCtx, chromedp.Text(selector, &text, chromedp.ByQuery)); err != nil {
+		return "", err
+	}
+	return text, nil
 }
 
 func (b *cdpBackend) Screenshot(ctx context.Context) ([]byte, error) {

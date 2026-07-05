@@ -15196,6 +15196,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		data, _ := json.Marshal(evalResult)
 		return mcpToolResult(string(data))
 
+	case "selenium_status",
+		"selenium_start",
+		"selenium_search",
+		"selenium_navigate",
+		"selenium_click",
+		"selenium_type",
+		"selenium_snapshot",
+		"selenium_text",
+		"selenium_screenshot",
+		"selenium_sessions",
+		"selenium_close":
+		return mcpSeleniumToolCall(call.Name, call.Arguments)
+
 	// --- Vibe Preview ---
 	// Schemas live in mcp_tools.go (vibePreviewTools); these are the
 	// dispatchers that turn a JSON-RPC tools/call into a manager call.

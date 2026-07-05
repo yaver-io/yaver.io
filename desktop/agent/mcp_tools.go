@@ -4293,6 +4293,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 	}
 	tools = append(tools, browserTools...)
+	tools = append(tools, seleniumMCPTools()...)
 
 	// --- Droid interactive (generic human-in-the-loop Android device control) ---
 	// Mirrors the browser_interactive_* tools but for a paired Android phone over

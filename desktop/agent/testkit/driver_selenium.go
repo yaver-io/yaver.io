@@ -81,6 +81,9 @@ func (s *seleniumBackend) newChromeSession(ctx context.Context) error {
 	if s.opts.ViewportW > 0 && s.opts.ViewportH > 0 {
 		args = append(args, fmt.Sprintf("--window-size=%d,%d", s.opts.ViewportW, s.opts.ViewportH))
 	}
+	if strings.TrimSpace(s.opts.UserDataDir) != "" {
+		args = append(args, "--user-data-dir="+s.opts.UserDataDir)
+	}
 	body := map[string]interface{}{
 		"capabilities": map[string]interface{}{
 			"alwaysMatch": map[string]interface{}{
@@ -128,6 +131,21 @@ func (s *seleniumBackend) Click(ctx context.Context, selector string) error {
 
 func (s *seleniumBackend) Fill(ctx context.Context, selector, value string) error {
 	return s.d.SendKeys(ctx, selector, value)
+}
+
+func (s *seleniumBackend) VisibleText(ctx context.Context, selector string) (string, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		selector = "body"
+	}
+	resp, err := s.d.post(ctx, "/session/"+s.d.sessionID+"/execute/sync", map[string]interface{}{
+		"script": `const el = document.querySelector(arguments[0]); return el ? (el.innerText || el.textContent || "") : "";`,
+		"args":   []interface{}{selector},
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Value.String, nil
 }
 
 func (s *seleniumBackend) Screenshot(ctx context.Context) ([]byte, error) {
