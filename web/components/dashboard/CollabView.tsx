@@ -26,6 +26,7 @@ import {
   type JoinedProjectShare,
   type ProjectRole,
 } from "@/lib/projectShares";
+import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 // People & Shared Projects. The social graph (address book) + the
 // invite-to-code wrapper. Friends here become one-tap targets when
@@ -346,7 +347,8 @@ function ProjectsSection({ token }: { token: string }) {
           <Field label="Where does collaborators' work run?">
             <div className="flex gap-2">
               <Choice active={hostKind === "owner-device"} onClick={() => setHostKind("owner-device")} label="My machine" />
-              <Choice active={hostKind === "managed-cloud"} onClick={() => setHostKind("managed-cloud")} label="Yaver Cloud" />
+              {/* HN-LAUNCH-HIDE-PAID: hide managed Yaver Cloud host option at launch */}
+              {!HIDE_PAID_UI && <Choice active={hostKind === "managed-cloud"} onClick={() => setHostKind("managed-cloud")} label="Yaver Cloud" />}
             </div>
           </Field>
           {hostKind === "owner-device" ? (

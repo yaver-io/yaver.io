@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentClient, agentClient } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
+import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 type Registration = {
   key: string;
@@ -210,7 +211,8 @@ export default function CIRunnerView({ devices, token }: { devices: Device[]; to
               <select className="rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm" value={where} onChange={(e) => setWhere(e.target.value as any)}>
                 <option value="self-hosted">your box (free)</option>
                 <option value="operator-fleet">operator fleet (free)</option>
-                <option value="yaver-cloud">Yaver Cloud (metered)</option>
+                {/* HN-LAUNCH-HIDE-PAID: hide metered Yaver Cloud runner option at launch */}
+                {!HIDE_PAID_UI && <option value="yaver-cloud">Yaver Cloud (metered)</option>}
               </select>
               <button disabled={busy} onClick={register} className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium disabled:opacity-50">
                 Register runner

@@ -7,6 +7,7 @@ import { NetCaptureModal } from "./NetCaptureModal";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
+import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
@@ -2518,7 +2519,8 @@ export default function DevicesView({
               {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent agent signal and no usable relay/tunnel path.
             </div>
           ) : null}
-          {onNavigateCloud ? (
+          {/* HN-LAUNCH-HIDE-PAID: hide the "Yaver Cloud — rent a managed box" banner. */}
+          {onNavigateCloud && !HIDE_PAID_UI ? (
             <ManagedCloudSummary token={token} onOpen={onNavigateCloud} />
           ) : null}
           {renderedDevices.map((device) => {

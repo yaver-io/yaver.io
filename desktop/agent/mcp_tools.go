@@ -4531,6 +4531,9 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// surface stays the AI coding/preview/deploy loop. See mcp_owner_gate.go.
 	tools = filterOwnerOnlyTools(tools, currentUserIsOwner())
 
+	// HN-LAUNCH-HIDE-PAID: drop Yaver's own paid-plan buyer tools at launch.
+	tools = filterPaidToolsAtLaunch(tools)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

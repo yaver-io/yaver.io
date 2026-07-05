@@ -126,8 +126,10 @@ export default function SelfHostingPage() {
           </h1>
           <p className="text-sm leading-relaxed text-surface-400">
             The CLI, agent, relay, and backend (Convex via Docker) are all
-            genuinely self-hostable. Every Yaver component is open source under
-            the AGPL-3.0-only license. Choose the networking option that fits
+            genuinely self-hostable. The core is open source under the
+            Functional Source License (FSL-1.1-Apache-2.0, which converts to
+            Apache-2.0 two years after each release); the client SDKs and CLIs
+            are Apache-2.0 from day one. Choose the networking option that fits
             your setup &mdash; from zero-config to fully custom infrastructure.
           </p>
           <p className="mt-3 text-sm leading-relaxed text-surface-500">

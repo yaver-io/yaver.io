@@ -59,6 +59,7 @@ import BillingView from "@/components/dashboard/BillingView";
 import StoresView from "@/components/dashboard/StoresView";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
 import { CapabilityShelf } from "@/components/dashboard/CapabilityShelf";
+import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import StudioPanel from "@/components/dashboard/StudioPanel";
 import QAPanel from "@/components/dashboard/QAPanel";
 import WebTestsPanel from "@/components/dashboard/WebTestsPanel";
@@ -738,14 +739,10 @@ const CONNECTION_REQUIRED_TABS = new Set<string>([
   "todos", "arm", "appletv",
 ]);
 
-// HN-LAUNCH-HIDE-PAID: temporarily hide managed-cloud / billing / pricing
-// surfaces so launch reads as pure free + open-source + self-hosted. Flip to
-// false to restore the Billing tab and Yaver Cloud purchase CTAs. (grep this
-// token to find every gated surface across web + mobile.) Note: the Cloud tab
-// itself stays — it also controls machines the user already owns; only the
-// buy/checkout CTAs inside ManagedCloudPanel are gated (see that file).
-const HIDE_PAID_UI = true;
-
+// HN-LAUNCH-HIDE-PAID: paid surfaces (Billing, Cloud + Build/CapabilityShelf
+// tabs, Yaver Cloud "rent a box" banner, metered choices) are hidden via the
+// shared HIDE_PAID_UI flag (imported from @/lib/launchFlags). Owned machines
+// stay reachable via the Devices tab, so hiding the Cloud tab loses no control.
 export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, sessionExpired, logout } = useAuth();
@@ -1966,7 +1963,10 @@ export default function DashboardPage() {
     { id: "arm", label: "Robot Arm", icon: "\uD83E\uDDBE" },
     { id: "appletv", label: "Apple TV", icon: "\uD83D\uDCFA" },
   ] as { id: typeof activeTab; label: string; icon: string; badge?: number }[]).filter(
-    (t) => isOwnerAccount || !OWNER_ONLY_TABS.has(t.id),
+    (t) =>
+      (isOwnerAccount || !OWNER_ONLY_TABS.has(t.id)) &&
+      // HN-LAUNCH-HIDE-PAID: drop the paid managed-cloud + metered build tabs.
+      !(HIDE_PAID_UI && (t.id === "build" || t.id === "cloud")),
   );
 
   // Beta users get the focused Beta workspace INSTEAD of the full
@@ -2088,7 +2088,7 @@ export default function DashboardPage() {
             ] as const)
               // HN-LAUNCH-HIDE-PAID: drop the Billing tab from the nav so the
               // launch reads as free + self-hosted. Flip HIDE_PAID_UI to restore.
-              .filter((it) => !(HIDE_PAID_UI && it.id === "billing"))
+              .filter((it) => !(HIDE_PAID_UI && (it.id === "billing" || it.id === "cloud" || it.id === "build")))
               .map((it) => (
               <button
                 key={it.id}
@@ -2794,7 +2794,7 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><BillingView token={token} /></div>
           ) : activeTab === "stores" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><StoresView token={token} /></div>
-          ) : activeTab === "build" ? (
+          ) : activeTab === "build" && !HIDE_PAID_UI ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <h2 className="text-lg font-semibold text-surface-100">Build your app</h2>
               <p className="mt-1 text-xs text-surface-500">
@@ -2816,7 +2816,7 @@ export default function DashboardPage() {
                 <WebTestsPanel />
               </div>
             </div>
-          ) : activeTab === "cloud" ? (
+          ) : activeTab === "cloud" && !HIDE_PAID_UI ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <h2 className="text-lg font-semibold text-surface-100">Yaver Cloud</h2>
               <p className="mt-1 text-xs text-surface-500">

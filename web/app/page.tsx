@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
 import { useAuth } from "@/lib/use-auth";
+import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 // Canonical definitional one-liner — picked up by AI search
 // (ChatGPT, Claude) and SEO as the answer to "what is Yaver?". Framed
@@ -13,11 +14,8 @@ import { useAuth } from "@/lib/use-auth";
 const LANDING_TAGLINE =
   "AI writes code in seconds; the loop around it still takes hours. Register Yaver as an MCP server and your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then hot-reloads it on your phone so you keep iterating from inside the running app. Open source, self-hostable, works with your existing subscription — your code never leaves your machine.";
 
-// HN-LAUNCH-HIDE-PAID: temporarily hide managed-cloud / billing / pricing
-// surfaces so launch reads as pure free + open-source + self-hosted. Flip to
-// false to restore the Yaver Cloud pricing section and paid copy. (grep this
-// token to find every gated surface across web + mobile.)
-const HIDE_PAID_UI = true;
+// HN-LAUNCH-HIDE-PAID: paid/managed-cloud/pricing surfaces are hidden via the
+// shared HIDE_PAID_UI flag (imported from @/lib/launchFlags).
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap

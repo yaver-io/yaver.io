@@ -10877,6 +10877,8 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 			_ = json.Unmarshal(req.Params, &tc)
 			if denied := mcpToolDeniedByOwnerGate(tc.Name); denied != nil {
 				resp.Result = mcpToolError(denied.Reason)
+			} else if denied := mcpToolDeniedAsPaidAtLaunch(tc.Name); denied != nil {
+				resp.Result = mcpToolError(denied.Reason)
 			} else {
 				resp.Result = srv.handleMCPToolCall(req.Params)
 			}

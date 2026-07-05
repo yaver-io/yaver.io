@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { HIDE_PAID_UI } from "@/lib/launchFlags";
 
 type ServiceKey = "reload" | "backend" | "web" | "agentBox" | "inference" | "publish" | "studio";
 
@@ -235,6 +236,12 @@ export function CapabilityShelf({ token }: { token: string | null }) {
       setAddingCredit(false);
     }
   }, [token, headers]);
+
+  // HN-LAUNCH-HIDE-PAID: this whole shelf is the paid/metered concierge cockpit
+  // (balance, add-credit, per-capability burn). Hidden at launch — the Build
+  // tab that renders it is also gated in the dashboard nav. Placed after hooks
+  // to satisfy rules-of-hooks.
+  if (HIDE_PAID_UI) return null;
 
   if (!token) {
     return (
