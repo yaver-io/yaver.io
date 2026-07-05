@@ -10,6 +10,7 @@ public class AppDelegate: ExpoAppDelegate {
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
   private var isReloading = false
+  private let carVoiceShortcutType = "io.yaver.mobile.carVoice"
 
   public override func application(
     _ application: UIApplication,
@@ -1026,7 +1027,12 @@ public class AppDelegate: ExpoAppDelegate {
     open url: URL,
     options: [UIApplication.OpenURLOptionsKey: Any] = [:]
   ) -> Bool {
-    return super.application(app, open: url, options: options) || RCTLinkingManager.application(app, open: url, options: options)
+    let handledByRN = RCTLinkingManager.application(app, open: url, options: options)
+    if isCarVoiceLaunchURL(url) {
+      UserDefaults.standard.set(true, forKey: "yaverPendingCarVoiceLaunch")
+      return true
+    }
+    return super.application(app, open: url, options: options) || handledByRN
   }
 
   public override func application(
@@ -1036,6 +1042,28 @@ public class AppDelegate: ExpoAppDelegate {
   ) -> Bool {
     let result = RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
     return super.application(application, continue: userActivity, restorationHandler: restorationHandler) || result
+  }
+
+  public override func application(
+    _ application: UIApplication,
+    performActionFor shortcutItem: UIApplicationShortcutItem,
+    completionHandler: @escaping (Bool) -> Void
+  ) {
+    guard shortcutItem.type == carVoiceShortcutType,
+          let url = URL(string: "yaver://car-voice-coding?autostart=1")
+    else {
+      completionHandler(false)
+      return
+    }
+    UserDefaults.standard.set(true, forKey: "yaverPendingCarVoiceLaunch")
+    _ = RCTLinkingManager.application(application, open: url, options: [:])
+    completionHandler(true)
+  }
+
+  private func isCarVoiceLaunchURL(_ url: URL) -> Bool {
+    guard url.scheme?.lowercased() == "yaver" else { return false }
+    if url.host?.lowercased() == "car-voice-coding" { return true }
+    return url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() == "car-voice-coding"
   }
 }
 

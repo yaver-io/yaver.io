@@ -178,7 +178,7 @@ func runPublishStoreFacade(args []string) {
 			os.Exit(2)
 		}
 		for _, target := range targets {
-			out := mcpMobilePlatformDeploy(resolvedPath, target, true, false, *timeout)
+			out := mcpMobilePlatformDeploy(resolvedPath, target, true, false, *timeout, platformValidationConfig{})
 			if ok, _ := out["ok"].(bool); !ok {
 				fmt.Fprintf(os.Stderr, "platform publish %s failed: %v\n", target, out["error"])
 				os.Exit(1)

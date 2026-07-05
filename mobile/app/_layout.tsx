@@ -21,11 +21,11 @@ import "../src/lib/polyfills";
 import { installRuntimeDebugHandlers } from "../src/lib/runtimeDebug";
 installRuntimeDebugHandlers();
 
-import { Stack, usePathname } from "expo-router";
+import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useEffect } from "react";
-import { Dimensions, ScrollView, Text, View } from "react-native";
+import { AppState, Dimensions, NativeModules, Platform, ScrollView, Text, View } from "react-native";
 import { breakpoints } from "../src/theme/tokens";
 import { AuthProvider } from "../src/context/AuthContext";
 import { DeviceProvider } from "../src/context/DeviceContext";
@@ -79,6 +79,7 @@ class ErrorBoundary extends React.Component<
 function InnerLayout() {
   const { isDark, colors } = useTheme();
   const { user } = useAuth();
+  const router = useRouter();
   // Wire the native screen-recorder bridge once on first render. Idempotent
   // — vibePreview.ts.setNativeScreenRecorder just stores the latest fn.
   useEffect(() => {
@@ -87,6 +88,30 @@ function InnerLayout() {
   useEffect(() => {
     return startFeedbackShakeBridge(user?.id);
   }, [user?.id]);
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    let mounted = true;
+    const consume = async () => {
+      try {
+        const pending = await (NativeModules as any)?.YaverInfo?.consumePendingCarVoiceLaunch?.();
+        if (!mounted || !pending) return;
+        router.navigate({
+          pathname: "/car-voice-coding",
+          params: { autostart: "1", surface: "ios-car" },
+        } as any);
+      } catch {
+        // Optional native bridge; no-op on builds without the method.
+      }
+    };
+    void consume();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void consume();
+    });
+    return () => {
+      mounted = false;
+      sub.remove();
+    };
+  }, [router]);
   // Dogfood mode: re-arm the sticky toggle on sign-in (per-user flag). When on,
   // this starts the native screenshot auto-catch + breadcrumb recorder.
   useEffect(() => {

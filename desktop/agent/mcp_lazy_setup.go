@@ -84,6 +84,12 @@ type LazySetupResult struct {
 		Instruction string `json:"instruction"`
 	} `json:"mobile_app"`
 
+	// IntegrationSetup is an idempotent readiness plan for provider
+	// integrations used by MCP/remote-runtime/car/watch/TV. Connected
+	// providers are reported as ready and reused; missing providers include
+	// the exact setup action and Yaver verbs they unlock.
+	IntegrationSetup map[string]interface{} `json:"integration_setup"`
+
 	// Single sentence the AI can speak verbatim. Covers the current
 	// state's next step — "tap this URL", "install the app", "you're
 	// all set", etc.
@@ -101,6 +107,7 @@ func yaverLazySetup(ctx context.Context, waitSeconds int) (LazySetupResult, erro
 	out.MobileApp.IOS = "https://apps.apple.com/us/app/yaver-io/id6760467669"
 	out.MobileApp.Android = "https://play.google.com/store/apps/details?id=io.yaver.mobile"
 	out.MobileApp.Instruction = "Open the Yaver app on your phone and sign in with the same account. If it is not installed yet, use the official download link. Your dev machine will appear automatically."
+	out.IntegrationSetup = yaverIntegrationSetupStatus()
 
 	// Fast path: already signed in.
 	if snap := authStatusSnapshot(); snap.SignedIn {
@@ -180,6 +187,7 @@ func (out *LazySetupResult) applySignedIn(snap AuthStatusSnapshot) {
 	out.UserCode = ""
 	out.DeviceCode = ""
 	out.ExpiresInSeconds = 0
+	out.IntegrationSetup = yaverIntegrationSetupStatus()
 
 	who := strings.TrimSpace(snap.UserEmail)
 	if who == "" {
@@ -198,7 +206,7 @@ func (out *LazySetupResult) applySignedIn(snap AuthStatusSnapshot) {
 	out.DaemonServing = serving
 
 	if serving {
-		out.NextAction = "Signed in as " + who + " and your dev machine is online. Open the Yaver mobile app, sign in with the same account, and this machine appears automatically — no codes, no IP to type."
+		out.NextAction = "Signed in as " + who + " and your dev machine is online. Open the Yaver mobile app with the same account. For Gmail, Teams, GitHub, GitLab, and other MCP integrations, use integration_setup: ready providers are reused and missing ones show connect actions."
 		return
 	}
 

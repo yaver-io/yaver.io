@@ -175,6 +175,16 @@ export default function CarVoiceCodingScreen() {
         return runtimeSurfaceClient.mailUnread(deviceId, payload as any);
       if (verb === "mail_send")
         return runtimeSurfaceClient.mailSend(deviceId, payload as any);
+      if (verb === "git_prs")
+        return runtimeSurfaceClient.gitPRs(deviceId, payload as any);
+      if (verb === "git_issues")
+        return runtimeSurfaceClient.gitIssues(deviceId, payload as any);
+      if (verb === "git_ci_status")
+        return runtimeSurfaceClient.gitCIStatus(deviceId, payload as any);
+      if (verb === "media_open")
+        return runtimeSurfaceClient.mediaOpen(deviceId, payload as any);
+      if (verb === "maps_open")
+        return runtimeSurfaceClient.mapsOpen(deviceId, payload as any);
       throw new Error(`unsupported car ops verb ${verb}`);
     },
     [deviceId],

@@ -58,6 +58,12 @@ func TestYaverLazySetup_StartsFromCold(t *testing.T) {
 	if out.MobileApp.IOS == "" || out.MobileApp.Android == "" {
 		t.Errorf("MobileApp links must always populate: %+v", out.MobileApp)
 	}
+	if out.IntegrationSetup == nil {
+		t.Fatalf("IntegrationSetup must always populate")
+	}
+	if out.IntegrationSetup["idempotent"] != true {
+		t.Errorf("IntegrationSetup should advertise idempotent setup; got %#v", out.IntegrationSetup["idempotent"])
+	}
 	if n := atomic.LoadInt32(&calls); n != 1 {
 		t.Errorf("backend device-code hits = %d, want 1", n)
 	}
@@ -148,6 +154,12 @@ func TestYaverLazySetup_ReportsSignedInWithoutTouchingBackend(t *testing.T) {
 	}
 	if out.UserEmail != "cousin@example.com" {
 		t.Errorf("UserEmail = %q, want cousin@example.com", out.UserEmail)
+	}
+	if out.IntegrationSetup == nil {
+		t.Fatalf("IntegrationSetup must populate after sign-in")
+	}
+	if next, _ := out.IntegrationSetup["next"].(string); !strings.Contains(next, "Connected providers are reused") && !strings.Contains(next, "No provider integrations") {
+		t.Errorf("IntegrationSetup next should explain provider reuse or missing setup; got %q", next)
 	}
 	if !strings.Contains(out.NextAction, "mobile") {
 		t.Errorf("NextAction should mention the mobile app step; got %q", out.NextAction)

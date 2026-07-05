@@ -33,8 +33,21 @@
 			</array>
 		</dict>
 	</array>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>io.yaver.mobile.carVoice</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Car Voice Runtime</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Start a hands-free Yaver task</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAudio</string>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
-	<string>381</string>
+	<string>382</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>airmail</string>

@@ -224,7 +224,7 @@ func normalizePublishJobTarget(target string) string {
 func runPlatformTargetForJob(target string, phase *atomicString) publishTargetResult {
 	phase.Set("building " + target)
 	start := time.Now()
-	out := mcpMobilePlatformDeploy("", target, true, false, 7200)
+	out := mcpMobilePlatformDeploy("", target, true, false, 7200, platformValidationConfig{})
 	ok, _ := out["ok"].(bool)
 	result := publishTargetResult{
 		Target:     target,

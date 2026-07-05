@@ -10896,14 +10896,25 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mcpConsoleMachines())
 	case "mobile_platform_deploy":
 		var a struct {
-			Dir        string `json:"directory"`
-			Target     string `json:"target"`
-			Upload     bool   `json:"upload"`
-			DryRun     bool   `json:"dry_run"`
-			TimeoutSec int    `json:"timeout_sec"`
+			Dir                  string `json:"directory"`
+			Target               string `json:"target"`
+			Upload               bool   `json:"upload"`
+			DryRun               bool   `json:"dry_run"`
+			TimeoutSec           int    `json:"timeout_sec"`
+			ValidateDriver       string `json:"validate_driver"`
+			ValidateScope        string `json:"validate_scope"`
+			ValidateViewport     string `json:"validate_viewport"`
+			ValidateMaxFlows     int    `json:"validate_max_flows"`
+			ValidateMaxWallClock int    `json:"validate_max_wall_clock_sec"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpMobilePlatformDeploy(a.Dir, a.Target, a.Upload, a.DryRun, a.TimeoutSec))
+		return mcpToolJSON(mcpMobilePlatformDeploy(a.Dir, a.Target, a.Upload, a.DryRun, a.TimeoutSec, platformValidationConfig{
+			Driver:          a.ValidateDriver,
+			Scope:           a.ValidateScope,
+			Viewport:        a.ValidateViewport,
+			MaxFlows:        a.ValidateMaxFlows,
+			MaxWallClockSec: a.ValidateMaxWallClock,
+		}))
 	case "mobile_platform_matrix":
 		var a struct {
 			Dir string `json:"directory"`
@@ -16569,6 +16580,16 @@ func yaverOnboardChecklist() string {
 	emailOK := cfg != nil && cfg.Email != nil && (cfg.Email.SMTPHost != "" || cfg.Email.GoogleRefreshToken != "")
 	mark(emailOK, "Email provider wired (needed for forms/newsletter/mail)", "yaver email setup   (or use mail_onboard_start from mobile)")
 
+	// 5b. Provider integrations for MCP/remote-runtime surfaces. Optional for
+	// core Yaver, first-class for car/watch/TV/personal-agent workflows.
+	b.WriteString("\nIntegrations for MCP / car / watch / TV\n")
+	for _, item := range yaverInitialIntegrationChecklist(cfg, collectMachineOnboardingStatusPassive()) {
+		mark(item.Done, item.Label, item.Hint)
+		if item.Enables != "" {
+			b.WriteString("       enables: " + item.Enables + "\n")
+		}
+	}
+
 	// 6. Runner installed — yaver's three first-class runners.
 	runnerFound := ""
 	for _, r := range []string{"claude", "codex", "opencode"} {
@@ -16626,6 +16647,97 @@ func yaverOnboardChecklist() string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+type yaverInitialIntegrationItem struct {
+	Label   string
+	Done    bool
+	Hint    string
+	Enables string
+}
+
+func yaverInitialIntegrationChecklist(cfg *Config, machineStatus machineOnboardingStatus) []yaverInitialIntegrationItem {
+	email := (*EmailConfig)(nil)
+	if cfg != nil {
+		email = cfg.Email
+	}
+	googleReady := email != nil && strings.TrimSpace(email.GoogleRefreshToken) != ""
+	microsoftReady := email != nil && (strings.TrimSpace(email.AzureTenantID) != "" || strings.EqualFold(strings.TrimSpace(email.Provider), "office365") || strings.EqualFold(strings.TrimSpace(email.Provider), "o365"))
+
+	githubReady := false
+	gitlabReady := false
+	for _, p := range machineStatus.Providers {
+		switch p.ID {
+		case "github":
+			githubReady = p.CloneReady || p.CIReady || p.Configured
+		case "gitlab":
+			gitlabReady = p.CloneReady || p.CIReady || p.Configured
+		}
+	}
+
+	return []yaverInitialIntegrationItem{
+		{
+			Label:   "Google connected for Gmail / Calendar / Meet",
+			Done:    googleReady,
+			Hint:    "start Gmail OAuth from mobile/web (`POST /mail/onboard/start {provider:\"gmail\"}`) or run `yaver email setup`",
+			Enables: "mail_unread, mail_search, meeting_next, meeting_join_next",
+		},
+		{
+			Label:   "Microsoft 365 connected for Outlook / Calendar / Teams",
+			Done:    microsoftReady,
+			Hint:    "start Microsoft OAuth from mobile/web (`POST /mail/onboard/start {provider:\"o365\"}`) or run `yaver email setup`",
+			Enables: "mail_unread, mail_search, meeting_next, meeting_join_next",
+		},
+		{
+			Label:   "Zoom available through calendar/local join links",
+			Done:    googleReady || microsoftReady,
+			Hint:    "connect Google or Microsoft calendar first; full Zoom OAuth/API connector is separate future work",
+			Enables: "meeting_next, meeting_join_next, meeting_open_url",
+		},
+		{
+			Label:   "GitHub connected for repos / PRs / issues / Actions",
+			Done:    githubReady,
+			Hint:    "run `git_oauth_start` / `git_oauth_status`, or `git_connect`; for a remote box use `git_push_creds` / `git_push`",
+			Enables: "git_prs, git_issues, git_ci_status, github_prs, github_issues, github_ci_status, gh_run",
+		},
+		{
+			Label:   "GitLab connected for repos / MRs / issues / pipelines",
+			Done:    gitlabReady,
+			Hint:    "run `git_oauth_start` / `git_oauth_status`, or `git_connect`; pass host for self-managed GitLab",
+			Enables: "git_prs, git_issues, git_ci_status, gitlab_mrs, gitlab_issues, gitlab_ci, glab_run",
+		},
+	}
+}
+
+func yaverIntegrationSetupStatus() map[string]interface{} {
+	cfg, _ := LoadConfig()
+	status := collectMachineOnboardingStatusPassive()
+	items := yaverInitialIntegrationChecklist(cfg, status)
+	ready := 0
+	providers := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if item.Done {
+			ready++
+		}
+		providers = append(providers, map[string]interface{}{
+			"label":   item.Label,
+			"ready":   item.Done,
+			"action":  item.Hint,
+			"enables": item.Enables,
+		})
+	}
+	next := "Provider integrations are optional. Connected providers are reused automatically; connect missing ones only when you want their MCP/car/watch/TV verbs."
+	if ready == 0 {
+		next = "No provider integrations are connected yet. Start with Google or Microsoft for mail/calendar/meetings, or GitHub/GitLab for repo and CI status."
+	}
+	return map[string]interface{}{
+		"idempotent": true,
+		"principle":  "Yaver reuses existing OAuth/provider credentials on this runtime. It does not duplicate setup; missing providers include connect actions.",
+		"ready":      ready,
+		"total":      len(items),
+		"providers":  providers,
+		"next":       next,
+	}
 }
 
 func yaverHelpText(topic string) string {

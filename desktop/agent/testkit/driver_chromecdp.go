@@ -370,27 +370,3 @@ func (b *cdpBackend) Close() {
 		b.allocCancel = nil
 	}
 }
-
-// --- Selenium backend (opt-in, lazy) ---------------------------------
-
-// seleniumBackend is provisioned only when a project explicitly opts
-// into the Selenium driver. The actual ChromeDriver+Selenium download
-// is deferred to first real use (never at npm install). v1 ships the
-// CDP path; this returns a clear, actionable error until the lazy
-// provisioner lands so the failure mode is obvious rather than silent.
-type seleniumBackend struct{ opts ChromeOpts }
-
-func newSeleniumBackend(opts ChromeOpts) *seleniumBackend { return &seleniumBackend{opts: opts} }
-
-var errSeleniumOptIn = fmt.Errorf("autotest: the Selenium driver is opt-in and provisioned lazily; " +
-	"v1 ships the CDP driver — set \"driver\":\"cdp\" in .yaver/autotest.json (or omit it)")
-
-func (s *seleniumBackend) Launch(context.Context) error                 { return errSeleniumOptIn }
-func (s *seleniumBackend) Navigate(context.Context, string) error       { return errSeleniumOptIn }
-func (s *seleniumBackend) Snapshot(context.Context) (Snapshot, error)   { return Snapshot{}, errSeleniumOptIn }
-func (s *seleniumBackend) Click(context.Context, string) error          { return errSeleniumOptIn }
-func (s *seleniumBackend) Fill(context.Context, string, string) error   { return errSeleniumOptIn }
-func (s *seleniumBackend) Screenshot(context.Context) ([]byte, error)   { return nil, errSeleniumOptIn }
-func (s *seleniumBackend) Console() []ConsoleMsg                        { return nil }
-func (s *seleniumBackend) Network() []NetEvent                          { return nil }
-func (s *seleniumBackend) Close()                                       {}

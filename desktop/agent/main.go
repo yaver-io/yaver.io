@@ -561,6 +561,8 @@ func main() {
 		runAsk(os.Args[2:])
 	case "diagnose":
 		runDiagnoseCLI(os.Args[2:])
+	case "onboard", "onboarding":
+		fmt.Print(yaverOnboardChecklist())
 	case "net":
 		runNet(os.Args[2:])
 	case "managed":
@@ -665,6 +667,7 @@ Usage:
   yaver push android  Discover Android app in this repo, build AAB, upload to Play internal testing
   yaver auth        Sign in and start agent (opens browser)
   yaver auth status [--show-token]  Show who you are signed in as (gh/glab style)
+  yaver onboard     Show setup checklist including MCP/runtime integrations
   yaver signout     Sign out and clear credentials
   yaver connect     Connect to your dev machine
   yaver ping        Ping a device (direct or via relay)
@@ -1745,6 +1748,7 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 		if !printHeadlessSteps {
 			fmt.Println("Next:")
 			fmt.Println("  yaver primary       see your devices, pick a primary")
+			fmt.Println("  yaver onboard       connect Gmail/O365/GitHub/GitLab integrations for MCP/runtime")
 			fmt.Println("  yaver code          terminal UI for AI-driven dev on this machine")
 			fmt.Println("  yaver ssh primary   SSH to your primary (auto-bootstraps keys)")
 			fmt.Println()
@@ -1851,6 +1855,11 @@ func printHeadlessNextSteps() {
 	fmt.Println("    iPhone:            https://apps.apple.com/us/app/yaver-io/id6760467669")
 	fmt.Println("    Android (Play):    https://play.google.com/store/apps/details?id=io.yaver.mobile")
 	fmt.Println("  This machine will appear in its device list automatically.")
+	fmt.Println()
+	fmt.Println("Next - integrations:")
+	fmt.Println("  Run `yaver onboard` to connect Gmail/O365/GitHub/GitLab for MCP,")
+	fmt.Println("  car/watch/TV, meeting, mail, repo, and CI status workflows.")
+	fmt.Println("  Existing connections are reused; only missing providers need setup.")
 	fmt.Println()
 
 	// Bootstrap-secret nudge still needs a human decision — where to store it.

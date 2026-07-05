@@ -32,6 +32,10 @@ import {
   type CarVoiceDeps,
 } from "./carVoiceCoding";
 import { assessRisk, interpretConfirmReply } from "./carVoiceConfirm";
+import {
+  executeCarSurfaceIntent,
+  type CarSurfaceOps,
+} from "./carSurfaceIntent";
 
 // ── Wire protocol v1 ─────────────────────────────────────────────────
 // The single TS source of truth. Mirrored byte-for-byte by:
@@ -109,12 +113,13 @@ export async function handleWatchTurn(
   deps: CarVoiceDeps,
   config: CarVoiceConfig = {},
   send: (r: WatchReply) => void = () => {},
+  ops?: CarSurfaceOps,
 ): Promise<WatchReply> {
   switch (msg.kind) {
     case "intent": {
       const text = watchIntentToTranscript(msg.intent);
       if (!text) return emit(send, reply("error", { spoken: "I don't know that shortcut." }));
-      return runTranscript(text, deps, config, send);
+      return runTranscript(text, deps, config, send, ops);
     }
     case "confirm": {
       // Negation / ambiguity fails safe — only an explicit confirm proceeds.
@@ -127,7 +132,7 @@ export async function handleWatchTurn(
       return dispatch(text, deps, config, send);
     }
     case "transcript":
-      return runTranscript(msg.text, deps, config, send);
+      return runTranscript(msg.text, deps, config, send, ops);
     default:
       return emit(send, reply("error", { spoken: "I didn't understand that." }));
   }
@@ -139,6 +144,7 @@ async function runTranscript(
   deps: CarVoiceDeps,
   config: CarVoiceConfig,
   send: (r: WatchReply) => void,
+  ops?: CarSurfaceOps,
 ): Promise<WatchReply> {
   const clean = (text || "").trim();
   if (!clean) return emit(send, reply("error", { spoken: "I didn't catch that." }));
@@ -148,6 +154,13 @@ async function runTranscript(
       target: "phone",
       spoken: "I won't read code on your wrist — it'll be on your phone.",
     }));
+  }
+
+  if (ops) {
+    const surface = await executeCarSurfaceIntent(clean, ops);
+    if (surface.handled) {
+      return emit(send, reply("summary", { spoken: surface.spoken }));
+    }
   }
 
   const risk = assessRisk(clean);

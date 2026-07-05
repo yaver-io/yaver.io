@@ -92,6 +92,17 @@ final class YaverInfo: NSObject {
     resolve(pending)
   }
 
+  @objc func consumePendingCarVoiceLaunch(
+    _ resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    let pending = UserDefaults.standard.bool(forKey: "yaverPendingCarVoiceLaunch")
+    if pending {
+      UserDefaults.standard.removeObject(forKey: "yaverPendingCarVoiceLaunch")
+    }
+    resolve(pending)
+  }
+
   // Called by Yaver mobile (host) JS on sign-in / heartbeat so the
   // guest's bundled feedback SDK can read the user's Convex bearer +
   // selected agent URL + deviceId via constantsToExport (above) and

@@ -216,9 +216,21 @@ func deleteGitLabVaultEntriesOptional(host string) ([]string, error) {
 }
 
 func collectMachineOnboardingStatus() machineOnboardingStatus {
+	return collectMachineOnboardingStatusWithVault(true)
+}
+
+func collectMachineOnboardingStatusPassive() machineOnboardingStatus {
+	return collectMachineOnboardingStatusWithVault(false)
+}
+
+func collectMachineOnboardingStatusWithVault(includeVault bool) machineOnboardingStatus {
 	githubCred := findCredentialForHost("github.com")
 	githubProvider := findProvider("github.com")
-	githubVault, vaultErr := loadVaultEntryOptional("github-token")
+	var githubVault *VaultEntry
+	var vaultErr error
+	if includeVault {
+		githubVault, vaultErr = loadVaultEntryOptional("github-token")
+	}
 
 	gitlabHost := "gitlab.com"
 	var gitlabCred *GitCredential
@@ -254,14 +266,23 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 	if gitlabCred == nil {
 		gitlabCred = findCredentialForHost(gitlabHost)
 	}
-	gitlabVault, gitlabVaultKey, gitlabVaultErr := loadGitLabVaultEntryOptional(gitlabHost)
-	if vaultErr == nil && gitlabVaultErr != nil {
-		vaultErr = gitlabVaultErr
+	var gitlabVault *VaultEntry
+	var gitlabVaultKey string
+	if includeVault {
+		var gitlabVaultErr error
+		gitlabVault, gitlabVaultKey, gitlabVaultErr = loadGitLabVaultEntryOptional(gitlabHost)
+		if vaultErr == nil && gitlabVaultErr != nil {
+			vaultErr = gitlabVaultErr
+		}
 	}
 
-	openAIEntry, openAIVaultErr := loadVaultEntryOptional("OPENAI_API_KEY")
-	if vaultErr == nil && openAIVaultErr != nil {
-		vaultErr = openAIVaultErr
+	var openAIEntry *VaultEntry
+	if includeVault {
+		var openAIVaultErr error
+		openAIEntry, openAIVaultErr = loadVaultEntryOptional("OPENAI_API_KEY")
+		if vaultErr == nil && openAIVaultErr != nil {
+			vaultErr = openAIVaultErr
+		}
 	}
 	openAISource := ""
 	openAIConfigured := false

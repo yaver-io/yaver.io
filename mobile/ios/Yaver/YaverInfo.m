@@ -7,6 +7,8 @@ RCT_EXTERN_METHOD(clearLastGuestCrashReport:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(consumePendingFeedbackLaunch:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(consumePendingCarVoiceLaunch:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(setInheritedAuth:(NSString *)token
                   agentUrl:(NSString *)agentUrl
                   deviceId:(NSString *)deviceId)

@@ -183,6 +183,88 @@ export const runtimeSurfaceClient = {
       60000,
     ),
 
+  gitPRs: (
+    target: OpsTarget,
+    args: {
+      provider?: string;
+      directory?: string;
+      state?: string;
+      limit?: number;
+    } = {},
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "git_prs",
+      args as Record<string, unknown>,
+      60000,
+    ),
+
+  gitIssues: (
+    target: OpsTarget,
+    args: {
+      provider?: string;
+      directory?: string;
+      state?: string;
+      limit?: number;
+    } = {},
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "git_issues",
+      args as Record<string, unknown>,
+      60000,
+    ),
+
+  gitCIStatus: (
+    target: OpsTarget,
+    args: { provider?: string; directory?: string } = {},
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "git_ci_status",
+      args as Record<string, unknown>,
+      60000,
+    ),
+
+  mediaOpen: (
+    target: OpsTarget,
+    args: {
+      provider?: string;
+      query?: string;
+      url?: string;
+      live?: boolean;
+      open?: boolean;
+      openMode?: string;
+      surface?: string;
+    },
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "media_open",
+      args as Record<string, unknown>,
+      30000,
+    ),
+
+  mapsOpen: (
+    target: OpsTarget,
+    args: {
+      provider?: string;
+      query?: string;
+      origin?: string;
+      destination?: string;
+      traffic?: boolean;
+      open?: boolean;
+      openMode?: string;
+      surface?: string;
+    },
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "maps_open",
+      args as Record<string, unknown>,
+      30000,
+    ),
+
   dpadInput: (
     target: OpsTarget,
     args: {

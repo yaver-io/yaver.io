@@ -4,6 +4,7 @@ import { useDevice } from "../context/DeviceContext";
 import { makeRealCarVoiceDeps, type CarVoiceConfig, type CarVoiceTaskRef } from "../lib/carVoiceCoding";
 import { connectionManager } from "../lib/connectionManager";
 import { appLog } from "../lib/logger";
+import { runtimeSurfaceClient } from "../lib/runtimeSurfaceClient";
 import { watchBridgeBus } from "../lib/watchEntry";
 
 type NativeWatchBridge = {
@@ -81,6 +82,18 @@ export function WatchBridgeHost() {
     watchBridgeBus.configure({
       makeDeps: () => makeWatchDeps(targetDeviceId).deps,
       config: () => makeWatchDeps(targetDeviceId).config,
+      ops: (verb, payload) => {
+        if (verb === "meeting_next") return runtimeSurfaceClient.meetingNext(targetDeviceId, payload as any);
+        if (verb === "meeting_join_next") return runtimeSurfaceClient.meetingJoinNext(targetDeviceId, payload as any);
+        if (verb === "mail_unread") return runtimeSurfaceClient.mailUnread(targetDeviceId, payload as any);
+        if (verb === "mail_send") return runtimeSurfaceClient.mailSend(targetDeviceId, payload as any);
+        if (verb === "git_prs") return runtimeSurfaceClient.gitPRs(targetDeviceId, payload as any);
+        if (verb === "git_issues") return runtimeSurfaceClient.gitIssues(targetDeviceId, payload as any);
+        if (verb === "git_ci_status") return runtimeSurfaceClient.gitCIStatus(targetDeviceId, payload as any);
+        if (verb === "media_open") return runtimeSurfaceClient.mediaOpen(targetDeviceId, payload as any);
+        if (verb === "maps_open") return runtimeSurfaceClient.mapsOpen(targetDeviceId, payload as any);
+        throw new Error(`unsupported watch ops verb ${verb}`);
+      },
       sender: (json) => bridge.sendToWatch?.(json),
     });
     return () => watchBridgeBus.reset();

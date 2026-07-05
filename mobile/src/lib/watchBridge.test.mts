@@ -109,6 +109,44 @@ test("read-the-code asks hand off to the phone, never dispatch", async () => {
   assert.equal(dispatched, false);
 });
 
+test("surface media transcript is handled before coding dispatch", async () => {
+  let dispatched = false;
+  const calls: Array<{ verb: string; payload: Record<string, unknown> }> = [];
+  const final = await handleWatchTurn(
+    { v: 1, kind: "transcript", text: "open Twitch hasanabi" } as WatchTurn,
+    deps({ dispatch: async () => { dispatched = true; return "x"; } }),
+    {},
+    undefined,
+    async (verb, payload) => {
+      calls.push({ verb, payload });
+      return { spoken: "Opening Twitch for hasanabi." };
+    },
+  );
+  assert.equal(final.kind, "summary");
+  assert.match(final.spoken!, /Twitch/);
+  assert.equal(calls[0].verb, "media_open");
+  assert.equal(dispatched, false);
+});
+
+test("surface maps transcript is handled before coding dispatch", async () => {
+  let dispatched = false;
+  const calls: Array<{ verb: string; payload: Record<string, unknown> }> = [];
+  const final = await handleWatchTurn(
+    { v: 1, kind: "transcript", text: "check Google Maps traffic to Taksim" } as WatchTurn,
+    deps({ dispatch: async () => { dispatched = true; return "x"; } }),
+    {},
+    undefined,
+    async (verb, payload) => {
+      calls.push({ verb, payload });
+      return { spoken: "Opening Google Maps traffic for Taksim." };
+    },
+  );
+  assert.equal(final.kind, "summary");
+  assert.match(final.spoken!, /Google Maps/);
+  assert.equal(calls[0].verb, "maps_open");
+  assert.equal(dispatched, false);
+});
+
 // ── complication intents ─────────────────────────────────────────────
 
 test("run-tests intent expands and dispatches", async () => {

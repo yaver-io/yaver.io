@@ -10,17 +10,32 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yaver-io/agent/testkit"
 )
 
 type platformDeployPlan struct {
-	Target string   `json:"target"`
-	Script string   `json:"script"`
-	Args   []string `json:"args"`
-	Upload bool     `json:"upload"`
-	Root   string   `json:"root"`
+	Target     string                    `json:"target"`
+	Script     string                    `json:"script"`
+	Args       []string                  `json:"args"`
+	Upload     bool                      `json:"upload"`
+	Root       string                    `json:"root"`
+	Validation *platformValidationConfig `json:"validation,omitempty"`
+}
+
+type platformValidationConfig struct {
+	Driver          string `json:"driver,omitempty"`
+	Scope           string `json:"scope,omitempty"`
+	Viewport        string `json:"viewport,omitempty"`
+	MaxFlows        int    `json:"max_flows,omitempty"`
+	MaxWallClockSec int    `json:"max_wall_clock_sec,omitempty"`
 }
 
 func platformDeployPlanFor(root, target string, upload bool, extra []string) (platformDeployPlan, error) {
+	return platformDeployPlanForValidation(root, target, upload, extra, platformValidationConfig{})
+}
+
+func platformDeployPlanForValidation(root, target string, upload bool, extra []string, validation platformValidationConfig) (platformDeployPlan, error) {
 	t := strings.ToLower(strings.TrimSpace(target))
 	var script string
 	switch t {
@@ -36,6 +51,9 @@ func platformDeployPlanFor(root, target string, upload bool, extra []string) (pl
 	case "wear", "wear-os", "wearos", "android-wear", "android-watch":
 		t = "wear-os"
 		script = "scripts/deploy-wear-os.sh"
+	case "watchos", "watch-os", "apple-watch", "applewatch":
+		t = "watchos"
+		script = "scripts/deploy-watchos.sh"
 	case "ios", "testflight", "carplay":
 		t = "ios"
 		script = "scripts/deploy-testflight.sh"
@@ -43,7 +61,7 @@ func platformDeployPlanFor(root, target string, upload bool, extra []string) (pl
 		t = "android"
 		script = "scripts/deploy-playstore.sh"
 	default:
-		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos, wear-os, ios/testflight/carplay, android/android-auto/auto/playstore)", target)
+		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos, wear-os, watchos, ios/testflight/carplay, android/android-auto/auto/playstore)", target)
 	}
 	if _, err := os.Stat(filepath.Join(root, script)); err != nil {
 		return platformDeployPlan{}, fmt.Errorf("%s not found in %s", script, root)
@@ -52,7 +70,23 @@ func platformDeployPlanFor(root, target string, upload bool, extra []string) (pl
 	if upload {
 		args = append(args, "--upload")
 	}
-	return platformDeployPlan{Target: t, Script: script, Args: args, Upload: upload, Root: root}, nil
+	plan := platformDeployPlan{Target: t, Script: script, Args: args, Upload: upload, Root: root}
+	if validation.Driver = normalizeReleaseValidationDriver(validation.Driver); validation.Driver != "" {
+		if validation.Scope == "" {
+			validation.Scope = validationScopeForDeployTarget(t)
+		}
+		if validation.Viewport == "" {
+			validation.Viewport = validationViewportForDeployTarget(t)
+		}
+		if validation.MaxFlows < 0 {
+			validation.MaxFlows = 0
+		}
+		if validation.MaxWallClockSec < 0 {
+			validation.MaxWallClockSec = 0
+		}
+		plan.Validation = &validation
+	}
+	return plan, nil
 }
 
 func runDeployPlatformCmd(target string, args []string) {
@@ -104,10 +138,10 @@ func runDeployPlatformCmd(target string, args []string) {
 	}
 }
 
-func mcpMobilePlatformDeploy(directory, target string, upload, dryRun bool, timeoutSec int) map[string]interface{} {
+func mcpMobilePlatformDeploy(directory, target string, upload, dryRun bool, timeoutSec int, validation platformValidationConfig) map[string]interface{} {
 	root := normalizePlatformRoot(directory)
 
-	plan, err := platformDeployPlanFor(root, target, upload, nil)
+	plan, err := platformDeployPlanForValidation(root, target, upload, nil, validation)
 	if err != nil {
 		return map[string]interface{}{"ok": false, "error": err.Error()}
 	}
@@ -126,6 +160,15 @@ func mcpMobilePlatformDeploy(directory, target string, upload, dryRun bool, time
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
+	if plan.Validation != nil {
+		validationResult, err := runPlatformReleaseValidation(ctx, root, *plan.Validation)
+		if err != nil {
+			return map[string]interface{}{"ok": false, "plan": plan, "validation": validationResult, "error": err.Error()}
+		}
+		if passed, _ := validationResult["passed"].(bool); !passed {
+			return map[string]interface{}{"ok": false, "plan": plan, "validation": validationResult, "error": "release validation failed"}
+		}
+	}
 	cmdline := append([]string{plan.Script}, plan.Args...)
 	cmd := exec.CommandContext(ctx, "bash", cmdline...)
 	cmd.Dir = root
@@ -148,4 +191,77 @@ func mcpMobilePlatformDeploy(directory, target string, upload, dryRun bool, time
 		return map[string]interface{}{"ok": false, "exit_code": exitCode, "plan": plan, "output_tail": text}
 	}
 	return map[string]interface{}{"ok": true, "exit_code": 0, "plan": plan, "output_tail": text}
+}
+
+func normalizeReleaseValidationDriver(driver string) string {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "", "none", "off", "false", "skip":
+		return ""
+	case "cdp", "chrome", "chrome-cdp":
+		return "cdp"
+	case "selenium", "webdriver", "web-driver":
+		return "selenium"
+	default:
+		return strings.ToLower(strings.TrimSpace(driver))
+	}
+}
+
+func validationScopeForDeployTarget(_ string) string {
+	return "full"
+}
+
+func validationViewportForDeployTarget(target string) string {
+	switch target {
+	case "watchos", "wear-os":
+		return "pixel7"
+	case "tvos", "android-tv", "tv":
+		return "ipad11-landscape"
+	case "android":
+		return "pixel7"
+	default:
+		return "iphone15"
+	}
+}
+
+func runPlatformReleaseValidation(ctx context.Context, root string, validation platformValidationConfig) (map[string]interface{}, error) {
+	driver := normalizeReleaseValidationDriver(validation.Driver)
+	if driver == "" {
+		return map[string]interface{}{"skipped": true}, nil
+	}
+	req := testkit.AutoTestRequest{
+		WorkDir:       root,
+		Scope:         validation.Scope,
+		Viewport:      validation.Viewport,
+		Driver:        driver,
+		Propose:       false,
+		MaxFlows:      validation.MaxFlows,
+		MaxWallClockS: validation.MaxWallClockSec,
+		ACPowerOnly:   false,
+	}
+	res, err := testkit.RunAutoTest(ctx, req, nil)
+	if res == nil {
+		return map[string]interface{}{"driver": driver, "error": errorString(err)}, err
+	}
+	out := map[string]interface{}{
+		"driver":         res.Driver,
+		"scope":          res.Scope,
+		"viewport":       res.Viewport,
+		"passed":         res.Passed,
+		"bugs_found":     res.BugsFound,
+		"native_skipped": res.NativeSkipped,
+		"results_dir":    res.ResultsDir,
+		"run_id":         res.RunID,
+	}
+	if err != nil {
+		out["error"] = err.Error()
+		return out, err
+	}
+	return out, nil
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

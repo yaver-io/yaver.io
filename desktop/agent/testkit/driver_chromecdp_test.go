@@ -3,7 +3,7 @@ package testkit
 // Chrome CDP driver tests.
 //
 //   - TestNewWebDriverRouting is a pure unit test (no Chrome) — always
-//     runs. It pins the factory routing + the Selenium opt-in contract.
+//     runs. It pins the factory routing for CDP and Selenium/WebDriver.
 //   - TestChromeCDPSmoke is the real end-to-end (httptest page → real
 //     headless Chrome → snapshot/fill/click/screenshot). It is gated by
 //     YAVER_CHROME_SMOKE=1 so it never stalls a dev box or fails on a
@@ -12,7 +12,6 @@ package testkit
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,14 +36,6 @@ func TestNewWebDriverRouting(t *testing.T) {
 	}
 	if _, ok := d.(*seleniumBackend); !ok {
 		t.Fatalf("NewWebDriver(selenium): expected *seleniumBackend, got %T", d)
-	}
-	// Opt-in contract: every Selenium call fails loudly with the
-	// actionable error, never a silent no-op that looks like success.
-	if err := d.Launch(context.Background()); !errors.Is(err, errSeleniumOptIn) {
-		t.Fatalf("seleniumBackend.Launch: want errSeleniumOptIn, got %v", err)
-	}
-	if _, err := d.Snapshot(context.Background()); !errors.Is(err, errSeleniumOptIn) {
-		t.Fatalf("seleniumBackend.Snapshot: want errSeleniumOptIn, got %v", err)
 	}
 
 	if _, err := NewWebDriver("playwright", ChromeOpts{}); err == nil {

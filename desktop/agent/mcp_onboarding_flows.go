@@ -58,6 +58,7 @@ func mcpYaverSelfHostOnboarding(args yaverSelfHostOnboardingArgs) map[string]int
 			"providers": status.Providers,
 			"next":      "For least friction, use `git_oauth_start` and `git_oauth_status` so the user approves GitHub/GitLab in a browser instead of pasting a PAT. Then use `machine_onboarding_status` to verify clone/deploy readiness.",
 		},
+		"integrations": yaverIntegrationOnboardingGuide("self-hosted"),
 		"agent_next_steps": []map[string]interface{}{
 			{"tool": "yaver_onboard", "why": "show the legacy checklist for anything missing"},
 			{"tool": "machine_onboarding_status", "why": "inspect OpenAI/GitHub/GitLab readiness"},
@@ -101,6 +102,7 @@ func mcpYaverManagedCloudOnboarding(args yaverManagedCloudOnboardingArgs) map[st
 			"message":                      "Managed cloud may create a billable Yaver Hetzner machine. Call again with confirm_checkout=true and accept_cost=true only after the user explicitly approves the displayed cost/cap in the UI or chat.",
 		},
 		"current_status": status,
+		"integrations":   yaverIntegrationOnboardingGuide("managed-cloud"),
 		"post_purchase_onboarding": []map[string]interface{}{
 			{"step": "wait_for_machine", "tool": "yaver_managed_cloud_onboarding", "detail": "poll with confirm_checkout=false until a managed machine is listed"},
 			{"step": "sync_git", "tool": "git_push_creds", "detail": "push local GitHub/GitLab clone/deploy creds to the new managed box; tokens never go to Convex"},
@@ -155,5 +157,59 @@ func startOnboardingGitOAuth(provider string) map[string]interface{} {
 		"interval":         sess.Interval,
 		"expires_at":       sess.ExpiresAt.Unix(),
 		"next":             "Show verification_uri and user_code to the user, then poll git_oauth_status with session_id.",
+	}
+}
+
+func yaverIntegrationOnboardingGuide(runtime string) map[string]interface{} {
+	remoteNote := "For remote runtime use, connect on the target box or push credentials peer-to-peer; car/watch/TV never receive provider tokens."
+	if runtime == "self-hosted" {
+		remoteNote = "For self-hosted runtime use, connect on the machine that will execute the ops. Car/watch/TV only call Yaver verbs."
+	}
+	return map[string]interface{}{
+		"principle": remoteNote,
+		"surfaces":  []string{"car", "watch", "tv", "mobile", "mcp", "cli"},
+		"providers": []map[string]interface{}{
+			{
+				"id":          "google",
+				"label":       "Google: Gmail, Calendar, Meet",
+				"connect":     "Configure Google/Gmail OAuth in Yaver email settings or gateway OAuth; authorize Gmail + Calendar scopes.",
+				"unlocks":     []string{"mail_search", "mail_unread", "meeting_next", "meeting_join_next"},
+				"remote_note": "Meet links come from Google Calendar conference data and open through the selected Yaver runtime.",
+			},
+			{
+				"id":          "microsoft",
+				"label":       "Microsoft 365: Outlook mail, Calendar, Teams",
+				"connect":     "Configure Microsoft OAuth / Graph credentials in Yaver email settings or gateway OAuth.",
+				"unlocks":     []string{"mail_search", "mail_unread", "meeting_next", "meeting_join_next"},
+				"remote_note": "Teams links come from Microsoft Graph calendar events and open through the selected Yaver runtime.",
+			},
+			{
+				"id":          "zoom",
+				"label":       "Zoom",
+				"connect":     "Current path is join-link based from calendar/local bookings. Full Zoom OAuth/API control is a planned connector.",
+				"unlocks":     []string{"meeting_next", "meeting_join_next", "meeting_open_url"},
+				"remote_note": "Zoom opens as an official Zoom/web link from the selected runtime.",
+			},
+			{
+				"id":          "github",
+				"label":       "GitHub: repos, PRs, issues, Actions",
+				"connect":     "Use git_oauth_start/git_oauth_status or git_connect for Device Flow; use git_push_creds/git_push to move creds to an owned remote box.",
+				"unlocks":     []string{"git_connect", "git_push", "git_prs", "git_issues", "git_ci_status", "github_prs", "github_issues", "github_ci_status", "gh_run"},
+				"remote_note": "Tokens are stored on the executing box in Yaver/git credential storage and do not transit Convex.",
+			},
+			{
+				"id":          "gitlab",
+				"label":       "GitLab: repos, MRs, issues, pipelines",
+				"connect":     "Use git_oauth_start/git_oauth_status or git_connect for Device Flow; use git_push_creds/git_push to move creds to an owned remote box.",
+				"unlocks":     []string{"git_connect", "git_push", "git_prs", "git_issues", "git_ci_status", "gitlab_mrs", "gitlab_issues", "gitlab_ci", "glab_run"},
+				"remote_note": "Self-managed GitLab is supported by passing the host when connecting.",
+			},
+		},
+		"recommended_sequence": []map[string]interface{}{
+			{"step": "pick_runtime", "detail": "Choose the box that should execute integrations from car/watch/TV."},
+			{"step": "connect_identity", "detail": "Run provider OAuth/device flow on that box, or push existing creds to it via Yaver peer-to-peer."},
+			{"step": "verify", "detail": "Call a read-only verb first: mail_unread, meeting_next, git_prs, or git_ci_status."},
+			{"step": "enable_voice", "detail": "Car/watch/TV commands call provider-neutral Yaver verbs, not raw provider APIs."},
+		},
 	}
 }

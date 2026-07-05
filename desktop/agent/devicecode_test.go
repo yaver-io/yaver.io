@@ -125,6 +125,7 @@ func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("YAVER_VAULT_SKIP_KEYCHAIN", "1")
 	// On darwin/linux `ConfigDir` resolves via os.UserHomeDir which
 	// consults $HOME first, so setting it is enough.
 	yaverDir := filepath.Join(dir, ".yaver")

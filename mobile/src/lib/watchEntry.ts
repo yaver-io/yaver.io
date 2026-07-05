@@ -33,6 +33,7 @@
 
 import { handleWatchTurn, type WatchReply, type WatchTurn } from "./watchBridge";
 import type { CarVoiceConfig, CarVoiceDeps } from "./carVoiceCoding";
+import type { CarSurfaceOps } from "./carSurfaceIntent";
 
 /** What the app must provide so the bridge can actually do work: the deps for
  *  the chosen remote box and the user's speech config. Supplied by a factory
@@ -42,6 +43,8 @@ export interface WatchBridgeWiring {
   makeDeps: () => CarVoiceDeps;
   /** STT/TTS + poll config (usually the same the car loop uses). */
   config?: () => CarVoiceConfig;
+  /** Optional constrained-surface ops handler for mail/meetings/media/maps. */
+  ops?: CarSurfaceOps;
   /** Ship a reply JSON string back to the wrist (the native sender). */
   sender: (json: string) => void;
 }
@@ -78,7 +81,7 @@ export const watchBridgeBus: WatchBridgeBus = {
     }
     const config = w.config?.() ?? {};
     try {
-      return await handleWatchTurn(msg, w.makeDeps(), config, (r) => safeSend(w, r));
+      return await handleWatchTurn(msg, w.makeDeps(), config, (r) => safeSend(w, r), w.ops);
     } catch (e) {
       const err: WatchReply = {
         v: 1,

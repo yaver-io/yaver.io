@@ -42,7 +42,7 @@ steps:
 	if res.BugsFound != 1 || res.Proposed != 1 {
 		t.Fatalf("bugs/proposed = %d/%d, want 1/1", res.BugsFound, res.Proposed)
 	}
-	if len(res.Flows) != 1 || !strings.Contains(res.Flows[0].Error, "Selenium driver is opt-in") {
+	if len(res.Flows) != 1 || (!strings.Contains(res.Flows[0].Error, "chromedriver") && !strings.Contains(res.Flows[0].Error, "selenium")) {
 		t.Fatalf("unexpected flow result: %+v", res.Flows)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".yaver", "tests", "plan.json")); err != nil {
