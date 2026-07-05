@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   carVoiceViewport,
+  headsetViewport,
   normalizeOpsInitial,
   tvDpadViewport,
   viewportHeaders,
@@ -32,6 +33,14 @@ test("tvDpadViewport produces shared TV dpad metadata", () => {
   assert.equal(vp.surface, "tv-apple");
   assert.equal(vp.interaction, "dpad");
   assert.equal(vp.riskPolicy, "shared-tv");
+});
+
+test("headsetViewport produces spatial headset metadata", () => {
+  const vp = headsetViewport("headset-android-xr");
+  assert.equal(vp.surface, "headset-android-xr");
+  assert.equal(vp.interaction, "touch");
+  assert.equal(vp.visualBudget, "panel");
+  assert.equal(vp.riskPolicy, "spatial");
 });
 
 test("viewportHeaders maps metadata to agent headers", () => {

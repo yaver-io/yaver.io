@@ -60,11 +60,17 @@ func platformDeployPlanForValidation(root, target string, upload bool, extra []s
 	case "carplay", "apple-car", "apple-carplay":
 		t = "carplay"
 		script = "scripts/deploy-carplay.sh"
+	case "visionos", "vision-os", "apple-vision", "apple-vision-pro", "vision-pro":
+		t = "visionos"
+		script = "scripts/deploy-visionos.sh"
+	case "android-xr", "androidxr", "android-vr", "quest", "meta-quest", "vr-android", "xr-android":
+		t = "android-xr"
+		script = "scripts/deploy-android-xr.sh"
 	case "android", "android-auto", "auto", "playstore":
 		t = "android"
 		script = "scripts/deploy-playstore.sh"
 	default:
-		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos, wear-os, watchos, ios/testflight, carplay, android/android-auto/auto/playstore)", target)
+		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos, wear-os, watchos, ios/testflight, carplay, visionos, android-xr, android/android-auto/auto/playstore)", target)
 	}
 	if _, err := os.Stat(filepath.Join(root, script)); err != nil {
 		return platformDeployPlan{}, fmt.Errorf("%s not found in %s", script, root)
@@ -196,6 +202,41 @@ func mcpMobilePlatformDeploy(directory, target string, upload, dryRun bool, time
 	return map[string]interface{}{"ok": true, "exit_code": 0, "plan": plan, "output_tail": text}
 }
 
+func platformSubmitValidation(target string) platformValidationConfig {
+	return platformValidationConfig{
+		Driver:          "selenium",
+		Scope:           validationScopeForDeployTarget(normalizeDeployTargetForValidation(target)),
+		Viewport:        validationViewportForDeployTarget(normalizeDeployTargetForValidation(target)),
+		MaxWallClockSec: 900,
+	}
+}
+
+func normalizeDeployTargetForValidation(target string) string {
+	t := strings.ToLower(strings.TrimSpace(target))
+	switch t {
+	case "androidtv", "leanback", "google-tv", "googletv":
+		return "android-tv"
+	case "apple-tv", "appletv":
+		return "tvos"
+	case "wear", "wearos", "android-wear", "android-watch":
+		return "wear-os"
+	case "watch-os", "apple-watch", "applewatch":
+		return "watchos"
+	case "apple-car", "apple-carplay":
+		return "carplay"
+	case "vision-os", "apple-vision", "apple-vision-pro", "vision-pro":
+		return "visionos"
+	case "androidxr", "android-vr", "quest", "meta-quest", "vr-android", "xr-android":
+		return "android-xr"
+	case "android-auto", "auto", "playstore":
+		return "android"
+	case "testflight":
+		return "ios"
+	default:
+		return t
+	}
+}
+
 func normalizeReleaseValidationDriver(driver string) string {
 	switch strings.ToLower(strings.TrimSpace(driver)) {
 	case "", "none", "off", "false", "skip":
@@ -217,7 +258,7 @@ func validationViewportForDeployTarget(target string) string {
 	switch target {
 	case "watchos", "wear-os":
 		return "pixel7"
-	case "tvos", "android-tv", "tv", "carplay":
+	case "tvos", "android-tv", "tv", "carplay", "visionos", "android-xr":
 		return "ipad11-landscape"
 	case "android":
 		return "pixel7"

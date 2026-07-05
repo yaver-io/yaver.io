@@ -18,7 +18,7 @@ func runDeploy(args []string) {
 	case "all":
 		runDeployAllCmd(args[1:])
 		return
-	case "tv", "television", "android-tv", "androidtv", "leanback", "tvos", "apple-tv", "appletv", "wear", "wear-os", "wearos", "android-wear", "android-watch", "ios", "testflight", "carplay", "android", "android-auto", "auto", "playstore":
+	case "tv", "television", "android-tv", "androidtv", "leanback", "tvos", "apple-tv", "appletv", "wear", "wear-os", "wearos", "android-wear", "android-watch", "watchos", "watch-os", "apple-watch", "applewatch", "ios", "testflight", "carplay", "apple-car", "apple-carplay", "visionos", "vision-os", "apple-vision", "apple-vision-pro", "vision-pro", "android-xr", "androidxr", "android-vr", "quest", "meta-quest", "vr-android", "xr-android", "android", "android-auto", "auto", "playstore":
 		runDeployPlatformCmd(args[0], args[1:])
 		return
 	case "npm", "cli":
@@ -168,7 +168,9 @@ func printDeployUsage() {
   yaver deploy ios                                     TestFlight upload (iOS app).
   yaver deploy testflight                              Same as yaver deploy ios.
   yaver deploy carplay                                  Same as yaver deploy ios (Apple CarPlay).
+  yaver deploy visionos                                 Apple Vision Pro / visionOS release analysis.
   yaver deploy android                                  Play Store internal track upload.
+  yaver deploy android-xr                               Android XR / VR release analysis + Play lane.
   yaver deploy android-auto                            Same as yaver deploy android (Android Auto).
   yaver deploy auto                                     Same as yaver deploy android (Android Auto).
   yaver deploy playstore                              Same as yaver deploy android.
@@ -177,6 +179,7 @@ func printDeployUsage() {
   yaver deploy android-tv                              Play AAB upload with leanback verification.
   yaver deploy tvos                                    Apple TV standalone archive/upload.
   yaver deploy wear-os                                 Wear OS AAB upload to Play internal.
+  yaver deploy watchos                                 watchOS standalone archive/upload.
 
   # npm CLI release only (bump version → tag → push → CI publishes):
   yaver deploy npm                                     Patch-bump + release the CLI to npm.

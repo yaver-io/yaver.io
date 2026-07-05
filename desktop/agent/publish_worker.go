@@ -164,7 +164,12 @@ var shotsJobTargets = map[string]bool{"shots": true, "shots-submit": true}
 // platformJobTargets are deployable platform surfaces that do not go
 // through /deploy/ship yet. They use the mobile_platform_deploy spine
 // directly so mobile/web can enqueue TV deploys without a human shell.
-var platformJobTargets = map[string]bool{"tv": true, "android-tv": true, "tvos": true, "wear-os": true}
+var platformJobTargets = map[string]bool{
+	"tv": true, "android-tv": true, "tvos": true,
+	"wear-os": true, "watchos": true,
+	"carplay":  true,
+	"visionos": true, "android-xr": true,
+}
 
 // runLocalShipForJob dispatches the claim's targets: store binaries go
 // through the existing /deploy/ship spine; `shots*` pseudo-targets run the
@@ -214,6 +219,14 @@ func normalizePublishJobTarget(target string) string {
 		return "tvos"
 	case "wear", "wearos", "android-wear", "android-watch":
 		return "wear-os"
+	case "watch-os", "apple-watch", "applewatch":
+		return "watchos"
+	case "apple-car", "apple-carplay":
+		return "carplay"
+	case "vision-os", "apple-vision", "apple-vision-pro", "vision-pro":
+		return "visionos"
+	case "androidxr", "android-vr", "quest", "meta-quest", "vr-android", "xr-android":
+		return "android-xr"
 	case "television":
 		return "tv"
 	default:
@@ -224,7 +237,7 @@ func normalizePublishJobTarget(target string) string {
 func runPlatformTargetForJob(target string, phase *atomicString) publishTargetResult {
 	phase.Set("building " + target)
 	start := time.Now()
-	out := mcpMobilePlatformDeploy("", target, true, false, 7200, platformValidationConfig{})
+	out := mcpMobilePlatformDeploy("", target, true, false, 7200, platformSubmitValidation(target))
 	ok, _ := out["ok"].(bool)
 	result := publishTargetResult{
 		Target:     target,
@@ -538,9 +551,9 @@ func (a *atomicString) Get() string  { a.mu.RLock(); defer a.mu.RUnlock(); retur
 func computePublishCapabilities() []string {
 	switch runtime.GOOS {
 	case "darwin":
-		return []string{"ios", "android", "android-tv", "tvos", "tv", "wear-os"}
+		return []string{"ios", "android", "android-tv", "tvos", "tv", "wear-os", "watchos", "carplay", "visionos", "android-xr"}
 	case "linux":
-		return []string{"android", "android-tv", "wear-os"}
+		return []string{"android", "android-tv", "wear-os", "android-xr"}
 	default:
 		return []string{}
 	}

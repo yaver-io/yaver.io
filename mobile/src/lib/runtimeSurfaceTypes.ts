@@ -9,12 +9,16 @@ export type RuntimeSurface =
   | "tv-living-room"
   | "tv-android"
   | "tv-apple"
+  | "headset-visionos"
+  | "headset-android-xr"
+  | "web-spatial-hud"
+  | "web-spatial-vr"
   | "mcp"
   | "cli";
 
 export type SurfaceInteraction = "voice" | "dpad" | "touch" | "keyboard" | "approval" | "stream";
 export type SurfaceVisualBudget = "none" | "glance" | "panel" | "full";
-export type SurfaceRiskPolicy = "normal" | "driving" | "watch" | "shared-tv" | "mcp";
+export type SurfaceRiskPolicy = "normal" | "driving" | "watch" | "shared-tv" | "spatial" | "mcp";
 
 export interface TaskViewportInput {
   surface?: RuntimeSurface | string;
@@ -82,6 +86,15 @@ export function tvDpadViewport(surface: RuntimeSurface | string = "tv-living-roo
     interaction: "dpad",
     visualBudget: "glance",
     riskPolicy: "shared-tv",
+  };
+}
+
+export function headsetViewport(surface: RuntimeSurface | string = "headset-visionos"): TaskViewportInput {
+  return {
+    surface,
+    interaction: "touch",
+    visualBudget: "panel",
+    riskPolicy: "spatial",
   };
 }
 

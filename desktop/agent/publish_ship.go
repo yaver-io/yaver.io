@@ -74,6 +74,29 @@ var publishStoreAliases = map[string][]string{
 	"wearos":        {"wear-os"},
 	"android-wear":  {"wear-os"},
 	"android-watch": {"wear-os"},
+	"watchos":       {"watchos"},
+	"watch-os":      {"watchos"},
+	"apple-watch":   {"watchos"},
+	"applewatch":    {"watchos"},
+	"carplay":       {"carplay"},
+	"apple-car":     {"carplay"},
+	"apple-carplay": {"carplay"},
+	// AR / VR headset surfaces.
+	"xr":               {"visionos", "android-xr"},
+	"ar":               {"visionos", "android-xr"},
+	"vr":               {"visionos", "android-xr"},
+	"headset":          {"visionos", "android-xr"},
+	"headsets":         {"visionos", "android-xr"},
+	"visionos":         {"visionos"},
+	"vision-os":        {"visionos"},
+	"apple-vision":     {"visionos"},
+	"apple-vision-pro": {"visionos"},
+	"vision-pro":       {"visionos"},
+	"android-xr":       {"android-xr"},
+	"androidxr":        {"android-xr"},
+	"android-vr":       {"android-xr"},
+	"quest":            {"android-xr"},
+	"meta-quest":       {"android-xr"},
 }
 
 // isPublishStoreWord reports whether arg looks like a store selector (so
@@ -148,7 +171,7 @@ func runPublishStoreFacade(args []string) {
 			os.Exit(1)
 		}
 		// iOS archive needs a Mac — fail before enqueuing to a non-Mac node.
-		if targetsContain(targets, "testflight") {
+		if targetsNeedMac(targets) {
 			if err := preflightTestFlightMachine(deviceID); err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(2)
@@ -165,7 +188,7 @@ func runPublishStoreFacade(args []string) {
 		resolvedApp, strings.Join(targets, " + "), where)
 
 	// Sync remote iOS: still needs a Mac on the other end.
-	if targetsContain(targets, "testflight") && strings.TrimSpace(*machine) != "" {
+	if targetsNeedMac(targets) && strings.TrimSpace(*machine) != "" {
 		if err := preflightTestFlightMachine(strings.TrimSpace(*machine)); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(2)
@@ -178,7 +201,7 @@ func runPublishStoreFacade(args []string) {
 			os.Exit(2)
 		}
 		for _, target := range targets {
-			out := mcpMobilePlatformDeploy(resolvedPath, target, true, false, *timeout, platformValidationConfig{})
+			out := mcpMobilePlatformDeploy(resolvedPath, target, true, false, *timeout, platformSubmitValidation(target))
 			if ok, _ := out["ok"].(bool); !ok {
 				fmt.Fprintf(os.Stderr, "platform publish %s failed: %v\n", target, out["error"])
 				os.Exit(1)
@@ -243,6 +266,24 @@ func preflightTestFlightMachine(deviceID string) error {
 func targetsContain(targets []string, want string) bool {
 	for _, t := range targets {
 		if strings.EqualFold(strings.TrimSpace(t), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func targetNeedsMac(target string) bool {
+	switch normalizePublishJobTarget(target) {
+	case "testflight", "tvos", "watchos", "carplay", "visionos":
+		return true
+	default:
+		return false
+	}
+}
+
+func targetsNeedMac(targets []string) bool {
+	for _, target := range targets {
+		if targetNeedsMac(target) {
 			return true
 		}
 	}

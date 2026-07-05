@@ -164,6 +164,21 @@ func TestFormatViewportHint_TVSharedDpad(t *testing.T) {
 	}
 }
 
+func TestFormatViewportHint_HeadsetSpatial(t *testing.T) {
+	vp := &TaskViewport{
+		Surface:      "headset-android-xr",
+		Interaction:  "touch",
+		VisualBudget: "panel",
+		RiskPolicy:   "spatial",
+	}
+	hint := formatViewportHint(vp)
+	for _, want := range []string{"AR/VR headset spatial panel", "touch interaction", "panel visual budget", "spatial policy"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("headset hint missing %q: %q", want, hint)
+		}
+	}
+}
+
 func TestFormatViewportHint_MCPStructuredApproval(t *testing.T) {
 	vp := &TaskViewport{
 		Surface:      "mcp",

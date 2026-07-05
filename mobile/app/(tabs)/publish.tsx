@@ -55,7 +55,10 @@ type StoreChoice =
   | "android-auto"
   | "android-wear"
   | "watchos"
-  | "carplay";
+  | "carplay"
+  | "xr"
+  | "visionos"
+  | "android-xr";
 
 // Friendly store word → canonical /deploy/ship target IDs. Same map
 // as the CLI façade (publish_ship.go) so both surfaces agree.
@@ -67,9 +70,12 @@ const STORE_TARGETS: Record<StoreChoice, string[]> = {
   "android-tv": ["android-tv"],
   tvos: ["tvos"],
   "android-auto": ["playstore"],
-  "android-wear": [],
-  watchos: [],
-  carplay: [],
+  "android-wear": ["wear-os"],
+  watchos: ["watchos"],
+  carplay: ["carplay"],
+  xr: ["visionos", "android-xr"],
+  visionos: ["visionos"],
+  "android-xr": ["android-xr"],
 };
 
 const STORE_CHOICES: StoreChoice[] = [
@@ -83,6 +89,9 @@ const STORE_CHOICES: StoreChoice[] = [
   "android-wear",
   "watchos",
   "carplay",
+  "xr",
+  "visionos",
+  "android-xr",
 ];
 
 const STORE_META: Record<
@@ -119,18 +128,27 @@ const STORE_META: Record<
   },
   "android-wear": {
     label: "Wear OS",
-    note: "Build lane exists; store upload is not one-tap yet.",
-    disabled: true,
+    note: "Queues Wear OS AAB upload to Play internal.",
   },
   watchos: {
     label: "watchOS",
-    note: "Simulator build works; upload needs companion/release lane wiring.",
-    disabled: true,
+    note: "Queues watchOS archive/upload on a Mac.",
   },
   carplay: {
     label: "CarPlay",
-    note: "Needs Apple CarPlay entitlement and native template work first.",
-    disabled: true,
+    note: "Queues CarPlay preflight and the shared iOS upload on a Mac.",
+  },
+  xr: {
+    label: "AR/VR both",
+    note: "Queues visionOS and Android XR release analysis.",
+  },
+  visionos: {
+    label: "Apple Vision Pro",
+    note: "Queues visionOS release analysis on a Mac.",
+  },
+  "android-xr": {
+    label: "Android XR",
+    note: "Queues Android XR/VR manifest analysis and Play lane.",
   },
 };
 
@@ -281,7 +299,7 @@ export default function PublishScreen() {
           <View>
             <Text style={styles.h1}>Publish</Text>
             <Text style={styles.sub}>
-              Build & ship mobile, TV, and bundled car artifacts on your own Mac.
+              Build & ship mobile, TV, car, and AR/VR artifacts on your own Mac.
               Tap publish and close the app — it runs on the Mac.
             </Text>
 

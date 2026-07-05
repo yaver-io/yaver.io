@@ -1,6 +1,7 @@
 import { quicClient } from "./quic";
 import {
   carVoiceViewport,
+  headsetViewport,
   normalizeOpsInitial,
   tvDpadViewport,
   viewportHeaders,
@@ -13,6 +14,7 @@ import {
 
 export {
   carVoiceViewport,
+  headsetViewport,
   normalizeOpsInitial,
   tvDpadViewport,
   viewportHeaders,
@@ -45,6 +47,7 @@ async function callSurfaceOps<T = unknown>(
 export const runtimeSurfaceClient = {
   viewportHeaders,
   carVoiceViewport,
+  headsetViewport,
   watchVoiceViewport,
   tvDpadViewport,
 

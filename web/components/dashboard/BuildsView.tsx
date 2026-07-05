@@ -149,8 +149,8 @@ export default function BuildsView({
     const upload = surface.submitSupported ? "true" : "false";
     const title = `Deploy ${surface.label}`;
     const description = [
-      `Use the Yaver MCP mobile_platform_deploy tool for target=${target}, upload=${upload}.`,
-      "Run it one target at a time and report build/upload status, version/build number, and any blocking signing or review issue.",
+      `Use the Yaver MCP mobile_platform_deploy tool for target=${target}, upload=${upload}, validate_driver=selenium.`,
+      "Run the Selenium release gate before submit, one target at a time, and report build/upload status, version/build number, and any blocking signing or review issue.",
     ].join(" ");
     try {
       const task = await agentClient.sendTask(title, description);
@@ -218,7 +218,20 @@ export default function BuildsView({
 
   function canRunPlatformMcp(surface: MobilePlatformSurface) {
     const target = surface.deployTarget || surface.id;
-    return surface.submitSupported && ["tv", "android-tv", "tvos"].includes(target) && surface.scriptPresent === true;
+    return (
+      surface.submitSupported &&
+      [
+        "tv",
+        "android-tv",
+        "tvos",
+        "wear-os",
+        "watchos",
+        "carplay",
+        "visionos",
+        "android-xr",
+      ].includes(target) &&
+      surface.scriptPresent === true
+    );
   }
 
   function unityTitle(run: UnityRun) {
@@ -289,7 +302,7 @@ export default function BuildsView({
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-xs font-medium uppercase tracking-wider text-surface-500">Platform Surfaces</div>
-            <div className="mt-1 text-sm text-surface-300">TV is executable now; watch and car lanes show the current release gate instead of pretending they are uploadable.</div>
+            <div className="mt-1 text-sm text-surface-300">Script-backed phone, TV, watch, car, and AR/VR lanes can build and submit with the Selenium release gate.</div>
           </div>
           {platformMatrix ? (
             <div className="text-xs text-surface-500">{platformMatrix.devicePlatform}/{platformMatrix.deviceArch}</div>
@@ -316,7 +329,7 @@ export default function BuildsView({
                     title={!canRun ? surface.limitations?.[0] || "This surface is not one-click deployable yet." : ""}
                     className={deployButtonClass(!canRun, surface.surface === "tv")}
                   >
-                    {canRun ? "Build + Submit" : surface.buildSupported ? "Build-only" : "Blocked"}
+                    {canRun ? "Selenium + Submit" : surface.buildSupported ? "Build-only" : "Blocked"}
                   </button>
                 </div>
               );

@@ -12,7 +12,7 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	if err := os.MkdirAll(scripts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh", "deploy-wear-os.sh", "deploy-watchos.sh", "deploy-testflight.sh", "deploy-playstore.sh", "deploy-carplay.sh"} {
+	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh", "deploy-wear-os.sh", "deploy-watchos.sh", "deploy-testflight.sh", "deploy-playstore.sh", "deploy-carplay.sh", "deploy-visionos.sh", "deploy-android-xr.sh"} {
 		if err := os.WriteFile(filepath.Join(scripts, name), []byte("#!/bin/bash\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -84,6 +84,22 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	if plan.Target != "carplay" || plan.Script != "scripts/deploy-carplay.sh" || plan.Validation == nil || plan.Validation.Driver != "selenium" || plan.Validation.Scope != "full" || plan.Validation.Viewport != "ipad11-landscape" {
 		t.Fatalf("unexpected carplay selenium validation plan: %+v", plan)
 	}
+
+	plan, err = platformDeployPlanForValidation(root, "apple-vision-pro", false, nil, platformValidationConfig{Driver: "selenium"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Target != "visionos" || plan.Script != "scripts/deploy-visionos.sh" || plan.Validation == nil || plan.Validation.Driver != "selenium" || plan.Validation.Viewport != "ipad11-landscape" {
+		t.Fatalf("unexpected visionos validation plan: %+v", plan)
+	}
+
+	plan, err = platformDeployPlanForValidation(root, "quest", true, nil, platformValidationConfig{Driver: "webdriver"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Target != "android-xr" || plan.Script != "scripts/deploy-android-xr.sh" || len(plan.Args) != 1 || plan.Args[0] != "--upload" || plan.Validation == nil || plan.Validation.Driver != "selenium" || plan.Validation.Viewport != "ipad11-landscape" {
+		t.Fatalf("unexpected android-xr validation plan: %+v", plan)
+	}
 }
 
 func TestMCPMobilePlatformDeployDryRunIncludesSeleniumValidation(t *testing.T) {
@@ -113,6 +129,17 @@ func TestMCPMobilePlatformDeployDryRunIncludesSeleniumValidation(t *testing.T) {
 	}
 }
 
+func TestPlatformSubmitValidationDefaultsToSelenium(t *testing.T) {
+	v := platformSubmitValidation("visionos")
+	if v.Driver != "selenium" || v.Scope != "full" || v.Viewport != "ipad11-landscape" || v.MaxWallClockSec != 900 {
+		t.Fatalf("unexpected visionos submit validation: %+v", v)
+	}
+	v = platformSubmitValidation("wear-os")
+	if v.Driver != "selenium" || v.Viewport != "pixel7" {
+		t.Fatalf("unexpected wear submit validation: %+v", v)
+	}
+}
+
 func TestMobilePlatformMatrixAdvertisesSeleniumReleaseValidation(t *testing.T) {
 	report := mobilePlatformMatrix(t.TempDir())
 	want := map[string]bool{
@@ -124,6 +151,8 @@ func TestMobilePlatformMatrixAdvertisesSeleniumReleaseValidation(t *testing.T) {
 		"tvos":           false,
 		"watchos":        false,
 		"carplay":        false,
+		"visionos":       false,
+		"android-xr":     false,
 	}
 	for _, surface := range report.Surfaces {
 		if _, ok := want[surface.ID]; !ok {

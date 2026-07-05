@@ -40,7 +40,7 @@ type mobilePlatformMatrixReport struct {
 func init() {
 	registerOpsVerb(opsVerbSpec{
 		Name:        "mobile_platform_matrix",
-		Description: "Read-only platform surface matrix for phone, TV, watch, and car deployability. Used by lean-back clients to show what the selected runtime can build or submit.",
+		Description: "Read-only platform surface matrix for phone, TV, watch, car, and AR/VR deployability. Used by lean-back clients to show what the selected runtime can build or submit.",
 		Schema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -54,7 +54,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "mobile_platform_deploy_plan",
-		Description: "Dry-run-only platform deploy planner for phone, TV, watch, and car targets. Returns the script/validation plan without building, uploading, or submitting.",
+		Description: "Dry-run-only platform deploy planner for phone, TV, watch, car, and AR/VR targets. Returns the script/validation plan without building, uploading, or submitting.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"target"},
@@ -155,6 +155,26 @@ func mobilePlatformMatrix(root string) mobilePlatformMatrixReport {
 				Limitations:   []string{"Upload still requires Apple's granted CarPlay entitlement in the provisioning profile; the script fails fast before upload if local project wiring is missing."},
 				PortalActions: []string{"Confirm Apple granted com.apple.developer.carplay-voice-based-conversation, then regenerate the iOS App Store provisioning profile with that entitlement."},
 				NextSteps:     []string{"Run mobile_platform_deploy target=carplay upload=false for unsigned simulator build/preflight, then upload=true to submit the shared iOS artifact."},
+			}),
+			surface(mobilePlatformSurface{
+				ID: "visionos", Label: "Apple Vision Pro", Family: "apple", Surface: "ar-vr",
+				Status: "ready-gated", BuildSupported: true, SubmitSupported: true, ManagedCloud: "needs-macos", RequiredHost: "macos",
+				StoreTarget: "app-store-connect", DeployTarget: "visionos", Script: "scripts/deploy-visionos.sh", QueueTargets: []string{"visionos"},
+				Validation:    []string{"deep-build-doctor", "autotest-cdp", "autotest-selenium", "visionos-simulator"},
+				Notes:         []string{"Runs headset-specific static checks, verifies the visionOS SDK is installed, and then delegates upload to the Apple release lane when requested."},
+				Limitations:   []string{"A production visionOS upload still needs a configured visionOS/App Store Connect platform record or compatible destination in the project."},
+				PortalActions: []string{"In App Store Connect, add the visionOS platform for the app record if shipping a native visionOS binary rather than compatible iPad mode."},
+				NextSteps:     []string{"Run mobile_platform_deploy target=visionos upload=false on a Mac for release analysis, then upload=true once the visionOS store record/signing lane is ready."},
+			}),
+			surface(mobilePlatformSurface{
+				ID: "android-xr", Label: "Android XR / Meta Quest", Family: "android", Surface: "ar-vr",
+				Status: "ready-gated", BuildSupported: true, SubmitSupported: true, ManagedCloud: "supported", RequiredHost: "any",
+				StoreTarget: "playstore", DeployTarget: "android-xr", Script: "scripts/deploy-android-xr.sh", QueueTargets: []string{"android-xr"},
+				Validation:    []string{"deep-build-doctor", "autotest-cdp", "autotest-selenium", "android-xr-emulator", "android-device"},
+				Notes:         []string{"Runs Android XR/VR manifest and hardware-feature checks, builds the release AAB, and can upload to the Play internal track."},
+				Limitations:   []string{"Meta Quest Store and Horizon OS submission are not a Play upload; use this lane for Android XR-compatible Play artifacts until a dedicated Quest submission lane exists."},
+				PortalActions: []string{"In Play Console, complete Android XR/form-factor declarations when Google exposes them for the listing."},
+				NextSteps:     []string{"Run mobile_platform_deploy target=android-xr upload=false before first headset release upload."},
 			}),
 		},
 	}

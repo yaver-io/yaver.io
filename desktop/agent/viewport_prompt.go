@@ -152,6 +152,8 @@ func surfaceShape(surface string, cols, rows int) string {
 		return "spatial HUD ~600x600 — terse glanceable text, max 4 lines per block"
 	case "web-spatial-vr":
 		return "VR headset (Quest/Vision Pro) tmux-style floating panes — moderate detail, code blocks fine"
+	case "headset-visionos", "headset-android-xr":
+		return "AR/VR headset spatial panel — concise sections, large touch targets, avoid dense tables"
 	case "glasses-mentra-live":
 		return "audio-only smart glasses (no display) — speak the answer in one sentence, NO code blocks"
 	case "glasses-mentra-display":
@@ -225,6 +227,8 @@ func riskPolicyShape(policy string) string {
 		return "watch policy — approve/deny only for low or medium risk; high risk should hand off to phone"
 	case "shared-tv":
 		return "shared TV policy — do not reveal secrets, tokens, private paths, or sensitive account data"
+	case "spatial":
+		return "spatial policy — keep content glanceable in floating panels and ask before disruptive immersive actions"
 	case "mcp":
 		return "MCP policy — do not bypass human approval gates; surface pending approvals as structured state"
 	case "normal":
