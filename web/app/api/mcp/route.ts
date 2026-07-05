@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auditYaverAppManifest, formatYaverAppPolicyAudit } from "@/lib/yaver-app-policy";
 import { auditYaverGameManifest, formatYaverGamePolicyAudit } from "@/lib/yaver-game-policy";
+import {
+  requiredYaverNativeScopes,
+  yaverNativeAuthAdapterText,
+  type YaverNativeAppKind,
+} from "@/lib/yaver-native-auth";
 
 const SERVER_NAME = "Yaver";
 const SERVER_VERSION = "1.0.0";
@@ -91,6 +96,38 @@ const tools = [
           description: "The app family being integrated.",
         },
       },
+      additionalProperties: false,
+    },
+    outputSchema: textResultSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: "yaver_native_oauth_guide",
+    title: "Wire Yaver-Native OAuth",
+    description: "Explain how a Yaver-native app or game should use Yaver OAuth as the platform identity layer below its own standalone auth providers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appId: {
+          type: "string",
+          description: "Yaver app/game id, for example game_sfmg or game_carrotbet.",
+        },
+        appKind: {
+          type: "string",
+          enum: ["app", "game"],
+          description: "Whether the integration is a general Yaver-native app or game.",
+        },
+        standaloneAuthAllowedOutsideYaver: {
+          type: "boolean",
+          description: "Whether the app can keep its own auth outside Yaver builds.",
+        },
+        externalProvidersOutsideYaver: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional standalone providers outside Yaver, such as google, apple, email, github.",
+        },
+      },
+      required: ["appId", "appKind"],
       additionalProperties: false,
     },
     outputSchema: textResultSchema,
@@ -243,6 +280,17 @@ function callTool(id: JsonRpcId, params: any) {
       return jsonRpc(id, textResult(bootstrapText(String(args.projectType || "unknown"))));
     case "yaver_app_runtime_guide":
       return jsonRpc(id, textResult(appRuntimeText(String(args.appType || "unknown"))));
+    case "yaver_native_oauth_guide": {
+      const appKind = args.appKind === "game" ? "game" : "app";
+      return jsonRpc(id, textResult(yaverNativeOauthText({
+        appId: String(args.appId || "app_unknown"),
+        appKind,
+        standaloneAuthAllowedOutsideYaver: args.standaloneAuthAllowedOutsideYaver !== false,
+        externalProvidersOutsideYaver: Array.isArray(args.externalProvidersOutsideYaver)
+          ? args.externalProvidersOutsideYaver.filter((item: unknown): item is string => typeof item === "string")
+          : undefined,
+      })));
+    }
     case "yaver_app_manifest_audit": {
       const audit = auditYaverAppManifest(args.manifest);
       return jsonRpc(id, textResult(formatYaverAppPolicyAudit(audit)));
@@ -263,6 +311,35 @@ function callTool(id: JsonRpcId, params: any) {
     default:
       return jsonRpcError(id, -32602, `Unknown Yaver tool: ${name}`);
   }
+}
+
+function yaverNativeOauthText(args: {
+  appId: string;
+  appKind: YaverNativeAppKind;
+  standaloneAuthAllowedOutsideYaver: boolean;
+  externalProvidersOutsideYaver?: readonly string[];
+}) {
+  return [
+    yaverNativeAuthAdapterText({
+      appId: args.appId,
+      appKind: args.appKind,
+      standaloneAuthAllowedOutsideYaver: args.standaloneAuthAllowedOutsideYaver,
+      yaverAuthRequiredInYaverBuild: true,
+      externalProvidersOutsideYaver: args.externalProvidersOutsideYaver,
+    }),
+    "",
+    "Required Yaver scopes:",
+    ...requiredYaverNativeScopes(args.appKind).map((scope) => `- ${scope}`),
+    "",
+    "Recommended backend bridge:",
+    "- Add a /yaver/auth/bootstrap route or equivalent server function.",
+    "- Read Authorization: Bearer <Yaver token> from the request header.",
+    "- Verify the bearer against Yaver /auth/validate or the approved introspection endpoint.",
+    "- Enforce bootstrap appId/appKind/surface/scopes.",
+    "- Upsert a local account link keyed by yaverUserId.",
+    "- Derive local user/player/agent id server-side for all saves, multiplayer state, entitlements, and audit events.",
+    "- Do not accept userId/playerId/agentId from the client as an authorization boundary.",
+  ].join("\n");
 }
 
 function appRuntimeText(appType: string) {

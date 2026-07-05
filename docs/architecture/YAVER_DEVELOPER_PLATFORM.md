@@ -102,3 +102,32 @@ Yaver monetizes:
 
 Yaver does not monetize by trapping source code. A developer can use Yaver, ship
 outside Yaver, and later remove the project from Yaver.
+
+## Yaver-Native OAuth Layer
+
+Yaver OAuth is the platform identity layer for Yaver-native builds. It sits
+below an app's own standalone auth providers:
+
+```text
+Yaver build:
+  Yaver OAuth -> Yaver bootstrap -> app backend link -> local player/user
+
+Standalone external build:
+  developer auth provider(s) -> app backend -> local player/user
+```
+
+This means a game like SFMG or Carrotbet can keep Google, Apple, email, or any
+other developer-owned auth outside Yaver, while its Yaver catalog build uses
+Yaver OAuth as the account of record.
+
+The shared web contract lives in `web/lib/yaver-native-auth.ts` and defines:
+
+- `YAVER_NATIVE_AUTH_PROVIDER`
+- app and game required scopes
+- bootstrap validation helpers
+- bearer header helpers
+- adapter guidance text used by MCP
+
+New Yaver-native apps should use that contract instead of hand-rolling scopes
+or provider names. Coding agents can call the hosted MCP tool
+`yaver_native_oauth_guide` while wiring a new app.

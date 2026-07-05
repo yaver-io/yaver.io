@@ -1,3 +1,9 @@
+import {
+  YAVER_NATIVE_APP_SCOPES,
+  YAVER_NATIVE_AUTH_PROVIDER,
+  YAVER_NATIVE_GAME_SCOPES,
+} from "./yaver-native-auth";
+
 export type YaverAppKind =
   | "game"
   | "simulation"
@@ -141,7 +147,7 @@ export interface YaverAppCommandContract {
 
 export interface YaverAppAuthContract {
   readonly mode: YaverAppAuthMode;
-  readonly provider: "yaver-oauth";
+  readonly provider: typeof YAVER_NATIVE_AUTH_PROVIDER;
   readonly requiredScopes: readonly string[];
   readonly guestAccess: "disabled" | "private-test-only" | "public";
   readonly notes: string;
@@ -214,17 +220,11 @@ export interface YaverAppManifest {
 }
 
 export const REQUIRED_YAVER_APP_SCOPES = [
-  "openid",
-  "profile",
-  "yaver.apps.run",
-  "yaver.apps.events.write",
-  "yaver.ai.invoke",
+  ...YAVER_NATIVE_APP_SCOPES,
 ] as const;
 
 export const REQUIRED_YAVER_GAME_SCOPES = [
-  ...REQUIRED_YAVER_APP_SCOPES,
-  "yaver.games.play",
-  "yaver.games.save",
+  ...YAVER_NATIVE_GAME_SCOPES,
 ] as const;
 
 const catalogRevenueShare = {
@@ -289,7 +289,7 @@ export const SFMG_YAVER_APP: YaverAppManifest = {
   ai: ["intent-parser", "advisor", "narration", "scenario-generation", "test-bots", "moderation"],
   auth: {
     mode: "required",
-    provider: "yaver-oauth",
+    provider: YAVER_NATIVE_AUTH_PROVIDER,
     requiredScopes: REQUIRED_YAVER_GAME_SCOPES,
     guestAccess: "private-test-only",
     notes:
@@ -369,7 +369,7 @@ export const YAVER_FEEDBACK_APP: YaverAppManifest = {
   ai: ["feedback-triage", "summarization", "release-assistant", "test-bots"],
   auth: {
     mode: "required",
-    provider: "yaver-oauth",
+    provider: YAVER_NATIVE_AUTH_PROVIDER,
     requiredScopes: REQUIRED_YAVER_APP_SCOPES,
     guestAccess: "private-test-only",
     notes: "Feedback reporters can be guest-scoped, but developer triage and agent routing require a Yaver session.",
@@ -437,7 +437,7 @@ export const CARROTBET_YAVER_APP: YaverAppManifest = {
   ai: ["intent-parser", "advisor", "narration", "scenario-generation", "test-bots", "moderation", "feedback-triage"],
   auth: {
     mode: "required",
-    provider: "yaver-oauth",
+    provider: YAVER_NATIVE_AUTH_PROVIDER,
     requiredScopes: REQUIRED_YAVER_GAME_SCOPES,
     guestAccess: "private-test-only",
     notes:
@@ -552,7 +552,7 @@ export const PERSONAL_RUNTIME_APP: YaverAppManifest = {
   ai: ["intent-parser", "workflow-planning", "summarization", "advisor", "moderation"],
   auth: {
     mode: "required",
-    provider: "yaver-oauth",
+    provider: YAVER_NATIVE_AUTH_PROVIDER,
     requiredScopes: REQUIRED_YAVER_APP_SCOPES,
     guestAccess: "disabled",
     notes: "User-owned connectors and app sessions stay bound to the user's Yaver identity and local vault.",
@@ -622,7 +622,7 @@ export const PERSONAL_HEALTH_AGENT_APP: YaverAppManifest = {
   ai: ["intent-parser", "summarization", "result-analysis", "reminder-planning", "document-extraction"],
   auth: {
     mode: "required",
-    provider: "yaver-oauth",
+    provider: YAVER_NATIVE_AUTH_PROVIDER,
     requiredScopes: REQUIRED_YAVER_APP_SCOPES,
     guestAccess: "disabled",
     notes:

@@ -17,6 +17,11 @@ not a separately released SFMG app and not a public third-party marketplace.
 The Yaver build of SFMG must use Yaver OAuth/session identity. It must not show
 a standalone SFMG login, and it must not own mobile payments directly.
 
+Yaver OAuth is the shared Yaver-native platform layer, not an SFMG-only adapter.
+The source of truth for required provider/scopes and bootstrap helpers is
+`web/lib/yaver-native-auth.ts`. New games such as Carrotbet should use the same
+contract and can ask hosted MCP for `yaver_native_oauth_guide` while developing.
+
 ## Why
 
 - One first-party flagship is safer for App Store and Play Store review than a

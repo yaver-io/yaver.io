@@ -1,3 +1,9 @@
+import {
+  YAVER_NATIVE_AUTH_PROVIDER,
+  YAVER_NATIVE_APP_SCOPES,
+  YAVER_NATIVE_GAME_SCOPES,
+} from "./yaver-native-auth";
+
 export type YaverAppPolicySeverity = "error" | "warning";
 
 export type YaverAppPolicyFinding = {
@@ -10,20 +16,6 @@ export type YaverAppPolicyAudit = {
   ok: boolean;
   findings: YaverAppPolicyFinding[];
 };
-
-const REQUIRED_APP_SCOPES = [
-  "openid",
-  "profile",
-  "yaver.apps.run",
-  "yaver.apps.events.write",
-  "yaver.ai.invoke",
-] as const;
-
-const REQUIRED_GAME_SCOPES = [
-  ...REQUIRED_APP_SCOPES,
-  "yaver.games.play",
-  "yaver.games.save",
-] as const;
 
 const KNOWN_SURFACES = new Set([
   "web",
@@ -84,11 +76,11 @@ export function auditYaverAppManifest(manifest: unknown): YaverAppPolicyAudit {
     });
   }
 
-  if (isYaverNative && auth.provider !== "yaver-oauth") {
+  if (isYaverNative && auth.provider !== YAVER_NATIVE_AUTH_PROVIDER) {
     findings.push({
       severity: "error",
       code: "yaver_oauth_required",
-      message: "Yaver-native catalog apps must use auth.provider = yaver-oauth.",
+      message: `Yaver-native catalog apps must use auth.provider = ${YAVER_NATIVE_AUTH_PROVIDER}.`,
     });
   }
 
@@ -101,7 +93,7 @@ export function auditYaverAppManifest(manifest: unknown): YaverAppPolicyAudit {
   }
 
   const scopes = readStringArray(auth.requiredScopes);
-  const requiredScopes = isGame ? REQUIRED_GAME_SCOPES : REQUIRED_APP_SCOPES;
+  const requiredScopes = isGame ? YAVER_NATIVE_GAME_SCOPES : YAVER_NATIVE_APP_SCOPES;
   for (const scope of requiredScopes) {
     if (!scopes.includes(scope)) {
       findings.push({
