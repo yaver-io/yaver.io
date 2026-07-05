@@ -4534,6 +4534,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// HN-LAUNCH-HIDE-PAID: drop Yaver's own paid-plan buyer tools at launch.
 	tools = filterPaidToolsAtLaunch(tools)
 
+	// Lean "core" profile: trim peripheral families for non-owners so a fresh
+	// user's agent sees the dev/hermes/runner/deploy wedge. Owners + explicit
+	// YAVER_MCP_PROFILE=full see everything. See mcp_core_profile.go.
+	tools = filterToCoreProfile(tools)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}
