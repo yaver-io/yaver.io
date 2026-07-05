@@ -13,6 +13,8 @@ MARKETING_VERSION="${WATCHOS_MARKETING_VERSION:-}"
 BUILD_NUMBER="${WATCHOS_BUILD_NUMBER:-}"
 WATCHOS_PROVISIONING_PROFILE_SPECIFIER="${WATCHOS_PROVISIONING_PROFILE_SPECIFIER:-}"
 WATCHOS_CODE_SIGN_IDENTITY="${WATCHOS_CODE_SIGN_IDENTITY:-Apple Distribution}"
+WATCHOS_EXPORT_METHOD="${WATCHOS_EXPORT_METHOD:-release-testing}"
+WATCHOS_EXPORT_DESTINATION="${WATCHOS_EXPORT_DESTINATION:-export}"
 UPLOAD=0
 
 usage() {
@@ -39,6 +41,13 @@ Environment:
   WATCHOS_CODE_SIGN_IDENTITY
                       Signing identity for manual signing. Defaults to
                       "Apple Distribution".
+  WATCHOS_EXPORT_METHOD
+                      Export method for xcodebuild. Defaults to
+                      "release-testing"; Xcode 17 rejects app-store-connect
+                      for standalone watchOS archives.
+  WATCHOS_EXPORT_DESTINATION
+                      Export destination. Defaults to "export"; standalone
+                      watchOS archives are uploaded with altool after export.
 
 Options:
   --upload            Export and upload the archive to App Store Connect.
@@ -152,10 +161,10 @@ printf '%s\n' \
 '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
 '<plist version="1.0">' \
 '<dict>' \
-'    <key>method</key><string>app-store-connect</string>' \
+"    <key>method</key><string>${WATCHOS_EXPORT_METHOD}</string>" \
 "    <key>teamID</key><string>${APPLE_TEAM_ID}</string>" \
 "    <key>signingStyle</key><string>${EXPORT_SIGNING_STYLE}</string>" \
-'    <key>destination</key><string>upload</string>' \
+"    <key>destination</key><string>${WATCHOS_EXPORT_DESTINATION}</string>" \
 '    <key>uploadSymbols</key><false/>' \
 '</dict>' \
 '</plist>' > "$EXPORT_OPTIONS"
@@ -170,4 +179,29 @@ xcodebuild -exportArchive \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER"
 
-echo "watchOS upload submitted from $ARCHIVE_PATH"
+if [ "$WATCHOS_EXPORT_DESTINATION" = "upload" ]; then
+  echo "watchOS upload submitted from $ARCHIVE_PATH"
+  exit 0
+fi
+
+IPA_PATH="$(find "$EXPORT_PATH" -maxdepth 2 -name '*.ipa' -print -quit)"
+if [ -z "$IPA_PATH" ]; then
+  echo "ERROR: expected exported watchOS IPA under $EXPORT_PATH" >&2
+  exit 1
+fi
+
+ALTOOL_OUTPUT="$(mktemp /tmp/YaverWatchAltool.XXXXXX.log)"
+if ! xcrun altool --upload-app \
+  -f "$IPA_PATH" \
+  --api-key "$AUTH_KEY_ID" \
+  --api-issuer "$AUTH_KEY_ISSUER" \
+  --p8-file-path "$AUTH_KEY" \
+  --show-progress 2>&1 | tee "$ALTOOL_OUTPUT"; then
+  exit 1
+fi
+if grep -q " ERROR: " "$ALTOOL_OUTPUT"; then
+  echo "ERROR: altool reported a watchOS upload error; see $ALTOOL_OUTPUT" >&2
+  exit 1
+fi
+
+echo "watchOS upload submitted from $IPA_PATH"
