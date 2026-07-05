@@ -85,12 +85,12 @@ func TestTmuxRunnerReadyAbsentSession(t *testing.T) {
 }
 
 func TestTmuxRunnerEligibleClaudeOnly(t *testing.T) {
-	for _, ok := range []string{"claude", "Claude", "CLAUDE-CODE", "claude-code"} {
+	for _, ok := range []string{"claude", "Claude", "CLAUDE-CODE", "claude-code", "opencode", "OpenCode"} {
 		if !tmuxRunnerEligible(ok) {
 			t.Errorf("expected %q to be eligible", ok)
 		}
 	}
-	for _, no := range []string{"codex", "opencode", "", "claude2", "yaver"} {
+	for _, no := range []string{"codex", "", "claude2", "yaver"} {
 		if tmuxRunnerEligible(no) {
 			t.Errorf("expected %q to be ineligible", no)
 		}
@@ -110,6 +110,12 @@ func TestBuildTmuxRunnerCommandShape(t *testing.T) {
 	}
 	if !strings.Contains(cmd.Args[2], "tmux new-window") {
 		t.Fatal("script body missing tmux new-window")
+	}
+	if !strings.Contains(cmd.Args[2], "alternate-screen off") {
+		t.Fatal("script body must disable tmux alternate-screen for inspectable scrollback")
+	}
+	if !strings.Contains(cmd.Args[2], "tmux send-keys") {
+		t.Fatal("script body must send the runner command after window options are applied")
 	}
 	if !strings.Contains(cmd.Args[2], "tmux wait-for") {
 		t.Fatal("script body missing tmux wait-for")

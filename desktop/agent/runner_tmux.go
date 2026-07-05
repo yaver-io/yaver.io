@@ -47,13 +47,14 @@ func tmuxRunnerSession() string {
 	return strings.TrimSpace(os.Getenv(tmuxRunnerEnvVar))
 }
 
-// tmuxRunnerEligible: which runners benefit from tmux dispatch. We start
-// with claude / claude-code only — that's the runner whose macOS Keychain
-// auth surface is the immediate pain. Codex and OpenCode auth differently
-// (long-lived API keys / token files), so they don't need this yet.
+// tmuxRunnerEligible: which runners benefit from tmux dispatch. Claude
+// needs the user's interactive login session for macOS Keychain access.
+// OpenCode also benefits because its interactive UI otherwise redraws in
+// ways that are hard to inspect after the fact; the wrapper disables the
+// tmux alternate screen so normal copy-mode scrollback keeps the transcript.
 func tmuxRunnerEligible(runnerID string) bool {
 	switch strings.ToLower(strings.TrimSpace(runnerID)) {
-	case "claude", "claude-code":
+	case "claude", "claude-code", "opencode":
 		return true
 	}
 	return false
@@ -78,7 +79,7 @@ func tmuxRunnerReady() string {
 }
 
 // shellQuoteStrict single-quotes a value safely for sh, escaping any embedded
-// single quotes via the standard '\'' dance.
+// single quotes with the standard POSIX shell sequence.
 func shellQuoteStrict(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -138,8 +139,11 @@ trap cleanup TERM INT HUP EXIT
 : > "$LOG"
 tmux kill-window -t "$SESSION:$WIN" 2>/dev/null || true
 
-tmux new-window -d -t "$SESSION" -n "$WIN" \
-  "$YAVER_TMUX_INNER; rc=\$?; printf '\n__YAVER_EXIT__:%d\n' \"\$rc\"; tmux wait-for -S \"$SIG\""
+tmux new-window -d -t "$SESSION" -n "$WIN"
+tmux set-option -q -t "$SESSION:$WIN" remain-on-exit on 2>/dev/null || true
+tmux set-window-option -q -t "$SESSION:$WIN" alternate-screen off 2>/dev/null || true
+tmux send-keys -t "$SESSION:$WIN" \
+  "$YAVER_TMUX_INNER; rc=\$?; printf '\n__YAVER_EXIT__:%d\n' \"\$rc\"; tmux wait-for -S \"$SIG\"" Enter
 
 tmux pipe-pane -o -t "$SESSION:$WIN" "cat >> '$LOG'"
 

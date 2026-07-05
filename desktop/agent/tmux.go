@@ -26,17 +26,17 @@ type TmuxSession struct {
 	Created      string `json:"created"`
 	Attached     bool   `json:"attached"`
 	Relationship string `json:"relationship"`          // "adopted", "forked-by-yaver", "unrelated"
-	AgentType    string `json:"agentType,omitempty"`    // "claude", "codex", "opencode"
-	MainPID      int    `json:"mainPid,omitempty"`      // PID of the main process in the active pane
-	PanePreview  string `json:"panePreview,omitempty"`  // last ~20 lines of pane output
-	TaskID       string `json:"taskId,omitempty"`       // set if adopted as a Yaver task
+	AgentType    string `json:"agentType,omitempty"`   // "claude", "codex", "opencode"
+	MainPID      int    `json:"mainPid,omitempty"`     // PID of the main process in the active pane
+	PanePreview  string `json:"panePreview,omitempty"` // last ~20 lines of pane output
+	TaskID       string `json:"taskId,omitempty"`      // set if adopted as a Yaver task
 }
 
 // TmuxManager manages tmux session adoption and I/O bridging.
 // It keeps track of adopted sessions and their polling goroutines.
 type TmuxManager struct {
 	mu       sync.RWMutex
-	adopted  map[string]string             // tmux session name -> task ID
+	adopted  map[string]string // tmux session name -> task ID
 	taskMgr  *TaskManager
 	pollStop map[string]context.CancelFunc // per-session poll cancellation
 }
@@ -587,22 +587,43 @@ func getChildPIDs(parentPID int) []int {
 
 // capturePanePreview captures the last N lines from a tmux pane.
 func capturePanePreview(sessionName string, lines int) string {
-	out, err := exec.Command("tmux", "capture-pane", "-t", sessionName,
-		"-p", "-S", fmt.Sprintf("-%d", lines)).CombinedOutput()
-	if err != nil {
-		return ""
-	}
-	return stripControlChars(strings.TrimRight(string(out), "\n "))
+	return strings.TrimRight(capturePane(sessionName, lines), "\n ")
 }
 
 // capturePaneContent captures the last N lines from a tmux pane for diffing.
 func capturePaneContent(sessionName string, lines int) string {
-	out, err := exec.Command("tmux", "capture-pane", "-t", sessionName,
-		"-p", "-S", fmt.Sprintf("-%d", lines)).CombinedOutput()
+	return capturePane(sessionName, lines)
+}
+
+func capturePane(sessionName string, lines int) string {
+	normal := capturePaneMode(sessionName, lines, false)
+	alternate := capturePaneMode(sessionName, lines, true)
+	if strings.TrimSpace(alternate) != "" && paneCaptureSignal(alternate) > paneCaptureSignal(normal) {
+		return alternate
+	}
+	return normal
+}
+
+func capturePaneMode(sessionName string, lines int, alternate bool) string {
+	args := []string{"capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", lines)}
+	if alternate {
+		args = append([]string{"capture-pane", "-a", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", lines)})
+	}
+	out, err := exec.Command("tmux", args...).CombinedOutput()
 	if err != nil {
 		return ""
 	}
 	return stripControlChars(string(out))
+}
+
+func paneCaptureSignal(s string) int {
+	score := 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			score++
+		}
+	}
+	return score
 }
 
 // stripControlChars removes ANSI escape sequences and other control characters
