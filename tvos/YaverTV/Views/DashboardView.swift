@@ -18,6 +18,9 @@ struct DashboardView: View {
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 24)], spacing: 24) {
                             NavigationLink(destination: RuntimeDashboardView()) {
+                                Tile(icon: "gamecontroller", title: "Yaver Games", detail: "SFMG · strategy runtime")
+                            }
+                            NavigationLink(destination: RuntimeDashboardView()) {
                                 Tile(icon: "terminal", title: "Runtime", detail: "Claude · Codex · reload")
                             }
                             NavigationLink(destination: AppleTVRemoteView()) {
