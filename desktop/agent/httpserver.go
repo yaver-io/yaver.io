@@ -8817,6 +8817,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mcpEVNetworks(args.Country))
 	case "ev_connector_types":
 		return mcpToolJSON(mcpEVConnectorTypes())
+	case "health_agent_policy",
+		"health_connector_template",
+		"health_schedule_plan":
+		return mcpHealthToolCall(call.Name, call.Arguments)
 	case "gateway_query":
 		var args struct {
 			Connector  string            `json:"connector"`

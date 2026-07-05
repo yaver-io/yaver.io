@@ -1671,6 +1671,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "translate", "description": "Translate text between languages (LibreTranslate, free).", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"text"}, "properties": map[string]interface{}{"text": map[string]interface{}{"type": "string"}, "from": map[string]interface{}{"type": "string", "description": "Source language (default: auto)"}, "to": map[string]interface{}{"type": "string", "description": "Target language (default: en)"}, "api_url": map[string]interface{}{"type": "string", "description": "Custom LibreTranslate URL"}}}},
 	}
 	tools = append(tools, locationTools...)
+	tools = append(tools, healthAgentTools()...)
 
 	// Personal Agent Gateway — per-capability dynamic tools (M-G6). Each wired
 	// connector's READ capabilities surface as their own gw_<connector>_<capability>
