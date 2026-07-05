@@ -39,7 +39,11 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.259"
+// version is the agent's self-reported version. It is a var (not const) so the
+// release build injects the real tag via -ldflags "-X main.version=<tag>"
+// (see .github/workflows/release-cli.yml). The default below is only used for
+// local `go build`; releases always override it, so it never drifts again.
+var version = "1.99.272"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"

@@ -154,7 +154,7 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME="${BINARY_NAME}.exe"
           fi
-          go build -ldflags="-s -w" -o "$BINARY_NAME" .
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o "$BINARY_NAME" .
           echo "Built: $BINARY_NAME"
 
       # Sign + notarize macOS binaries so Gatekeeper doesn't kill them
