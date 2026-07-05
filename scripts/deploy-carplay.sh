@@ -49,8 +49,11 @@ if ! /usr/libexec/PlistBuddy -c "Print :UIApplicationSceneManifest:UISceneConfig
   exit 1
 fi
 if ! /usr/libexec/PlistBuddy -c "Print :com.apple.developer.carplay-voice-based-conversation" "$ENTITLEMENTS" >/dev/null 2>&1; then
-  echo "ERROR: Yaver.entitlements is missing com.apple.developer.carplay-voice-based-conversation." >&2
-  exit 1
+  if [ "$UPLOAD" = "1" ]; then
+    echo "ERROR: CarPlay upload requires Apple to grant com.apple.developer.carplay-voice-based-conversation and a regenerated provisioning profile." >&2
+    exit 1
+  fi
+  echo "WARN: CarPlay entitlement is not enabled in Yaver.entitlements; simulator build can run, but CarPlay upload remains Apple-entitlement gated."
 fi
 if ! grep -q "CPTemplateApplicationSceneDelegate" "$SCENE_DELEGATE"; then
   echo "ERROR: CarPlay scene delegate does not implement CPTemplateApplicationSceneDelegate." >&2

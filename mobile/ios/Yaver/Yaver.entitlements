@@ -13,7 +13,5 @@
       <string>applinks:yaver.io</string>
       <string>webcredentials:yaver.io</string>
     </array>
-    <key>com.apple.developer.carplay-voice-based-conversation</key>
-    <true/>
   </dict>
 </plist>
