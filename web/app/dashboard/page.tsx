@@ -738,6 +738,14 @@ const CONNECTION_REQUIRED_TABS = new Set<string>([
   "todos", "arm", "appletv",
 ]);
 
+// HN-LAUNCH-HIDE-PAID: temporarily hide managed-cloud / billing / pricing
+// surfaces so launch reads as pure free + open-source + self-hosted. Flip to
+// false to restore the Billing tab and Yaver Cloud purchase CTAs. (grep this
+// token to find every gated surface across web + mobile.) Note: the Cloud tab
+// itself stays — it also controls machines the user already owns; only the
+// buy/checkout CTAs inside ManagedCloudPanel are gated (see that file).
+const HIDE_PAID_UI = true;
+
 export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, sessionExpired, logout } = useAuth();
@@ -2077,7 +2085,11 @@ export default function DashboardPage() {
               { id: "vault",    label: "Vault",    icon: "🔐" },
               { id: "billing",  label: "Billing",  icon: "💳" },
               { id: "stores",   label: "Publish",  icon: "🚀" },
-            ] as const).map((it) => (
+            ] as const)
+              // HN-LAUNCH-HIDE-PAID: drop the Billing tab from the nav so the
+              // launch reads as free + self-hosted. Flip HIDE_PAID_UI to restore.
+              .filter((it) => !(HIDE_PAID_UI && it.id === "billing"))
+              .map((it) => (
               <button
                 key={it.id}
                 onClick={() => setActiveTab(it.id)}
@@ -2775,7 +2787,10 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ExtrasView /></div>
           ) : activeTab === "share" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><ShareView /></div>
-          ) : activeTab === "billing" ? (
+          ) : activeTab === "billing" && !HIDE_PAID_UI ? (
+            // HN-LAUNCH-HIDE-PAID: billing tab is unreachable while paid UI is
+            // hidden (nav entry filtered out above). Branch + BillingView import
+            // retained so restoring is a one-flag flip.
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><BillingView token={token} /></div>
           ) : activeTab === "stores" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><StoresView token={token} /></div>

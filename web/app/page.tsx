@@ -13,6 +13,12 @@ import { useAuth } from "@/lib/use-auth";
 const LANDING_TAGLINE =
   "AI writes code in seconds; the loop around it still takes hours. Register Yaver as an MCP server and your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then hot-reloads it on your phone so you keep iterating from inside the running app. Open source, self-hostable, works with your existing subscription — your code never leaves your machine.";
 
+// HN-LAUNCH-HIDE-PAID: temporarily hide managed-cloud / billing / pricing
+// surfaces so launch reads as pure free + open-source + self-hosted. Flip to
+// false to restore the Yaver Cloud pricing section and paid copy. (grep this
+// token to find every gated surface across web + mobile.)
+const HIDE_PAID_UI = true;
+
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
 // LANDING_TAGLINE + the hero H1/subline to Option B (see docs/planning/LICENSING.md
@@ -108,11 +114,11 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Does Yaver manage my servers?",
-    a: "The default path is your phone sandbox first, then your own machine, dev box, or VPS. Self-hosted Yaver stays free. Optional Yaver Cloud is managed infrastructure bought on the web: a saved cloud workspace, private relay, and agent runtime that auto-stops when idle. The mobile app controls machines you already own or already bought; it does not sell managed cloud inside the App Store or Play Store app.",
+    a: "No. You run Yaver on your own machine, dev box, or VPS — Yaver drives it, it doesn't host it. The default path is your phone sandbox first, then your own hardware. Self-hosted Yaver is free. (An optional managed-cloud option for people who don't want to run their own box is coming later.)",
   },
   {
     q: "What is free, and what is paid?",
-    a: "The open-source stack is free: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. Optional Yaver Cloud is paid infrastructure for people who do not want to run their own always-reachable workspace. It is purchased on the web, auto-stops when idle, and keeps the workspace saved.",
+    a: "The whole open-source stack is free: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. That's everything you need to build and iterate. (An optional managed-cloud option for people who don't want to run their own always-reachable box is coming later.)",
   },
   {
     q: "What if I already use Vercel or Supabase Cloud?",
@@ -1322,7 +1328,7 @@ export default function HomePage() {
           the hero video above is the single viral artifact; a second
           video area below it competed for attention. */}
 
-      <CloudInfraSection />
+      {!HIDE_PAID_UI && <CloudInfraSection />}
 
       {/* ── Section 3: Get Started ── */}
       <section id="get-started" className="border-t border-surface-800/60 px-6 py-16">
@@ -1807,7 +1813,7 @@ return (
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
             <p><strong className="text-surface-100">A solo developer can run the open-source stack at $0.</strong></p>
             <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi.</p>
-            <p>Self-host the CLI, agent, relay, and backend for free. The mobile app connects through Yaver&apos;s thin coordination plane today &mdash; identity and device discovery only, your code stays P2P &mdash; and full mobile self-host is on the way. Yaver Cloud is optional managed infrastructure for people who want Yaver to run the workspace and private relay for them.</p>
+            <p>Self-host the CLI, agent, relay, and backend for free. The mobile app connects through Yaver&apos;s thin coordination plane today &mdash; identity and device discovery only, your code stays P2P &mdash; and full mobile self-host is on the way.</p>
             <p className="mt-4 text-surface-500">
               The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}
               <strong className="text-surface-300">FSL-1.1</strong> (auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}

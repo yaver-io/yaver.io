@@ -7,6 +7,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import ManagedCloudCard from "../../src/components/ManagedCloudCard";
+import { HIDE_PAID_UI } from "../../src/lib/launchFlags";
 import { quicClient, type CapabilitySnapshot, type CompanionStatus, type IncidentEvent, type InfraSummary, type MicroserviceWrapResult } from "../../src/lib/quic";
 import { listGuests, type GuestInfo } from "../../src/lib/guests";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -664,7 +665,9 @@ export default function InfraScreen() {
             ) : null}
           </Section>
 
-          <ManagedCloudCard c={c} token={token} />
+          {/* HN-LAUNCH-HIDE-PAID: managed (Yaver-billed) cloud billing card.
+              Flip HIDE_PAID_UI in src/lib/launchFlags.ts to restore. */}
+          {!HIDE_PAID_UI && <ManagedCloudCard c={c} token={token} />}
 
           <Section c={c} title="Microservices" subtitle="Wrap repo commands as durable Yaver companion services">
             <View style={{ gap: 8, marginTop: 8 }}>

@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../src/context/ThemeContext";
 import type { ThemeColors } from "../src/constants/colors";
 import { AppBackButton } from "../src/components/AppBackButton";
+import { HIDE_PAID_UI } from "../src/lib/launchFlags";
 import {
   listConnections,
   requestConnection,
@@ -280,9 +281,14 @@ export default function ConnectionsScreen() {
                 <Text style={[s.label, { color: c.textMuted }]}>Where does work run?</Text>
                 <View style={[s.row, { marginBottom: 8 }]}>
                   <Choice label="My machine" active={hostKind === "owner-device"} onPress={() => setHostKind("owner-device")} c={c} s={s} />
-                  <Choice label="Yaver Cloud" active={hostKind === "managed-cloud"} onPress={() => setHostKind("managed-cloud")} c={c} s={s} />
+                  {/* HN-LAUNCH-HIDE-PAID: hide the managed (Yaver-billed)
+                      "Yaver Cloud" host option; BYO "My machine" stays. Flip
+                      HIDE_PAID_UI in src/lib/launchFlags.ts to restore. */}
+                  {!HIDE_PAID_UI && (
+                    <Choice label="Yaver Cloud" active={hostKind === "managed-cloud"} onPress={() => setHostKind("managed-cloud")} c={c} s={s} />
+                  )}
                 </View>
-                {hostKind === "managed-cloud" && (
+                {!HIDE_PAID_UI && hostKind === "managed-cloud" && (
                   <View style={[s.row, { marginBottom: 8 }]}>
                     <Choice label="I pay" active={payer === "owner"} onPress={() => setPayer("owner")} c={c} s={s} />
                     <Choice label="They pay" active={payer === "invitee"} onPress={() => setPayer("invitee")} c={c} s={s} />

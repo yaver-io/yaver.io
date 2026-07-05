@@ -39,6 +39,14 @@ interface ManagedMachine {
   runnersAuthorized?: boolean;
 }
 
+// HN-LAUNCH-HIDE-PAID: temporarily hide the managed-cloud purchase surface
+// (plan cards + prepaid wallet + provision/checkout/add-credit CTAs) so the
+// launch reads as free + open-source + self-hosted. The panel's machine list
+// and per-box control actions (git connect, dev-loop, deploy, recycle) STAY —
+// they let a user control boxes they already own. Flip to false to restore the
+// buy CTAs. (grep this token to find every gated surface across web + mobile.)
+const HIDE_PAID_UI = true;
+
 type CloudPlanId = "cloud-agent" | "cloud-workspace";
 
 const CLOUD_PLANS: Array<{
@@ -667,6 +675,8 @@ export function ManagedCloudPanel({
             App Store / Play Store app.
           </p>
 
+          {/* HN-LAUNCH-HIDE-PAID: plan cards + prepaid wallet + buy CTAs. */}
+          {!HIDE_PAID_UI && (<>
           <div className="grid gap-2 md:grid-cols-2">
             {CLOUD_PLANS.map((plan) => {
               const activePlan = selectedPlan === plan.id;
@@ -785,6 +795,8 @@ export function ManagedCloudPanel({
               are not part of the launch purchase path.
             </p>
           </div>
+          </>)}
+          {/* End HN-LAUNCH-HIDE-PAID buy block. */}
 
           {/* Adopt is an owner/dev path — tucked behind a toggle so it
               doesn't clutter the index for everyone else. */}

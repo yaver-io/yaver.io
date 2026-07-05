@@ -51,6 +51,7 @@ import { AppBackButton } from "../src/components/AppBackButton";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useDevice, type Device } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
+import { HIDE_PAID_UI } from "../src/lib/launchFlags";
 import {
   runYaverAgent,
   type YaverAgentProgressEvent,
@@ -1062,28 +1063,32 @@ export default function GlassTerminalScreen() {
                 );
               })
             )}
-            {/* Finish setup for an already-active managed-cloud dev box. */}
-            <Pressable
-              onPress={() => {
-                setDevicePickerOpen(false);
-                router.push("/cloud-onboarding");
-              }}
-              style={{
-                marginTop: 10,
-                paddingVertical: 10,
-                paddingHorizontal: 12,
-                borderRadius: 6,
-                borderWidth: 1,
-                borderColor: PAL.accent,
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, marginRight: 8 }}>＋</Text>
-              <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, flex: 1 }}>
-                set up cloud box
-              </Text>
-            </Pressable>
+            {/* Finish setup for an already-active managed-cloud dev box.
+                HN-LAUNCH-HIDE-PAID: managed (Yaver-billed) cloud entry point.
+                Flip HIDE_PAID_UI in src/lib/launchFlags.ts to restore. */}
+            {!HIDE_PAID_UI && (
+              <Pressable
+                onPress={() => {
+                  setDevicePickerOpen(false);
+                  router.push("/cloud-onboarding");
+                }}
+                style={{
+                  marginTop: 10,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  borderColor: PAL.accent,
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, marginRight: 8 }}>＋</Text>
+                <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, flex: 1 }}>
+                  set up cloud box
+                </Text>
+              </Pressable>
+            )}
           </Pressable>
         </Pressable>
       </Modal>

@@ -21,6 +21,7 @@ import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useAuth } from "../src/context/AuthContext";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "../src/lib/auth";
 import { isCloudPreviewUser } from "../src/lib/cloudPreview";
+import { HIDE_PAID_UI } from "../src/lib/launchFlags";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
 import { acceptBetaInvite, fetchBetaInferenceToken, getManagedSubscription, isBetaUser } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
@@ -201,7 +202,9 @@ export default function PhoneProjectsScreen() {
   const connected = connectionStatus === "connected";
   const canUseCloudPreview = isCloudPreviewUser(user?.email);
   const [hasManagedCloud, setHasManagedCloud] = useState(false);
-  const canUseYaverCloud = canUseCloudPreview || hasManagedCloud;
+  // HN-LAUNCH-HIDE-PAID: hide the managed "Yaver Cloud" start-mode option
+  // (Yaver-billed box). Flip HIDE_PAID_UI in src/lib/launchFlags.ts to restore.
+  const canUseYaverCloud = !HIDE_PAID_UI && (canUseCloudPreview || hasManagedCloud);
 
   const [projects, setProjects] = useState<PhoneProject[]>([]);
   const [templates, setTemplates] = useState<PhoneTemplate[]>([]);
