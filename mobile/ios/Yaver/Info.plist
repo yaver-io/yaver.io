@@ -33,19 +33,6 @@
 			</array>
 		</dict>
 	</array>
-	<key>UIApplicationShortcutItems</key>
-	<array>
-		<dict>
-			<key>UIApplicationShortcutItemType</key>
-			<string>io.yaver.mobile.carVoice</string>
-			<key>UIApplicationShortcutItemTitle</key>
-			<string>Car Voice Runtime</string>
-			<key>UIApplicationShortcutItemSubtitle</key>
-			<string>Start a hands-free Yaver task</string>
-			<key>UIApplicationShortcutItemIconType</key>
-			<string>UIApplicationShortcutIconTypeAudio</string>
-		</dict>
-	</array>
 	<key>CFBundleVersion</key>
 	<string>383</string>
 	<key>LSApplicationQueriesSchemes</key>
@@ -131,6 +118,36 @@
 	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>CPTemplateApplicationScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>Yaver CarPlay</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).YaverCarPlaySceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAudio</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Start a hands-free Yaver task</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Car Voice Runtime</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>io.yaver.mobile.carVoice</string>
+		</dict>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

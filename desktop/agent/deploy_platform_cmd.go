@@ -54,14 +54,17 @@ func platformDeployPlanForValidation(root, target string, upload bool, extra []s
 	case "watchos", "watch-os", "apple-watch", "applewatch":
 		t = "watchos"
 		script = "scripts/deploy-watchos.sh"
-	case "ios", "testflight", "carplay":
+	case "ios", "testflight":
 		t = "ios"
 		script = "scripts/deploy-testflight.sh"
+	case "carplay", "apple-car", "apple-carplay":
+		t = "carplay"
+		script = "scripts/deploy-carplay.sh"
 	case "android", "android-auto", "auto", "playstore":
 		t = "android"
 		script = "scripts/deploy-playstore.sh"
 	default:
-		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos, wear-os, watchos, ios/testflight/carplay, android/android-auto/auto/playstore)", target)
+		return platformDeployPlan{}, fmt.Errorf("unsupported platform deploy target %q (supported: tv, android-tv, tvos, wear-os, watchos, ios/testflight, carplay, android/android-auto/auto/playstore)", target)
 	}
 	if _, err := os.Stat(filepath.Join(root, script)); err != nil {
 		return platformDeployPlan{}, fmt.Errorf("%s not found in %s", script, root)
@@ -214,7 +217,7 @@ func validationViewportForDeployTarget(target string) string {
 	switch target {
 	case "watchos", "wear-os":
 		return "pixel7"
-	case "tvos", "android-tv", "tv":
+	case "tvos", "android-tv", "tv", "carplay":
 		return "ipad11-landscape"
 	case "android":
 		return "pixel7"

@@ -10,10 +10,10 @@
 
 The watch **owns nothing and shows nothing complex.** Voice in, **one short
 sentence + a haptic** out. It renders no React Native, holds no agent, runs no
-chromedp, and never shows code or a diff. Everything real — the coding agent,
-redroid, chromedp/playwright, the personal-agent-gateway CRUD over your
-credentialed apps — runs on the **remote runner** (self-hosted box or managed
-cloud), exactly as it does for the car surface.
+chromedp, and never shows code or a diff. Everything real — the Yaver runtime,
+Claude/Codex sessions, redroid, chromedp/playwright, the personal-agent-gateway
+CRUD over your credentialed apps — runs on the **remote runner** (self-hosted box
+or managed cloud), exactly as it does for the car surface.
 
 It is **async by design**: dispatch → "On it" haptic → background → wake on
 completion. It never blocks the wrist on a remote task.
@@ -25,7 +25,7 @@ a wrist can't drive. Forking `react-native-tvos` would tax every future
 `expo prebuild` for a surface that shares almost nothing with the phone app. So
 the watch is a **small standalone SwiftUI app** following the `tvos/` precedent
 exactly: a reproducible XcodeGen project (`watch/project.yml` →
-`xcodegen generate`), bundle `io.yaver.watch`, team `5SJZ4KA39A`. Keeping it out
+`xcodegen generate`), bundle `io.yaver.mobile.watch`, team `5SJZ4KA39A`. Keeping it out
 of the mobile prebuild entirely is the lower-friction path
 (`docs/yaver-smartwatch-voice-terminal.md` §6).
 
@@ -93,6 +93,25 @@ wrist) + a small QR, polls until an already-signed-in phone approves, then
 collects the LAN box host. No new backend — the same contract `yaver auth` and
 the tvOS app use.
 
+## OAuth handoff for Yaver / Claude / Codex
+
+The watch never opens provider OAuth itself. In phone-paired mode it asks the
+iPhone to do the work; in standalone mode it shows/speaks a short code and
+pushes a phone handoff. The phone then uses the same existing screens as mobile
+and TV:
+
+- **Yaver machine auth:** `https://yaver.io/auth/device?code=ABCD-1234` opens
+  `app/approve-device.tsx` through Universal Links on iOS and App Links on
+  Android.
+- **Claude Code / Codex runtime auth:** `https://yaver.io/runner-auth/browser`
+  or `yaver://runner-auth/browser` opens the mobile runner-auth browser flow.
+
+For watchOS and Wear OS, the wearable only displays one sentence such as
+"Approve Codex on your phone." The phone handles browser cookies, biometrics,
+clipboard, provider redirects, and the final token write to the selected
+runtime. That keeps OAuth off the tiny screen and avoids storing provider
+credentials on the watch.
+
 ## Creating the Xcode target (one-time)
 
 The repo intentionally does **not** check in an `.xcodeproj` (generated, churny).
@@ -100,12 +119,13 @@ Either run XcodeGen against `project.yml` or create the target by hand:
 
 1. `cd watch && xcodegen generate` (preferred), **or** Xcode → New Project →
    **watchOS App**, SwiftUI lifecycle, name `YaverWatch`, bundle id
-   `io.yaver.watch`, team `5SJZ4KA39A`, deployment target watchOS 10.0.
+   `io.yaver.mobile.watch`, team `5SJZ4KA39A`, deployment target watchOS 10.0.
 2. Delete any generated `ContentView.swift` / `App.swift`; add every file under
    `watch/YaverWatch/` to the target ("Create groups").
 3. Set `Info.plist` to `watch/YaverWatch/Info.plist` (or merge its keys —
    it adds `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription`,
-   and `NSAllowsLocalNetworking`).
+   `NSAllowsLocalNetworking`, and `WKCompanionAppBundleIdentifier=io.yaver.mobile`
+   so watchOS can install it as the Yaver iPhone app's companion).
 4. Complications: the quick-actions in `Complications.swift` need a separate
    **Widget Extension** target to appear on a watch face — that wiring is a
    follow-up. The intent + deep-link contract (`yaverwatch://intent/<name>`) is

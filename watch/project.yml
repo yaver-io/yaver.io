@@ -29,7 +29,7 @@ targets:
           - "Info.plist"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.watch
+        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.mobile.watch
         PRODUCT_NAME: Yaver
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"

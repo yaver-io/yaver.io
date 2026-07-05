@@ -86,7 +86,7 @@ def get_editable_version(app_id, platform, version_string):
     """Return the version id in PREPARE_FOR_SUBMISSION, creating one if needed."""
     data = api_get(
         f"/apps/{app_id}/appStoreVersions",
-        params={"filter[appStoreState]": "PREPARE_FOR_SUBMISSION", "limit": 5},
+        params={"filter[appStoreState]": "PREPARE_FOR_SUBMISSION", "filter[platform]": platform, "limit": 5},
     )
     versions = (data or {}).get("data", [])
     if versions:
@@ -133,11 +133,12 @@ def set_export_compliance(version_id):
         print(f"  (skip) export compliance not set via version ({resp.status_code}).")
 
 
-def bind_latest_build(app_id, version_id):
+def bind_latest_build(app_id, version_id, platform):
     """Attach the newest processed (VALID) build to the version, if any."""
     data = api_get("/builds", params={
         "filter[app]": app_id,
         "filter[processingState]": "VALID",
+        "filter[preReleaseVersion.platform]": platform,
         "sort": "-uploadedDate",
         "limit": 1,
     })
@@ -219,7 +220,7 @@ def main():
     app_id = find_app(args.bundle_id)
     version_id = get_editable_version(app_id, args.platform, args.version)
     set_export_compliance(version_id)
-    bind_latest_build(app_id, version_id)
+    bind_latest_build(app_id, version_id, args.platform)
     submit_for_review(version_id)
 
 

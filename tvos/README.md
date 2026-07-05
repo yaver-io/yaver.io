@@ -1,9 +1,8 @@
-# Yaver tvOS — thin native SwiftUI app
+# Yaver tvOS — native remote-runtime dashboard
 
-> Status: **scaffold** (2026-06-17). Decision: `docs/yaver-tvos-fork-adr.md` (Option B —
-> native SwiftUI, **no `react-native-tvos` fork**). Roadmap: `docs/yaver-tv-car-deployment-roadmap.md`
-> M-TV2. This directory is source-only: it is **not** wired into any build pipeline yet
-> (mirrors `mobile/plugins/withAndroidTV.js` being unregistered before activation).
+> Status: **Apple TV App Store staged** (2026-07-05). Decision:
+> `docs/yaver-tvos-fork-adr.md` (Option B — native SwiftUI, **no `react-native-tvos` fork**).
+> This target builds and uploads through `scripts/deploy-tvos.sh`.
 
 ## Why this is separate from `mobile/`
 
@@ -17,20 +16,40 @@ Yaver agent over the **same** surfaces everything else uses:
   The TV shows a QR + short code; an already-signed-in phone approves it.
 - **Control:** `POST http://<box>:18080/ops` with `{ "verb": ..., "payload": ..., "machine": "local" }`
   and `Authorization: Bearer <session-token>` — identical to `mobile/src/lib/appletvClient.ts`.
-  All the `appletv_*` / `capture_*` / `stream_*` verbs are already callable.
+  The tvOS app calls `info`, `status`, `runner`, `voice`, `reload`, plus the existing
+  `appletv_*` / `capture_*` verbs.
 
 No new backend, no new agent code. The agent already serves every verb this app calls.
 
-## Scope (lean-back only — by design)
+## Scope (lean-back runtime control — by design)
 
 Shipped slice = the surfaces that are genuinely a 10-foot experience:
 
-1. **Apple TV remote** — D-pad / transport / now-playing card (`appletv_*` verbs).
-2. **Capture / now-playing** view of the home capture card (`capture_*`).
-3. **Device + agent status**.
+1. **Runtime control room** — machine status, dev-server status, Claude/Codex agent sessions,
+   STT/TTS readiness, QR-based OAuth handoff, and hot-reload/Hermes-push controls
+   (`info`, `status`, `runner`, `runner_auth`, `voice`, `reload`).
+2. **Apple TV remote** — D-pad / transport / now-playing card (`appletv_*` verbs).
+3. **Capture / now-playing** view of the home capture card (`capture_*`).
 
-Code authoring, the agentic UI, forms, tabs — intentionally **not** here. They are phone/web
-surfaces; a remote can't drive them. (Documented as out-of-scope, not "missing".)
+Dense code authoring, raw logs, and text editing are intentionally **not** on tvOS. The Apple TV
+is the wall display/control surface while coding continues from MacBook terminal, Claude Code,
+Codex, phone, or web. tvOS can trigger reloads and show whether the remote runtime is alive.
+
+## QR auth handoff
+
+Apple TV follows the same sign-in pattern users expect from streaming apps:
+
+- Yaver account/runtime auth shows a QR plus a short code. The QR targets
+  `https://yaver.io/auth/device?code=...`; the signed-in Yaver phone app opens
+  the approver via Universal Links/App Links and authorizes the TV or remote
+  machine.
+- Claude Code and Codex auth is started on the selected runtime through
+  `runner_auth browser_start`. tvOS renders the returned provider URL as a QR;
+  the phone opens the system browser and completes OAuth/device-code handling.
+
+The TV never asks for passwords, provider tokens, API keys, or long codes with
+the Siri Remote. Watch, car, Android TV, and Android Auto should use the same
+phone-mediated handoff shape.
 
 ## Transport note
 
@@ -52,8 +71,8 @@ The repo intentionally does **not** check in an `.xcodeproj` (generated, churny)
 4. Build & run on the tvOS Simulator or a real Apple TV.
 5. Sign-in: scan the QR with the Yaver phone app, approve — the TV gets a 1-year session.
 
-Submission later mirrors the iOS path (App Store Connect, same team/API key). A legit
-remote-control app passes review with Siri Remote support + tvOS HIG focus behavior.
+Submission mirrors the iOS path (App Store Connect, same team/API key). The current staged
+tvOS version has build `4`, export compliance set, and a 1920x1080 Apple TV screenshot uploaded.
 
 ## File map
 
@@ -66,4 +85,5 @@ remote-control app passes review with Siri Remote support + tvOS HIG focus behav
 | `YaverStore.swift` | `@MainActor ObservableObject` — session token, selected box, persistence. |
 | `Views/SignInView.swift` | QR + short code, polls until approved. |
 | `Views/DashboardView.swift` | Lean-back tile launcher. |
+| `Views/RuntimeDashboardView.swift` | Runtime control room: status, Claude/Codex sessions, voice, QR OAuth, reload, Apple surface readiness. |
 | `Views/AppleTVRemoteView.swift` | D-pad / transport / now-playing. |

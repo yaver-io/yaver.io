@@ -17,6 +17,9 @@ struct DashboardView: View {
                         emptyBoxPrompt
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 24)], spacing: 24) {
+                            NavigationLink(destination: RuntimeDashboardView()) {
+                                Tile(icon: "terminal", title: "Runtime", detail: "Claude · Codex · reload")
+                            }
                             NavigationLink(destination: AppleTVRemoteView()) {
                                 Tile(icon: "appletv", title: "Apple TV", detail: "Remote · now playing")
                             }
@@ -41,7 +44,7 @@ struct DashboardView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Yaver").font(.system(size: 48, weight: .heavy))
-            Text(store.selectedBox.map { "Connected to \($0.name) · \($0.host)" } ?? "No box selected")
+            Text(store.selectedBox.map { "Remote runtime on \($0.name) · \($0.host)" } ?? "No box selected")
                 .font(.system(size: 20)).foregroundStyle(.secondary)
         }
     }

@@ -39,6 +39,21 @@ function isApproveUrl(raw: string): boolean {
   }
 }
 
+function isRunnerAuthUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    const path = (u.pathname || "").replace(/\/+$/, "");
+    if (path === "/runner-auth/browser" || path === "/runner-auth/approve") return true;
+    // yaver://runner-auth/browser?runner=codex parses host="runner-auth", pathname="/browser".
+    if ((u.protocol === "yaver:" || u.protocol === "yaver://") && u.host === "runner-auth") {
+      return path === "/browser" || path === "/approve";
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function routePairUrl(raw: string) {
   // Device-code approve takes precedence — it's a distinct path from
   // the /pair token-submit flow and parsePairUrl wouldn't recognise it.
@@ -46,6 +61,20 @@ function routePairUrl(raw: string) {
     // Forward the whole URL; approve-device extracts ?code= itself so we
     // stay compatible with extra params (convex=, etc.).
     router.navigate({ pathname: "/approve-device", params: { url: raw } } as any);
+    return true;
+  }
+  if (isRunnerAuthUrl(raw)) {
+    const u = new URL(raw);
+    const path = (u.pathname || "").replace(/\/+$/, "");
+    const leaf = u.host === "runner-auth" ? path.replace(/^\//, "") : path.split("/").pop();
+    router.navigate({
+      pathname: leaf === "approve" ? "/runner-auth/approve" : "/runner-auth/browser",
+      params: {
+        runner: u.searchParams.get("runner") || "claude",
+        target: u.searchParams.get("target") || "",
+        targetLabel: u.searchParams.get("targetLabel") || "",
+      },
+    } as any);
     return true;
   }
   const payload = parsePairUrl(raw);

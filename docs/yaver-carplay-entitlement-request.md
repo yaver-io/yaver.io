@@ -1,49 +1,53 @@
-# CarPlay entitlement request — draft justification
+# CarPlay entitlement request — voice runtime
 
-> Status: draft (2026-06-17). Companion: `docs/yaver-tv-car-deployment-roadmap.md`,
-> `docs/yaver-ev-charging-turkey.md`. **You** submit this (Apple form, your identity);
-> I can only prepare the text. Without a granted entitlement the CarPlay scene never loads.
+> Status: submitted direction (2026-07-05). Companion:
+> `docs/yaver-car-voice-coding.md`, `docs/yaver-tv-car-deployment-roadmap.md`.
+> Without a granted entitlement the native CarPlay scene must stay disabled.
 
 ## Which entitlement, in what order
 
-1. **`com.apple.developer.carplay-charging`** — lead with this. Real charging apps get it; it's
-   templated (`CPListTemplate` / `CPPointOfInterestTemplate` / `CPMapTemplate`); Yaver has a
-   genuine EV charging surface (discovery + navigate + status, and start/stop via the private
-   driver behind the seam). **Highest approval odds.**
-2. `com.apple.developer.carplay-driving-task` — optional, later. Most permissive door; the
-   CarPlay analog to Android's IoT for a *narrow* device-control glance. Apple still judges
-   "appropriate while driving."
-3. `com.apple.developer.carplay-communication` — optional, **strictest** review (Apple wants
-   proof you're a genuine messaging platform). This is the voice-coding-as-messaging path. Do
-   **not** lead with it; it slows the whole request.
+1. **`com.apple.developer.carplay-voice-based-conversation`** — lead with this. The real Yaver
+   car use case is voice-first: a user launches Yaver in CarPlay, speaks a remote-runtime request,
+   Yaver dispatches it to the selected machine, and Yaver speaks back a short status. Coding and
+   Talos work are important examples, but the product category is broader than coding.
+2. `com.apple.developer.carplay-communication` — later only if Apple steers us there. Yaver is
+   conversational, but it is not primarily a human messaging or VoIP app and should not claim that
+   category first.
+3. `com.apple.developer.carplay-charging` / `com.apple.developer.carplay-driving-task` — separate
+   future requests for EV charging or driving-specific utility surfaces. Do not mix these into the
+   voice-runtime request.
 
-## Draft text for the request form (charging)
+## Submitted request direction (voice-based conversational)
 
-> **App name:** Yaver
-> **CarPlay app type:** EV Charging
-> **What the app does in CarPlay:** Yaver helps EV drivers find and navigate to charging
-> stations and view connector/power/availability while driving, using Apple-provided CarPlay
-> templates only (list, point-of-interest, map). Drivers filter by connector (CCS2/Type 2),
-> minimum power, and network. For chargers the user operates themselves, the app can also start
-> and stop a session.
-> **Why it needs the charging entitlement:** the in-car experience is exclusively EV-charging
-> discovery, navigation, and session status — it does not present any general-purpose or
-> distracting UI. All interaction is via standard CarPlay templates and voice.
-> **Driver-distraction handling:** no custom rendering; list/POI/map templates only; no text
-> entry while moving; status is summarized and can be read via Siri/TTS.
-> **Regions / networks:** launch market Turkey (Trugo, ZES, Eşarj, Sharz.net, Voltrun, …) with
-> CCS2/Type 2 coverage; station data via OpenChargeMap and (self-hosted, user-authorized) the
-> user's own network accounts.
+> **App name:** Yaver IO
+>
+> **CarPlay app type:** Voice-Based Conversational
+>
+> **Tell us about your app:** Yaver IO lets users control their own computers and remote runtimes
+> from iPhone. The CarPlay use case is a voice-first runtime assistant for safe hands-free use while
+> driving: the user launches Yaver from CarPlay, speaks a short request such as "start the Talos
+> build", "check the failing task", or "run the next step on my Mac", and Yaver sends that request
+> to the user's paired machine. Yaver then speaks a concise status result back to the driver. Source
+> code, logs, and task data stay on the user's own machine; Yaver's servers are used only for
+> account, pairing, and relay/discovery.
+>
+> **What specific CarPlay features do you plan to implement?** We plan to implement the
+> voice-based conversational CarPlay surface only. On launch, the primary modality is voice. The
+> CarPlay UI will expose a minimal voice control screen to start/stop one active voice turn, show
+> listening/working/speaking state, and return audio-only responses. Yaver will not display code,
+> diffs, logs, long text, images, web views, or arbitrary project UI in CarPlay. It will only hold
+> an audio session while actively listening or speaking. Risky commands such as deploy, push,
+> delete, reset, or production changes require an explicit confirmation before dispatch. Requests
+> to read code or diffs aloud are refused while driving and directed back to the phone when parked.
 
 ## Technical checklist before/after the grant
-- [ ] Add `CPTemplateApplicationScene` to the iOS app's `Info.plist` scene manifest.
-- [ ] Add the granted entitlement to the app's `.entitlements`.
-- [ ] Drive templates from JS via **`react-native-carplay`** (no full Swift rewrite).
-- [ ] Templates: charging-station list → POI detail (connectors/power/price/availability) →
-      map/navigate handoff. Start/stop button only renders when a `ChargeController` is
-      registered (private driver) — otherwise hidden/deep-link to the network app.
+- [x] Add `CPTemplateApplicationScene` to the iOS app's `Info.plist` scene manifest.
+- [x] Add the granted entitlement to the app's `.entitlements`.
+- [x] Implement the voice-based conversational CarPlay scene using Apple's approved voice control
+      surface for this category; keep Yaver's project/file UI out of CarPlay.
+- [ ] Wire the scene to `mobile/src/lib/carVoiceEntry.ts` / `mobile/src/lib/carVoiceCoding.ts`.
 - [ ] Test in the iOS Simulator's CarPlay environment with a development entitlement first.
-- [ ] No text entry while in motion; all actions template- or voice-driven.
+- [ ] No text entry while in motion; all actions are voice-driven and spoken status readback only.
 
 ## Realistic timeline
 - Entitlement decision: days to a couple of weeks after submission.

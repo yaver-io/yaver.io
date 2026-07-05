@@ -34,6 +34,151 @@ struct CaptureStatus: Decodable {
     var ffmpeg: Bool?
 }
 
+struct AgentInfo: Decodable {
+    var hostname: String?
+    var platform: String?
+    var arch: String?
+    var agentVersion: String?
+    var deviceId: String?
+    var cpuPercent: Double?
+    var localIPs: [String]?
+}
+
+struct AgentStatus: Decodable {
+    var agentVersion: String?
+    var authExpired: Bool?
+    var tasks: TaskCounts?
+    var devServer: DevServerStatus?
+}
+
+struct TaskCounts: Decodable {
+    var total: Int?
+    var running: Int?
+}
+
+struct DevServerStatus: Decodable {
+    var running: Bool?
+    var framework: String?
+    var url: String?
+    var port: Int?
+    var project: String?
+    var workDir: String?
+}
+
+struct VoiceRuntimeStatus: Decodable {
+    var enabled: Bool?
+    var sttProvider: String?
+    var ttsProvider: String?
+    var sttReady: Bool?
+    var ttsReady: Bool?
+    var defaultProject: String?
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case sttProvider = "stt_provider"
+        case ttsProvider = "tts_provider"
+        case sttReady = "stt_ready"
+        case ttsReady = "tts_ready"
+        case defaultProject = "default_project"
+    }
+}
+
+struct RunnerSessions: Decodable {
+    var count: Int?
+    var sessions: [RunnerSession]?
+}
+
+struct RunnerSession: Decodable, Identifiable {
+    var id: String
+    var agent: String?
+    var title: String?
+    var status: String?
+    var workDir: String?
+    var updatedAt: String?
+    var createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, agent, title, status
+        case workDir = "workDir"
+        case updatedAt = "updatedAt"
+        case createdAt = "createdAt"
+    }
+}
+
+struct ReloadResult: Decodable {
+    var mode: String?
+    var framework: String?
+    var reloaded: Bool?
+    var workDir: String?
+    var deliveredTo: Int?
+    var changeClass: String?
+    var nativeChangesDetected: Bool?
+}
+
+struct PlatformMatrixEnvelope: Decodable {
+    var ok: Bool?
+    var matrix: PlatformMatrixReport?
+}
+
+struct PlatformMatrixReport: Decodable {
+    var devicePlatform: String?
+    var deviceArch: String?
+    var surfaces: [PlatformSurface]?
+
+    enum CodingKeys: String, CodingKey {
+        case devicePlatform = "device_platform"
+        case deviceArch = "device_arch"
+        case surfaces
+    }
+}
+
+struct PlatformSurface: Decodable, Identifiable {
+    var id: String
+    var label: String?
+    var family: String?
+    var surface: String?
+    var status: String?
+    var buildSupported: Bool?
+    var submitSupported: Bool?
+    var deployTarget: String?
+    var scriptPresent: Bool?
+    var notes: [String]?
+    var limitations: [String]?
+    var nextSteps: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, label, family, surface, status, notes, limitations
+        case buildSupported = "build_supported"
+        case submitSupported = "submit_supported"
+        case deployTarget = "deploy_target"
+        case scriptPresent = "script_present"
+        case nextSteps = "next_steps"
+    }
+}
+
+struct RunnerAuthStartResult: Decodable {
+    var ok: Bool?
+    var session: RunnerAuthSession?
+}
+
+struct RunnerAuthSession: Decodable, Identifiable {
+    var id: String
+    var runner: String?
+    var method: String?
+    var status: String?
+    var openURL: String?
+    var code: String?
+    var detail: String?
+    var authConfigured: Bool?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, runner, method, status, code, detail, error
+        case openURL = "openUrl"
+        case authConfigured
+    }
+}
+
 struct PairedATV: Decodable, Identifiable {
     let identifier: String
     let name: String

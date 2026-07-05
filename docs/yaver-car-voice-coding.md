@@ -1,4 +1,4 @@
-# Yaver — Remote Coding From the Car by Voice (+ cheap in-car category surfaces)
+# Yaver — Remote Runtime From the Car by Voice (+ cheap in-car category surfaces)
 
 > **Status:** design-only + build-safe scaffold, 2026-06-17. No native rebuild,
 > nothing committed, no entitlements requested.
@@ -13,11 +13,12 @@ features:
 1. **The "cheap" in-car category surfaces** — Android Auto **messaging** +
    **weather** (and an IoT skeleton noted as a heavier follow-up). These are
    the Android Auto categories that need *no* special entitlement.
-2. **Remote coding from the car by voice** — speak a command → STT → dispatch
-   to the coding agent on a remote box → result summarized to one sentence →
-   TTS read back over car audio.
+2. **Remote runtime from the car by voice** — speak a command → STT → dispatch
+   to the selected Yaver machine/runtime → result summarized to one sentence →
+   TTS read back over car audio. Coding, Talos operation, builds, and machine
+   checks are all task types behind the same voice loop.
 
-The two features share one delivery vehicle: **the coding agent appears as a
+The two features share one delivery vehicle: **the remote runtime appears as a
 conversation you message by voice and that reads replies aloud.** Android Auto
 treats that as a *messaging app*, which is the cheapest, entitlement-free way
 onto the car head unit.
@@ -37,8 +38,8 @@ coding task and waits for its result
 prompt wrapper). The remote-box dispatch path is just
 `quicClient.sendTask(..., codeMode=true)` against whichever device the
 connection pool is pointed at (`connectionManager.clientFor(deviceId)`). So
-"car voice coding" is **not** a new pipeline — it is a *new front end and a
-new safety posture* over the existing one. The net-new work is: (a) a
+"car voice runtime" is **not** a new pipeline — it is a *new front end and a
+new safety posture* over the existing remote-task path. The net-new work is: (a) a
 hands-free / push-to-talk **driving loop** that records → STT → dispatch →
 summarize-to-one-sentence → TTS without ever rendering a diff; (b) the
 **Android Auto MessagingStyle** notification surface so the loop can run from
@@ -56,16 +57,18 @@ that is the entitlement wall. But both Android Auto and CarPlay carve out a
 incoming-message notification, (b) be read aloud by the Assistant, and (c)
 accept a spoken reply via voice. The reframe:
 
-> The **remote coding agent is a contact.** You "message" it by voice; it
+> The **remote runtime is a contact.** You "message" it by voice; it
 > "replies" with a one-sentence status that the car reads aloud. The whole
-> coding session is modeled as a *conversation thread* (`MessagingStyle`),
+> runtime session is modeled as a *conversation thread* (`MessagingStyle`),
 > not as an app screen.
 
 This is honest — it *is* a conversational, asynchronous, voice-first
-interaction — and it is exactly the shape Android Auto's notification
-messaging templates and CarPlay's `carplay-communication` entitlement are
-designed for. It is also the lowest-effort path: a MessagingStyle notification
-needs no CarAppService, no Kotlin `Screen` hierarchy, no template review.
+interaction. On Android it is exactly the shape Android Auto's notification
+messaging templates are designed for. On Apple, the submitted request is
+Voice-Based Conversational, because Yaver is voice-first remote runtime control
+rather than human messaging or VoIP. It is also the lowest-effort Android path:
+a MessagingStyle notification needs no CarAppService, no Kotlin `Screen`
+hierarchy, no template review.
 
 ---
 
@@ -74,8 +77,8 @@ needs no CarAppService, no Kotlin `Screen` hierarchy, no template review.
 | Tier | Surface | Entitlement | Ships | What it is |
 |---|---|---|---|---|
 | **0** | Phone app + Bluetooth car audio + push-to-talk / Siri Shortcut | **None** | **today** | The voice loop runs in the phone app; audio plays over the car's A2DP/Bluetooth speakers. PTT button, lock-screen, or a Siri Shortcut / Android shortcut triggers it. No car SDK at all. |
-| **1** | Android Auto **MessagingStyle** notification | **None** | next | The coding-agent conversation is an `expo-notifications` MessagingStyle notification with a `RemoteInput` reply. Android Auto reads new "messages" (status updates) aloud and lets you reply by voice from the head unit. Needs only the `automotive_app_desc.xml` + `com.google.android.gms.car.application` manifest meta-data. |
-| **2** | CarPlay `carplay-communication` | **Entitlement (strict Apple review)** | later | A real CarPlay communication scene. Requires Apple to grant the CarPlay communication entitlement, a regenerated provisioning profile, and passes Apple's stricter "is this genuinely a messaging app" review. Heaviest path; design it last. |
+| **1** | Android Auto **MessagingStyle** notification | **None** | next | The runtime conversation is an `expo-notifications` MessagingStyle notification with a `RemoteInput` reply. Android Auto reads new "messages" (status updates) aloud and lets you reply by voice from the head unit. Needs only the `automotive_app_desc.xml` + `com.google.android.gms.car.application` manifest meta-data. |
+| **2** | CarPlay voice-based conversational | **Entitlement (strict Apple review)** | submitted | A real CarPlay voice-control scene. Requires Apple to grant the voice-based conversational entitlement, a regenerated provisioning profile, and a minimal CarPlay template that never displays code/logs/diffs. |
 
 **Tier 0 is the product that ships now.** Tiers 1 and 2 are progressive
 enhancements that put the *same loop* on the actual head unit.
@@ -87,7 +90,7 @@ Beyond coding, Android Auto's entitlement-free categories also include
 (agent-side) and `expo-notifications`. So the "cheap in-car category" surfaces
 are:
 
-- **Messaging** — the coding-agent conversation (this doc's Tier 1).
+- **Messaging** — the runtime conversation (this doc's Tier 1).
 - **Weather** — a glanceable card / spoken weather brief sourced from the
   existing `weather` verb. (Skeleton only; not built here.)
 - **IoT / EV** — a `CarAppService` (`androidx.car.app`) Kotlin surface for
@@ -125,6 +128,29 @@ Concretely:
 This is consistent with the project's content-agnostic, utility-first stance
 and with platform driver-distraction rules.
 
+## 4.1 OAuth / sign-in handoff while driving
+
+Car surfaces do **not** run OAuth. That rule applies to CarPlay, Android Auto,
+and the phone-over-Bluetooth Tier 0 flow.
+
+- **Yaver runtime sign-in:** if a car-initiated command needs a machine to be
+  signed in, Yaver creates the same device-code URL used by TV and CLI:
+  `https://yaver.io/auth/device?code=ABCD-1234`. The car reads the short code
+  aloud and sends a push/deep link to the phone. The already-signed-in Yaver
+  phone app approves it.
+- **Claude Code / Codex auth:** the car starts no provider browser. It asks the
+  selected runtime for a `runner_auth browser_start` session, then hands
+  `https://yaver.io/runner-auth/browser?runner=claude|codex` or the provider
+  `openUrl` to the phone. The phone opens the system browser sheet and handles
+  provider redirects, clipboard code capture, biometrics, and token writeback.
+- **iOS and Android parity:** iOS uses Universal Links/custom scheme routing;
+  Android uses App Links/custom scheme routing. Both land in the same mobile
+  screens (`approve-device`, `runner-auth/browser`, `runner-auth/approve`).
+
+While the vehicle is moving, the head unit should only say "Approve this on
+your phone" or "I need Codex sign-in on your phone." It should never display a
+provider login page, long URL, password field, API key field, or OAuth token.
+
 ---
 
 ## 5. The STT → dispatch → summarize → TTS pipeline, mapped onto existing primitives
@@ -140,9 +166,9 @@ and with platform driver-distraction rules.
  └──────────────────────────┘
         │  final transcript (string)
         ▼
- ┌──────────────────────────┐
- │ DISPATCH to remote box   │  quicClient.sendTask(title, transcript,
- │  (coding agent)          │    model, runner, …, codeMode=true)
+	 ┌──────────────────────────┐
+	 │ DISPATCH to remote box   │  quicClient.sendTask(title, transcript,
+	 │  (Yaver runtime)         │    model, runner, …, codeMode=true)
  │                          │  → POST {box}/tasks  source="mobile-code"
  │                          │  via connectionManager.clientFor(deviceId)
  └──────────────────────────┘
@@ -226,13 +252,13 @@ apply.
   rebuild + on-device test), mirroring `withMeshTunnel.js`.
 - **[built] Tier 1 MessagingStyle helper** —
   `mobile/src/lib/carMessagingNotification.ts`: builds the MessagingStyle +
-  CarExtender + RemoteInput reply notification representing the coding-agent
+  CarExtender + RemoteInput reply notification representing the remote-runtime
   conversation, on top of `expo-notifications`. Native CarExtender fields that
   `expo-notifications` can't express are documented as the activation gap.
 - **[not built — heavier follow-up] IoT / EV `CarAppService`** — a real
   Kotlin `androidx.car.app` surface. Out of scope; see §3.
-- **[not built — entitlement-gated] Tier 2 CarPlay** `carplay-communication`
-  scene.
+- **[submitted — entitlement-gated] Tier 2 CarPlay** voice-based conversational
+  scene. Keep the native CarPlay scene disabled until Apple grants the entitlement.
 - **[not built — wiring] UI entry point** — a hidden/dev screen or Settings
   toggle + Siri Shortcut / Android shortcut to start the Tier-0 loop. The lib
   is importable now; wiring is a follow-up.
@@ -255,8 +281,8 @@ apply.
    car connection signal (Android Auto connected / CarPlay scene active). Tier
    0 from the phone can't know for sure, so it relies on the user invoking the
    PTT/Shortcut deliberately and on the one-sentence-readback guard regardless.
-4. **CarPlay (Tier 2) is genuinely hard** — Apple entitlement + strict review.
-   Don't promise it; design it last.
+4. **CarPlay (Tier 2) is entitlement-gated** — Apple must grant the voice-based
+   conversational entitlement before the native scene can ship.
 5. **Latency.** A remote coding task can take minutes. The loop must speak an
    immediate "On it" acknowledgement and deliver the result asynchronously
    (Tier 0: a later spoken status; Tier 1: an incoming MessagingStyle message)
@@ -273,7 +299,8 @@ apply.
 3. `expo prebuild --platform android --clean` → restore force-tracked overlays
    → gradle bundleRelease (~28 min cold).
 4. Verify with Android Auto **DHU** (Desktop Head Unit) before any real car.
-5. Only then consider Tier 2 (CarPlay entitlement request).
+5. CarPlay Tier 2 waits on Apple's entitlement decision, then simulator +
+   vehicle-style voice-template testing before it is enabled in the iOS binary.
 
 Until step 1, every existing TestFlight/Play build stays green — the plugin is
 inert and the lib no-ops when no car surface is present.

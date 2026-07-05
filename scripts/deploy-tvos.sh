@@ -69,6 +69,7 @@ if [ "$UPLOAD" != "1" ]; then
     -sdk appletvos \
     -destination "generic/platform=tvOS" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
+    CODE_SIGNING_ALLOWED=NO \
     ${EXTRA_SETTINGS[@]+"${EXTRA_SETTINGS[@]}"} \
     build
   exit 0
@@ -114,7 +115,7 @@ xcodebuild -project "$TVOS_DIR/YaverTV.xcodeproj" \
   -archivePath "$ARCHIVE_PATH" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
   "${SIGNING_SETTINGS[@]}" \
-  "${ALLOW_PROVISIONING_UPDATES[@]}" \
+  ${ALLOW_PROVISIONING_UPDATES[@]+"${ALLOW_PROVISIONING_UPDATES[@]}"} \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" \
@@ -150,7 +151,7 @@ xcodebuild -exportArchive \
   -archivePath "$ARCHIVE_PATH" \
   -exportOptionsPlist "$EXPORT_OPTIONS" \
   -exportPath "$EXPORT_PATH" \
-  "${ALLOW_PROVISIONING_UPDATES[@]}" \
+  ${ALLOW_PROVISIONING_UPDATES[@]+"${ALLOW_PROVISIONING_UPDATES[@]}"} \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER"

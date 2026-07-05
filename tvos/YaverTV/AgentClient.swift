@@ -103,6 +103,40 @@ actor AgentClient {
         try await ops("capture_status", [:], as: CaptureStatus.self)
     }
 
+    func info() async throws -> AgentInfo {
+        try await ops("info", [:], as: AgentInfo.self)
+    }
+
+    func status() async throws -> AgentStatus {
+        try await ops("status", [:], as: AgentStatus.self)
+    }
+
+    func voiceStatus() async throws -> VoiceRuntimeStatus {
+        try await ops("voice", ["op": "status"], as: VoiceRuntimeStatus.self)
+    }
+
+    func runnerSessions() async throws -> RunnerSessions {
+        try await ops("runner", ["op": "agents_list"], as: RunnerSessions.self)
+    }
+
+    func platformMatrix() async throws -> PlatformMatrixEnvelope {
+        try await ops("mobile_platform_matrix", [:], as: PlatformMatrixEnvelope.self)
+    }
+
+    func startRunnerAuth(_ runner: String) async throws -> RunnerAuthStartResult {
+        try await ops("runner_auth", ["op": "browser_start", "runner": runner], as: RunnerAuthStartResult.self)
+    }
+
+    func runnerAuthStatus(sessionId: String) async throws -> RunnerAuthStartResult {
+        try await ops("runner_auth", ["op": "browser_status", "sessionId": sessionId], as: RunnerAuthStartResult.self)
+    }
+
+    func reload(mode: String = "dev", workDir: String? = nil) async throws -> ReloadResult {
+        var payload: [String: Any] = ["mode": mode]
+        if let workDir, !workDir.isEmpty { payload["workDir"] = workDir }
+        return try await ops("reload", payload, as: ReloadResult.self)
+    }
+
     /// MJPEG frame URL for the capture card — same `/capture/frame.jpg` the RN
     /// client polls. Bearer goes in the header on fetch; tvOS `AsyncImage` can't
     /// set headers, so callers fetch via `frameData()` instead.

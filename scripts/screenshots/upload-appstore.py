@@ -8,8 +8,9 @@ flow shells out to this; it is also runnable by hand.
         --bundle-id com.example.app \
         --dir /path/to/pngs \
         --locale en-US \
+        [--platform IOS|TV_OS] \
         [--files 01_a.png,02_b.png] \
-        [--display-types APP_IPHONE_67,APP_IPHONE_65]
+        [--display-types APP_IPHONE_67,APP_IPHONE_65|APP_APPLE_TV]
 
 Auth (same as the rest of the App Store Connect scripts):
     APP_STORE_KEY_ID, APP_STORE_KEY_ISSUER, APP_STORE_KEY_PATH (.p8)
@@ -84,10 +85,10 @@ def find_app(bundle_id):
     return app["id"]
 
 
-def get_version_localization(app_id, locale):
+def get_version_localization(app_id, locale, platform):
     versions = api_get(
         f"/apps/{app_id}/appStoreVersions",
-        params={"filter[appStoreState]": "PREPARE_FOR_SUBMISSION"}
+        params={"filter[appStoreState]": "PREPARE_FOR_SUBMISSION", "filter[platform]": platform}
     )
     if not versions.get("data"):
         print("ERROR: No version in PREPARE_FOR_SUBMISSION. Create a version in "
@@ -95,7 +96,7 @@ def get_version_localization(app_id, locale):
         sys.exit(1)
     ver = versions["data"][0]
     ver_id = ver["id"]
-    print(f"Version: {ver['attributes']['versionString']} ({ver['attributes']['appStoreState']})")
+    print(f"Version: {ver['attributes']['versionString']} ({ver['attributes']['appStoreState']}, {platform})")
 
     locs = api_get(f"/appStoreVersions/{ver_id}/appStoreVersionLocalizations")
     for loc in locs["data"]:
@@ -272,6 +273,8 @@ def parse_args():
                     help="Directory containing the PNGs (or SHOTS_DIR env).")
     ap.add_argument("--locale", default=os.environ.get("SHOTS_LOCALE", "en-US"),
                     help="App Store localization locale (default en-US).")
+    ap.add_argument("--platform", default=os.environ.get("SHOTS_PLATFORM", "IOS"),
+                    help="App Store platform to target (default IOS; use TV_OS for Apple TV).")
     ap.add_argument("--files", default="",
                     help="Optional comma-separated ordered file list (default: sorted *.png in --dir).")
     ap.add_argument("--display-types", default="APP_IPHONE_67,APP_IPHONE_65",
@@ -296,7 +299,7 @@ def main():
     print()
 
     app_id = find_app(args.bundle_id)
-    loc_id, _ver_id = get_version_localization(app_id, args.locale)
+    loc_id, _ver_id = get_version_localization(app_id, args.locale, args.platform)
 
     if not args.no_age_rating:
         set_age_rating(app_id)
