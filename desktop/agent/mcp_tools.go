@@ -2536,6 +2536,29 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"limit":        map[string]interface{}{"type": "integer"},
 			"onlyPersonal": map[string]interface{}{"type": "boolean"},
 		}}},
+		{"name": "mail_search", "description": "Provider-neutral email search/fetch for car/watch/TV/mobile/MCP. Uses configured Gmail or Microsoft 365 OAuth and returns short message summaries.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"provider":     map[string]interface{}{"type": "string", "enum": []string{"gmail", "o365", "auto"}},
+			"folder":       map[string]interface{}{"type": "string", "enum": []string{"inbox", "sent", "all"}},
+			"query":        map[string]interface{}{"type": "string"},
+			"limit":        map[string]interface{}{"type": "integer"},
+			"onlyPersonal": map[string]interface{}{"type": "boolean"},
+		}}},
+		{"name": "mail_unread", "description": "Driving/watch-safe summary of recent inbox messages from Gmail or Microsoft 365.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"provider":     map[string]interface{}{"type": "string", "enum": []string{"gmail", "o365", "auto"}},
+			"limit":        map[string]interface{}{"type": "integer"},
+			"onlyPersonal": map[string]interface{}{"type": "boolean"},
+		}}},
+		{"name": "mail_send", "description": "Send email through Yaver's configured SMTP relay. Dry-run by default; execute=true requires confirm:'send'.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"to", "subject", "body"}, "properties": map[string]interface{}{
+			"to":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"cc":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"bcc":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"subject": map[string]interface{}{"type": "string"},
+			"body":    map[string]interface{}{"type": "string"},
+			"html":    map[string]interface{}{"type": "string"},
+			"execute": map[string]interface{}{"type": "boolean"},
+			"confirm": map[string]interface{}{"type": "string", "description": "Must be 'send' when execute=true."},
+			"surface": map[string]interface{}{"type": "string", "description": "car, watch, tv, mobile, mcp, cli"},
+		}}},
 		{"name": "mail_draft", "description": "Draft a reply to a message. Pulls the thread + recent sent-folder mail for tone, then pipes through the configured AI runner when execute=true and returns the draft text. Otherwise returns the prompt the caller can execute manually.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"id"}, "properties": map[string]interface{}{
 			"id":           map[string]interface{}{"type": "string"},
 			"provider":     map[string]interface{}{"type": "string"},
@@ -2583,6 +2606,25 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		}}},
 		{"name": "meeting_list", "description": "List all bookable event types.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 		{"name": "meeting_bookings", "description": "List confirmed bookings across all event types.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "meeting_next", "description": "Find the next meeting from local Yaver bookings or configured Google/O365 calendar. Returns a provider-neutral join plan for car/watch/TV/mobile/MCP.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"provider":       map[string]interface{}{"type": "string", "description": "auto, local, google, o365, teams, zoom"},
+			"withinHours":    map[string]interface{}{"type": "integer", "description": "Lookahead window; default 24, max 168."},
+			"includePastMin": map[string]interface{}{"type": "integer", "description": "Treat already-started meetings as joinable for this many minutes; default 5."},
+		}}},
+		{"name": "meeting_join_next", "description": "Find the next meeting and optionally open its official Teams/Meet/Zoom/Yaver link on this runtime host. Use open=false for car/watch confirmation, open=true after approval. openMode=browser/automation/selenium opens a controlled runtime browser profile; default system uses the OS/default app.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+			"provider":       map[string]interface{}{"type": "string", "description": "auto, local, google, o365, teams, zoom"},
+			"open":           map[string]interface{}{"type": "boolean", "description": "Actually open the URL on this Yaver runtime host."},
+			"openMode":       map[string]interface{}{"type": "string", "enum": []string{"system", "browser", "automation", "selenium"}, "description": "system opens the provider/default app; browser/automation/selenium opens a Yaver-controlled Chrome automation session."},
+			"surface":        map[string]interface{}{"type": "string", "description": "car, watch, tv, mobile, mcp, cli"},
+			"withinHours":    map[string]interface{}{"type": "integer"},
+			"includePastMin": map[string]interface{}{"type": "integer"},
+		}}},
+		{"name": "meeting_open_url", "description": "Classify and optionally open a known meeting URL on this runtime host. Supports Teams, Google Meet, Zoom, and Yaver call links. openMode=browser/automation/selenium opens a controlled runtime browser profile; default system uses the OS/default app.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"url"}, "properties": map[string]interface{}{
+			"url":      map[string]interface{}{"type": "string"},
+			"open":     map[string]interface{}{"type": "boolean"},
+			"openMode": map[string]interface{}{"type": "string", "enum": []string{"system", "browser", "automation", "selenium"}, "description": "system opens the provider/default app; browser/automation/selenium opens a Yaver-controlled Chrome automation session."},
+			"surface":  map[string]interface{}{"type": "string", "description": "car, watch, tv, mobile, mcp, cli"},
+		}}},
 
 		// --- Studio modules (clips, chat, A/B, invoices, affiliates, asciinema) ---
 

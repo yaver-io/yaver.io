@@ -36,6 +36,10 @@ import {
   type CarVoiceConfig,
   type CarVoiceResult,
 } from "./carVoiceCoding";
+import {
+  executeCarSurfaceIntent,
+  type CarSurfaceOps,
+} from "./carSurfaceIntent";
 
 // ── Risky-verb detection ─────────────────────────────────────────────
 
@@ -71,19 +75,31 @@ export function isRiskyReply(text: string): boolean {
   if (/\bkubectl\s+delete\b/.test(t)) return true;
   if (/\b(shutdown|reboot|poweroff|destroy)\b/.test(t)) return true;
   // Merge / promote to a protected branch.
-  if (/\bmerge\b/.test(t) && /\b(main|master|prod|production|release)\b/.test(t)) return true;
+  if (
+    /\bmerge\b/.test(t) &&
+    /\b(main|master|prod|production|release)\b/.test(t)
+  )
+    return true;
   return false;
 }
 
 /** True when a reply is an explicit confirmation of a pending risky command. */
 export function isConfirmReply(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!]+$/, "");
-  return /^(confirm|confirmed|yes|yep|yeah|do it|go ahead|proceed|approved?|send it)$/.test(t);
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, "");
+  return /^(confirm|confirmed|yes|yep|yeah|do it|go ahead|proceed|approved?|send it)$/.test(
+    t,
+  );
 }
 
 /** True when a reply explicitly cancels a pending risky command. */
 export function isCancelReply(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!]+$/, "");
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, "");
   return /^(cancel|no|nope|stop|abort|never ?mind|forget it)$/.test(t);
 }
 
@@ -128,6 +144,7 @@ export class CarReplyGate {
 
 export type CarReplyOutcome =
   | "dispatched" // command was sent to the box
+  | "surface" // handled by a car-safe ops verb (meetings/mail/etc.)
   | "needs-confirm" // risky command stashed; awaiting confirm
   | "confirmed" // a previously-stashed risky command was released + dispatched
   | "cancelled" // a pending risky command was discarded
@@ -149,6 +166,7 @@ export interface HandleCarReplyOpts {
   gate: CarReplyGate;
   deps: CarVoiceDeps;
   config?: CarVoiceConfig;
+  ops?: CarSurfaceOps;
   now?: () => number;
 }
 
@@ -169,7 +187,9 @@ export interface HandleCarReplyOpts {
  * Dispatch reuses carVoiceCoding.dispatchAndSummarize, so the never-read-code
  * rule + one-sentence summary readback are inherited unchanged.
  */
-export async function handleCarReply(opts: HandleCarReplyOpts): Promise<CarReplyDecision> {
+export async function handleCarReply(
+  opts: HandleCarReplyOpts,
+): Promise<CarReplyDecision> {
   const { conversationId, gate, deps, config } = opts;
   const text = (opts.text || "").trim();
   const now = opts.now ?? (() => Date.now());
@@ -200,6 +220,13 @@ export async function handleCarReply(opts: HandleCarReplyOpts): Promise<CarReply
       command: text,
       reply: `That's a risky one — say "confirm" to run "${clampForSpeech(text)}", or "cancel".`,
     };
+  }
+
+  if (opts.ops) {
+    const surface = await executeCarSurfaceIntent(text, opts.ops);
+    if (surface.handled) {
+      return { outcome: "surface", reply: surface.spoken, command: text };
+    }
   }
 
   const result = await dispatchAndSummarize(text, deps, config);

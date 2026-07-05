@@ -39,22 +39,22 @@ import (
 
 // EventType is one bookable slot kind.
 type EventType struct {
-	Slug        string    `json:"slug"`
-	Title       string    `json:"title"`
-	DurationMin int       `json:"durationMin"`
-	Description string    `json:"description,omitempty"`
-	Provider    string    `json:"provider"` // "google" | "o365"
-	Hosting     string    `json:"hosting"`  // "meet" | "teams" | "none"
-	Availability []Avail  `json:"availability"`
-	BufferMin   int       `json:"bufferMin,omitempty"` // pad after each booking
-	DaysAhead   int       `json:"daysAhead,omitempty"` // default 14
-	Location    string    `json:"location,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
+	Slug         string    `json:"slug"`
+	Title        string    `json:"title"`
+	DurationMin  int       `json:"durationMin"`
+	Description  string    `json:"description,omitempty"`
+	Provider     string    `json:"provider"` // "google" | "o365"
+	Hosting      string    `json:"hosting"`  // "meet" | "teams" | "none"
+	Availability []Avail   `json:"availability"`
+	BufferMin    int       `json:"bufferMin,omitempty"` // pad after each booking
+	DaysAhead    int       `json:"daysAhead,omitempty"` // default 14
+	Location     string    `json:"location,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 // Avail is a weekly recurring window — e.g. Mon-Fri 09:00-17:00.
 type Avail struct {
-	Weekday   int    `json:"weekday"` // 0=Sun..6=Sat
+	Weekday   int    `json:"weekday"`   // 0=Sun..6=Sat
 	StartTime string `json:"startTime"` // "09:00"
 	EndTime   string `json:"endTime"`   // "17:00"
 	Timezone  string `json:"timezone,omitempty"`
@@ -62,22 +62,22 @@ type Avail struct {
 
 // Booking is one confirmed slot.
 type Booking struct {
-	ID          string    `json:"id"`
-	EventSlug   string    `json:"eventSlug"`
-	Name        string    `json:"name"`
-	Email       string    `json:"email"`
-	StartsAt    time.Time `json:"startsAt"`
-	EndsAt      time.Time `json:"endsAt"`
-	CreatedAt   time.Time `json:"createdAt"`
-	JoinURL     string    `json:"joinUrl,omitempty"`
-	CalEventID  string    `json:"calEventId,omitempty"`
-	Provider    string    `json:"provider"`
+	ID         string    `json:"id"`
+	EventSlug  string    `json:"eventSlug"`
+	Name       string    `json:"name"`
+	Email      string    `json:"email"`
+	StartsAt   time.Time `json:"startsAt"`
+	EndsAt     time.Time `json:"endsAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+	JoinURL    string    `json:"joinUrl,omitempty"`
+	CalEventID string    `json:"calEventId,omitempty"`
+	Provider   string    `json:"provider"`
 }
 
 var (
-	meetMu      sync.Mutex
-	eventTypes  []EventType
-	bookings    []Booking
+	meetMu     sync.Mutex
+	eventTypes []EventType
+	bookings   []Booking
 )
 
 func meetingsFile() (string, error) {
@@ -183,7 +183,7 @@ func computeSlots(e *EventType, now time.Time) []time.Time {
 			start := time.Date(day.Year(), day.Month(), day.Day(), sh, sm, 0, 0, loc)
 			end := time.Date(day.Year(), day.Month(), day.Day(), eh, em, 0, 0, loc)
 			step := time.Duration(e.DurationMin+e.BufferMin) * time.Minute
-			for t := start; t.Add(time.Duration(e.DurationMin) * time.Minute).Before(end) || t.Add(time.Duration(e.DurationMin)*time.Minute).Equal(end); t = t.Add(step) {
+			for t := start; t.Add(time.Duration(e.DurationMin)*time.Minute).Before(end) || t.Add(time.Duration(e.DurationMin)*time.Minute).Equal(end); t = t.Add(step) {
 				if t.Before(now.Add(1 * time.Hour)) {
 					continue
 				}
@@ -233,7 +233,7 @@ func createGoogleEvent(cfg *EmailConfig, e *EventType, b *Booking) (string, stri
 	if e.Hosting == "meet" {
 		body["conferenceData"] = map[string]interface{}{
 			"createRequest": map[string]interface{}{
-				"requestId": b.ID,
+				"requestId":             b.ID,
 				"conferenceSolutionKey": map[string]string{"type": "hangoutsMeet"},
 			},
 		}
@@ -280,8 +280,8 @@ func createGraphEvent(cfg *EmailConfig, e *EventType, b *Booking) (string, strin
 			"contentType": "HTML",
 			"content":     e.Description,
 		},
-		"start":    map[string]string{"dateTime": b.StartsAt.Format(time.RFC3339), "timeZone": "UTC"},
-		"end":      map[string]string{"dateTime": b.EndsAt.Format(time.RFC3339), "timeZone": "UTC"},
+		"start": map[string]string{"dateTime": b.StartsAt.Format(time.RFC3339), "timeZone": "UTC"},
+		"end":   map[string]string{"dateTime": b.EndsAt.Format(time.RFC3339), "timeZone": "UTC"},
 		"attendees": []map[string]interface{}{
 			{"emailAddress": map[string]string{"address": b.Email, "name": b.Name}, "type": "required"},
 		},
@@ -336,8 +336,9 @@ func (s *HTTPServer) handleMeetings(w http.ResponseWriter, r *http.Request) {
 			e.DaysAhead = 14
 		}
 		e.CreatedAt = time.Now().UTC()
+		current := loadMeetings()
 		meetMu.Lock()
-		eventTypes = append(loadMeetings(), e)
+		eventTypes = append(current, e)
 		_ = saveMeetings()
 		meetMu.Unlock()
 		jsonReply(w, http.StatusCreated, map[string]interface{}{"ok": true, "eventType": e})
@@ -439,8 +440,9 @@ func (s *HTTPServer) handleBookSlot(w http.ResponseWriter, r *http.Request, e *E
 		return
 	}
 
+	current := loadBookings()
 	meetMu.Lock()
-	bookings = append(loadBookings(), booking)
+	bookings = append(current, booking)
 	_ = saveBookings()
 	meetMu.Unlock()
 

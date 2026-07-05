@@ -13665,6 +13665,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(map[string]interface{}{"messages": msgs, "counts": countByClassification(msgs)})
+	case "mail_search", "mail_unread", "mail_send":
+		return mcpToolJSON(dispatchOps(OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}, OpsRequest{
+			Machine: "local",
+			Verb:    call.Name,
+			Payload: call.Arguments,
+		}))
 	case "mail_draft":
 		var args struct {
 			ID           string `json:"id"`
@@ -14615,6 +14621,24 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(map[string]interface{}{"eventTypes": loadMeetings()})
 	case "meeting_bookings":
 		return mcpToolJSON(map[string]interface{}{"bookings": loadBookings()})
+	case "meeting_next":
+		return mcpToolJSON(dispatchOps(OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}, OpsRequest{
+			Machine: "local",
+			Verb:    "meeting_next",
+			Payload: call.Arguments,
+		}))
+	case "meeting_join_next":
+		return mcpToolJSON(dispatchOps(OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}, OpsRequest{
+			Machine: "local",
+			Verb:    "meeting_join_next",
+			Payload: call.Arguments,
+		}))
+	case "meeting_open_url":
+		return mcpToolJSON(dispatchOps(OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}, OpsRequest{
+			Machine: "local",
+			Verb:    "meeting_open_url",
+			Payload: call.Arguments,
+		}))
 
 	case "autoinit_start":
 		var spec AutoInitStart
