@@ -437,11 +437,11 @@ export default function LoginScreen() {
                   isTabletPortrait && styles.subtitleTablet,
                 ]}
               >
-                {isTablet ? "AI coding assistant for your machines, from anywhere." : "AI coding assistant for your machines."}
+                {isTablet ? "Your coding agent builds on your machine — hot-reload it on your phone, from anywhere." : "Your coding agent builds on your machine — hot-reload it on your phone."}
               </Text>
               {isTabletLandscape && (
                 <Text style={[styles.tertiaryTagline, { color: c.textMuted }]}>
-                  Sign in to start coding from anywhere.
+                  Sign in to drive your coding agent from anywhere.
                 </Text>
               )}
             </View>

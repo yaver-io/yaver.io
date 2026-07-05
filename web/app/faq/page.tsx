@@ -63,7 +63,7 @@ const faqs = [
       },
       {
         q: "Can I run everything locally with no cloud?",
-        a: "Yes. Use Ollama for local models + Tailscale for networking. Zero cloud, zero API keys, zero cost. Your code, your models, your hardware. The only cloud component is the Convex auth bridge for OAuth sign-in, and you can deploy your own instance of that too.",
+        a: "Yes. Use Ollama for local models + Tailscale for networking. Zero cloud, zero API keys, zero cost. Your code, your models, your hardware. The only cloud component is the Convex auth bridge for OAuth sign-in, and you can deploy your own instance of that too. One honest caveat: the mobile app connects through Yaver's thin coordination plane today — identity and device discovery only, your code stays P2P — and full mobile self-host is on the way.",
       },
       {
         q: "What about Cloudflare Tunnel?",

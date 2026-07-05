@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/use-auth";
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "AI writes code in seconds. The loop around it still takes hours. Drop the Yaver SDK in your app, hand user feedback to your own coding agent, and watch the fix land on your phone. Works with Claude Code, Codex, OpenCode — your code never leaves your machine.";
+  "AI writes code in seconds; the loop around it still takes hours. Register Yaver as an MCP server and your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then hot-reloads it on your phone so you keep iterating from inside the running app. Open source, self-hostable, works with your existing subscription — your code never leaves your machine.";
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
@@ -1223,7 +1223,7 @@ export default function HomePage() {
         <div className="mx-auto max-w-5xl text-center">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Open source, self-hosted, mobile first
+            Open source · Self-hostable · Mobile-first
           </div>
 
           <h1 className="mb-5 text-4xl font-bold leading-[1.02] tracking-tight text-surface-50 sm:text-5xl md:text-6xl">
@@ -1239,10 +1239,11 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
-            Drop the Yaver SDK in your app, hand user feedback to your own
-            coding agent, and watch the fix land on your phone. Works with
-            Claude Code, Codex, OpenCode &mdash; your code never leaves your
-            machine.
+            Register Yaver as an MCP server and your coding agent &mdash; Claude
+            Code, Codex, or OpenCode &mdash; builds a full-stack app on your own
+            machine. Then hot-reload it on your phone and keep iterating from
+            inside the running app. Open source, self-hostable &mdash; your code
+            never leaves your machine.
           </p>
 
           <div className="mt-7 flex flex-col items-center justify-center gap-2">
@@ -1806,7 +1807,7 @@ return (
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
             <p><strong className="text-surface-100">A solo developer can run the open-source stack at $0.</strong></p>
             <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi.</p>
-            <p>Self-host the entire stack for free. Yaver Cloud is optional managed infrastructure for people who want Yaver to run the workspace and private relay for them.</p>
+            <p>Self-host the CLI, agent, relay, and backend for free. The mobile app connects through Yaver&apos;s thin coordination plane today &mdash; identity and device discovery only, your code stays P2P &mdash; and full mobile self-host is on the way. Yaver Cloud is optional managed infrastructure for people who want Yaver to run the workspace and private relay for them.</p>
             <p className="mt-4 text-surface-500">
               The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}
               <strong className="text-surface-300">FSL-1.1</strong> (auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}

@@ -3,9 +3,9 @@
 [![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](docs/planning/LICENSING.md)
 
-**Yaver is a local-first developer toolkit for driving coding agents, previews, feedback, and deploy loops from your phone.**
+**Yaver is an open-source, self-hostable MCP server: your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then you hot-reload it on your phone and keep iterating from inside the running app.**
 
-Your code stays on your machine. The mobile app is the remote control; the `yaver` agent runs on your Mac, Linux box, WSL machine, Pi, or VPS; the SDK captures feedback from your own dev builds.
+Your code stays on your machine. The `yaver` agent runs on your Mac, Linux box, WSL machine, Pi, or VPS; the mobile app is the remote control. The CLI, agent, relay, and backend are all self-hostable — the mobile app connects through a thin hosted coordination plane today (identity + device discovery only; your code stays P2P), and full mobile self-host is on the way.
 
 <p align="center">
   <a href="https://github.com/kivanccakmak/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4">

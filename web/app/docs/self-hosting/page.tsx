@@ -125,9 +125,16 @@ export default function SelfHostingPage() {
             Self-Hosting Guide
           </h1>
           <p className="text-sm leading-relaxed text-surface-400">
-            Yaver is fully self-hostable. Every Yaver component is open source
-            under the AGPL-3.0-only license. Choose the networking option that
-            fits your setup &mdash; from zero-config to fully custom infrastructure.
+            The CLI, agent, relay, and backend (Convex via Docker) are all
+            genuinely self-hostable. Every Yaver component is open source under
+            the AGPL-3.0-only license. Choose the networking option that fits
+            your setup &mdash; from zero-config to fully custom infrastructure.
+          </p>
+          <p className="mt-3 text-sm leading-relaxed text-surface-500">
+            One honest caveat: the mobile app you install from the App Store or
+            Play Store connects through Yaver&apos;s thin coordination plane
+            today &mdash; identity and device discovery only, your code stays
+            P2P &mdash; and full mobile self-host is on the way.
           </p>
         </div>
 
@@ -1026,7 +1033,12 @@ AI Agent options:
                 <InlineCode>yaver config set convex_site_url https://your-project.convex.site</InlineCode>{" "}
                 or <InlineCode>yaver serve --convex-url &lt;url&gt;</InlineCode>.
                 For the mobile app, update <InlineCode>CONVEX_URL</InlineCode> in{" "}
-                <InlineCode>mobile/src/lib/constants.ts</InlineCode>.
+                <InlineCode>mobile/src/lib/constants.ts</InlineCode> and rebuild
+                from source &mdash; the mobile app you install from the App Store
+                or Play Store connects through Yaver&apos;s thin coordination
+                plane today (identity and device discovery only, your code stays
+                P2P), so pointing the shipped app at a self-hosted backend needs
+                a rebuild. Full mobile self-host is on the way.
               </p>
             </div>
           </div>

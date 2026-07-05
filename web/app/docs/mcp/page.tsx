@@ -171,12 +171,13 @@ export default function McpPage() {
             </h4>
             <p className="text-sm leading-relaxed text-surface-400">
               Yaver implements an MCP server that exposes your development
-              machine as a tool server. This means any MCP-compatible AI agent
-              &mdash; Claude Desktop, Claude Web UI, or others &mdash; can
-              create tasks, read files, manage projects, send emails, and
-              connect to other MCP servers through your Yaver agent. All
-              operations run locally on your machine; nothing is sent to
-              third-party servers.
+              machine as a tool server. Yaver auto-registers itself with its
+              three first-class runner CLIs &mdash; Claude Code, Codex, and
+              opencode &mdash; and any other MCP-compatible client can connect
+              too. Once connected, an agent can create tasks, read files, manage
+              projects, send emails, and connect to other MCP servers through
+              your Yaver agent. All operations run locally on your machine;
+              nothing is sent to third-party servers.
             </p>
           </div>
         </section>

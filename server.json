@@ -46,7 +46,7 @@
       "install_guide": "https://yaver.io/docs/mcp",
       "highlights": [
         "Resumable headless OAuth: the device-code flow survives agent tool-call timeouts without re-prompting the human.",
-        "Auto-registers in Claude Code, Claude Desktop, Codex, Cursor, Windsurf, and Zed on first sign-in.",
+        "Auto-registers in Claude Code, Codex, and OpenCode on first sign-in.",
         "Phone-to-dev-machine P2P control plane with MCP tools for hot reload, builds, deploys, git, tunnels, and sessions.",
         "Works with any coding agent \u2014 provider-agnostic by design."
       ]
