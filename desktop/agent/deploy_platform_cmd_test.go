@@ -12,7 +12,7 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	if err := os.MkdirAll(scripts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh", "deploy-wear-os.sh", "deploy-watchos.sh", "deploy-testflight.sh", "deploy-playstore.sh", "deploy-carplay.sh", "deploy-visionos.sh", "deploy-android-xr.sh"} {
+	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh", "deploy-wear-os.sh", "deploy-watchos.sh", "deploy-testflight.sh", "deploy-playstore.sh", "deploy-android-auto.sh", "deploy-carplay.sh", "deploy-visionos.sh", "deploy-android-xr.sh"} {
 		if err := os.WriteFile(filepath.Join(scripts, name), []byte("#!/bin/bash\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +73,7 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Target != "android" || plan.Script != "scripts/deploy-playstore.sh" || len(plan.Args) != 1 || plan.Args[0] != "--upload" {
+	if plan.Target != "android-auto" || plan.Script != "scripts/deploy-android-auto.sh" || len(plan.Args) != 1 || plan.Args[0] != "--upload" {
 		t.Fatalf("unexpected android-auto plan: %+v", plan)
 	}
 

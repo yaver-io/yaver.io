@@ -66,7 +66,10 @@ func platformDeployPlanForValidation(root, target string, upload bool, extra []s
 	case "android-xr", "androidxr", "android-vr", "quest", "meta-quest", "vr-android", "xr-android":
 		t = "android-xr"
 		script = "scripts/deploy-android-xr.sh"
-	case "android", "android-auto", "auto", "playstore":
+	case "android-auto", "auto":
+		t = "android-auto"
+		script = "scripts/deploy-android-auto.sh"
+	case "android", "playstore":
 		t = "android"
 		script = "scripts/deploy-playstore.sh"
 	default:

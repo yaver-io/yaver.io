@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPLOAD=0
+NATIVE_ONLY=0
 CONFIGURATION="${CONFIGURATION:-Release}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/YaverVisionBuild}"
 VISION_DIR="${VISION_DIR:-$ROOT/visionos}"
@@ -11,11 +12,18 @@ IOS_ENTITLEMENTS="${IOS_ENTITLEMENTS:-$ROOT/mobile/ios/Yaver/Yaver.entitlements}
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy-visionos.sh [--upload]
+Usage: scripts/deploy-visionos.sh [--upload] [--native-only]
 
 Analyze/build the Apple Vision Pro release lane. A native visionOS project is
 optional today; when absent, this script verifies that the iOS app can be
-analyzed for compatible iPad-on-visionOS distribution and exits before upload.
+analyzed for compatible iPad-on-visionOS distribution. With --upload and no
+native project, it ships that compatible artifact through the iOS/TestFlight
+lane. Use --native-only to require a real visionOS project.
+
+Options:
+  --upload       Upload the native visionOS artifact, or compatible iOS artifact
+                 when no native visionOS project exists.
+  --native-only  Refuse compatible iOS mode; require a native visionOS project.
 
 Environment:
   VISION_DIR      Override native visionOS project directory. Default: visionos/
@@ -27,6 +35,7 @@ EOF
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --upload) UPLOAD=1 ;;
+    --native-only) NATIVE_ONLY=1 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -77,9 +86,17 @@ if [ ! -d "$VISION_DIR" ]; then
   echo "Running compatible iOS app analysis instead."
   analyze_compatible_ios_for_visionos
   echo "visionOS native upload is gated until a visionOS platform/project exists in App Store Connect."
-  if [ "$UPLOAD" = "1" ]; then
-    echo "ERROR: refusing upload without a native visionOS project. Ship compatible iPad mode through the iOS/TestFlight lane." >&2
+  if [ "$NATIVE_ONLY" = "1" ]; then
+    if [ "$UPLOAD" = "1" ]; then
+      echo "ERROR: native-only visionOS upload requires a native visionOS project." >&2
+    else
+      echo "ERROR: native-only visionOS analysis requires a native visionOS project." >&2
+    fi
     exit 1
+  fi
+  if [ "$UPLOAD" = "1" ]; then
+    echo "Uploading compatible Vision Pro artifact through the iOS/TestFlight lane."
+    "$ROOT/scripts/deploy-testflight.sh"
   fi
   exit 0
 fi
