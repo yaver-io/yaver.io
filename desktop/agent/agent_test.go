@@ -481,7 +481,10 @@ func TestMCPRequiresAuth(t *testing.T) {
 	if status != http.StatusUnauthorized {
 		t.Fatalf("expected unauthenticated /mcp to return 401, got %d", status)
 	}
-	if body["error"] != "missing or invalid Authorization header" {
+	// /mcp now returns the RFC 9728 discovery challenge for unauthenticated
+	// requests (authMCP → mcpAuthChallenge, with a WWW-Authenticate header that
+	// TestAuthMCP_ConnectorScopingAndChallenge asserts on). Still a 401.
+	if body["error"] != "authentication required" {
 		t.Fatalf("expected unauthorized error body, got %#v", body)
 	}
 }

@@ -593,6 +593,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/oauth/token", s.handleOauthToken)
 	mux.HandleFunc("/oauth/userinfo", s.handleOauthUserinfo)
 	mux.HandleFunc("/oauth/jwks", s.handleOauthJWKS)
+	// MCP-spec discovery (RFC 9728 / RFC 8414) at the standard well-known paths so
+	// Claude/ChatGPT connectors can find the AS from a 401 on /mcp. Unauthenticated.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", s.handleMCPProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", s.handleMCPProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-authorization-server", s.handleMCPAuthServerMetadata)
 	// CRUD for registered clients + users — owner-only
 	mux.HandleFunc("/oauth/clients", s.auth(s.handleOauthClients))
 	mux.HandleFunc("/oauth/users", s.auth(s.handleOauthUsers))
@@ -1417,8 +1422,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// a single round trip.
 	mux.HandleFunc("/yaver-agent/audit", s.auth(s.handleYaverAgentDeviceAudit))
 
-	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP
-	mux.HandleFunc("/mcp", s.auth(s.handleMCP))
+	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP.
+	// authMCP adds the per-user OAuth connector path (default-deny tool scope) on
+	// top of the existing owner/paired/guest auth. See oauth_mcp.go.
+	mux.HandleFunc("/mcp", s.authMCP(s.handleMCP))
 	// Manage user-registered external MCP servers (mcp_external.go).
 	mux.HandleFunc("/mcp/servers", s.auth(s.handleMCPServers))
 
@@ -1996,6 +2003,7 @@ func stripGuestRequestHeaders(r *http.Request) {
 		"X-Yaver-SdkAllowedRunners",
 		"X-Yaver-HostShareAllowedRunners",
 		"X-Yaver-AllowedTools",
+		"X-Yaver-Connector",
 		"X-Yaver-RedactPII",
 		"X-Yaver-Support",
 		"X-Yaver-Proxied-By",

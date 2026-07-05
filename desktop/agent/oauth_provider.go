@@ -39,6 +39,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,11 +75,13 @@ type OAuthUser struct {
 
 // oauthCode is an in-memory short-lived authorization code.
 type oauthCode struct {
-	UserID      string
-	ClientID    string
-	RedirectURI string
-	Scope       string
-	ExpiresAt   time.Time
+	UserID        string
+	ClientID      string
+	RedirectURI   string
+	Scope         string
+	CodeChallenge string // PKCE S256 (base64url), bound at authorize
+	Resource      string // RFC 8707 resource indicator (token audience)
+	ExpiresAt     time.Time
 }
 
 // --- storage ---------------------------------------------------------------
@@ -245,8 +248,10 @@ func verifyPassword(password, hashB64, saltB64 string) bool {
 
 // --- JWT -------------------------------------------------------------------
 
-// mintAccessToken returns a short-lived signed access token.
-func mintAccessToken(userID, clientID, scope string, lifetime time.Duration) (string, error) {
+// mintAccessToken returns a short-lived signed access token. audience is the
+// token's aud claim — the RFC 8707 resource for MCP connectors, or the client_id
+// for plain OIDC use.
+func mintAccessToken(userID, audience, scope string, lifetime time.Duration) (string, error) {
 	k, err := ensureOauthKey()
 	if err != nil {
 		return "", err
@@ -256,7 +261,7 @@ func mintAccessToken(userID, clientID, scope string, lifetime time.Duration) (st
 	claims := map[string]interface{}{
 		"iss":   "yaver-oauth",
 		"sub":   userID,
-		"aud":   clientID,
+		"aud":   audience,
 		"scope": scope,
 		"iat":   now,
 		"exp":   now + int64(lifetime.Seconds()),
@@ -313,6 +318,9 @@ func (s *HTTPServer) handleOauthAuthorize(w http.ResponseWriter, r *http.Request
 	responseType := q.Get("response_type")
 	scope := q.Get("scope")
 	state := q.Get("state")
+	codeChallenge := q.Get("code_challenge")
+	codeMethod := q.Get("code_challenge_method")
+	resource := q.Get("resource") // RFC 8707
 	if responseType != "code" {
 		jsonError(w, http.StatusBadRequest, "response_type must be code")
 		return
@@ -326,21 +334,30 @@ func (s *HTTPServer) handleOauthAuthorize(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "redirect_uri not registered")
 		return
 	}
-	// Minimal HTML login form. No framework — keeps the binary
-	// self-contained.
+	// PKCE S256 is mandatory (both MCP directories require it).
+	if codeChallenge == "" || codeMethod != "S256" {
+		jsonError(w, http.StatusBadRequest, "PKCE required: code_challenge with code_challenge_method=S256")
+		return
+	}
+	// Minimal HTML login+consent form. Signing in IS the consent. No framework —
+	// keeps the binary self-contained. PKCE challenge + resource ride through as
+	// hidden fields so the code minted at /oauth/login is bound to them.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!doctype html><html><body style="font-family:system-ui;max-width:360px;margin:64px auto;padding:24px">
-<h2>Sign in</h2>
+<h2>Sign in to Yaver</h2>
+<p style="color:#555;font-size:14px">Authorize <b>%s</b> to connect to your Yaver agent (limited tool access).</p>
 <form method="POST" action="/oauth/login">
 <input type="hidden" name="client_id" value="%s">
 <input type="hidden" name="redirect_uri" value="%s">
 <input type="hidden" name="scope" value="%s">
 <input type="hidden" name="state" value="%s">
+<input type="hidden" name="code_challenge" value="%s">
+<input type="hidden" name="resource" value="%s">
 <p><input name="email" type="email" placeholder="email" required style="width:100%%;padding:10px"></p>
 <p><input name="password" type="password" placeholder="password" required style="width:100%%;padding:10px"></p>
-<button type="submit" style="width:100%%;padding:12px;background:#4F46E5;color:#fff;border:0;border-radius:8px">Sign in</button>
+<button type="submit" style="width:100%%;padding:12px;background:#4F46E5;color:#fff;border:0;border-radius:8px">Sign in &amp; authorize</button>
 </form>
-</body></html>`, clientID, redirectURI, scope, state)
+</body></html>`, html.EscapeString(clientID), html.EscapeString(clientID), html.EscapeString(redirectURI), html.EscapeString(scope), html.EscapeString(state), html.EscapeString(codeChallenge), html.EscapeString(resource))
 }
 
 func (s *HTTPServer) handleOauthLogin(w http.ResponseWriter, r *http.Request) {
@@ -354,6 +371,8 @@ func (s *HTTPServer) handleOauthLogin(w http.ResponseWriter, r *http.Request) {
 	redirectURI := r.PostForm.Get("redirect_uri")
 	scope := r.PostForm.Get("scope")
 	state := r.PostForm.Get("state")
+	codeChallenge := r.PostForm.Get("code_challenge")
+	resource := r.PostForm.Get("resource")
 
 	user := findOauthUserByEmail(email)
 	if user == nil || !verifyPassword(password, user.Hash, user.Salt) {
@@ -363,11 +382,13 @@ func (s *HTTPServer) handleOauthLogin(w http.ResponseWriter, r *http.Request) {
 	code := randomFormID() + randomFormID()
 	oauthMu.Lock()
 	oauthCodes[code] = oauthCode{
-		UserID:      user.ID,
-		ClientID:    clientID,
-		RedirectURI: redirectURI,
-		Scope:       scope,
-		ExpiresAt:   time.Now().Add(5 * time.Minute),
+		UserID:        user.ID,
+		ClientID:      clientID,
+		RedirectURI:   redirectURI,
+		Scope:         scope,
+		CodeChallenge: codeChallenge,
+		Resource:      resource,
+		ExpiresAt:     time.Now().Add(5 * time.Minute),
 	}
 	oauthMu.Unlock()
 	sep := "?"
@@ -384,11 +405,6 @@ func (s *HTTPServer) handleOauthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	grant := r.PostForm.Get("grant_type")
-	if grant != "authorization_code" {
-		jsonError(w, http.StatusBadRequest, "only authorization_code supported")
-		return
-	}
-	code := r.PostForm.Get("code")
 	clientID := r.PostForm.Get("client_id")
 	clientSecret := r.PostForm.Get("client_secret")
 
@@ -398,29 +414,81 @@ func (s *HTTPServer) handleOauthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oauthMu.Lock()
-	entry, ok := oauthCodes[code]
-	if ok {
-		delete(oauthCodes, code)
-	}
-	oauthMu.Unlock()
-	if !ok || time.Now().After(entry.ExpiresAt) {
-		jsonError(w, http.StatusBadRequest, "code invalid or expired")
+	// Determine the subject + audience + scope for the token being issued.
+	var userID, audience, scope string
+	switch grant {
+	case "authorization_code":
+		code := r.PostForm.Get("code")
+		verifier := r.PostForm.Get("code_verifier")
+		oauthMu.Lock()
+		entry, ok := oauthCodes[code]
+		if ok {
+			delete(oauthCodes, code)
+		}
+		oauthMu.Unlock()
+		if !ok || time.Now().After(entry.ExpiresAt) {
+			jsonError(w, http.StatusBadRequest, "code invalid or expired")
+			return
+		}
+		if entry.ClientID != clientID {
+			jsonError(w, http.StatusBadRequest, "code was issued to a different client")
+			return
+		}
+		// PKCE S256: base64url(sha256(verifier)) must equal the stored challenge.
+		if entry.CodeChallenge == "" || verifier == "" {
+			jsonError(w, http.StatusBadRequest, "PKCE verifier required")
+			return
+		}
+		sum := sha256.Sum256([]byte(verifier))
+		if base64.RawURLEncoding.EncodeToString(sum[:]) != entry.CodeChallenge {
+			jsonError(w, http.StatusBadRequest, "PKCE verification failed")
+			return
+		}
+		userID, scope = entry.UserID, entry.Scope
+		audience = entry.Resource // RFC 8707: bind token to the requested resource
+		if audience == "" {
+			audience = clientID
+		}
+	case "refresh_token":
+		rt := r.PostForm.Get("refresh_token")
+		claims, ok := verifyRefreshToken(rt)
+		if !ok {
+			jsonError(w, http.StatusBadRequest, "invalid refresh token")
+			return
+		}
+		userID, _ = claims["sub"].(string)
+		audience, _ = claims["aud"].(string)
+		// scope not carried on refresh; re-issue with empty (safe default)
+	default:
+		jsonError(w, http.StatusBadRequest, "unsupported grant_type")
 		return
 	}
-	access, err := mintAccessToken(entry.UserID, clientID, entry.Scope, 1*time.Hour)
+
+	access, err := mintAccessToken(userID, audience, scope, 1*time.Hour)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	refresh, _ := mintAccessToken(entry.UserID, clientID, "refresh", 30*24*time.Hour)
+	refresh, _ := mintAccessToken(userID, audience, "refresh", 30*24*time.Hour)
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"access_token":  access,
 		"token_type":    "Bearer",
 		"expires_in":    3600,
 		"refresh_token": refresh,
-		"scope":         entry.Scope,
+		"scope":         scope,
 	})
+}
+
+// verifyRefreshToken validates a refresh JWT (RS256 + exp + scope=="refresh").
+func verifyRefreshToken(token string) (map[string]interface{}, bool) {
+	claims, ok := parseVerifyJWT(token)
+	if !ok {
+		return nil, false
+	}
+	if sc, _ := claims["scope"].(string); sc != "refresh" {
+		return nil, false
+	}
+	return claims, true
 }
 
 func (s *HTTPServer) handleOauthUserinfo(w http.ResponseWriter, r *http.Request) {
@@ -476,10 +544,10 @@ func (s *HTTPServer) handleOauthClients(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		secret := randomFormID() + randomFormID() + randomFormID()
-		hashed, _, _ := hashPassword(secret)
+		h, salt, _ := hashPassword(secret)
 		client := OAuthClient{
 			ID:           randomFormID(),
-			Secret:       hashed,
+			Secret:       h + ":" + salt, // hash:salt so verifyClientSecret can check it
 			Name:         body.Name,
 			RedirectURIs: body.RedirectURIs,
 			Scopes:       body.Scopes,
@@ -578,21 +646,14 @@ func findOauthUserByEmail(email string) *OAuthUser {
 }
 
 func verifyClientSecret(c *OAuthClient, plain string) bool {
-	// The stored Secret is a scrypt hash of the plaintext that
-	// was shown once at client creation time. verifyPassword
-	// takes hash + salt separately — we stored them joined, so
-	// split on the colon (hashPassword doesn't actually do
-	// that here; we re-compute cheaply for simplicity because
-	// client count is always small).
-	//
-	// For now we store only the hash without the salt — this
-	// is the MVP and we do a second pass later when the dev
-	// starts rotating client secrets.
-	dk, _, err := hashPassword(plain)
-	if err != nil {
+	// Secret is stored as "hash:salt" (scrypt) — split and verify. A legacy
+	// salt-less secret cannot be verified (a fresh scrypt uses a new random salt),
+	// so it is rejected rather than silently accepted.
+	parts := strings.SplitN(c.Secret, ":", 2)
+	if len(parts) != 2 {
 		return false
 	}
-	return hmac.Equal([]byte(dk), []byte(c.Secret))
+	return verifyPassword(plain, parts[0], parts[1])
 }
 
 func oauthContains(list []string, v string) bool {
