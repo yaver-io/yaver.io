@@ -82,5 +82,6 @@ echo "Wear OS AAB ready: $AAB"
 if [ "$UPLOAD" = "1" ]; then
   PLAY_STORE_KEY_FILE="${PLAY_STORE_KEY_FILE:-$ROOT/keys/google-play-service-account.json}" \
   AAB_PATH="$AAB" \
+  PLAY_TRACK="${PLAY_TRACK:-wear:internal}" \
     python3 "$ROOT/scripts/upload-playstore.py"
 fi
