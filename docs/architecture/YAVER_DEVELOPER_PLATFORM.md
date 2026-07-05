@@ -3,6 +3,11 @@
 This is the baseline third-party developer use case. It applies to SFMG first,
 then to external developers.
 
+Native app/game catalog metadata is declared in `yaver.app.yaml` or
+`yaver.game.yaml`; see `docs/architecture/YAVER_NATIVE_APP_MANIFEST.md` for the
+YAML schema, Yaver OAuth requirements, and the boundary between a hosted Yaver
+runtime app and a separate native App Store / Play Store binary.
+
 ## Core Flow
 
 ```text

@@ -37,6 +37,18 @@
         <meta-data
             android:name="com.google.android.wearable.standalone"
             android:value="true" />
+        <meta-data
+            android:name="io.yaver.native_app_manifest_schema_version"
+            android:value="1" />
+        <meta-data
+            android:name="io.yaver.native_oauth_provider"
+            android:value="yaver-oauth" />
+        <meta-data
+            android:name="io.yaver.native_runtime_kind"
+            android:value="hosted-yaver-companion" />
+        <meta-data
+            android:name="io.yaver.native_runtime_surfaces"
+            android:value="watch" />
 
         <!-- The single Compose-hosting activity: raise/tap → dictate → send →
              one line + haptic. -->

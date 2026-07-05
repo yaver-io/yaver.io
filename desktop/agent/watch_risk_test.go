@@ -72,6 +72,32 @@ func TestWatchIntentToTranscript(t *testing.T) {
 	}
 }
 
+func TestBuildWatchPromptModes(t *testing.T) {
+	cases := []struct {
+		in   string
+		mode string
+		want string
+	}{
+		{"idea for sfmg owner mode sponsor board", "idea-capture", "Do not edit code"},
+		{"add this to sfmg owner mode", "implementation", "permission to work"},
+		{"deploy to production", "implementation", "permission to work"},
+		{"open browser and check pricing", "browser-automation", "Stop for login"},
+		{"what is the status of my remote runtime session", "remote-runtime-question", "one-sentence watch summary"},
+	}
+	for _, tc := range cases {
+		plan := buildWatchPrompt(tc.in)
+		if plan.Mode != tc.mode {
+			t.Fatalf("%q mode = %q, want %q", tc.in, plan.Mode, tc.mode)
+		}
+		if !strings.Contains(plan.Prompt, tc.want) {
+			t.Fatalf("%q prompt missing %q: %s", tc.in, tc.want, plan.Prompt)
+		}
+		if !strings.Contains(plan.Prompt, "Watch transcript: "+tc.in) {
+			t.Fatalf("prompt missing original transcript: %s", plan.Prompt)
+		}
+	}
+}
+
 func TestSummarizeForWatch(t *testing.T) {
 	// Status lead is always present.
 	if got := summarizeForWatch("completed", ""); got != "Done." {

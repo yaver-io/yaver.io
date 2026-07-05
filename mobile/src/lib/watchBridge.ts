@@ -36,6 +36,7 @@ import {
   executeCarSurfaceIntent,
   type CarSurfaceOps,
 } from "./carSurfaceIntent";
+import { buildWatchPrompt } from "./watchPrompt";
 
 // ── Wire protocol v1 ─────────────────────────────────────────────────
 // The single TS source of truth. Mirrored byte-for-byte by:
@@ -180,11 +181,12 @@ async function dispatch(
   config: CarVoiceConfig,
   send: (r: WatchReply) => void,
 ): Promise<WatchReply> {
+  const watchPlan = buildWatchPrompt(text);
   let acked = false;
-  const result = await dispatchAndSummarize(text, deps, config, (s) => {
+  const result = await dispatchAndSummarize(watchPlan.prompt, deps, config, (s) => {
     if (s.stage === "dispatched") {
       acked = true;
-      send(reply("ack", { taskId: s.taskId, spoken: s.text || "On it." }));
+      send(reply("ack", { taskId: s.taskId, spoken: s.text || (watchPlan.mode === "idea-capture" ? "Captured." : "On it.") }));
     } else if (s.stage === "working") {
       send(reply("working", { taskId: s.taskId, status: s.status }));
     }

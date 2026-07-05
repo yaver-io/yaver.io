@@ -55,6 +55,10 @@ export function auditYaverAppManifest(manifest: unknown): YaverAppPolicyAudit {
   const publishPolicy = readObject(root.publishPolicy);
   const source = readObject(root.source);
   const mcp = readObject(root.mcp);
+  const native = readObject(root.native);
+  const nativeHost = readObject(native.host);
+  const nativeApple = readObject(native.apple);
+  const nativeAppleInfoPlist = readObject(nativeApple.infoPlist);
 
   const kind = String(root.kind ?? runtime.kind ?? "");
   const owner = String(root.owner ?? "");
@@ -177,6 +181,26 @@ export function auditYaverAppManifest(manifest: unknown): YaverAppPolicyAudit {
       severity: "warning",
       code: "surface_approval_policy_missing",
       message: "Watch and car surfaces should declare a surface-aware or phone-required approval policy.",
+    });
+  }
+
+  if (isYaverNative && nativeHost.requiresYaverOAuth !== true) {
+    findings.push({
+      severity: "warning",
+      code: "native_host_oauth_not_declared",
+      message: "Yaver-native manifests should declare native.host.requiresYaverOAuth = true.",
+    });
+  }
+
+  const appleSurfaces = ["ios", "tablet", "tvos", "watch", "car", "visionos"];
+  const touchesAppleHost = surfaces.some((surface) => appleSurfaces.includes(surface));
+  const appleRequiredKeys = readStringArray(nativeAppleInfoPlist.requiredKeys);
+  const appleUsageDescriptions = readObject(nativeAppleInfoPlist.usageDescriptions);
+  if (isYaverNative && touchesAppleHost && appleRequiredKeys.length === 0 && Object.keys(appleUsageDescriptions).length === 0) {
+    findings.push({
+      severity: "warning",
+      code: "apple_info_plist_requirements_missing",
+      message: "Yaver-native Apple surfaces should declare native.apple.infoPlist required keys or usage descriptions.",
     });
   }
 

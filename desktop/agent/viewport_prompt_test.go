@@ -123,6 +123,9 @@ func TestFormatViewportHint_Smartwatch(t *testing.T) {
 		if !strings.Contains(hint, "ONE short sentence") {
 			t.Errorf("%s hint should demand a one-sentence answer: %q", surface, hint)
 		}
+		if !strings.Contains(hint, "single-thread") {
+			t.Errorf("%s hint should keep the watch UI single-threaded: %q", surface, hint)
+		}
 		if !strings.Contains(hint, "no code") {
 			t.Errorf("%s hint should forbid code: %q", surface, hint)
 		}

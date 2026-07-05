@@ -21,6 +21,7 @@ struct RootView: View {
                 VStack(spacing: 14) {
                     resultLine
                     recordButton
+                    catalogHint
                     transportHint
                 }
                 .padding(.horizontal, 6)
@@ -94,6 +95,14 @@ struct RootView: View {
             }
         }
         .font(.footnote)
+    }
+
+    private var catalogHint: some View {
+        Text("Companion: \(YaverNativeCatalog.companionSummary)")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
     }
 
     private func label(_ text: String, _ icon: String, _ color: Color) -> some View {

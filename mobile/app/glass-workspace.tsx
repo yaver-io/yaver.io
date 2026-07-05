@@ -51,6 +51,7 @@ import {
   invalidateProjectKindCache,
   type ProjectKindResult,
 } from "../src/lib/projectKind";
+import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 import { callMcpDirect } from "../src/lib/yaverMcpDirect";
 import {
   runYaverAgent,
@@ -117,7 +118,7 @@ export default function GlassWorkspaceScreen(): React.ReactElement {
             fontSize: 10,
             marginTop: 2,
           }}>
-            kind: {kindLabel}
+            kind: {kindLabel} · xr: {yaverNativeSurfaceSummary("xr")}
           </Text>
         </View>
         <Pressable

@@ -21,6 +21,8 @@ Yaver OAuth is the shared Yaver-native platform layer, not an SFMG-only adapter.
 The source of truth for required provider/scopes and bootstrap helpers is
 `web/lib/yaver-native-auth.ts`. New games such as Carrotbet should use the same
 contract and can ask hosted MCP for `yaver_native_oauth_guide` while developing.
+Yaver-native app/game release metadata should be declared in `yaver.game.yaml`;
+see `docs/architecture/YAVER_NATIVE_APP_MANIFEST.md`.
 
 ## Why
 

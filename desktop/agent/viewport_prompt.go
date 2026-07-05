@@ -164,7 +164,7 @@ func surfaceShape(surface string, cols, rows int) string {
 		// Smartwatch (Apple Watch / Wear OS) — the thinnest surface: one
 		// spoken/glanced sentence, never code. See
 		// docs/yaver-smartwatch-voice-terminal.md.
-		return "smartwatch wrist screen — ONE short sentence answer only, no code, no diffs, no lists; if detail is needed say it's on the phone"
+		return "smartwatch wrist screen — single-thread task input/output, ONE short sentence answer only, no code, no diffs, no lists; if detail is needed say it's on the phone"
 	case "car", "car-audio", "car-android-auto", "car-carplay":
 		return "car surface — driving-safe one spoken status sentence, no code, no diffs, no logs; hand off details to phone"
 	case "tv", "tv-living-room", "tv-android", "tv-apple":

@@ -137,15 +137,19 @@ func (s *HTTPServer) handleWatchTranscript(w http.ResponseWriter, text, project 
 // wearable-watch viewport so the runner answers in one short sentence,
 // then returns a `working` reply carrying the taskId to poll.
 func (s *HTTPServer) dispatchWatchTranscript(w http.ResponseWriter, text, project string) {
+	plan := buildWatchPrompt(text)
 	vp := &TaskViewport{
-		Surface:    "wearable-watch",
-		Voice:      true,
-		TTSEnabled: true,
-		TTSBudget:  watchReadbackMaxChars,
+		Surface:      "wearable-watch",
+		Voice:        true,
+		TTSEnabled:   true,
+		TTSBudget:    watchReadbackMaxChars,
+		Interaction:  "voice",
+		VisualBudget: "glance",
+		RiskPolicy:   "watch",
 	}
 	task, err := s.taskMgr.CreateTaskWithOptions(
 		voiceTitleFromTranscript(text),
-		text,
+		plan.Prompt,
 		"",            // model: task manager default
 		"voice-input", // source: same arm as the car/voice loop
 		"",            // runner: default

@@ -136,13 +136,13 @@ const tools = [
   {
     name: "yaver_app_manifest_audit",
     title: "Audit A Yaver App Manifest",
-    description: "Validate that a Yaver-native app manifest preserves external release freedom while enforcing Yaver OAuth, billing, source-sharing, MCP, and surface policy for catalog builds.",
+    description: "Validate that a Yaver-native app manifest preserves external release freedom while enforcing Yaver OAuth, billing, source-sharing, native host, MCP, and surface policy for catalog builds.",
     inputSchema: {
       type: "object",
       properties: {
         manifest: {
           type: "object",
-          description: "Parsed yaver.app.json manifest.",
+          description: "Parsed yaver.app.yaml or yaver.app.json manifest.",
           additionalProperties: true,
         },
       },
@@ -173,13 +173,13 @@ const tools = [
   {
     name: "yaver_game_manifest_audit",
     title: "Audit A Yaver Game Manifest",
-    description: "Validate that a Yaver-native game manifest requires Yaver OAuth, Yaver billing ownership, no source copying, and release-only source sharing.",
+    description: "Validate that a Yaver-native game manifest requires Yaver OAuth, Yaver billing ownership, no source copying, native host declarations, and release-only source sharing.",
     inputSchema: {
       type: "object",
       properties: {
         manifest: {
           type: "object",
-          description: "Parsed yaver.game.json manifest.",
+          description: "Parsed yaver.game.yaml or yaver.game.json manifest.",
           additionalProperties: true,
         },
       },
@@ -331,6 +331,11 @@ function yaverNativeOauthText(args: {
     "Required Yaver scopes:",
     ...requiredYaverNativeScopes(args.appKind).map((scope) => `- ${scope}`),
     "",
+    "Manifest:",
+    `- Declare this in ${args.appKind === "game" ? "yaver.game.yaml" : "yaver.app.yaml"} with auth.provider = yaver-oauth and requiredInYaverBuild = true.`,
+    "- Declare native.host.requiresYaverOAuth = true and list any Apple Info.plist / Android manifest requirements under native.apple or native.android.",
+    "- Keep standalone auth providers only for outside-Yaver builds unless a reviewed catalog exception says otherwise.",
+    "",
     "Recommended backend bridge:",
     "- Add a /yaver/auth/bootstrap route or equivalent server function.",
     "- Read Authorization: Bearer <Yaver token> from the request header.",
@@ -360,7 +365,7 @@ function strategyGameText(gameType: string) {
   const gameLabel = gameType === "sfmg" ? "SFMG" : "the game";
   return [
     "Yaver-native strategy game contract:",
-    `- ${gameLabel} should stay in its own repo/source system; Yaver imports it through a yaver.game.json manifest and a reviewed game package, not by copying code into yaver.io.`,
+    `- ${gameLabel} should stay in its own repo/source system; Yaver imports it through a yaver.game.yaml manifest and a reviewed game package, not by copying code into yaver.io.`,
     "- Yaver is primarily a platform for strategy, simulation, tactics, management, and command/state-driven games rather than low-latency action games.",
     "- Required runtime shape: intent -> command -> validation -> deterministic reducer -> event log -> snapshot -> render.",
     "- Yaver OAuth/session is the account of record for Yaver-hosted builds. Future mobile/TV purchases use Yaver-owned IAP, Play Billing, or web entitlements.",

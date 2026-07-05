@@ -52,6 +52,7 @@ import {
   subscribeCarReplies,
 } from "../src/lib/carMessagingNotification";
 import { runtimeSurfaceClient } from "../src/lib/runtimeSurfaceClient";
+import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 
 // ── turn history model (UI only) ────────────────────────────────────
 interface Turn {
@@ -657,6 +658,16 @@ export default function CarVoiceCodingScreen() {
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <AppScreenHeader title="Car Voice Coding" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <View style={[card, { borderColor: c.accent }]}>
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>Yaver-native car surface</Text>
+          <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700", marginTop: 4 }}>
+            {yaverNativeSurfaceSummary("car")}
+          </Text>
+          <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 4 }}>
+            Car is companion-only: voice, summaries, approvals, and handoff to phone/TV/runtime.
+          </Text>
+        </View>
+
         {/* Active box */}
         <View
           style={[

@@ -25,6 +25,50 @@ import (
 // wrist. Tighter than the car's 200 — a watch face shows ~1-2 short lines.
 const watchReadbackMaxChars = 120
 
+type watchPromptPlan struct {
+	Mode   string
+	Prompt string
+}
+
+func buildWatchPrompt(transcript string) watchPromptPlan {
+	clean := strings.TrimSpace(transcript)
+	mode := classifyWatchPrompt(clean)
+	shared := "This task came from a smartwatch while the user may be walking. Input may be short, noisy, and under-specified. Do not ask for long clarification on the watch. Return a watch-safe one-sentence spoken summary first; send details, code, logs, and decisions to phone/desktop."
+	var instruction string
+	switch mode {
+	case "implementation":
+		instruction = "Treat this as permission to work on the remote runtime. If the app/repo is ambiguous, infer from current Yaver context; otherwise create a concise implementation plan and stop before destructive changes. For code changes, make focused edits, run the smallest useful check, and summarize outcome in one sentence for the watch."
+	case "browser-automation":
+		instruction = "Treat this as a remote browser/runtime automation request. Use visible or auditable browser automation where possible. Stop for login, payment, CAPTCHA, consent, destructive actions, or private data exposure; hand off details to phone. For read-only browsing, run the session and summarize the result in one watch-safe sentence."
+	case "remote-runtime-question":
+		instruction = "Treat this as a question for the remote runtime. Inspect the relevant app/session/log/status if available. Answer with a one-sentence watch summary and put detailed findings on the phone/desktop task output."
+	default:
+		mode = "idea-capture"
+		instruction = "Treat this as idea capture unless the user explicitly asked to implement now. Turn it into a concise product note: app/context guess, user problem, possible feature, acceptance criteria, and next implementation step. Do not edit code unless the transcript explicitly asks to build/change/fix/add."
+	}
+	return watchPromptPlan{
+		Mode:   mode,
+		Prompt: shared + "\n\n" + instruction + "\n\nWatch transcript: " + clean,
+	}
+}
+
+func classifyWatchPrompt(transcript string) string {
+	t := " " + strings.ToLower(strings.TrimSpace(transcript)) + " "
+	if regexp.MustCompile(`\b(implement|build|make|code|edit|change|add|fix|wire|create|ship|deploy|redeploy|deployment|release|rollout|push|force|reset|delete|remove|destroy|prod|production)\b`).MatchString(t) {
+		return "implementation"
+	}
+	if regexp.MustCompile(`\b(browser|website|site|page|login|search|scrape|click|open|chrome|safari|playwright|selenium)\b`).MatchString(t) {
+		return "browser-automation"
+	}
+	if regexp.MustCompile(`\b(question|ask|check|status|what|why|how|can you|runtime|session|summari[sz]e)\b`).MatchString(t) {
+		return "remote-runtime-question"
+	}
+	if regexp.MustCompile(`\b(idea|remember|note|thought|feature idea|maybe|should we|what if)\b`).MatchString(t) {
+		return "idea-capture"
+	}
+	return "idea-capture"
+}
+
 // ── Risk gate ────────────────────────────────────────────────────────
 // Coarse on purpose: the point is "stop and ask before something
 // destructive/irreversible", not a policy engine. Mirrors RISK_PATTERNS in

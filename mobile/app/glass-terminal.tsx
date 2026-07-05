@@ -76,6 +76,7 @@ import {
   invalidateProjectKindCache,
   type ProjectKindResult,
 } from "../src/lib/projectKind";
+import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 import XtermView, { type XtermHandle } from "../src/components/XtermView";
 import { resizeFrame, isTerminalMetaFrame } from "../src/lib/xtermBridge";
 
@@ -705,7 +706,16 @@ export default function GlassTerminalScreen() {
             }}>
               {shellReady ? "● live" : (reconnectTimer.current ? "○ reconnecting" : `○ ${connectionStatus}`)}
             </Text>
-          ) : null}
+          ) : (
+            <Text style={{
+              color: PAL.muted,
+              fontFamily: "Menlo",
+              fontSize: 10,
+              marginTop: 2,
+            }}>
+              xr · {yaverNativeSurfaceSummary("xr")}
+            </Text>
+          )}
         </Pressable>
         <Pressable
           hitSlop={8}

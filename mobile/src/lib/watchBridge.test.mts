@@ -39,17 +39,31 @@ function capture() {
 
 test("a safe transcript dispatches and streams ack then summary", async () => {
   const { send, sent } = capture();
+  let dispatchedPrompt = "";
   const final = await handleWatchTurn(
     { v: 1, kind: "transcript", text: "add a test" } as WatchTurn,
-    deps(),
+    deps({ dispatch: async (_title, prompt) => { dispatchedPrompt = prompt; return "task-1"; } }),
     {},
     send,
   );
   assert.equal(final.kind, "summary");
   assert.match(final.spoken!, /Done\./);
+  assert.match(dispatchedPrompt, /smartwatch/i);
+  assert.match(dispatchedPrompt, /Watch transcript: add a test/i);
   const kinds = sent.map((r) => r.kind);
   assert.deepEqual(kinds[0], "ack");          // "On it" fires first
   assert.equal(kinds.at(-1), "summary");      // summary last
+});
+
+test("walking idea is dispatched as idea capture, not blind code edit", async () => {
+  let dispatchedPrompt = "";
+  const final = await handleWatchTurn(
+    { v: 1, kind: "transcript", text: "idea for sfmg owner mode sponsors" } as WatchTurn,
+    deps({ dispatch: async (_title, prompt) => { dispatchedPrompt = prompt; return "task-1"; } }),
+  );
+  assert.equal(final.kind, "summary");
+  assert.match(dispatchedPrompt, /Treat this as idea capture/i);
+  assert.match(dispatchedPrompt, /Do not edit code/i);
 });
 
 // ── risky write: confirm round-trip ──────────────────────────────────
@@ -80,7 +94,8 @@ test("confirm:confirm dispatches the echoed transcript", async () => {
     send,
   );
   assert.equal(final.kind, "summary");
-  assert.equal(dispatchedText, "deploy to production");
+  assert.match(dispatchedText, /Watch transcript: deploy to production/i);
+  assert.match(dispatchedText, /permission to work/i);
 });
 
 test("confirm:cancel (and anything unclear) fails safe without dispatching", async () => {

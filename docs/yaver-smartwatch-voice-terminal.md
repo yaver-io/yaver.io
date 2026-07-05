@@ -165,6 +165,30 @@ treats deploy/push/delete/prod as confirm-required).
   confirm or open phone." That's `carVoiceConfirm.interpretConfirmReply()` on a
   tap target. This is genuinely better on a watch than anywhere else.
 
+## 5.1 Walking ideas, browser automation, and the one-thread UI
+
+The watch prompt contract is intentionally stricter than phone/desktop because
+walking input is short, noisy, and often speculative. The bridge wraps every
+watch transcript before it reaches the remote runtime:
+
+- **Idea capture is the default.** "Idea for SFMG owner sponsors" becomes a
+  product note with acceptance criteria and a next step. It does not edit code
+  unless the transcript explicitly says build/add/fix/wire/ship.
+- **Implementation is explicit.** "Add this to SFMG" or "fix the failing test"
+  becomes a normal remote runtime task, still with watch-safe readback.
+- **Browser automation is auditable.** Read/search/open/click style work may run
+  in the remote browser, but the runner must stop for login, payment, CAPTCHA,
+  consent, destructive actions, or private data exposure.
+- **Questions summarize first.** Status checks and "ask the runtime" requests
+  must return one sentence for the wrist first; logs, screenshots, code, and
+  long answers belong on phone or desktop.
+
+The native watch UI should stay a single task thread: one current input/output
+line, one record/stop action, one optional confirm sheet, and a handoff target.
+No task list, no diff viewer, no browser viewport, no multi-pane terminal on
+the wrist. The watch can start, approve, cancel, and hear the result; the phone,
+TV, web, or desktop owns everything that needs reading.
+
 ## 6. Platform reality — two thin native apps, NOT React Native
 
 This is settled precedent in the repo, not an open question. The **tvOS ADR

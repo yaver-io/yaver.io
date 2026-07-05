@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
 import type { ThemeColors } from "../src/constants/colors";
+import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 
 type Tile = {
   key: string;
@@ -28,8 +29,10 @@ type Tile = {
 
 // Only lean-back-friendly surfaces. Editing code / tabs / forms are phone+web
 // surfaces; a TV remote can't drive them, so they're deliberately omitted.
+const TV_CATALOG_SURFACE = Platform.OS === "android" ? "android-tv" : "tvos";
+
 const TILES: Tile[] = [
-  { key: "games", label: "Yaver Games", detail: "SFMG · strategy runtime", icon: "game-controller-outline", route: "/apps?surface=games" },
+  { key: "games", label: "Yaver Catalog", detail: yaverNativeSurfaceSummary(TV_CATALOG_SURFACE), icon: "game-controller-outline", route: `/yaver-catalog?surface=${TV_CATALOG_SURFACE}` },
   { key: "home", label: "Home Control", detail: "Universal remote · activities", icon: "home-outline", route: "/home-control" },
   { key: "appletv", label: "Apple TV", detail: "Remote · now playing", icon: "tv-outline", route: "/appletv-remote" },
   { key: "capture", label: "Capture & Stream", detail: "Capture card · scenes", icon: "videocam-outline", route: "/appletv-remote?surface=glass" },

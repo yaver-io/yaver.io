@@ -18,6 +18,18 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>YaverNativeAppManifestSchemaVersion</key>
+	<string>1</string>
+	<key>YaverNativeOAuthProvider</key>
+	<string>yaver-oauth</string>
+	<key>YaverNativeRuntimeKind</key>
+	<string>hosted-yaver-runtime</string>
+	<key>YaverNativeRuntimeSurfaces</key>
+	<array>
+		<string>tvos</string>
+		<string>android-tv</string>
+		<string>remote-runner</string>
+	</array>
     <key>UIRequiredDeviceCapabilities</key>
     <array>
         <string>arm64</string>
