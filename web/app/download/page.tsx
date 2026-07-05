@@ -184,6 +184,53 @@ export default function DownloadPage() {
           </div>
         </section>
 
+        <section className="mt-10 grid gap-5 md:grid-cols-2">
+          <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-surface-50">Android app</h2>
+              <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-400">
+                APK &middot; QR install
+              </span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-surface-400">
+              Scan the QR from your phone or tap through to download the latest signed APK. No Node,
+              no CLI &mdash; the mobile app is the native container that runs your projects and drives
+              your agents. Also on Google Play.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <DownloadButton href="https://download.yaver.io" primary>
+                Open QR install page
+              </DownloadButton>
+              <a
+                href="https://download.yaver.io/latest.apk"
+                className="inline-flex items-center justify-center rounded-xl border border-surface-700 px-4 py-2.5 text-sm font-semibold text-surface-200 transition hover:border-surface-500 hover:text-surface-50"
+              >
+                Download APK directly
+              </a>
+              <a
+                href="https://play.google.com/store/apps/details?id=io.yaver.mobile"
+                className="inline-flex items-center justify-center rounded-xl border border-surface-700 px-4 py-2.5 text-sm font-semibold text-surface-200 transition hover:border-surface-500 hover:text-surface-50"
+              >
+                Google Play
+              </a>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
+            <h2 className="text-lg font-semibold text-surface-50">iOS app</h2>
+            <p className="mt-3 text-sm leading-6 text-surface-400">
+              iPhone and iPad ship through the App Store &mdash; Apple does not allow public APK-style
+              sideloading. Install from the store, then sign in with the same account as your desktop
+              agent.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <DownloadButton href="https://apps.apple.com/us/app/yaver-io/id6760467669" primary>
+                App Store
+              </DownloadButton>
+            </div>
+          </div>
+        </section>
+
         <section className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
           <h2 className="text-lg font-semibold text-surface-50">Sign-in providers</h2>
           <p className="mt-3 text-sm leading-6 text-surface-400">

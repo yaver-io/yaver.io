@@ -1,0 +1,25 @@
+# download.yaver.io — Cloudflare Worker fronting the yaver-apk R2 bucket.
+# Serves the QR install page at "/" and streams the APK + metadata objects.
+# Deploy: cd download && npx wrangler deploy
+#
+# ONE-TIME MIGRATION (see README.md): download.yaver.io is currently an R2
+# *custom domain* on the yaver-apk bucket. A hostname can't be both an R2
+# custom domain and a Worker custom domain — remove the R2 custom domain in
+# the Cloudflare dashboard (R2 → yaver-apk → Settings → Custom Domains) BEFORE
+# the first `wrangler deploy`, or the custom_domain route below will conflict.
+# The R2 binding here gives the Worker direct object access, so public serving
+# keeps working after the custom domain moves to the Worker.
+
+name = "yaver-download"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Worker owns the bare hostname; wrangler provisions the DNS + cert.
+[[routes]]
+pattern = "download.yaver.io"
+custom_domain = true
+
+# Direct object access to the distribution bucket.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "yaver-apk"

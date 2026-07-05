@@ -1,0 +1,13 @@
+{
+  "name": "yaver-download",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Cloudflare Worker for download.yaver.io — QR install page + R2 APK host",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

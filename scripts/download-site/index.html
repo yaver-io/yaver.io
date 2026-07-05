@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install Yaver for Android</title>
+<meta name="description" content="Download and install the Yaver Android app. Scan the QR code from your phone or tap to download the latest signed APK.">
+<meta property="og:title" content="Install Yaver for Android">
+<meta property="og:description" content="Scan the QR from your phone or tap to download the latest signed APK.">
+<link rel="icon" href="https://yaver.io/favicon.ico">
+<style>
+  :root {
+    --bg0: #070b13;
+    --bg1: #0f1b34;
+    --bg2: #16243f;
+    --fg: #e6edf8;
+    --muted: #9fb2cd;
+    --accent: #3f6bd0;
+    --accent2: #5b8bff;
+    --card: rgba(16, 27, 52, 0.72);
+    --line: rgba(120, 160, 230, 0.16);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(120% 80% at 50% 0%, var(--bg2), var(--bg1) 45%, var(--bg0));
+    color: var(--fg);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%;
+    max-width: 440px;
+    text-align: center;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(7, 11, 19, 0.5);
+    margin-bottom: 22px;
+  }
+  .brand img { width: 26px; height: 26px; border-radius: 7px; }
+  .brand span {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 26px; font-weight: 800; letter-spacing: 0.5px;
+    text-shadow: 0 0 22px rgba(120, 160, 230, 0.45);
+  }
+  .ver { color: var(--accent2); font-weight: 700; font-size: 13px; letter-spacing: 0.5px; min-height: 18px; }
+  .qr-wrap {
+    margin: 26px auto 18px;
+    width: 208px; height: 208px;
+    padding: 14px;
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+  .qr-wrap svg { width: 100%; height: 100%; display: block; }
+  .qr-hint { color: var(--muted); font-size: 12.5px; margin: 0 0 22px; }
+  a.btn {
+    display: block;
+    background: linear-gradient(180deg, var(--accent2), var(--accent));
+    color: #fff;
+    padding: 16px 24px;
+    border-radius: 15px;
+    text-decoration: none;
+    font-weight: 800; font-size: 16px; letter-spacing: 0.3px;
+    box-shadow: 0 10px 28px rgba(63, 107, 208, 0.4);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  a.btn:active { transform: translateY(1px); box-shadow: 0 6px 18px rgba(63, 107, 208, 0.35); }
+  .btn-sub { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+  .steps {
+    text-align: left;
+    margin: 28px auto 0;
+    padding: 18px 20px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+  }
+  .steps h2 {
+    margin: 0 0 12px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
+  }
+  .steps ol { margin: 0; padding-left: 20px; color: #cdd9ee; font-size: 13.5px; line-height: 1.7; }
+  .steps li { margin-bottom: 4px; }
+  .foot { margin-top: 26px; font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .foot a { color: var(--accent2); text-decoration: none; }
+  .foot a:hover { text-decoration: underline; }
+  .ios {
+    margin-top: 14px; font-size: 12.5px; color: var(--muted);
+  }
+  .ios a { color: var(--accent2); text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <img src="https://yaver.io/icon-192.png" alt="Yaver">
+      <span>Yaver for Android</span>
+    </div>
+
+    <h1>Install Yaver</h1>
+    <div class="ver" id="ver">&nbsp;</div>
+
+    <!-- QR encodes https://download.yaver.io/latest.apk (fixed target) -->
+    <div class="qr-wrap" aria-label="QR code to download the Yaver APK">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 37 37" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h37v37H0z"/><path stroke="#000000" d="M4 4.5h7m1 0h1m1 0h1m3 0h1m2 0h2m1 0h1m1 0h7M4 5.5h1m5 0h1m3 0h1m5 0h2m1 0h2m1 0h1m5 0h1M4 6.5h1m1 0h3m1 0h1m3 0h2m1 0h1m2 0h2m1 0h1m2 0h1m1 0h3m1 0h1M4 7.5h1m1 0h3m1 0h1m1 0h1m2 0h1m2 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h3m1 0h1M4 8.5h1m1 0h3m1 0h1m1 0h2m2 0h7m3 0h1m1 0h3m1 0h1M4 9.5h1m5 0h1m1 0h1m4 0h2m3 0h2m2 0h1m5 0h1M4 10.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M12 11.5h1m5 0h5m1 0h1M4 12.5h1m3 0h1m1 0h9m1 0h2m1 0h7m2 0h1M6 13.5h3m2 0h1m2 0h3m2 0h4m3 0h7M4 14.5h1m5 0h1m3 0h2m1 0h3m2 0h1m4 0h2m3 0h1M5 15.5h2m2 0h1m1 0h1m2 0h1m1 0h2m1 0h8m1 0h2m1 0h2M5 16.5h1m2 0h1m1 0h3m1 0h2m1 0h1m3 0h3m1 0h1m5 0h1M6 17.5h4m4 0h1m2 0h6m3 0h7M4 18.5h3m1 0h1m1 0h1m1 0h1m4 0h2m1 0h1m1 0h1m3 0h3m1 0h1M4 19.5h1m3 0h2m1 0h1m1 0h4m1 0h1m2 0h2m8 0h2M5 20.5h2m1 0h1m1 0h1m1 0h3m2 0h3m1 0h1m1 0h3m1 0h1m3 0h1M4 21.5h1m1 0h4m1 0h2m1 0h1m4 0h1m1 0h2m3 0h4m1 0h2M6 22.5h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7m1 0h3m1 0h1m1 0h1m1 0h1M12 23.5h2m3 0h1m1 0h1m1 0h1m4 0h1m1 0h1m2 0h2M4 24.5h2m1 0h1m1 0h4m4 0h1m2 0h2m2 0h6m2 0h1M12 25.5h9m1 0h1m1 0h1m3 0h1m3 0h1M4 26.5h7m1 0h4m3 0h1m1 0h1m1 0h2m1 0h1m1 0h3m1 0h1M4 27.5h1m5 0h1m2 0h1m2 0h1m1 0h1m1 0h5m3 0h1m2 0h2M4 28.5h1m1 0h3m1 0h1m1 0h2m3 0h2m1 0h2m1 0h7m1 0h1M4 29.5h1m1 0h3m1 0h1m2 0h2m2 0h1m1 0h2m2 0h1m1 0h1m6 0h1M4 30.5h1m1 0h3m1 0h1m3 0h6m1 0h5m3 0h4M4 31.5h1m5 0h1m8 0h1m1 0h1m2 0h1m1 0h2m1 0h1m1 0h2M4 32.5h7m1 0h5m4 0h1m1 0h2m2 0h3m1 0h1"/></svg>
+    </div>
+    <p class="qr-hint">Scan with your phone&rsquo;s camera to download</p>
+
+    <a class="btn" href="/latest.apk" id="dl">&#11015;&#65039;&nbsp; Download APK</a>
+    <p class="btn-sub" id="size">Latest signed build &middot; Android 8+</p>
+
+    <div class="steps">
+      <h2>Installing the APK</h2>
+      <ol>
+        <li>Tap <b>Download APK</b> above (or scan the QR from another phone).</li>
+        <li>Open the downloaded file. Android may warn about &ldquo;unknown apps.&rdquo;</li>
+        <li>Tap <b>Settings</b> &rarr; allow your browser to <b>install unknown apps</b>.</li>
+        <li>Go back and tap <b>Install</b>, then <b>Open</b>.</li>
+      </ol>
+    </div>
+
+    <p class="ios">On an iPhone? <a href="https://apps.apple.com/us/app/yaver-io/id6760467669">Get Yaver on the App Store</a>.</p>
+
+    <div class="foot">
+      <a href="https://yaver.io">yaver.io</a> &middot;
+      <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile">Google Play</a><br>
+      Package <code>io.yaver.mobile</code>. This APK is signed by Yaver.
+    </div>
+  </div>
+
+  <script>
+    // Fill version + size from the R2-hosted version.json so this page never
+    // needs rebuilding per release — only latest.apk + version.json change.
+    (function () {
+      function fmtMB(bytes) {
+        if (!bytes || isNaN(bytes)) return null;
+        return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+      }
+      fetch("/version.json", { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (v) {
+          if (!v) return;
+          if (v.versionName) {
+            document.getElementById("ver").textContent =
+              "v" + v.versionName + (v.versionCode ? " (build " + v.versionCode + ")" : "");
+          }
+          var mb = fmtMB(v.size);
+          if (mb) {
+            document.getElementById("size").textContent =
+              "Latest signed build · " + mb + " · Android 8+";
+          }
+        })
+        .catch(function () { /* keep static fallback copy */ });
+    })();
+  </script>
+</body>
+</html>
