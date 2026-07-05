@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "yaver": {
+      "command": "npx",
+      "args": ["-y", "yaver-cli@latest", "yaver-mcp"],
+      "env": {
+        "YAVER_HEADLESS": "0"
+      }
+    }
+  }
+}

@@ -1024,7 +1024,7 @@ function MCPIntegrationSection() {
           MCP Integration
         </h2>
         <p className="mx-auto mb-16 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-          Connect Yaver as an MCP server from Claude Desktop, Claude Web UI, or any MCP-compatible client.
+          Connect Yaver as an MCP server from Codex Desktop, Claude Code, OpenCode, or any MCP-compatible client.
         </p>
 
         {/* Tabs */}
@@ -1063,12 +1063,15 @@ function MCPIntegrationSection() {
               <pre className="text-surface-200 whitespace-pre-wrap">{`{
   "mcpServers": {
     "yaver": {
-      "command": "yaver",
-      "args": ["mcp"]
+      "command": "npx",
+      "args": ["-y", "yaver-cli@latest", "yaver-mcp"]
     }
   }
 }`}</pre>
             </div>
+            <p className="px-5 pb-5 pt-0 text-xs leading-relaxed text-surface-500">
+              Codex Desktop can install the Yaver plugin from the local marketplace; the plugin bundles this MCP server and setup guidance.
+            </p>
           </div>
         )}
 

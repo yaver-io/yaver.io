@@ -12,7 +12,7 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	if err := os.MkdirAll(scripts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh", "deploy-wear-os.sh", "deploy-watchos.sh", "deploy-testflight.sh", "deploy-playstore.sh"} {
+	for _, name := range []string{"deploy-tv.sh", "deploy-android-tv.sh", "deploy-tvos.sh", "deploy-wear-os.sh", "deploy-watchos.sh", "deploy-testflight.sh", "deploy-playstore.sh", "deploy-carplay.sh"} {
 		if err := os.WriteFile(filepath.Join(scripts, name), []byte("#!/bin/bash\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -81,7 +81,7 @@ func TestPlatformDeployPlanForTVTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Target != "ios" || plan.Validation == nil || plan.Validation.Driver != "selenium" || plan.Validation.Scope != "full" || plan.Validation.Viewport != "iphone15" {
+	if plan.Target != "carplay" || plan.Script != "scripts/deploy-carplay.sh" || plan.Validation == nil || plan.Validation.Driver != "selenium" || plan.Validation.Scope != "full" || plan.Validation.Viewport != "ipad11-landscape" {
 		t.Fatalf("unexpected carplay selenium validation plan: %+v", plan)
 	}
 }

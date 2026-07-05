@@ -1,0 +1,33 @@
+{
+  "name": "yaver",
+  "version": "0.1.0",
+  "description": "Use the Yaver MCP server from Codex to drive your own dev machine and paired phone.",
+  "author": {
+    "name": "Simkab",
+    "email": "info@simkab.com",
+    "url": "https://yaver.io"
+  },
+  "homepage": "https://yaver.io/docs/mcp",
+  "repository": "https://github.com/kivanccakmak/yaver.io",
+  "license": "FSL-1.1-Apache-2.0",
+  "keywords": ["mcp", "codex", "react-native", "mobile", "self-hosted", "developer-tools"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Yaver",
+    "shortDescription": "Connect Codex to your local Yaver dev machine.",
+    "longDescription": "Yaver runs as a local MCP server so Codex can pair your phone, start development loops, hot-reload React Native bundles, inspect feedback, and manage self-hosted app projects without sending source code through a hosted middleman.",
+    "developerName": "Simkab",
+    "category": "Developer Tools",
+    "capabilities": ["MCP", "Local"],
+    "websiteURL": "https://yaver.io",
+    "privacyPolicyURL": "https://yaver.io/privacy",
+    "termsOfServiceURL": "https://yaver.io/terms",
+    "defaultPrompt": [
+      "Set up Yaver for this repo.",
+      "Pair my phone with Yaver.",
+      "Check my Yaver dev loop."
+    ],
+    "brandColor": "#6366F1"
+  },
+  "mcpServers": "./.mcp.json"
+}

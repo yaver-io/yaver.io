@@ -215,6 +215,13 @@ export default function McpPage() {
                 <Divider />
                 <Cmd>codex mcp add yaver -- npx -y yaver-cli yaver-mcp</Cmd>
               </Terminal>
+              <p className="mt-3 text-sm leading-relaxed text-surface-400">
+                Codex Desktop users can also install the bundled Yaver plugin
+                from the local marketplace. It declares the same{" "}
+                <InlineCode>npx -y yaver-cli@latest yaver-mcp</InlineCode>{" "}
+                server and adds a short Codex skill that starts with{" "}
+                <InlineCode>yaver_lazy_setup</InlineCode>.
+              </p>
             </div>
           </div>
 
