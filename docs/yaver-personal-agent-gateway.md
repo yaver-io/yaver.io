@@ -166,6 +166,26 @@ rate via broker API), bank (get balance), commerce (add order), etc.
 4. **ACT wrapper** — dry-run + confirm + audit, then enable one write end-to-end.
 5. Voice surface: route gateway queries through the in-car STT/TTS assistant.
 
+## 19. Health portals and e-Nabız
+
+Health portals are a first-class Personal Agent Gateway use case, but they are a
+sensitive-read category, not a generic scraping job.
+
+The reference connector is `health_enabiz`:
+
+- read-only first: results, prescriptions, appointments, report metadata
+- scheduled human-cadence checks, not polling swarms
+- local vault/profile/artifact storage
+- optional inference for summaries and reminder planning
+- no diagnosis, no medication changes, no autonomous writes
+
+OAuth, e-Devlet login, 2FA, CAPTCHA, or blocks must trigger user handoff:
+automation stops, the visible browser/redroid session is preserved, the user
+completes the step manually, and Yaver resumes only after explicit consent.
+Never bypass, solve, spoof, or rotate around a block.
+
+See `docs/architecture/PERSONAL_HEALTH_AGENT.md`.
+
 ---
 
 # Deep design (design-only, 2026-06-17)
@@ -383,5 +403,4 @@ Per connector, the broker picks a mode — **always a remote-operable one**:
   push_to_app(device) | sms | passkey }`; the broker routes accordingly, escalating to a
   human-gate only when irreducible.
 - **Passkey-only with no fallback** stays the one dead-end (non-relayable) → official API / manual.
-
 

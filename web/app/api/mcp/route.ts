@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auditYaverAppManifest, formatYaverAppPolicyAudit } from "@/lib/yaver-app-policy";
+import { auditYaverGameManifest, formatYaverGamePolicyAudit } from "@/lib/yaver-game-policy";
 
 const SERVER_NAME = "Yaver";
 const SERVER_VERSION = "1.0.0";
@@ -71,6 +73,80 @@ const tools = [
           description: "The kind of app the user wants to start or connect.",
         },
       },
+      additionalProperties: false,
+    },
+    outputSchema: textResultSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: "yaver_app_runtime_guide",
+    title: "Build A Yaver-Native App",
+    description: "Explain the Yaver app runtime contract for external release, optional Yaver catalog distribution, MCP, cloud inference, and multi-surface support.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        appType: {
+          type: "string",
+          enum: ["game", "simulation", "workflow", "assistant_connector", "devtool", "unknown"],
+          description: "The app family being integrated.",
+        },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: textResultSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: "yaver_app_manifest_audit",
+    title: "Audit A Yaver App Manifest",
+    description: "Validate that a Yaver-native app manifest preserves external release freedom while enforcing Yaver OAuth, billing, source-sharing, MCP, and surface policy for catalog builds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        manifest: {
+          type: "object",
+          description: "Parsed yaver.app.json manifest.",
+          additionalProperties: true,
+        },
+      },
+      required: ["manifest"],
+      additionalProperties: false,
+    },
+    outputSchema: textResultSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: "yaver_strategy_game_native_guide",
+    title: "Build A Yaver-Native Strategy Game",
+    description: "Explain the Yaver-native strategy game contract for mobile, tablet, TV, watch, browser, and remote-runner compatibility.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        gameType: {
+          type: "string",
+          enum: ["sfmg", "strategy", "simulation", "unknown"],
+          description: "The game or strategy-game family being integrated.",
+        },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: textResultSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: "yaver_game_manifest_audit",
+    title: "Audit A Yaver Game Manifest",
+    description: "Validate that a Yaver-native game manifest requires Yaver OAuth, Yaver billing ownership, no source copying, and release-only source sharing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        manifest: {
+          type: "object",
+          description: "Parsed yaver.game.json manifest.",
+          additionalProperties: true,
+        },
+      },
+      required: ["manifest"],
       additionalProperties: false,
     },
     outputSchema: textResultSchema,
@@ -165,6 +241,18 @@ function callTool(id: JsonRpcId, params: any) {
       ].join("\n")));
     case "yaver_project_bootstrap_guide":
       return jsonRpc(id, textResult(bootstrapText(String(args.projectType || "unknown"))));
+    case "yaver_app_runtime_guide":
+      return jsonRpc(id, textResult(appRuntimeText(String(args.appType || "unknown"))));
+    case "yaver_app_manifest_audit": {
+      const audit = auditYaverAppManifest(args.manifest);
+      return jsonRpc(id, textResult(formatYaverAppPolicyAudit(audit)));
+    }
+    case "yaver_strategy_game_native_guide":
+      return jsonRpc(id, textResult(strategyGameText(String(args.gameType || "unknown"))));
+    case "yaver_game_manifest_audit": {
+      const audit = auditYaverGameManifest(args.manifest);
+      return jsonRpc(id, textResult(formatYaverGamePolicyAudit(audit)));
+    }
     case "yaver_privacy_summary":
       return jsonRpc(id, textResult([
         "Yaver is local-first. The local MCP server runs on the user's own Mac, Linux, WSL, Pi, or VPS machine.",
@@ -175,6 +263,36 @@ function callTool(id: JsonRpcId, params: any) {
     default:
       return jsonRpcError(id, -32602, `Unknown Yaver tool: ${name}`);
   }
+}
+
+function appRuntimeText(appType: string) {
+  const label = appType === "unknown" ? "the app" : appType.replace("_", " ");
+  return [
+    "Yaver-native app runtime contract:",
+    `- ${label} can be developed with Yaver and still released independently by the developer. Yaver catalog distribution is optional, reviewed, and separately monetized.`,
+    "- External app releases may use developer-owned auth, hosting, payments, and stores. Yaver charges only for Yaver services the developer keeps using: cloud runners, inference, relay, feedback, testing, MCP hosting, and release automation.",
+    "- In-Yaver catalog builds use Yaver OAuth, Yaver entitlements, Yaver billing, and no direct developer payments inside the Yaver app.",
+    "- The reusable runtime path is intent -> command/tool call -> validation -> event log/audit -> render/result -> surface-specific summary.",
+    "- MCP tools should be grouped into reviewed packs with declared scopes, risk, approval policy, data locality, and billing meter.",
+    "- Surface support should be explicit: phone/web are full UI, TV is D-pad/wallboard/couch mode, watch is glance/approval, car is voice/status, XR is spatial panels, remote-runner does heavy work.",
+    "- Yaver-managed inference should be sold as app capability, not raw tokens: intent parsing, scenario generation, test bots, summaries, feedback triage, and workflow planning.",
+  ].join("\n");
+}
+
+function strategyGameText(gameType: string) {
+  const gameLabel = gameType === "sfmg" ? "SFMG" : "the game";
+  return [
+    "Yaver-native strategy game contract:",
+    `- ${gameLabel} should stay in its own repo/source system; Yaver imports it through a yaver.game.json manifest and a reviewed game package, not by copying code into yaver.io.`,
+    "- Yaver is primarily a platform for strategy, simulation, tactics, management, and command/state-driven games rather than low-latency action games.",
+    "- Required runtime shape: intent -> command -> validation -> deterministic reducer -> event log -> snapshot -> render.",
+    "- Yaver OAuth/session is the account of record for Yaver-hosted builds. Future mobile/TV purchases use Yaver-owned IAP, Play Billing, or web entitlements.",
+    "- Target surfaces should be declared explicitly: web, iOS phone, Android phone, tablet, tvOS, Android TV, watch companion, car/voice companion, and remote runner.",
+    "- TV/tablet/mobile are primary play surfaces. Watch and car should be companion/briefing/approval surfaces, not full dense gameplay.",
+    "- Development can use GitHub, GitLab, self-hosted Git, local folders, Yaver Cloud, self-hosted runtime, Codex, Claude Code, OpenCode, or other MCP/coding-agent tools.",
+    "- Developers can still use Yaver to develop, test, run privately, self-host, or do whatever their own project/license allows without sharing source with Yaver.",
+    "- Source/package sharing is only required for official in-Yaver catalog release/distribution, where private review access and Yaver compliance checks are mandatory.",
+  ].join("\n");
 }
 
 function setupText(client: string) {
