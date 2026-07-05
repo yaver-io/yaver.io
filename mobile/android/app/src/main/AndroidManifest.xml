@@ -42,6 +42,19 @@
        prebuild. Keep the two in sync. -->
   <uses-feature android:name="android.software.leanback" android:required="false"/>
   <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+  <!-- Android XR / headset compatibility. These are explicitly optional because
+       this shared Play AAB is still the phone/tablet app, not a dedicated
+       immersive OpenXR binary. Required XR features live behind the dedicated
+       android-xr deploy gate once a native OpenXR/Unity/Quest artifact exists.
+       The camera/Bluetooth declarations prevent Google Play from treating the
+       permissions above as hard hardware filters on headset-class devices. -->
+  <uses-feature android:name="android.software.xr.api.openxr" android:required="false"/>
+  <uses-feature android:name="android.hardware.vr.headtracking" android:required="false"/>
+  <uses-feature android:name="android.hardware.camera.any" android:required="false"/>
+  <uses-feature android:name="android.hardware.camera" android:required="false"/>
+  <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
+  <uses-feature android:name="android.hardware.bluetooth" android:required="false"/>
+  <uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>
@@ -81,6 +94,9 @@
         <category android:name="android.intent.category.LAUNCHER"/>
         <!-- Surfaces the app on the Android TV / Google TV leanback home row. -->
         <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+        <!-- Lets headset launchers identify the shared app as XR-compatible.
+             A true immersive Quest/OpenXR release must use immersive checks. -->
+        <category android:name="com.oculus.intent.category.VR"/>
       </intent-filter>
       <intent-filter>
         <action android:name="android.intent.action.VIEW"/>
