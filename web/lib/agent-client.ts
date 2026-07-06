@@ -1948,6 +1948,24 @@ export class AgentClient {
     return data;
   }
 
+  /**
+   * getOpsVerbs lists every ops verb the connected agent registered, each
+   * with its JSON-Schema payload. This is the same `/ops/verbs` feed the
+   * `ops_verbs` MCP tool exposes to agents — here it drives the generic
+   * schema-driven ToolPanelView so a verb gets a native form without a
+   * hand-written panel. `payload` is a JSON Schema (may be undefined for
+   * param-less verbs).
+   */
+  async getOpsVerbs(): Promise<
+    Array<{ name: string; description?: string; streaming?: boolean; allowGuest?: boolean; payload?: any }>
+  > {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops/verbs`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to list ops verbs: ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.verbs) ? data.verbs : [];
+  }
+
   async getAgentUpdateStatus(): Promise<AgentUpdateStatus> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/update`, {
