@@ -1005,6 +1005,10 @@ type Task struct {
 	PendingFollowUps []PendingFollowUp `json:"pendingFollowUps,omitempty"`
 
 	runner   RunnerConfig // the runner config used for this task (not persisted)
+	// codexLastMsgPath: for embedded chat mode we run codex with
+	// --output-last-message <file> and read ONLY the final assistant message
+	// from it as ResultText — no reasoning, tool-log, or banner pollution.
+	codexLastMsgPath string
 	cmd      *exec.Cmd
 	cancel   context.CancelFunc
 	stdin    io.WriteCloser
@@ -2320,6 +2324,22 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	if task.Model != "" {
 		runner.Model = task.Model
 	}
+
+	// Embedded chat + codex: run with --output-last-message so we can read ONLY
+	// the final assistant message (clean answer) as ResultText, instead of
+	// scrubbing codex's reasoning + tool-call transcript. The flag is injected
+	// right before the {prompt} arg; the file is read in readRawOutput.
+	if chatMode && strings.EqualFold(runner.RunnerID, "codex") {
+		task.codexLastMsgPath = filepath.Join(os.TempDir(), "yaver-codex-last-"+task.ID+".txt")
+		injected := make([]string, 0, len(runner.Args)+2)
+		for _, a := range runner.Args {
+			if a == "{prompt}" {
+				injected = append(injected, "--output-last-message", task.codexLastMsgPath)
+			}
+			injected = append(injected, a)
+		}
+		runner.Args = injected
+	}
 	// Resolve the task's effective workDir for the runner's sandbox
 	// allowlist (codex uses -C <DIR> to add it). Without this, codex's
 	// workspace-write sandbox treats the project path as Read-only and
@@ -3032,6 +3052,17 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 	// leak our own injected system context or Codex's banner+config dump.
 	// Mirrors mobile-side stripPromptEcho in mobile/app/(tabs)/tasks.tsx.
 	task.ResultText = stripPromptEcho(task.Output)
+	// Embedded chat + codex: prefer codex's own final-message file (written via
+	// --output-last-message). It contains ONLY the final answer — no reasoning,
+	// no tool-call logs, no banner — which is exactly what a normie should see.
+	if task.codexLastMsgPath != "" {
+		if b, err := os.ReadFile(task.codexLastMsgPath); err == nil {
+			if final := strings.TrimSpace(string(b)); final != "" {
+				task.ResultText = final
+			}
+		}
+		_ = os.Remove(task.codexLastMsgPath)
+	}
 	tm.mu.Unlock()
 
 	log.Printf("[task %s] Raw output reader finished (output_len=%d, result_len=%d)",
