@@ -2040,7 +2040,10 @@ func buildRunnerArgsWithWorkDir(runner RunnerConfig, prompt, workDir string) []s
 	// runner with this concept and we don't want to mint a generic
 	// "drop-paired-args-when-placeholder-empty" syntax that other
 	// runners might trip over later.
-	if runner.RunnerID == "opencode" && strings.TrimSpace(runner.Mode) != "" {
+	// "chat"/"chat:<surface>" is the embedded Q&A mode (see chatTaskResponseContext),
+	// NOT an opencode agent name — don't splice it as --agent.
+	if runner.RunnerID == "opencode" && strings.TrimSpace(runner.Mode) != "" &&
+		runner.Mode != "chat" && !strings.HasPrefix(runner.Mode, "chat:") {
 		out := make([]string, 0, len(args)+2)
 		injected := false
 		for _, a := range args {
@@ -2207,8 +2210,20 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		tm.autoSwitchProject(task, prompt)
 	}
 
+	// EMBEDDED "chat" mode: a third party (Talos web chat / WhatsApp / voice)
+	// drives Yaver as a plain-language Q&A brain for a NON-TECHNICAL end user.
+	// That user must see ONLY a clean, surface-encoded answer — never the
+	// coding-agent framing, terminal narration, decision/scheduling preambles,
+	// or this prompt. So chat mode gets its own clean contract and skips all the
+	// coding-agent context blocks below.
+	chatMode := task.runner.Mode == "chat" || strings.HasPrefix(task.runner.Mode, "chat:")
+
 	// System prompt: behave as a remote terminal agent, tailored to the task source.
-	prompt += taskSourcePromptSuffix(task.Source)
+	if chatMode {
+		prompt += chatTaskResponseContext(task.runner.Mode)
+	} else {
+		prompt += taskSourcePromptSuffix(task.Source)
+	}
 
 	contextDir := tm.workDir
 	if task.WorkDir != "" {
@@ -2219,7 +2234,11 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// per task via Task.AskFreely (audit / risky-change reviews). Inserted
 	// AFTER taskSourcePromptSuffix so the source-specific framing is read
 	// first, then the policy clarifies "and don't ask in prose."
-	if task.AskMode {
+	// Skipped entirely for chat mode — "operate autonomously / schedule_self"
+	// framing is wrong for a conversational Q&A turn.
+	if chatMode {
+		// no coding-agent preambles for embedded chat
+	} else if task.AskMode {
 		// Ask mode reframes the run as explain-first deep analysis with a
 		// confirm gate before acting — the opposite stance from the
 		// no-questions preamble, so it replaces (not augments) it.
@@ -2327,6 +2346,14 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			prompt = redacted
 		}
 	}
+	// Deterministic prompt-echo boundary. Runners like codex echo the ENTIRE
+	// prompt to stdout before answering; appending this sentinel as the final
+	// line lets stripPromptEcho slice everything up to (and including) its last
+	// occurrence, so no injected system context can survive into ResultText —
+	// regardless of which context blocks were assembled above (the old cleaner
+	// keyed off three hardcoded end-sentences a talos-web prompt never had). If a
+	// runner doesn't echo the prompt, the slice simply no-ops.
+	prompt += "\n\n" + promptEchoSentinel + "\n"
 	args := buildRunnerArgsWithWorkDir(runner, prompt, taskDirForArgs)
 
 	// Recurring-schedule resume: when the scheduler re-fires a schedule with
@@ -3795,6 +3822,34 @@ When the user asks you to run a short read-only inspection command — e.g. "run
 
 [Long-running / build / test / deploy output]
 For commands whose value is success/failure (build, test, deploy, migration, install) the rule above does NOT apply — summarize the outcome and surface only the lines that explain failures. The "show raw output" rule is specifically for inspection asks where the human wants to read the output themselves.`
+}
+
+// chatTaskResponseContext is the EMBEDDED-mode contract. A third party drives
+// Yaver as a Q&A assistant for a non-technical end user, so the output must be a
+// clean, human-readable answer — no coding-agent framing, no terminal narration,
+// no tool logs, no engine internals, and never this prompt. The answer is encoded
+// for the target surface (task.Surface): web markdown, WhatsApp markup, or plain
+// prose for voice.
+func chatTaskResponseContext(mode string) string {
+	base := "\n\nYou are answering as Talos, an assistant for a manufacturing/ERP business, speaking to a NON-TECHNICAL user. Answer their question directly and completely." +
+		"\n- Reply in the SAME language as the user's message (Turkish or English)." +
+		"\n- Give ONLY the final answer. No step-by-step narration, no terminal/command output, no \"checked/next\" status bullets, no mention of tools, runners, engines, files, or how you obtained the data." +
+		"\n- Use the available Talos data tools to fetch REAL data; fetch ALL relevant rows and aggregate fully before answering — never report a partial slice or stop early on a large result set." +
+		"\n- Be accurate and concrete: real names, codes, quantities, currencies, dates. If a total is asked, compute the complete total."
+	// Surface is encoded as a suffix on the mode: "chat" (web markdown, default),
+	// "chat:whatsapp", "chat:voice". mode is a no-op for codex so this is safe.
+	surface := ""
+	if i := strings.IndexByte(mode, ':'); i >= 0 {
+		surface = strings.ToLower(strings.TrimSpace(mode[i+1:]))
+	}
+	switch surface {
+	case "whatsapp", "wa":
+		return base + "\n- This is sent over WhatsApp: use WhatsApp formatting ONLY — *bold* with single asterisks, _italic_. NO markdown tables and NO headings. Present rows as short \"label: value\" lines or \"- \" bullets. Keep it tight and scannable."
+	case "plain", "voice", "tts":
+		return base + "\n- This will be read aloud: reply in plain prose sentences. No markdown, no tables, no bullets, no code."
+	default: // web_markdown — Talos web/mobile chat bubble
+		return base + "\n- This renders as GitHub-flavored Markdown in a chat bubble: use clean Markdown — tables, \"- \" bullets, **bold** — exactly like a normal chat answer."
+	}
 }
 
 // ListTasks returns info about all tasks.

@@ -338,7 +338,15 @@ func collapseRepeatedLeadInFence(s string) string {
 //	yaverDevServerContext         → "Kill any stale expo/metro processes before retrying."
 //	yaverWrapperCapabilityContext → "or related Yaver preview tools instead of asking them to guess."
 //	autopilotContext              → "pick up where you left off."
+// promptEchoSentinel is appended as the LAST line of every assembled prompt
+// (tasks.go, before args build). Runners that echo the prompt (codex raw mode)
+// reproduce it verbatim, giving stripPromptEcho a deterministic boundary to slice
+// after — so injected system context can never leak into ResultText even when no
+// other end-marker sentence is present (the talos-web/chat case).
+const promptEchoSentinel = "⟦YAVER_PROMPT_BOUNDARY_9F3A⟧"
+
 var systemContextEndMarkers = []string{
+	promptEchoSentinel,
 	"Kill any stale expo/metro processes before retrying.",
 	"or related Yaver preview tools instead of asking them to guess.",
 	"pick up where you left off.",
