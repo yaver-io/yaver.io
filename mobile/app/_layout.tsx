@@ -23,6 +23,7 @@ installRuntimeDebugHandlers();
 
 import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
 import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useEffect } from "react";
 import { AppState, Dimensions, NativeModules, Platform, ScrollView, Text, View } from "react-native";
@@ -80,6 +81,10 @@ function InnerLayout() {
   const { isDark, colors } = useTheme();
   const { user } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  useEffect(() => {
+    void SplashScreen.hideAsync().catch(() => {});
+  }, []);
   // Wire the native screen-recorder bridge once on first render. Idempotent
   // — vibePreview.ts.setNativeScreenRecorder just stores the latest fn.
   useEffect(() => {
@@ -119,7 +124,6 @@ function InnerLayout() {
   }, [user?.id]);
   // Feed the active route into dogfood breadcrumbs + the native capture payload
   // so a caught screenshot knows which screen it's on. No-op when dogfood is off.
-  const pathname = usePathname();
   useEffect(() => {
     recordDogfoodRoute(pathname);
   }, [pathname]);

@@ -69,14 +69,45 @@ public class AppDelegate: ExpoAppDelegate {
     YaverHTTPServer.shared.start()
 
 #if os(iOS) || os(tvOS)
-    window = ShakeDetectingWindow(frame: UIScreen.main.bounds)
+    if let scene = Self.activeWindowScene() {
+      window = ShakeDetectingWindow(windowScene: scene)
+    } else {
+      window = ShakeDetectingWindow(frame: UIScreen.main.bounds)
+    }
     factory.startReactNative(
       withModuleName: "main",
       in: window,
       launchOptions: launchOptions)
+    attachMainWindowToActiveScene()
+    DispatchQueue.main.async { [weak self] in self?.attachMainWindowToActiveScene() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+      self?.attachMainWindowToActiveScene()
+    }
 #endif
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  private static func activeWindowScene() -> UIWindowScene? {
+    var fallback: UIWindowScene?
+    for scene in UIApplication.shared.connectedScenes {
+      guard let windowScene = scene as? UIWindowScene else { continue }
+      if fallback == nil {
+        fallback = windowScene
+      }
+      if windowScene.activationState == .foregroundActive || windowScene.activationState == .foregroundInactive {
+        return windowScene
+      }
+    }
+    return fallback
+  }
+
+  private func attachMainWindowToActiveScene() {
+    guard let window else { return }
+    if window.windowScene == nil, let scene = Self.activeWindowScene() {
+      window.windowScene = scene
+    }
+    window.makeKeyAndVisible()
   }
 
   @objc func handleBundleReload(_ notification: Notification) {
@@ -1304,6 +1335,13 @@ final class YaverFramedHost: UIViewController {
 
 class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
   var overrideBundleURL: URL?
+
+  override func customize(_ rootView: UIView) {
+    // Expo's iOS splash subscriber can leave its Fabric loading view over the
+    // mounted React surface in Release/TestFlight builds. Yaver owns the native
+    // launch storyboard, so do not install a second runtime splash overlay.
+    rootView.backgroundColor = .black
+  }
 
   override func sourceURL(for bridge: RCTBridge) -> URL? {
     bridge.bundleURL ?? bundleURL()
