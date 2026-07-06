@@ -87,6 +87,9 @@ export const invite = mutation({
     // slugs/names on the host. Useful when a dev wants to let users file
     // feedback about Project A without exposing B & C. Empty = all projects.
     allowedProjects: v.optional(v.array(v.string())),
+    // canVibe opts a tester (scope="sdk-project") into the AI-improve surface
+    // (/vibing). Ignored for any other scope. Default false = test-only.
+    canVibe: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -218,6 +221,10 @@ export const invite = mutation({
     if (guestUser) invitationDoc.guestUserId = guestUser._id;
     if (rawUserId) invitationDoc.invitedByUserId = true;
     if (proposed.length > 0) invitationDoc.proposedDeviceIds = proposed;
+    // canVibe is only meaningful for the tester tier — never let a full or
+    // feedback-only invite carry it (the agent would ignore it anyway, but
+    // keep the stored state coherent).
+    if (scope === "sdk-project" && args.canVibe === true) invitationDoc.canVibe = true;
     const allowedProjects = (args.allowedProjects ?? [])
       .map((s) => s.trim())
       .filter(Boolean);
@@ -275,6 +282,8 @@ async function materializeInvitationAccept(
     ...(Array.isArray(invitation.allowedProjects) && invitation.allowedProjects.length > 0
       ? { allowedProjects: invitation.allowedProjects as string[] }
       : {}),
+    // Carry the tester's vibe opt-in from the invitation into the live grant.
+    ...(invitation.canVibe === true ? { canVibe: true } : {}),
   });
 
   // Normalize + clamp approved list against proposal (if any) and ownership.
@@ -978,6 +987,7 @@ export const getGuestConfig = query({
       guestName: string;
       scope: "full" | "feedback-only" | "sdk-project" | "support";
       allowedProjects?: string[];
+      canVibe?: boolean;
       dailyTokenLimit?: number;
       allowedRunners?: string[];
       usageMode?: string;
@@ -1014,6 +1024,7 @@ export const getGuestConfig = query({
         // without re-inviting existing teammates doesn't silently downgrade them.
         scope: access.scope ?? "full",
         allowedProjects: access.allowedProjects,
+        canVibe: access.canVibe,
         dailyTokenLimit: access.dailyTokenLimit,
         allowedRunners: grant?.allowedRunners ?? access.allowedRunners,
         usageMode: grant?.usageMode ?? access.usageMode,
@@ -1082,6 +1093,9 @@ export const updateGuestConfig = mutation({
     // Narrow (or clear, by passing []) the set of projects this guest can
     // see feedback for / trigger fix-tasks against.
     allowedProjects: v.optional(v.array(v.string())),
+    // Toggle the tester's AI-improve (vibe) opt-in. Only sticks while the
+    // effective scope is sdk-project; a scope downgrade clears it.
+    canVibe: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -1192,6 +1206,13 @@ export const updateGuestConfig = mutation({
     if (args.allowedProjects !== undefined) {
       const cleaned = args.allowedProjects.map((s) => s.trim()).filter(Boolean);
       patch.allowedProjects = cleaned.length > 0 ? cleaned : undefined;
+    }
+    // canVibe only applies to the tester tier. Clear it whenever the effective
+    // scope isn't sdk-project so a scope downgrade can't leave a stale vibe
+    // grant behind.
+    const effectiveScope = args.scope ?? access.scope ?? "full";
+    if (args.canVibe !== undefined || (args.scope !== undefined && effectiveScope !== "sdk-project")) {
+      patch.canVibe = effectiveScope === "sdk-project" && args.canVibe === true ? true : undefined;
     }
 
     await ctx.db.patch(access._id, patch);

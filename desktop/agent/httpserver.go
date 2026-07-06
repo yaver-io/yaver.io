@@ -1341,6 +1341,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/guests/revoke", s.auth(s.handleGuestRevoke))
 	mux.HandleFunc("/guests/config", s.auth(s.handleGuestConfig))
 	mux.HandleFunc("/guests/usage", s.auth(s.handleGuestUsage))
+	mux.HandleFunc("/guest/testable", s.auth(s.handleGuestTestableProjects))
+	mux.HandleFunc("/guest/vibe-save", s.auth(s.handleGuestVibeSave))
 	mux.HandleFunc("/host-share/workspace/status", s.auth(s.handleHostShareWorkspaceStatus))
 	mux.HandleFunc("/host-share/workspace/bootstrap", s.auth(s.handleHostShareWorkspaceBootstrap))
 	mux.HandleFunc("/host-share/workspace/attach-repo", s.auth(s.handleHostShareWorkspaceAttachRepo))
@@ -1954,10 +1956,12 @@ func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid stri
 		return false
 	}
 	scope := guestScopeDefaultLegacy
+	canVibe := false
 	if s.guestConfigMgr != nil {
 		scope = s.guestConfigMgr.GetScope(uid)
+		canVibe = s.guestConfigMgr.GuestCanVibe(uid)
 	}
-	if !isGuestAllowedPathForScope(r.URL.Path, scope) {
+	if !isGuestAllowedPathForScopeVibe(r.URL.Path, scope, canVibe) {
 		jsonError(w, http.StatusForbidden, "guests cannot access this endpoint")
 		return true
 	}

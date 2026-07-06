@@ -239,6 +239,9 @@ export async function inviteGuest(
         deviceIds?: string[];
         scope?: "full" | "feedback-only" | "sdk-project";
         allowedProjects?: string[];
+        // Opt a tester (scope="sdk-project") into the AI-improve surface.
+        // Ignored by the server for any other scope.
+        canVibe?: boolean;
       }
     | string
 ): Promise<{ inviteCode: string; guestRegistered: boolean; guestUserId?: string; guestEmail?: string }> {
@@ -251,6 +254,7 @@ export async function inviteGuest(
           deviceIds: target.deviceIds,
           scope: target.scope,
           allowedProjects: target.allowedProjects,
+          canVibe: target.canVibe,
         };
   const res = await fetch(`${getConvexSiteUrl()}/guests/invite`, {
     method: "POST",

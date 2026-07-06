@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -165,6 +166,91 @@ func injectCredentials(cloneURL string) string {
 	}
 	parsed.User = url.UserPassword(username, cred.Token)
 	return parsed.String()
+}
+
+// stripURLCredentials returns the URL with any embedded userinfo (user:token@)
+// removed. Non-URL inputs (e.g. SSH scp-style git@host:path) are returned
+// unchanged. Used to keep a cloned repo's origin token-free.
+func stripURLCredentials(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User == nil {
+		return raw
+	}
+	// Only rewrite http(s) — SSH scp-style URLs (git@host:path) have no
+	// embedded token and can confuse url.Parse; leave them untouched.
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return raw
+	}
+	parsed.User = nil
+	return parsed.String()
+}
+
+// resetOriginToCleanURL rewrites a freshly-cloned repo's origin remote to a
+// token-free URL. `git clone https://user:token@host/…` persists the token in
+// .git/config remote.origin.url; leaving it there lets anything that can read
+// the working tree — a tester/guest task, a shared container — lift the owner's
+// git PAT. Fetch/pull re-inject credentials per-operation (handleRepoPull), so
+// origin never needs to carry the token. Non-fatal: the clone already
+// succeeded, so a failure here is logged, not surfaced.
+func resetOriginToCleanURL(ctx context.Context, clonePath, cleanURL string) {
+	clean := stripURLCredentials(cleanURL)
+	cmd := osexec.CommandContext(ctx, "git", "-C", clonePath, "remote", "set-url", "origin", clean)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("[repos] warning: could not strip credentials from %s origin: %v (%s)",
+			clonePath, err, strings.TrimSpace(string(out)))
+	}
+}
+
+// gitRemoteURL returns the configured URL for a remote (e.g. "origin"), or ""
+// if the command fails. Used by pull to re-inject credentials without ever
+// persisting the token back into .git/config.
+func gitRemoteURL(workDir, remote string) string {
+	out, err := osexec.Command("git", "-C", workDir, "remote", "get-url", remote).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// errNothingToCommit signals a no-op save (the tester ran vibe but left no
+// change). Callers surface it as a friendly "nothing to save", not an error.
+var errNothingToCommit = fmt.Errorf("nothing to commit")
+
+// commitAndPushGuestVibe stages everything in a tester's project, commits it to
+// the current branch (straight onto the branch — no PR), attributed to the
+// friend, and best-effort pushes to origin (re-injecting creds per-op, never
+// persisting them). Returns the new commit sha + whether the push landed.
+// errNothingToCommit when the working tree is clean. Uses the shared runGit
+// (git_http.go), which runs in `dir` with its own timeout.
+func commitAndPushGuestVibe(dir, authorName, authorEmail, message string) (sha string, pushed bool, err error) {
+	if strings.TrimSpace(dir) == "" {
+		return "", false, fmt.Errorf("no project directory")
+	}
+	if out, e := runGit(dir, "add", "-A"); e != nil {
+		return "", false, fmt.Errorf("git add: %v (%s)", e, out)
+	}
+	if status, _ := runGit(dir, "status", "--porcelain"); strings.TrimSpace(status) == "" {
+		return "", false, errNothingToCommit
+	}
+	author := fmt.Sprintf("%s <%s>", authorName, authorEmail)
+	if out, e := runGit(dir,
+		"-c", "user.name="+authorName, "-c", "user.email="+authorEmail,
+		"commit", "-m", message, "--author", author); e != nil {
+		return "", false, fmt.Errorf("git commit: %v (%s)", e, out)
+	}
+	sha, _ = runGit(dir, "rev-parse", "HEAD")
+	// Best-effort push — a self-hosted box may have no remote configured, and
+	// a failed push shouldn't lose the local commit. Re-inject creds per-op.
+	if origin := gitRemoteURL(dir, "origin"); origin != "" {
+		pushArgs := []string{"push", "origin", "HEAD"}
+		if inj := injectCredentials(origin); inj != origin {
+			pushArgs = []string{"push", inj, "HEAD"}
+		}
+		if _, e := runGit(dir, pushArgs...); e == nil {
+			pushed = true
+		}
+	}
+	return sha, pushed, nil
 }
 
 func allowedRepoRootsForTask(taskWorkDir string) []string {
@@ -475,6 +561,14 @@ func (s *HTTPServer) handleRepoClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Credential hygiene: when a token was injected into the clone URL, git
+	// persisted it in .git/config. Reset origin to the token-free URL so a
+	// tester/guest running in this workdir (or a shared container) can't lift
+	// the owner's git PAT out of .git/config. Fetch/pull re-inject per-op.
+	if cloneURL != req.URL {
+		resetOriginToCleanURL(ctx, clonePath, req.URL)
+	}
+
 	// Invalidate project/repo caches so the mobile Hot Reload list
 	// reflects the just-cloned project on its next poll (within 2.5s
 	// while scanning, vs. a 10-minute wait otherwise).
@@ -519,10 +613,26 @@ func (s *HTTPServer) handleRepoPull(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	cmd := osexec.CommandContext(ctx, "git", "pull")
+	// Origin is stored token-free (see resetOriginToCleanURL), so re-inject
+	// credentials for this operation only — pass the tokenised URL as an arg
+	// so it never persists back into .git/config. Public repos / SSH origins
+	// return an unchanged URL and pull from origin as before.
+	pullArgs := []string{"pull"}
+	pullURL := ""
+	if originURL := gitRemoteURL(workDir, "origin"); originURL != "" {
+		if injected := injectCredentials(originURL); injected != originURL {
+			pullURL = injected
+			pullArgs = []string{"pull", injected}
+		}
+	}
+	cmd := osexec.CommandContext(ctx, "git", pullArgs...)
 	cmd.Dir = workDir
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
+	if pullURL != "" {
+		// Never leak the injected token in the response.
+		output = strings.ReplaceAll(output, pullURL, stripURLCredentials(pullURL))
+	}
 
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "git pull failed: "+output)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -1440,6 +1441,15 @@ func (s *HTTPServer) handleRepoCloneWithMetadata(w http.ResponseWriter, r *http.
 		sanitised := strings.ReplaceAll(output, cloneURL, req.URL)
 		jsonError(w, http.StatusInternalServerError, "git clone failed: "+sanitised)
 		return
+	}
+
+	// Credential hygiene: the HTTPS branch injected a token into the clone URL,
+	// which git persists in .git/config. Reset origin to the token-free URL so a
+	// tester/guest in this workdir can't read the owner's PAT. SSH clones carry
+	// no token, so they're left untouched. See resetOriginToCleanURL.
+	usedTokenURL := (provider == nil || provider.SSHKeyPath == "") && cloneURL != req.URL
+	if usedTokenURL {
+		resetOriginToCleanURL(context.Background(), clonePath, req.URL)
 	}
 
 	// Generate metadata

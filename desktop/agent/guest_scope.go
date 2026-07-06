@@ -107,6 +107,7 @@ var guestFullAllowedPrefixes = []string{
 	"/builds",
 	"/health",
 	"/vibing",
+	"/guest/testable",
 	"/shared-storage/",
 	// Shared-machine deploy surface (doctor + script templates +
 	// actual run + history). Scoped by allowedProjects in the handler;
@@ -155,6 +156,37 @@ var guestFeedbackOnlyAllowedPrefixes = []string{
 	"/voice/",
 	"/info",
 	"/health",
+}
+
+// guestSDKProjectAllowedPrefixes is the "tester" tier: an invited friend who
+// can RUN the dev's pre-release app (load the host-built guest-safe Hermes
+// bundle + hot-reload it) and file feedback, but cannot read code, enumerate
+// projects, exec, deploy, or reach the vault. It is the feedback-only surface
+// PLUS the narrow reload/status/events endpoints — deliberately NOT the "/dev/"
+// subtree, which would expose the full dev-server proxy (arbitrary local ports).
+//
+// The AI-improve surface ("/vibing") is intentionally NOT in this static list.
+// It is unlocked per-grant by the canVibe flag (isGuestAllowedPathForScopeVibe).
+// A vibing task from a tester is always force-isolated AND routed to a GLM/BYO
+// runner, never the owner's subscription (see handleVibingExecute) — so opting a
+// tester into vibe never lends them code-read, host filesystem, or the owner's
+// Claude/Codex plan.
+var guestSDKProjectAllowedPrefixes = []string{
+	"/feedback",
+	"/blackbox/",
+	"/voice/",
+	"/info",
+	"/health",
+	"/dev/reload",
+	"/dev/reload-app",
+	"/dev/status",
+	"/dev/events",
+	// Read-only discovery: which of the host's projects this tester may run.
+	// Returns only the tester's allowedProjects (handler-enforced).
+	"/guest/testable",
+	// Save a vibe straight onto the project branch. Project-gated + canVibe-gated
+	// in the handler; a non-vibe tester is refused there.
+	"/guest/vibe-save",
 }
 
 // guestDeployAllowedPrefixes is the tight shared-machine-deploy surface.
@@ -229,10 +261,23 @@ func guestScopeOrDefault(s string) string {
 // (so "/agent/runners-debug" stays blocked even though it shares the
 // /agent/runners prefix). This closes the H-4 collision class.
 func isGuestAllowedPathForScope(path, scope string) bool {
+	return isGuestAllowedPathForScopeVibe(path, scope, false)
+}
+
+// isGuestAllowedPathForScopeVibe is the canVibe-aware form. canVibe unlocks the
+// AI-improve surface ("/vibing" and its sub-paths) for the sdk-project tester
+// tier ONLY. It is ignored for every other scope: "full" already lists /vibing,
+// and feedback-only / deploy / support / circuit must never reach it regardless
+// of the flag. The 2-arg isGuestAllowedPathForScope delegates here with
+// canVibe=false so callers that don't carry the flag keep the tight default.
+func isGuestAllowedPathForScopeVibe(path, scope string, canVibe bool) bool {
+	normScope := guestScopeOrDefault(scope)
 	list := guestFullAllowedPrefixes
-	switch guestScopeOrDefault(scope) {
-	case GuestScopeFeedbackOnly, GuestScopeSDKProject:
+	switch normScope {
+	case GuestScopeFeedbackOnly:
 		list = guestFeedbackOnlyAllowedPrefixes
+	case GuestScopeSDKProject:
+		list = guestSDKProjectAllowedPrefixes
 	case GuestScopeDeploy:
 		list = guestDeployAllowedPrefixes
 	case GuestScopeSupport:
@@ -242,6 +287,11 @@ func isGuestAllowedPathForScope(path, scope string) bool {
 	}
 	if path == "" {
 		path = "/"
+	}
+	// canVibe is a per-grant opt-in, not part of the static scope list, so it
+	// is gated here rather than baked into guestSDKProjectAllowedPrefixes.
+	if canVibe && normScope == GuestScopeSDKProject && matchGuestAllowEntry(path, "/vibing") {
+		return true
 	}
 	for _, prefix := range list {
 		if matchGuestAllowEntry(path, prefix) {
@@ -308,6 +358,21 @@ func (m *GuestConfigManager) GetScope(guestUserID string) string {
 // paths that need a yes/no answer.
 func (m *GuestConfigManager) IsFeedbackOnly(guestUserID string) bool {
 	return m.GetScope(guestUserID) == GuestScopeFeedbackOnly
+}
+
+// GuestCanVibe reports whether this guest's grant opted into the AI-improve
+// (vibe) capability. Default false — vibe is explicit opt-in at invite time,
+// and only meaningful for the sdk-project tester tier (the /vibing gate in
+// isGuestAllowedPathForScopeVibe ignores it for every other scope).
+func (m *GuestConfigManager) GuestCanVibe(guestUserID string) bool {
+	if m == nil {
+		return false
+	}
+	cfg := m.GetConfig(guestUserID)
+	if cfg == nil || cfg.CanVibe == nil {
+		return false
+	}
+	return *cfg.CanVibe
 }
 
 // AllowedProjects returns the list of project slugs this guest may touch.

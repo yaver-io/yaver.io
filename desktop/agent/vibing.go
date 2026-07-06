@@ -1558,6 +1558,21 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	// configured primary still wins when it's actually ready, so the
 	// behaviour for healthy machines is unchanged.
 	pickedRunner := pickReadyVibingRunner(s)
+	if guestUID != "" {
+		// A guest's vibe must NEVER spend the owner's Claude/Codex
+		// subscription: it double-bills the owner's personal plan (ToS) and
+		// a subscription CLI can't authenticate inside the guest's isolation
+		// container anyway. Route to a GLM/BYO runner; refuse (fail-closed)
+		// if none is ready rather than silently fall back to the owner's plan.
+		if pickedRunner == "" || isSubscriptionRunner(pickedRunner) {
+			pickedRunner = pickReadyGuestVibeRunner(s)
+		}
+		if pickedRunner == "" {
+			jsonError(w, http.StatusServiceUnavailable,
+				"guest vibe requires a GLM/BYO runner (subscription runners are owner-only); none is ready on this machine")
+			return
+		}
+	}
 
 	taskOpts := TaskCreateOptions{}
 	if guestUID != "" {
@@ -1568,7 +1583,14 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 		taskOpts.WorkDir = req.ProjectPath
 		if s.guestConfigMgr != nil {
 			cfg := s.guestConfigMgr.GetConfig(guestUID)
-			taskOpts.GuestRequireIsolation = guestRequireIsolation(cfg) || s.guestConfigMgr.IsFeedbackOnly(guestUID)
+			// Force container isolation for feedback-only AND sdk-project
+			// (tester) guests. A tester who opted into vibe is running the AI
+			// coding agent against the dev's repo — it MUST be sandboxed
+			// (no host filesystem, no ~/.yaver, no .git/config token) exactly
+			// like the feedback-only fix path.
+			taskOpts.GuestRequireIsolation = guestRequireIsolation(cfg) ||
+				s.guestConfigMgr.IsFeedbackOnly(guestUID) ||
+				s.guestConfigMgr.GetScope(guestUID) == GuestScopeSDKProject
 			taskOpts.GuestUseHostAPIKeys = guestUseHostAPIKeys(cfg)
 			taskOpts.GuestAllowGuestProvidedKeys = cfg == nil || cfg.AllowGuestProvidedAPIKeys == nil || *cfg.AllowGuestProvidedAPIKeys
 			if cfg != nil {
@@ -1611,6 +1633,47 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 // user saw aider's OpenRouter sign-in banner instead of their picked
 // runner running. Mobile UI only offers claude/codex/opencode, so
 // the picker should match.
+// isSubscriptionRunner reports whether a runnerID authenticates via a personal
+// subscription login (Claude Max / ChatGPT Plus) rather than an API key. These
+// are owner-only: a guest must never drive them — it double-bills the owner's
+// plan and breaks the single-user subscription model. GLM/BYO runners
+// (glm, opencode, aider, …) are key-based and safe to lend.
+func isSubscriptionRunner(runnerID string) bool {
+	switch normalizeRunnerID(runnerID) {
+	case "claude", "codex":
+		return true
+	default:
+		return false
+	}
+}
+
+// pickReadyGuestVibeRunner is pickReadyVibingRunner restricted to GLM/BYO
+// runners: it walks supportedRunnerIDs in order, skips subscription runners
+// entirely, and returns the first key-based runner that is ready. Returns ""
+// when no non-subscription runner is ready, so the caller can fail closed
+// rather than fall back to the owner's personal plan.
+func pickReadyGuestVibeRunner(s *HTTPServer) string {
+	if s == nil || s.taskMgr == nil {
+		return ""
+	}
+	s.taskMgr.mu.Lock()
+	workDir := s.taskMgr.workDir
+	s.taskMgr.mu.Unlock()
+	for _, id := range supportedRunnerIDs {
+		if isSubscriptionRunner(id) {
+			continue
+		}
+		runner, ok := builtinRunners[id]
+		if !ok {
+			continue
+		}
+		if err := CheckRunnerReady(runner, workDir); err == nil {
+			return id
+		}
+	}
+	return ""
+}
+
 func pickReadyVibingRunner(s *HTTPServer) string {
 	if s == nil || s.taskMgr == nil {
 		return ""

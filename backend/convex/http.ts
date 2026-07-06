@@ -5952,6 +5952,7 @@ http.route({
     const allowedProjects = Array.isArray(body.allowedProjects)
       ? body.allowedProjects.map(String)
       : undefined;
+    const canVibe = body.canVibe === true ? true : undefined;
     if (!email && !userId) {
       return errorResponse("email or userId is required");
     }
@@ -5964,6 +5965,7 @@ http.route({
         proposedDeviceIds,
         scope,
         allowedProjects,
+        canVibe,
       });
       return jsonResponse({
         ok: true,

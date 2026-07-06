@@ -80,6 +80,10 @@ func runGuestsInvite(args []string) {
 		case a == "--feedback-only":
 			// Redundant with the default, but explicit is nice for scripts.
 			opts.Scope = GuestScopeFeedbackOnly
+		case a == "--vibe":
+			// Opt a tester into the AI-improve surface. Requires --scope=sdk-project
+			// (validated below). Their vibe is force-isolated + GLM/BYO on the agent.
+			opts.CanVibe = true
 		case a == "--project" || a == "--projects":
 			// Repeatable project-scoping: --project SFMG --project talos
 			// (or comma-separated via --projects=SFMG,talos).
@@ -106,6 +110,10 @@ func runGuestsInvite(args []string) {
 			fmt.Fprintf(os.Stderr, "Invalid --scope %q. Must be 'full', 'feedback-only', or 'sdk-project'.\n", opts.Scope)
 			os.Exit(1)
 		}
+	}
+	if opts.CanVibe && opts.Scope != GuestScopeSDKProject {
+		fmt.Fprintln(os.Stderr, "--vibe requires --scope=sdk-project (the tester tier).")
+		os.Exit(1)
 	}
 
 	if len(positional) > 0 && opts.Email == "" && opts.UserID == "" {

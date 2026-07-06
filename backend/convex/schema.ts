@@ -1345,6 +1345,10 @@ export default defineSchema({
     // Optional project narrowing at invite time — copied into guestAccess.allowedProjects
     // when the invitation is accepted. See guestAccess.allowedProjects for semantics.
     allowedProjects: v.optional(v.array(v.string())),
+    // canVibe opts an sdk-project (tester) invite into the AI-improve surface
+    // (/vibing). Copied into guestAccess on accept. Absent/false = test-only.
+    // Only meaningful with scope="sdk-project"; the agent ignores it otherwise.
+    canVibe: v.optional(v.boolean()),
     createdAt: v.number(),
     expiresAt: v.number(),           // pending invitations expire after 2 days
     acceptedAt: v.optional(v.number()),
@@ -1377,6 +1381,11 @@ export default defineSchema({
     //   - /feedback/{id}/fix: reject if the feedback's project is not in the list
     //   - /tasks: pin workDir to a project in the list; reject attempts to escape
     allowedProjects: v.optional(v.array(v.string())),
+    // canVibe opts a tester (sdk-project) grant into /vibing. Inherited from the
+    // invitation on accept; toggleable later via updateGuestConfig. Absent/false
+    // = test-only. Agent enforces it only for scope="sdk-project", and a tester's
+    // vibe is always force-isolated + GLM/BYO (see agent guest_scope.go / vibing.go).
+    canVibe: v.optional(v.boolean()),
     // Guest config — set by host to control guest access
     dailyTokenLimit: v.optional(v.number()),    // max task-seconds per day (0 or absent = unlimited)
     allowedRunners: v.optional(v.array(v.string())), // runner IDs guest can use (empty/absent = all)

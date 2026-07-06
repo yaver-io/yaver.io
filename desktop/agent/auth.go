@@ -424,6 +424,9 @@ type InviteGuestOpts struct {
 	// with Scope == "feedback-only" when a host wants end-users of Project A to
 	// file feedback without exposing Projects B / C.
 	AllowedProjects []string
+	// CanVibe opts a tester (Scope == "sdk-project") into the AI-improve surface
+	// (/vibing). Ignored by the server for any other scope. Default false.
+	CanVibe bool
 }
 
 // InviteGuest sends a guest invitation via Convex by email.
@@ -448,6 +451,9 @@ func InviteGuestWith(baseURL, token string, opts InviteGuestOpts) (*InviteResult
 	}
 	if projs := cleanProjectList(opts.AllowedProjects); len(projs) > 0 {
 		payload["allowedProjects"] = projs
+	}
+	if opts.CanVibe {
+		payload["canVibe"] = true
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -703,6 +709,11 @@ type GuestConfig struct {
 	// Empty = all projects. Enforced on /feedback list filtering, /feedback fix
 	// triggering, and /tasks workDir gating.
 	AllowedProjects           []string `json:"allowedProjects,omitempty"`
+	// CanVibe opts an sdk-project (tester) grant into the AI-improve surface
+	// (/vibing). Default nil/false — vibe is explicit opt-in at invite time.
+	// A tester's vibe task is always force-isolated + routed to a GLM/BYO
+	// runner (handleVibingExecute), never the owner's Claude/Codex plan.
+	CanVibe                   *bool    `json:"canVibe,omitempty"`
 	DailyTokenLimit           *int     `json:"dailyTokenLimit,omitempty"`
 	AllowedRunners            []string `json:"allowedRunners,omitempty"`
 	UsageMode                 string   `json:"usageMode,omitempty"`

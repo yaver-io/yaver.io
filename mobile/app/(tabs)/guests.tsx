@@ -115,6 +115,8 @@ export default function GuestsScreen() {
   const [inviteLookupErr, setInviteLookupErr] = useState<string | null>(null);
   const [inviteProposedDeviceIds, setInviteProposedDeviceIds] = useState<string[]>([]);
   const [inviteScope, setInviteScope] = useState<"full" | "feedback-only" | "sdk-project">("full");
+  // Tester-tier only: let the invited friend improve the app with AI (vibe).
+  const [inviteCanVibe, setInviteCanVibe] = useState(false);
   const [inviteProjects, setInviteProjects] = useState<string[]>([]);
   const [inviteProjectChoices, setInviteProjectChoices] = useState<string[]>([]);
   const [inviteProjectsLoading, setInviteProjectsLoading] = useState(false);
@@ -215,8 +217,8 @@ export default function GuestsScreen() {
     try {
       const payload =
         inviteKind === "email"
-          ? { email: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects: inviteProjects }
-          : { userId: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects: inviteProjects };
+          ? { email: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects: inviteProjects, canVibe: inviteScope === "sdk-project" ? inviteCanVibe : undefined }
+          : { userId: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects: inviteProjects, canVibe: inviteScope === "sdk-project" ? inviteCanVibe : undefined };
       const r = await inviteGuest(token, payload);
       setLastCode(r.inviteCode);
       setLastTarget(inviteKind === "email" ? v : inviteLookup?.email || ("user " + v));
@@ -507,24 +509,58 @@ export default function GuestsScreen() {
                     c={c}
                     label="Yaver full"
                     active={inviteScope === "full"}
-                    onPress={() => setInviteScope("full")}
+                    onPress={() => {
+                      setInviteScope("full");
+                      setInviteCanVibe(false);
+                    }}
                   />
                   <ChipToggle
                     c={c}
                     label="Feedback SDK"
                     active={inviteScope === "feedback-only"}
-                    onPress={() => setInviteScope("feedback-only")}
+                    onPress={() => {
+                      setInviteScope("feedback-only");
+                      setInviteCanVibe(false);
+                    }}
                   />
                   <ChipToggle
                     c={c}
-                    label="SDK project"
+                    label="Tester"
                     active={inviteScope === "sdk-project"}
                     onPress={() => setInviteScope("sdk-project")}
                   />
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                  Full = tasks, vibing, projects, remote coding. Feedback SDK = feedback, blackbox, voice only. SDK project = Feedback SDK access narrowed to selected projects.
+                  Full = tasks, vibing, projects, remote coding. Feedback SDK = feedback, blackbox, voice only. Tester = run your pre-release app on their device + feedback, narrowed to selected projects.
                 </Text>
+
+                {/* Tester-only: let the friend improve the app with AI. */}
+                {inviteScope === "sdk-project" && (
+                  <Pressable
+                    onPress={() => setInviteCanVibe((v) => !v)}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                      marginTop: 4,
+                      padding: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: inviteCanVibe ? c.accent : c.border,
+                      backgroundColor: inviteCanVibe ? c.accent + "15" : "transparent",
+                    }}
+                  >
+                    <Text style={{ fontSize: 16 }}>{inviteCanVibe ? "✅" : "⬜️"}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                        Let them improve it with AI (vibe)
+                      </Text>
+                      <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                        Runs sandboxed on GLM/BYO — never your Claude/Codex plan. Changes commit straight to your branch.
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
               </View>
 
               {/* Machine picker */}
