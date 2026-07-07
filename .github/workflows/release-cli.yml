@@ -76,6 +76,13 @@ jobs:
     # before the registry tries to verify them.
     needs: [validate, publish-npm]
     runs-on: ubuntu-latest
+    # The MCP Registry is an external, best-effort target: npm publish +
+    # signed binaries + the GitHub release are what users actually install,
+    # and they run independently. A registry-side flake (OIDC hiccup, npm
+    # metadata propagation race, registry outage — this exact job passed on
+    # 1.99.274 and flaked on 1.99.275 with identical code) must NOT red the
+    # whole release. Non-blocking + retried.
+    continue-on-error: true
     permissions:
       id-token: write
       contents: read
@@ -109,10 +116,18 @@ jobs:
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
             | tar xz mcp-publisher
           chmod +x mcp-publisher
-      - name: Authenticate to MCP Registry (GitHub OIDC)
-        run: ./mcp-publisher login github-oidc
-      - name: Publish server.json to MCP Registry
-        run: ./mcp-publisher publish
+      - name: Authenticate + publish to MCP Registry (retried)
+        run: |
+          for i in 1 2 3; do
+            if ./mcp-publisher login github-oidc && ./mcp-publisher publish; then
+              echo "published to MCP Registry on attempt $i"
+              exit 0
+            fi
+            echo "attempt $i failed (login/publish); retrying in 15s..."
+            sleep 15
+          done
+          echo "MCP Registry publish failed after 3 attempts — non-fatal (npm + binaries already shipped)"
+          exit 1
 
   build:
     needs: validate
