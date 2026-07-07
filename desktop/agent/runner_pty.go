@@ -120,21 +120,24 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 
 	if tmuxSession != "" {
 		// Zero-chrome default: hide the tmux status bar so the wrap is
-		// invisible; ?chrome=1 keeps it as a thin session indicator.
-		// Applied after the session exists; idempotent on -A reattach.
-		go func(sess string, on bool) {
-			status := "off"
-			if on {
-				status = "on"
-			}
-			for i := 0; i < 10; i++ {
+		// invisible; ?chrome=1 keeps it as a thin session indicator. Set it
+		// immediately (best-effort, before the first frame) so there's no
+		// status-bar flash on short-lived sessions, then re-assert briefly in
+		// the background to win any race with tmux's own initial render and
+		// to cover -A reattach.
+		status := "off"
+		if chrome {
+			status = "on"
+		}
+		_ = exec.Command("tmux", "set-option", "-t", tmuxSession, "status", status).Run()
+		go func(sess, want string) {
+			for i := 0; i < 8; i++ {
+				time.Sleep(150 * time.Millisecond)
 				if exec.Command("tmux", "has-session", "-t", sess).Run() == nil {
-					_ = exec.Command("tmux", "set-option", "-t", sess, "status", status).Run()
-					return
+					_ = exec.Command("tmux", "set-option", "-t", sess, "status", want).Run()
 				}
-				time.Sleep(200 * time.Millisecond)
 			}
-		}(tmuxSession, chrome)
+		}(tmuxSession, status)
 	}
 
 	meta := map[string]any{
@@ -190,6 +193,110 @@ func (s *HTTPServer) pumpRunnerPTY(conn *websocket.Conn, ts *terminalSession, re
 		}
 		_ = ts.writeInput(data)
 	}
+}
+
+// RunnerPTYSession describes a live runner PTY wrap on this box (a tmux
+// session started by /ws/runner). Used by `yaver attach --machine=<dev>` to
+// discover + reattach.
+type RunnerPTYSession struct {
+	Name     string `json:"name"`
+	Runner   string `json:"runner"`
+	Command  string `json:"command,omitempty"`
+	Created  int64  `json:"created,omitempty"`
+	Attached bool   `json:"attached"`
+}
+
+// handleRunnerSessions: GET /runner/sessions — owner-only list of live runner
+// PTY tmux sessions on this box, so the CLI can reattach or present a picker.
+// A session counts as a runner wrap when its tmux start-command's first token
+// is a known runner binary (survives custom --yaver-session names) or the
+// session name is the yaver-<runner> default.
+func (s *HTTPServer) handleRunnerSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Yaver-Guest") == "true" {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "runner sessions are owner-only"})
+		return
+	}
+	sessions := listRunnerPTYSessions()
+	jsonReply(w, http.StatusOK, map[string]any{"ok": true, "sessions": sessions})
+}
+
+func listRunnerPTYSessions() []RunnerPTYSession {
+	out := []RunnerPTYSession{}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return out
+	}
+	raw, err := exec.Command("tmux", "list-sessions", "-F",
+		"#{session_name}\t#{session_created}\t#{session_attached}").CombinedOutput()
+	if err != nil {
+		return out // no server / no sessions
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 1 {
+			continue
+		}
+		name := parts[0]
+		created := int64(0)
+		if len(parts) > 1 {
+			fmt.Sscanf(parts[1], "%d", &created)
+		}
+		attached := len(parts) > 2 && strings.TrimSpace(parts[2]) == "1"
+
+		startCmd, curCmd := "", ""
+		if pc, perr := exec.Command("tmux", "list-panes", "-t", name, "-F", "#{pane_start_command}\x1f#{pane_current_command}").CombinedOutput(); perr == nil {
+			first := strings.Split(strings.TrimSpace(string(pc)), "\n")[0]
+			cols := strings.SplitN(first, "\x1f", 2)
+			startCmd = strings.TrimSpace(cols[0])
+			if len(cols) > 1 {
+				curCmd = strings.TrimSpace(cols[1])
+			}
+		}
+		runner := runnerFromStartCommand(startCmd)
+		if runner == "" {
+			runner = runnerFromStartCommand(curCmd)
+		}
+		if runner == "" && strings.HasPrefix(name, "yaver-") {
+			runner = normalizeRunnerID(strings.TrimPrefix(name, "yaver-"))
+			if !IsSupportedRunner(runner) {
+				runner = ""
+			}
+		}
+		if runner == "" {
+			continue // not a runner wrap
+		}
+		out = append(out, RunnerPTYSession{
+			Name: name, Runner: runner, Command: startCmd,
+			Created: created, Attached: attached,
+		})
+	}
+	return out
+}
+
+// runnerFromStartCommand returns the runner id when the first token of a tmux
+// pane command names a known runner binary, else "". Handles shell-quoted
+// tokens (tmux reports our `'codex'` verbatim) and process-name suffixes
+// (pane_current_command shows the exec'd `codex-aarch64-a`).
+func runnerFromStartCommand(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	bin := strings.Trim(fields[0], "'\"")
+	if idx := strings.LastIndex(bin, "/"); idx >= 0 {
+		bin = bin[idx+1:]
+	}
+	switch {
+	case bin == "claude" || strings.HasPrefix(bin, "claude-"):
+		return "claude"
+	case bin == "codex" || strings.HasPrefix(bin, "codex-"):
+		return "codex"
+	case bin == "opencode" || strings.HasPrefix(bin, "opencode-"):
+		return "opencode"
+	}
+	return ""
 }
 
 func runnerPTYFail(conn *websocket.Conn, msg string) {

@@ -85,12 +85,12 @@ func TestTmuxRunnerReadyAbsentSession(t *testing.T) {
 }
 
 func TestTmuxRunnerEligibleClaudeOnly(t *testing.T) {
-	for _, ok := range []string{"claude", "Claude", "CLAUDE-CODE", "claude-code", "opencode", "OpenCode"} {
+	for _, ok := range []string{"claude", "Claude", "CLAUDE-CODE", "claude-code", "opencode", "OpenCode", "codex", "Codex"} {
 		if !tmuxRunnerEligible(ok) {
 			t.Errorf("expected %q to be eligible", ok)
 		}
 	}
-	for _, no := range []string{"codex", "", "claude2", "yaver"} {
+	for _, no := range []string{"", "claude2", "yaver"} {
 		if tmuxRunnerEligible(no) {
 			t.Errorf("expected %q to be ineligible", no)
 		}

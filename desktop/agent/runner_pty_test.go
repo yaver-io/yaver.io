@@ -162,7 +162,7 @@ func TestPreflightRemoteRunnerAuth(t *testing.T) {
 	t.Run("authed proceeds silently", func(t *testing.T) {
 		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, AuthConfigured: true}, nil)
 		defer srv.Close()
-		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex"); err != nil {
+		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true); err != nil {
 			t.Fatalf("expected nil, got %v", err)
 		}
 	})
@@ -170,7 +170,7 @@ func TestPreflightRemoteRunnerAuth(t *testing.T) {
 	t.Run("not installed fails fast with npm hint", func(t *testing.T) {
 		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: false}, nil)
 		defer srv.Close()
-		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex")
+		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true)
 		if err == nil || !strings.Contains(err.Error(), "@openai/codex") {
 			t.Fatalf("expected npm hint error, got %v", err)
 		}
@@ -179,7 +179,7 @@ func TestPreflightRemoteRunnerAuth(t *testing.T) {
 	t.Run("sandbox blocked fails fast with sysctl hint", func(t *testing.T) {
 		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, Error: "kernel settings are blocking the sandbox"}, nil)
 		defer srv.Close()
-		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex")
+		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true)
 		if err == nil || !strings.Contains(err.Error(), "sysctl") {
 			t.Fatalf("expected sysctl hint error, got %v", err)
 		}
@@ -197,7 +197,7 @@ func TestPreflightRemoteRunnerAuth(t *testing.T) {
 		hits := 0
 		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, AuthConfigured: false}, &hits)
 		defer srv.Close()
-		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex"); err != nil {
+		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true); err != nil {
 			t.Fatalf("expected mirror to satisfy preflight, got %v", err)
 		}
 		if hits != 1 {
@@ -208,10 +208,88 @@ func TestPreflightRemoteRunnerAuth(t *testing.T) {
 	t.Run("old agent without endpoint proceeds with warning", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(http.NotFound))
 		defer srv.Close()
-		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex"); err != nil {
+		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true); err != nil {
 			t.Fatalf("expected nil for old agent, got %v", err)
 		}
 	})
+}
+
+func TestRunnerFromStartCommand(t *testing.T) {
+	cases := map[string]string{
+		"codex --dangerously-bypass-approvals-and-sandbox": "codex",
+		"/usr/local/bin/claude --dangerously-skip-permissions": "claude",
+		"opencode":            "opencode",
+		"/root/.opencode/bin/opencode": "opencode",
+		"bash":                "",
+		"":                    "",
+		"vim file.go":         "",
+	}
+	for in, want := range cases {
+		if got := runnerFromStartCommand(in); got != want {
+			t.Errorf("runnerFromStartCommand(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRunnerSessionsEndpointOwnerOnly(t *testing.T) {
+	srv := &HTTPServer{token: "owner-token", ownerUserID: "owner-user"}
+	server := httptest.NewServer(http.HandlerFunc(srv.auth(srv.handleRunnerSessions)))
+	defer server.Close()
+
+	// Guest is rejected.
+	req, _ := http.NewRequest("GET", server.URL+"/runner/sessions", nil)
+	req.Header.Set("Authorization", "Bearer owner-token")
+	req.Header.Set("X-Yaver-Guest", "true")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("guest status = %d, want 403", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Owner gets a well-formed (possibly empty) list.
+	req2, _ := http.NewRequest("GET", server.URL+"/runner/sessions", nil)
+	req2.Header.Set("Authorization", "Bearer owner-token")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("owner status = %d, want 200", resp2.StatusCode)
+	}
+	var out struct {
+		OK       bool               `json:"ok"`
+		Sessions []RunnerPTYSession `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !out.OK {
+		t.Fatalf("expected ok=true")
+	}
+}
+
+func TestFetchRunnerSessionsFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"sessions": []RunnerPTYSession{
+				{Name: "yaver-codex", Runner: "codex"},
+				{Name: "yaver-claude", Runner: "claude"},
+			},
+		})
+	}))
+	defer server.Close()
+	got, err := fetchRunnerSessions(server.URL, "tok", http.Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(got))
+	}
 }
 
 func TestApplyRunnerYoloDefaults(t *testing.T) {

@@ -683,6 +683,7 @@ Usage:
   yaver code        Terminal-first coding UX (interactive by default, mesh with --mesh)
   yaver claude|codex|opencode|glm [args...] [--machine=<device>]  Run the agent's own TUI, local or remote (exact wrap, tmux-persistent)
   yaver attach      Interactive terminal — see tasks, type prompts (like Claude Code)
+  yaver attach --machine=<device> [--agent=codex]  Reattach to a live remote runner session (auto-picks if one, prompts if many)
   yaver agent       Dependency-aware agent graph runner (chat + autoideas)
   yaver serve       Start the agent manually (advanced)
   yaver permissions Open the one-time macOS permission checklist again

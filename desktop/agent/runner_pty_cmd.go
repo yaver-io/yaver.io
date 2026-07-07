@@ -23,8 +23,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +36,253 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// errTransportUnreach marks a preflight failure caused by the network dial
+// itself (dead route) rather than an auth/install problem — the caller falls
+// through to the next transport candidate instead of aborting.
+var errTransportUnreach = errors.New("transport unreachable")
+
+func isTransportReachError(err error) bool {
+	return errors.Is(err, errTransportUnreach)
+}
+
+// runnerPTYMinAgentVersion is the first agent build that serves /ws/runner +
+// /runner-auth/status (the remote runner TUI, shipped 1.99.274). A remote older
+// than this can't host a runner PTY at all; we detect it from /health.version
+// and tell the user to update, instead of letting the WS upgrade 404 opaquely.
+const runnerPTYMinAgentVersion = "1.99.274"
+
+// remoteReachResult is what the /health preflight learned about a box.
+type remoteReachResult struct {
+	candidate   RemoteAgentCandidate
+	version     string
+	authExpired bool
+}
+
+// preflightRemoteRunner runs the layered reachability diagnostic and returns
+// the first candidate whose agent answered /health (with its version). The
+// layers, in order:
+//
+//  1. yaver: probe /health across every transport candidate. A hit here means
+//     everything below is fine — return immediately (the common path).
+//  2. internet: /health missed everywhere → is THIS machine even online? A dead
+//     local uplink is diagnosed here so we don't blame the box.
+//  3. tailscale: the box is only reachable over the tailnet but our tailnet is
+//     down → tell the user to `tailscale up`, not to restart the box.
+//  4. auto-repair: internet + route look fine but the remote agent is down →
+//     best-effort restart it over SSH and re-probe once before giving up.
+//
+// quiet (the zero-chrome default) suppresses the progress narration; only the
+// final diagnosis and any repair ACTION ever print.
+func preflightRemoteRunner(candidates []RemoteAgentCandidate, token, machine string, quiet bool) (*remoteReachResult, error) {
+	// Layer 1 — yaver /health.
+	if r, _ := probeRemoteAgentHealth(candidates, token); r != nil {
+		return r, nil
+	}
+
+	// Layer 2 — this machine's internet. If we can't reach the public internet
+	// at all, the box is almost certainly fine and the problem is local.
+	if !localInternetUp() {
+		return nil, fmt.Errorf("%s unreachable — but THIS machine has no internet (can't reach 1.1.1.1/8.8.8.8). Fix your connection (Wi-Fi / captive portal / VPN) and retry; the box is probably fine.", machine)
+	}
+
+	// Layer 3 — tailnet. When every candidate route rides Tailscale CGNAT
+	// (100.64/10) and our own tailnet is down, restarting the box won't help —
+	// the tunnel is the broken link.
+	if candidatesAreTailscaleOnly(candidates) && !localTailscaleUp() {
+		return nil, fmt.Errorf("%s is only reachable over Tailscale, but your tailnet is down here — run `tailscale up` (or `yaver mesh up`), then retry.", machine)
+	}
+
+	// Layer 4 — remote agent looks down while the network is fine. Try to bring
+	// it back over SSH, then re-probe. Best-effort: SSH may not be reachable
+	// (no key, box firewalled), in which case we fall through to the diagnosis.
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "→ %s: agent not answering on any transport — attempting SSH restart…\r\n", machine)
+	}
+	if repairRemoteAgentOverSSH(machine, quiet) {
+		for attempt := 0; attempt < 4; attempt++ {
+			time.Sleep(2 * time.Second)
+			if r, _ := probeRemoteAgentHealth(candidates, token); r != nil {
+				fmt.Fprintf(os.Stderr, "→ %s: agent is back up after SSH restart\r\n", machine)
+				return r, nil
+			}
+		}
+	}
+
+	// Nothing worked — emit the per-transport diagnosis.
+	_, fails := probeRemoteAgentHealthDetailed(candidates, token)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s unreachable — its yaver agent did not answer on any transport:", machine)
+	for _, f := range fails {
+		kind := strings.TrimSpace(f.kind)
+		if kind == "" {
+			kind = "transport"
+		}
+		fmt.Fprintf(&b, "\n  %-10s %s", kind, f.cause)
+	}
+	b.WriteString("\n\nInternet + tailnet look fine here, so the box's agent is down (or bound to a different port than its stale device row).")
+	b.WriteString("\nBring it back: `yaver ssh " + machine + "` (auto-recovers the agent) · refresh the tunnel: `yaver primary auth`.")
+	return nil, errors.New(b.String())
+}
+
+type probeFail struct{ kind, cause string }
+
+// probeRemoteAgentHealth probes /health across candidates (best-ordered) and
+// returns the first that answers 200 with a parseable body, else nil.
+func probeRemoteAgentHealth(candidates []RemoteAgentCandidate, token string) (*remoteReachResult, []probeFail) {
+	return probeRemoteAgentHealthDetailed(candidates, token)
+}
+
+// probeRemoteAgentHealthDetailed is probeRemoteAgentHealth plus the per-
+// transport failure list (used to build the final diagnosis).
+func probeRemoteAgentHealthDetailed(candidates []RemoteAgentCandidate, token string) (*remoteReachResult, []probeFail) {
+	client := &http.Client{Timeout: 6 * time.Second}
+	var fails []probeFail
+	for i := range candidates {
+		c := candidates[i]
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		req, err := http.NewRequest(http.MethodGet, base+"/health", nil)
+		if err != nil {
+			fails = append(fails, probeFail{c.Kind, err.Error()})
+			continue
+		}
+		ctoken := token
+		for k, v := range c.Headers {
+			req.Header.Set(k, v)
+			if strings.EqualFold(k, "Authorization") {
+				ctoken = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+			}
+		}
+		if req.Header.Get("Authorization") == "" && ctoken != "" {
+			req.Header.Set("Authorization", "Bearer "+ctoken)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			fails = append(fails, probeFail{c.Kind, condenseTransportError(err)})
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			fails = append(fails, probeFail{c.Kind, fmt.Sprintf("HTTP %d", resp.StatusCode)})
+			continue
+		}
+		var h struct {
+			Version     string `json:"version"`
+			AuthExpired bool   `json:"authExpired"`
+		}
+		_ = json.Unmarshal(body, &h)
+		return &remoteReachResult{candidate: c, version: h.Version, authExpired: h.AuthExpired}, fails
+	}
+	return nil, fails
+}
+
+// localInternetUp is a fast, ICMP-free check that THIS machine can reach the
+// public internet — TCP/443 to 1.1.1.1 or 8.8.8.8 (works through networks that
+// drop ping). Same probe net_doctor uses.
+func localInternetUp() bool {
+	if ok, _ := netReachTCP("1.1.1.1", 443, 2500); ok {
+		return true
+	}
+	ok, _ := netReachTCP("8.8.8.8", 443, 2500)
+	return ok
+}
+
+// candidatesAreTailscaleOnly reports whether every candidate route depends on
+// the tailnet (CGNAT 100.64/10 or classified "tailscale") — i.e. there is no
+// LAN / public / relay path that could work with Tailscale down.
+func candidatesAreTailscaleOnly(candidates []RemoteAgentCandidate) bool {
+	if len(candidates) == 0 {
+		return false
+	}
+	for _, c := range candidates {
+		if c.Kind == "tailscale" {
+			continue
+		}
+		if u, err := url.Parse(strings.TrimSpace(c.BaseURL)); err == nil {
+			if ip := net.ParseIP(u.Hostname()); ip != nil && isCGNATTailscaleIP(u.Hostname()) {
+				continue
+			}
+		}
+		return false
+	}
+	return true
+}
+
+// repairRemoteAgentOverSSH resolves an SSH route to the box and runs a POSIX
+// restart script that re-launches the agent if it isn't healthy — the non-
+// interactive cousin of `yaver ssh <dev>`'s recovery path. Returns true only
+// when the ssh command completed (0 exit); the caller then re-probes /health.
+// Deliberately conservative: it never runs an interactive auth flow, so it is
+// safe to fire automatically. A box that needs a fresh login still surfaces
+// that when the runner auth preflight runs afterward.
+func repairRemoteAgentOverSSH(machine string, quiet bool) bool {
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		return false
+	}
+	dest := resolveSSHHost(machine)
+	if strings.TrimSpace(dest) == "" {
+		return false
+	}
+	if !quiet {
+		fmt.Fprintf(os.Stderr, "→ ssh %s → restarting yaver agent\r\n", dest)
+	}
+	args := sshArgsWithSurvivability(dest, []string{"sh", "-lc", remoteAgentRestartScript})
+	args = append([]string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=8"}, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, sshPath, args...)
+	out, runErr := cmd.CombinedOutput()
+	if s := strings.TrimSpace(string(out)); s != "" && !quiet {
+		fmt.Fprintf(os.Stderr, "  %s\r\n", strings.ReplaceAll(s, "\n", "\r\n  "))
+	}
+	return runErr == nil
+}
+
+// remoteAgentRestartScript restarts the far-side agent if it is installed but
+// not healthy, preferring a managed service unit and falling back to a
+// backgrounded `yaver serve`. No auth prompts — purely a restart.
+const remoteAgentRestartScript = `
+if ! command -v yaver >/dev/null 2>&1; then
+  echo "[yaver] not installed on this box — npm install -g yaver-cli"; exit 0
+fi
+if yaver status >/dev/null 2>&1; then echo "[yaver] agent already healthy"; exit 0; fi
+echo "[yaver] agent down — restarting"
+systemctl --user restart yaver 2>/dev/null \
+  || sudo -n systemctl restart yaver 2>/dev/null \
+  || (pkill -f 'yaver serve' 2>/dev/null; nohup yaver serve >"${TMPDIR:-/tmp}/yaver-serve.log" 2>&1 &)
+sleep 1
+echo "[yaver] restart issued"
+`
+
+// condenseTransportError collapses a net/http dial error to the phrase that
+// actually helps ("connection refused", "timeout", "no route to host") so the
+// per-transport diagnostic reads cleanly instead of echoing the full
+// "dial tcp 100.x.y.z:18090: connect: …" chain for every candidate.
+func condenseTransportError(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "connection refused"):
+		return "connection refused (agent not listening)"
+	case strings.Contains(s, "i/o timeout"), strings.Contains(s, "deadline exceeded"), strings.Contains(s, "Client.Timeout"):
+		return "timed out (host down or firewalled)"
+	case strings.Contains(s, "no route to host"):
+		return "no route to host"
+	case strings.Contains(s, "no such host"), strings.Contains(s, "server misbehaving"):
+		return "DNS lookup failed"
+	case strings.Contains(s, "connection reset"):
+		return "connection reset"
+	default:
+		if i := strings.LastIndex(s, ": "); i >= 0 && i+2 < len(s) {
+			return s[i+2:]
+		}
+		return s
+	}
+}
 
 func runRunnerPassthrough(runnerName string, args []string) {
 	machine := ""
@@ -171,9 +420,17 @@ func runLocalRunnerPassthrough(runnerID string, args []string) {
 }
 
 // runRemoteRunnerPTY resolves the device (alias / id prefix / name / primary /
-// secondary — same resolver as `yaver shell` and `yaver ping`), dials the
-// agent's owner-only /ws/runner endpoint over the best probed transport
-// (LAN → mesh → public → relay), and bridges the local terminal raw.
+// secondary — same resolver as `yaver shell` and `yaver ping`) and dials the
+// agent's owner-only /ws/runner endpoint. It walks EVERY transport candidate
+// the resolver built (same-lan → tailscale → direct/public → relay), trying
+// the next on any connection failure — so it is tailscale-AWARE (that route
+// is preferred when up) but never tailscale-DEPENDENT (a down tailnet falls
+// straight through to the public IP or relay). Then bridges the local
+// terminal raw.
+//
+// Zero chrome by default: exactly like `ssh box` + `codex` — no yaver banner,
+// no tmux status bar, just the runner's TUI. `--chrome` adds the banner + the
+// remote tmux status line.
 func runRemoteRunnerPTY(machine, runnerID string, args []string, cwd, session string, chrome bool) error {
 	candidates, token, err := resolveRemoteAgentCandidates(machine)
 	if err != nil {
@@ -182,36 +439,33 @@ func runRemoteRunnerPTY(machine, runnerID string, args []string, cwd, session st
 	if len(candidates) == 0 {
 		return fmt.Errorf("no reachable transport to %q — is the device online?", machine)
 	}
-	c := candidates[0]
-	base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
-	switch {
-	case strings.HasPrefix(base, "https://"):
-		base = "wss://" + strings.TrimPrefix(base, "https://")
-	case strings.HasPrefix(base, "http://"):
-		base = "ws://" + strings.TrimPrefix(base, "http://")
-	default:
-		return fmt.Errorf("unsupported base URL scheme: %s", c.BaseURL)
-	}
 
-	headers := http.Header{}
-	for k, v := range c.Headers {
-		headers.Set(k, v)
-		if strings.EqualFold(k, "Authorization") {
-			token = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+	// Layered reachability diagnostic BEFORE any auth work or WS upgrade. A box
+	// that heartbeats "online" in Convex can still have a dead / old / wrong-
+	// port agent (stale device row), and the failure can live at any layer:
+	// this machine's internet, the tailnet, or the remote agent itself. We walk
+	// them in order (internet → tailscale → yaver /health), so the message
+	// pinpoints the actual broken layer — and, when only the remote agent is
+	// down, best-effort restarts it over SSH — instead of leaking a bare
+	// "dial tcp …:18090: connection refused" out of the WS dial.
+	reach, rerr := preflightRemoteRunner(candidates, token, machine, !chrome)
+	if rerr != nil {
+		return rerr
+	}
+	if rv := strings.TrimSpace(reach.version); rv != "" {
+		if semverLess(rv, runnerPTYMinAgentVersion) {
+			return fmt.Errorf("%s runs yaver agent v%s, which predates the remote runner TUI (needs v%s+) — update the box:\n  yaver exec %s -- npm install -g yaver-cli@latest\nthen restart its agent (`yaver ssh %s` → `yaver serve`)",
+				machine, rv, runnerPTYMinAgentVersion, machine, machine)
+		}
+		if semverLess(rv, version) {
+			fmt.Fprintf(os.Stderr, "→ note: %s runs agent v%s while this CLI is v%s — consider `yaver exec %s -- npm install -g yaver-cli@latest`\r\n", machine, rv, version, machine)
 		}
 	}
-
-	// State-aware preflight: yaver-auth level is already proven (we resolved
-	// the device and probed a transport as this user); now check the RUNNER's
-	// own OAuth on the target and repair it before opening a TUI that would
-	// just show a login screen — mirror from this machine when we hold the
-	// credential, else drive the headless device-auth flow inline.
-	if err := preflightRemoteRunnerAuth(c.BaseURL, token, headers, machine, runnerID); err != nil {
-		return err
+	if reach.authExpired {
+		fmt.Fprintf(os.Stderr, "→ note: %s reports its yaver auth token expired — run `yaver primary auth` if the runner sign-in stalls\r\n", machine)
 	}
 
 	q := url.Values{}
-	q.Set("token", token)
 	q.Set("runner", runnerID)
 	if chrome {
 		q.Set("chrome", "1")
@@ -225,27 +479,72 @@ func runRemoteRunnerPTY(machine, runnerID string, args []string, cwd, session st
 	for _, a := range args {
 		q.Add("arg", a)
 	}
-	wsURL := base + "/ws/runner?" + q.Encode()
 
-	dialer := &websocket.Dialer{HandshakeTimeout: 15 * time.Second}
-	conn, resp, err := dialer.Dial(wsURL, headers)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusForbidden {
-			return fmt.Errorf("connect to %s: forbidden — runner PTY is owner-only", machine)
+	preflightDone := false
+	var lastErr error
+	for _, c := range candidates {
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		var wsBase string
+		switch {
+		case strings.HasPrefix(base, "https://"):
+			wsBase = "wss://" + strings.TrimPrefix(base, "https://")
+		case strings.HasPrefix(base, "http://"):
+			wsBase = "ws://" + strings.TrimPrefix(base, "http://")
+		default:
+			lastErr = fmt.Errorf("unsupported base URL scheme: %s", c.BaseURL)
+			continue
 		}
-		if resp != nil {
-			return fmt.Errorf("connect to %s: %s (%d)", machine, err, resp.StatusCode)
+
+		ctoken := token
+		headers := http.Header{}
+		for k, v := range c.Headers {
+			headers.Set(k, v)
+			if strings.EqualFold(k, "Authorization") {
+				ctoken = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+			}
 		}
-		return fmt.Errorf("connect to %s: %w", machine, err)
+
+		// State-aware preflight, once, against the first candidate that
+		// answers: check the RUNNER's own OAuth on the target and repair it
+		// (mirror our local credential, else headless device-auth) before
+		// opening a TUI that would just show a login screen. If this
+		// candidate is unreachable the preflight errs → try the next route.
+		if !preflightDone {
+			if perr := preflightRemoteRunnerAuth(base, ctoken, headers, machine, runnerID, !chrome); perr != nil {
+				if isTransportReachError(perr) {
+					lastErr = perr
+					continue // route dead — fall through to the next candidate
+				}
+				return perr // real auth/install/sandbox problem — surface it
+			}
+			preflightDone = true
+		}
+
+		qv := q
+		qv.Set("token", ctoken)
+		wsURL := wsBase + "/ws/runner?" + qv.Encode()
+
+		dialer := &websocket.Dialer{HandshakeTimeout: 15 * time.Second}
+		conn, resp, derr := dialer.Dial(wsURL, headers)
+		if derr != nil {
+			if resp != nil && resp.StatusCode == http.StatusForbidden {
+				return fmt.Errorf("connect to %s: forbidden — runner PTY is owner-only", machine)
+			}
+			lastErr = derr
+			continue // this transport failed — try the next candidate
+		}
+		defer conn.Close()
+
+		if chrome {
+			fmt.Fprintf(os.Stderr, "→ %s on %s via %s — session persists on disconnect; rerun to reattach (tmux detach: Ctrl-b d)\r\n",
+				runnerID, machine, c.Kind)
+		}
+		return bridgeTerminal(conn)
 	}
-	defer conn.Close()
-
-	// The one line of chrome yaver is allowed before handing the screen to
-	// the runner's TUI. Disconnecting (or tmux Ctrl-b d) leaves the session
-	// running; the same command reattaches.
-	fmt.Fprintf(os.Stderr, "→ %s on %s via %s — session persists on disconnect; rerun this command to reattach (tmux detach: Ctrl-b d)\r\n",
-		runnerID, machine, c.Kind)
-	return bridgeTerminal(conn)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no reachable transport")
+	}
+	return fmt.Errorf("connect to %s: %w", machine, lastErr)
 }
 
 // preflightRemoteRunnerAuth checks the runner's install + OAuth state on the
@@ -259,9 +558,12 @@ func runRemoteRunnerPTY(machine, runnerID string, args []string, cwd, session st
 //     print the URL (+ code for codex; stdin paste-back for claude) in this
 //     terminal and poll until signed in. Works SSH-only on both ends.
 //
-// Never fatal on status-endpoint absence (older agents): warn and proceed —
-// /ws/runner surfaces its own errors.
-func preflightRemoteRunnerAuth(baseURL, token string, headers http.Header, machine, runnerID string) error {
+// When quiet is set (zero-chrome default), informational lines are suppressed;
+// only auth ACTIONS (device-auth URL, mirror) and hard errors ever print.
+// A network-unreachable target returns an errTransportUnreach-wrapped error so
+// the caller can fall through to the next transport candidate; a reachable
+// agent that merely lacks the endpoint (older build) proceeds silently.
+func preflightRemoteRunnerAuth(baseURL, token string, headers http.Header, machine, runnerID string, quiet bool) error {
 	client := &http.Client{Timeout: 20 * time.Second}
 	do := func(method, path string, body io.Reader) (*http.Response, error) {
 		req, err := http.NewRequest(method, strings.TrimRight(baseURL, "/")+path, body)
@@ -278,36 +580,45 @@ func preflightRemoteRunnerAuth(baseURL, token string, headers http.Header, machi
 		return client.Do(req)
 	}
 
-	fetchRow := func() (row *runnerAuthStatusRow, supported bool) {
+	// reachErr is non-nil only when the network dial itself failed (dead
+	// route); an HTTP error (404/older agent) leaves it nil.
+	fetchRow := func() (row *runnerAuthStatusRow, hasEndpoint bool, reachErr error) {
 		resp, err := do(http.MethodGet, "/runner-auth/status", nil)
 		if err != nil {
-			return nil, false
+			return nil, false, fmt.Errorf("%w: %v", errTransportUnreach, err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, false
+			return nil, false, nil
 		}
 		var out struct {
 			Runners []runnerAuthStatusRow `json:"runners"`
 		}
 		if json.NewDecoder(resp.Body).Decode(&out) != nil {
-			return nil, true
+			return nil, true, nil
 		}
 		for i := range out.Runners {
 			if normalizeRunnerID(out.Runners[i].ID) == runnerID {
-				return &out.Runners[i], true
+				return &out.Runners[i], true, nil
 			}
 		}
-		return nil, true
+		return nil, true, nil
 	}
 
-	row, supported := fetchRow()
-	if !supported {
-		fmt.Fprintf(os.Stderr, "→ %s: runner preflight unavailable (older agent?) — continuing\r\n", machine)
+	row, hasEndpoint, reachErr := fetchRow()
+	if reachErr != nil {
+		return reachErr // dead route — caller tries the next candidate
+	}
+	if !hasEndpoint {
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "→ %s: runner preflight unavailable (older agent) — continuing\r\n", machine)
+		}
 		return nil
 	}
 	if row == nil {
-		fmt.Fprintf(os.Stderr, "→ %s: agent does not report runner %s — continuing\r\n", machine, runnerID)
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "→ %s: agent does not report runner %s — continuing\r\n", machine, runnerID)
+		}
 		return nil
 	}
 	if !row.Installed {
@@ -335,9 +646,11 @@ func preflightRemoteRunnerAuth(baseURL, token string, headers http.Header, machi
 				}
 				return client.Do(req)
 			}); merr == nil {
+				// Auth repair happened — always worth one line even in quiet
+				// mode (it explains the brief pause before the TUI).
 				fmt.Fprintf(os.Stderr, "→ mirrored %s auth from this machine to %s\r\n", runnerID, machine)
 				return nil
-			} else {
+			} else if !quiet {
 				fmt.Fprintf(os.Stderr, "→ %s auth mirror to %s failed (%v) — falling back to device-auth\r\n", runnerID, machine, merr)
 			}
 		}
@@ -440,6 +753,129 @@ func runHeadlessRunnerDeviceAuth(do func(string, string, io.Reader) (*http.Respo
 		}
 	}
 	return fmt.Errorf("%s sign-in on %s timed out after 6 minutes — rerun the command to try again", runnerID, machine)
+}
+
+// runRemoteAttachPicker lists live runner PTY sessions on the machine and
+// reattaches: exactly one match (optionally filtered by runnerFilter) attaches
+// silently; several present a numbered picker (like Claude Code's session
+// chooser); none prints a hint. Reattach dials /ws/runner with the session's
+// tmux name, so `tmux new-session -A` drops back into the exact same TUI.
+func runRemoteAttachPicker(machine, runnerFilter string, chrome bool) error {
+	candidates, token, err := resolveRemoteAgentCandidates(machine)
+	if err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		return fmt.Errorf("no reachable transport to %q — is the device online?", machine)
+	}
+
+	// Find the first reachable candidate and list its sessions there.
+	var sessions []RunnerPTYSession
+	var usable *RemoteAgentCandidate
+	var lastErr error
+	for i := range candidates {
+		c := candidates[i]
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		headers := http.Header{}
+		ctoken := token
+		for k, v := range c.Headers {
+			headers.Set(k, v)
+			if strings.EqualFold(k, "Authorization") {
+				ctoken = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+			}
+		}
+		ss, serr := fetchRunnerSessions(base, ctoken, headers)
+		if serr != nil {
+			lastErr = serr
+			continue
+		}
+		sessions = ss
+		usable = &candidates[i]
+		token = ctoken
+		break
+	}
+	if usable == nil {
+		if lastErr != nil {
+			return fmt.Errorf("list sessions on %s: %w", machine, lastErr)
+		}
+		return fmt.Errorf("could not reach %s to list sessions", machine)
+	}
+
+	if strings.TrimSpace(runnerFilter) != "" {
+		filtered := sessions[:0]
+		for _, s := range sessions {
+			if s.Runner == runnerFilter {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
+	switch len(sessions) {
+	case 0:
+		hint := "start one with `yaver <runner> --machine=" + machine + "`"
+		if runnerFilter != "" {
+			return fmt.Errorf("no live %s session on %s — %s", runnerFilter, machine, hint)
+		}
+		return fmt.Errorf("no live runner sessions on %s — %s", machine, hint)
+	case 1:
+		return runRemoteRunnerPTY(machine, sessions[0].Runner, nil, "", sessions[0].Name, chrome)
+	default:
+		chosen, perr := pickRunnerSession(machine, sessions)
+		if perr != nil {
+			return perr
+		}
+		return runRemoteRunnerPTY(machine, chosen.Runner, nil, "", chosen.Name, chrome)
+	}
+}
+
+func fetchRunnerSessions(baseURL, token string, headers http.Header) ([]RunnerPTYSession, error) {
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/runner/sessions", nil)
+	if err != nil {
+		return nil, err
+	}
+	for k := range headers {
+		req.Header.Set(k, headers.Get(k))
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("remote agent is too old to list runner sessions (update it)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var out struct {
+		Sessions []RunnerPTYSession `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Sessions, nil
+}
+
+func pickRunnerSession(machine string, sessions []RunnerPTYSession) (RunnerPTYSession, error) {
+	fmt.Fprintf(os.Stderr, "Live runner sessions on %s:\n", machine)
+	for i, s := range sessions {
+		tag := ""
+		if s.Attached {
+			tag = " (attached elsewhere)"
+		}
+		fmt.Fprintf(os.Stderr, "  [%d] %-16s %s%s\n", i+1, s.Runner, s.Name, tag)
+	}
+	fmt.Fprintf(os.Stderr, "Pick a session [1-%d]: ", len(sessions))
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	idx := 0
+	if _, err := fmt.Sscanf(line, "%d", &idx); err != nil || idx < 1 || idx > len(sessions) {
+		return RunnerPTYSession{}, fmt.Errorf("invalid selection %q", line)
+	}
+	return sessions[idx-1], nil
 }
 
 func printRunnerPassthroughUsage(runnerName string) {

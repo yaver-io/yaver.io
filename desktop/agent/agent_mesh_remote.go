@@ -379,6 +379,17 @@ func directAgentBaseCandidates(target *DeviceInfo) []string {
 	if port <= 0 {
 		port = 18080
 	}
+	// Ports to try per host: the registered one first, then the canonical
+	// default (18080) as a fallback. A device row can go stale on the port
+	// alone — a box that once ran on a custom --http-port, then restarted on
+	// the default, keeps advertising the old port until its next heartbeat, so
+	// every dial to the row's port is refused while 18080 is live. Trying both
+	// costs one extra dead candidate at worst and rescues that whole class of
+	// "connection refused on a box that's actually up" failures.
+	ports := []int{port}
+	if port != 18080 {
+		ports = append(ports, 18080)
+	}
 	var hosts []string
 	if host := strings.TrimSpace(target.QuicHost); host != "" {
 		hosts = append(hosts, host)
@@ -408,19 +419,25 @@ func directAgentBaseCandidates(target *DeviceInfo) []string {
 			if ip.IsLoopback() || ip.IsUnspecified() {
 				continue
 			}
-			if ip.To4() != nil {
-				add(fmt.Sprintf("http://%s:%d", host, port))
-			} else {
-				add(fmt.Sprintf("http://[%s]:%d", host, port))
+			for _, p := range ports {
+				if ip.To4() != nil {
+					add(fmt.Sprintf("http://%s:%d", host, p))
+				} else {
+					add(fmt.Sprintf("http://[%s]:%d", host, p))
+				}
 			}
 			continue
 		}
 		if strings.HasSuffix(strings.ToLower(host), ".local") {
-			add(fmt.Sprintf("http://%s:%d", host, port))
+			for _, p := range ports {
+				add(fmt.Sprintf("http://%s:%d", host, p))
+			}
 			continue
 		}
 		add(fmt.Sprintf("https://%s", host))
-		add(fmt.Sprintf("http://%s:%d", host, port))
+		for _, p := range ports {
+			add(fmt.Sprintf("http://%s:%d", host, p))
+		}
 	}
 	return out
 }
@@ -457,8 +474,13 @@ func publicAgentBaseCandidates(target *DeviceInfo) []string {
 		// for SSH discovery). Synthesize the agent's default HTTP URL so
 		// remote callers actually have something to dial. The web UI's
 		// SSH copy still works against the same bare-host string because
-		// it does its own URL stripping on the device-list payload.
+		// it does its own URL stripping on the device-list payload. Try the
+		// registered port then the canonical 18080 default — same stale-port
+		// rescue as directAgentBaseCandidates.
 		add(fmt.Sprintf("http://%s:%d", base, port))
+		if port != 18080 {
+			add(fmt.Sprintf("http://%s:%d", base, 18080))
+		}
 	}
 	return out
 }

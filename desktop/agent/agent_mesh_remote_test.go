@@ -204,6 +204,45 @@ func TestBuildRemoteAgentCandidatesPrefersLastGoodDirectPath(t *testing.T) {
 	}
 }
 
+func TestDirectAgentBaseCandidatesAddsDefaultPortFallback(t *testing.T) {
+	// A stale device row can advertise a non-default port (the box once ran on
+	// --http-port 18090, then restarted on the 18080 default). We must still
+	// synthesize an 18080 candidate so the live agent is reachable.
+	target := &DeviceInfo{
+		DeviceID: "dev-1",
+		QuicHost: "100.75.123.78",
+		QuicPort: 18090,
+	}
+	bases := directAgentBaseCandidates(target)
+	var has18090, has18080 bool
+	for _, b := range bases {
+		switch b {
+		case "http://100.75.123.78:18090":
+			has18090 = true
+		case "http://100.75.123.78:18080":
+			has18080 = true
+		}
+	}
+	if !has18090 {
+		t.Errorf("expected the registered port candidate :18090, got %v", bases)
+	}
+	if !has18080 {
+		t.Errorf("expected the default-port fallback :18080, got %v", bases)
+	}
+	// Registered port must come first so an unchanged row keeps its ordering.
+	if len(bases) < 2 || bases[0] != "http://100.75.123.78:18090" {
+		t.Errorf("registered port should be tried first, got %v", bases)
+	}
+}
+
+func TestDirectAgentBaseCandidatesNoDuplicateWhenDefaultPort(t *testing.T) {
+	target := &DeviceInfo{DeviceID: "d", QuicHost: "10.0.0.45", QuicPort: 18080}
+	bases := directAgentBaseCandidates(target)
+	if len(bases) != 1 || bases[0] != "http://10.0.0.45:18080" {
+		t.Fatalf("default-port row should yield exactly one candidate, got %v", bases)
+	}
+}
+
 func TestDoRemoteAgentRequestFallsBackToSecondCandidate(t *testing.T) {
 	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer token-123" {

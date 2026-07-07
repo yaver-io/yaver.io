@@ -24,9 +24,22 @@ func runAttach(args []string) {
 	agent := fs.String("agent", "", "alias for --runner")
 	model := fs.String("model", "", "model override for new terminal tasks")
 	mode := fs.String("mode", "", "runner mode override for new terminal tasks")
+	machine := fs.String("machine", "", "reattach to a live runner session on a remote device (alias/id/name)")
+	chrome := fs.Bool("chrome", false, "with --machine: keep the remote tmux status bar visible")
 	_ = fs.Parse(args)
 	if strings.TrimSpace(*agent) != "" && strings.TrimSpace(*runner) == "" {
 		*runner = normalizeRunnerID(*agent)
+	}
+
+	// Remote reattach: `yaver attach --machine=<dev> [--agent=codex]` finds
+	// live runner PTY sessions on the box. One match → reattach; several →
+	// picker; none → hint. Mirrors `yaver codex --machine` transport.
+	if strings.TrimSpace(*machine) != "" {
+		if err := runRemoteAttachPicker(*machine, normalizeRunnerID(strings.TrimSpace(*runner)), *chrome); err != nil {
+			fmt.Fprintf(os.Stderr, "attach: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 	opts := attachSessionOptions{
 		Source:        terminalLocalTaskSource,

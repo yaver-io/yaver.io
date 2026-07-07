@@ -1181,6 +1181,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Owner-only exact-TUI runner wrap (yaver claude|codex|opencode --machine=…);
 	// deliberately NOT in hostShareAllowedPrefixes. See runner_pty.go.
 	mux.HandleFunc("/ws/runner", s.auth(s.handleRunnerPTYWS))
+	mux.HandleFunc("/runner/sessions", s.auth(s.handleRunnerSessions))
 	mux.HandleFunc("/console/machines", s.auth(s.handleConsoleMachines))
 
 	// Deploy pipeline
