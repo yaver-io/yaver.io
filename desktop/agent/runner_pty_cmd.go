@@ -8,7 +8,9 @@ package main
 //	yaver claude --dangerously-skip-permissions --machine=myhetzner
 //	yaver codex --dangerously-bypass-approvals-and-sandbox --machine=mypi
 //	yaver opencode --machine primary
-//	yaver codex                       # no --machine: plain local exec passthrough
+//	yaver codex remote                # sugar for --machine=primary
+//	yaver claude remote               # same, any runner
+//	yaver codex                       # no machine: plain local exec passthrough
 //
 // Everything that is not a yaver-owned flag (--machine/-m, --chrome,
 // --yaver-cwd, --yaver-session, --yaver-help) is shipped VERBATIM to the
@@ -284,38 +286,110 @@ func condenseTransportError(err error) string {
 	}
 }
 
-func runRunnerPassthrough(runnerName string, args []string) {
-	machine := ""
-	chrome := false
-	cwd := ""
-	session := ""
-	yaverSafe := false
-	passthrough := make([]string, 0, len(args))
+// runnerPassthroughOpts is the parsed split of a `yaver <runner> …` invocation
+// into yaver-owned knobs and the argv shipped verbatim to the runner.
+type runnerPassthroughOpts struct {
+	machine     string
+	chrome      bool
+	cwd         string
+	session     string
+	yaverSafe   bool
+	showHelp    bool
+	sync        bool // mirror the CWD project onto the box (implied by `remote`)
+	noSync      bool // explicit opt-out
+	passthrough []string
+}
+
+// parseRunnerPassthrough peels the yaver-owned flags (--machine/-m, the `remote`
+// sugar, --chrome, --yaver-*) off the argv and leaves everything else untouched
+// for the runner. Kept pure (no os.Exit / no I/O) so the arg contract is unit-
+// testable; runRunnerPassthrough wraps it with the runner dispatch.
+func parseRunnerPassthrough(args []string) runnerPassthroughOpts {
+	opts := runnerPassthroughOpts{passthrough: make([]string, 0, len(args))}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--machine" || a == "-m":
 			if i+1 < len(args) {
 				i++
-				machine = args[i]
+				opts.machine = args[i]
 			}
 		case strings.HasPrefix(a, "--machine="):
-			machine = strings.TrimPrefix(a, "--machine=")
+			opts.machine = strings.TrimPrefix(a, "--machine=")
+		case a == "remote" && i == 0:
+			// `yaver codex remote` — sugar for --machine=primary + project
+			// mirror, the common "just run this on my main box, in this repo"
+			// case. Only the FIRST token counts so a quoted prompt that happens
+			// to be the word "remote" (rare) isn't hijacked. An explicit
+			// --machine=<device> still wins. For a non-primary box, use
+			// --machine=<device> --yaver-sync.
+			if strings.TrimSpace(opts.machine) == "" {
+				opts.machine = "primary"
+			}
+			opts.sync = true
+		case a == "--yaver-sync":
+			opts.sync = true
+		case a == "--yaver-no-sync":
+			opts.noSync = true
 		case a == "--chrome":
-			chrome = true
+			opts.chrome = true
 		case strings.HasPrefix(a, "--yaver-cwd="):
-			cwd = strings.TrimPrefix(a, "--yaver-cwd=")
+			opts.cwd = strings.TrimPrefix(a, "--yaver-cwd=")
 		case strings.HasPrefix(a, "--yaver-session="):
-			session = strings.TrimPrefix(a, "--yaver-session=")
+			opts.session = strings.TrimPrefix(a, "--yaver-session=")
 		case a == "--yaver-safe":
-			yaverSafe = true
+			opts.yaverSafe = true
 		case a == "--yaver-help":
-			printRunnerPassthroughUsage(runnerName)
-			return
+			opts.showHelp = true
 		default:
-			passthrough = append(passthrough, a)
+			opts.passthrough = append(opts.passthrough, a)
 		}
 	}
+	return opts
+}
+
+// runTopLevelRemote backs `yaver remote …`: run the user's DEFAULT runner on
+// the primary device, project-aware. It resolves the default runner from config
+// (falling back to claude) and forwards to the runner passthrough with `remote`
+// prepended, so all the machine-resolution + mirror logic is shared.
+func runTopLevelRemote(args []string) {
+	runner := "claude"
+	if _, code, err := loadCodeConfig(); err == nil && code != nil {
+		if r := normalizeRunnerID(strings.TrimSpace(code.Runner)); r != "" && IsSupportedRunner(r) {
+			runner = r
+		}
+	}
+	runRunnerPassthrough(runner, append([]string{"remote"}, args...))
+}
+
+// remoteMobileSubcommands are the verbs the legacy `yaver remote` (paired-phone
+// control) owns. `yaver remote` dispatches to it for these; anything else (a
+// coding prompt / runner flags) routes to CWD-aware remote coding.
+var remoteMobileSubcommands = map[string]bool{
+	"detect": true, "list": true, "ls": true, "phones": true,
+	"insert": true, "push": true, "help": true, "-h": true, "--help": true,
+}
+
+// runRemoteDispatch splits the overloaded `yaver remote …`: the historical
+// paired-phone control verbs keep their behavior; everything else (a bare prompt
+// like `yaver remote "fix the bug"`, or runner flags) becomes CWD-aware remote
+// coding on the primary device with the default runner. `yaver remote` with no
+// args keeps the phone-control help, its long-standing behavior.
+func runRemoteDispatch(args []string) {
+	if len(args) == 0 || remoteMobileSubcommands[strings.ToLower(strings.TrimSpace(args[0]))] {
+		runRemote(args)
+		return
+	}
+	runTopLevelRemote(args)
+}
+
+func runRunnerPassthrough(runnerName string, args []string) {
+	opts := parseRunnerPassthrough(args)
+	if opts.showHelp {
+		printRunnerPassthroughUsage(runnerName)
+		return
+	}
+	passthrough := opts.passthrough
 
 	runnerID := normalizeRunnerID(runnerName)
 	if !IsSupportedRunner(runnerID) {
@@ -323,15 +397,18 @@ func runRunnerPassthrough(runnerName string, args []string) {
 			runnerName, strings.Join(supportedRunnerIDs, ", "))
 		os.Exit(1)
 	}
-	if !yaverSafe {
+	if !opts.yaverSafe {
 		passthrough = applyRunnerYoloDefaults(runnerID, passthrough)
 	}
 
-	if strings.TrimSpace(machine) == "" {
+	if strings.TrimSpace(opts.machine) == "" {
 		runLocalRunnerPassthrough(runnerID, passthrough)
 		return
 	}
-	if err := runRemoteRunnerPTY(machine, runnerID, passthrough, cwd, session, chrome); err != nil {
+	// Mirror the CWD project onto the box unless the caller opted out or pinned
+	// an explicit remote dir (--yaver-cwd wins over auto-detection).
+	mirror := opts.sync && !opts.noSync && strings.TrimSpace(opts.cwd) == ""
+	if err := runRemoteRunnerPTY(opts.machine, runnerID, passthrough, opts.cwd, opts.session, opts.chrome, mirror); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", runnerName, err)
 		os.Exit(1)
 	}
@@ -431,7 +508,11 @@ func runLocalRunnerPassthrough(runnerID string, args []string) {
 // Zero chrome by default: exactly like `ssh box` + `codex` — no yaver banner,
 // no tmux status bar, just the runner's TUI. `--chrome` adds the banner + the
 // remote tmux status line.
-func runRemoteRunnerPTY(machine, runnerID string, args []string, cwd, session string, chrome bool) error {
+//
+// When mirror is set (the `remote` sugar / --yaver-sync), the CWD's git project
+// is first cloned/pulled onto the box and the runner is cd'd into the matching
+// subdir — CWD-aware remote coding.
+func runRemoteRunnerPTY(machine, runnerID string, args []string, cwd, session string, chrome, mirror bool) error {
 	candidates, token, err := resolveRemoteAgentCandidates(machine)
 	if err != nil {
 		return err
@@ -463,6 +544,33 @@ func runRemoteRunnerPTY(machine, runnerID string, args []string, cwd, session st
 	}
 	if reach.authExpired {
 		fmt.Fprintf(os.Stderr, "→ note: %s reports its yaver auth token expired — run `yaver primary auth` if the runner sign-in stalls\r\n", machine)
+	}
+
+	// CWD-aware mirroring: clone/pull this project onto the box and point the
+	// runner at the matching subdir. Runs against the candidate that just
+	// answered /health (reach.candidate) — the one route we know is live.
+	if mirror {
+		repo, _ := detectLocalRepoContext()
+		if repo != nil {
+			warnLocalRepoState(repo, machine)
+			c := reach.candidate
+			base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+			headers := http.Header{}
+			ctoken := token
+			for k, v := range c.Headers {
+				headers.Set(k, v)
+				if strings.EqualFold(k, "Authorization") {
+					ctoken = strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+				}
+			}
+			remoteCwd, perr := prepareRemoteRepo(base, ctoken, headers, repo, c.DeviceID, !chrome)
+			if perr != nil {
+				return perr
+			}
+			cwd = remoteCwd
+		} else if !chrome {
+			fmt.Fprintf(os.Stderr, "→ not inside a git repo — running in %s's default work dir\r\n", machine)
+		}
 	}
 
 	q := url.Values{}
@@ -819,13 +927,13 @@ func runRemoteAttachPicker(machine, runnerFilter string, chrome bool) error {
 		}
 		return fmt.Errorf("no live runner sessions on %s — %s", machine, hint)
 	case 1:
-		return runRemoteRunnerPTY(machine, sessions[0].Runner, nil, "", sessions[0].Name, chrome)
+		return runRemoteRunnerPTY(machine, sessions[0].Runner, nil, "", sessions[0].Name, chrome, false)
 	default:
 		chosen, perr := pickRunnerSession(machine, sessions)
 		if perr != nil {
 			return perr
 		}
-		return runRemoteRunnerPTY(machine, chosen.Runner, nil, "", chosen.Name, chrome)
+		return runRemoteRunnerPTY(machine, chosen.Runner, nil, "", chosen.Name, chrome, false)
 	}
 }
 
@@ -883,12 +991,22 @@ func printRunnerPassthroughUsage(runnerName string) {
 
 Usage:
   yaver %[1]s [%[1]s args...]                     local passthrough (exactly like running %[1]s)
-  yaver %[1]s [%[1]s args...] --machine=<device>  same TUI, running on the remote machine
+  yaver %[1]s remote [%[1]s args...]              same TUI on your primary device, IN THIS PROJECT
+  yaver %[1]s [%[1]s args...] --machine=<device>  same TUI, running on a specific remote machine
+
+Project-aware remote (the "remote" word): from inside a git checkout, yaver
+mirrors THIS project onto the box (clone if absent, pull if present) and cd's
+the runner into the same subdir — so 'yaver %[1]s remote "fix the bug"' picks up
+your current repo on the primary box. Sync is pull-from-origin: the box works on
+the PUSHED branch, and you're warned if local changes aren't committed+pushed.
 
 Yaver-owned flags (everything else goes verbatim to %[1]s):
+  remote                   run on your primary device, in this project — first word only
   --machine, -m <device>   device alias / id / name / primary / secondary
+  --yaver-sync             mirror this project onto --machine (implied by "remote")
+  --yaver-no-sync          do NOT mirror; run in the box's default work dir
   --chrome                 keep the remote tmux status bar visible (default: hidden)
-  --yaver-cwd=<path>       remote working directory (default: agent work dir)
+  --yaver-cwd=<path>       explicit remote working directory (overrides mirroring)
   --yaver-session=<name>   remote tmux session name (default: yaver-<runner>)
   --yaver-safe             do NOT inject the default no-approvals flag
   --yaver-help             this help

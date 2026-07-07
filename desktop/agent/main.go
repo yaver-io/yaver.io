@@ -648,7 +648,9 @@ func main() {
 	case "android":
 		runAndroid(os.Args[2:])
 	case "remote":
-		runRemote(os.Args[2:])
+		// Overloaded: legacy paired-phone control (`yaver remote detect/insert/
+		// …`) OR CWD-aware remote coding (`yaver remote "fix the bug"`).
+		runRemoteDispatch(os.Args[2:])
 	case "insert":
 		runRemoteInsert(os.Args[2:])
 	case "monorepo":

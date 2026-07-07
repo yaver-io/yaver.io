@@ -390,3 +390,45 @@ func TestCollectCodexFilesPicksUpHomeSessions(t *testing.T) {
 		t.Fatalf("expected %s in collected files, got %v", want, keys)
 	}
 }
+
+func TestParseRunnerPassthroughRemoteSugar(t *testing.T) {
+	cases := []struct {
+		name        string
+		args        []string
+		wantMachine string
+		wantPass    []string
+	}{
+		{"bare remote → primary", []string{"remote"}, "primary", []string{}},
+		{"remote then args", []string{"remote", "exec", "hi"}, "primary", []string{"exec", "hi"}},
+		{"explicit machine wins over remote", []string{"remote", "--machine=linux-3"}, "linux-3", []string{}},
+		{"remote only counts as first token", []string{"exec", "remote"}, "", []string{"exec", "remote"}},
+		{"machine flag still works", []string{"--machine", "mypi", "hello"}, "mypi", []string{"hello"}},
+		{"no machine → local", []string{"hello world"}, "", []string{"hello world"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseRunnerPassthrough(tc.args)
+			if got.machine != tc.wantMachine {
+				t.Errorf("machine = %q, want %q", got.machine, tc.wantMachine)
+			}
+			if strings.Join(got.passthrough, "\x00") != strings.Join(tc.wantPass, "\x00") {
+				t.Errorf("passthrough = %v, want %v", got.passthrough, tc.wantPass)
+			}
+		})
+	}
+}
+
+func TestNormalizeGitURLToHTTPS(t *testing.T) {
+	cases := map[string]string{
+		"git@github.com:kivanccakmak/yaver.io.git":     "https://github.com/kivanccakmak/yaver.io.git",
+		"git@gitlab.com:group/sub/proj.git":            "https://gitlab.com/group/sub/proj.git",
+		"ssh://git@github.com/owner/repo.git":          "https://github.com/owner/repo.git",
+		"https://github.com/owner/repo.git":            "https://github.com/owner/repo.git",
+		"":                                             "",
+	}
+	for in, want := range cases {
+		if got := normalizeGitURLToHTTPS(in); got != want {
+			t.Errorf("normalizeGitURLToHTTPS(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
