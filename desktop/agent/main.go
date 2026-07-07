@@ -387,6 +387,11 @@ func main() {
 		runPingDispatch(os.Args[2:])
 	case "attach":
 		runAttach(os.Args[2:])
+	case "claude", "codex", "opencode", "glm":
+		// Transparent runner passthrough: `yaver codex <codex args…>
+		// --machine=<device>` wraps the runner's own TUI locally or on a
+		// remote machine (runner_pty_cmd.go). Zero yaver chrome by default.
+		runRunnerPassthrough(os.Args[1], os.Args[2:])
 	case "code":
 		runCode(os.Args[2:])
 	case "wrap":
@@ -676,6 +681,7 @@ Usage:
   yaver stop        Stop the running agent
   yaver restart     Restart the agent
   yaver code        Terminal-first coding UX (interactive by default, mesh with --mesh)
+  yaver claude|codex|opencode|glm [args...] [--machine=<device>]  Run the agent's own TUI, local or remote (exact wrap, tmux-persistent)
   yaver attach      Interactive terminal — see tasks, type prompts (like Claude Code)
   yaver agent       Dependency-aware agent graph runner (chat + autoideas)
   yaver serve       Start the agent manually (advanced)

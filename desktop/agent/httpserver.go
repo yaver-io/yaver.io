@@ -1178,6 +1178,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/ws/metrics", s.auth(s.handleMetricsStream))
 	mux.HandleFunc("/ws/logs", s.auth(s.handleContainerLogsStream))
 	mux.HandleFunc("/ws/terminal", s.auth(s.handleTerminalWS))
+	// Owner-only exact-TUI runner wrap (yaver claude|codex|opencode --machine=…);
+	// deliberately NOT in hostShareAllowedPrefixes. See runner_pty.go.
+	mux.HandleFunc("/ws/runner", s.auth(s.handleRunnerPTYWS))
 	mux.HandleFunc("/console/machines", s.auth(s.handleConsoleMachines))
 
 	// Deploy pipeline

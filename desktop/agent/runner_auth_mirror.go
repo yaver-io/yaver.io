@@ -106,6 +106,16 @@ func ReadLocalRunnerCredential(runner string) (LocalRunnerCredential, error) {
 		path = filepath.Join(home, ".claude", ".credentials.json")
 	case "codex":
 		path = filepath.Join(home, ".codex", "auth.json")
+	case "opencode":
+		// First existing XDG-aware candidate; canonical XDG data path as
+		// the default when none exists yet.
+		path = filepath.Join(home, ".local", "share", "opencode", "auth.json")
+		for _, cand := range openCodeAuthPaths() {
+			if _, err := os.Stat(cand); err == nil {
+				path = cand
+				break
+			}
+		}
 	default:
 		return LocalRunnerCredential{}, fmt.Errorf("mirror not supported for runner %q", runner)
 	}
@@ -168,7 +178,7 @@ func AcceptMirrorPayload(_ context.Context, payload MirrorAcceptPayload) (Mirror
 		return MirrorResult{}, fmt.Errorf("empty credentials file")
 	}
 	runner := normalizeRunnerAuthName(payload.Runner)
-	if runner != "claude" && runner != "codex" {
+	if runner != "claude" && runner != "codex" && runner != "opencode" {
 		return MirrorResult{}, fmt.Errorf("runner %q not supported", payload.Runner)
 	}
 	data, err := base64.StdEncoding.DecodeString(payload.CredentialsFile)
@@ -191,6 +201,8 @@ func AcceptMirrorPayload(_ context.Context, payload MirrorAcceptPayload) (Mirror
 		dest = filepath.Join(home, ".claude", ".credentials.json")
 	case "codex":
 		dest = filepath.Join(home, ".codex", "auth.json")
+	case "opencode":
+		dest = filepath.Join(home, ".local", "share", "opencode", "auth.json")
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return MirrorResult{}, fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)

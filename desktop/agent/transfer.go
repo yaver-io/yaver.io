@@ -525,7 +525,7 @@ func collectAiderFiles(workDir string, files map[string]string) {
 
 // Codex: session state
 func collectCodexFiles(workDir string, files map[string]string) {
-	// Codex stores state in .codex/ in the project directory
+	// Project-local .codex/ (config overrides some setups keep in-repo).
 	codexDir := filepath.Join(workDir, ".codex")
 	if _, err := os.Stat(codexDir); err == nil {
 		filepath.Walk(codexDir, func(path string, info os.FileInfo, err error) error {
@@ -540,6 +540,41 @@ func collectCodexFiles(workDir string, files map[string]string) {
 			return nil
 		})
 	}
+
+	// The actual session rollouts live under $CODEX_HOME/sessions (default
+	// ~/.codex/sessions), NOT in the project dir — without these, a
+	// cross-device transfer moves nothing and `codex exec resume` on the
+	// target has no session to resume. Cap per-file size; rollouts are
+	// jsonl and can grow, but a resume only needs the rollout file intact.
+	sessionsDir := filepath.Join(codexHomeDir(), "sessions")
+	if _, err := os.Stat(sessionsDir); err == nil {
+		filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || info.Size() > 8<<20 {
+				return nil
+			}
+			rel, rerr := filepath.Rel(sessionsDir, path)
+			if rerr != nil {
+				return nil
+			}
+			data, _ := os.ReadFile(path)
+			if data != nil {
+				files["codex-home/sessions/"+filepath.ToSlash(rel)] = base64.StdEncoding.EncodeToString(data)
+			}
+			return nil
+		})
+	}
+}
+
+// codexHomeDir mirrors codexAuthPath's resolution: $CODEX_HOME, else ~/.codex.
+func codexHomeDir() string {
+	if dir := strings.TrimSpace(os.Getenv("CODEX_HOME")); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".codex"
+	}
+	return filepath.Join(home, ".codex")
 }
 
 // Goose: session state
@@ -648,6 +683,20 @@ func writeAgentFiles(agentType, sessionID string, files map[string]string, workD
 			name := strings.TrimPrefix(key, "aider/")
 			fpath := filepath.Join(workDir, name)
 			os.WriteFile(fpath, []byte(content), 0644)
+
+		case strings.HasPrefix(key, "codex-home/"):
+			// Session rollouts go back under $CODEX_HOME (default ~/.codex),
+			// where the codex CLI actually reads them for `exec resume`.
+			rel := strings.TrimPrefix(key, "codex-home/")
+			if strings.Contains(rel, "..") {
+				continue
+			}
+			fpath := filepath.Join(codexHomeDir(), filepath.FromSlash(rel))
+			os.MkdirAll(filepath.Dir(fpath), 0755)
+			data, _ := base64.StdEncoding.DecodeString(content)
+			if data != nil {
+				os.WriteFile(fpath, data, 0600)
+			}
 
 		case strings.HasPrefix(key, "codex/"):
 			rel := strings.TrimPrefix(key, "codex/")

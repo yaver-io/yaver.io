@@ -673,8 +673,8 @@ func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r 
 		return
 	}
 	runner := normalizeRunnerAuthName(body.Runner)
-	if runner != "claude" && runner != "codex" {
-		jsonError(w, http.StatusBadRequest, "unsupported runner — claude or codex only")
+	if runner != "claude" && runner != "codex" && runner != "opencode" {
+		jsonError(w, http.StatusBadRequest, "unsupported runner — claude, codex, or opencode")
 		return
 	}
 	creds := strings.TrimSpace(body.CredentialsJSON)
@@ -711,6 +711,10 @@ func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r 
 		dest = filepath.Join(home, ".claude", ".credentials.json")
 	case "codex":
 		dest = filepath.Join(home, ".codex", "auth.json")
+	case "opencode":
+		// opencode's canonical store (XDG data dir) — first entry that
+		// openCodeAuthPaths() probes for detectOpenCodeStatus.
+		dest = filepath.Join(home, ".local", "share", "opencode", "auth.json")
 	}
 	if tr.Enabled {
 		if err := writeTenantCredentialFile(tr, dest, []byte(creds)); err != nil {

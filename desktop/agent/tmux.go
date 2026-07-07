@@ -607,7 +607,7 @@ func capturePane(sessionName string, lines int) string {
 func capturePaneMode(sessionName string, lines int, alternate bool) string {
 	args := []string{"capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", lines)}
 	if alternate {
-		args = append([]string{"capture-pane", "-a", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", lines)})
+		args = []string{"capture-pane", "-a", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", lines)}
 	}
 	out, err := exec.Command("tmux", args...).CombinedOutput()
 	if err != nil {

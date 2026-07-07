@@ -2437,7 +2437,15 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			case "opencode":
 				args = insertRunnerFlagAfter(args, "run", "--model", effectiveModel)
 			case "codex":
-				args = insertRunnerFlagAfter(args, "exec", "--model", effectiveModel)
+				// On a schedule-resume, resumeTransform rebuilt the argv as
+				// `codex … exec resume <sessionId> <prompt>`. Inserting after
+				// "exec" would land --model BETWEEN exec and resume, so codex
+				// parses "resume" as the prompt and the session id as a stray
+				// arg. The resumed session carries its model already — skip
+				// injection, matching the continue_task resume path.
+				if !resumedForSchedule {
+					args = insertRunnerFlagAfter(args, "exec", "--model", effectiveModel)
+				}
 			default:
 				args = append(args, "--model", effectiveModel)
 			}

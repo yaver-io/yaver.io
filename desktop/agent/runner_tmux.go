@@ -56,6 +56,13 @@ func tmuxRunnerEligible(runnerID string) bool {
 	switch strings.ToLower(strings.TrimSpace(runnerID)) {
 	case "claude", "claude-code", "opencode":
 		return true
+	case "codex":
+		// Codex doesn't need the login-session Keychain, but tmux dispatch
+		// gives its `exec` runs the same pane-mirrored live view + post-hoc
+		// scrollback the other runners get — and the pane is adoptable from
+		// the phone (tmux_adopt_session). Opt-in via YAVER_TMUX_RUNNER as
+		// with every runner.
+		return true
 	}
 	return false
 }

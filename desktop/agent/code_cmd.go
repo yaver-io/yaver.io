@@ -60,6 +60,8 @@ func runCode(args []string) {
 	allowedDevices := fs.String("allowed-devices", "", "comma-separated device IDs or names to form the mesh execution pool")
 	allowedRunners := fs.String("allowed-runners", "", "comma-separated runner allowlist for mesh nodes, e.g. ollama,opencode,codex")
 	plain := fs.Bool("plain", false, "force plain line-by-line output (no TUI)")
+	ptyMode := fs.Bool("pty", false, "with --attach: raw PTY wrap of the runner's own TUI on the remote machine (tmux-persistent, zero chrome)")
+	chrome := fs.Bool("chrome", false, "with --pty: keep the remote tmux status bar visible")
 	_ = fs.Parse(args)
 	if cfg, profile, err := loadCodeConfig(); err == nil && cfg != nil && profile != nil {
 		if strings.TrimSpace(*runner) == "" {
@@ -83,6 +85,21 @@ func runCode(args []string) {
 	}
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if *ptyMode {
+		// `yaver code --attach <device> --pty [--runner codex] [-- args…]`:
+		// same transport + endpoint as `yaver codex --machine=<device>` —
+		// the runner's own TUI, wrapped in tmux on the remote end.
+		if strings.TrimSpace(*attachTarget) == "" {
+			fmt.Fprintln(os.Stderr, "code: --pty requires --attach <device> (for a local TUI just run the runner directly)")
+			os.Exit(1)
+		}
+		ptyRunner := normalizeRunnerID(firstNonEmpty(strings.TrimSpace(*runner), "claude"))
+		if err := runRemoteRunnerPTY(*attachTarget, ptyRunner, fs.Args(), "", "", *chrome); err != nil {
+			fmt.Fprintf(os.Stderr, "code: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if strings.TrimSpace(*attachTarget) != "" {
 		if err := runRemoteCodeAttach(prompt, *attachTarget, *username, *runner, *model, *mode); err != nil {
 			fmt.Fprintf(os.Stderr, "code: %v\n", err)
@@ -185,8 +202,13 @@ Terminal mode:
   yaver code
       Open the local Yaver terminal.
 
-  yaver code --attach <deviceId|deviceName> [--username <email>]
+  yaver code --attach <alias|deviceId|deviceName> [--username <email>]
       Open the Yaver terminal on another machine you already own or can access.
+
+  yaver code --attach <device> --pty [--runner codex] [runner args...]
+      Raw PTY wrap of the runner's OWN TUI on the remote machine (zero yaver
+      chrome, tmux-persistent). Shorthand: yaver claude|codex|opencode|glm
+      [args...] --machine=<device>.
 
 One-shot mode:
   yaver code "fix the failing tests"
@@ -373,7 +395,8 @@ func resolveCodeAttachDevice(cfg *Config, attachTarget, username string) (*Devic
 		if wantEmail != "" && strings.ToLower(strings.TrimSpace(d.HostEmail)) != wantEmail {
 			continue
 		}
-		if strings.EqualFold(d.DeviceID, attachTarget) || strings.EqualFold(d.Name, attachTarget) {
+		if strings.EqualFold(d.DeviceID, attachTarget) || strings.EqualFold(d.Name, attachTarget) ||
+			(strings.TrimSpace(d.Alias) != "" && strings.EqualFold(d.Alias, attachTarget)) {
 			exact = d
 			break
 		}

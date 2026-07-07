@@ -275,6 +275,13 @@ func profileInstallTarget(name string) (string, bool) {
 		return "node", true
 	case "opencode":
 		return "opencode", true
+	case "claude", "claude-code":
+		return "claude", true
+	case "codex":
+		return "codex", true
+	case "glm", "zai", "z.ai":
+		// GLM rides the claude binary (provider env selects z.ai).
+		return "claude", true
 	case "chrome", "google-chrome", "google-chrome-stable":
 		return "chrome", true
 	case "chromium", "chromium-browser":
@@ -478,15 +485,17 @@ func applyEnvironmentProfile(ctx context.Context, convexURL string, profile Envi
 		if target, ok := profileInstallTarget(runner.ID); ok {
 			installTargets[target] = true
 			sourceToolTargets[target] = true
-			continue
-		}
-		if runner.Installed || runner.Ready {
-			switch normalizeRunnerID(runner.ID) {
-			case "claude":
-				result.ManualSteps = append(result.ManualSteps, "Install Claude Code manually and reconnect auth on the target machine.")
-			case "codex":
-				result.ManualSteps = append(result.ManualSteps, "Install Codex manually and sign in with OpenAI on the target machine.")
+			// Install is automated; auth is not (subscription OAuth only).
+			// Point at the mirror path instead of a dead-end manual step.
+			if runner.Installed || runner.Ready {
+				switch normalizeRunnerID(runner.ID) {
+				case "claude", "codex", "opencode":
+					result.Notes = append(result.Notes, fmt.Sprintf(
+						"%s auth does not travel with the toolchain — mirror it from a signed-in machine (runner_auth_mirror / credentials_import) or run the device-auth flow on the target.",
+						normalizeRunnerID(runner.ID)))
+				}
 			}
+			continue
 		}
 	}
 

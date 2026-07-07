@@ -311,6 +311,18 @@ if ! command -v aider >/dev/null 2>&1; then
   pipx install --force aider-chat
 fi
 
+log "claude code + codex (npm globals)"
+# The two subscription-OAuth runners. Install-only: auth NEVER lands on this
+# box at provision time — it arrives later via runner_auth_mirror /
+# credentials_import from a signed-in machine, or `codex login --device-auth` /
+# `claude auth login` relayed through the agent's browser-auth flow.
+if ! command -v claude >/dev/null 2>&1; then
+  npm install -g @anthropic-ai/claude-code || log "WARN: claude-code install failed (non-fatal)"
+fi
+if ! command -v codex >/dev/null 2>&1; then
+  npm install -g @openai/codex || log "WARN: codex install failed (non-fatal)"
+fi
+
 log "opencode"
 if ! command -v opencode >/dev/null 2>&1; then
   # Official installer puts binary in ~/.opencode/bin. Run it as the yaver

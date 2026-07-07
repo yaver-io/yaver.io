@@ -174,6 +174,36 @@ sudo mv /tmp/yaver-new /usr/local/bin/yaver
 echo "[setup] Yaver agent installed: $(yaver --version 2>/dev/null || echo unknown)"
 `, agentURL))
 
+	// Coding runners (claude / codex / opencode) + the codex Linux sandbox
+	// sysctls. Install-only and non-fatal: auth never lands here at
+	// provision time — it arrives via runner_auth_mirror / credentials_import
+	// or the relayed device-auth flow. Without the sysctls, every codex task
+	// on a stock Ubuntu box (apparmor_restrict_unprivileged_userns=1) fails
+	// "runner not ready" with no auto-remediation.
+	script.WriteString(`
+# Coding runners (install-only; auth is mirrored later)
+if command -v npm &>/dev/null; then
+  command -v claude &>/dev/null || npm install -g @anthropic-ai/claude-code || echo "[setup] WARN: claude-code install failed"
+  command -v codex  &>/dev/null || npm install -g @openai/codex || echo "[setup] WARN: codex install failed"
+  command -v opencode &>/dev/null || npm install -g opencode-ai || echo "[setup] WARN: opencode install failed"
+fi
+`)
+	if platform == "linux" {
+		script.WriteString(`
+# Codex sandbox prerequisites (unprivileged user namespaces)
+if [ "$(uname)" = "Linux" ]; then
+  sudo tee /etc/sysctl.d/99-yaver-runner-sandbox.conf >/dev/null <<'SYSCTL'
+kernel.unprivileged_userns_clone=1
+user.max_user_namespaces=1048576
+SYSCTL
+  if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+    echo "kernel.apparmor_restrict_unprivileged_userns=0" | sudo tee -a /etc/sysctl.d/99-yaver-runner-sandbox.conf >/dev/null
+  fi
+  sudo sysctl --system >/dev/null 2>&1 || true
+fi
+`)
+	}
+
 	// Firewall (Linux only)
 	if platform == "linux" {
 		script.WriteString(`
