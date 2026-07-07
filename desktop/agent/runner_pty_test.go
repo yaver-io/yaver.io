@@ -142,6 +142,112 @@ func TestRunnerPTYSpawnsStubRunner(t *testing.T) {
 	}
 }
 
+func TestPreflightRemoteRunnerAuth(t *testing.T) {
+	newFakeAgent := func(row runnerAuthStatusRow, mirrorHits *int) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/runner-auth/status":
+				json.NewEncoder(w).Encode(map[string]any{"ok": true, "runners": []runnerAuthStatusRow{row}})
+			case r.URL.Path == "/runner/auth/mirror/accept":
+				if mirrorHits != nil {
+					*mirrorHits++
+				}
+				json.NewEncoder(w).Encode(map[string]any{"ok": true, "runner": row.ID})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+	}
+
+	t.Run("authed proceeds silently", func(t *testing.T) {
+		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, AuthConfigured: true}, nil)
+		defer srv.Close()
+		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex"); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("not installed fails fast with npm hint", func(t *testing.T) {
+		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: false}, nil)
+		defer srv.Close()
+		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex")
+		if err == nil || !strings.Contains(err.Error(), "@openai/codex") {
+			t.Fatalf("expected npm hint error, got %v", err)
+		}
+	})
+
+	t.Run("sandbox blocked fails fast with sysctl hint", func(t *testing.T) {
+		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, Error: "kernel settings are blocking the sandbox"}, nil)
+		defer srv.Close()
+		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex")
+		if err == nil || !strings.Contains(err.Error(), "sysctl") {
+			t.Fatalf("expected sysctl hint error, got %v", err)
+		}
+	})
+
+	t.Run("unauthed with local credential mirrors and proceeds", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"oauth":{"expiresAt":9999999999999}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		hits := 0
+		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, AuthConfigured: false}, &hits)
+		defer srv.Close()
+		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex"); err != nil {
+			t.Fatalf("expected mirror to satisfy preflight, got %v", err)
+		}
+		if hits != 1 {
+			t.Fatalf("mirror accept hits = %d, want 1", hits)
+		}
+	})
+
+	t.Run("old agent without endpoint proceeds with warning", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(http.NotFound))
+		defer srv.Close()
+		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex"); err != nil {
+			t.Fatalf("expected nil for old agent, got %v", err)
+		}
+	})
+}
+
+func TestApplyRunnerYoloDefaults(t *testing.T) {
+	cases := []struct {
+		runner string
+		in     []string
+		want   []string
+	}{
+		// The headline behavior: bare invocation gets the yolo flag.
+		{"codex", nil, []string{"--dangerously-bypass-approvals-and-sandbox"}},
+		{"claude", nil, []string{"--dangerously-skip-permissions"}},
+		{"glm", nil, []string{"--dangerously-skip-permissions"}},
+		// opencode's TUI has no permission flag — untouched.
+		{"opencode", nil, nil},
+		// A prompt positional still gets the flag prepended.
+		{"claude", []string{"fix the failing tests"}, []string{"--dangerously-skip-permissions", "fix the failing tests"}},
+		// Already carrying a stance → untouched.
+		{"codex", []string{"--full-auto"}, []string{"--full-auto"}},
+		{"codex", []string{"--sandbox=workspace-write"}, []string{"--sandbox=workspace-write"}},
+		{"claude", []string{"--permission-mode", "plan"}, []string{"--permission-mode", "plan"}},
+		{"claude", []string{"--dangerously-skip-permissions"}, []string{"--dangerously-skip-permissions"}},
+		// Management subcommands must not get a root flag shoved in front.
+		{"codex", []string{"login", "--device-auth"}, []string{"login", "--device-auth"}},
+		{"codex", []string{"resume", "abc123"}, []string{"resume", "abc123"}},
+		{"claude", []string{"mcp", "list"}, []string{"mcp", "list"}},
+		// Flags-first invocations still get it.
+		{"codex", []string{"--model", "gpt-5.4"}, []string{"--dangerously-bypass-approvals-and-sandbox", "--model", "gpt-5.4"}},
+	}
+	for _, c := range cases {
+		got := applyRunnerYoloDefaults(c.runner, c.in)
+		if strings.Join(got, "\x00") != strings.Join(c.want, "\x00") {
+			t.Errorf("applyRunnerYoloDefaults(%s, %v) = %v, want %v", c.runner, c.in, got, c.want)
+		}
+	}
+}
+
 func TestSanitizeTmuxSessionName(t *testing.T) {
 	cases := map[string]string{
 		"":              "",
