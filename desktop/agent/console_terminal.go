@@ -94,7 +94,7 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				if tcwd == "" {
 					tcwd = home + "/Workspace"
 				}
-				env := append(s.gatewayInjectEnv(guestUserID), "TERM=xterm-256color")
+				env := append(s.gatewayInjectEnv(guestUserID), "TERM="+safePTYTermName(r.URL.Query().Get("term")))
 				if hostShareSessionID != "" {
 					env = append(env,
 						"YAVER_HOST_SHARE=1",
@@ -128,7 +128,7 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			// A tenant can't read the operator/yaver files or another
 			// tenant's home; the upstream key never appears (scoped token).
 			if name, home, err := ensureTenantOSUser(guestUserID); err == nil {
-				inject := append(s.gatewayInjectEnv(guestUserID), "TERM=xterm-256color")
+				inject := append(s.gatewayInjectEnv(guestUserID), "TERM="+safePTYTermName(r.URL.Query().Get("term")))
 				argv := tenantShellArgv(name, shell, inject)
 				cmd = exec.Command(argv[0], argv[1:]...)
 				// Don't leak the agent's env into the sudo invocation; sudo
@@ -146,12 +146,12 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			// run as the yaver agent user but with a secret-stripped env +
 			// the gateway provider. Still never the host key.
 			cmd = exec.Command(shell)
-			cmd.Env = append(s.tenantRunnerBaseEnv(guestUserID), "TERM=xterm-256color")
+			cmd.Env = append(s.tenantRunnerBaseEnv(guestUserID), "TERM="+safePTYTermName(r.URL.Query().Get("term")))
 		}
 		if ts == nil {
 			if cmd == nil {
 				cmd = exec.Command(shell)
-				cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+				cmd.Env = append(os.Environ(), "TERM="+safePTYTermName(r.URL.Query().Get("term")))
 			}
 			workspaceDir := ""
 			if isHostShare {

@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,45 +146,85 @@ func TestRunnerPTYSpawnsStubRunner(t *testing.T) {
 }
 
 func TestPreflightRemoteRunnerAuth(t *testing.T) {
-	newFakeAgent := func(row runnerAuthStatusRow, mirrorHits *int) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch {
-			case r.URL.Path == "/runner-auth/status":
-				json.NewEncoder(w).Encode(map[string]any{"ok": true, "runners": []runnerAuthStatusRow{row}})
-			case r.URL.Path == "/runner/auth/mirror/accept":
-				if mirrorHits != nil {
-					*mirrorHits++
+	// fakeAgent serves /runner-auth/status from a mutable row so a test can
+	// model the real contract: a mirror only counts if the NEXT status read
+	// says the runner is authenticated.
+	type fakeAgent struct {
+		srv         *httptest.Server
+		row         *runnerAuthStatusRow
+		mirrorHits  int
+		deviceAuths int
+	}
+	newFakeAgent := func(row runnerAuthStatusRow, authAfterMirror bool) *fakeAgent {
+		fa := &fakeAgent{row: &row}
+		var mu sync.Mutex
+		fa.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch r.URL.Path {
+			case "/runner-auth/status":
+				json.NewEncoder(w).Encode(map[string]any{"ok": true, "runners": []runnerAuthStatusRow{*fa.row}})
+			case "/runner/auth/mirror/accept":
+				fa.mirrorHits++
+				if authAfterMirror {
+					fa.row.AuthConfigured = true
+					fa.row.AuthVerified = true
 				}
-				json.NewEncoder(w).Encode(map[string]any{"ok": true, "runner": row.ID})
+				json.NewEncoder(w).Encode(map[string]any{"ok": true, "runner": fa.row.ID})
+			case "/runner-auth/browser/start":
+				fa.deviceAuths++
+				// No session id → preflight reports the flow could not start,
+				// which is enough to assert that we *reached* device-auth.
+				json.NewEncoder(w).Encode(map[string]any{"ok": true})
 			default:
 				http.NotFound(w, r)
 			}
 		}))
+		return fa
 	}
 
 	t.Run("authed proceeds silently", func(t *testing.T) {
-		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, AuthConfigured: true}, nil)
-		defer srv.Close()
-		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true); err != nil {
+		fa := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, Ready: true, AuthConfigured: true, AuthVerified: true}, false)
+		defer fa.srv.Close()
+		repaired, err := preflightRemoteRunnerAuth(fa.srv.URL, "tok", http.Header{}, "box", "codex", true)
+		if err != nil {
 			t.Fatalf("expected nil, got %v", err)
+		}
+		if repaired {
+			t.Fatal("nothing was repaired; repaired must be false")
 		}
 	})
 
 	t.Run("not installed fails fast with npm hint", func(t *testing.T) {
-		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: false}, nil)
-		defer srv.Close()
-		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true)
+		fa := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: false}, false)
+		defer fa.srv.Close()
+		_, err := preflightRemoteRunnerAuth(fa.srv.URL, "tok", http.Header{}, "box", "codex", true)
 		if err == nil || !strings.Contains(err.Error(), "@openai/codex") {
 			t.Fatalf("expected npm hint error, got %v", err)
 		}
 	})
 
 	t.Run("sandbox blocked fails fast with sysctl hint", func(t *testing.T) {
-		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, Error: "kernel settings are blocking the sandbox"}, nil)
-		defer srv.Close()
-		err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true)
+		fa := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, Error: "kernel settings are blocking the sandbox"}, false)
+		defer fa.srv.Close()
+		_, err := preflightRemoteRunnerAuth(fa.srv.URL, "tok", http.Header{}, "box", "codex", true)
 		if err == nil || !strings.Contains(err.Error(), "sysctl") {
 			t.Fatalf("expected sysctl hint error, got %v", err)
+		}
+	})
+
+	t.Run("auth file present but rejected fails before tui", func(t *testing.T) {
+		fa := newFakeAgent(runnerAuthStatusRow{
+			ID:             "claude",
+			Installed:      true,
+			Ready:          false,
+			AuthConfigured: true,
+			Error:          "Failed to authenticate. API Error: 401 Invalid authentication credentials",
+		}, false)
+		defer fa.srv.Close()
+		_, err := preflightRemoteRunnerAuth(fa.srv.URL, "tok", http.Header{}, "box", "claude", true)
+		if err == nil || !strings.Contains(err.Error(), "not usable") || !strings.Contains(err.Error(), "yaver primary auth claude") {
+			t.Fatalf("expected actionable auth error, got %v", err)
 		}
 	})
 
@@ -194,35 +237,230 @@ func TestPreflightRemoteRunnerAuth(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"oauth":{"expiresAt":9999999999999}}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		hits := 0
-		srv := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, AuthConfigured: false}, &hits)
-		defer srv.Close()
-		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true); err != nil {
+		fa := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, Ready: true, AuthConfigured: false}, true)
+		defer fa.srv.Close()
+		repaired, err := preflightRemoteRunnerAuth(fa.srv.URL, "tok", http.Header{}, "box", "codex", true)
+		if err != nil {
 			t.Fatalf("expected mirror to satisfy preflight, got %v", err)
 		}
-		if hits != 1 {
-			t.Fatalf("mirror accept hits = %d, want 1", hits)
+		if fa.mirrorHits != 1 {
+			t.Fatalf("mirror accept hits = %d, want 1", fa.mirrorHits)
+		}
+		if !repaired {
+			t.Fatal("a successful mirror must report repaired=true so the caller starts a fresh session")
+		}
+	})
+
+	// The bug this whole change exists for: a mirror that transfers bytes but
+	// not a login must NOT be treated as success. Before the fix the preflight
+	// returned nil here and dropped the user into a TUI showing a browser
+	// login screen on a machine with no browser.
+	t.Run("mirror that does not authenticate falls through to device-auth", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"oauth":{"expiresAt":9999999999999}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fa := newFakeAgent(runnerAuthStatusRow{ID: "codex", Installed: true, Ready: true, AuthConfigured: false}, false)
+		defer fa.srv.Close()
+		_, err := preflightRemoteRunnerAuth(fa.srv.URL, "tok", http.Header{}, "box", "codex", true)
+		if err == nil {
+			t.Fatal("expected preflight to fail rather than open a TUI onto a login screen")
+		}
+		if fa.mirrorHits != 1 {
+			t.Fatalf("mirror accept hits = %d, want 1", fa.mirrorHits)
+		}
+		if fa.deviceAuths != 1 {
+			t.Fatalf("device-auth starts = %d, want 1 (must fall through after a useless mirror)", fa.deviceAuths)
+		}
+	})
+
+	// A signed-out runner is repairable, not fatal: the preflight must reach
+	// the headless sign-in instead of erroring on `ready:false`.
+	t.Run("signed out runner reaches headless device auth", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir()) // no mirrorable credential
+		fa := newFakeAgent(runnerAuthStatusRow{
+			ID:             "codex",
+			Installed:      true,
+			Ready:          false,
+			AuthConfigured: false,
+			Error:          "Codex is installed but no credentials were found.",
+		}, false)
+		defer fa.srv.Close()
+		_, err := preflightRemoteRunnerAuth(fa.srv.URL, "tok", http.Header{}, "box", "codex", true)
+		if err == nil {
+			t.Fatal("expected the stubbed device-auth start to surface an error")
+		}
+		if fa.deviceAuths != 1 {
+			t.Fatalf("device-auth starts = %d, want 1", fa.deviceAuths)
 		}
 	})
 
 	t.Run("old agent without endpoint proceeds with warning", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(http.NotFound))
 		defer srv.Close()
-		if err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true); err != nil {
+		if _, err := preflightRemoteRunnerAuth(srv.URL, "tok", http.Header{}, "box", "codex", true); err != nil {
 			t.Fatalf("expected nil for old agent, got %v", err)
 		}
 	})
 }
 
+// TestClaudeCredentialFileHasOAuth pins the exact false positive that shipped
+// the bug: ~/.claude/.credentials.json also stores MCP plugin OAuth, so on a
+// Mac whose subscription token lives in the Keychain the file exists while
+// Claude is signed out of it. Mirroring it made a headless box claim it was
+// signed in and then demand a browser login.
+func TestClaudeCredentialFileHasOAuth(t *testing.T) {
+	future := time.Now().Add(time.Hour).UnixMilli()
+	past := time.Now().Add(-time.Hour).UnixMilli()
+	cases := map[string]struct {
+		body string
+		want bool
+	}{
+		"mcp plugin tokens only":     {`{"mcpOAuth":{"vercel":{"accessToken":"tok"}}}`, false},
+		"empty object":               {`{}`, false},
+		"not json":                   {`nope`, false},
+		"blank access token":         {`{"claudeAiOauth":{"accessToken":""}}`, false},
+		"live access token":          {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
+		"expired but refreshable":    {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":%d}}`, past), true},
+		"expired without refresh":    {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, past), false},
+		"mcp tokens plus real oauth": {fmt.Sprintf(`{"mcpOAuth":{"v":{"accessToken":"t"}},"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".credentials.json")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := claudeCredentialFileHasOAuth(path); got != tc.want {
+				t.Errorf("claudeCredentialFileHasOAuth(%s) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+	t.Run("missing file", func(t *testing.T) {
+		if claudeCredentialFileHasOAuth(filepath.Join(t.TempDir(), "absent.json")) {
+			t.Error("a missing file must not read as authenticated")
+		}
+	})
+}
+
+// TestReadLocalRunnerCredentialRefusesClaudeWithoutOAuth guards the mirror
+// source: pushing an mcpOAuth-only file is worse than pushing nothing, because
+// it makes the target's presence check lie.
+func TestReadLocalRunnerCredentialRefusesClaudeWithoutOAuth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude", ".credentials.json")
+
+	if err := os.WriteFile(path, []byte(`{"mcpOAuth":{"vercel":{"accessToken":"tok"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadLocalRunnerCredential("claude"); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("mcpOAuth-only file must not be mirrorable, got err=%v", err)
+	}
+
+	body := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, time.Now().Add(time.Hour).UnixMilli())
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cred, err := ReadLocalRunnerCredential("claude")
+	if err != nil {
+		t.Fatalf("a real claudeAiOauth credential must be mirrorable, got %v", err)
+	}
+	if len(cred.FileBytes) == 0 {
+		t.Fatal("expected the credential bytes to be carried verbatim")
+	}
+}
+
+// TestRunnerPTYPaneEnv guards the variables that must reach the runner process
+// itself. They used to live only in cmd.Env, which tmux hands to the client,
+// not the pane — so on any box whose tmux server predated them they silently
+// vanished, taking GLM's z.ai routing and root-claude's IS_SANDBOX with them.
+func TestRunnerPTYPaneEnv(t *testing.T) {
+	env := runnerPTYPaneEnv("claude", "xterm-256color")
+	if len(env) == 0 || !strings.HasPrefix(env[0], "TERM=") {
+		t.Fatalf("TERM must lead the pane env, got %v", env)
+	}
+	if got := runnerPTYPaneEnv("claude", "$(evil)"); !strings.HasPrefix(got[0], "TERM=") ||
+		strings.Contains(got[0], "$(") {
+		t.Errorf("a hostile TERM must be sanitized, got %q", got[0])
+	}
+	// Every entry must be a KEY=VALUE assignment: the tmux path splices these
+	// straight after `env` on a shell command line.
+	for _, e := range runnerPTYPaneEnv("glm", "xterm") {
+		if !strings.Contains(e, "=") {
+			t.Errorf("pane env entry %q is not a KEY=VALUE assignment", e)
+		}
+	}
+	if os.Geteuid() == 0 {
+		var sawSandbox bool
+		for _, e := range runnerPTYPaneEnv("claude", "xterm") {
+			sawSandbox = sawSandbox || e == "IS_SANDBOX=1"
+		}
+		if !sawSandbox {
+			t.Error("root-owned claude needs IS_SANDBOX=1 to accept --dangerously-skip-permissions")
+		}
+	}
+}
+
+// TestRunnerLoginScreenDetection keeps the stale-session heuristic honest. It
+// must fire on the pane a signed-out box actually leaves behind, and stay
+// silent on anything a healthy session could render.
+func TestRunnerLoginScreenDetection(t *testing.T) {
+	matches := func(pane string) bool {
+		tail := paneTailLower(pane, runnerLoginScreenTailLines)
+		for _, m := range runnerLoginScreenMarkers {
+			if strings.Contains(tail, m) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Verbatim shape of the pane this bug strands on a headless box.
+	stuck := "  ░░░ Claude logo art ░░░\n\n" +
+		" OAuth error: Invalid code. Please make sure the full code was copied\n\n\n" +
+		" Press Enter to retry.\n"
+	if !matches(stuck) {
+		t.Error("a pane parked on Claude's OAuth error screen must be detected as stale")
+	}
+	if !matches("Select login method:\n  1. Claude account with subscription\n") {
+		t.Error("Claude's fresh login screen must be detected as stale")
+	}
+
+	// A marker scrolled out of the prompt window is just transcript text.
+	scrolled := "OAuth error: something the user asked Claude about\n" +
+		strings.Repeat("normal transcript line\n", 20) + "> ready for input\n"
+	if matches(scrolled) {
+		t.Error("a marker in scrollback must not reach the tail window")
+	}
+	// Generic phrases alone must never kill a live session.
+	for _, benign := range []string{
+		"request failed.\nPress Enter to retry.\n",
+		"the API said you are not logged in\n> \n",
+		"Sign in required for that MCP server\n> \n",
+	} {
+		if matches(benign) {
+			t.Errorf("benign pane must not be treated as a login screen: %q", benign)
+		}
+	}
+}
+
 func TestRunnerFromStartCommand(t *testing.T) {
 	cases := map[string]string{
-		"codex --dangerously-bypass-approvals-and-sandbox": "codex",
+		"codex --dangerously-bypass-approvals-and-sandbox":     "codex",
 		"/usr/local/bin/claude --dangerously-skip-permissions": "claude",
-		"opencode":            "opencode",
+		"opencode":                     "opencode",
 		"/root/.opencode/bin/opencode": "opencode",
-		"bash":                "",
-		"":                    "",
-		"vim file.go":         "",
+		"bash":                         "",
+		"":                             "",
+		"vim file.go":                  "",
 	}
 	for in, want := range cases {
 		if got := runnerFromStartCommand(in); got != want {
@@ -420,11 +658,11 @@ func TestParseRunnerPassthroughRemoteSugar(t *testing.T) {
 
 func TestNormalizeGitURLToHTTPS(t *testing.T) {
 	cases := map[string]string{
-		"git@github.com:kivanccakmak/yaver.io.git":     "https://github.com/kivanccakmak/yaver.io.git",
-		"git@gitlab.com:group/sub/proj.git":            "https://gitlab.com/group/sub/proj.git",
-		"ssh://git@github.com/owner/repo.git":          "https://github.com/owner/repo.git",
-		"https://github.com/owner/repo.git":            "https://github.com/owner/repo.git",
-		"":                                             "",
+		"git@github.com:kivanccakmak/yaver.io.git": "https://github.com/kivanccakmak/yaver.io.git",
+		"git@gitlab.com:group/sub/proj.git":        "https://gitlab.com/group/sub/proj.git",
+		"ssh://git@github.com/owner/repo.git":      "https://github.com/owner/repo.git",
+		"https://github.com/owner/repo.git":        "https://github.com/owner/repo.git",
+		"":                                         "",
 	}
 	for in, want := range cases {
 		if got := normalizeGitURLToHTTPS(in); got != want {

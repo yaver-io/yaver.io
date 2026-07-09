@@ -26,6 +26,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -81,6 +82,23 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 	}
 	chrome := q.Get("chrome") == "1"
 
+	// Claude Code runs its first-run wizard — theme picker, then "Select login
+	// method", then a browser OAuth URL — whenever ~/.claude.json lacks
+	// hasCompletedOnboarding, no matter how valid the credential is. A box
+	// provisioned by Yaver has never run `claude` by hand, so without this
+	// every remote TUI opens on a sign-in screen the box cannot complete.
+	// Gated on the runner actually being authenticated: on a signed-out box
+	// that wizard is the only thing that can still help its owner.
+	if runnerID == "claude" || runnerID == "glm" {
+		if DetectRunnerRuntimeStatus(rc, cwd).AuthConfigured {
+			if home, herr := os.UserHomeDir(); herr == nil && home != "" {
+				if err := ensureClaudeOnboardingComplete(home); err != nil {
+					log.Printf("[runner-pty] onboarding marker for %s: %v", runnerID, err)
+				}
+			}
+		}
+	}
+
 	var cmd *exec.Cmd
 	tmuxSession := ""
 	if _, terr := exec.LookPath("tmux"); terr == nil {
@@ -88,11 +106,31 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 		if tmuxSession == "" {
 			tmuxSession = "yaver-" + runnerID
 		}
+		// Persistence is the point of tmux here, but it also means a session
+		// left sitting on the runner's own login screen outlives the auth
+		// repair that fixed it — `new-session -A` would reattach the dead
+		// screen forever. Retire such a session before starting.
+		//   ?fresh=1   caller knows auth just changed (see runner_pty_cmd.go)
+		//   otherwise  only when the pane is visibly parked on a login prompt
+		//
+		// The pane reports the BINARY it runs, so GLM (which drives the claude
+		// binary against z.ai) must be matched as "claude", not "glm".
+		if q.Get("fresh") == "1" || runnerPaneAwaitingLogin(tmuxSession, runnerFromStartCommand(rc.Command)) {
+			killStaleRunnerTmuxSession(tmuxSession)
+		}
 		// -A: attach if the session already exists. The runner survives
 		// disconnects (and agent restarts — the tmux server is independent);
 		// a fresh WS with the same name lands back in the same TUI. tmux's
 		// shell-command parameter is a single sh string, so quote strictly.
-		inner := shellJoin(append([]string{rc.Command}, args...))
+		//
+		// cmd.Env below reaches the tmux CLIENT, not the pane. tmux runs pane
+		// commands from the environment the SERVER was started with, and that
+		// server outlives every agent restart — so a variable the agent only
+		// learned about later (a z.ai key for GLM, IS_SANDBOX for root claude)
+		// silently never arrives. Carry them on the command line instead,
+		// where no tmux version can drop them.
+		inner := shellJoin(append(append([]string{"env"}, runnerPTYPaneEnv(runnerID, q.Get("term"))...),
+			append([]string{rc.Command}, args...)...))
 		tmuxArgs := []string{"new-session", "-A", "-s", tmuxSession}
 		if cwd != "" {
 			tmuxArgs = append(tmuxArgs, "-c", cwd)
@@ -105,11 +143,9 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 			cmd.Dir = cwd
 		}
 	}
-	env := append(os.Environ(), "TERM=xterm-256color")
-	// GLM rides the claude binary against z.ai; provider env is what selects
-	// it. No-op for runners without a configured provider override.
-	env = append(env, runnerProviderEnv(runnerID)...)
-	cmd.Env = env
+	// Still set the process env: it is what the non-tmux path uses, and it
+	// seeds the tmux SERVER's environment on the very first new-session.
+	cmd.Env = append(os.Environ(), runnerPTYPaneEnv(runnerID, q.Get("term"))...)
 	cmd = sandboxWrapCmd(cmd)
 
 	ts, err := s.newTerminalSession(cmd, nil, "", "", cwd)
@@ -117,6 +153,7 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 		runnerPTYFail(conn, "pty start failed: "+err.Error())
 		return
 	}
+	ts.runnerID = runnerID
 
 	if tmuxSession != "" {
 		// Zero-chrome default: hide the tmux status bar so the wrap is
@@ -147,6 +184,117 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 		"cwd":         cwd,
 	}
 	s.pumpRunnerPTY(conn, ts, false, meta)
+}
+
+// runnerPTYPaneEnv is the environment the runner process itself must see —
+// as `KEY=VALUE` assignments, so it can either be appended to cmd.Env or
+// prefixed to a tmux pane command via `env`.
+//
+// Keep this the single source of truth for both paths. When it lived only in
+// cmd.Env, everything here was silently lost on any box whose tmux server was
+// already running: GLM fell back to Anthropic instead of z.ai, and root-owned
+// claude lost the IS_SANDBOX=1 that lets it accept --dangerously-skip-permissions.
+func runnerPTYPaneEnv(runnerID, requestedTerm string) []string {
+	env := []string{"TERM=" + safePTYTermName(requestedTerm)}
+	if os.Geteuid() == 0 && (runnerID == "claude" || runnerID == "glm") {
+		env = append(env, "IS_SANDBOX=1")
+	}
+	// GLM rides the claude binary against z.ai; provider env is what selects
+	// it. No-op for runners without a configured provider override.
+	return append(env, runnerProviderEnv(runnerID)...)
+}
+
+// runnerLoginScreenMarkers are phrases a coding-agent TUI renders only while
+// it is blocking on sign-in. Matched case-insensitively against the BOTTOM of
+// the visible pane — where a prompt lives — so the same words appearing inside
+// a scrolled-back transcript don't trip it.
+//
+// Every entry names the login UI specifically. Generic lines that a healthy
+// session could plausibly print ("press enter to retry", "not logged in") are
+// deliberately absent: killing a live session costs the user their context,
+// and the login screen always carries one of these alongside them anyway.
+var runnerLoginScreenMarkers = []string{
+	"select login method",
+	"claude account with subscription",
+	"anthropic console account",
+	"oauth error:",
+	"paste code here if prompted",
+	// The wizard's first step. A session parked here is just as dead as one
+	// parked on the login step, and it precedes it.
+	"choose the text style that looks best",
+}
+
+// runnerLoginScreenTailLines is how many trailing non-empty pane lines are
+// searched for a marker.
+const runnerLoginScreenTailLines = 8
+
+// runnerPaneAwaitingLogin reports whether the named tmux session is stuck on
+// the runner's login screen *even though the runner is signed in*. That
+// contradiction is the tell: a session started before credentials landed keeps
+// showing its login prompt forever, and `new-session -A` reattaches it, so the
+// user re-runs the command and concludes the auth repair did nothing.
+//
+// Every clause is a guard against killing live work. The session must exist,
+// its pane must still be running this runner, local auth must be VERIFIED good
+// (so the login screen cannot be legitimate), and a marker must appear in the
+// pane's trailing lines. Anything less and we leave the session alone.
+func runnerPaneAwaitingLogin(session, runnerBinaryID string) bool {
+	if strings.TrimSpace(session) == "" || runnerBinaryID == "" {
+		return false
+	}
+	if exec.Command("tmux", "has-session", "-t", session).Run() != nil {
+		return false
+	}
+	// If the runner really is signed out, a login screen is correct and the
+	// user is about to be handed the headless flow anyway. Only a *verified*
+	// sign-in makes the screen provably stale.
+	auth := DetectRunnerRuntimeStatus(GetRunnerConfig(runnerBinaryID), "")
+	if !auth.AuthConfigured || !auth.AuthVerified {
+		return false
+	}
+	current, err := exec.Command("tmux", "list-panes", "-t", session, "-F", "#{pane_current_command}").Output()
+	if err != nil || runnerFromStartCommand(strings.TrimSpace(string(current))) != runnerBinaryID {
+		return false
+	}
+	pane, err := exec.Command("tmux", "capture-pane", "-p", "-t", session).Output()
+	if err != nil {
+		return false
+	}
+	for _, marker := range runnerLoginScreenMarkers {
+		if strings.Contains(paneTailLower(string(pane), runnerLoginScreenTailLines), marker) {
+			log.Printf("[runner-pty] %s session %q is parked on a login screen (%q) while auth is healthy — starting fresh",
+				runnerBinaryID, session, marker)
+			return true
+		}
+	}
+	return false
+}
+
+// paneTailLower returns the last n non-empty lines of a captured pane,
+// lowercased and rejoined.
+func paneTailLower(pane string, n int) string {
+	lines := make([]string, 0, n)
+	all := strings.Split(pane, "\n")
+	for i := len(all) - 1; i >= 0 && len(lines) < n; i-- {
+		if line := strings.TrimSpace(all[i]); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.ToLower(strings.Join(lines, "\n"))
+}
+
+func killStaleRunnerTmuxSession(session string) {
+	if strings.TrimSpace(session) == "" {
+		return
+	}
+	if exec.Command("tmux", "has-session", "-t", session).Run() != nil {
+		return
+	}
+	if out, err := exec.Command("tmux", "kill-session", "-t", session).CombinedOutput(); err != nil {
+		log.Printf("[runner-pty] could not kill stale session %q: %v (%s)", session, err, strings.TrimSpace(string(out)))
+		return
+	}
+	log.Printf("[runner-pty] killed stale session %q before restart", session)
 }
 
 // pumpRunnerPTY attaches the WS to a terminal session and pumps frames until
@@ -206,6 +354,12 @@ type RunnerPTYSession struct {
 	Attached bool   `json:"attached"`
 }
 
+type RunnerSessionCloseResult struct {
+	Name   string `json:"name"`
+	Runner string `json:"runner,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
 // handleRunnerSessions: GET /runner/sessions — owner-only list of live runner
 // PTY tmux sessions on this box, so the CLI can reattach or present a picker.
 // A session counts as a runner wrap when its tmux start-command's first token
@@ -218,6 +372,55 @@ func (s *HTTPServer) handleRunnerSessions(w http.ResponseWriter, r *http.Request
 	}
 	sessions := listRunnerPTYSessions()
 	jsonReply(w, http.StatusOK, map[string]any{"ok": true, "sessions": sessions})
+}
+
+func (s *HTTPServer) handleRunnerSessionsClose(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Yaver-Guest") == "true" {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "runner sessions are owner-only"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+		return
+	}
+	results := closeTmuxSessions()
+	failed := 0
+	for _, r := range results {
+		if r.Error != "" {
+			failed++
+		}
+	}
+	jsonReply(w, http.StatusOK, map[string]any{
+		"ok":     failed == 0,
+		"killed": results,
+		"failed": failed,
+	})
+}
+
+func closeTmuxSessions() []RunnerSessionCloseResult {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return nil
+	}
+	raw, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	var results []RunnerSessionCloseResult
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		res := RunnerSessionCloseResult{Name: name, Runner: detectRunnerFromTmuxSession(name)}
+		if out, kerr := exec.Command("tmux", "kill-session", "-t", name).CombinedOutput(); kerr != nil {
+			res.Error = strings.TrimSpace(string(out))
+			if res.Error == "" {
+				res.Error = kerr.Error()
+			}
+		}
+		results = append(results, res)
+	}
+	return results
 }
 
 func listRunnerPTYSessions() []RunnerPTYSession {
@@ -265,6 +468,9 @@ func listRunnerPTYSessions() []RunnerPTYSession {
 			}
 		}
 		if runner == "" {
+			runner = detectRunnerFromTmuxSession(name)
+		}
+		if runner == "" {
 			continue // not a runner wrap
 		}
 		out = append(out, RunnerPTYSession{
@@ -273,6 +479,24 @@ func listRunnerPTYSessions() []RunnerPTYSession {
 		})
 	}
 	return out
+}
+
+func detectRunnerFromTmuxSession(name string) string {
+	if pid := getPanePID(name); pid > 0 {
+		if runner := normalizeRunnerID(detectAgentType(pid)); IsSupportedRunner(runner) {
+			return runner
+		}
+	}
+	preview := strings.ToLower(capturePanePreview(name, 80))
+	switch {
+	case strings.Contains(preview, "claude code") || strings.Contains(preview, "claude.ai") || strings.Contains(preview, "claude /login"):
+		return "claude"
+	case strings.Contains(preview, "codex") || strings.Contains(preview, "openai"):
+		return "codex"
+	case strings.Contains(preview, "opencode"):
+		return "opencode"
+	}
+	return ""
 }
 
 // runnerFromStartCommand returns the runner id when the first token of a tmux

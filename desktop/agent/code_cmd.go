@@ -95,7 +95,7 @@ func runCode(args []string) {
 		}
 		ptyRunner := normalizeRunnerID(firstNonEmpty(strings.TrimSpace(*runner), "claude"))
 		ptyArgs := applyRunnerYoloDefaults(ptyRunner, fs.Args())
-		if err := runRemoteRunnerPTY(*attachTarget, ptyRunner, ptyArgs, "", "", *chrome, false); err != nil {
+		if err := runRemoteRunnerPTY(*attachTarget, ptyRunner, ptyArgs, "", "", *chrome, false, false); err != nil {
 			fmt.Fprintf(os.Stderr, "code: %v\n", err)
 			os.Exit(1)
 		}

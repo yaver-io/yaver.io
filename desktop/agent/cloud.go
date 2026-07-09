@@ -429,6 +429,32 @@ func activeCloudMachine() (*cloudMachineRecord, error) {
 	return &result.Machines[0], nil
 }
 
+func resolveManagedCloudSSHHost(machineHint string) string {
+	hint := strings.ToLower(strings.TrimSpace(machineHint))
+	if hint == "" {
+		return ""
+	}
+	machine, err := activeCloudMachine()
+	if err != nil || machine == nil || strings.TrimSpace(machine.ServerIP) == "" {
+		return ""
+	}
+	matches := []string{
+		machine.ID,
+		machine.Hostname,
+		strings.TrimPrefix(machine.Hostname, "root@"),
+	}
+	for _, m := range matches {
+		m = strings.ToLower(strings.TrimSpace(m))
+		if m == "" {
+			continue
+		}
+		if hint == m || strings.HasPrefix(m, hint) || strings.HasPrefix(hint, m) {
+			return "root@" + strings.TrimSpace(machine.ServerIP)
+		}
+	}
+	return ""
+}
+
 func printCloudMachine(machine *cloudMachineRecord) {
 	if machine == nil {
 		return

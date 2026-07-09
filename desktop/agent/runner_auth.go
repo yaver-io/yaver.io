@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,11 +17,25 @@ import (
 // RunnerRuntimeStatus describes whether a runner is usable on this machine,
 // including runner-specific auth/config checks that plain LookPath misses.
 type RunnerRuntimeStatus struct {
-	Ready          bool   `json:"ready"`
-	AuthConfigured bool   `json:"authConfigured,omitempty"`
-	AuthSource     string `json:"authSource,omitempty"`
-	Warning        string `json:"warning,omitempty"`
-	Error          string `json:"error,omitempty"`
+	Ready          bool `json:"ready"`
+	AuthConfigured bool `json:"authConfigured,omitempty"`
+	// AuthVerified is set only when AuthConfigured was established by asking
+	// the runner itself (`claude auth status`, `codex login status`) or by
+	// finding an explicit API key — never by merely spotting a credentials
+	// file on disk.
+	//
+	// The distinction is load-bearing. `~/.claude/.credentials.json` also
+	// holds MCP plugin OAuth tokens, so on a Mac whose Claude subscription
+	// token lives in the Keychain the file exists while Claude is signed
+	// OUT of it. Mirroring that file verbatim onto a headless box produced a
+	// machine that reported "signed in" and then greeted the user with a
+	// browser login screen it had no browser to satisfy. Callers that are
+	// about to open a TUI (or skip a headless sign-in) must gate on this
+	// field, not on AuthConfigured.
+	AuthVerified bool   `json:"authVerified,omitempty"`
+	AuthSource   string `json:"authSource,omitempty"`
+	Warning      string `json:"warning,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 // CheckRunnerReady verifies the binary exists and that any runner-specific
@@ -129,6 +144,9 @@ func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntim
 	}
 	if status.AuthConfigured && runnerAuthFailureRecent(normalizeRunnerID(runner.RunnerID)) {
 		status.AuthConfigured = false
+		// A 401 from the provider is the strongest possible evidence, so the
+		// answer stays verified — just negative.
+		status.AuthVerified = true
 		status.AuthSource = ""
 		if strings.TrimSpace(status.Warning) == "" {
 			status.Warning = "Token rejected by API on the last task — sign in again to refresh."
@@ -351,49 +369,241 @@ func normalizeRunnerID(id string) string {
 
 func detectClaudeStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
-	switch {
-	case func() bool {
-		value, _ := hostSecretValue("ANTHROPIC_API_KEY")
-		return value != ""
-	}():
-		status.AuthConfigured = true
-		_, source := hostSecretValue("ANTHROPIC_API_KEY")
-		status.AuthSource = source
-	case func() bool {
-		value, _ := hostSecretValue("ANTHROPIC_AUTH_TOKEN")
-		return value != ""
-	}():
-		status.AuthConfigured = true
-		_, source := hostSecretValue("ANTHROPIC_AUTH_TOKEN")
-		status.AuthSource = source
-	case func() bool {
-		value, _ := hostSecretValue("CLAUDE_CODE_OAUTH_TOKEN")
-		return value != ""
-	}():
-		status.AuthConfigured = true
-		_, source := hostSecretValue("CLAUDE_CODE_OAUTH_TOKEN")
-		status.AuthSource = source
-	default:
-		if path, ok := claudeCredentialsPath(); ok {
+	// An explicit key beats everything: it needs no OAuth and no probe.
+	for _, name := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if value, source := hostSecretValue(name); value != "" {
 			status.AuthConfigured = true
-			if runtime.GOOS == "darwin" {
-				status.AuthSource = "macOS Keychain / Claude login"
-			} else {
-				status.AuthSource = path
-			}
-		} else if runtime.GOOS == "darwin" && claudeMacKeychainHasCreds() {
-			// macOS subscription users have no env var and no
-			// ~/.claude/.credentials.json — Claude Code stores the
-			// OAuth token in the system Keychain under the service
-			// name "Claude Code-credentials". `security find-generic-
-			// password` exits 0 iff the entry exists, so we use it
-			// as a cheap presence check (cached for 60s to keep the
-			// /runner-auth/status poll loop free of fork overhead).
-			status.AuthConfigured = true
-			status.AuthSource = "macOS Keychain · Claude Code-credentials"
+			status.AuthVerified = true
+			status.AuthSource = source
+			return status
 		}
 	}
+
+	// Ask Claude Code itself. `claude auth status --json` reads whichever
+	// store this platform actually uses (file on Linux, Keychain on macOS),
+	// costs no API call, and answers the only question that matters: would a
+	// TUI launched right now show a login screen? It prints well-formed JSON
+	// in both states and exits 1 when signed out, so the exit code is noise —
+	// parse stdout.
+	if st, ok := probeClaudeAuthStatus(); ok {
+		status.AuthConfigured = st.LoggedIn
+		status.AuthVerified = true
+		if st.LoggedIn {
+			status.AuthSource = claudeAuthSourceLabel(st)
+		} else {
+			status.Warning = "Claude Code is signed out on this machine — run the headless sign-in to authenticate it."
+		}
+		return status
+	}
+
+	// The binary could not answer (missing, too old for `auth status`, or the
+	// probe timed out). Fall back to the storage heuristics — flagged
+	// unverified so callers know these are guesses, not answers.
+	if path, ok := claudeCredentialsPath(); ok && claudeCredentialFileHasOAuth(path) {
+		status.AuthConfigured = true
+		status.AuthSource = path
+	} else if runtime.GOOS == "darwin" && claudeMacKeychainHasCreds() {
+		// macOS subscription users may have no env var and no usable
+		// ~/.claude/.credentials.json — Claude Code stores the OAuth token in
+		// the system Keychain under the service name "Claude Code-credentials".
+		// `security find-generic-password` exits 0 iff the entry exists.
+		status.AuthConfigured = true
+		status.AuthSource = "macOS Keychain · Claude Code-credentials"
+	} else {
+		status.Warning = "No Claude Code credential detected on this machine."
+	}
 	return status
+}
+
+func claudeAuthSourceLabel(st claudeAuthStatusJSON) string {
+	method := strings.TrimSpace(st.AuthMethod)
+	if method == "" {
+		method = "claude login"
+	}
+	if sub := strings.TrimSpace(st.SubscriptionType); sub != "" {
+		return method + " · " + sub
+	}
+	return method
+}
+
+// claudeAuthStatusJSON is the payload of `claude auth status --json`.
+type claudeAuthStatusJSON struct {
+	LoggedIn         bool   `json:"loggedIn"`
+	AuthMethod       string `json:"authMethod"`
+	APIProvider      string `json:"apiProvider"`
+	SubscriptionType string `json:"subscriptionType"`
+}
+
+var (
+	// claudeAuthStatusCache guards only the cached VALUE. The fork itself runs
+	// outside it, behind claudeAuthStatusFork, so a slow `claude auth status`
+	// can never wedge the /runner-auth/status handler that mobile polls every
+	// 1.5 s — readers with a warm entry never touch the fork lock at all.
+	claudeAuthStatusCache = struct {
+		sync.Mutex
+		st claudeAuthStatusJSON
+		ok bool
+		at time.Time
+	}{}
+	claudeAuthStatusFork sync.Mutex
+	claudeAuthStatusTTL  = 60 * time.Second
+)
+
+// invalidateClaudeAuthStatusCache forces the next probe to re-run the CLI.
+// Called by the `?live=1` status path and after any credential write, so a
+// caller that just repaired auth never reads a stale "signed out".
+func invalidateClaudeAuthStatusCache() {
+	claudeAuthStatusCache.Lock()
+	claudeAuthStatusCache.at = time.Time{}
+	claudeAuthStatusCache.Unlock()
+}
+
+func cachedClaudeAuthStatus() (claudeAuthStatusJSON, bool, bool) {
+	claudeAuthStatusCache.Lock()
+	defer claudeAuthStatusCache.Unlock()
+	if claudeAuthStatusCache.at.IsZero() || time.Since(claudeAuthStatusCache.at) >= claudeAuthStatusTTL {
+		return claudeAuthStatusJSON{}, false, false
+	}
+	return claudeAuthStatusCache.st, claudeAuthStatusCache.ok, true
+}
+
+// probeClaudeAuthStatus returns Claude Code's own view of its auth state.
+// ok=false means the question could not be asked (no binary, no `auth status`
+// subcommand, timeout) — NOT that the user is signed out.
+func probeClaudeAuthStatus() (claudeAuthStatusJSON, bool) {
+	if st, ok, hit := cachedClaudeAuthStatus(); hit {
+		return st, ok
+	}
+	// One fork at a time. Whoever loses the race re-reads the cache the winner
+	// just filled instead of spawning a second `claude`.
+	claudeAuthStatusFork.Lock()
+	defer claudeAuthStatusFork.Unlock()
+	if st, ok, hit := cachedClaudeAuthStatus(); hit {
+		return st, ok
+	}
+	st, ok := runClaudeAuthStatus()
+	claudeAuthStatusCache.Lock()
+	claudeAuthStatusCache.st = st
+	claudeAuthStatusCache.ok = ok
+	claudeAuthStatusCache.at = time.Now()
+	claudeAuthStatusCache.Unlock()
+	return st, ok
+}
+
+func runClaudeAuthStatus() (claudeAuthStatusJSON, bool) {
+	bin := resolveRunnerBinary("claude")
+	if bin == "" {
+		return claudeAuthStatusJSON{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, bin, "auth", "status", "--json")
+	cmd.Env = append(os.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
+	// Signed-out is exit 1 WITH a well-formed body, so the exit code carries no
+	// information the body doesn't. A parse hit means the CLI answered us;
+	// anything else (binary too old for `auth status`, crash, timeout) means it
+	// did not, which is "unknown", never "signed out".
+	out, _ := cmd.Output()
+	if ctx.Err() != nil {
+		return claudeAuthStatusJSON{}, false
+	}
+	body := extractFirstJSONObject(out)
+	if len(body) == 0 {
+		return claudeAuthStatusJSON{}, false
+	}
+	var st claudeAuthStatusJSON
+	if json.Unmarshal(body, &st) != nil {
+		return claudeAuthStatusJSON{}, false
+	}
+	return st, true
+}
+
+// extractFirstJSONObject slices out the outermost {...} so a stray banner or
+// update-notice line on stdout doesn't defeat the decode.
+func extractFirstJSONObject(out []byte) []byte {
+	start := bytes.IndexByte(out, '{')
+	end := bytes.LastIndexByte(out, '}')
+	if start < 0 || end <= start {
+		return nil
+	}
+	return out[start : end+1]
+}
+
+// claudeCredentialFileHasOAuth reports whether a ~/.claude/.credentials.json
+// actually carries a Claude subscription token. The same file also stores MCP
+// plugin OAuth under `mcpOAuth`, so its mere existence proves nothing — that
+// false positive is precisely what let a mirrored, Claude-less credentials
+// file mark a headless box "signed in".
+//
+// An expired accessToken still counts when a refreshToken is present: Claude
+// Code refreshes it silently on the next launch.
+func claudeCredentialFileHasOAuth(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var probe struct {
+		ClaudeAiOauth struct {
+			AccessToken  string  `json:"accessToken"`
+			RefreshToken string  `json:"refreshToken"`
+			ExpiresAt    float64 `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(data, &probe) != nil {
+		return false
+	}
+	oauth := probe.ClaudeAiOauth
+	if strings.TrimSpace(oauth.AccessToken) == "" {
+		return false
+	}
+	if strings.TrimSpace(oauth.RefreshToken) != "" {
+		return true
+	}
+	return oauth.ExpiresAt <= 0 || int64(oauth.ExpiresAt) > time.Now().UnixMilli()
+}
+
+// applyLiveRunnerAuthProbe re-answers a runner's auth question from scratch,
+// bypassing every cache. `/runner-auth/status?live=1` uses it before a caller
+// commits to an expensive, hard-to-undo action (opening a remote TUI) where a
+// 60-second-stale "signed in" would strand the user on a login screen.
+//
+// It costs a `claude auth status` fork and zero API tokens. It deliberately
+// does NOT send a probe prompt through the model: `claude --print` is headless
+// mode, which this project does not run.
+func applyLiveRunnerAuthProbe(rows []runnerAuthStatusRow, runner string) []runnerAuthStatusRow {
+	if normalizeRunnerID(runner) == "" {
+		runner = "claude"
+	}
+	if normalizeRunnerID(runner) != "claude" {
+		return rows // only Claude Code exposes a free, authoritative auth probe
+	}
+	invalidateClaudeAuthStatusCache()
+	for i := range rows {
+		if normalizeRunnerID(rows[i].ID) != "claude" || !rows[i].Installed {
+			continue
+		}
+		// detectClaudeStatus directly, NOT DetectRunnerRuntimeStatus: the
+		// latter overlays lastRunnerAuthFailure, and a live answer from the
+		// CLI is strictly better evidence than a task that 401'd 20 minutes
+		// ago. Here the live result *decides* the override rather than
+		// inheriting it.
+		fresh := detectClaudeStatus()
+		rows[i].Ready = fresh.Ready
+		rows[i].AuthConfigured = fresh.AuthConfigured
+		rows[i].AuthVerified = fresh.AuthVerified
+		rows[i].AuthSource = fresh.AuthSource
+		rows[i].Warning = fresh.Warning
+		rows[i].Error = fresh.Error
+		if detail := firstNonEmptyBrowserAuth(fresh.Error, fresh.Warning); detail != "" {
+			rows[i].Detail = detail
+		}
+		if fresh.AuthConfigured {
+			ClearRunnerAuthInvalid("claude")
+		} else if fresh.AuthVerified {
+			MarkRunnerAuthInvalid("claude")
+		}
+	}
+	return rows
 }
 
 // detectGLMStatus reports auth readiness for the GLM (z.ai) runner. GLM runs
@@ -479,6 +689,7 @@ func detectCodexStatus() RunnerRuntimeStatus {
 	}
 	if value, source := hostSecretValue("OPENAI_API_KEY"); value != "" {
 		status.AuthConfigured = true
+		status.AuthVerified = true
 		status.AuthSource = source
 		return status
 	}
@@ -504,6 +715,7 @@ func detectCodexStatus() RunnerRuntimeStatus {
 	// fork codex every 1.5s.
 	if codexLoginStatusOK() {
 		status.AuthConfigured = true
+		status.AuthVerified = true
 		status.AuthSource = "codex login status"
 		return status
 	}

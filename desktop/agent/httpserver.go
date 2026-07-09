@@ -1181,6 +1181,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Owner-only exact-TUI runner wrap (yaver claude|codex|opencode --machine=…);
 	// deliberately NOT in hostShareAllowedPrefixes. See runner_pty.go.
 	mux.HandleFunc("/ws/runner", s.auth(s.handleRunnerPTYWS))
+	mux.HandleFunc("/runner/sessions/close", s.auth(s.handleRunnerSessionsClose))
 	mux.HandleFunc("/runner/sessions", s.auth(s.handleRunnerSessions))
 	mux.HandleFunc("/console/machines", s.auth(s.handleConsoleMachines))
 
@@ -6919,6 +6920,29 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		log.Printf("[MCP] Detached tmux session (task %s)", args.TaskID)
 		return mcpToolResult(fmt.Sprintf("Detached task %s. The tmux session continues running.", args.TaskID))
+
+	case "tmux_close_sessions":
+		var args struct {
+			DeviceID    string `json:"device_id"`
+			AllMachines bool   `json:"all_machines"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if args.AllMachines {
+			return s.mcpCloseTmuxSessionsAllMachines()
+		}
+		if dev := strings.TrimSpace(args.DeviceID); dev != "" {
+			status, raw, err := proxyToDevice(context.Background(), "tmux_close_sessions", dev, http.MethodPost, "/runner/sessions/close", nil)
+			if err == nil {
+				if status >= 300 {
+					return mcpToolError(fmt.Sprintf("tmux_close_sessions (remote) returned %d: %s", status, string(raw)))
+				}
+				return mcpToolResult(formatCloseSessionsJSON(dev, raw))
+			}
+			if !errors.Is(err, errProxyLocal) {
+				return mcpToolError(fmt.Sprintf("tmux_close_sessions (remote): %v", err))
+			}
+		}
+		return mcpToolResult(formatCloseSessionResults("this machine", closeTmuxSessions()))
 
 	case "tmux_send_input":
 		var args struct {

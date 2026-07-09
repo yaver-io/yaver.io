@@ -37,6 +37,7 @@ type terminalSession struct {
 	hostShareID    string
 	guestUserID    string
 	workspaceDir   string
+	runnerID       string
 	createdAt      time.Time
 	lastAttachedAt time.Time
 }
@@ -262,6 +263,9 @@ func (ts *terminalSession) readLoop() {
 
 			if ts.onTouch != nil {
 				ts.onTouch(false)
+			}
+			if ts.runnerID != "" && IsRunnerAuthFailureOutput(string(chunk)) == ts.runnerID {
+				MarkRunnerAuthInvalid(ts.runnerID)
 			}
 			_ = ts.writeWS(websocket.BinaryMessage, chunk)
 			if shouldPrompt {

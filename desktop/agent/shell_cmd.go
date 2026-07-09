@@ -15,6 +15,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -199,9 +200,10 @@ func bridgeTerminal(conn *websocket.Conn) error {
 				}
 			}
 			if err != nil {
-				// EOF (Ctrl-D) closes the write side; let the remote shell exit.
-				_ = conn.WriteMessage(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				// Local stdin can close when the CLI is launched through tmux,
+				// mobile, or a wrapper. Do not turn that into a remote close:
+				// runner sessions must stay attachable and Ctrl-D in raw mode
+				// still reaches the remote PTY as a byte.
 				return
 			}
 		}
@@ -223,7 +225,15 @@ func bridgeTerminal(conn *websocket.Conn) error {
 		case websocket.BinaryMessage:
 			_, _ = os.Stdout.Write(data)
 		case websocket.TextMessage:
-			// Control frame (e.g. {"type":"terminal_session",...}); ignore.
+			var frame struct {
+				Type  string `json:"type"`
+				Error string `json:"error"`
+			}
+			if json.Unmarshal(data, &frame) == nil && frame.Type == "runner_pty_error" && strings.TrimSpace(frame.Error) != "" {
+				close(stopResize)
+				return errors.New(frame.Error)
+			}
+			// Other control frames (e.g. {"type":"terminal_session",...}) are ignored.
 		}
 	}
 }

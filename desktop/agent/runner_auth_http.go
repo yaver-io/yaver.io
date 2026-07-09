@@ -30,6 +30,9 @@ func (s *HTTPServer) handleRunnerAuthStatus(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusInternalServerError, "runner auth status: "+err.Error())
 		return
 	}
+	if r.URL.Query().Get("live") == "1" {
+		rows = applyLiveRunnerAuthProbe(rows, r.URL.Query().Get("runner"))
+	}
 	workDir, _ := os.Getwd()
 	deviceID := ""
 	if s.taskMgr != nil {

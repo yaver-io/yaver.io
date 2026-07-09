@@ -130,6 +130,15 @@ func ReadLocalRunnerCredential(runner string) (LocalRunnerCredential, error) {
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return LocalRunnerCredential{}, ErrNoCredential
 	}
+	// A Claude credentials file also stores MCP plugin OAuth. On a Mac whose
+	// subscription token lives in the Keychain, the file is present and holds
+	// nothing but `mcpOAuth` — mirroring it verbatim gives the target a file
+	// that satisfies every presence check and authenticates nothing. Push only
+	// a credential that actually carries `claudeAiOauth`; otherwise report
+	// ErrNoCredential so the caller falls through to headless device-auth.
+	if normalizeRunnerAuthName(runner) == "claude" && !claudeCredentialFileHasOAuth(path) {
+		return LocalRunnerCredential{}, ErrNoCredential
+	}
 	expires := extractExpiry(runner, data)
 	return LocalRunnerCredential{
 		FileBytes: data,
@@ -209,6 +218,15 @@ func AcceptMirrorPayload(_ context.Context, payload MirrorAcceptPayload) (Mirror
 	}
 	if err := os.WriteFile(dest, data, 0o600); err != nil {
 		return MirrorResult{}, fmt.Errorf("write %s: %w", dest, err)
+	}
+	// The credential store just changed under us; a cached "signed out" would
+	// make the very next status poll contradict the write we just did.
+	invalidateClaudeAuthStatusCache()
+	// A mirrored credential lands on a box that has never run `claude`
+	// interactively, so its TUI would still open the first-run wizard and ask
+	// for a browser sign-in. Mark onboarding done in the same breath.
+	if runner == "claude" {
+		ensureClaudeOnboardingForLocalHome()
 	}
 
 	expiresAt := time.Time{}

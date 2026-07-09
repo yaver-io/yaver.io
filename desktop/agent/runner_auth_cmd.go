@@ -201,11 +201,16 @@ type runnerAuthStatusRow struct {
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
 	AuthConfigured bool   `json:"authConfigured"`
-	AuthSource     string `json:"authSource,omitempty"`
-	Warning        string `json:"warning,omitempty"`
-	Error          string `json:"error,omitempty"`
-	Path           string `json:"path,omitempty"`
-	Detail         string `json:"detail,omitempty"`
+	// AuthVerified distinguishes "the runner told us it is signed in" from
+	// "a credentials file exists". Absent on agents older than 1.99.278,
+	// which is why remote callers must treat a missing value as "unknown"
+	// rather than "unverified but fine". See RunnerRuntimeStatus.AuthVerified.
+	AuthVerified bool   `json:"authVerified,omitempty"`
+	AuthSource   string `json:"authSource,omitempty"`
+	Warning      string `json:"warning,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Path         string `json:"path,omitempty"`
+	Detail       string `json:"detail,omitempty"`
 	// Version is the first line of `<bin> --version` output (capped at
 	// 80 chars). Surfaced in the mobile Coding Agents pane so the user
 	// can see "Claude Code 2.1.126" / "codex-cli 0.122" / "opencode 1.4.0"
@@ -271,6 +276,7 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 		status := DetectRunnerRuntimeStatus(cfg, wd)
 		row.Ready = status.Ready
 		row.AuthConfigured = status.AuthConfigured
+		row.AuthVerified = status.AuthVerified
 		row.AuthSource = status.AuthSource
 		row.Warning = status.Warning
 		row.Error = status.Error

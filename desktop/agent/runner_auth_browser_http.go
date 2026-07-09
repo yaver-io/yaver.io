@@ -114,6 +114,9 @@ func (s *runnerBrowserAuthSessionState) snapshot() runnerBrowserAuthSession {
 }
 
 func refreshRunnerBrowserAuthSnapshot(out *runnerBrowserAuthSession) {
+	// The whole point of this snapshot is to observe a credential that may
+	// have landed a moment ago, so never read it through the status cache.
+	invalidateClaudeAuthStatusCache()
 	rows, err := collectRunnerAuthStatusRows()
 	if err != nil {
 		return
@@ -343,6 +346,12 @@ func startRunnerBrowserAuthSession(runner string, tr tenantRuntime, onTerminal f
 				// DeviceDetails would keep showing ⚠️ for up to 30 min
 				// after a successful re-sign-in.
 				ClearRunnerAuthInvalid(state.Runner)
+				// `claude auth login` authenticates but does not mark the
+				// first-run wizard done, so the TUI would still greet this
+				// freshly signed-in box with "Select login method".
+				if state.Runner == "claude" && !tr.Enabled {
+					ensureClaudeOnboardingForLocalHome()
+				}
 			} else if ctx.Err() == context.Canceled {
 				state.Status = "cancelled"
 				if state.Detail == "" {
@@ -735,6 +744,10 @@ func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r 
 	// back to ✓ signed in on the next poll instead of waiting for a
 	// task to vouch for the new creds.
 	ClearRunnerAuthInvalid(runner)
+	invalidateClaudeAuthStatusCache()
+	if runner == "claude" && !tr.Enabled {
+		ensureClaudeOnboardingForLocalHome()
+	}
 	log.Printf("[runner-auth] imported %s credentials to %s (%d bytes)", runner, dest, len(creds))
 	jsonReply(w, http.StatusOK, map[string]any{
 		"ok":     true,

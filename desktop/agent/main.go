@@ -43,7 +43,7 @@ import (
 // release build injects the real tag via -ldflags "-X main.version=<tag>"
 // (see .github/workflows/release-cli.yml). The default below is only used for
 // local `go build`; releases always override it, so it never drifts again.
-var version = "1.99.272"
+var version = "1.99.278"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -387,6 +387,8 @@ func main() {
 		runPingDispatch(os.Args[2:])
 	case "attach":
 		runAttach(os.Args[2:])
+	case "close-sessions":
+		runCloseSessions(os.Args[2:])
 	case "claude", "codex", "opencode", "glm":
 		// Transparent runner passthrough: `yaver codex <codex args…>
 		// --machine=<device>` wraps the runner's own TUI locally or on a

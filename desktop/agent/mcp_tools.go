@@ -860,6 +860,23 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "tmux_close_sessions",
+			"description": "Kill tmux sessions, closing live Claude/Codex/OpenCode/shell sessions. By default acts on this machine. Pass device_id for one owned remote machine, or all_machines=true to fan out to all online owned machines.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional remote device ID/alias. Empty means this machine.",
+					},
+					"all_machines": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Close tmux sessions on all online owned machines.",
+					},
+				},
+			},
+		},
+		{
 			"name":        "tmux_send_input",
 			"description": "Send keyboard input to an adopted tmux session (e.g. type into a live Claude Code session running in a pane). The input is sent via tmux send-keys followed by Enter. Pass device_id to target a pane on another device.",
 			"inputSchema": map[string]interface{}{
