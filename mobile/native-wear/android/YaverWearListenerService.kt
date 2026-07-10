@@ -5,8 +5,9 @@
 //
 // It forwards the JSON to the live RN module (YaverWearBridgeModule.instance),
 // which emits it to JS (watchEntry.ts). If no React instance is alive (app
-// fully killed), the correct activation is a HeadlessJsTaskService that spins
-// up JS to handle the turn — left as a TODO so the scaffold stays honest.
+// fully killed), the turn is stored in SharedPreferences and drained when the
+// JS bridge next mounts (consumePendingTurns). This mirrors the car surface's
+// consumePendingReplies pattern — no more dropped head-unit commands.
 
 package io.yaver.mobile.wear
 
@@ -21,11 +22,9 @@ class YaverWearListenerService : WearableListenerService() {
     if (module != null) {
       module.emitInbound(json)
     } else {
-      // TODO(activation): no live React instance — start a HeadlessJsTask
-      // that loads watchEntry.ts, calls deliver(json), and lets the JS
-      // sender ship replies back via MessageClient(PATH_REPLY). Until then,
-      // inbound turns require the app to have been opened at least once this
-      // process lifetime.
+      // No live React instance — persist the turn so it's drained when the
+      // JS bridge mounts (consumePendingTurns). Nothing is dropped.
+      YaverWearBridgeModule.storePendingTurn(applicationContext, json)
     }
   }
 }

@@ -11,6 +11,7 @@ type NativeWatchBridge = {
   sendToWatch?: (json: string) => void;
   addListener?: (eventName: string) => void;
   removeListeners?: (count: number) => void;
+  consumePendingTurns?: () => Promise<string[] | undefined>;
 };
 
 function nativeBridge(): NativeWatchBridge | null {
@@ -110,6 +111,22 @@ export function WatchBridgeHost() {
         appLog("warn", `watch bridge delivery failed: ${e instanceof Error ? e.message : String(e)}`);
       });
     });
+
+    // Drain any turns that arrived while the JS bridge was dead (app cold or
+    // before this host mounted). The Wear listener service persists them in
+    // SharedPreferences; consumePendingTurns pops + returns them. Mirrors the
+    // car surface's consumePendingReplies pattern.
+    if (typeof bridge.consumePendingTurns === "function") {
+      void bridge.consumePendingTurns().then((turns) => {
+        if (!Array.isArray(turns)) return;
+        turns.forEach((json) => {
+          if (typeof json === "string" && json) {
+            void watchBridgeBus.deliver(json).catch(() => {});
+          }
+        });
+      }).catch(() => {});
+    }
+
     return () => sub.remove();
   }, []);
 

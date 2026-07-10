@@ -16,17 +16,25 @@
 //   PATH_TURN  = "/yaver/watch/turn"   (watch → phone)
 //   PATH_REPLY = "/yaver/watch/reply"  (phone → watch)
 //
-// NOT built until plugins/withWatchBridge.js is registered (same posture as
-// the mesh tunnel). When the app is backgrounded, delivering an inbound
-// message to JS needs a HeadlessJsTask — noted as the activation gap below.
+// Dead-process activation: when the phone app's process is dead, inbound
+// Wear Data Layer messages are stored in SharedPreferences and drained when
+// the JS bridge next mounts (consumePendingTurns). This mirrors the car
+// surface's consumePendingReplies pattern — simpler than HeadlessJsTaskService
+// and proven in this codebase. The user experience: if the phone is dead, the
+// turn is queued and processed when the user next opens the app.
 
 package io.yaver.mobile.wear
 
+import android.content.Context
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableArray
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.google.android.gms.wearable.Wearable
+import org.json.JSONArray
+import org.json.JSONObject
 
 const val PATH_TURN = "/yaver/watch/turn"
 const val PATH_REPLY = "/yaver/watch/reply"
@@ -58,8 +66,24 @@ class YaverWearBridgeModule(
   @ReactMethod fun addListener(eventName: String) {}
   @ReactMethod fun removeListeners(count: Int) {}
 
-  /** Called by the listener service (or a HeadlessJsTask) with an inbound
-   *  PATH_TURN payload. Emits it to JS if a context is live. */
+  /**
+   * Drain Wear Data Layer turns captured while the JS bridge was not
+   * listening yet. The watch can send a turn while the app process is cold
+   * or before WatchBridgeHost has mounted; dropping that spoken command
+   * makes the wrist feel broken. Mirrors YaverCarMessagingModule's
+   * consumePendingReplies.
+   */
+  @ReactMethod
+  fun consumePendingTurns(promise: com.facebook.react.bridge.Promise) {
+    try {
+      promise.resolve(drainPendingTurns(reactContext.applicationContext))
+    } catch (e: Exception) {
+      promise.reject("wear_turn_drain_failed", e.message, e)
+    }
+  }
+
+  /** Called by the listener service with an inbound PATH_TURN payload.
+   *  Emits it to JS if a context is live. */
   fun emitInbound(json: String) {
     if (!reactContext.hasActiveReactInstance()) return
     reactContext
@@ -69,9 +93,36 @@ class YaverWearBridgeModule(
 
   companion object {
     // Weak-ish singleton so the WearableListenerService can reach a live
-    // module. When the app is fully backgrounded this is null — that case
-    // wants a HeadlessJsTaskService (TODO activation).
+    // module. When the app is fully backgrounded this is null — inbound turns
+    // are stored in SharedPreferences and drained on next mount.
     @Volatile
     var instance: YaverWearBridgeModule? = null
+
+    private const val PREFS = "yaver_wear_turns"
+    private const val PREF_PENDING = "pending"
+
+    /** Store a turn JSON when the RN context is dead. Called by the listener
+     *  service so nothing is dropped while the app process is cold. */
+    fun storePendingTurn(ctx: Context, json: String) {
+      val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      val arr = JSONArray(prefs.getString(PREF_PENDING, "[]") ?: "[]")
+      arr.put(json)
+      prefs.edit().putString(PREF_PENDING, arr.toString()).apply()
+    }
+
+    /** Pop + return all pending turn JSON strings. Called by consumePendingTurns
+     *  when the JS bridge mounts. */
+    fun drainPendingTurns(ctx: Context): WritableArray {
+      val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      val raw = prefs.getString(PREF_PENDING, "[]") ?: "[]"
+      prefs.edit().remove(PREF_PENDING).apply()
+      val out = Arguments.createArray()
+      val arr = JSONArray(raw)
+      for (i in 0 until arr.length()) {
+        val s = arr.optString(i, "")
+        if (s.isNotEmpty()) out.pushString(s)
+      }
+      return out
+    }
   }
 }
