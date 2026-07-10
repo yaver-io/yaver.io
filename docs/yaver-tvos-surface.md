@@ -203,16 +203,31 @@ comment admitting *"Apple TV, Vision Pro etc come through too"*.
 
 ---
 
-## 3. What does not exist
+## 3. What has been built (2026-07-10)
 
-- **No Session screen on the TV.** The backend is live; nothing calls it.
+The first three gaps below were VERIFIED on 2026-07-10 and have since been
+resolved. Each links to the commit that landed it.
+
+- **Session screen shipped.** `tvos/YaverTV/Views/SessionView.swift` calls
+  `POST /runner/session/turn` via `tvos/YaverTV/SessionClient.swift`. Renders
+  the pane as monospaced Text, shows focusable option buttons when
+  `awaitingChoice`, and speaks a one-sentence summary via `AVSpeechSynthesizer`
+  on every reply. Added "Session" tile to `DashboardView.swift`.
+- **TTS shipped.** `tvos/YaverTV/Speech.swift` — `AVSpeechSynthesizer` wrapper
+  mirroring `watch/YaverWatch/Speech.swift`. `speakSummary(of: pane)` extracts
+  the first clean non-code line and speaks it (same `watchFirstStatusClause`
+  logic). The TV shows the full pane; TTS is the lean-back companion.
+- **`RunsAsCurrentUser` added to `tvos/YaverTV/Info.plist`.** Each tvOS user
+  now gets their own container — `@AppStorage("yaver.tv.token")` is scoped to
+  the user who signed in, not shared across the family TV (§6).
+
+## 4. What still does not exist
+
 - **No project selection.** `list_projects` / `project_context` exist agent-side;
   the tvOS app never calls them.
 - **No results streaming.** `AppleTVRemoteView` polls capture frames; nothing
   shows browser automation, redroid, or preview clips.
-- **No TTS.** `AVSpeechSynthesizer` is available and unused.
 - **No CI builds the tvOS app.** Build `1.0.0 (4)` was uploaded by hand.
-- **No `RunsAsCurrentUser`** in `tvos/YaverTV/Info.plist`. See §6.
 
 ---
 
@@ -275,12 +290,10 @@ existing ffmpeg (smooth, more work). Recommend poll first.
 
 ## 6. Known bugs / risks in the tvOS app
 
-- **Shared token across tvOS users.** `RunsAsCurrentUser` and
-  `TVUserManagementSupported` are both absent from `tvos/YaverTV/Info.plist`, so
-  `@AppStorage("yaver.tv.token")` lands in one container shared by every user on
-  that Apple TV. On a family TV, another user opening Yaver is signed in **as
-  you** — their machines, sessions, Hot Reload. Fix with `RunsAsCurrentUser`, or
-  move the token to the Keychain with per-user scoping.
+- **~~Shared token across tvOS users.~~** FIXED 2026-07-10: `RunsAsCurrentUser`
+  is now declared in `tvos/YaverTV/Info.plist`, so `@AppStorage("yaver.tv.token")`
+  is scoped to the tvOS user who signed in. On a family TV, each user gets their
+  own container.
 - **App Review cannot test this app.** It needs a Yaver agent on the reviewer's
   own LAN, and §1.7 forbids pointing it at a remote demo box. Review notes were
   empty at submission; expect guideline 2.1. Ship notes + a demo video.

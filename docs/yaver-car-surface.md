@@ -230,14 +230,29 @@ bridge the native scene into the JS car voice entry point.
 
 ---
 
-## 6. What does not exist
+## 6. What has been built (2026-07-10) vs. what does not exist
 
+**Built:**
+- **Android Auto replies drive `/runner/session/turn`.** `carReplyDispatch.ts`
+  now has a session path: when `sessionTurn` is provided, `handleCarReply`
+  drives the LIVE coding session instead of spawning a new task. The car voice
+  screen (`car-voice-coding.tsx`) wires `quicClient.runnerSessionTurn` as the
+  transport. `awaitingChoice` is handled: the options are spoken as a question,
+  the driver's spoken number is mapped to a choice digit, and menus chain
+  (§7 build order #2).
+- **CarPlay compiles `CPVoiceControlTemplate`.** The compiled delegate in
+  `mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift` now uses the four-state
+  voice template (ready/listening/working/speaking), not the disabled label.
+  Still untestable on hardware until the entitlement lands (§1).
+- **Android Auto replies survive a dead JS bridge.**
+  `YaverCarMessagingModule.consumePendingReplies` drains head-unit replies
+  captured while the car voice screen wasn't mounted. No more dropped spoken
+  commands.
+
+**Still does not exist:**
 - **CarPlay entitlement.** §1. Everything else on that platform is downstream.
-- **CarPlay native-to-JS bridge.** The Swift template exists, but there is no
-  entitled hardware path yet and no native action wired to `carVoiceEntryBus`.
-- **CarPlay live-session driving is not wired.** Android Auto replies use
-  `/runner/session/turn`; CarPlay still needs an entitled native-to-JS bridge
-  before it can use the same path.
+- **CarPlay native-to-JS bridge.** The Swift voice template exists, but there is
+  no entitled hardware path yet and no native action wired to `carVoiceEntryBus`.
 - **No `androidx.car.app`.** Deliberate. A real Car App (maps/EV/IoT templates)
   is a much heavier surface and unnecessary for a voice pipe.
 

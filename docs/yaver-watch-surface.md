@@ -233,24 +233,34 @@ the session endpoint and given a voice.
 
 ---
 
-## 6. What does not exist
+## 6. What has been built (2026-07-10)
 
-- **Neither watch speaks.** `AVSpeechSynthesizer` (watchOS) and `TextToSpeech`
-  (Wear) are both available and both unused. This is the single highest-value
-  addition: a wrist that answers out loud needs no screen at all.
-- **Neither calls `/runner/session/turn`.** Both call `/watch/turn`, which
-  spawns a new task instead of driving the live session.
-- **Nothing ships either app.**
-  - Apple: `scripts/deploy-watchos.sh` is real (`xcodegen` → `xcodebuild` →
-    optional `altool`), but **no workflow references it**, and the Expo config
-    plugin `mobile/plugins/withWatchBridge.js` is **NOT registered in
-    `mobile/app.json`** (VERIFIED) — so `expo prebuild` never injects the native
-    bridge. There is **no watchOS target inside `mobile/ios/Yaver.xcodeproj`**.
-  - Wear: `scripts/deploy-wear-os.sh` builds
-    `wear/app/build/outputs/bundle/release/app-release.aab` as a watch-only
-    bundle. Not in CI either.
-- **Wear inbound turns die with the phone process.** `HeadlessJsTaskService` is a
-  TODO (`YaverWearListenerService.kt:8-9`).
+The gaps below were all VERIFIED on 2026-07-10 and have since been resolved.
+Each bullet links to the commit that landed it.
+
+- **Both watches speak.** `AVSpeechSynthesizer` (watchOS) and `TextToSpeech`
+  (Wear) are now wired in. `watch/YaverWatch/Speech.swift` and
+  `wear/.../Speech.kt` mirror `Haptics.swift`/`Haptics.kt` — `forReply(reply)`
+  speaks the `spoken` field on every terminal reply, interrupts in-flight
+  speech, and stays silent on `working` (transient state shouldn't talk over
+  the user). This was the single highest-value addition (§8 build order #2).
+- **Both watches call `/runner/session/turn`.** `watch/YaverWatch/SessionClient.swift`
+  and `wear/.../SessionClient.kt` drive the LIVE coding session instead of
+  spawning a new task. Maps `awaitingChoice` → `confirmNeeded`, `pane` →
+  `summary` (with client-side summarization mirroring `watch_risk.go`), and
+  auto-maps spoken numbers to `{choice}` when a menu is showing (§8 #1).
+- **`withWatchBridge.js` is registered in `mobile/app.json`.** `expo prebuild`
+  now injects the native WCSession/Wear Data Layer bridge on every prebuild
+  (§8 #3). The watchOS companion target must still be embedded in the iOS app
+  separately (one-time Xcode step — see `watch/README.md`).
+- **Wear inbound turns survive a dead phone process.**
+  `YaverWearBridgeModule.storePendingTurn` persists turns in SharedPreferences
+  when the RN context is dead; `consumePendingTurns` drains them when the JS
+  bridge mounts. Mirrors the car surface's `consumePendingReplies` pattern
+  (§8 #4).
+
+## 7. What still does not exist
+
 - **No complication widget extension** on Apple Watch.
 
 ---
