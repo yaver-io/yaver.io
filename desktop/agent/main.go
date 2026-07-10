@@ -647,6 +647,8 @@ func main() {
 		runWire(os.Args[2:])
 	case "wireless":
 		runWireless(os.Args[2:])
+	case "tv":
+		runTVCommand(os.Args[2:])
 	case "android":
 		runAndroid(os.Args[2:])
 	case "remote":
