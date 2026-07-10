@@ -1,16 +1,17 @@
 // Mobile SSH terminal — a full-VT interactive PTY on any of your devices,
-// over the agent's /ws/terminal endpoint (so it rides direct LAN / Tailscale /
-// Cloudflare Tunnel / relay, whichever the connection negotiated).
+// over the agent's /ws/terminal and /ws/runner endpoints (so it rides direct
+// LAN / Tailscale / Cloudflare Tunnel / relay, whichever the connection
+// negotiated).
 //
 // Renders with XtermView (xterm.js in a WebView), so full-screen TUIs render
 // faithfully — Claude Code's boxed UI, codex, opencode, tmux, vim. One-tap
-// launchers type the supported coding agents into the PTY in yolo mode. An
-// optional mic dictates a command via on-device whisper. A device picker
-// switches which box you're shelled into (e.g. magara) without leaving here.
+// runner chips attach to stable remote tmux sessions, so a CLI-started
+// `yaver codex --machine=...` can be continued from the phone.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -30,13 +31,23 @@ import { quicClient } from "../src/lib/quic";
 import { AppBackButton } from "../src/components/AppBackButton";
 import XtermView, { type XtermHandle } from "../src/components/XtermView";
 import { isTerminalMetaFrame, resizeFrame } from "../src/lib/xtermBridge";
-import { AGENT_LAUNCHERS, launchLine, closeLine, type AgentLaunch } from "../src/lib/agentLaunch";
+import { AGENT_LAUNCHERS, closeLine, type AgentLaunch } from "../src/lib/agentLaunch";
 import { isWhisperReady, startRealtimeTranscribe } from "../src/lib/speech";
 import { OpenCodeConfigModal } from "../src/components/OpenCodeConfigModal";
 
-function buildTerminalWsUrl(baseUrl: string, token: string): string {
+type PTYTarget =
+  | { kind: "shell" }
+  | { kind: "runner"; runner: AgentLaunch["id"]; sessionName: string };
+
+function buildPTYWsUrl(baseUrl: string, token: string, target: PTYTarget): string {
   const ws = baseUrl.replace(/^http/, "ws").replace(/\/+$/, "");
-  return `${ws}/ws/terminal?token=${encodeURIComponent(token)}`;
+  const q = new URLSearchParams({ token, term: "xterm-256color" });
+  if (target.kind === "runner") {
+    q.set("runner", target.runner);
+    q.set("name", target.sessionName);
+    return `${ws}/ws/runner?${q.toString()}`;
+  }
+  return `${ws}/ws/terminal?${q.toString()}`;
 }
 
 // UTF-8 encode for PTY stdin (TextEncoder is present in modern Hermes; the
@@ -69,6 +80,8 @@ export default function ShellScreen() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [opencodeCfgOpen, setOpencodeCfgOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [target, setTarget] = useState<PTYTarget>({ kind: "shell" });
+  const [closingSessions, setClosingSessions] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const xtermRef = useRef<XtermHandle | null>(null);
@@ -106,14 +119,14 @@ export default function ShellScreen() {
     setStatus("connecting");
     setError(null);
 
-    const ws = new WebSocket(buildTerminalWsUrl(quicClient.baseUrl, token));
+    const ws = new WebSocket(buildPTYWsUrl(quicClient.baseUrl, token, target));
     wsRef.current = ws;
     try { (ws as any).binaryType = "arraybuffer"; } catch {}
 
     ws.onopen = () => {
       if (cancelled) return;
       setStatus("open");
-      setRunningId(null); // fresh PTY — nothing running yet
+      setRunningId(target.kind === "runner" ? target.runner : null);
       try {
         ws.send(resizeFrame(sizeRef.current.cols, sizeRef.current.rows));
       } catch {}
@@ -126,7 +139,14 @@ export default function ShellScreen() {
       } else if (typeof data === "string") {
         // Text frames are control/meta (session id, sudo prompt) — don't paint
         // them into the grid. Anything else is treated as output bytes.
-        if (!isTerminalMetaFrame(data)) xtermRef.current?.write(encodeUtf8(data));
+        if (isTerminalMetaFrame(data)) {
+          try {
+            const frame = JSON.parse(data);
+            if (typeof frame?.error === "string") setError(frame.error);
+          } catch {}
+        } else {
+          xtermRef.current?.write(encodeUtf8(data));
+        }
       }
     };
     ws.onerror = () => {
@@ -134,7 +154,7 @@ export default function ShellScreen() {
       setStatus("error");
       setRunningId(null);
       setError(
-        `Couldn't reach the shell on ${activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name}. Make sure yaver is running on it.`,
+          `Couldn't reach ${target.kind === "runner" ? target.runner : "the shell"} on ${activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name}. Make sure yaver is running on it.`,
       );
     };
     ws.onclose = (e: WebSocketCloseEvent) => {
@@ -142,9 +162,7 @@ export default function ShellScreen() {
       setStatus("closed");
       setRunningId(null);
       if (e?.code && e.code !== 1000) {
-        setError(
-          `Shell closed${e.reason ? ` (${e.reason})` : ` (code ${e.code})`}. The agent may have restarted — tap Reconnect.`,
-        );
+        setError(`${target.kind === "runner" ? target.runner : "Shell"} closed${e.reason ? ` (${e.reason})` : ` (code ${e.code})`}. Tap Reconnect.`);
       } else {
         setError(null);
       }
@@ -155,7 +173,7 @@ export default function ShellScreen() {
       try { ws.close(); } catch {}
       wsRef.current = null;
     };
-  }, [activeDevice, token, connectionStatus, reconnectNonce]);
+  }, [activeDevice, token, connectionStatus, reconnectNonce, target]);
 
   const reconnect = useCallback(() => {
     setError(null);
@@ -171,21 +189,93 @@ export default function ShellScreen() {
 
   const sendText = useCallback((text: string) => sendBytes(encodeUtf8(text)), [sendBytes]);
 
-  // Open/close toggle for a runner. Best-effort state: tapping an idle chip
-  // types the launch command; tapping the active chip types its `/exit`.
+  // Open/close toggle for a runner. Tapping a runner chip attaches to the
+  // stable /ws/runner tmux session used by the CLI (`yaver-<runner>`). Closing
+  // sends the runner's own /exit command; simply leaving this screen only
+  // drops the WebSocket, so the tmux-backed runner keeps going.
   const toggleRunner = useCallback(
     (l: AgentLaunch) => {
-      if (status !== "open") return;
       if (runningId === l.id) {
         sendText(closeLine(l));
-        setRunningId(null);
       } else {
-        sendText(launchLine(l));
-        setRunningId(l.id);
+        setTarget({ kind: "runner", runner: l.id, sessionName: `yaver-${l.id}` });
+        setReconnectNonce((n) => n + 1);
       }
     },
-    [status, runningId, sendText],
+    [runningId, sendText],
   );
+
+  const openShell = useCallback(() => {
+    if (target.kind === "shell") return;
+    setTarget({ kind: "shell" });
+    setReconnectNonce((n) => n + 1);
+  }, [target.kind]);
+
+  const summarizeClosed = useCallback((label: string, killed: Array<{ name: string; runner?: string; error?: string }>) => {
+    if (killed.length === 0) return `${label}: no tmux sessions found`;
+    return `${label}: ${killed.map((s) => s.runner ? `${s.name} (${s.runner})` : s.name).join(", ")}`;
+  }, []);
+
+  const closeSelectedSessions = useCallback(() => {
+    if (!activeDevice || closingSessions) return;
+    const label = activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name;
+    Alert.alert("Close tmux sessions?", `This kills all tmux sessions on ${label}, including Claude, Codex, OpenCode, and shells.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Close sessions",
+        style: "destructive",
+        onPress: async () => {
+          setClosingSessions(true);
+          try {
+            const res = await quicClient.closeTmuxSessions(activeDevice.id);
+            Alert.alert(res.ok ? "Sessions closed" : "Close failed", res.error || summarizeClosed(label, res.killed));
+            setTarget({ kind: "shell" });
+            setReconnectNonce((n) => n + 1);
+          } catch (e: any) {
+            Alert.alert("Close failed", e?.message ?? "Could not close sessions.");
+          } finally {
+            setClosingSessions(false);
+          }
+        },
+      },
+    ]);
+  }, [activeDevice, closingSessions, summarizeClosed]);
+
+  const closeAllMachineSessions = useCallback(() => {
+    if (closingSessions) return;
+    const targets = devices.filter((d) => d.online && !d.isGuest && !d.needsAuth);
+    if (targets.length === 0) {
+      Alert.alert("No online machines", "No online owned machines are available.");
+      return;
+    }
+    Alert.alert("Close sessions on all machines?", `This kills tmux sessions on ${targets.length} online owned machine${targets.length === 1 ? "" : "s"}.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Close all",
+        style: "destructive",
+        onPress: async () => {
+          setClosingSessions(true);
+          try {
+            const lines: string[] = [];
+            for (const d of targets) {
+              const label = d.alias ? `@${d.alias}` : d.name;
+              try {
+                const res = await quicClient.closeTmuxSessions(d.id);
+                lines.push(res.error ? `${label}: ${res.error}` : summarizeClosed(label, res.killed));
+              } catch (e: any) {
+                lines.push(`${label}: ${e?.message ?? "failed"}`);
+              }
+            }
+            Alert.alert("Close sessions", lines.join("\n"));
+            setTarget({ kind: "shell" });
+            setReconnectNonce((n) => n + 1);
+          } finally {
+            setClosingSessions(false);
+          }
+        },
+      },
+    ]);
+  }, [closingSessions, devices, summarizeClosed]);
 
   // ── XtermView wiring ─────────────────────────────────────────────
   const onTermData = useCallback((bytes: Uint8Array) => sendBytes(bytes), [sendBytes]);
@@ -269,6 +359,7 @@ export default function ShellScreen() {
   }
 
   const deviceLabel = activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name;
+  const surfaceLabel = target.kind === "runner" ? `${target.runner} · tmux` : "PTY";
 
   return (
     <KeyboardAvoidingView
@@ -289,7 +380,7 @@ export default function ShellScreen() {
             numberOfLines={1}
           >
             {status === "open"
-              ? "PTY · connected — tap title to switch device"
+              ? `${surfaceLabel} · connected — tap title to switch device`
               : status === "connecting"
                 ? "connecting…"
                 : status === "closed"
@@ -339,6 +430,15 @@ export default function ShellScreen() {
         style={styles.launchBar}
         contentContainerStyle={{ gap: 8, paddingHorizontal: 10, alignItems: "center" }}
       >
+        <Pressable
+          onPress={openShell}
+          disabled={target.kind === "shell"}
+          style={[styles.ctrlBtn, target.kind === "shell" && styles.ctrlBtnActive]}
+          accessibilityLabel="Open a regular shell"
+        >
+          <Text style={[styles.ctrlText, target.kind === "shell" && styles.ctrlTextActive]}>Shell</Text>
+        </Pressable>
+        <View style={styles.launchDivider} />
         {AGENT_LAUNCHERS.map((l) => {
           const active = runningId === l.id;
           return (
@@ -379,6 +479,12 @@ export default function ShellScreen() {
         </Pressable>
         <Pressable onPress={() => sendBytes(new Uint8Array([0x1b]))} disabled={status !== "open"} style={[styles.ctrlBtn, status !== "open" && { opacity: 0.4 }]}>
           <Text style={styles.ctrlText}>Esc</Text>
+        </Pressable>
+        <Pressable onPress={closeSelectedSessions} disabled={closingSessions} style={[styles.dangerBtn, closingSessions && { opacity: 0.45 }]}>
+          <Text style={styles.dangerText}>Close</Text>
+        </Pressable>
+        <Pressable onPress={closeAllMachineSessions} disabled={closingSessions} style={[styles.dangerBtn, closingSessions && { opacity: 0.45 }]}>
+          <Text style={styles.dangerText}>Close all</Text>
         </Pressable>
         {sttAvailable ? (
           <Pressable
@@ -499,7 +605,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1f2937",
   },
+  ctrlBtnActive: { backgroundColor: "#1f2937", borderColor: "#374151" },
   ctrlText: { color: "#9ca3af", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, fontWeight: "600" },
+  ctrlTextActive: { color: "#e5e7eb" },
+  dangerBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.45)",
+  },
+  dangerText: { color: "#fca5a5", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, fontWeight: "700" },
   micBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,

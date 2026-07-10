@@ -6481,6 +6481,30 @@ export class QuicClient {
     return { ok: true, tool: data.tool || tool, stream: data.stream || `install:${tool}` };
   }
 
+  async closeTmuxSessions(target?: string): Promise<{
+    ok: boolean;
+    killed: Array<{ name: string; runner?: string; error?: string }>;
+    failed?: number;
+    error?: string;
+  }> {
+    this.assertConnected();
+    const base = this.peerEndpoint(target, "/runner/sessions/close");
+    const res = await fetch(base, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, killed: [], error: data.error || `HTTP ${res.status}` };
+    }
+    return {
+      ok: data.ok !== false,
+      killed: Array.isArray(data.killed) ? data.killed : [],
+      failed: typeof data.failed === "number" ? data.failed : undefined,
+      error: data.error,
+    };
+  }
+
   /**
    * Install a coding-agent runner (claude / codex / opencode) on
    * the connected device (or a peer when `target` is set). Thin
