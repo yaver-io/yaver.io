@@ -17,6 +17,9 @@ struct DashboardView: View {
                         emptyBoxPrompt
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 24)], spacing: 24) {
+                            NavigationLink(destination: SessionView()) {
+                                Tile(icon: "terminal.fill", title: "Session", detail: "Drive a live coding session")
+                            }
                             NavigationLink(destination: RuntimeDashboardView()) {
                                 Tile(icon: "gamecontroller", title: "Yaver Catalog", detail: YaverNativeCatalog.tvSummary)
                             }
