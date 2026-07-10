@@ -1183,6 +1183,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/ws/runner", s.auth(s.handleRunnerPTYWS))
 	mux.HandleFunc("/runner/sessions/close", s.auth(s.handleRunnerSessionsClose))
 	mux.HandleFunc("/runner/sessions", s.auth(s.handleRunnerSessions))
+	// The screenless surfaces (watch, car, TV) drive a live session through
+	// this one call — see runner_session_turn.go.
+	mux.HandleFunc("/runner/session/turn", s.auth(s.handleRunnerSessionTurn))
 	mux.HandleFunc("/console/machines", s.auth(s.handleConsoleMachines))
 
 	// Deploy pipeline
