@@ -153,10 +153,13 @@ final class WatchStore: ObservableObject {
         return nil
     }
 
-    /// The single reduce path: reply -> (line shown, haptic, phase, confirm).
-    /// This is where "voice in, one sentence + haptic out" is enforced.
+    /// The single reduce path: reply -> (line shown, haptic, spoken, phase, confirm).
+    /// This is where "voice in, one sentence + haptic + voice out" is enforced.
+    /// Speech.forReply speaks the `spoken` field aloud via AVSpeechSynthesizer
+    /// (docs/yaver-watch-surface.md §6 — the single highest-value addition).
     private func reduce(_ reply: WatchReply) {
         Haptics.forReply(reply)
+        Speech.forReply(reply)
         switch reply.kind {
         case .ack:
             lastLine = reply.spoken ?? "On it."
