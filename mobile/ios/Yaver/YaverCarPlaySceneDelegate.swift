@@ -5,15 +5,48 @@ import CarPlay
 
 final class YaverCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
   private var interfaceController: CPInterfaceController?
+  private var voiceTemplate: CPVoiceControlTemplate?
 
   func templateApplicationScene(
     _ templateApplicationScene: CPTemplateApplicationScene,
     didConnect interfaceController: CPInterfaceController
   ) {
     self.interfaceController = interfaceController
-    interfaceController.setRootTemplate(makeRootTemplate(), animated: false)
+
+    let ready = CPVoiceControlState(
+      identifier: "ready",
+      titleVariants: ["Yaver is ready"],
+      image: UIImage(systemName: "waveform.circle"),
+      repeats: true
+    )
+    let listening = CPVoiceControlState(
+      identifier: "listening",
+      titleVariants: ["Listening"],
+      image: UIImage(systemName: "mic.circle"),
+      repeats: true
+    )
+    let working = CPVoiceControlState(
+      identifier: "working",
+      titleVariants: ["Working on your request"],
+      image: UIImage(systemName: "gearshape.2"),
+      repeats: true
+    )
+    let speaking = CPVoiceControlState(
+      identifier: "speaking",
+      titleVariants: ["Reading back status"],
+      image: UIImage(systemName: "speaker.wave.2.circle"),
+      repeats: true
+    )
+
+    let template = CPVoiceControlTemplate(voiceControlStates: [ready, listening, working, speaking])
+    voiceTemplate = template
+    interfaceController.setRootTemplate(template, animated: true, completion: nil)
+    template.activateVoiceControlState(withIdentifier: "ready")
   }
 
+}
+
+extension YaverCarPlaySceneDelegate {
   func templateApplicationScene(
     _ templateApplicationScene: CPTemplateApplicationScene,
     didDisconnect interfaceController: CPInterfaceController
@@ -21,16 +54,7 @@ final class YaverCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDe
     if self.interfaceController === interfaceController {
       self.interfaceController = nil
     }
-  }
-
-  private func makeRootTemplate() -> CPTemplate {
-    let item = CPListItem(
-      text: "Yaver",
-      detailText: "Voice runtime ready. Use the iPhone voice loop for dictation and confirmation."
-    )
-    item.isEnabled = false
-    let section = CPListSection(items: [item])
-    return CPListTemplate(title: "Yaver", sections: [section])
+    voiceTemplate = nil
   }
 }
 #endif

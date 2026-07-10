@@ -11,6 +11,7 @@ import {
   isConfirmReply,
   isCancelReply,
   CarReplyGate,
+  SessionChoiceGate,
   handleCarReply,
 } from "./carReplyDispatch.ts";
 import type { CarVoiceDeps, CarVoiceTaskRef } from "./carVoiceCoding.ts";
@@ -156,4 +157,63 @@ test("gate is per-conversation (confirm on one doesn't release another)", async 
   assert.notEqual(d.outcome, "confirmed");
   assert.ok(gate.hasPending("a"), "conversation a's deploy must stay pending");
   assert.equal(dispatched.includes("deploy"), false, "deploy must never have fired");
+});
+
+test("session path sends safe replies to the live session instead of spawning a task", async () => {
+  const { deps, dispatched } = recordingDeps();
+  const gate = new CarReplyGate();
+  const sessionChoiceGate = new SessionChoiceGate();
+  const calls: Array<{ text: string | null; choice: string | null }> = [];
+
+  const d = await handleCarReply({
+    conversationId: "c",
+    text: "keep developing this",
+    gate,
+    deps,
+    sessionChoiceGate,
+    sessionTurn: async (text, choice) => {
+      calls.push({ text, choice });
+      return {
+        ok: true,
+        session: "codex",
+        awaitingChoice: true,
+        options: ["1. Yes, continue", "2. No, exit"],
+        pane: "1. Yes, continue\n2. No, exit",
+      };
+    },
+  });
+
+  assert.equal(d.outcome, "session-prompt");
+  assert.equal(d.awaitingChoice, true);
+  assert.deepEqual(calls, [{ text: "keep developing this", choice: null }]);
+  assert.deepEqual(dispatched, []);
+});
+
+test("session path routes the next answer as a menu choice", async () => {
+  const { deps } = recordingDeps();
+  const gate = new CarReplyGate();
+  const sessionChoiceGate = new SessionChoiceGate();
+  sessionChoiceGate.setAwaiting("c");
+  const calls: Array<{ text: string | null; choice: string | null }> = [];
+
+  const d = await handleCarReply({
+    conversationId: "c",
+    text: "yes",
+    gate,
+    deps,
+    sessionChoiceGate,
+    sessionTurn: async (text, choice) => {
+      calls.push({ text, choice });
+      return {
+        ok: true,
+        session: "codex",
+        awaitingChoice: false,
+        pane: "Continuing.",
+      };
+    },
+  });
+
+  assert.equal(d.outcome, "session-choice");
+  assert.equal(d.awaitingChoice, false);
+  assert.deepEqual(calls, [{ text: null, choice: "1" }]);
 });
