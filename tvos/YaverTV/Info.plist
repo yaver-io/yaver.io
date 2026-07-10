@@ -23,6 +23,14 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Yaver connects to a machine on your network running the Yaver agent to control your Apple TV and view its now-playing card.</string>
+	<!-- Per-user token isolation: without RunsAsCurrentUser, @AppStorage
+	     ("yaver.tv.token") lands in one container shared by every user on
+	     the Apple TV. On a family TV, another user opening Yaver would be
+	     signed in as you — their machines, sessions, Hot Reload. With
+	     RunsAsCurrentUser=true, each tvOS user gets their own container.
+	     See docs/yaver-tvos-surface.md §6. -->
+	<key>RunsAsCurrentUser</key>
+	<true/>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>arm64</string>
