@@ -40,8 +40,16 @@ func TestDetectRunnerRuntimeStatusCodexAuthFile(t *testing.T) {
 	if !status.AuthConfigured {
 		t.Fatalf("expected codex auth file to be detected")
 	}
-	if !strings.HasSuffix(status.AuthSource, "auth.json") {
-		t.Fatalf("expected auth.json source, got %q", status.AuthSource)
+	// Precedence: we ask `codex login status` before trusting a file, because a
+	// credentials file proves a login happened once, not that it still works.
+	// So the source depends on whether the codex binary is here to answer —
+	// and only its answer may claim AuthVerified.
+	if status.AuthVerified {
+		if status.AuthSource != "codex login status" {
+			t.Fatalf("a verified codex answer must name the live probe, got %q", status.AuthSource)
+		}
+	} else if !strings.HasSuffix(status.AuthSource, "auth.json") {
+		t.Fatalf("without a live probe the source must be the credentials file, got %q", status.AuthSource)
 	}
 }
 

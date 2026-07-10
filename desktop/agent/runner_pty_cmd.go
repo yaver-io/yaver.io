@@ -800,10 +800,13 @@ func preflightRemoteRunnerAuth(baseURL, token string, headers http.Header, machi
 			if row.AuthVerified {
 				fmt.Fprintf(os.Stderr, "→ %s is signed in on %s (%s)\r\n", runnerID, machine, row.AuthSource)
 			} else {
-				// Pre-1.99.278 agents answer from file presence alone, which is
-				// exactly the signal that used to strand users on a login
-				// screen. Say so rather than pretending we checked.
-				fmt.Fprintf(os.Stderr, "→ %s reports %s auth present but cannot verify it (agent predates `authVerified`) — update the box if you land on a login screen\r\n", machine, runnerID)
+				// AuthVerified absent means one of two things we cannot tell
+				// apart from here: an agent older than 1.99.278, or a credential
+				// the runner could not be asked about (its CLI wouldn't answer).
+				// Either way the honest statement is the same — a credential was
+				// found, nobody confirmed it works. Don't guess which.
+				fmt.Fprintf(os.Stderr, "→ %s: %s credential found on %s but not confirmed working (%s) — if a login screen appears, run `yaver runner-auth setup %s --target %s`\r\n",
+					machine, runnerID, machine, firstNonEmptyBrowserAuth(row.AuthSource, "no live check"), runnerID, machine)
 			}
 		}
 		return false, nil

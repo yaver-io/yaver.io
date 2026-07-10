@@ -613,13 +613,16 @@ func applyLiveRunnerAuthProbe(rows []runnerAuthStatusRow, runner string) []runne
 // Anthropic OAuth / Keychain path applies here.
 func detectGLMStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
+	// An explicit key needs no OAuth and no probe: its presence IS the answer.
 	if cfg := runnerProviderConfigFor("glm"); cfg.apiKey != "" {
 		status.AuthConfigured = true
+		status.AuthVerified = true
 		status.AuthSource = "z.ai key (" + cfg.baseURL + ")"
 		return status
 	}
 	if value, source := hostSecretValue("ZAI_API_KEY"); value != "" {
 		status.AuthConfigured = true
+		status.AuthVerified = true
 		status.AuthSource = source
 		return status
 	}
@@ -693,13 +696,31 @@ func detectCodexStatus() RunnerRuntimeStatus {
 		status.AuthSource = source
 		return status
 	}
-	// Check every path the codex CLI is known to drop credentials at,
-	// across versions / install methods. The original detector only
-	// looked at ~/.codex/auth.json and missed installs that write
-	// credentials.json (newer device-auth) or store the OAuth payload
-	// under ~/.codex/sessions/. When the file is missing, the dashboard
-	// re-prompts for sign-in even though the user just completed the
-	// flow — that surfaced as the "Test → Sign In Codex" loop in #19.
+	// Ask the codex CLI itself FIRST. `codex login status` exits 0 with
+	// account info when authenticated, non-zero with a "run codex login"
+	// message otherwise — the only answer that settles whether a TUI opened
+	// right now would demand a sign-in. Cached (60 s) so the status poll
+	// doesn't fork codex every 1.5 s.
+	//
+	// Ordered ahead of the file probe on purpose: a credentials file proves a
+	// login happened once, not that it still works. Trusting the file first is
+	// what let a stale token report "signed in" and strand the caller.
+	if codexLoginStatusOK() {
+		status.AuthConfigured = true
+		status.AuthVerified = true
+		status.AuthSource = "codex login status"
+		return status
+	}
+	// Fall back to the paths the codex CLI is known to drop credentials at,
+	// across versions / install methods. The original detector only looked at
+	// ~/.codex/auth.json and missed installs that write credentials.json (newer
+	// device-auth) or store the OAuth payload under ~/.codex/sessions/. When
+	// the file is missing, the dashboard re-prompts for sign-in even though the
+	// user just completed the flow — that surfaced as the "Test → Sign In
+	// Codex" loop in #19.
+	//
+	// Reached only when codex could not answer (binary too old for
+	// `login status`, or the probe timed out), so AuthVerified stays false.
 	for _, path := range codexAuthCandidatePaths() {
 		if runnerFileExists(path) {
 			status.AuthConfigured = true
@@ -707,51 +728,58 @@ func detectCodexStatus() RunnerRuntimeStatus {
 			return status
 		}
 	}
-	// Final fallback: ask the codex CLI itself. `codex login status`
-	// exits 0 with account info when authenticated, non-zero with a
-	// "run codex login" message otherwise. Only useful when the binary
-	// resolves on PATH — when it doesn't we leave the existing "no
-	// credentials" error in place. Cached so the poll loop doesn't
-	// fork codex every 1.5s.
-	if codexLoginStatusOK() {
-		status.AuthConfigured = true
-		status.AuthVerified = true
-		status.AuthSource = "codex login status"
-		return status
-	}
 	status.Ready = false
 	status.Error = "Codex is installed but no credentials were found. Set `OPENAI_API_KEY` or run `codex login --device-auth` (and complete it in the browser). Checked: " + strings.Join(codexAuthCandidatePaths(), ", ") + "."
 	return status
 }
 
+type codexLoginStatusEntry struct {
+	ok bool
+	at time.Time
+}
+
 var (
+	// Keyed by the credential root the answer was measured under. codex reads
+	// its login from $CODEX_HOME (else $HOME), so a single global entry would
+	// let one home's answer be served for another — which is exactly how a
+	// warm "logged in" leaked across tests running under different HOMEs.
 	codexLoginStatusCache = struct {
 		sync.Mutex
-		ok bool
-		at time.Time
-	}{}
+		byHome map[string]codexLoginStatusEntry
+	}{byHome: map[string]codexLoginStatusEntry{}}
 	codexLoginStatusTTL = 60 * time.Second
 )
 
+func codexCredentialRoot() string {
+	if dir := strings.TrimSpace(os.Getenv("CODEX_HOME")); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
 func codexLoginStatusOK() bool {
+	key := codexCredentialRoot()
 	codexLoginStatusCache.Lock()
-	defer codexLoginStatusCache.Unlock()
-	if !codexLoginStatusCache.at.IsZero() && time.Since(codexLoginStatusCache.at) < codexLoginStatusTTL {
-		return codexLoginStatusCache.ok
+	if e, ok := codexLoginStatusCache.byHome[key]; ok && time.Since(e.at) < codexLoginStatusTTL {
+		codexLoginStatusCache.Unlock()
+		return e.ok
 	}
-	bin := resolveRunnerBinary("codex")
-	if bin == "" {
-		codexLoginStatusCache.ok = false
-		codexLoginStatusCache.at = time.Now()
-		return false
+	codexLoginStatusCache.Unlock()
+
+	ok := false
+	if bin := resolveRunnerBinary("codex"); bin != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		defer cancel()
+		ok = osexec.CommandContext(ctx, bin, "login", "status").Run() == nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
-	defer cancel()
-	cmd := osexec.CommandContext(ctx, bin, "login", "status")
-	err := cmd.Run()
-	ok := err == nil
-	codexLoginStatusCache.ok = ok
-	codexLoginStatusCache.at = time.Now()
+
+	codexLoginStatusCache.Lock()
+	codexLoginStatusCache.byHome[key] = codexLoginStatusEntry{ok: ok, at: time.Now()}
+	codexLoginStatusCache.Unlock()
 	return ok
 }
 
