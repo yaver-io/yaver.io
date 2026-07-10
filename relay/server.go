@@ -91,11 +91,6 @@ type RelayServer struct {
 	pwUserIDs   map[string]string // password -> userId (short cache)
 	pwUserIDExp map[string]time.Time
 
-	// Scale-to-zero shared beta runtime signalling (see beta_signal.go).
-	// Always-on free entry: verified beta users wake the pool; the owner-side
-	// controller polls /beta/state to provision/reap an ephemeral box.
-	betaPool *betaPoolState
-
 	// Yaver Mesh DERP relay — persistent per-device frame streams that forward
 	// WireGuard packets between peers that can't reach each other directly
 	// (symmetric NAT). Pass-through: the relay never decrypts payloads.
@@ -141,7 +136,6 @@ func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain st
 		exposeRoutes: make(map[string]*exposeRoute),
 		exposeDomain: exposeDomain,
 		busHub:       newBusHub(),
-		betaPool:     newBetaPoolState(),
 		pwUserIDs:    make(map[string]string),
 		pwUserIDExp:  make(map[string]time.Time),
 		// RELAY_ADMIN_TOKEN gates /admin/* + diagnostic endpoints
@@ -718,11 +712,6 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux.HandleFunc("/bus/publish", s.handleBusPublish)
 	mux.HandleFunc("/bus/subscribe", s.handleBusSubscribe)
 	mux.HandleFunc("/bus/status", s.handleBusStatus)
-	// Scale-to-zero beta runtime: /beta/wake (beta-user-gated via Convex) flips
-	// the shared pool to "waking"; /beta/state is polled by clients (until up)
-	// and written by the owner-side pool controller (admin-gated POST).
-	mux.HandleFunc("/beta/wake", s.handleBetaWake)
-	mux.HandleFunc("/beta/state", s.handleBetaState)
 	mux.HandleFunc("/d/", s.handleProxy) // /d/{deviceId}/...
 
 	srv := &http.Server{

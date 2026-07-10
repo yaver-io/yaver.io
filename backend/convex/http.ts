@@ -614,7 +614,6 @@ for (const path of [
   "/byo/machines",
   "/gateway/policy", "/gateway/policy/set",
   "/gateway/token/mint", "/gateway/token/revoke", "/gateway/token/rotate",
-  "/beta/create-user",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage",
@@ -681,69 +680,6 @@ http.route({
       token,
       userId: publicUser?.userId ?? String(userId),
       userDocId: String(userId),
-    });
-  }),
-});
-
-/** POST /beta/create-user — OWNER ONLY. One-shot: create an email/password
- *  account (if it doesn't exist) AND seed full invisible beta access
- *  (GLM gateway grant + caps + included hours + hidden box grant +
- *  sharedProject). Reuses the real hashPassword path so the account logs in
- *  normally. Owner-gated by the cloud-preview allowlist (the same gate as
- *  every money route). Body: { email, password, fullName?, sharedProject? }.
- *
- *  NOTE: this provisions ACCESS GRANTS only. The actual coding/push/
- *  isolation experience requires the box-side data-plane (partition +
- *  two-repo push broker), which is not deployed yet — a created user can
- *  sign in and see the Beta surface but cannot push/isolate until that
- *  lands. See beta-invisible-infra-share-design.md. */
-http.route({
-  path: "/beta/create-user",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const authHeader = request.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
-    const session = await ctx.runQuery(api.auth.validateSession, {
-      tokenHash: await sha256Hex(authHeader.slice(7)),
-    });
-    if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email, session.userDocId)) {
-      return errorResponse("Owner only", 403);
-    }
-
-    const body = await request.json();
-    const { email, password, fullName, sharedProject } = body ?? {};
-    if (!email || !password) return errorResponse("email + password required", 400);
-    if (String(password).length < 8) return errorResponse("password must be ≥ 8 chars", 400);
-    const normEmail = String(email).toLowerCase().trim();
-
-    let userDocId;
-    let created = false;
-    const existing = await ctx.runQuery(api.auth.lookupEmailUser, { email: normEmail });
-    if (existing) {
-      userDocId = existing._id;
-    } else {
-      const passwordHash = await hashPassword(String(password));
-      userDocId = await ctx.runMutation(api.auth.createEmailUser, {
-        email: normEmail,
-        fullName: String(fullName || "Beta Tester").trim(),
-        passwordHash,
-      });
-      created = true;
-    }
-
-    const seed = await ctx.runAction(internal.betaAccess.seedBetaUser, {
-      guestUserId: userDocId,
-      sharedProject: sharedProject ? String(sharedProject) : undefined,
-    });
-
-    return jsonResponse({
-      ok: true,
-      email: normEmail,
-      userDocId: String(userDocId),
-      accountCreated: created,
-      sharedProject: sharedProject ? String(sharedProject) : null,
-      seed,
     });
   }),
 });
@@ -5195,12 +5131,11 @@ http.route({
     const userDocId = await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
     if (!userDocId) return errorResponse("User not found", 404);
 
-    const [subscription, relay, machines, wallet, beta] = await Promise.all([
+    const [subscription, relay, machines, wallet] = await Promise.all([
       ctx.runQuery(api.subscriptions.getByUser, { userId: userDocId }),
       ctx.runQuery(api.managedRelays.getByUser, { userId: userDocId }),
       ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId }),
       ctx.runQuery(internal.cloudLifecycle.getWallet, { userId: userDocId }),
-      ctx.runQuery(internal.betaAccess.getBetaStatus, { userId: userDocId }),
     ]);
 
     return jsonResponse({
@@ -5228,10 +5163,6 @@ http.route({
       prepaidBalanceCents: wallet.balanceCents,
       currency: wallet.currency,
       balance: wallet,
-      // Beta entitlement (invisible-infra-share). When isBeta, clients
-      // render the Beta workspace view (project + vibe box) and the "Beta"
-      // badge — never the infra/guest/device details (those stay hidden).
-      beta,
       relay: relay ? {
         status: relay.status,
         domain: relay.domain,
@@ -8344,66 +8275,6 @@ http.route({
     } catch (e: any) {
       return errorResponse(e?.message || "list failed", 400);
     }
-  }),
-});
-
-// POST /beta/inference-token — a beta user exchanges their session for a scoped
-// inference token (ygw_) + the gateway URL, so the mobile/web client can use
-// managed (keyless) GLM without ever holding the upstream key. Gated on beta
-// status; the raw token is returned ONCE (only its hash is stored).
-http.route({
-  path: "/beta/inference-token",
-  method: "OPTIONS",
-  handler: httpAction(async () => corsPreflightResponse()),
-});
-http.route({
-  path: "/beta/inference-token",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const session = await authenticateRequest(ctx, request);
-    if (!session) return errorResponse("Unauthorized", 401);
-    const beta = await ctx.runQuery(internal.betaAccess.getBetaStatus, {
-      userId: session.userDocId as any,
-    });
-    if (!beta?.isBeta || !beta?.aiEnabled) {
-      return errorResponse("Not a beta user", 403);
-    }
-    const raw =
-      "ygw_" +
-      crypto.randomUUID().replace(/-/g, "") +
-      crypto.randomUUID().replace(/-/g, "");
-    const tokenHash = await sha256Hex(raw);
-    await ctx.runMutation(internal.gatewayTokens.mintInternal, {
-      userId: session.userDocId as any,
-      tokenHash,
-      scope: "inference",
-      label: "beta-client",
-    });
-    return jsonResponse({
-      token: raw,
-      gatewayUrl: process.env.GATEWAY_PUBLIC_URL ?? "",
-    });
-  }),
-});
-
-// POST /beta/consent — the authenticated user approves a pre-seeded beta invite
-// (consent to managed AI + the shared box). The real grant is created only here.
-http.route({
-  path: "/beta/consent",
-  method: "OPTIONS",
-  handler: httpAction(async () => corsPreflightResponse()),
-});
-http.route({
-  path: "/beta/consent",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const session = await authenticateRequest(ctx, request);
-    if (!session) return errorResponse("Unauthorized", 401);
-    const result = await ctx.runAction(internal.betaAccess.acceptBetaInvite, {
-      userId: session.userDocId as any,
-    });
-    if (!result.ok) return errorResponse(result.reason ?? "No pending invite", 404);
-    return jsonResponse({ ok: true });
   }),
 });
 

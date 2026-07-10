@@ -2454,15 +2454,10 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 	// Determine working directory
 	taskDir := tm.effectiveTaskWorkDir(task)
-	// UNWIRE GATE: a general-purpose / personal box is NOT a beta runtime host.
-	// An isolation-required guest task (the beta hidden-grant marker,
-	// requireIsolation:true) is REFUSED unless this box is an explicit beta
-	// host (YAVER_BETA_HOST=1 — only the ephemeral scale-to-zero pool boxes set
-	// it). Keeps the owner's Talos/personal box from ever executing beta code.
-	if task.GuestRequireIsolation && !betaHostEnabled() {
-		cancel()
-		return fmt.Errorf("this agent is not a beta runtime host — isolation-required guest task refused")
-	}
+	// An isolation-required guest task (requireIsolation:true) runs confined as
+	// an unprivileged per-tenant OS user in a partition on this box. Confinement
+	// is Linux-only; tenantRT.prepare() below fails loudly on a host that can't
+	// provide it, rather than silently running the guest unconfined.
 	tenantRT := tenantRuntimeForTask(task)
 	if tenantRT.Enabled {
 		if err := CheckRunnerBinary(runner.Command); err != nil {

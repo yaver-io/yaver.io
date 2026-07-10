@@ -685,8 +685,8 @@ export async function generatePhoneProjectDraftFromPrompt(args: {
   name: string;
   prompt: string;
   template?: string;
-  // Managed/beta inference: route generation through the Yaver gateway (keyless
-  // GLM via the owner's key). baseUrl is a runtime-config value (never hardcoded
+  // Managed inference: route generation through the Yaver gateway (keyless GLM
+  // via the owner's key). baseUrl is a runtime-config value (never hardcoded
   // — infra hostnames stay out of the repo), apiKey is the user's scoped ygw_
   // token, model overrides the default. Gateway is OpenAI-compatible.
   baseUrl?: string;
@@ -1668,38 +1668,6 @@ export interface PhoneRuntimeDeployResult {
   runtime?: ProjectRuntimeApplyResponse | null;
   pushes: Array<{ kind: "dev-hw" | "yaver-cloud" | "custom"; result: PhonePushResult }>;
   promotes: Array<{ kind: "convex" | "cloudflare-workers"; result: PromoteResult | null }>;
-}
-
-// One-call "deploy to my beta cloud": wake the (auto-paused) beta box, then push
-// the serverless bundle to it via the relay with overwrite (so re-deploys update
-// the live app). deployTarget comes from getBetaStatus (beta-box deviceId +
-// relay), so the box never appears in the user's device list. The box may take
-// ~45-60s to power on after the wake — the UI should show "deploying…" + retry.
-export async function deployToBetaCloud(args: {
-  slug: string;
-  deployTarget: { deviceId: string; relayHttpUrl: string };
-  managedToken?: string;
-}): Promise<PhoneRuntimeDeployResult> {
-  const relay = args.deployTarget.relayHttpUrl.replace(/\/$/, "");
-  if (args.managedToken) {
-    // best-effort wake — the controller powers the box on from this signal
-    await fetch(`${relay}/beta/wake`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${args.managedToken}` },
-    }).catch(() => {});
-  }
-  return deployPhoneProjectRuntime({
-    slug: args.slug,
-    includeData: true,
-    exports: [
-      {
-        kind: "dev-hw",
-        deviceId: args.deployTarget.deviceId,
-        relayHttpUrl: args.deployTarget.relayHttpUrl,
-        onConflict: "overwrite",
-      },
-    ],
-  });
 }
 
 export async function deployPhoneProjectRuntime(req: PhoneRuntimeDeployRequest): Promise<PhoneRuntimeDeployResult> {

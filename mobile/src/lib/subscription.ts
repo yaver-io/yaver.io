@@ -58,42 +58,6 @@ export interface ManagedCloudUsageSummary {
   topups: ManagedCloudTopupEntry[];
 }
 
-// Beta soft-launch status (mirrors web/lib/subscription.ts). When isBeta, the
-// user gets managed inference (owner's GLM via the gateway) + the owner's box —
-// no key entry. Cosmetic flag; access is enforced server-side (gateway caps +
-// hidden infra grant). See project_beta_invisible_infra_share.
-export interface BetaStatus {
-  isBeta: boolean;
-  plan: string | null;
-  sharedProject: string | null;
-  includedHours: number;
-  usedHours: number;
-  aiEnabled: boolean;
-  deployTarget?: { deviceId: string; relayHttpUrl: string } | null;
-  // Pending pre-seeded invite (whitelisted email, not yet approved). When set,
-  // show a consent card; approve via acceptBetaInvite to activate the grant.
-  betaInvite?: {
-    pending: boolean;
-    inviterName: string;
-    sharedProject: string | null;
-    includedHours: number;
-  } | null;
-}
-
-/** Approve a pending beta invite (consent to managed AI + the shared box).
- * Returns true on success. The caller should refetch the subscription after. */
-export async function acceptBetaInvite(token: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${getConvexSiteUrl()}/beta/consent`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 export interface ManagedSubscriptionSummary {
   // Owner-allowlist flag (server isCloudPreviewUser). Mobile hides
   // the managed-cloud card entirely for non-owners — cosmetic; the
@@ -120,32 +84,6 @@ export interface ManagedSubscriptionSummary {
   prepaidBalanceCents?: number | null;
   currency?: string;
   balance?: ManagedCloudBalanceSummary | null;
-  beta?: BetaStatus | null;
-}
-
-/** Render the beta surface? Cosmetic only — access is enforced server-side. */
-export function isBetaUser(s: ManagedSubscriptionSummary | null | undefined): boolean {
-  return s?.beta?.isBeta === true;
-}
-
-/** Exchange a beta user's session for a scoped managed-inference token + gateway
- * URL (keyless GLM). Returns null for non-beta / errors. The raw token is only
- * returned here; store it locally for the sandbox generation's managed lane. */
-export async function fetchBetaInferenceToken(
-  token: string,
-): Promise<{ token: string; gatewayUrl: string } | null> {
-  try {
-    const res = await fetch(`${getConvexSiteUrl()}/beta/inference-token`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { token?: string; gatewayUrl?: string };
-    if (!data.token || !data.gatewayUrl) return null;
-    return { token: data.token, gatewayUrl: data.gatewayUrl };
-  } catch {
-    return null;
-  }
 }
 
 export async function getManagedSubscription(token: string): Promise<ManagedSubscriptionSummary | null> {

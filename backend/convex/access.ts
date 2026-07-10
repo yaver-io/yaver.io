@@ -52,20 +52,15 @@ export async function listActiveInfraGrantsForGuest(
   return grants.filter(notExpired);
 }
 
-// UI-LISTING variant: same as listActiveInfraGrantsForGuest but DROPS
-// `hidden` grants. Use this anywhere a grant is rendered TO THE GUEST
-// (their "shared with me" / reachable-device list). The invisible
-// owner-infra share (beta soft-launch) marks its grant hidden:true so the
-// beta user can reach the box (access-control path above still returns it)
-// without ever seeing the device/guest relationship in their UI. The HOST
-// is never filtered — only the guest's own view. See
-// beta-invisible-infra-share-design.md.
+// UI-LISTING variant of listActiveInfraGrantsForGuest — the grant list
+// rendered TO THE GUEST (their "shared with me" / reachable-device list).
+// Kept as a distinct entry point (call sites in cloudMachines/devices) even
+// though it is currently identical to the access-control list.
 export async function listVisibleInfraGrantsForGuest(
   ctx: AccessCtx,
   guestUserId: Id<"users">,
 ): Promise<ActiveInfraGrant[]> {
-  const grants = await listActiveInfraGrantsForGuest(ctx, guestUserId);
-  return grants.filter((g) => g.hidden !== true);
+  return listActiveInfraGrantsForGuest(ctx, guestUserId);
 }
 
 export async function listGrantedDeviceIdsForGrant(

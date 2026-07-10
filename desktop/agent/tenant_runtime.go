@@ -18,19 +18,6 @@ type tenantRuntime struct {
 	Home    string
 }
 
-// betaHostEnabled reports whether THIS box is a designated beta runtime host.
-// Default false — a general-purpose / owner-personal box (e.g. the Talos box)
-// must never execute beta-tenant code. Only the ephemeral scale-to-zero pool
-// boxes set YAVER_BETA_HOST=1 (baked into their golden image / boot env).
-func betaHostEnabled() bool {
-	switch strings.TrimSpace(strings.ToLower(os.Getenv("YAVER_BETA_HOST"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
 func runnerNeedsTenantRuntime(runnerID string) bool {
 	switch normalizeRunnerID(runnerID) {
 	case "claude", "codex":
@@ -41,15 +28,15 @@ func runnerNeedsTenantRuntime(runnerID string) bool {
 }
 
 func tenantRuntimeForGuest(userID string) tenantRuntime {
-	id := betaSanitizeRef(userID)
+	id := sanitizeTenantRef(userID)
 	if id == "anon" {
 		return tenantRuntime{}
 	}
-	root := filepath.Join(betaTenantRoot, id)
+	root := filepath.Join(tenantPartitionRoot, id)
 	return tenantRuntime{
 		Enabled: true,
 		UserID:  userID,
-		User:    betaTenantUser(userID),
+		User:    tenantPartitionUser(userID),
 		Root:    root,
 		Home:    filepath.Join(root, "home"),
 	}
@@ -116,11 +103,11 @@ func (tr tenantRuntime) prepare() error {
 	if err := validTenant(tr.User); err != nil {
 		return err
 	}
-	if handled, err := privilegedBetaTenantCreate(tr); handled {
+	if handled, err := privilegedTenantPartitionCreate(tr); handled {
 		return err
 	}
 	if os.Geteuid() == 0 {
-		if _, err := (execBetaSysRunner{}).run("useradd", "--system", "--no-create-home", "--shell", "/bin/bash", "--home-dir", tr.Home, tr.User); err != nil {
+		if _, err := (execTenantSysRunner{}).run("useradd", "--system", "--no-create-home", "--shell", "/bin/bash", "--home-dir", tr.Home, tr.User); err != nil {
 			// Existing users are fine; useradd wording varies by distro.
 			if _, lookupErr := exec.Command("id", "-u", tr.User).Output(); lookupErr != nil {
 				return fmt.Errorf("useradd %s: %w", tr.User, err)
@@ -182,7 +169,7 @@ func (tr tenantRuntime) command(ctx context.Context, cwd, name string, args []st
 	return cmd, nil
 }
 
-func privilegedBetaTenantCreate(tr tenantRuntime) (bool, error) {
+func privilegedTenantPartitionCreate(tr tenantRuntime) (bool, error) {
 	if !helperAvailable() {
 		return false, nil
 	}

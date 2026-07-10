@@ -90,7 +90,7 @@ func newRunnerBrowserAuthSession(runner string, tr tenantRuntime) *runnerBrowser
 	now := time.Now().UnixMilli()
 	idPrefix := runner
 	if tr.Enabled {
-		idPrefix = runner + "-" + betaSanitizeRef(tr.UserID)
+		idPrefix = runner + "-" + sanitizeTenantRef(tr.UserID)
 	}
 	id := fmt.Sprintf("%s-%d", idPrefix, now)
 	return &runnerBrowserAuthSessionState{

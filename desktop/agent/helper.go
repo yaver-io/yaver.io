@@ -221,7 +221,7 @@ func (s *helperServer) handle(req helperRequest) helperResponse {
 			return helperResponse{Error: "tenant root/home must be absolute and home must be under root"}
 		}
 		if root != "/home/"+req.Tenant {
-			base := filepath.Clean(betaTenantRoot)
+			base := filepath.Clean(tenantPartitionRoot)
 			rel, relErr := filepath.Rel(base, root)
 			if relErr != nil || rel == "." || strings.HasPrefix(rel, "..") || strings.Contains(rel, string(filepath.Separator)) {
 				return helperResponse{Error: "tenant root must be the canonical /home/yv-* or /srv/yaver/tenants/<id> path"}

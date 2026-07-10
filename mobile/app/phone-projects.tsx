@@ -23,7 +23,7 @@ import { getLocalSecret, getUserSettings, LOCAL_KEYS, saveLocalSecret } from "..
 import { isCloudPreviewUser } from "../src/lib/cloudPreview";
 import { HIDE_PAID_UI } from "../src/lib/launchFlags";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "../src/lib/conversationImport";
-import { acceptBetaInvite, fetchBetaInferenceToken, getManagedSubscription, isBetaUser } from "../src/lib/subscription";
+import { getManagedSubscription } from "../src/lib/subscription";
 import { getYaverCloudBaseUrl } from "../src/lib/yaverCloud";
 import { quicClient } from "../src/lib/quic";
 import { pingProvider } from "../src/lib/llmOpenAI";
@@ -231,20 +231,6 @@ export default function PhoneProjectsScreen() {
   const [step, setStep] = useState(0);
   const [codingMode, setCodingMode] = useState<CodingMode>(connected ? "runner" : "phone");
   const [mobileAiProvider, setMobileAiProvider] = useState<MobileAiProvider>("openai");
-  // Beta soft-launch: beta users get managed inference (owner's GLM via the
-  // gateway) with NO key entry. "managed" = beta path; "byo" = bring-your-own key.
-  const [isBeta, setIsBeta] = useState(false);
-  // Owner (kivanc.cakmak@icloud.com / cloudPreviewOwner) can flip a local "Beta
-  // preview" toggle to dogfood the beta experience WITHOUT being permanently
-  // seeded/force-gated. Keyless GLM works for the owner via their cloud-access
-  // session (the gateway authorizes cloud-access tokens). showBeta drives the UI.
-  const [isOwner, setIsOwner] = useState(false);
-  const [betaPreview, setBetaPreview] = useState(false);
-  const [betaInvite, setBetaInvite] = useState<{ inviterName: string; sharedProject: string | null; includedHours: number } | null>(null);
-  const [betaReload, setBetaReload] = useState(0);
-  const [approvingBeta, setApprovingBeta] = useState(false);
-  const showBeta = isBeta || betaPreview;
-  const [inferenceMode, setInferenceMode] = useState<"managed" | "byo">("byo");
   const [openAiKey, setOpenAiKey] = useState("");
   const [glmKey, setGlmKey] = useState("");
   const mobileAiProviderTouchedRef = useRef(false);
@@ -435,41 +421,11 @@ export default function PhoneProjectsScreen() {
         && summary.machines.some((machine) => machine.status !== "stopped");
       const hasSubscription = !!summary.subscription;
       setHasManagedCloud(hasMachine || hasSubscription);
-      const beta = isBetaUser(summary);
-      setIsBeta(beta);
-      setIsOwner(!!summary.cloudPreviewOwner);
-      const invite = summary.beta?.betaInvite;
-      setBetaInvite(invite?.pending ? { inviterName: invite.inviterName, sharedProject: invite.sharedProject, includedHours: invite.includedHours } : null);
-      if (beta) {
-        setInferenceMode("managed"); // beta users default to managed inference (no key)
-        // Self-service: fetch + store the scoped managed-inference token + gateway
-        // URL so the sandbox generation's managed lane works with no manual setup.
-        if (token) {
-          void fetchBetaInferenceToken(token).then((creds) => {
-            if (cancelled || !creds) return;
-            void saveLocalSecret(LOCAL_KEYS.managedInferenceToken, creds.token);
-            void saveLocalSecret(LOCAL_KEYS.gatewayUrl, creds.gatewayUrl);
-          });
-        }
-      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [token, betaReload]);
-
-  const onApproveBeta = async () => {
-    if (!token || approvingBeta) return;
-    setApprovingBeta(true);
-    const ok = await acceptBetaInvite(token);
-    setApprovingBeta(false);
-    if (ok) {
-      setBetaInvite(null);
-      setBetaReload((n) => n + 1); // refetch → isBeta + managed inference now active
-    } else {
-      Alert.alert("Could not activate", "Please try again in a moment.");
-    }
-  };
+  }, [token]);
 
   useEffect(() => {
     if (!runnerChoiceEnabled && codingMode === "runner") {
@@ -586,10 +542,8 @@ export default function PhoneProjectsScreen() {
     const effectivePrompt = [surveyParagraph, brandParagraph, refineParagraph, baseDescription]
       .filter(Boolean)
       .join("\n");
-    const betaManaged = showBeta && inferenceMode === "managed";
     const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
-    // Beta-managed inference needs no phone key — the gateway runs GLM for the user.
-    if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey && !betaManaged) {
+    if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey) {
       Alert.alert(
         `${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} key required`,
         `On-phone prompt or thread import needs your ${mobileAiProvider === "glm" ? "GLM" : "OpenAI"} API key.`,
@@ -626,22 +580,11 @@ export default function PhoneProjectsScreen() {
         await saveLocalSecret(LOCAL_KEYS.mobileCodingProvider, mobileAiProvider);
       }
       if (onPhoneGen) markStep("gen", "running");
-      // Managed/beta lane: route generation through the Yaver gateway (keyless
-      // GLM via the owner's key + scoped ygw_ token). Falls back to BYO if the
-      // managed creds aren't present. gatewayUrl is runtime-config (not hardcoded).
-      let managedGen: { baseUrl: string; apiKey: string } | null = null;
-      if (betaManaged) {
-        const gwUrl = (await getLocalSecret(LOCAL_KEYS.gatewayUrl))?.trim();
-        const mTok = (await getLocalSecret(LOCAL_KEYS.managedInferenceToken))?.trim();
-        if (gwUrl && mTok) managedGen = { baseUrl: gwUrl, apiKey: mTok };
-      }
       const draft =
         codingMode === "phone" && effectivePrompt.trim()
           ? await generatePhoneProjectDraftFromPrompt({
-              provider: managedGen ? "glm" : mobileAiProvider,
-              apiKey: managedGen ? managedGen.apiKey : activePhoneKey,
-              baseUrl: managedGen?.baseUrl,
-              model: managedGen ? "glm-4.6" : undefined,
+              provider: mobileAiProvider,
+              apiKey: activePhoneKey,
               name: name.trim(),
               prompt: effectivePrompt,
               template,
@@ -1233,130 +1176,49 @@ export default function PhoneProjectsScreen() {
 
                 {startMode === "this-phone" ? (
                   <>
-                    {isOwner && !isBeta ? (
-                      <Pressable
-                        onPress={() => {
-                          const next = !betaPreview;
-                          setBetaPreview(next);
-                          if (next) setInferenceMode("managed");
-                        }}
-                        hitSlop={8}
-                        style={[
-                          styles.reviewCard,
-                          {
-                            backgroundColor: betaPreview ? c.accent : c.bg,
-                            borderColor: betaPreview ? c.accent : c.border,
-                            marginTop: 12,
-                            flexDirection: "row",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                          },
-                        ]}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.reviewTitle, { color: betaPreview ? c.bg : c.textPrimary }]}>
-                            🧪 Beta preview mode
-                          </Text>
-                          <Text style={[styles.muted, { color: betaPreview ? c.bg : c.textMuted, marginTop: 2 }]}>
-                            Owner only — try the beta experience (beta access, no key). Doesn't change your account.
-                          </Text>
-                        </View>
-                        <View
-                          style={{
-                            width: 44, height: 26, borderRadius: 13, padding: 3,
-                            backgroundColor: betaPreview ? c.bg : c.border,
-                            alignItems: betaPreview ? "flex-end" : "flex-start",
-                          }}
-                        >
-                          <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: betaPreview ? c.accent : c.bgCard }} />
-                        </View>
-                      </Pressable>
-                    ) : null}
-
-                    {showBeta ? (
-                      <>
-                        <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Inference</Text>
-                        <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
-                          {([
-                            { id: "managed" as const, label: "Beta access" },
-                            { id: "byo" as const, label: "Use my own key" },
-                          ]).map((m) => {
-                            const active = inferenceMode === m.id;
-                            return (
-                              <Pressable
-                                key={m.id}
-                                onPress={() => setInferenceMode(m.id)}
-                                hitSlop={8}
-                                style={[
-                                  styles.modeChip,
-                                  { backgroundColor: active ? c.accent : c.bgCard, borderColor: active ? c.accent : c.border, flexDirection: "row", alignItems: "center", gap: 7 },
-                                ]}
-                              >
-                                <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: active ? c.bg : c.border, alignItems: "center", justifyContent: "center" }}>
-                                  {active ? <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.bg }} /> : null}
-                                </View>
-                                <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>{m.label}</Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      </>
-                    ) : null}
-
-                    {showBeta && inferenceMode === "managed" ? (
-                      <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 12 }]}>
-                        <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>✨ Beta access</Text>
-                        <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-                          Included in your beta — no API key needed.
-                        </Text>
-                      </View>
-                    ) : (
-                      <>
-                        <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>AI provider</Text>
-                        <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
-                          {([
-                            { id: "openai" as MobileAiProvider, label: "OpenAI" },
-                            { id: "glm" as MobileAiProvider, label: "GLM" },
-                          ]).map((provider) => {
-                            const active = mobileAiProvider === provider.id;
-                            return (
-                              <Pressable
-                                key={provider.id}
-                                onPress={() => {
-                                  mobileAiProviderTouchedRef.current = true;
-                                  setMobileAiProvider(provider.id);
-                                }}
-                                hitSlop={8}
-                                style={[
-                                  styles.modeChip,
-                                  { backgroundColor: active ? c.accent : c.bgCard, borderColor: active ? c.accent : c.border },
-                                ]}
-                              >
-                                <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
-                                  {provider.label}
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                        <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>
-                          {mobileAiProvider === "glm" ? "GLM API key" : "OpenAI API key"}
-                        </Text>
-                        <TextInput
-                          value={mobileAiProvider === "glm" ? glmKey : openAiKey}
-                          onChangeText={mobileAiProvider === "glm" ? setGlmKey : setOpenAiKey}
-                          placeholder={mobileAiProvider === "glm" ? "zai_..." : "sk-..."}
-                          placeholderTextColor={c.textMuted}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          spellCheck={false}
-                          style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
-                        />
-                        <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
-                          Only needed when you want Yaver to turn a prompt or imported thread into the first draft. Pure template starts work without it.
-                        </Text>
-                      </>
-                    )}
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>AI provider</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                      {([
+                        { id: "openai" as MobileAiProvider, label: "OpenAI" },
+                        { id: "glm" as MobileAiProvider, label: "GLM" },
+                      ]).map((provider) => {
+                        const active = mobileAiProvider === provider.id;
+                        return (
+                          <Pressable
+                            key={provider.id}
+                            onPress={() => {
+                              mobileAiProviderTouchedRef.current = true;
+                              setMobileAiProvider(provider.id);
+                            }}
+                            hitSlop={8}
+                            style={[
+                              styles.modeChip,
+                              { backgroundColor: active ? c.accent : c.bgCard, borderColor: active ? c.accent : c.border },
+                            ]}
+                          >
+                            <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
+                              {provider.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>
+                      {mobileAiProvider === "glm" ? "GLM API key" : "OpenAI API key"}
+                    </Text>
+                    <TextInput
+                      value={mobileAiProvider === "glm" ? glmKey : openAiKey}
+                      onChangeText={mobileAiProvider === "glm" ? setGlmKey : setOpenAiKey}
+                      placeholder={mobileAiProvider === "glm" ? "zai_..." : "sk-..."}
+                      placeholderTextColor={c.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+                    />
+                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+                      Only needed when you want Yaver to turn a prompt or imported thread into the first draft. Pure template starts work without it.
+                    </Text>
                   </>
                 ) : null}
 
@@ -1947,11 +1809,6 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       runner,
       runnerChoiceEnabled,
       setupSteps,
-      isBeta,
-      showBeta,
-      betaPreview,
-      isOwner,
-      inferenceMode,
       primaryHex,
       secondaryHex,
       logoUrl,
@@ -2108,23 +1965,6 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       style={{ flex: 1, backgroundColor: c.bg }}
     >
       <AppScreenHeader title="Mobile Sandbox" onBack={() => router.back()} />
-      {betaInvite ? (
-        <View style={{ margin: 16, marginBottom: 0, padding: 16, borderRadius: 14, backgroundColor: c.bgCard, borderWidth: 1, borderColor: c.accent }}>
-          <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 16 }}>
-            ✨ {betaInvite.inviterName} invited you to Yaver Beta
-          </Text>
-          <Text style={{ color: c.textMuted, marginTop: 6, lineHeight: 19 }}>
-            Approve to enable managed AI — no API key needed — and {betaInvite.includedHours} hours on a shared Yaver box. Build a sandbox app on your phone and deploy it to Yaver Serverless.
-          </Text>
-          <Pressable
-            onPress={onApproveBeta}
-            disabled={approvingBeta}
-            style={{ marginTop: 12, backgroundColor: c.accent, borderRadius: 10, paddingVertical: 11, alignItems: "center", opacity: approvingBeta ? 0.6 : 1 }}
-          >
-            <Text style={{ color: c.bg, fontWeight: "700" }}>{approvingBeta ? "Activating…" : "Approve beta access"}</Text>
-          </Pressable>
-        </View>
-      ) : null}
       <FlatList
         data={projects}
         keyExtractor={(p) => p.slug}
