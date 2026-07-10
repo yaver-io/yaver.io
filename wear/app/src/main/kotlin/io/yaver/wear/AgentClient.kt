@@ -9,6 +9,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
+ * LEGACY standalone transport: watch → box over LAN HTTP via /watch/turn.
+ *
+ * ⚠️ SUPERSEDED by [SessionClient], which drives a LIVE coding session via
+ * POST /runner/session/turn (docs/yaver-watch-surface.md §4.2). This file is
+ * kept because:
+ *   1. It's a valid fallback if /runner/session/turn is unavailable on an older
+ *      agent — /watch/turn still works (it spawns a new task instead of driving
+ *      the live session).
+ *   2. It documents the original wire protocol shape for reference.
+ * MainActivity no longer routes to this client; SessionClient is the standalone
+ * transport. See docs/yaver-watch-surface.md §8 build order #1.
+ *
+ * Original docstring preserved below:
+ * ---------------------------------------------------------------------------
  * Standalone (SECONDARY) transport: watch → box over LAN HTTP.
  *
  * Used only when there is no paired phone (or the user explicitly opts into
