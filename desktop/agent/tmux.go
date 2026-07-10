@@ -289,6 +289,83 @@ func (m *TmuxManager) DetachSession(taskID string) error {
 	return nil
 }
 
+// tmuxSubmitDelay is the pause between typing a line and pressing Enter.
+//
+// `send-keys <text> Enter` in one call delivers both before a TUI has finished
+// ingesting the text, and coding-agent composers (verified against codex
+// 0.142.5) swallow the Enter — the prompt sits in the box, unsent, and the
+// caller is told "sent". Splitting the calls with a beat in between makes the
+// submit land. Small enough that a voice turn still feels immediate.
+var tmuxSubmitDelay = 250 * time.Millisecond
+
+// sendTmuxKey types input literally with NO Enter. Used for menu answers,
+// where the keypress itself is the confirmation.
+func sendTmuxKey(sessionName, input string) error {
+	key := strings.TrimSpace(input)
+	if out, err := exec.Command("tmux", "send-keys", "-t", sessionName, "-l", "--", key).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys (choice): %w: %s", err, string(out))
+	}
+	return nil
+}
+
+// sendTmuxLine types input literally, waits, then presses Enter.
+//
+// `-l` matters: without it tmux parses the argument as key names, so a prompt
+// containing words like "Enter", "Space" or "C-c" would be delivered as those
+// keystrokes instead of as text. `--` guards inputs that begin with a dash.
+func sendTmuxLine(sessionName, input string) error {
+	if out, err := exec.Command("tmux", "send-keys", "-t", sessionName, "-l", "--", input).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys (text): %w: %s", err, string(out))
+	}
+	time.Sleep(tmuxSubmitDelay)
+	if out, err := exec.Command("tmux", "send-keys", "-t", sessionName, "Enter").CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys (submit): %w: %s", err, string(out))
+	}
+	return nil
+}
+
+// tmuxChoiceAnswerPattern matches a bare option number ("2", " 3 ") — the only
+// input allowed through to a pane that is showing a menu.
+var tmuxChoiceAnswerPattern = regexp.MustCompile(`^\s*\d{1,2}\s*$`)
+
+func isTmuxChoiceAnswer(input string) bool {
+	return tmuxChoiceAnswerPattern.MatchString(input)
+}
+
+// tmuxMenuOptionPattern matches a rendered menu row: an optional selection
+// caret, then "1." / "2)" etc. Covers claude ("❯ 1. Yes, I trust this folder")
+// and codex ("› 1. Update now").
+var tmuxMenuOptionPattern = regexp.MustCompile(`^\s*[›❯>*]?\s*(\d{1,2})[.)]\s+\S`)
+
+// tmuxPaneAwaitingChoice reports whether the pane's visible tail is a menu —
+// two or more numbered options — and returns them. Two is the threshold on
+// purpose: a single "1." can appear in ordinary agent output (a numbered list
+// in a reply), while a real menu always offers an alternative.
+func tmuxPaneAwaitingChoice(sessionName string) (bool, []string) {
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", sessionName).Output()
+	if err != nil {
+		return false, nil // cannot see the pane; do not block the caller
+	}
+	lines := strings.Split(string(out), "\n")
+	if len(lines) > tmuxChoiceScanLines {
+		lines = lines[len(lines)-tmuxChoiceScanLines:]
+	}
+	var options []string
+	for _, line := range lines {
+		if tmuxMenuOptionPattern.MatchString(line) {
+			options = append(options, strings.TrimSpace(line))
+		}
+	}
+	if len(options) < 2 {
+		return false, nil
+	}
+	return true, options
+}
+
+// tmuxChoiceScanLines bounds the menu scan to the visible prompt region, so a
+// numbered list scrolled up in a transcript is not mistaken for a live menu.
+const tmuxChoiceScanLines = 12
+
 // SendTmuxInput sends keyboard input to an adopted tmux session via send-keys.
 func (m *TmuxManager) SendTmuxInput(taskID, input string) error {
 	m.mu.RLock()
@@ -309,10 +386,29 @@ func (m *TmuxManager) SendTmuxInput(taskID, input string) error {
 		return fmt.Errorf("tmux session %q no longer exists", sessionName)
 	}
 
-	// Send the input followed by Enter
-	out, err := exec.Command("tmux", "send-keys", "-t", sessionName, input, "Enter").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("tmux send-keys: %w: %s", err, string(out))
+	// Refuse to type into a pane that is waiting on a menu choice. The Enter we
+	// append would pick whatever option happens to be highlighted: a prompt sent
+	// while codex showed "› 1. Update now" selected it, codex ran
+	// `npm install -g @openai/codex`, exited, and took the tmux session with it.
+	// A screenless surface (watch, car) cannot see that dialog, so the agent has
+	// to refuse on its behalf. A bare number is how a caller answers the menu.
+	if isTmuxChoiceAnswer(input) {
+		// A menu digit selects AND confirms on its own. Appending Enter here is
+		// actively dangerous: answering claude's "1. Yes, I trust this folder"
+		// pops a second modal whose option 1 is "No, exit", and the trailing
+		// Enter confirms it — claude quits and the session dies. Send the key,
+		// nothing more, and let the caller read the pane again.
+		if err := sendTmuxKey(sessionName, input); err != nil {
+			return err
+		}
+	} else {
+		if awaiting, options := tmuxPaneAwaitingChoice(sessionName); awaiting {
+			return fmt.Errorf("session %q is waiting on a choice, not a prompt — send just the option number (it confirms immediately; re-read the pane afterwards, menus can chain). Options: %s",
+				sessionName, strings.Join(options, " | "))
+		}
+		if err := sendTmuxLine(sessionName, input); err != nil {
+			return err
+		}
 	}
 
 	// Record the input as a user turn

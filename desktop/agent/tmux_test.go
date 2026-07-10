@@ -922,3 +922,47 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 // Helper to make the context import not unused
 var _ = context.Background
 var _ = json.Marshal
+
+// A screenless surface (watch, car) cannot see a modal. The agent must refuse
+// on its behalf: a prompt sent while codex showed "› 1. Update now" had its
+// appended Enter select that option, codex ran `npm install`, exited, and the
+// tmux session died with it.
+func TestTmuxMenuDetection(t *testing.T) {
+	menu := []string{
+		"› 1. Update now (runs `npm install -g @openai/codex`)",
+		"  2. Skip",
+		"❯ 1. Yes, I trust this folder",
+		"   2. No, exit",
+		"1) Claude account with subscription",
+	}
+	for _, line := range menu {
+		if !tmuxMenuOptionPattern.MatchString(line) {
+			t.Errorf("menu row not recognised: %q", line)
+		}
+	}
+	// Ordinary agent output must never read as a menu row.
+	for _, line := range []string{
+		"the answer is 42",
+		"› reply with exactly HELLO",
+		"  gpt-5.6-sol default · ~",
+		"Step1. do the thing", // no space after the dot
+	} {
+		if tmuxMenuOptionPattern.MatchString(line) {
+			t.Errorf("ordinary output misread as a menu row: %q", line)
+		}
+	}
+}
+
+// A bare number is how a caller answers a menu; anything else is a prompt.
+func TestTmuxChoiceAnswer(t *testing.T) {
+	for _, ok := range []string{"1", "2", " 3 ", "10"} {
+		if !isTmuxChoiceAnswer(ok) {
+			t.Errorf("%q should be accepted as a menu answer", ok)
+		}
+	}
+	for _, no := range []string{"", "2 files changed", "fix the bug", "1.5", "y"} {
+		if isTmuxChoiceAnswer(no) {
+			t.Errorf("%q must not be treated as a menu answer", no)
+		}
+	}
+}

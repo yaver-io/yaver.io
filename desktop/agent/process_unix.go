@@ -367,6 +367,14 @@ Wants=network-online.target
 ExecStart=%s serve --debug --work-dir=%s
 Restart=always
 RestartSec=5
+# The remote coding sessions ARE tmux. A runner started by
+# "yaver <runner> --machine=<box>" lives in a tmux server this agent spawned,
+# so systemd's default KillMode=control-group SIGTERMs that server on every
+# restart — an agent upgrade, a crash-restart, or a reboot silently destroys
+# every session the user was told would survive a closed laptop. Killing only
+# the main process leaves the tmux server (already reparented to pid 1) alive
+# across restarts, which is the entire persistence promise.
+KillMode=process
 
 [Install]
 WantedBy=default.target
@@ -498,6 +506,14 @@ Wants=network-online.target
 ExecStart=%s serve --debug --work-dir=%s
 Restart=always
 RestartSec=5
+# The remote coding sessions ARE tmux. A runner started by
+# "yaver <runner> --machine=<box>" lives in a tmux server this agent spawned,
+# so systemd's default KillMode=control-group SIGTERMs that server on every
+# restart — an agent upgrade, a crash-restart, or a reboot silently destroys
+# every session the user was told would survive a closed laptop. Killing only
+# the main process leaves the tmux server (already reparented to pid 1) alive
+# across restarts, which is the entire persistence promise.
+KillMode=process
 
 [Install]
 WantedBy=default.target

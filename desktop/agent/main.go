@@ -2072,6 +2072,10 @@ Restart=on-failure
 RestartSec=5
 WorkingDirectory=%s
 Environment=HOME=%s
+# See process_unix.go: the tmux server holding every remote coding session is a
+# child of this unit, so the default KillMode=control-group destroys those
+# sessions on any restart. Stop the agent, not the sessions.
+KillMode=process
 
 [Install]
 WantedBy=default.target
