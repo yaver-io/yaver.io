@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Info.plist for the YaverTV tvOS target. Merge these keys into the
-     Xcode-generated plist when you create the target (see tvos/README.md).
-     ATS exception allows plain-HTTP /ops to a box on the local network; the
-     bearer token still authenticates every call. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -18,6 +14,19 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Yaver connects to a machine on your network running the Yaver agent to control your Apple TV and view its now-playing card.</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
 	<key>YaverNativeAppManifestSchemaVersion</key>
 	<string>1</string>
 	<key>YaverNativeOAuthProvider</key>
@@ -30,17 +39,5 @@
 		<string>android-tv</string>
 		<string>remote-runner</string>
 	</array>
-    <key>UIRequiredDeviceCapabilities</key>
-    <array>
-        <string>arm64</string>
-    </array>
-    <!-- LAN /ops is plain HTTP to a private box; allow local networking only. -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsLocalNetworking</key>
-        <true/>
-    </dict>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>Yaver connects to a machine on your network running the Yaver agent to control your Apple TV and view its now-playing card.</string>
 </dict>
 </plist>
