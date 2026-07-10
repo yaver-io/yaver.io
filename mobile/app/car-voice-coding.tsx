@@ -34,6 +34,7 @@ import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
 import { connectionManager } from "../src/lib/connectionManager";
+import { quicClient } from "../src/lib/quic";
 import { loadLocalSpeechConfig } from "../src/lib/auth";
 import { speakText } from "../src/lib/speech";
 import {
@@ -46,7 +47,11 @@ import {
 import { assessRisk, interpretConfirmReply } from "../src/lib/carVoiceConfirm";
 import { carVoiceEntryBus, shouldAutostart } from "../src/lib/carVoiceEntry";
 import { executeCarSurfaceIntent } from "../src/lib/carSurfaceIntent";
-import { CarReplyGate, handleCarReply } from "../src/lib/carReplyDispatch";
+import {
+  CarReplyGate,
+  SessionChoiceGate,
+  handleCarReply,
+} from "../src/lib/carReplyDispatch";
 import {
   presentCarConversation,
   subscribeCarReplies,
@@ -104,6 +109,7 @@ export default function CarVoiceCodingScreen() {
   const recordingRef = useRef<any>(null); // expo-av Audio.Recording
   const liveRef = useRef(true);
   const carReplyGateRef = useRef(new CarReplyGate());
+  const sessionChoiceGateRef = useRef(new SessionChoiceGate());
   useEffect(
     () => () => {
       liveRef.current = false;
@@ -112,6 +118,8 @@ export default function CarVoiceCodingScreen() {
   );
 
   const pickedDevice = devices.find((d) => (d.id || d.deviceId) === deviceId);
+  const carConversationId = deviceId ? `car:${deviceId}` : "car:yaver";
+  const carContactName = `Yaver · ${pickedDevice?.name || pickedDevice?.alias || deviceId || "runtime"}`;
 
   // ── deps factory: dispatch + getTask go through THE picked box ────
   const buildDeps = useCallback(async () => {
@@ -191,6 +199,21 @@ export default function CarVoiceCodingScreen() {
     [deviceId],
   );
 
+  const publishCarConversation = useCallback(
+    async (transcript: string, reply: string) => {
+      if (!deviceId || !transcript || !reply) return;
+      await presentCarConversation({
+        conversationId: carConversationId,
+        contactName: carContactName,
+        messages: [
+          { from: "you", text: transcript, timestamp: Date.now() - 1 },
+          { from: "agent", text: reply, timestamp: Date.now() },
+        ],
+      });
+    },
+    [carContactName, carConversationId, deviceId],
+  );
+
   // ── recording (mirrors AgentVoiceButton's expo-av path) ───────────
   const startRecording = useCallback(async () => {
     setErrorMsg("");
@@ -268,6 +291,7 @@ export default function CarVoiceCodingScreen() {
         const spoken = "I couldn't understand that.";
         patchTurn(turnId, { stage: "error", spoken });
         await safeSpeak(deps, spoken);
+        await publishCarConversation("voice command", spoken);
         setStatus("idle");
         return;
       }
@@ -276,6 +300,7 @@ export default function CarVoiceCodingScreen() {
         const spoken = "I didn't catch that.";
         patchTurn(turnId, { stage: "error", spoken });
         await safeSpeak(deps, spoken);
+        await publishCarConversation("voice command", spoken);
         setStatus("idle");
         return;
       }
@@ -287,6 +312,7 @@ export default function CarVoiceCodingScreen() {
         setConfirm({ transcript, prompt: risk.prompt });
         setStatus("speaking");
         await safeSpeak(deps, risk.prompt);
+        await publishCarConversation(transcript, risk.prompt);
         setStatus("idle");
         return; // dispatch only happens after confirmTurn()
       }
@@ -299,6 +325,7 @@ export default function CarVoiceCodingScreen() {
           patchTurn(turnId, { stage: "spoken", spoken: surface.spoken });
           setStatus("speaking");
           await safeSpeak(deps, surface.spoken);
+          await publishCarConversation(transcript, surface.spoken);
           setStatus("idle");
           return;
         }
@@ -306,13 +333,14 @@ export default function CarVoiceCodingScreen() {
         const spoken = "I couldn't reach that meeting or mail service.";
         patchTurn(turnId, { stage: "error", spoken });
         await safeSpeak(deps, spoken);
+        await publishCarConversation(transcript, spoken);
         setStatus("idle");
         return;
       }
 
       await dispatchTurn(turnId, transcript, deps, config);
     },
-    [buildDeps, callCarOps],
+    [buildDeps, callCarOps, publishCarConversation],
   );
 
   // Shared dispatch path (used after transcribe for safe commands AND after a
@@ -349,9 +377,10 @@ export default function CarVoiceCodingScreen() {
         status: r.status,
         declined: r.declined,
       });
+      await publishCarConversation(transcript, r.spoken);
       setStatus("idle");
     },
-    [],
+    [publishCarConversation],
   );
 
   function patchTurn(id: string, patch: Partial<Turn>) {
@@ -398,6 +427,7 @@ export default function CarVoiceCodingScreen() {
   }, [confirm, buildDeps, dispatchTurn]);
 
   const cancelTurn = useCallback(async () => {
+    const transcript = confirm?.transcript;
     setConfirm(null);
     setStatus("idle");
     try {
@@ -405,7 +435,10 @@ export default function CarVoiceCodingScreen() {
     } catch {
       /* ignore */
     }
-  }, []);
+    if (transcript) {
+      await publishCarConversation(transcript, "Cancelled. Nothing was run.");
+    }
+  }, [confirm?.transcript, publishCarConversation]);
 
   // Spoken confirm: record a short yes/no, transcribe, interpret. Lets the
   // driver confirm hands-free without reaching for the screen.
@@ -470,7 +503,6 @@ export default function CarVoiceCodingScreen() {
       if (!text) return;
       const conversationId = ev.conversationId || `car:${deviceId}`;
       const turnId = `car-reply-${Date.now()}`;
-      const contactName = `Yaver · ${pickedDevice?.name || pickedDevice?.alias || deviceId}`;
       const seed: Turn = {
         id: turnId,
         transcript: text,
@@ -488,6 +520,20 @@ export default function CarVoiceCodingScreen() {
           deps,
           config,
           ops: callCarOps,
+          sessionTurn: async (prompt, choice) => {
+            const r = await quicClient.runnerSessionTurn(deviceId, prompt, choice);
+            return {
+              ok: r.ok === true,
+              session: r.session || "",
+              runner: r.runner,
+              sent: r.sent,
+              awaitingChoice: r.awaitingChoice === true,
+              options: r.options,
+              pane: r.pane,
+              error: r.error,
+            };
+          },
+          sessionChoiceGate: sessionChoiceGateRef.current,
         });
         const stage: Turn["stage"] =
           decision.outcome === "needs-confirm"
@@ -501,7 +547,7 @@ export default function CarVoiceCodingScreen() {
         await safeSpeak(deps, decision.reply);
         await presentCarConversation({
           conversationId,
-          contactName,
+          contactName: carContactName,
           messages: [
             { from: "you", text, timestamp: Date.now() - 1 },
             { from: "agent", text: decision.reply, timestamp: Date.now() },
@@ -512,9 +558,8 @@ export default function CarVoiceCodingScreen() {
   }, [
     buildDeps,
     callCarOps,
+    carContactName,
     deviceId,
-    pickedDevice?.alias,
-    pickedDevice?.name,
   ]);
 
   // ── styles ────────────────────────────────────────────────────────

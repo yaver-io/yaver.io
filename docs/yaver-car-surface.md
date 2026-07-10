@@ -11,12 +11,14 @@ Companion docs: `docs/yaver-tvos-surface.md`, `docs/yaver-watch-surface.md`.
 ## 0. The one-paragraph version
 
 The two car platforms are **not symmetric and should not be planned together.**
-Android Auto is real, compiled, and shipping in the APK today — it just relays
-voice replies into JS rather than into a coding session. CarPlay is **blocked by
-Apple**: the entitlement was never granted, and the template that actually
-compiles is a single disabled label. Neither platform lets you display a
-terminal, and neither should. Both are voice pipes. The agent side of the loop
-already exists (`POST /runner/session/turn`).
+Android Auto is real, compiled, and shipping in the APK today. It posts genuine
+MessagingStyle / CarExtender notifications, drains head-unit voice replies back
+into JS, and Auto replies now drive `/runner/session/turn` so the user can keep
+talking to the live Codex/Claude session from the car. The phone car voice loop
+also publishes spoken status back into the same conversation. CarPlay is still
+**blocked by Apple entitlement / provisioning**, but the compiled Swift scene is
+now the voice-control template rather than a disabled placeholder. Neither
+platform lets you display a terminal, and neither should. Both are voice pipes.
 
 ---
 
@@ -54,29 +56,26 @@ Until it is granted, CarPlay work is speculative and untestable on hardware.
 
 ## 2. What exists — CarPlay
 
-### 2.1 Two delegates that disagree (VERIFIED)
+### 2.1 Compiled voice-control delegate (VERIFIED)
 
 `Info.plist` wires the scene to `$(PRODUCT_MODULE_NAME).YaverCarPlaySceneDelegate`,
 which resolves to the **compiled** overlay:
 
 ```
-mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift:31   item.isEnabled = false
-mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift:33   return CPListTemplate(title: "Yaver", sections: [section])
+mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift      CPVoiceControlTemplate
+mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift      ready/listening/working/speaking states
 ```
 
-A single `CPListTemplate` holding one **disabled** `CPListItem` that reads
-*"Voice runtime ready. Use the iPhone voice loop for dictation and confirmation."*
-It is a placeholder. It drives nothing.
-
-The good version is tracked but **not compiled**:
+The tracked reference copy is the same shape:
 
 ```
 mobile/native-carplay/ios/YaverCarPlaySceneDelegate.swift:6    private var voiceTemplate: CPVoiceControlTemplate?
 mobile/native-carplay/ios/YaverCarPlaySceneDelegate.swift:39   CPVoiceControlTemplate(voiceControlStates: [ready, listening, working, speaking])
 ```
 
-Four voice states. This is the right shape. Swapping it in is cheap; it just
-cannot be *tested* until §1 clears.
+Four voice states is the right template shape. It still cannot be tested on real
+hardware until §1 clears, and it does not yet bridge a native CarPlay action into
+the JS car voice loop.
 
 ### 2.2 What CarPlay allows at all
 
@@ -131,17 +130,23 @@ the APK today.**
 `CarExtender.UnreadConversation` and a `RemoteInput` reply action — the exact
 shape Android Auto reads aloud and offers a voice reply for. The reply fires
 `YaverCarReplyReceiver` (declared at `AndroidManifest.xml:88`), which re-emits the
-captured text to JS as a `yaverCarReply` device event.
+captured text to JS as a `yaverCarReply` device event. If React Native is not
+active yet, the receiver stores the reply in native SharedPreferences and
+`subscribeCarReplies()` drains it when the car screen mounts.
 
-`mobile/src/lib/carReplyDispatch.ts` receives it. **What it does with it is the
-open question** — today it dispatches into the JS coding pipeline, not into a
-live tmux session.
+`mobile/src/lib/carReplyDispatch.ts` receives it and routes through the
+driving-safe JS car pipeline: risky commands require an explicit confirm, car
+surface intents go through `/ops`, and coding replies from Android Auto drive
+`/runner/session/turn` through `quicClient.runnerSessionTurn()`. The phone car
+voice screen also posts normal spoken turn results back through
+`presentCarConversation()`, so Android Auto has a live conversation even before
+the first RemoteInput reply.
 
 ---
 
 ## 4. The agent contract
 
-### 4.1 Use `/runner/session/turn` (shipped 2026-07-10)
+### 4.1 Live-session path: `/runner/session/turn` (shipped 2026-07-10)
 
 `desktop/agent/runner_session_turn.go`. One call: a sentence in, a live session
 driven, pane state back.
@@ -196,19 +201,20 @@ restart. A car client can assume yesterday's session still exists.
 
 ## 5. The loop, per platform
 
-**Android Auto** (works today, needs only the dispatch changed):
+**Android Auto** (works today for live-session replies):
 
 ```
-Auto reads the notification aloud
-   → user speaks a reply → RemoteInput → YaverCarReplyReceiver
+Phone car voice turn or Auto reads the notification aloud
+   → user speaks a command/reply → RemoteInput → YaverCarReplyReceiver
    → yaverCarReply event → carReplyDispatch.ts
-   → POST /runner/session/turn {runner, text}
-   ← {pane, awaitingChoice, options[]}
+   → risk gate / car surface intent / POST /runner/session/turn
+   ← awaitingChoice ? speak options : speak one-sentence pane summary
    → post the reply back as another MessagingStyle notification (Auto speaks it)
 ```
 
-The whole surface is a conversation thread. `awaitingChoice` becomes a spoken
-question; the user answers with a number or a word you map to one.
+The whole surface is a conversation thread. The phone push-to-talk screen can
+still create/poll a Yaver task; Android Auto replies prefer the live-session
+branch so "keep developing this" continues the already-running pane.
 
 **CarPlay** (after the entitlement lands):
 
@@ -218,21 +224,20 @@ CPVoiceControlTemplate: ready → listening → working → speaking
    ← awaitingChoice ? CPListTemplate(options) : speak the summary
 ```
 
-`mobile/native-carplay/ios/YaverCarPlaySceneDelegate.swift` already has the four
-states. Swap it into the build when Apple grants the entitlement.
+`mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift` already has the four states.
+When Apple grants the entitlement, add the matching entitlement/profile and then
+bridge the native scene into the JS car voice entry point.
 
 ---
 
 ## 6. What does not exist
 
 - **CarPlay entitlement.** §1. Everything else on that platform is downstream.
-- **The good CarPlay delegate is not the one that compiles.** `Info.plist` points
-  at the disabled-label version.
-- **Neither car surface drives a live session.** Android Auto relays a reply into
-  JS; CarPlay relays nothing.
-- **No summarisation for speech.** `pane` is a screenful of text. A car needs one
-  sentence. `watch_risk.go` already has one-sentence summarisation — reuse it
-  rather than writing a second one.
+- **CarPlay native-to-JS bridge.** The Swift template exists, but there is no
+  entitled hardware path yet and no native action wired to `carVoiceEntryBus`.
+- **CarPlay live-session driving is not wired.** Android Auto replies use
+  `/runner/session/turn`; CarPlay still needs an entitled native-to-JS bridge
+  before it can use the same path.
 - **No `androidx.car.app`.** Deliberate. A real Car App (maps/EV/IoT templates)
   is a much heavier surface and unnecessary for a voice pipe.
 
@@ -242,17 +247,17 @@ states. Swap it into the build when Apple grants the entitlement.
 
 1. **File the CarPlay entitlement request today.** It is the only item with an
    external clock, and it blocks nothing else.
-2. **Android Auto: point `carReplyDispatch.ts` at `/runner/session/turn`.** The
-   notification, the `RemoteInput`, the receiver, and the JS event all exist and
-   are compiled. This is the shortest path to vibing from a car, and it needs no
-   permission from anyone.
-3. **Reuse `watch_risk.go`'s summariser** so the car speaks one sentence, not a
-   pane.
+2. **Verify Android Auto with DHU.** The notification, `RemoteInput`, receiver,
+   native pending queue, JS dispatch, and `/runner/session/turn` transport all
+   exist and are compiled. Confirm the Desktop Head Unit reads the Yaver message
+   aloud and that replies continue the live runner session.
+3. **Harden live-session selection.** Today `runnerSessionTurn` lets the agent
+   pick the only live session or return a spoken error. Add a driver-safe picker
+   if multiple runner sessions are active.
 4. **Handle `awaitingChoice` as a spoken question** in both platforms. Map "yes",
    "the first one", "one" → `choice: "1"`. Never infer.
-5. **CarPlay**, when entitled: swap in `mobile/native-carplay/ios/YaverCarPlaySceneDelegate.swift`
-   and add the entitlement key at the *same time* as the profile refresh, never
-   before.
+5. **CarPlay**, when entitled: add the entitlement key at the *same time* as the
+   profile refresh, then wire the native template to the JS car voice entry.
 
 ---
 
@@ -271,6 +276,6 @@ states. Swap it into the build when Apple grants the entitlement.
 - **Destructive work.** The watch has `ConfirmView` and `watch_risk.go` for a
   reason. A car is worse: the user is driving. Gate writes and deploys behind an
   explicit spoken confirmation, and default to refusing.
-- **`yaverCarReply` is a device event with no auth context.** Confirm that a
-  spoken reply cannot be spoofed by another app posting the same event before
-  wiring it to a session that can run code. (UNVERIFIED — check.)
+- **`yaverCarReply` is emitted from the app's private native receiver, and the
+  receiver is `exported=false`.** Keep it that way; do not add an external
+  broadcast action for car replies.

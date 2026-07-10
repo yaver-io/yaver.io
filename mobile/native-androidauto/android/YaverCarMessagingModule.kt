@@ -37,10 +37,13 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import org.json.JSONArray
+import org.json.JSONObject
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -57,6 +60,21 @@ class YaverCarMessagingModule(
     @ReactMethod
     fun isAvailable(promise: com.facebook.react.bridge.Promise) {
         promise.resolve(true)
+    }
+
+    /**
+     * Drain RemoteInput replies captured while the JS bridge/screen was not
+     * listening yet. Android Auto can deliver a broadcast while the app process
+     * is cold or before the Car Voice screen has mounted; dropping that spoken
+     * command makes the head-unit path feel broken.
+     */
+    @ReactMethod
+    fun consumePendingReplies(promise: com.facebook.react.bridge.Promise) {
+        try {
+            promise.resolve(drainPendingReplies(reactContext.applicationContext))
+        } catch (e: Exception) {
+            promise.reject("car_reply_drain_failed", e.message, e)
+        }
     }
 
     /**
@@ -191,6 +209,8 @@ class YaverCarMessagingModule(
         const val EXTRA_CONVERSATION_ID = "yaver_conversation_id"
         const val EXTRA_REMOTE_INPUT_KEY = "yaver_remote_input_key"
         const val EVENT_NAME = "yaverCarReply"
+        private const val PREFS = "yaver_car_replies"
+        private const val PREF_PENDING = "pending"
 
         /** Re-emit a captured reply into JS. Called by the receiver while the
          *  RN context is alive; if it's not, the reply is dropped (the car
@@ -204,6 +224,34 @@ class YaverCarMessagingModule(
             }
             rc.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 .emit(EVENT_NAME, payload)
+        }
+
+        fun storePendingReply(ctx: Context, conversationId: String, text: String) {
+            val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val arr = JSONArray(prefs.getString(PREF_PENDING, "[]") ?: "[]")
+            arr.put(JSONObject().apply {
+                put("conversationId", conversationId)
+                put("text", text)
+                put("timestamp", System.currentTimeMillis())
+            })
+            prefs.edit().putString(PREF_PENDING, arr.toString()).apply()
+        }
+
+        fun drainPendingReplies(ctx: Context): WritableArray {
+            val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val raw = prefs.getString(PREF_PENDING, "[]") ?: "[]"
+            prefs.edit().remove(PREF_PENDING).apply()
+            val out = Arguments.createArray()
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                out.pushMap(Arguments.createMap().apply {
+                    putString("conversationId", obj.optString("conversationId"))
+                    putString("text", obj.optString("text"))
+                    putDouble("timestamp", obj.optDouble("timestamp", 0.0))
+                })
+            }
+            return out
         }
     }
 }
@@ -231,6 +279,10 @@ class YaverCarReplyReceiver : BroadcastReceiver() {
             val host = (app as? com.facebook.react.ReactApplication)?.reactNativeHost
             host?.reactInstanceManager?.currentReactContext as? ReactApplicationContext
         }.getOrNull()
-        YaverCarMessagingModule.emitReply(reactContext, conversationId, text)
+        if (reactContext?.hasActiveReactInstance() == true) {
+            YaverCarMessagingModule.emitReply(reactContext, conversationId, text)
+        } else {
+            YaverCarMessagingModule.storePendingReply(context.applicationContext, conversationId, text)
+        }
     }
 }

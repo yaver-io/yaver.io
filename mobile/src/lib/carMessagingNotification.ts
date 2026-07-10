@@ -61,7 +61,16 @@ export interface CarReplyEvent {
 export function subscribeCarReplies(handler: (ev: CarReplyEvent) => void): () => void {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { DeviceEventEmitter } = require("react-native");
+    const { DeviceEventEmitter, NativeModules } = require("react-native");
+    const mod = NativeModules?.YaverCarMessaging;
+    if (typeof mod?.consumePendingReplies === "function") {
+      void mod.consumePendingReplies().then((replies: CarReplyEvent[] | undefined) => {
+        if (!Array.isArray(replies)) return;
+        replies.forEach((ev) => {
+          if (ev && typeof ev.text === "string") handler(ev);
+        });
+      }).catch(() => {});
+    }
     if (!DeviceEventEmitter?.addListener) return () => {};
     const sub = DeviceEventEmitter.addListener(CAR_REPLY_EVENT, (ev: CarReplyEvent) => {
       if (ev && typeof ev.text === "string") handler(ev);
