@@ -8134,6 +8134,66 @@ export class QuicClient {
     return { ok: false, error: lastError };
   }
 
+  /** runnerSessionTurn drives a LIVE coding session on a remote device via
+   *  POST /runner/session/turn (shipped 2026-07-10). This is the endpoint the
+   *  car/watch/TV surfaces should call — it drives the session the user already
+   *  has running, instead of spawning a new task.
+   *
+   *  Walks the same relay list as callOpsOnDevice, authenticated with the
+   *  USER's bearer. Returns the session response (pane + awaitingChoice +
+   *  options) or an error object. Never throws.
+   *
+   *  See desktop/agent/runner_session_turn.go for the contract. */
+  async runnerSessionTurn(
+    deviceId: string,
+    text: string | null,
+    choice: string | null,
+    waitMs = 6000,
+  ): Promise<{
+    ok?: boolean;
+    session?: string;
+    runner?: string;
+    sent?: string;
+    awaitingChoice?: boolean;
+    options?: string[];
+    pane?: string;
+    error?: string;
+  }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    if (!deviceId) return { ok: false, error: "no device selected" };
+    if (!text && !choice) return { ok: false, error: "send text or choice" };
+    const relayList = [...this.relayServers];
+    if (relayList.length === 0) return { ok: false, error: "no relay servers configured" };
+    const body = JSON.stringify({ text, choice, waitMs });
+    let lastError = "no relay reached the device";
+    for (const relay of relayList) {
+      const url =
+        `${relay.httpUrl}/d/${deviceId}/runner/session/turn` +
+        (relay.password ? `?__rp=${encodeURIComponent(relay.password)}` : "");
+      try {
+        const res = await this.fetchWithTimeout(
+          url,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              "Content-Type": "application/json",
+              "X-Client-Platform": Platform.OS,
+            },
+            body,
+          },
+          30000,
+        );
+        const data = await res.json().catch(() => ({}));
+        if (res.ok || res.status === 409) return data;
+        lastError = data?.error || `session turn failed: ${res.status}`;
+      } catch (e: any) {
+        lastError = e?.message || String(e);
+      }
+    }
+    return { ok: false, error: lastError };
+  }
+
   /** Factory-reset a remote device's agent auth. Mirrors the web
    *  AgentClient.factoryResetDeviceAuth — agent verifies ownership
    *  via Convex round-trip in its handler (NOT against its local

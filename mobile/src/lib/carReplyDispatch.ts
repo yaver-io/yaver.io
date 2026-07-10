@@ -40,6 +40,10 @@ import {
   executeCarSurfaceIntent,
   type CarSurfaceOps,
 } from "./carSurfaceIntent";
+import {
+  dispatchSessionTurn,
+  type SessionTurnDep,
+} from "./carSessionTurn";
 
 // ── Risky-verb detection ─────────────────────────────────────────────
 
@@ -140,10 +144,43 @@ export class CarReplyGate {
   }
 }
 
+// ── Session-choice gate (per conversation) ───────────────────────────
+
+/**
+ * Tracks whether the last session turn left the pane on a menu
+ * (awaitingChoice). When the driver speaks a number/yes/no after a menu,
+ * `handleCarReply` uses this to route the reply as {choice} instead of {text}.
+ *
+ * Separate from [CarReplyGate] (which gates risky verbs) because session choices
+ * are NOT risky — they're the normal interaction model for a coding session
+ * that's asking "1. Yes, I trust this folder / 2. No, exit". The risk gate
+ * still applies to the initial transcript; the choice gate handles the
+ * follow-up menu answer.
+ */
+export class SessionChoiceGate {
+  private pending = new Map<string, boolean>();
+
+  setAwaiting(conversationId: string): void {
+    this.pending.set(conversationId, true);
+  }
+
+  takeAwaiting(conversationId: string): boolean {
+    const v = this.pending.get(conversationId) ?? false;
+    this.pending.delete(conversationId);
+    return v;
+  }
+
+  clear(conversationId: string): void {
+    this.pending.delete(conversationId);
+  }
+}
+
 // ── Reply handling ───────────────────────────────────────────────────
 
 export type CarReplyOutcome =
-  | "dispatched" // command was sent to the box
+  | "dispatched" // command was sent to the box (task-spawning path)
+  | "session-prompt" // prompt sent to the live session (/runner/session/turn)
+  | "session-choice" // a menu choice was sent to the live session
   | "surface" // handled by a car-safe ops verb (meetings/mail/etc.)
   | "needs-confirm" // risky command stashed; awaiting confirm
   | "confirmed" // a previously-stashed risky command was released + dispatched
@@ -158,6 +195,8 @@ export interface CarReplyDecision {
   command?: string;
   /** Present when outcome is "dispatched" or "confirmed". */
   result?: CarVoiceResult;
+  /** True when the session is showing a menu (the driver needs to answer). */
+  awaitingChoice?: boolean;
 }
 
 export interface HandleCarReplyOpts {
@@ -168,24 +207,43 @@ export interface HandleCarReplyOpts {
   config?: CarVoiceConfig;
   ops?: CarSurfaceOps;
   now?: () => number;
+  /**
+   * Optional: the /runner/session/turn transport. When present, `handleCarReply`
+   * drives the LIVE coding session instead of spawning a new task. This is the
+   * preferred path (docs/yaver-car-surface.md §7 build order #2).
+   */
+  sessionTurn?: SessionTurnDep;
+  /**
+   * Optional: tracks whether the last session turn left a menu on screen.
+   * Required when `sessionTurn` is provided. The caller owns one instance for
+   * the app's car surface.
+   */
+  sessionChoiceGate?: SessionChoiceGate;
 }
 
 /**
  * Process one captured car reply for a conversation.
  *
- * Flow:
- *   - empty                          → "ignored"
- *   - pending exists + confirm       → release + dispatch    → "confirmed"
- *   - pending exists + cancel        → discard                → "cancelled"
- *   - pending exists + anything else → discard old, fall through to treat the
- *                                       new text as a fresh command (so the
- *                                       driver can just say the corrected
- *                                       command instead of "cancel" then re-say)
- *   - new risky command              → stash, ask to confirm  → "needs-confirm"
- *   - new safe command               → dispatch               → "dispatched"
+ * Two dispatch paths:
  *
- * Dispatch reuses carVoiceCoding.dispatchAndSummarize, so the never-read-code
- * rule + one-sentence summary readback are inherited unchanged.
+ *   1. SESSION path (preferred, docs/yaver-car-surface.md §7): when
+ *      `opts.sessionTurn` is provided, drive the LIVE coding session via
+ *      POST /runner/session/turn. The `sessionChoiceGate` tracks whether the
+ *      last turn left a menu on screen — if so, a spoken number/yes/no is
+ *      routed as {choice} instead of {text}. The risk gate still applies to
+ *      the initial transcript; the choice gate handles the follow-up.
+ *
+ *   2. TASK path (fallback): spawn a new task via dispatchAndSummarize. The
+ *      never-read-code rule + one-sentence summary readback are inherited.
+ *
+ * Flow (shared risk gate, then path-specific dispatch):
+ *   - empty                          → "ignored"
+ *   - pending risk exists + confirm  → release + dispatch    → "confirmed"
+ *   - pending risk exists + cancel   → discard                → "cancelled"
+ *   - pending risk + anything else   → discard old, fall through
+ *   - new risky command              → stash, ask to confirm  → "needs-confirm"
+ *   - new safe command + sessionTurn → drive live session     → "session-prompt" / "session-choice"
+ *   - new safe command, no sessionTurn → dispatch new task    → "dispatched"
  */
 export async function handleCarReply(
   opts: HandleCarReplyOpts,
@@ -196,7 +254,7 @@ export async function handleCarReply(
 
   if (!text) return { outcome: "ignored", reply: "I didn't catch that." };
 
-  // Resolve any pending risky command first.
+  // Resolve any pending risky command first (applies to both paths).
   if (gate.hasPending(conversationId)) {
     if (isConfirmReply(text)) {
       const command = gate.takePending(conversationId)!;
@@ -212,7 +270,7 @@ export async function handleCarReply(
     gate.clear(conversationId);
   }
 
-  // Fresh command: gate risky verbs before dispatch.
+  // Fresh command: gate risky verbs before dispatch (applies to both paths).
   if (isRiskyReply(text)) {
     gate.setPending(conversationId, text, now());
     return {
@@ -229,6 +287,22 @@ export async function handleCarReply(
     }
   }
 
+  // SESSION path (preferred): drive the live coding session.
+  if (opts.sessionTurn && opts.sessionChoiceGate) {
+    const pendingChoice = opts.sessionChoiceGate.takeAwaiting(conversationId);
+    const result = await dispatchSessionTurn(text, opts.sessionTurn, pendingChoice);
+    if (result.awaitingChoice) {
+      opts.sessionChoiceGate.setAwaiting(conversationId);
+    }
+    return {
+      outcome: pendingChoice ? "session-choice" : "session-prompt",
+      reply: result.spoken,
+      command: text,
+      awaitingChoice: result.awaitingChoice,
+    };
+  }
+
+  // TASK path (fallback): spawn a new task.
   const result = await dispatchAndSummarize(text, deps, config);
   return { outcome: "dispatched", reply: result.spoken, command: text, result };
 }
