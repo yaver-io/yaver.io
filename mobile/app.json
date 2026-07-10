@@ -167,7 +167,8 @@
         }
       ],
       "./plugins/withAndroidTV",
-      "./plugins/withAndroidAutoMessaging"
+      "./plugins/withAndroidAutoMessaging",
+      "./plugins/withWatchBridge"
     ]
   }
 }

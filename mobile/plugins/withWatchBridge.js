@@ -5,28 +5,19 @@
 // §3 mode A). The watch apps themselves are the standalone native projects in
 // watch/ (watchOS) and wear/ (Wear OS).
 //
-// ⚠️ DELIBERATELY NOT REGISTERED in app.json yet — same posture as
-// withMeshTunnel.js. Registration is the ACTIVATION step and must happen with:
-//   1. iOS: a watchOS companion target (watch/) actually added to the Xcode
-//      project + a regenerated provisioning profile (WatchConnectivity needs
-//      the paired-app relationship). The phone module here works standalone,
-//      but there's nothing to pair with until the watch target ships.
-//   2. Android: the Wear app (wear/) installed on a paired watch; the phone's
-//      play-services-wearable dependency added.
-//   3. A native rebuild (pod install / gradle) + on-device pair test
-//      (Simulator/emulator Data-Layer + WCSession pairing are unreliable).
-// Until all three are done, leaving this unregistered keeps every existing
-// build green. The JS side (src/lib/watchEntry.ts) already no-ops safely when
-// the native module is absent.
-//
-// What this plugin does once registered:
-//   iOS     — copies YaverWatchBridge.swift/.m into the app target. (The
-//             watchOS companion target itself is added separately, like the
-//             mesh extension target — see TODO below.)
+// REGISTERED in mobile/app.json (activated 2026-07-10). Registration was the
+// ACTIVATION step; it now runs on every `expo prebuild`:
+//   iOS     — copies YaverWatchBridge.swift/.m into the app target. The
+//             watchOS companion target itself (watch/) is a separate XcodeGen
+//             project that must be embedded in the iOS app for WCSession to
+//             have a peer. That embedding is a one-time Xcode step (see
+//             watch/README.md §"Creating the Xcode target").
 //   Android — copies the Wear bridge Kotlin sources into the app package,
 //             registers YaverWearListenerService (intent-filter PATH_TURN) in
 //             the manifest, adds the play-services-wearable dependency, and
 //             registers YaverWearPackage in MainApplication.
+// The JS side (src/lib/watchEntry.ts) no-ops safely when the native module is
+// absent (e.g. on a fresh prebuild before pod install / gradle sync).
 
 const {
   withAndroidManifest,
