@@ -1,6 +1,21 @@
-// AgentClient.swift — STANDALONE-mode transport: POST a watch protocol message
-// to the agent's /watch/turn endpoint over LAN HTTP with a Bearer token, and
-// decode the protocol reply.
+// AgentClient.swift — LEGACY standalone transport: POST a watch protocol message
+// to the agent's /watch/turn endpoint over LAN HTTP with a Bearer token.
+//
+// ⚠️ SUPERSEDED by SessionClient.swift, which drives a LIVE coding session via
+// POST /runner/session/turn (docs/yaver-watch-surface.md §4.2). This file is
+// kept because:
+//   1. It defines `AgentError`, which SessionClient also throws.
+//   2. It's a valid fallback if /runner/session/turn is unavailable on an older
+//      agent — /watch/turn still works (it just spawns a new task instead of
+//      driving the live session).
+// WatchStore no longer routes to this client; SessionClient is the standalone
+// transport. See docs/yaver-watch-surface.md §8 build order #1.
+//
+// Original docstring preserved below:
+// ---------------------------------------------------------------------------
+// STANDALONE-mode transport: POST a watch protocol message to the agent's
+// /watch/turn endpoint over LAN HTTP with a Bearer token, and decode the
+// protocol reply.
 //
 // This is the SECONDARY mode (docs/yaver-smartwatch-voice-terminal.md §3 B/C).
 // The DEFAULT is phone-paired (PhoneSession.swift), where the watch holds no

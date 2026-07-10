@@ -68,7 +68,7 @@ final class PhoneSession: NSObject, ObservableObject {
             throw WatchProtocolError.malformed
         }
         guard session.isReachable else {
-            // Caller should fall back to standalone (AgentClient) or surface
+            // Caller should fall back to standalone (SessionClient) or surface
             // "open the Yaver app on your phone".
             throw PhoneSessionError.notReachable
         }

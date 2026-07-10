@@ -86,22 +86,27 @@ final class WatchStore: ObservableObject {
     // MARK: - Turn routing (the one decision point)
 
     /// Send a transcript. Phone-paired first; standalone fallback if opted-in.
+    /// In standalone mode the transcript goes to /runner/session/turn (the LIVE
+    /// session endpoint) via SessionClient, NOT /watch/turn (which spawns a new
+    /// task). See docs/yaver-watch-surface.md §4.2.
     func sendTranscript(_ text: String) async {
         await run { transport in
             switch transport {
             case .phone: return try await self.phone.sendTranscript(text)
-            case .agent(let client): return try await client.turn(.transcript(text))
+            case .session(let client): return try await client.sendText(text)
             }
         }
     }
 
     /// Answer the pending confirm (or any confirm by token).
+    /// In standalone mode, confirm/cancel maps to session choice "1"/"2" —
+    /// a lossy fallback. The voice path (speak the number) is preferred.
     func sendConfirm(token: String, reply: ConfirmReply) async {
         pendingConfirm = nil
         await run { transport in
             switch transport {
             case .phone: return try await self.phone.sendConfirm(token: token, reply: reply)
-            case .agent(let client): return try await client.turn(.confirm(token: token, reply: reply))
+            case .session(let client): return try await client.sendConfirm(reply: reply)
             }
         }
     }
@@ -111,7 +116,10 @@ final class WatchStore: ObservableObject {
         await run { transport in
             switch transport {
             case .phone: return try await self.phone.sendIntent(intent)
-            case .agent(let client): return try await client.turn(.intent(intent))
+            case .session(let client):
+                // Expand the intent to a transcript and send it as a session prompt.
+                let text = WatchStore.intentToTranscript(intent)
+                return try await client.sendText(text)
             }
         }
     }
@@ -125,7 +133,9 @@ final class WatchStore: ObservableObject {
 
     private enum Transport {
         case phone
-        case agent(AgentClient)
+        /// Standalone transport: drives a LIVE coding session via
+        /// POST /runner/session/turn (docs/yaver-watch-surface.md §4.2).
+        case session(SessionClient)
     }
 
     /// Resolve the transport, run the closure, reduce the reply (or the error).
@@ -144,13 +154,25 @@ final class WatchStore: ObservableObject {
         }
     }
 
-    /// Phone-paired wins when reachable; otherwise standalone if opted-in.
+    /// Phone-paired wins when reachable; otherwise standalone (session) if
+    /// opted-in. The standalone path uses SessionClient (/runner/session/turn),
+    /// NOT AgentClient (/watch/turn) — driving the live session is the product.
     private func resolveTransport() -> Transport? {
         if phone.canUsePhone { return .phone }
         if standaloneOptIn, hasStandaloneCreds, let box {
-            return .agent(AgentClient(token: token, box: box))
+            return .session(SessionClient(token: token, box: box))
         }
         return nil
+    }
+
+    /// Expand a complication intent to a transcript the session can send as a
+    /// prompt. Mirrors watch_risk.go::watchIntentToTranscript.
+    private static func intentToTranscript(_ intent: WatchIntent) -> String {
+        switch intent {
+        case .runTests: return "run the tests on the primary device and tell me if they pass"
+        case .deploy: return "deploy"
+        case .status: return "give me a one-line status of the current work"
+        }
     }
 
     /// The single reduce path: reply -> (line shown, haptic, spoken, phase, confirm).
