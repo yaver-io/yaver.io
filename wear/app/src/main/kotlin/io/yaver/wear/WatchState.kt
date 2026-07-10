@@ -75,8 +75,14 @@ object WatchState {
      * Apply a parsed reply from the phone (or box) to the UI state. This is the
      * one place a [WatchProtocol.Reply] turns into wrist state — keeps the
      * listener service and the standalone client path identical.
+     *
+     * Also fires the matching spoken line via [Speech.forReply] (mirrors the
+     * haptic cue fired by the caller). Speaking the one-sentence summary aloud
+     * is the single highest-value addition on this surface — a wrist that
+     * answers aloud needs no screen at all (docs/yaver-watch-surface.md §6).
      */
     fun applyReply(reply: WatchProtocol.Reply) {
+        Speech.forReply(reply)
         when (reply) {
             is WatchProtocol.Reply.Ack -> {
                 _line.value = reply.spoken

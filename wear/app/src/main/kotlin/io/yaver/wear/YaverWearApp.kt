@@ -9,6 +9,15 @@ import android.app.Application
  * no coding loop here — those live on the paired phone (default) or the remote
  * runner (standalone). This class just exists so the process has a stable
  * Application object the Data Layer services and UI can hang off of, and so we
- * have one place to do app-wide init if it's ever needed (it isn't yet).
+ * have one place to do app-wide init if it's ever needed.
+ *
+ * The one piece of app-wide init we DO need: [Speech.init], so the TextToSpeech
+ * engine is warmed up before any reply arrives from [ReplyListenerService]
+ * (which has no Activity and can't lazy-init TTS itself).
  */
-class YaverWearApp : Application()
+class YaverWearApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        Speech.init(this)
+    }
+}
