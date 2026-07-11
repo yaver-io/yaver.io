@@ -127,12 +127,21 @@ type abuseGuard struct {
 	trustedProxies []*net.IPNet
 }
 
-// cloudflareCIDRs are Cloudflare's published edge ranges (https://www.cloudflare.com/ips/).
-// They are the DEFAULT trusted proxies so the official CF-fronted relay reads the
-// real client IP from CF-Connecting-IP, while a DIRECT-connect attacker (whose peer
-// IP is not Cloudflare) can't spoof it. Override the whole set with the
-// RELAY_TRUSTED_PROXIES env (comma-separated CIDRs) for other fronting.
-var cloudflareCIDRs = []string{
+// defaultTrustedProxyCIDRs are the DEFAULT trusted reverse-proxy ranges. The
+// relay's real deployment (install-relay.sh / provision-relay.sh) puts an nginx
+// reverse proxy IN FRONT, inside Docker — so the relay's immediate peer is
+// localhost or the Docker bridge gateway (a private IP), and the real client IP
+// arrives in nginx's X-Real-IP/X-Forwarded-For. We therefore trust LOOPBACK +
+// RFC1918/ULA (the infra proxy) so that header is honored, PLUS Cloudflare's
+// edge ranges for the (currently DNS-only, but possible) CF-proxied setup. A
+// direct-connect attacker from a public IP is not in any of these, so their
+// spoofed forwarding header is ignored and they're keyed on their real socket
+// IP. Override the whole set with RELAY_TRUSTED_PROXIES (comma-separated CIDRs).
+var defaultTrustedProxyCIDRs = []string{
+	// Reverse proxy / container network (the actual deployment):
+	"127.0.0.0/8", "::1/128",
+	"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7",
+	// Cloudflare edge (https://www.cloudflare.com/ips/) — for a CF-proxied relay:
 	"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
 	"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
 	"197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
@@ -142,7 +151,7 @@ var cloudflareCIDRs = []string{
 }
 
 func parseTrustedProxies(env string) []*net.IPNet {
-	raw := cloudflareCIDRs
+	raw := defaultTrustedProxyCIDRs
 	if s := strings.TrimSpace(env); s != "" {
 		raw = strings.Split(s, ",")
 	}

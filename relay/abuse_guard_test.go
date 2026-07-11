@@ -113,6 +113,23 @@ func TestClientIP_TrustedProxyGating(t *testing.T) {
 		t.Fatalf("trusted proxy: expected forwarded client 9.9.9.9, got %q", got)
 	}
 
+	// THE ACTUAL DEPLOYMENT: nginx reverse proxy on localhost forwards X-Real-IP.
+	// Must be honored or every request keys on 127.0.0.1 (one shared bucket).
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("X-Real-IP", "203.0.113.77")
+	if got := g.clientIP(req); got != "203.0.113.77" {
+		t.Fatalf("nginx localhost proxy: expected real client 203.0.113.77, got %q", got)
+	}
+
+	// Dockerized relay: immediate peer is the bridge gateway (private IP).
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.17.0.1:40000"
+	req.Header.Set("X-Forwarded-For", "198.51.100.9, 172.17.0.1")
+	if got := g.clientIP(req); got != "198.51.100.9" {
+		t.Fatalf("docker gateway proxy: expected real client 198.51.100.9, got %q", got)
+	}
+
 	// Direct connect from an untrusted peer → spoofed header IGNORED, keyed on
 	// the real socket IP. This is the whole point of the fix.
 	req = httptest.NewRequest(http.MethodGet, "/", nil)
