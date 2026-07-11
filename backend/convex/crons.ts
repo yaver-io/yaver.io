@@ -1,4 +1,5 @@
 import { cronJobs } from "convex/server";
+import { internal } from "./_generated/api";
 
 // All cron schedules moved to a self-hosted box (the yaver-test-ephemeral box).
 // Systemd timers POST to /crons/run with a bearer token (CRON_TRIGGER_SECRET).
@@ -24,5 +25,18 @@ import { cronJobs } from "convex/server";
 //       (YAVER_CLOUD_IDLE_ENABLE) until the box agent reports activity via
 //       /machine/activity; pause is HCLOUD_TOKEN/dryRun fail-closed.)
 const crons = cronJobs();
+
+// Auto-off (scale-to-zero): every 15 min, snapshot+delete managed boxes idle
+// past YAVER_CLOUD_IDLE_MINUTES so the owner NEVER pays for an unused box. This
+// one runs natively in Convex (unlike the self-hosted crons above) precisely
+// because a "don't bill me for idle" guarantee must not depend on an external
+// box staying up. Fail-closed: no-op unless YAVER_CLOUD_IDLE_ENABLE is set AND
+// HCLOUD_TOKEN is present (pauseMachine token-gates itself).
+crons.interval(
+  "cloud idle sweep",
+  { minutes: 15 },
+  internal.cloudLifecycle.idleSweepCron,
+  {},
+);
 
 export default crons;

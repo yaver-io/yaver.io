@@ -770,6 +770,28 @@ export const idleSweep = internalAction({
   },
 });
 
+// idleSweepCron — the Convex-NATIVE scheduled entry for auto-off (registered in
+// crons.ts). Runs from Convex itself (not the external Hetzner cron box that used
+// to POST /crons/run) so the "never bill me for an idle box" guarantee can't
+// silently break if an external scheduler is down — the single most important
+// property here. Decoupled from the prepaid meter (YAVER_CLOUD_METER_LIVE): a
+// live snapshot+delete only needs YAVER_CLOUD_IDLE_ENABLE + a present
+// HCLOUD_TOKEN (pauseMachine stays token-fail-closed, and aborts the delete if
+// the snapshot fails — the box is never lost).
+export const idleSweepCron = internalAction({
+  args: {},
+  handler: async (ctx): Promise<IdleSweepResult> => {
+    const raw = (process.env.YAVER_CLOUD_IDLE_ENABLE ?? "").trim().toLowerCase();
+    const enabled = raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+    const mins = Number(process.env.YAVER_CLOUD_IDLE_MINUTES);
+    return await ctx.runAction(internal.cloudLifecycle.idleSweep, {
+      enabled,
+      idleMinutes: Number.isFinite(mins) && mins > 0 ? mins : 45,
+      dryRun: false, // live; pauseMachine is HCLOUD_TOKEN fail-closed on its own
+    });
+  },
+});
+
 // RESUME = prepaid-floor gate → recreate the Hetzner server from the
 // pause snapshot → persist new id/ip → status "active". HCLOUD_TOKEN
 // absent ⇒ dry-run state transition.
