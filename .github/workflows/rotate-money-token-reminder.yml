@@ -1,0 +1,80 @@
+name: rotate-money-token-reminder
+
+# Monthly reminder to rotate the "makes-me-poor" provider token(s) used by Yaver
+# managed cloud (Hetzner; Cloudflare if used).
+#
+# Why a reminder and not a full auto-swap: Hetzner Cloud API tokens are
+# CONSOLE-ONLY — there is no Hetzner API to mint a token — so full auto-rotation
+# is impossible by provider design. This automates the CADENCE and the runbook;
+# scripts/rotate-money-token.sh does the actual swap SAFELY (verifies the new
+# token against the provider BEFORE writing to Convex prod env + the GitHub
+# secret — fail-closed, so a typo can't brick prod).
+#
+# Deliberately SECRETLESS: it only opens a GitHub issue via the built-in
+# GITHUB_TOKEN. Nothing here can leak a token — safe in a public, open-source
+# repo (no hacking surface). One tiny run per month — negligible CI cost.
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"   # 09:00 UTC on the 1st of every month
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open the monthly rotation reminder
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const LABEL = "token-rotation";
+
+            // Ensure the label exists (idempotent).
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: LABEL });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner, repo, name: LABEL, color: "b60205",
+                description: "Monthly money-token rotation reminders",
+              });
+            }
+
+            // Don't stack duplicates — one open reminder at a time.
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: "open", labels: LABEL,
+            });
+            if (open.data.length) {
+              core.info(`Reminder already open: #${open.data[0].number}`);
+              return;
+            }
+
+            const month = new Date().toISOString().slice(0, 7);
+            const body = [
+              "Monthly hygiene rotation of the provider ('makes-me-poor') tokens",
+              "for Yaver managed cloud.",
+              "",
+              "**Hetzner is console-only** — there is no API to mint a Cloud API",
+              "token, so this can't be fully automatic. Do it by hand, safely:",
+              "",
+              "1. https://console.hetzner.cloud/ → Security → API Tokens →",
+              "   create a NEW Read+Write token (keep the old one for now).",
+              "2. From repo root: `scripts/rotate-money-token.sh hcloud`",
+              "   Paste the new token at the hidden prompt. It VERIFIES against",
+              "   the Hetzner API before writing to Convex prod env + the GitHub",
+              "   secret (fail-closed — a typo can't brick prod).",
+              "3. Delete the OLD token in the console so the superseded copy is dead.",
+              "",
+              "Cloudflare (if used): `scripts/rotate-money-token.sh cloudflare`.",
+              "",
+              "Close this issue once done.",
+            ].join("\n");
+
+            const issue = await github.rest.issues.create({
+              owner, repo, title: `Rotate money tokens (${month})`, body, labels: [LABEL],
+            });
+            core.info(`Opened reminder #${issue.data.number}`);
