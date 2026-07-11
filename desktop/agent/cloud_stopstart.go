@@ -83,10 +83,11 @@ func (m *CloudDeployManager) hetznerSnapshotServerReturningID(token, serverID, l
 // image. Kept separate so hetznerCreateServer's signature + callers
 // are untouched.
 func (m *CloudDeployManager) hetznerCreateServerFromImage(token, name, plan, region, imageID string) (string, string, error) {
-	serverTypeMap := map[string]string{"starter": "cx21", "pro": "cx31", "scale": "cx41"}
+	// arm64 (cax*) — MUST match the golden snapshot's arch so machine_up boots it.
+	serverTypeMap := map[string]string{"starter": "cax11", "pro": "cax21", "scale": "cax31"}
 	serverType, ok := serverTypeMap[plan]
 	if !ok {
-		serverType = "cx21"
+		serverType = "cax11"
 	}
 	locationMap := map[string]string{"eu": "nbg1", "us": "ash"}
 	location, ok := locationMap[region]

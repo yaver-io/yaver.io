@@ -106,16 +106,19 @@ type CloudDeployManager struct {
 
 var availablePlans = []CloudPlan{
 	{
-		Name: "starter", VCPU: 1, RAM: "2GB", Disk: "40GB",
-		Transfer: "2TB", Price: 9.0, MaxApps: 2,
+		// cax11 (arm64) — matches the arm-only bootstrap (Go/hermesc/Android SDK).
+		Name: "starter", VCPU: 2, RAM: "4GB", Disk: "40GB",
+		Transfer: "20TB", Price: 9.0, MaxApps: 2,
 	},
 	{
-		Name: "pro", VCPU: 2, RAM: "4GB", Disk: "80GB",
-		Transfer: "4TB", Price: 19.0, MaxApps: 5,
+		// cax21 (arm64)
+		Name: "pro", VCPU: 4, RAM: "8GB", Disk: "80GB",
+		Transfer: "20TB", Price: 19.0, MaxApps: 5,
 	},
 	{
-		Name: "scale", VCPU: 4, RAM: "8GB", Disk: "160GB",
-		Transfer: "8TB", Price: 29.0, MaxApps: 10,
+		// cax31 (arm64) — dev-box grade: yaver+talos+sfmg+Android Gradle+Hermes.
+		Name: "scale", VCPU: 8, RAM: "16GB", Disk: "160GB",
+		Transfer: "20TB", Price: 29.0, MaxApps: 10,
 	},
 }
 
@@ -853,13 +856,13 @@ var (
 func (m *CloudDeployManager) hetznerCreateServer(token, name, plan, region string) (string, string, error) {
 	// Map Yaver plan → Hetzner server type
 	serverTypeMap := map[string]string{
-		"starter": "cx21",
-		"pro":     "cx31",
-		"scale":   "cx41",
+		"starter": "cax11",
+		"pro":     "cax21",
+		"scale":   "cax31",
 	}
 	serverType, ok := serverTypeMap[plan]
 	if !ok {
-		serverType = "cx21"
+		serverType = "cax11"
 	}
 
 	locationMap := map[string]string{

@@ -43,10 +43,11 @@ var gitURLRe = regexp.MustCompile(`^(https?://|git@)[A-Za-z0-9@:/._~%+-]+$`)
 // snappy; the box self-installs via user_data and appears as a pending
 // device to claim.
 func (m *CloudDeployManager) hetznerCreateServerCustom(token, name, plan, region, imageID, repoURL string) (string, string, error) {
-	serverTypeMap := map[string]string{"starter": "cx21", "pro": "cx31", "scale": "cx41"}
+	// arm64 (cax*) to match the arm-only bootstrap + golden snapshot arch.
+	serverTypeMap := map[string]string{"starter": "cax11", "pro": "cax21", "scale": "cax31"}
 	serverType, ok := serverTypeMap[plan]
 	if !ok {
-		serverType = "cx21"
+		serverType = "cax11"
 	}
 	locationMap := map[string]string{"eu": "nbg1", "us": "ash"}
 	location, ok := locationMap[region]
@@ -124,7 +125,7 @@ func init() {
 		Schema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"plan":    map[string]interface{}{"type": "string", "description": "starter|pro|scale (default starter = cx21)"},
+				"plan":    map[string]interface{}{"type": "string", "description": "starter|pro|scale (default starter = cax11 arm64)"},
 				"region":  map[string]interface{}{"type": "string", "description": "eu|us (default eu)"},
 				"imageId": map[string]interface{}{"type": "string", "description": "Optional prebuilt Yaver snapshot id on YOUR account for fast boot. Omit ⇒ ubuntu-22.04 + first-boot install."},
 				"repoUrl": map[string]interface{}{"type": "string", "description": "Optional git URL to shallow-clone on the new box (https:// or git@). Private repos need creds pushed via git_push_creds."},
