@@ -38,6 +38,10 @@ type busHub struct {
 	subscribers map[string]map[*busSubscriber]struct{} // userId -> set
 	delivered   atomic.Uint64
 	published   atomic.Uint64
+	// maxPerUser caps concurrent subscribers per user so one account can't open
+	// thousands of long-lived SSE streams and exhaust the relay's shared
+	// concurrency slots for every other tenant (relay security audit, finding #6).
+	maxPerUser int
 }
 
 type busSubscriber struct {
@@ -47,10 +51,22 @@ type busSubscriber struct {
 }
 
 func newBusHub() *busHub {
-	return &busHub{subscribers: map[string]map[*busSubscriber]struct{}{}}
+	return &busHub{
+		subscribers: map[string]map[*busSubscriber]struct{}{},
+		maxPerUser:  envInt("RELAY_BUS_MAX_SUBSCRIBERS_PER_USER", 64),
+	}
 }
 
+// add registers a subscriber, or returns nil if the user is already at the
+// per-user cap (the caller must then refuse the stream). The cap check and the
+// insert happen under one lock so a burst of concurrent subscribes can't race
+// past the limit.
 func (h *busHub) add(userID string) *busSubscriber {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.maxPerUser > 0 && len(h.subscribers[userID]) >= h.maxPerUser {
+		return nil
+	}
 	sub := &busSubscriber{
 		userID: userID,
 		// Bounded channel — slow/dead subscriber drops the oldest
@@ -58,16 +74,17 @@ func (h *busHub) add(userID string) *busSubscriber {
 		ch:   make(chan []byte, 256),
 		done: make(chan struct{}),
 	}
-	h.mu.Lock()
 	if h.subscribers[userID] == nil {
 		h.subscribers[userID] = make(map[*busSubscriber]struct{})
 	}
 	h.subscribers[userID][sub] = struct{}{}
-	h.mu.Unlock()
 	return sub
 }
 
 func (h *busHub) remove(sub *busSubscriber) {
+	if sub == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if set, ok := h.subscribers[sub.userID]; ok {
@@ -119,6 +136,10 @@ func (s *RelayServer) handleBusPublish(w http.ResponseWriter, r *http.Request) {
 	}
 	relayPw := r.Header.Get("X-Relay-Password")
 	if !s.validatePassword(relayPw) {
+		if !s.abuseGuard.allowInvalidAuth(s.abuseGuard.clientIP(r)) {
+			writeRelayError(w, http.StatusTooManyRequests, "too many invalid relay password attempts")
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid relay password"})
@@ -170,6 +191,10 @@ func (s *RelayServer) handleBusSubscribe(w http.ResponseWriter, r *http.Request)
 	}
 	relayPw := r.Header.Get("X-Relay-Password")
 	if !s.validatePassword(relayPw) {
+		if !s.abuseGuard.allowInvalidAuth(s.abuseGuard.clientIP(r)) {
+			writeRelayError(w, http.StatusTooManyRequests, "too many invalid relay password attempts")
+			return
+		}
 		http.Error(w, "invalid relay password", http.StatusUnauthorized)
 		return
 	}
@@ -184,15 +209,22 @@ func (s *RelayServer) handleBusSubscribe(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	// Reserve a subscriber slot BEFORE committing to the stream — refuse if the
+	// user is at their concurrent-subscriber cap, so one account can't hoard the
+	// relay's shared stream slots (relay security audit, finding #6).
+	sub := s.busHub.add(userID)
+	if sub == nil {
+		writeRelayError(w, http.StatusTooManyRequests, "too many concurrent subscriptions for this account")
+		return
+	}
+	defer s.busHub.remove(sub)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	sub := s.busHub.add(userID)
-	defer s.busHub.remove(sub)
 
 	// Initial hello so slow caching proxies flush promptly.
 	_, _ = fmt.Fprintf(w, ": connected\n\n")
@@ -240,6 +272,10 @@ func (s *RelayServer) handleBusSubscribe(w http.ResponseWriter, r *http.Request)
 func (s *RelayServer) handleBusStatus(w http.ResponseWriter, r *http.Request) {
 	relayPw := r.Header.Get("X-Relay-Password")
 	if !s.validatePassword(relayPw) {
+		if !s.abuseGuard.allowInvalidAuth(s.abuseGuard.clientIP(r)) {
+			writeRelayError(w, http.StatusTooManyRequests, "too many invalid relay password attempts")
+			return
+		}
 		http.Error(w, "invalid relay password", http.StatusUnauthorized)
 		return
 	}

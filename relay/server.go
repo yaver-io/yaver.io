@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -234,7 +235,7 @@ func (s *RelayServer) authorizeAdmin(w http.ResponseWriter, r *http.Request) boo
 		hdr := r.Header.Get("Authorization")
 		if strings.HasPrefix(hdr, "Bearer ") {
 			tok := strings.TrimPrefix(hdr, "Bearer ")
-			if tok == s.adminToken {
+			if secretEqual(tok, s.adminToken) {
 				return true
 			}
 		}
@@ -248,12 +249,24 @@ func (s *RelayServer) authorizeAdmin(w http.ResponseWriter, r *http.Request) boo
 		return true
 	}
 
+	// Throttle invalid admin-auth attempts (relay security audit, finding #4).
+	if !s.abuseGuard.allowInvalidAuth(s.abuseGuard.clientIP(r)) {
+		writeRelayError(w, http.StatusTooManyRequests, "too many invalid admin auth attempts")
+		return false
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "unauthorized: provide Authorization: Bearer <RELAY_ADMIN_TOKEN> or X-Relay-Password",
 	})
 	return false
+}
+
+// secretEqual is a constant-time string comparison for secrets (passwords,
+// admin tokens) so a remote attacker can't recover them a byte at a time via
+// response-timing (relay security audit, finding #5).
+func secretEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // validatePassword checks a password against the shared password or Convex backend.
@@ -263,7 +276,7 @@ func (s *RelayServer) authorizeAdmin(w http.ResponseWriter, r *http.Request) boo
 // account/device ownership in Convex.
 func (s *RelayServer) validatePassword(pw string) bool {
 	// 1. Check shared password (self-hosted mode)
-	if sharedPw := s.getPassword(); sharedPw != "" && pw == sharedPw {
+	if sharedPw := s.getPassword(); sharedPw != "" && secretEqual(pw, sharedPw) {
 		return true
 	}
 
@@ -315,7 +328,7 @@ func (s *RelayServer) validateRelayAccess(pw, action, deviceID, token string) (s
 	// backend ownership/quota path instead of accepting a universal shared key.
 	if s.convexURL == "" {
 		if sharedPw := s.getPassword(); sharedPw != "" {
-			return "", pw == sharedPw
+			return "", secretEqual(pw, sharedPw)
 		}
 		return "", true
 	}
@@ -916,7 +929,7 @@ func (s *RelayServer) handleSetPassword(w http.ResponseWriter, r *http.Request) 
 	// is currently set.
 	if s.adminToken != "" {
 		hdr := r.Header.Get("Authorization")
-		if !strings.HasPrefix(hdr, "Bearer ") || strings.TrimPrefix(hdr, "Bearer ") != s.adminToken {
+		if !strings.HasPrefix(hdr, "Bearer ") || !secretEqual(strings.TrimPrefix(hdr, "Bearer "), s.adminToken) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -952,7 +965,7 @@ func (s *RelayServer) handleSetPassword(w http.ResponseWriter, r *http.Request) 
 	// (When admin token also gates this endpoint, this is belt-and-
 	// suspenders; we keep it for the path where adminToken is empty.)
 	if currentPw := s.getPassword(); currentPw != "" {
-		if req.CurrentPassword != currentPw {
+		if !secretEqual(req.CurrentPassword, currentPw) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1042,6 +1055,13 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, ok := s.validateRelayAccess(relayPw, "proxy", deviceID, "")
 	if !ok {
+		// Throttle invalid-password attempts so the account-wide relay password
+		// isn't brute-forcible over HTTP (relay security audit, finding #4).
+		// Keyed on the real client IP (trusted-proxy-aware clientIP).
+		if !s.abuseGuard.allowInvalidAuth(s.abuseGuard.clientIP(r)) {
+			writeRelayError(w, http.StatusTooManyRequests, "too many invalid relay password attempts")
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1739,6 +1759,12 @@ func withRelayCORS(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Relay-Password, X-Yaver-Caller")
+		// A proxied dev-server page may carry the account-wide password in its URL
+		// (?__rp=), which would otherwise leak via the Referer header to every
+		// third-party subresource it loads. Suppress it (relay security audit,
+		// finding #3). Full fix = get the password out of the URL entirely
+		// (asymmetric per-device tokens — see the relay auth design doc).
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

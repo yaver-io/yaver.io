@@ -98,3 +98,45 @@ func TestAbuseGuardQUICRegisterThrottle(t *testing.T) {
 		t.Fatal("different IP should have an independent registration bucket")
 	}
 }
+
+// TestClientIP_TrustedProxyGating locks relay-audit finding #1: forwarding
+// headers are honored ONLY behind a trusted proxy; a direct-connect attacker
+// cannot spoof CF-Connecting-IP to mint a fresh rate-limit bucket per request.
+func TestClientIP_TrustedProxyGating(t *testing.T) {
+	g := newAbuseGuard(defaultAbuseGuardConfig()) // default trusted set = Cloudflare
+
+	// Behind a trusted proxy (peer IP in a Cloudflare range) → header honored.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "173.245.48.5:443" // 173.245.48.0/20 is Cloudflare
+	req.Header.Set("CF-Connecting-IP", "9.9.9.9")
+	if got := g.clientIP(req); got != "9.9.9.9" {
+		t.Fatalf("trusted proxy: expected forwarded client 9.9.9.9, got %q", got)
+	}
+
+	// Direct connect from an untrusted peer → spoofed header IGNORED, keyed on
+	// the real socket IP. This is the whole point of the fix.
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.10:1234" // not a trusted proxy
+	req.Header.Set("CF-Connecting-IP", "1.2.3.4")
+	req.Header.Set("X-Forwarded-For", "5.6.7.8")
+	if got := g.clientIP(req); got != "203.0.113.10" {
+		t.Fatalf("SECURITY: untrusted peer spoofed its rate-limit key to %q", got)
+	}
+
+	// Explicit RELAY_TRUSTED_PROXIES override is respected.
+	t.Setenv("RELAY_TRUSTED_PROXIES", "10.0.0.0/8")
+	g2 := newAbuseGuard(defaultAbuseGuardConfig())
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.1.2.3:80"
+	req.Header.Set("X-Real-IP", "8.8.8.8")
+	if got := g2.clientIP(req); got != "8.8.8.8" {
+		t.Fatalf("custom trusted proxy: expected 8.8.8.8, got %q", got)
+	}
+	// A Cloudflare IP is no longer trusted once overridden.
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "173.245.48.5:443"
+	req.Header.Set("X-Real-IP", "8.8.8.8")
+	if got := g2.clientIP(req); got != "173.245.48.5" {
+		t.Fatalf("override should distrust Cloudflare, keyed real IP; got %q", got)
+	}
+}

@@ -118,26 +118,73 @@ type tokenBucket struct {
 }
 
 type abuseGuard struct {
-	mu            sync.Mutex
-	cfg           abuseGuardConfig
-	buckets       map[string]*tokenBucket
-	httpSem       chan struct{}
-	deviceActive  map[string]int
-	deniedLogLast map[string]time.Time
+	mu             sync.Mutex
+	cfg            abuseGuardConfig
+	buckets        map[string]*tokenBucket
+	httpSem        chan struct{}
+	deviceActive   map[string]int
+	deniedLogLast  map[string]time.Time
+	trustedProxies []*net.IPNet
+}
+
+// cloudflareCIDRs are Cloudflare's published edge ranges (https://www.cloudflare.com/ips/).
+// They are the DEFAULT trusted proxies so the official CF-fronted relay reads the
+// real client IP from CF-Connecting-IP, while a DIRECT-connect attacker (whose peer
+// IP is not Cloudflare) can't spoof it. Override the whole set with the
+// RELAY_TRUSTED_PROXIES env (comma-separated CIDRs) for other fronting.
+var cloudflareCIDRs = []string{
+	"173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+	"141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+	"197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+	"104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+	"2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+	"2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+}
+
+func parseTrustedProxies(env string) []*net.IPNet {
+	raw := cloudflareCIDRs
+	if s := strings.TrimSpace(env); s != "" {
+		raw = strings.Split(s, ",")
+	}
+	var nets []*net.IPNet
+	for _, c := range raw {
+		if c = strings.TrimSpace(c); c == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(c); err == nil {
+			nets = append(nets, n)
+		} else {
+			log.Printf("[RELAY] ignoring invalid RELAY_TRUSTED_PROXIES CIDR %q", c)
+		}
+	}
+	return nets
 }
 
 func newAbuseGuard(cfg abuseGuardConfig) *abuseGuard {
 	g := &abuseGuard{
-		cfg:           cfg,
-		buckets:       make(map[string]*tokenBucket),
-		deviceActive:  make(map[string]int),
-		deniedLogLast: make(map[string]time.Time),
+		cfg:            cfg,
+		buckets:        make(map[string]*tokenBucket),
+		deviceActive:   make(map[string]int),
+		deniedLogLast:  make(map[string]time.Time),
+		trustedProxies: parseTrustedProxies(os.Getenv("RELAY_TRUSTED_PROXIES")),
 	}
 	if cfg.MaxConcurrentHTTP > 0 {
 		g.httpSem = make(chan struct{}, cfg.MaxConcurrentHTTP)
 	}
 	go g.cleanupLoop()
 	return g
+}
+
+func (g *abuseGuard) isTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, n := range g.trustedProxies {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *abuseGuard) cleanupLoop() {
@@ -250,21 +297,25 @@ func (g *abuseGuard) logLimited(reason, key string) {
 }
 
 func (g *abuseGuard) clientIP(r *http.Request) string {
-	for _, h := range []string{"CF-Connecting-IP", "X-Real-IP"} {
-		if ip := strings.TrimSpace(r.Header.Get(h)); ip != "" {
-			return ip
+	peer := g.remoteIP(r.RemoteAddr)
+	// Only honor client-supplied forwarding headers when the immediate peer is a
+	// trusted proxy (CDN/LB). A direct-connect attacker can set any header, so on
+	// an untrusted peer we key strictly off the real socket address — otherwise
+	// every per-IP rate limit is bypassable with a fresh random CF-Connecting-IP
+	// per request (relay security audit, finding #1).
+	if g.isTrustedProxy(net.ParseIP(peer)) {
+		for _, h := range []string{"CF-Connecting-IP", "X-Real-IP"} {
+			if ip := strings.TrimSpace(r.Header.Get(h)); ip != "" {
+				return ip
+			}
+		}
+		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+			if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+				return first
+			}
 		}
 	}
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-			return first
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil && host != "" {
-		return host
-	}
-	return r.RemoteAddr
+	return peer
 }
 
 func (g *abuseGuard) remoteIP(addr string) string {
