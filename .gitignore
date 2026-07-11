@@ -66,6 +66,11 @@ keys/
 mobile/android/keystore.properties
 sdk/go/clib/libyaver.*
 
+# Generated SDK configs — carry a live auth token + absolute local path; never commit.
+# Regenerated locally by `yaver` tooling; safe to be absent for anyone who clones.
+**/yaver-sdk/config.generated.json
+**/config.generated.json
+
 # Android on-device sandbox payload — built at deploy time by
 # scripts/build-android-sandbox.sh, never committed (the Go agent is ~45 MB and
 # proot binaries are fetched/pinned). SandboxService loads them from jniLibs.
