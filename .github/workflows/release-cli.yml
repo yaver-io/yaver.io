@@ -132,6 +132,9 @@ jobs:
   build:
     needs: validate
     strategy:
+      # Each platform publishes independently — a flaky darwin sign+notarize must
+      # NOT cancel the linux binary that `npm install -g yaver-cli` needs on servers.
+      fail-fast: false
       matrix:
         include:
           - goos: darwin
