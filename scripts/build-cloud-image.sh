@@ -444,7 +444,7 @@ sudo_run rsync -a /tmp/yaver-ci-remote/ /opt/yaver/ci/remote/
 # The bootstrap.sh script needs root + a working network. Run it under
 # `sudo bash` rather than just `bash` so its install steps don't error
 # on a non-root SSH user (AWS uses ubuntu, Hetzner uses root).
-sudo_run bash /opt/yaver/ci/remote/bootstrap.sh
+sudo_run env YAVER_SKIP_OLLAMA=1 bash /opt/yaver/ci/remote/bootstrap.sh
 
 # Final hygiene: clear cloud-init state so the captured image will run
 # cloud-init fresh on every launched instance, not reuse our build-VM

@@ -11,6 +11,11 @@ set -euo pipefail
 log()  { printf '\n=== %s ===\n' "$*"; }
 
 export DEBIAN_FRONTEND=noninteractive
+# Optional: skip Ollama (on-box local inference). The managed/dev golden cloud
+# image sets YAVER_SKIP_OLLAMA=1 — inference runs via the gateway, not on-box —
+# which trims image size + bake time. Default (unset/0) keeps Ollama for the
+# test box's local-voice path.
+SKIP_OLLAMA="${YAVER_SKIP_OLLAMA:-0}"
 export NEEDRESTART_MODE=a
 
 log "apt base"
@@ -54,7 +59,14 @@ apt-get install -y --no-install-recommends \
   python3 python3-venv python3-pip pipx \
   software-properties-common lsb-release \
   ufw iproute2 net-tools bubblewrap uidmap \
+  unattended-upgrades \
   sudo
+
+# OS security auto-upgrades — one of the golden cloud-image's auto-upgrade
+# layers (the yaver agent self-updates its own binary separately; a weekly
+# re-bake refreshes the base image). Enable non-interactively; best-effort.
+dpkg-reconfigure -f noninteractive unattended-upgrades 2>/dev/null || true
+systemctl enable --now unattended-upgrades 2>/dev/null || true
 
 log "yaver user — non-root home for Workspace + agent"
 # Everything user-facing (cloned repos, the agent itself, opencode/codex/aider
@@ -131,7 +143,9 @@ fi
 export PATH=/usr/local/go/bin:$PATH
 
 log "ollama"
-if ! command -v ollama >/dev/null 2>&1; then
+if [ "$SKIP_OLLAMA" = "1" ]; then
+  log "ollama: skipped (YAVER_SKIP_OLLAMA=1)"
+elif ! command -v ollama >/dev/null 2>&1; then
   curl -fsSL https://ollama.com/install.sh | sh
 fi
 
@@ -290,17 +304,21 @@ log "remote-runtime preflight check"
   echo "kvm=$([ -e /dev/kvm ] && echo present || echo absent_TCG_fallback)"
   echo "zram=$(swapon --show 2>&1 | head -3 | tr '\n' ' ')"
 } > /var/lib/yaver-remote-runtime.preflight 2>&1 || true
-systemctl enable --now ollama || true
+if [ "$SKIP_OLLAMA" = "1" ]; then
+  log "ollama: enable + model pull skipped (YAVER_SKIP_OLLAMA=1)"
+else
+  systemctl enable --now ollama || true
 
-log "pull qwen2.5-coder:1.5b"
-# Retry once — first pull can race with ollama service coming up.
-for attempt in 1 2; do
-  if ollama list 2>/dev/null | grep -q '^qwen2.5-coder:1.5b'; then
-    break
-  fi
-  if ollama pull qwen2.5-coder:1.5b; then break; fi
-  if [ "$attempt" = "1" ]; then sleep 5; fi
-done
+  log "pull qwen2.5-coder:1.5b"
+  # Retry once — first pull can race with ollama service coming up.
+  for attempt in 1 2; do
+    if ollama list 2>/dev/null | grep -q '^qwen2.5-coder:1.5b'; then
+      break
+    fi
+    if ollama pull qwen2.5-coder:1.5b; then break; fi
+    if [ "$attempt" = "1" ]; then sleep 5; fi
+  done
+fi
 
 log "aider via pipx"
 # pipx needs a normal PATH setup; run it as root against /usr/local
