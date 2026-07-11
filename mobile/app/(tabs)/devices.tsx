@@ -13,6 +13,7 @@ import * as Clipboard from "expo-clipboard";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Alert } from "react-native";
 import { TextInput } from "react-native";
+import { getConvexSiteUrlSync } from "../../src/lib/backendConfig";
 import { useLocalSearchParams, router } from "expo-router";
 import { Device, useDevice } from "../../src/context/DeviceContext";
 import { appTag } from "../../src/lib/appVersion";
@@ -323,6 +324,47 @@ function DeviceCard({
   const [agentVersion, setAgentVersion] = useState<string | null>(null);
   const [remoteAuthExpired, setRemoteAuthExpired] = useState(false);
   const [detailsOpen, setDetailsOpenLocal] = useState(false);
+  const [boxBusy, setBoxBusy] = useState(false);
+
+  // Up/down for a Yaver-hosted (managed) box — same Convex route the web uses.
+  // "stop" = snapshot + delete the server so billing halts; "start" = recreate
+  // from the pause snapshot (~2-3 min). Entitlement/safety is server-side.
+  const handlePauseResume = useCallback(
+    (action: "stop" | "start") => {
+      if (!token || !device.machineId) return;
+      const verb = action === "stop" ? "Pause" : "Resume";
+      Alert.alert(
+        `${verb} ${device.name}?`,
+        action === "stop"
+          ? "Snapshots the disk, then deletes the cloud server so it stops billing. Resume recreates it from the snapshot in ~2-3 min (new IP)."
+          : "Recreates the box from its pause snapshot (~2-3 min).",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: verb,
+            style: action === "stop" ? "destructive" : "default",
+            onPress: async () => {
+              setBoxBusy(true);
+              try {
+                const res = await fetch(`${getConvexSiteUrlSync()}/billing/yaver-cloud/${action}`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ machineId: device.machineId }),
+                });
+                const j = await res.json().catch(() => ({}) as any);
+                if (!res.ok) Alert.alert(`${verb} failed`, j?.error || `HTTP ${res.status}`);
+              } catch (e: any) {
+                Alert.alert(`${verb} failed`, e?.message || String(e));
+              } finally {
+                setBoxBusy(false);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [token, device.machineId, device.name],
+  );
   // openDetails routes through the parent (master-detail right
   // pane) when onOpenDetails is provided; otherwise pops the
   // local modal as before. All four call sites (smart-connect,
@@ -770,6 +812,29 @@ function DeviceCard({
             >
               <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>★ Make Primary</Text>
             </Pressable>
+          ) : null}
+          {/* Up/down for a Yaver-hosted (managed) box. Resume when paused/stopped,
+              else Pause. Self-hosted boxes have no machineId ⇒ nothing here. */}
+          {!device.isGuest && device.machineId ? (
+            device.machineStatus === "paused" ||
+            device.machineStatus === "stopped" ||
+            device.machineStatus === "suspended" ? (
+              <Pressable
+                style={[styles.pingBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.success + "55", opacity: boxBusy ? 0.6 : 1 }]}
+                onPress={() => { void handlePauseResume("start"); }}
+                disabled={boxBusy}
+              >
+                <Text style={[styles.pingBtnText, { color: c.success, fontWeight: "700" }]}>{boxBusy ? "…" : "▲ Resume"}</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={[styles.pingBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.warn + "55", opacity: boxBusy ? 0.6 : 1 }]}
+                onPress={() => { void handlePauseResume("stop"); }}
+                disabled={boxBusy}
+              >
+                <Text style={[styles.pingBtnText, { color: c.warn, fontWeight: "700" }]}>{boxBusy ? "…" : "▼ Pause"}</Text>
+              </Pressable>
+            )
           ) : null}
         </View>
       </View>

@@ -45,6 +45,10 @@ export interface CoreDevice {
   /** Hosting provenance: "yaver-hosted" = Yaver-managed box (paid/adopted); "self-hosted" = own box. */
   hosting?: 'yaver-hosted' | 'self-hosted';
   managed?: boolean;
+  /** cloudMachines._id for a managed box — drives up/down (pause/resume). */
+  machineId?: string;
+  /** cloudMachines.status (active|paused|stopped|resuming|suspended|…). */
+  machineStatus?: string;
   hostName?: string;
   hostEmail?: string;
   accessScope?: 'owner' | 'shared-scoped' | 'shared-legacy';

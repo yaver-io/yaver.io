@@ -198,6 +198,10 @@ type ListedDevice = {
    */
   hosting?: "yaver-hosted" | "self-hosted";
   managed?: boolean;
+  /** cloudMachines._id for a managed box — lets the UI drive up/down (pause/resume). */
+  machineId?: string;
+  /** cloudMachines.status (active|paused|stopped|stopping|resuming|suspended|grace|…). */
+  machineStatus?: string;
 };
 
 function mergeHardwareProfile(
@@ -1195,10 +1199,13 @@ export const listMyDevices = query({
       .query("cloudMachines")
       .withIndex("by_user", (q) => q.eq("userId", session.user._id))
       .collect();
-    const managedDeviceIds = new Set<string>();
+    const managedByDeviceId = new Map<string, { machineId: string; status: string }>();
     for (const m of userCloudMachines) {
       if (typeof m.deviceId === "string" && m.deviceId.trim() !== "" && m.origin !== "self-hosted") {
-        managedDeviceIds.add(m.deviceId);
+        managedByDeviceId.set(m.deviceId, {
+          machineId: m._id,
+          status: typeof (m as any).status === "string" ? (m as any).status : "active",
+        });
       }
     }
 
@@ -1302,8 +1309,10 @@ export const listMyDevices = query({
       geoRegion: d.geoRegion,
       edgeProfile: d.edgeProfile,
       recoveryPosture: d.recoveryPosture,
-      managed: managedDeviceIds.has(d.deviceId),
-      hosting: (managedDeviceIds.has(d.deviceId) ? "yaver-hosted" : "self-hosted") as "yaver-hosted" | "self-hosted",
+      managed: managedByDeviceId.has(d.deviceId),
+      hosting: (managedByDeviceId.has(d.deviceId) ? "yaver-hosted" : "self-hosted") as "yaver-hosted" | "self-hosted",
+      machineId: managedByDeviceId.get(d.deviceId)?.machineId,
+      machineStatus: managedByDeviceId.get(d.deviceId)?.status,
     }));
 
     // Device LIST (UI) must drop hidden beta grants — a beta user must never see
