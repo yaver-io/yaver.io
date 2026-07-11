@@ -162,10 +162,33 @@ func openVaultE() (*VaultStore, error) {
 			return vs, nil
 		}
 		if !errors.Is(v2Err, ErrVaultIsLegacyV1) {
-			// Wrong master key OR corruption. Don't silently retry
-			// via v1 — that would mask a real problem (e.g. someone
-			// dropped a different user's vault.enc in place).
-			return nil, fmt.Errorf("Error opening vault (v2): %v", v2Err)
+			// A v2-magic file the current master key can't decrypt: the
+			// sealing key is gone (master.key lost/swapped, or the file
+			// came from another machine). No auth token recovers a v2
+			// vault, so on a headless box this bricks EVERY vault op
+			// forever — which is exactly how a cloud box's opencode GLM
+			// key couldn't be stored. Two escapes:
+			//   - YAVER_VAULT_AUTO_RESET=1 (set on cloud boxes): archive
+			//     the dead file + start fresh under the current master
+			//     key. Nothing recoverable is lost — the key is already
+			//     gone — and the archive keeps the bytes for forensics.
+			//   - otherwise: a clear error that points at the ACTUAL fix
+			//     (`yaver vault reset`), not the v1-only YAVER_VAULT_PASSPHRASE.
+			// Don't silently retry via v1 (that would mask a swapped
+			// vault.enc); only self-heal when explicitly opted in.
+			if isWrongPassphraseErr(v2Err) && vaultAutoResetEnabled() {
+				if fresh, rErr := resetDeadVaultToV2(masterKey, cfg.DeviceID); rErr == nil {
+					fmt.Fprintln(os.Stderr, "[vault] unreadable vault auto-reset (YAVER_VAULT_AUTO_RESET=1); previously stored secrets must be re-added.")
+					return fresh, nil
+				} else {
+					return nil, fmt.Errorf("Error opening vault (v2): %v; auto-reset failed: %v", v2Err, rErr)
+				}
+			}
+			return nil, fmt.Errorf("Error opening vault (v2): %v\n"+
+				"This machine's master key can't decrypt the vault (key lost/swapped, or the file came from another machine). "+
+				"No auth token recovers a v2 vault. Run `yaver vault reset --yes` to archive it and start fresh "+
+				"(previously stored secrets are unrecoverable), or restore ~/.yaver/master.key. "+
+				"On a headless box set YAVER_VAULT_AUTO_RESET=1 to self-heal automatically.", v2Err)
 		}
 		// File is legacy v1 — fall through to the passphrase chain
 		// below. The successful unlock there triggers a one-time
@@ -257,6 +280,40 @@ func resolveUserIDForVault(cfg *Config) string {
 		return ""
 	}
 	return strings.TrimSpace(info.UserID)
+}
+
+// vaultAutoResetEnabled reports whether an unreadable (dead-master-key) v2
+// vault should self-heal by archiving + recreating instead of hard-erroring.
+// Opt-in only (YAVER_VAULT_AUTO_RESET=1), set on cloud/headless boxes by the
+// bootstrap so a customer's box never bricks its own vault; a dev machine
+// where the user could still restore ~/.yaver/master.key is never auto-wiped.
+func vaultAutoResetEnabled() bool {
+	return envTruthy(os.Getenv("YAVER_VAULT_AUTO_RESET"))
+}
+
+// isWrongPassphraseErr matches the shared "wrong passphrase or corrupted
+// vault" sentinel string used by both the v1 and v2 open paths.
+func isWrongPassphraseErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "wrong passphrase")
+}
+
+// resetDeadVaultToV2 archives an unreadable vault file (its sealing key is
+// gone, so the ciphertext is dead) and creates a fresh empty v2 vault sealed
+// with the current master key. Nothing recoverable is lost — no key opens the
+// archived bytes — and the archive is kept for forensics. Used by the headless
+// auto-reset path in openVaultE.
+func resetDeadVaultToV2(masterKey [32]byte, deviceID string) (*VaultStore, error) {
+	path, err := VaultPath()
+	if err != nil {
+		return nil, err
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		if _, aErr := archiveVaultFile(path, "unreadable"); aErr != nil {
+			return nil, aErr
+		}
+	}
+	// File now absent → NewVaultStoreV2 creates a fresh empty v2 vault.
+	return NewVaultStoreV2(masterKey, deviceID)
 }
 
 // migrateVaultToV2 flips an already-unlocked v1 vault to the v2 master-

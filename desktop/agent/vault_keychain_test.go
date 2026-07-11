@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -125,6 +126,67 @@ func TestVaultV2RoundTrip(t *testing.T) {
 	_, err = NewVaultStoreV2(wrong, "dev-1")
 	if err == nil {
 		t.Fatalf("expected wrong-key error, got nil")
+	}
+}
+
+// TestResetDeadVaultToV2: when the master key that sealed a v2 vault is gone
+// (the headless "wrong passphrase (v2)" brick), resetDeadVaultToV2 archives the
+// unreadable file and starts a fresh empty vault under the current master key —
+// so a cloud box self-heals instead of failing every vault op forever.
+func TestResetDeadVaultToV2(t *testing.T) {
+	isolatedVaultDir(t)
+	// Seal a vault with key A + a secret we can no longer reach after "loss".
+	var keyA [masterKeyLen]byte
+	if _, err := io.ReadFull(rand.Reader, keyA[:]); err != nil {
+		t.Fatalf("gen key A: %v", err)
+	}
+	vs, err := NewVaultStoreV2(keyA, "dev-1")
+	if err != nil {
+		t.Fatalf("create v2 vault: %v", err)
+	}
+	if err := vs.Set(VaultEntry{Name: "GLM_API_KEY", Project: "runners", Value: "dead-secret"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	path, _ := VaultPath()
+
+	// Simulate key loss: a different master key B cannot open the file.
+	var keyB [masterKeyLen]byte
+	if _, err := io.ReadFull(rand.Reader, keyB[:]); err != nil {
+		t.Fatalf("gen key B: %v", err)
+	}
+	if _, err := NewVaultStoreV2(keyB, "dev-1"); err == nil {
+		t.Fatalf("expected wrong-key error before reset")
+	}
+
+	// Self-heal under B.
+	fresh, err := resetDeadVaultToV2(keyB, "dev-1")
+	if err != nil {
+		t.Fatalf("resetDeadVaultToV2: %v", err)
+	}
+	if got := fresh.List("runners"); len(got) != 0 {
+		t.Fatalf("expected empty fresh vault, got %d entries", len(got))
+	}
+	// The file is now sealed with B and reopens cleanly; a new secret persists.
+	if err := fresh.Set(VaultEntry{Name: "GLM_API_KEY", Project: "runners", Value: "new-secret"}); err != nil {
+		t.Fatalf("set on fresh vault: %v", err)
+	}
+	reopened, err := NewVaultStoreV2(keyB, "dev-1")
+	if err != nil {
+		t.Fatalf("reopen fresh vault under B: %v", err)
+	}
+	if got, err := reopened.Get("runners", "GLM_API_KEY"); err != nil || got.Value != "new-secret" {
+		t.Fatalf("fresh secret not persisted (val=%q err=%v)", got.Value, err)
+	}
+	// The unreadable original was archived (kept for forensics), not destroyed.
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	archived := false
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "unreadable") {
+			archived = true
+		}
+	}
+	if !archived {
+		t.Fatalf("expected an archived 'unreadable' vault file in %s", filepath.Dir(path))
 	}
 }
 

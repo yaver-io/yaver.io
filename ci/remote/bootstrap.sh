@@ -388,6 +388,15 @@ if ! command -v yaver >/dev/null 2>&1; then
   fi
 fi
 
+log "vault self-heal (headless boxes have no interactive key recovery)"
+# A v2 vault whose master key is lost/swapped is cryptographically dead and
+# bricks every vault op (runner-auth, provider keys) — exactly what blocked
+# opencode's GLM key on this box's first wake. A headless box can't prompt for
+# recovery, so opt into auto-reset: the agent archives the unreadable vault +
+# starts fresh under the current master key. System-wide so `yaver serve` and
+# interactive `yaver runner-auth`/`yaver vault` all see it.
+grep -q '^YAVER_VAULT_AUTO_RESET=' /etc/environment 2>/dev/null || echo 'YAVER_VAULT_AUTO_RESET=1' >> /etc/environment
+
 log "wire Yaver (+ Talos) MCP into runners"
 # Register Yaver as an MCP server inside claude-code / codex / opencode so a
 # runner launched on this box can call Yaver's own tools — and, when the

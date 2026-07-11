@@ -153,11 +153,12 @@ var targetCIWorkflow = map[string]string{
 // continue to satisfy capability checks across every phone-project
 // the user creates.
 var targetDefaultVaultProject = map[string]string{
-	"testflight":        "mobile",
-	"playstore":         "mobile",
-	"convex":            "backend",
-	"convex-selfhosted": "backend",
-	"cloudflare":        "web",
+	"testflight":           "mobile",
+	"playstore":            "mobile",
+	"playstore-production": "mobile",
+	"convex":               "backend",
+	"convex-selfhosted":    "backend",
+	"cloudflare":           "web",
 }
 
 // targetPlatformLock returns the GOOS the target is locked to (single
