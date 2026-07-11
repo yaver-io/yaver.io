@@ -23,6 +23,9 @@ func runMCPSetup(args []string) {
 	if len(args) == 0 {
 		fmt.Print("Yaver MCP Setup — register Yaver as an MCP server\n\n" +
 			"Usage:\n" +
+			"  yaver mcp setup all          Wire Yaver into every installed runner at once\n" +
+			"                               (claude-code + codex + opencode) and federate\n" +
+			"                               Talos when TALOS_MCP_URL/LICENSE is set\n" +
 			"  yaver mcp setup claude-code  Add Yaver to the Claude Code user MCP config\n" +
 			"  yaver mcp setup codex        Add Yaver to the Codex CLI MCP config\n" +
 			"  yaver mcp setup opencode     Add Yaver to opencode's MCP config\n" +
@@ -39,6 +42,8 @@ func runMCPSetup(args []string) {
 	yaverPath := findYaverBinary()
 
 	switch args[0] {
+	case "all", "runners":
+		setupAllRunners(yaverPath)
 	case "claude", "claude-code":
 		setupClaudeCode(yaverPath, false)
 	case "codex":
@@ -163,6 +168,58 @@ func runMCPUnregister(args []string) {
 			fmt.Fprintf(os.Stderr, "Unknown MCP client: %s (use claude-code, codex, or opencode)\n", target)
 		}
 	}
+}
+
+// setupAllRunners wires Yaver as an MCP server into every first-class runner
+// CLI present on this machine (claude-code, codex, opencode) in one shot, and
+// — when Talos MCP creds are available (TALOS_MCP_URL / TALOS_MCP_LICENSE) —
+// federates Talos behind Yaver's MCP as an ACL peer so the runners reach Talos
+// tools through the same Yaver connection.
+//
+// This is the box-bring-up / one-command path: called by the cloud-image
+// bootstrap after `yaver auth` + runner installs, and safe to re-run. Each
+// runner setup is idempotent (get → remove → add) and a runner that isn't
+// installed is skipped with a note rather than treated as an error, so a
+// partially-provisioned box still configures whatever runners it has.
+func setupAllRunners(yaverPath string) {
+	fmt.Println("Wiring Yaver MCP into installed runners…")
+
+	if _, err := exec.LookPath("claude"); err == nil {
+		setupClaudeCode(yaverPath, false)
+	} else {
+		fmt.Println("  claude-code: not installed — skipped")
+	}
+
+	if _, err := exec.LookPath("codex"); err == nil {
+		setupCodex(yaverPath, false)
+	} else {
+		fmt.Println("  codex: not installed — skipped")
+	}
+
+	// opencode's config is a plain JSON file that opencode reads on startup;
+	// writing it is harmless even if the opencode binary isn't installed yet,
+	// so it's always wired (the entry activates once opencode is present).
+	setupOpenCode(yaverPath, false)
+
+	// Talos federation is opt-in: only wire it when the operator has provided
+	// Talos MCP creds. A generic box (no Talos) simply skips this.
+	talosURL := strings.TrimSpace(os.Getenv("TALOS_MCP_URL"))
+	talosLicense := firstNonEmptyTalosACL(os.Getenv("TALOS_LICENSE_KEY"), os.Getenv("TALOS_MCP_LICENSE"))
+	if talosURL != "" || talosLicense != "" {
+		if cfg, err := LoadConfig(); err == nil && cfg != nil {
+			if err := runACLTalos(nil, cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "  talos: federation skipped: %v\n", err)
+			} else {
+				fmt.Println("  talos: federated behind Yaver MCP (acl peer)")
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  talos: federation skipped: config unavailable: %v\n", err)
+		}
+	} else {
+		fmt.Println("  talos: no TALOS_MCP_URL/LICENSE — skipped (set to federate Talos)")
+	}
+
+	fmt.Println("Done. Runners on this box now expose Yaver's tools (and Talos, if federated).")
 }
 
 func setupClaudeCode(yaverPath string, quiet bool) {

@@ -388,6 +388,23 @@ if ! command -v yaver >/dev/null 2>&1; then
   fi
 fi
 
+log "wire Yaver (+ Talos) MCP into runners"
+# Register Yaver as an MCP server inside claude-code / codex / opencode so a
+# runner launched on this box can call Yaver's own tools — and, when the
+# operator has set TALOS_MCP_URL / TALOS_MCP_LICENSE, Talos's tools too
+# (federated behind Yaver's MCP as an ACL peer). Runs as the `yaver` user
+# because that's who owns the runner configs (~/.claude.json, ~/.codex,
+# ~/.config/opencode) and who the agent spawns runners as. `mcp setup all`
+# is idempotent and skips any runner that isn't installed, so it's safe to
+# re-run on every golden-image rebuild and on box wake.
+if command -v yaver >/dev/null 2>&1 && id yaver >/dev/null 2>&1; then
+  sudo -iu yaver env \
+    TALOS_MCP_URL="${TALOS_MCP_URL:-}" \
+    TALOS_MCP_AUTH="${TALOS_MCP_AUTH:-}" \
+    TALOS_MCP_LICENSE="${TALOS_MCP_LICENSE:-}" \
+    bash -lc 'yaver mcp setup all' || log "WARN: mcp setup all failed (non-fatal)"
+fi
+
 log "system hermesc (linux-arm64 pre-warm)"
 # arm64 Linux boxes have no embedded prebuilt in the Go agent (see
 # desktop/agent/hermesc_embedded.go). Build hermesc once at
