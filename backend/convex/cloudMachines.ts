@@ -2,6 +2,7 @@ import { mutation, query, internalMutation, internalAction, internalQuery } from
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { listGrantedMachineIdsForGrant, listVisibleInfraGrantsForGuest } from "./access";
+import { isOwnerUserId } from "./ownerAllowlist";
 import { randomHex, sha256Hex } from "./auth";
 
 // Machine specs by type. The Hetzner server_type strings are what you pass
@@ -1327,6 +1328,54 @@ export const setPhase = internalMutation({
  *   4. Write Hetzner server id + IP back into the machine row.
  *   5. Schedule a health check 5 min later.
  */
+// ─── Machine quota (control-plane authoritative) ─────────────────
+// Cap how many managed machines a user may hold at once (any state except
+// removed/deleted). Enforced in provision() BEFORE any Hetzner spend — never
+// trusted from an MCP verb. Owner (env allowlist) is exempt so the repo owner
+// can develop multi-box flows. Plan-tiered with an env-tunable fallback.
+const MANAGED_MACHINE_QUOTA: Record<string, number> = {
+  "cloud-agent": 1,
+  "cloud-workspace": 2,
+};
+function managedMachineLimit(plan?: string | null): number {
+  if (plan && MANAGED_MACHINE_QUOTA[plan] != null) return MANAGED_MACHINE_QUOTA[plan];
+  const envN = parseInt(process.env.YAVER_MANAGED_MACHINE_LIMIT ?? "", 10);
+  return Number.isFinite(envN) && envN > 0 ? envN : 1;
+}
+
+/** Count a user's managed machines that occupy a quota slot (not removed/deleted). */
+export const activeCountForUser = internalQuery({
+  args: { userId: v.id("users"), excludeMachineId: v.optional(v.id("cloudMachines")) },
+  handler: async (ctx, { userId, excludeMachineId }) => {
+    const rows = await ctx.db
+      .query("cloudMachines")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    return rows.filter(
+      (m) => m._id !== excludeMachineId && m.status !== "removed" && m.status !== "deleted",
+    ).length;
+  },
+});
+
+/**
+ * MCP/UI-facing quota status: how many managed machines the user holds vs the
+ * cap. Lets the AI say "you're at 1 of 1 — upgrade for more" BEFORE the wall,
+ * instead of a silent create failure. Enforcement still lives in provision().
+ */
+export const quota = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const rows = await ctx.db
+      .query("cloudMachines")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const used = rows.filter((m) => m.status !== "removed" && m.status !== "deleted").length;
+    const owner = isOwnerUserId(userId);
+    const limit = owner ? Number.MAX_SAFE_INTEGER : managedMachineLimit();
+    return { used, limit, remaining: Math.max(0, limit - used), owner };
+  },
+});
+
 export const provision = internalAction({
   args: {
     machineId: v.id("cloudMachines"),
@@ -1382,6 +1431,26 @@ export const provision = internalAction({
           status: "error",
           errorMessage:
             "Not entitled — managed provisioning denied (active subscription, prepaid balance, or owner allowlist required)",
+        });
+        return;
+      }
+    }
+
+    // Machine quota — control-plane cap so a user can't spin up many managed
+    // boxes on our Hetzner account. Owner (env allowlist) exempt. Checked AFTER
+    // entitlement and BEFORE any Hetzner spend; the row being provisioned is
+    // excluded from the count.
+    if (!isOwnerUserId(machine.userId)) {
+      const limit = managedMachineLimit();
+      const used = await ctx.runQuery(internal.cloudMachines.activeCountForUser, {
+        userId: machine.userId,
+        excludeMachineId: machine._id,
+      });
+      if (used >= limit) {
+        await ctx.runMutation(internal.cloudMachines.setStatus, {
+          machineId: args.machineId,
+          status: "error",
+          errorMessage: `Machine quota reached — you already have ${used} managed machine(s) (limit ${limit}). Remove one with 'machine rm' or upgrade your plan for more.`,
         });
         return;
       }
