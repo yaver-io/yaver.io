@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { randomHex, sha256Hex } from "./auth";
+import { mutation, query, internalMutation, MutationCtx } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
+import { randomHex, sha256Hex, validateSessionInternal } from "./auth";
 
 const DEVICE_CODE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -204,5 +205,111 @@ export const authorizeDeviceCode = mutation({
     });
 
     return { ok: true };
+  },
+});
+
+async function createAuthorizedDeviceCodeForUser(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  args: {
+    machineName?: string;
+    platform?: string;
+    arch?: string;
+    deviceId?: string;
+  },
+) {
+  const now = Date.now();
+  const deviceCode = randomHex(20); // 40-char hex handle injected into the box
+  let userCode = generateUserCode();
+  // Best-effort uniqueness on the human code (unused in the broker path, kept
+  // for schema parity + audit).
+  for (let i = 0; i < 5; i++) {
+    const clash = await ctx.db
+      .query("deviceCodes")
+      .withIndex("by_userCode", (q) => q.eq("userCode", userCode))
+      .unique();
+    if (!clash || clash.status !== "pending") break;
+    userCode = generateUserCode();
+  }
+
+  // Mint the box's real 1-year session token, bound to the caller's user.
+  const tokenBytes = new Uint8Array(32);
+  crypto.getRandomValues(tokenBytes);
+  const token = Array.from(tokenBytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const tokenHash = await sha256Hex(token);
+  await ctx.db.insert("sessions", {
+    tokenHash,
+    userId,
+    deviceId: args.deviceId,
+    expiresAt: now + 365 * 24 * 60 * 60 * 1000,
+    createdAt: now,
+  });
+
+  // Pre-authorized code: the box picks up `token` exactly once via
+  // pollDeviceCode, then it's cleared. Never return the raw token here.
+  await ctx.db.insert("deviceCodes", {
+    userCode,
+    deviceCode,
+    status: "authorized",
+    pendingToken: token,
+    machineName: args.machineName,
+    platform: args.platform,
+    arch: args.arch,
+    expiresAt: now + DEVICE_CODE_TTL_MS,
+    createdAt: now,
+  });
+
+  return { deviceCode, expiresAt: now + DEVICE_CODE_TTL_MS };
+}
+
+/**
+ * BROKERED device onboarding — the keystone of seamless, secure remote-box
+ * provisioning. An ALREADY-AUTHENTICATED surface (the user's CLI daemon or the
+ * mobile app) mints + pre-authorizes a device code for a NEW box in ONE call,
+ * so the box inherits the caller's identity with **no interactive OAuth on the
+ * box** (no device-code paste, no browser-on-the-server).
+ *
+ * Security model (matches the arbitrage threat model):
+ *   - Gated on the CALLER'S own session (validateSessionInternal). The new box's
+ *     session is bound to the SAME user — you can only broker a box into your OWN
+ *     account, never someone else's.
+ *   - The value returned + injected into the box's cloud-init is only the
+ *     short-lived (15-min) deviceCode HANDLE, never the token. The box exchanges
+ *     it exactly ONCE via pollDeviceCode (which clears pendingToken on first
+ *     read) → the injected handle is worthless after first boot, even though
+ *     cloud metadata is rooted-readable.
+ *   - deviceCode is 40-char hex (randomHex(20)); the box's real token is a fresh
+ *     256-bit secret never exposed to the caller.
+ */
+export const createAuthorizedDeviceCode = mutation({
+  args: {
+    tokenHash: v.string(), // caller's session token hash (the broker) — REQUIRED
+    machineName: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    arch: v.optional(v.string()),
+    deviceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) {
+      throw new Error("Unauthorized — broker onboarding requires an authenticated caller");
+    }
+
+    return await createAuthorizedDeviceCodeForUser(ctx, session.user._id, args);
+  },
+});
+
+export const createAuthorizedDeviceCodeForUserInternal = internalMutation({
+  args: {
+    userId: v.id("users"),
+    machineName: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    arch: v.optional(v.string()),
+    deviceId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    return await createAuthorizedDeviceCodeForUser(ctx, args.userId, args);
   },
 });

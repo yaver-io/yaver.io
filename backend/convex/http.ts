@@ -3823,6 +3823,38 @@ http.route({
   }),
 });
 
+/** POST /auth/device-code/broker — Seamless remote-box onboarding. An
+ *  AUTHENTICATED caller (the user's CLI daemon or mobile app) mints a
+ *  PRE-AUTHORIZED device code for a NEW box, so the box inherits the caller's
+ *  identity with NO interactive OAuth on the box. Returns the short-TTL
+ *  deviceCode HANDLE to inject into the box's cloud-init; the box exchanges it
+ *  exactly once via GET /auth/device-code/poll. Bound to the caller's own user —
+ *  you can only broker a box into your OWN account. */
+http.route({
+  path: "/auth/device-code/broker",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const user = await authenticateRequest(ctx, request);
+    if (!user) return errorResponse("Unauthorized", 401);
+    const authHeader = request.headers.get("Authorization")!;
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => ({}) as any);
+    try {
+      const result = await ctx.runMutation(api.deviceCode.createAuthorizedDeviceCode, {
+        tokenHash,
+        machineName: typeof body?.machineName === "string" ? body.machineName : undefined,
+        platform: typeof body?.platform === "string" ? body.platform : undefined,
+        arch: typeof body?.arch === "string" ? body.arch : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (String(e?.message || "").includes("Unauthorized")) return errorResponse("Unauthorized", 401);
+      return errorResponse("Failed to broker device code", 500);
+    }
+  }),
+});
+
 // ── Download Endpoints ──────────────────────────────────────────────
 
 /** GET /downloads/list — List all available downloads (public, no auth). */
