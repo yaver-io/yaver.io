@@ -238,10 +238,11 @@ correct (Convex env / GH secrets); the hazard is *displaying* it. Use
 
 ### 4.4 Control‑plane tampering — *public/unauth endpoints*
 
-- **`backend/convex/authLogs.ts` is PUBLIC** (`writeLog`/`recentLogs`/`clearAll` are
-  unauth `mutation`/`query`, `:4,20,32`). Anyone with the deploy URL can **read, flood,
-  or wipe** auth logs. **P0 one‑line fix:** `internalMutation` / owner check. Matters
-  more now — attackers read the code and know this route.
+- **`backend/convex/authLogs.ts` — FIXED 2026-07-11.** Was public `mutation`/`query`
+  (`writeLog`/`recentLogs`/`clearAll`) — anyone with the deploy URL could read, flood, or
+  wipe auth logs. Now all three are `internal*` (writeLog's only caller is the auth
+  httpAction via `runMutation`; recentLogs/clearAll had no external callers), closing the
+  read/wipe hole. A rate-limit on the log-write HTTP route remains P1.
 - **Local agent `/webhooks/stripe|lemonsqueezy` unauth+unsigned** (`httpserver.go:694`,
   `invoices.go:511`) — a LAN attacker flips invoices to "paid." No money moves, but wire
   the existing LS verifier (`lemonsqueezy.go:808`).
@@ -276,7 +277,7 @@ correct (Convex env / GH secrets); the hazard is *displaying* it. Use
 - [ ] **Separate Hetzner project** for the managed pool (isolated from `owner‑dev`) + **budget alarm**. *(R3, R4)*
 - [ ] **Per‑box Hetzner Cloud Firewall** egress boundary; public‑IP box not exposing `:18080`. *(§4.2, §4.4)*
 - [ ] **Relay cross‑tenant scoping audit** — prove box A cannot reach box B via the relay. *(§3.2)*
-- [ ] **Fix public `authLogs`** → `internalMutation`/owner. *(`authLogs.ts:4,20,32`)*
+- [x] **Fix public `authLogs`** → `internal*` (done 2026-07-11).
 - [ ] **git‑history secret scrub** + confirm leaked keystore password (`yaver2024release`) was rotated. Public repo. *(2026‑07‑07 audit)*
 - [ ] **Guest‑bundle token inheritance gated/scoped** *if* selling "load your app" (`YaverInfo.swift:113`). Otherwise explicitly out of scope for untrusted users. *(§3.4)*
 

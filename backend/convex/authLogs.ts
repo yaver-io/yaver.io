@@ -1,7 +1,13 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
-export const writeLog = mutation({
+// SECURITY: these were public mutation/query — anyone with the deploy URL could
+// read, flood, or wipe auth logs (2026-07-07 audit HIGH). They are now internal*
+// (callable only from other Convex functions, e.g. the auth httpAction), which
+// closes the hole. writeLog's sole caller is http.ts (server-side runMutation);
+// recentLogs/clearAll had no external callers.
+
+export const writeLog = internalMutation({
   args: {
     level: v.union(v.literal("info"), v.literal("error"), v.literal("warn")),
     provider: v.string(),
@@ -17,7 +23,7 @@ export const writeLog = mutation({
   },
 });
 
-export const recentLogs = query({
+export const recentLogs = internalQuery({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 50;
@@ -29,7 +35,7 @@ export const recentLogs = query({
   },
 });
 
-export const clearAll = mutation({
+export const clearAll = internalMutation({
   args: {},
   handler: async (ctx) => {
     const logs = await ctx.db.query("authLogs").collect();

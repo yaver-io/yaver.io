@@ -3298,7 +3298,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const body = await request.json();
-      await ctx.runMutation(api.authLogs.writeLog, {
+      await ctx.runMutation(internal.authLogs.writeLog, {
         level: body.level || "info",
         provider: body.provider || "unknown",
         step: body.step || "unknown",
