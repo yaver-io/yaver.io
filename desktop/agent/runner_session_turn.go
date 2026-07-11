@@ -142,21 +142,39 @@ func (s *HTTPServer) handleRunnerSessionTurn(w http.ResponseWriter, r *http.Requ
 		jsonError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	reply, status := executeRunnerSessionTurn(req)
+	// The success (200) and conflict (409) paths carry the full reply struct so
+	// a caller can loop on a chained menu; the plain error paths (400/404/500)
+	// return a bare message. This mirrors the endpoint's original contract, now
+	// that the core lives in executeRunnerSessionTurn (shared with the
+	// `runner_turn` ops verb).
+	if status == http.StatusOK || status == http.StatusConflict {
+		jsonReply(w, status, reply)
+		return
+	}
+	jsonError(w, status, reply.Error)
+}
+
+// executeRunnerSessionTurn is the transport-agnostic core of a runner turn: it
+// drives one turn against a live tmux runner session and returns the resulting
+// state plus the HTTP status the /runner/session/turn endpoint would use. The
+// `runner_turn` ops verb (ops_runner.go) calls it too so a voice/car/watch
+// surface reaching Yaver over MCP gets exactly the same tmux hazard handling as
+// the direct HTTP callers — the three hazards documented at the top of this
+// file live here, once.
+func executeRunnerSessionTurn(req runnerSessionTurnRequest) (runnerSessionTurnResponse, int) {
 	text := strings.TrimSpace(req.Text)
 	choice := strings.TrimSpace(req.Choice)
 	if (text == "") == (choice == "") {
-		jsonError(w, http.StatusBadRequest, "send exactly one of `text` (a prompt) or `choice` (a menu option number)")
-		return
+		return runnerSessionTurnResponse{Error: "send exactly one of `text` (a prompt) or `choice` (a menu option number)"}, http.StatusBadRequest
 	}
 	if choice != "" && !isTmuxChoiceAnswer(choice) {
-		jsonError(w, http.StatusBadRequest, "`choice` must be a bare option number")
-		return
+		return runnerSessionTurnResponse{Error: "`choice` must be a bare option number"}, http.StatusBadRequest
 	}
 
 	sessionName, runnerID, err := resolveRunnerSession(req.Session, req.Runner)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, err.Error())
-		return
+		return runnerSessionTurnResponse{Error: err.Error()}, http.StatusNotFound
 	}
 
 	reply := runnerSessionTurnResponse{Session: sessionName, Runner: runnerID}
@@ -174,13 +192,12 @@ func (s *HTTPServer) handleRunnerSessionTurn(w http.ResponseWriter, r *http.Requ
 		if !awaiting {
 			reply.Pane = capturePaneTail(sessionName, runnerTurnPaneLines)
 			reply.Error = "session is not showing a menu — send `text`, not `choice`"
-			jsonReply(w, http.StatusConflict, reply)
-			return
+			return reply, http.StatusConflict
 		}
 		// The digit confirms on its own; no Enter, ever. See tmux.go.
 		if err := sendTmuxKey(sessionName, choice); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
-			return
+			reply.Error = err.Error()
+			return reply, http.StatusInternalServerError
 		}
 		reply.Sent = "choice"
 	} else {
@@ -191,12 +208,11 @@ func (s *HTTPServer) handleRunnerSessionTurn(w http.ResponseWriter, r *http.Requ
 			reply.Options = options
 			reply.Pane = capturePaneTail(sessionName, runnerTurnPaneLines)
 			reply.Error = "session is waiting on a choice — answer it with `choice` before sending a prompt"
-			jsonReply(w, http.StatusConflict, reply)
-			return
+			return reply, http.StatusConflict
 		}
 		if err := sendTmuxLine(sessionName, text); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
-			return
+			reply.Error = err.Error()
+			return reply, http.StatusInternalServerError
 		}
 		reply.Sent = "prompt"
 	}
@@ -220,7 +236,7 @@ func (s *HTTPServer) handleRunnerSessionTurn(w http.ResponseWriter, r *http.Requ
 	}
 	reply.Pane = capturePaneTail(sessionName, runnerTurnPaneLines)
 	reply.OK = true
-	jsonReply(w, http.StatusOK, reply)
+	return reply, http.StatusOK
 }
 
 // settleAndInspectPane waits for the pane to stop changing, then reports

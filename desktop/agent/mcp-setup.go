@@ -14,6 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"github.com/mdp/qrterminal/v3"
 )
 
 func runMCPSetup(args []string) {
@@ -23,10 +26,13 @@ func runMCPSetup(args []string) {
 			"  yaver mcp setup claude-code  Add Yaver to the Claude Code user MCP config\n" +
 			"  yaver mcp setup codex        Add Yaver to the Codex CLI MCP config\n" +
 			"  yaver mcp setup opencode     Add Yaver to opencode's MCP config\n" +
+			"  yaver mcp setup phone        Print the remote-connector URL + QR for the\n" +
+			"                               phone's Claude app (or any remote-MCP client)\n" +
 			"  yaver mcp setup show         Print the config JSON (for manual paste)\n\n" +
-			"Yaver exposes a curated set of tools (task management, file search,\n" +
-			"git, exec, screenshots, and more) over stdio. Run `yaver mcp` to\n" +
-			"inspect the tool list.\n")
+			"claude-code / codex / opencode register a local stdio server. `phone`\n" +
+			"is different: it prints the OAuth'd remote endpoint the Claude app on\n" +
+			"your phone (or ChatGPT) adds as a connector, so you can drive this box\n" +
+			"by voice from the car. Run `yaver mcp` to inspect the tool list.\n")
 		return
 	}
 
@@ -39,12 +45,85 @@ func runMCPSetup(args []string) {
 		setupCodex(yaverPath, false)
 	case "opencode":
 		setupOpenCode(yaverPath, false)
+	case "phone", "connector", "mobile":
+		runMCPSetupPhone()
 	case "show":
 		showMCPConfig(yaverPath)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown MCP client: %s (use claude-code, codex, or opencode)\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown MCP client: %s (use claude-code, codex, opencode, or phone)\n", args[0])
 		os.Exit(1)
 	}
+}
+
+// runMCPSetupPhone prints the remote MCP connector URL for this box (the relay
+// `/d/<deviceId>/mcp` endpoint) plus a scannable QR, so the Claude app on a
+// phone — or ChatGPT, or any remote-MCP client — can add Yaver as a connector.
+// Unlike the stdio clients above, nothing is written to a config file: the
+// client stores the URL, and OAuth (Yaver's own AS) authenticates it. See
+// docs/yaver-phone-mcp-connector.md.
+func runMCPSetupPhone() {
+	url, deviceID, err := phoneConnectorURL()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Add Yaver to your phone's Claude app (or ChatGPT) as a connector:")
+	fmt.Println()
+	fmt.Println("  1. In the app: add a custom connector / remote MCP server with this URL:")
+	fmt.Println()
+	fmt.Printf("       %s\n", url)
+	fmt.Println()
+	fmt.Println("  2. Sign in when prompted — this is Yaver's own OAuth, not Anthropic's.")
+	fmt.Println("  3. On the consent screen, tick \"Full access\" so the connector can run")
+	fmt.Println("     ops and drive coding runners (claude/codex/opencode/glm) on this box.")
+	fmt.Println("     Leaving it unchecked limits the connector to read-only utility tools.")
+	fmt.Println()
+	printConnectorQR(url)
+	fmt.Printf("Device: %s\n", deviceID)
+}
+
+// phoneConnectorURL resolves the remote MCP endpoint a phone connector should
+// use: the relay path form `<relayBase>/d/<deviceId>/mcp`. It prefers the relay
+// URL the running daemon was assigned, then any relay server in config.
+func phoneConnectorURL() (string, string, error) {
+	deviceID := localDeviceID()
+	if deviceID == "" {
+		return "", "", fmt.Errorf("this machine isn't registered yet — run `yaver auth` then `yaver serve` first")
+	}
+	// The daemon's assigned relay URL is already path-style and device-scoped
+	// (`.../d/<deviceId>`); append the resource. Empty in a fresh CLI process,
+	// so fall through to config.
+	if base := strings.TrimRight(getAssignedRelayURL(), "/"); base != "" {
+		return base + "/mcp", deviceID, nil
+	}
+	if cfg, err := LoadConfig(); err == nil && cfg != nil {
+		servers := cfg.RelayServers
+		if len(servers) == 0 {
+			servers = cfg.CachedRelayServers
+		}
+		for _, srv := range servers {
+			if u := strings.TrimRight(strings.TrimSpace(srv.HttpURL), "/"); u != "" {
+				return fmt.Sprintf("%s/d/%s/mcp", u, deviceID), deviceID, nil
+			}
+		}
+	}
+	return "", deviceID, fmt.Errorf("no relay endpoint known yet — start the agent with `yaver serve` so it registers a relay tunnel, then re-run `yaver mcp setup phone`")
+}
+
+// printConnectorQR renders the connector URL as a terminal QR (unless the user
+// opted out of pairing QRs), mirroring printPairURLAndQR.
+func printConnectorQR(url string) {
+	if strings.TrimSpace(url) == "" || pairQROptOut() {
+		return
+	}
+	qrterminal.GenerateWithConfig(url, qrterminal.Config{
+		Level:     qrterminal.L,
+		Writer:    os.Stdout,
+		BlackChar: qrterminal.BLACK,
+		WhiteChar: qrterminal.WHITE,
+		QuietZone: 2,
+	})
+	fmt.Println()
 }
 
 func runMCPUnregister(args []string) {

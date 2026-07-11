@@ -189,14 +189,17 @@ type ListedDevice = {
   agentVersion?: string;
   agentVersionReportedAt?: number;
   /**
-   * Hosting provenance for the UI badge. "yaver-hosted" = a Yaver-managed box:
-   * it has a cloudMachines row that is Yaver-side (paid via LemonSqueezy or
-   * owner-adopted; origin !== "self-hosted"). "self-hosted" = the user's own
-   * box with no managed row. Informational only — entitlement gates stay
-   * server-side. Absent on guest-shared devices (the host's provenance isn't
-   * exposed to the guest).
+   * Hosting provenance for the UI badge (three tiers). "yaver-hosted" = a
+   * Yaver-managed box: a cloudMachines row that is Yaver-side (paid via
+   * LemonSqueezy or owner-adopted; origin !== "self-hosted"). "byo" = a box
+   * Yaver provisioned on the user's OWN cloud account (a byoMachines row, not
+   * deleted, linked by deviceId) — Yaver holds its snapshot/recreate path and
+   * auto scale-to-zeros it, but the user pays the provider. "self-hosted" = the
+   * user's own box with no provisioning row (Yaver never touches its power).
+   * Informational only — entitlement gates stay server-side. Absent on
+   * guest-shared devices (the host's provenance isn't exposed to the guest).
    */
-  hosting?: "yaver-hosted" | "self-hosted";
+  hosting?: "yaver-hosted" | "byo" | "self-hosted";
   managed?: boolean;
   /** cloudMachines._id for a managed box — lets the UI drive up/down (pause/resume). */
   machineId?: string;
@@ -1209,6 +1212,27 @@ export const listMyDevices = query({
       }
     }
 
+    // Third tier: BYO. A box Yaver provisioned on the USER's own cloud account
+    // lives in byoMachines (not cloudMachines), so it isn't "yaver-hosted" — but
+    // it isn't a plain self-hosted box either: Yaver holds its snapshot/recreate
+    // path and auto scale-to-zeros it to cut the user's provider bill. Surface it
+    // as its own tier so the UI flags it separately and the agent's auto-lifecycle
+    // (hosting_tier.go) can act on it. Linked to a device only once the box
+    // self-registers its deviceId; not-deleted rows only.
+    const userByoMachines = await ctx.db
+      .query("byoMachines")
+      .withIndex("by_user", (q) => q.eq("userId", session.user._id))
+      .collect();
+    const byoDeviceIds = new Set<string>();
+    for (const b of userByoMachines) {
+      if (typeof b.deviceId === "string" && b.deviceId.trim() !== "" && b.state !== "deleted") {
+        byoDeviceIds.add(b.deviceId);
+      }
+    }
+    // managed wins over byo wins over self-hosted.
+    const hostingFor = (deviceId: string): "yaver-hosted" | "byo" | "self-hosted" =>
+      managedByDeviceId.has(deviceId) ? "yaver-hosted" : byoDeviceIds.has(deviceId) ? "byo" : "self-hosted";
+
     const activeGuestAccessRecords = await ctx.db
       .query("guestAccess")
       .withIndex("by_hostUserId", (q) => q.eq("hostUserId", session.user._id))
@@ -1310,7 +1334,7 @@ export const listMyDevices = query({
       edgeProfile: d.edgeProfile,
       recoveryPosture: d.recoveryPosture,
       managed: managedByDeviceId.has(d.deviceId),
-      hosting: (managedByDeviceId.has(d.deviceId) ? "yaver-hosted" : "self-hosted") as "yaver-hosted" | "self-hosted",
+      hosting: hostingFor(d.deviceId),
       machineId: managedByDeviceId.get(d.deviceId)?.machineId,
       machineStatus: managedByDeviceId.get(d.deviceId)?.status,
     }));

@@ -839,6 +839,38 @@ export const listBySubscription = internalQuery({
   },
 });
 
+/** hostingForDevice — the three-tier provenance of ONE of the user's devices,
+ *  for the agent's own auto-lifecycle gate (desktop/agent/hosting_tier.go).
+ *  managed = a Yaver-side cloudMachines row (origin !== "self-hosted"); byo = a
+ *  non-deleted byoMachines row linked by deviceId; else self-hosted. Mirrors
+ *  the three-way logic in devices.listMyDevices so web/mobile/agent agree.
+ *  Internal — the /machine/hosting HTTP route scopes userId from the session. */
+export const hostingForDevice = internalQuery({
+  args: { userId: v.id("users"), deviceId: v.string() },
+  handler: async (ctx, { userId, deviceId }) => {
+    const did = deviceId.trim();
+    if (did === "") return { tier: "self-hosted" as const, managed: false, byo: false };
+
+    const cloud = await ctx.db
+      .query("cloudMachines")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    if (cloud.some((m) => m.deviceId === did && m.origin !== "self-hosted")) {
+      return { tier: "managed" as const, managed: true, byo: false };
+    }
+
+    const byo = await ctx.db
+      .query("byoMachines")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    if (byo.some((b) => b.deviceId === did && b.state !== "deleted")) {
+      return { tier: "byo" as const, managed: false, byo: true };
+    }
+
+    return { tier: "self-hosted" as const, managed: false, byo: false };
+  },
+});
+
 // ─── Mutations ──────────────────────────────────────────────────
 
 async function createCloudMachine(

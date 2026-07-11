@@ -32,6 +32,12 @@ import (
 // tokens: pure computation / lookup tools with NO access to the host's files,
 // shell, devices, cloud, or state. Everything not listed is denied. Deliberately
 // conservative — widen only via an explicit, reviewed policy.
+//
+// This is the scope a FRESH connector gets. A connector token lives in a
+// third-party cloud (Anthropic's servers when you use the Claude app), so
+// default-deny to toys is the right stranger-safe posture. The owner opts a
+// specific connector UP to mcpOwnerConnectorAllowedTools() via the consent
+// checkbox — see mcpElevatedConnectorScope.
 func mcpConnectorAllowedTools() string {
 	return strings.Join([]string{
 		"calculate", "translate", "world_clock", "currency_exchange", "convert_units",
@@ -39,6 +45,61 @@ func mcpConnectorAllowedTools() string {
 		"base64", "color", "password_gen", "lorem_ipsum", "epoch", "regex_test",
 		"jwt_decode", "figlet", "tldr", "geocode",
 	}, ",")
+}
+
+// mcpElevatedConnectorScope is the marker, carried in a token's `scope` claim,
+// that a connector was OWNER-elevated. It is NOT a scope a client may request:
+// stripConnectorElevation removes it from any client-supplied scope, and it is
+// re-added ONLY when the human ticks "Full access" on the /oauth consent form
+// (handleOauthLogin). This keeps elevation a deliberate human decision, not
+// something a connector can grant itself by asking.
+const mcpElevatedConnectorScope = "owner-connector"
+
+// mcpOwnerConnectorAllowedTools is the ELEVATED allowlist for a connector the
+// owner deliberately trusted. It is small and voice-shaped on purpose: a general
+// agent (the phone's Claude app) picks well from ~10 tools and badly from 740.
+// Breadth comes from the `ops` grand-tool (one tool, ~290 verbs) rather than
+// exposing every specialist tool. Even here, Layer-4 secret verbs never cross
+// machines (mcp_remote_proxy.go) and ACT verbs stay confirm-gated.
+//
+//	ops / ops_verbs / ops_plan  — the whole ops surface incl. runner_turn,
+//	                              runner_sessions, machine, status, git, deploy…
+//	say                          — speak a line back
+//	read-only device/status/discovery tools for "what do I have / is it up"
+func mcpOwnerConnectorAllowedTools() string {
+	return strings.Join([]string{
+		"ops", "ops_verbs", "ops_plan",
+		"say",
+		"yaver_status", "yaver_devices", "get_info", "get_system_info",
+		"primary_status", "primary_ping", "ping",
+	}, ",")
+}
+
+// stripConnectorElevation removes the elevation marker from a scope string so a
+// client cannot self-elevate by requesting scope="owner-connector". Called on
+// the client-supplied scope before the marker is (maybe) re-added on consent.
+func stripConnectorElevation(scope string) string {
+	fields := strings.Fields(scope)
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f == mcpElevatedConnectorScope {
+			continue
+		}
+		out = append(out, f)
+	}
+	return strings.Join(out, " ")
+}
+
+// connectorScopeElevated reports whether a verified connector JWT carries the
+// owner-elevation marker minted by our own AS.
+func connectorScopeElevated(claims map[string]interface{}) bool {
+	sc, _ := claims["scope"].(string)
+	for _, f := range strings.Fields(sc) {
+		if f == mcpElevatedConnectorScope {
+			return true
+		}
+	}
+	return false
 }
 
 // parseVerifyJWT validates an RS256 JWT minted by our AS: signature against the
@@ -163,9 +224,18 @@ func (s *HTTPServer) authMCP(next http.HandlerFunc) http.HandlerFunc {
 				}
 			}
 			// CONNECTOR: hard default-deny scope. Strip any inbound scope header
-			// (never trust the client) and stamp the safe allowlist.
+			// (never trust the client) and stamp the allowlist the TOKEN earned.
+			// A fresh connector gets the toy list; one the owner elevated on the
+			// consent form (marker in the signed scope claim) gets the small
+			// voice-shaped ops surface. The elevation cannot be self-granted — it
+			// is only ever minted by our own AS after a human ticked the box.
+			allowed := mcpConnectorAllowedTools()
+			if connectorScopeElevated(claims) {
+				allowed = mcpOwnerConnectorAllowedTools()
+				r.Header.Set("X-Yaver-Connector-Elevated", "true")
+			}
 			r.Header.Del("X-Yaver-AllowedTools")
-			r.Header.Set("X-Yaver-AllowedTools", mcpConnectorAllowedTools())
+			r.Header.Set("X-Yaver-AllowedTools", allowed)
 			r.Header.Set("X-Yaver-Connector", "true")
 			next(w, r)
 			return

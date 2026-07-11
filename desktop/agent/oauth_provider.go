@@ -345,7 +345,7 @@ func (s *HTTPServer) handleOauthAuthorize(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!doctype html><html><body style="font-family:system-ui;max-width:360px;margin:64px auto;padding:24px">
 <h2>Sign in to Yaver</h2>
-<p style="color:#555;font-size:14px">Authorize <b>%s</b> to connect to your Yaver agent (limited tool access).</p>
+<p style="color:#555;font-size:14px">Authorize <b>%s</b> to connect to your Yaver agent.</p>
 <form method="POST" action="/oauth/login">
 <input type="hidden" name="client_id" value="%s">
 <input type="hidden" name="redirect_uri" value="%s">
@@ -355,6 +355,8 @@ func (s *HTTPServer) handleOauthAuthorize(w http.ResponseWriter, r *http.Request
 <input type="hidden" name="resource" value="%s">
 <p><input name="email" type="email" placeholder="email" required style="width:100%%;padding:10px"></p>
 <p><input name="password" type="password" placeholder="password" required style="width:100%%;padding:10px"></p>
+<label style="display:block;font-size:13px;color:#555;margin:4px 0 16px;line-height:1.4">
+<input type="checkbox" name="elevate" value="on" style="vertical-align:middle"> <b>Full access</b> — let this connector run ops and drive coding runners (claude/codex/opencode/glm) on this machine. Leave unchecked for read-only utility tools only.</label>
 <button type="submit" style="width:100%%;padding:12px;background:#4F46E5;color:#fff;border:0;border-radius:8px">Sign in &amp; authorize</button>
 </form>
 </body></html>`, html.EscapeString(clientID), html.EscapeString(clientID), html.EscapeString(redirectURI), html.EscapeString(scope), html.EscapeString(state), html.EscapeString(codeChallenge), html.EscapeString(resource))
@@ -378,6 +380,15 @@ func (s *HTTPServer) handleOauthLogin(w http.ResponseWriter, r *http.Request) {
 	if user == nil || !verifyPassword(password, user.Hash, user.Salt) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
+	}
+	// Elevation is a HUMAN decision made here, on the consent form — never a
+	// scope a client can request. Strip any client-injected marker, then re-add
+	// it only if the person actually ticked "Full access". The marker rides the
+	// scope claim into the minted token; authMCP reads it to pick the elevated
+	// vs the default (toy) connector allowlist.
+	scope = stripConnectorElevation(scope)
+	if r.PostForm.Get("elevate") == "on" {
+		scope = strings.TrimSpace(scope + " " + mcpElevatedConnectorScope)
 	}
 	code := randomFormID() + randomFormID()
 	oauthMu.Lock()

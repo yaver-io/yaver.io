@@ -4846,6 +4846,27 @@ http.route({
   }),
 });
 
+/** GET /machine/hosting?deviceId=<id> — the three-tier hosting provenance
+ *  (managed | byo | self-hosted) of one of the caller's devices. The agent
+ *  calls this to gate its own auto scale-to-zero (hosting_tier.go): it may
+ *  power-manage managed/byo boxes it provisioned, never a self-hosted one.
+ *  Session-scoped; returns self-hosted for an unknown/foreign deviceId (fail
+ *  safe — never claim a box is manageable when it isn't the caller's). */
+http.route({
+  path: "/machine/hosting",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const deviceId = (new URL(request.url).searchParams.get("deviceId") || "").trim();
+    const hosting = await ctx.runQuery(internal.cloudMachines.hostingForDevice, {
+      userId: session.userDocId as any,
+      deviceId,
+    });
+    return jsonResponse({ ok: true, ...hosting });
+  }),
+});
+
 // POST /byo/provision-init — mint a BYO box bootstrap (device credential +
 // self-bootstrapping cloud-init) so the PHONE can create the server on the
 // user's own Hetzner account. No Hetzner token here: the phone holds it and
