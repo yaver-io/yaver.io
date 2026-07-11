@@ -83,74 +83,25 @@ func (m *CloudDeployManager) hetznerSnapshotServerReturningID(token, serverID, l
 // image. Kept separate so hetznerCreateServer's signature + callers
 // are untouched.
 func (m *CloudDeployManager) hetznerCreateServerFromImage(token, name, plan, region, imageID string) (string, string, error) {
-	// arm64 (cax*) — MUST match the golden snapshot's arch so machine_up boots it.
-	serverTypeMap := map[string]string{"starter": "cax11", "pro": "cax21", "scale": "cax31"}
-	serverType, ok := serverTypeMap[plan]
-	if !ok {
-		serverType = "cax11"
-	}
-	locationMap := map[string]string{"eu": "nbg1", "us": "ash"}
-	location, ok := locationMap[region]
-	if !ok {
-		location = "nbg1"
-	}
-	// Hetzner accepts `image` as a numeric id or a name. A snapshot id
-	// is numeric — send it as a number when it parses, else as-is.
+	// Resume path — capacity-resilient too (scale-to-zero DEPENDS on resume
+	// succeeding; a single-DC stock-out must not strand a paused box). arm
+	// (cax*) MUST match the golden snapshot's arch. See cloud_capacity.go.
+	serverType := hetznerServerTypeForPlan(plan)
+	// Hetzner accepts `image` as a numeric id or a name. A snapshot id is
+	// numeric — send it as a number when it parses, else as-is.
 	var image interface{} = imageID
 	if n, perr := strconv.Atoi(imageID); perr == nil {
 		image = n
 	}
-	payload := map[string]interface{}{
-		"name":        name,
-		"server_type": serverType,
-		"image":       image,
-		"location":    location,
-		"user_data":   cloudBootstrapScript(),
-	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest("POST", hetznerAPIBase+"/servers", bytes.NewReader(body)) //nolint:noctx
+	ip, id, err := m.hetznerCreateResilient(token, serverType, region, map[string]interface{}{
+		"name":      name,
+		"image":     image,
+		"user_data": cloudBootstrapScript(),
+	})
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("hetzner API: %w", err)
-	}
-	defer resp.Body.Close()
-	var result struct {
-		Server struct {
-			ID        int `json:"id"`
-			PublicNet struct {
-				IPv4 struct {
-					IP string `json:"ip"`
-				} `json:"ipv4"`
-			} `json:"public_net"`
-		} `json:"server"`
-		Error *struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", fmt.Errorf("parse hetzner response: %w", err)
-	}
-	if result.Error != nil {
-		return "", "", fmt.Errorf("hetzner error %s: %s", result.Error.Code, result.Error.Message)
-	}
-	ip := result.Server.PublicNet.IPv4.IP
-	if ip == "" {
-		return "", "", fmt.Errorf("hetzner returned no IP for restored server")
-	}
-	id := strconv.Itoa(result.Server.ID)
-	if !hetznerSkipReadyWait {
-		for i := 0; i < 20; i++ {
-			if err := m.cloudSSHExec(ip, "echo ready"); err == nil {
-				break
-			}
-		}
-	}
+	m.hetznerWaitSSH(ip)
 	return ip, id, nil
 }
 

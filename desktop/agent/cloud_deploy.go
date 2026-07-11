@@ -854,85 +854,19 @@ var (
 // string) — the id is required to snapshot+delete the box later
 // (Phase A managed add/remove). The id was previously discarded.
 func (m *CloudDeployManager) hetznerCreateServer(token, name, plan, region string) (string, string, error) {
-	// Map Yaver plan → Hetzner server type
-	serverTypeMap := map[string]string{
-		"starter": "cax11",
-		"pro":     "cax21",
-		"scale":   "cax31",
-	}
-	serverType, ok := serverTypeMap[plan]
-	if !ok {
-		serverType = "cax11"
-	}
-
-	locationMap := map[string]string{
-		"eu": "nbg1",
-		"us": "ash",
-	}
-	location, ok := locationMap[region]
-	if !ok {
-		location = "nbg1"
-	}
-
-	payload := map[string]interface{}{
-		"name":        name,
-		"server_type": serverType,
-		"image":       "ubuntu-22.04",
-		"location":    location,
-		"user_data":   cloudBootstrapScript(),
-	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest("POST", hetznerAPIBase+"/servers", bytes.NewReader(body)) //nolint:noctx
+	// Capacity-resilient: tries every valid location for the arch and falls
+	// through single-DC stock-outs (errHetznerCapacity when all are out). See
+	// cloud_capacity.go for why (2026-07-11 arm outage).
+	serverType := hetznerServerTypeForPlan(plan)
+	ip, id, err := m.hetznerCreateResilient(token, serverType, region, map[string]interface{}{
+		"name":      name,
+		"image":     "ubuntu-24.04",
+		"user_data": cloudBootstrapScript(),
+	})
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("hetzner API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Server struct {
-			ID         int `json:"id"`
-			PublicNet  struct {
-				IPv4 struct {
-					IP string `json:"ip"`
-				} `json:"ipv4"`
-			} `json:"public_net"`
-		} `json:"server"`
-		Error *struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", fmt.Errorf("parse hetzner response: %w", err)
-	}
-	if result.Error != nil {
-		return "", "", fmt.Errorf("hetzner error %s: %s", result.Error.Code, result.Error.Message)
-	}
-
-	ip := result.Server.PublicNet.IPv4.IP
-	if ip == "" {
-		return "", "", fmt.Errorf("hetzner returned no IP for new server")
-	}
-	id := fmt.Sprintf("%d", result.Server.ID)
-
-	// Wait for SSH to become available (server needs ~30s to boot).
-	// Skipped under test (hetznerSkipReadyWait) so the fake API path
-	// doesn't sleep 100s.
-	if !hetznerSkipReadyWait {
-		for i := 0; i < 20; i++ {
-			time.Sleep(5 * time.Second)
-			if err := m.cloudSSHExec(ip, "echo ready"); err == nil {
-				break
-			}
-		}
-	}
+	m.hetznerWaitSSH(ip)
 	return ip, id, nil
 }
 
