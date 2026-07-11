@@ -2611,11 +2611,19 @@ export default function DevicesView({
                           className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                             device.hosting === "yaver-hosted"
                               ? "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
-                              : "border-slate-300 bg-slate-50 text-slate-600 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-300"
+                              : device.hosting === "byo"
+                                ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+                                : "border-slate-300 bg-slate-50 text-slate-600 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-300"
                           }`}
-                          title={device.hosting === "yaver-hosted" ? "Managed by Yaver (paid via LemonSqueezy or owner-adopted)" : "Your own self-hosted box"}
+                          title={
+                            device.hosting === "yaver-hosted"
+                              ? "Managed by Yaver (paid via LemonSqueezy or owner-adopted)"
+                              : device.hosting === "byo"
+                                ? "Yaver-provisioned on your own cloud account — auto scale-to-zero to cut your provider bill"
+                                : "Your own self-hosted box"
+                          }
                         >
-                          {device.hosting === "yaver-hosted" ? "Yaver-hosted" : "Self-hosted"}
+                          {device.hosting === "yaver-hosted" ? "Yaver-hosted" : device.hosting === "byo" ? "BYO" : "Self-hosted"}
                         </span>
                       ) : null}
                     </div>

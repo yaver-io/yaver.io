@@ -42,8 +42,8 @@ export interface CoreDevice {
   /** Unix ms of the latest heartbeat the agent sent to Convex. */
   lastHeartbeat: number;
   isGuest: boolean;
-  /** Hosting provenance: "yaver-hosted" = Yaver-managed box (paid/adopted); "self-hosted" = own box. */
-  hosting?: 'yaver-hosted' | 'self-hosted';
+  /** Hosting provenance: "yaver-hosted" = Yaver-managed box (paid/adopted); "byo" = Yaver-provisioned on your own cloud account; "self-hosted" = your own box. */
+  hosting?: 'yaver-hosted' | 'byo' | 'self-hosted';
   managed?: boolean;
   /** cloudMachines._id for a managed box — drives up/down (pause/resume). */
   machineId?: string;

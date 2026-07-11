@@ -329,8 +329,8 @@ export interface Device {
   lanIps?: string[];
   /** true when this device belongs to a host who granted us guest access */
   isGuest?: boolean;
-  /** Hosting provenance: "yaver-hosted" = Yaver-managed box (paid/adopted); "self-hosted" = own box. */
-  hosting?: 'yaver-hosted' | 'self-hosted';
+  /** Hosting provenance: "yaver-hosted" = Yaver-managed box (paid/adopted); "byo" = Yaver-provisioned on your own cloud account; "self-hosted" = your own box. */
+  hosting?: 'yaver-hosted' | 'byo' | 'self-hosted';
   managed?: boolean;
   /** cloudMachines._id for a managed box — drives up/down (pause/resume). */
   machineId?: string;
@@ -1085,7 +1085,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             lastTunnelEvent,
             needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
-            hosting: d.hosting === "yaver-hosted" || d.hosting === "self-hosted" ? d.hosting : undefined,
+            hosting: d.hosting === "yaver-hosted" || d.hosting === "byo" || d.hosting === "self-hosted" ? d.hosting : undefined,
             managed: typeof d.managed === "boolean" ? d.managed : undefined,
             machineId: typeof d.machineId === "string" ? d.machineId : undefined,
             machineStatus: typeof d.machineStatus === "string" ? d.machineStatus : undefined,

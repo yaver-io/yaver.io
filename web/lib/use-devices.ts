@@ -124,9 +124,10 @@ export interface Device {
   agentVersionReportedAt?: number;
   /**
    * Hosting provenance from listMyDevices. "yaver-hosted" = a Yaver-managed box
-   * (paid via LemonSqueezy or owner-adopted); "self-hosted" = the user's own box.
+   * (paid via LemonSqueezy or owner-adopted); "byo" = Yaver-provisioned on the
+   * user's own cloud account; "self-hosted" = the user's own box.
    */
-  hosting?: "yaver-hosted" | "self-hosted";
+  hosting?: "yaver-hosted" | "byo" | "self-hosted";
   managed?: boolean;
   /**
    * True when this row lacks both hardwareId and publicKey AND is not a
@@ -548,7 +549,9 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         agentVersionReportedAt:
           typeof d.agentVersionReportedAt === "number" ? d.agentVersionReportedAt : undefined,
         hosting:
-          d.hosting === "yaver-hosted" || d.hosting === "self-hosted" ? d.hosting : undefined,
+          d.hosting === "yaver-hosted" || d.hosting === "byo" || d.hosting === "self-hosted"
+            ? d.hosting
+            : undefined,
         managed: typeof d.managed === "boolean" ? d.managed : undefined,
         // Ghost: non-guest row lacking both stable identifiers. Cannot
         // be reliably reconnect-targeted. Surfaced in the UI so the
