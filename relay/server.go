@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -109,6 +110,7 @@ type RelayServer struct {
 	// per-device active stream caps. Defaults are generous and configurable
 	// with RELAY_* env vars so existing clients keep working.
 	abuseGuard *abuseGuard
+	sigNonces  *sigNonceCache
 }
 
 type exposeRoute struct {
@@ -144,6 +146,7 @@ func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain st
 		// available (callers must use the relay password instead).
 		adminToken: strings.TrimSpace(os.Getenv("RELAY_ADMIN_TOKEN")),
 		abuseGuard: newAbuseGuard(abuseGuardConfigFromEnv()),
+		sigNonces:  newSigNonceCache(),
 	}
 	// Initialize bandwidth manager
 	dataDir := os.Getenv("RELAY_DATA_DIR")
@@ -389,6 +392,71 @@ func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token st
 		return "", false
 	}
 	return result.UserID, result.OK
+}
+
+// resolveSigViaConvex fetches the SIGNER device's ed25519 signing public key
+// and confirms its owner also owns the TARGET device. Returns
+// (userId, signerPubKeyBase64, ok). The relay holds no secret — it receives
+// only public material and verifies the signature itself (verifyDeviceSig).
+func (s *RelayServer) resolveSigViaConvex(signerDeviceID, targetDeviceID string) (string, string, bool) {
+	if s.convexURL == "" {
+		return "", "", false
+	}
+	url := strings.TrimRight(s.convexURL, "/") + "/relay/resolve-sig"
+	body, _ := json.Marshal(map[string]string{
+		"signerDeviceId": signerDeviceID,
+		"targetDeviceId": targetDeviceID,
+	})
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		return "", "", false
+	}
+	defer resp.Body.Close()
+	var result struct {
+		OK              bool   `json:"ok"`
+		UserID          string `json:"userId"`
+		SignerPublicKey string `json:"signerPublicKey"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", false
+	}
+	return result.UserID, result.SignerPublicKey, result.OK
+}
+
+// authorizeProxyViaSig tries the asymmetric per-device signature path for a
+// /d/<targetDeviceID>/ proxy request. On success it returns the resolved userId
+// and true; on ANY failure it returns false so the caller falls back to the
+// password path — this can never lock out a client that hasn't migrated. It
+// buffers the request body (only when a signature is present) so it can hash it
+// for verification AND still forward it downstream.
+func (s *RelayServer) authorizeProxyViaSig(r *http.Request, targetDeviceID string) (string, bool) {
+	signerDeviceID := strings.TrimSpace(r.Header.Get("X-Yaver-Device"))
+	if signerDeviceID == "" {
+		return "", false
+	}
+	var body []byte
+	if r.Body != nil {
+		b, err := io.ReadAll(io.LimitReader(r.Body, s.abuseGuard.cfg.MaxRequestBodyBytes))
+		if err != nil {
+			return "", false
+		}
+		body = b
+		r.Body = io.NopCloser(bytes.NewReader(body)) // let the downstream proxy re-read it
+	}
+	userID, pubB64, ok := s.resolveSigViaConvex(signerDeviceID, targetDeviceID)
+	if !ok {
+		return "", false
+	}
+	pub := decodeSignPubKey(pubB64)
+	if pub == nil {
+		return "", false
+	}
+	signed, ok := verifyDeviceSig(r, body, pub, s.sigNonces)
+	if !ok || !sigDeviceMatches(signed, signerDeviceID) {
+		return "", false
+	}
+	return userID, true
 }
 
 // resolveUserIDFromPassword is the cache-aware variant used by bus
@@ -1053,21 +1121,34 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if relayPw == "" {
 		relayPw = r.URL.Query().Get("__rp")
 	}
-	userID, ok := s.validateRelayAccess(relayPw, "proxy", deviceID, "")
-	if !ok {
-		// Throttle invalid-password attempts so the account-wide relay password
-		// isn't brute-forcible over HTTP (relay security audit, finding #4).
-		// Keyed on the real client IP (trusted-proxy-aware clientIP).
-		if !s.abuseGuard.allowInvalidAuth(s.abuseGuard.clientIP(r)) {
-			writeRelayError(w, http.StatusTooManyRequests, "too many invalid relay password attempts")
+	// Asymmetric per-device signature path (preferred; no shared secret in the
+	// URL/logs). It is tried first and, on any failure, falls through to the
+	// password path — so a client that hasn't migrated is never locked out.
+	var userID string
+	var authed bool
+	if hasDeviceSig(r) {
+		if uid, sigOK := s.authorizeProxyViaSig(r, deviceID); sigOK {
+			userID, authed = uid, true
+		}
+	}
+	if !authed {
+		uid, ok := s.validateRelayAccess(relayPw, "proxy", deviceID, "")
+		if !ok {
+			// Throttle invalid-auth attempts so the account-wide relay password
+			// isn't brute-forcible over HTTP (relay security audit, finding #4).
+			// Keyed on the real client IP (trusted-proxy-aware clientIP).
+			if !s.abuseGuard.allowInvalidAuth(s.abuseGuard.clientIP(r)) {
+				writeRelayError(w, http.StatusTooManyRequests, "too many invalid relay password attempts")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "invalid relay password",
+			})
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": "invalid relay password",
-		})
-		return
+		userID = uid
 	}
 	if userID != "" && !s.abuseGuard.allow("proxy-user:"+userID, s.abuseGuard.cfg.ProxyPerUserPerMin, s.abuseGuard.cfg.ProxyBurstPerUser) {
 		s.abuseGuard.logLimited("proxy-user", userID)

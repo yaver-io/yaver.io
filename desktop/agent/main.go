@@ -2599,6 +2599,7 @@ func runServe(args []string) {
 			Name:            hostname,
 			Platform:        platform,
 			PublicKey:       devicePubKey,
+			SignPublicKey:   deviceSignPublicKey(),
 			QuicHost:        localIP,
 			QuicPort:        *httpPort,
 			PublicEndpoints: publicEndpoints,
@@ -2619,6 +2620,7 @@ func runServe(args []string) {
 					Name:            hostname,
 					Platform:        platform,
 					PublicKey:       devicePubKey,
+					SignPublicKey:   deviceSignPublicKey(),
 					QuicHost:        localIP,
 					QuicPort:        *httpPort,
 					PublicEndpoints: publicEndpoints,
@@ -5737,14 +5739,15 @@ func printStatusRunnableMachinesFromDevices(devices []DeviceInfo, err error, cfg
 
 	fmt.Printf("  Runnable machines: %d total, %d up\n", len(runnable), onlineCount)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "    NAME\tSTATUS\tACCESS\tSESSION\tADDRESS")
+	fmt.Fprintln(w, "    NAME\tHOSTING\tSTATUS\tACCESS\tSESSION\tADDRESS")
 	for _, d := range runnable {
 		status := "down"
 		if d.IsOnline {
 			status = "up"
 		}
-		fmt.Fprintf(w, "    %s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "    %s\t%s\t%s\t%s\t%s\t%s\n",
 			statusDeviceLabel(d, cfg.DeviceID),
+			deviceHostingLabel(d),
 			status,
 			deviceAccessLabel(d),
 			deviceSessionBindingLabel(d),
@@ -7224,7 +7227,7 @@ func runDevices(args []string) {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer w.Flush()
-	fmt.Fprintln(w, "ID\tROLE\tALIAS\tNAME\tPLATFORM\tSTATUS\tACCESS\tSESSION\tRUNNERS\tADDRESS")
+	fmt.Fprintln(w, "ID\tROLE\tHOSTING\tALIAS\tNAME\tPLATFORM\tSTATUS\tACCESS\tSESSION\tRUNNERS\tADDRESS")
 	for _, d := range devices {
 		status := "offline"
 		if d.IsOnline {
@@ -7250,8 +7253,8 @@ func runDevices(args []string) {
 			runners = "-"
 		}
 		address := fmt.Sprintf("%s:%d", d.QuicHost, d.QuicPort)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, role, alias, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, address)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			id, role, deviceHostingLabel(d), alias, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, address)
 	}
 	w.Flush()
 
@@ -9008,6 +9011,45 @@ type DeviceInfo struct {
 	UseHostAPIKeys            bool     `json:"useHostApiKeys,omitempty"`
 	AllowGuestProvidedAPIKeys bool     `json:"allowGuestProvidedApiKeys,omitempty"`
 	SessionBinding            string   `json:"sessionBinding,omitempty"`
+	// Hosting provenance (populated by listMyDevices). "yaver-hosted" =
+	// a Yaver-managed cloud box (paid via LemonSqueezy or owner-adopted);
+	// "byo" = a bring-your-own cloud box provisioned through Yaver;
+	// "self-hosted" = a machine the user runs `yaver serve` on directly.
+	// Managed/BYO boxes also carry the cloudMachines row id + lifecycle
+	// status so the CLI can show "managed·paused" for an auto-offed box.
+	Hosting       string `json:"hosting,omitempty"`
+	Managed       bool   `json:"managed,omitempty"`
+	MachineID     string `json:"machineId,omitempty"`
+	MachineStatus string `json:"machineStatus,omitempty"`
+}
+
+// deviceHostingLabel renders a device's provisioning provenance for the
+// CLI listings: "managed" (Yaver-hosted cloud box), "byo" (bring-your-own
+// cloud box provisioned through Yaver), or "self-hosted" (plain
+// `yaver serve`). For a managed/byo box that isn't currently running, the
+// lifecycle status is appended (e.g. "managed·paused") so an auto-offed
+// box doesn't read as live.
+func deviceHostingLabel(d DeviceInfo) string {
+	base := "self-hosted"
+	switch strings.TrimSpace(d.Hosting) {
+	case "yaver-hosted":
+		base = "managed"
+	case "byo":
+		base = "byo"
+	case "self-hosted":
+		base = "self-hosted"
+	default:
+		if d.Managed {
+			base = "managed"
+		}
+	}
+	if base != "self-hosted" {
+		st := strings.TrimSpace(d.MachineStatus)
+		if st != "" && st != "running" && st != "active" {
+			return base + "·" + st
+		}
+	}
+	return base
 }
 
 func listDevices(baseURL, token string) ([]DeviceInfo, error) {
@@ -9619,6 +9661,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 			Name:            hostname,
 			Platform:        runtime.GOOS,
 			PublicKey:       pub,
+			SignPublicKey:   deviceSignPublicKey(),
 			QuicHost:        quicHost,
 			QuicPort:        quicPort,
 			PublicEndpoints: publicEndpoints,

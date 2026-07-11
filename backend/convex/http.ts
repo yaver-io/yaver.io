@@ -3478,6 +3478,33 @@ http.route({
   }),
 });
 
+/** POST /relay/resolve-sig — the relay's asymmetric-auth resolver. Given the
+ *  SIGNER device and the TARGET device, returns the signer's ed25519 signing
+ *  PUBLIC key (so the relay verifies the signature locally) and whether the
+ *  signer's owner owns the target. No user auth (relay-auth); returns only
+ *  public material + a userId, never a secret. docs/yaver-relay-asymmetric-auth.md */
+http.route({
+  path: "/relay/resolve-sig",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      if (!body.signerDeviceId || typeof body.signerDeviceId !== "string") {
+        return jsonResponse({ ok: false, error: "signerDeviceId required" }, 400);
+      }
+      const res = await ctx.runQuery(internal.devices.resolveDeviceSig, {
+        signerDeviceId: body.signerDeviceId,
+        targetDeviceId:
+          typeof body.targetDeviceId === "string" ? body.targetDeviceId : undefined,
+      });
+      if (!res.ok) return jsonResponse({ ok: false }, 401);
+      return jsonResponse({ ok: true, userId: res.userId, signerPublicKey: res.signerPublicKey });
+    } catch {
+      return jsonResponse({ ok: false, error: "internal error" }, 500);
+    }
+  }),
+});
+
 // ── Push token registration (device-auth approval channel, P2) ──────
 
 /** POST /push/register — a signed-in phone registers its push token so a

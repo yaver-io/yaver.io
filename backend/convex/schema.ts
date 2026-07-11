@@ -314,6 +314,11 @@ export default defineSchema({
     // list, never a path or secret.
     publishCapabilities: v.optional(v.array(v.string())),
     publicKey: v.optional(v.string()),
+    // ed25519 signing public key (base64), distinct from `publicKey` (X25519
+    // box, encryption-only). Published so the relay can verify per-device
+    // request signatures holding only public material — no shared secret on the
+    // relay. See docs/yaver-relay-asymmetric-auth.md.
+    signPublicKey: v.optional(v.string()),
     quicHost: v.string(),
     // Every reachable IPv4 address the agent has — preferred outbound
     // first, then any additional LAN/Tailscale/Ethernet/VPN address it

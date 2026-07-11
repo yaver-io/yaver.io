@@ -62,9 +62,10 @@ func (c *sigNonceCache) remember(key string, now time.Time) bool {
 
 // hasDeviceSig reports whether a request even claims to be signature-authed, so
 // callers can cheaply decide whether to attempt sig verification before falling
-// back to the password path.
+// back to the password path. Uses a dedicated header, NOT Authorization — the
+// Bearer token there authenticates the end agent and must ride through.
 func hasDeviceSig(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("Authorization"), "Yaver-Sig")
+	return strings.TrimSpace(r.Header.Get("X-Yaver-Sig")) != ""
 }
 
 // verifyDeviceSig verifies a Yaver-Sig request against the device's ed25519

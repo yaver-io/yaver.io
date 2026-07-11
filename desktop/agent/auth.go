@@ -708,7 +708,7 @@ type GuestConfig struct {
 	// AllowedProjects narrows this grant to specific project slugs on the host.
 	// Empty = all projects. Enforced on /feedback list filtering, /feedback fix
 	// triggering, and /tasks workDir gating.
-	AllowedProjects           []string `json:"allowedProjects,omitempty"`
+	AllowedProjects []string `json:"allowedProjects,omitempty"`
 	// CanVibe opts an sdk-project (tester) grant into the AI-improve surface
 	// (/vibing). Default nil/false — vibe is explicit opt-in at invite time.
 	// A tester's vibe task is always force-isolated + routed to a GLM/BYO
@@ -1332,6 +1332,7 @@ type RegisterDeviceRequest struct {
 	Name            string                    `json:"name"`
 	Platform        string                    `json:"platform"`
 	PublicKey       string                    `json:"publicKey"`
+	SignPublicKey   string                    `json:"signPublicKey,omitempty"`
 	QuicHost        string                    `json:"quicHost"`
 	QuicPort        int                       `json:"quicPort"`
 	PublicEndpoints []string                  `json:"publicEndpoints,omitempty"`

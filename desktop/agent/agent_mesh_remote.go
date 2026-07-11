@@ -707,6 +707,19 @@ func doRemoteAgentRequest(ctx context.Context, candidates []RemoteAgentCandidate
 		req.Header.Set("X-Yaver-Proxied-By", localDeviceID())
 		req.Header.Set("X-Yaver-Proxied-Tool", firstNonEmpty(req.Header.Get("X-Yaver-Proxied-Tool"), "remote-request"))
 
+		// Sign relay-routed requests with this device's key so the relay can
+		// authorize us without the shared password. Belt-and-suspenders: the
+		// X-Relay-Password header still rides along (in candidate.Headers), so an
+		// un-upgraded relay keeps working — the relay tries the signature first
+		// and falls back to the password.
+		if strings.Contains(url, "/d/") {
+			if sk, skErr := LoadOrGenerateSigningKey(); skErr == nil {
+				for k, v := range sk.SignRelayRequest(localDeviceID(), method, req.URL.Path, bodyJSON, time.Now().UnixMilli(), newSigNonce()) {
+					req.Header.Set(k, v)
+				}
+			}
+		}
+
 		resp, err := client.Do(req)
 		if err != nil {
 			recordRemoteAgentFailure(candidate.DeviceID, candidate.BaseURL, time.Now())

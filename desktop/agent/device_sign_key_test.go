@@ -15,7 +15,7 @@ func TestSignRelayRequest_Verifies(t *testing.T) {
 	body := []byte(`{"x":1}`)
 
 	h := sk.SignRelayRequest("dev1", "POST", "/d/dev1/ops", body, 1700000000000, "n1")
-	if h["Authorization"] != "Yaver-Sig v1" || h["X-Yaver-Device"] != "dev1" {
+	if h["X-Yaver-Sig"] != "v1" || h["X-Yaver-Device"] != "dev1" {
 		t.Fatalf("unexpected headers: %v", h)
 	}
 

@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalQuery } from "./_generated/server";
 import { Doc } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
 import {
@@ -540,6 +540,7 @@ export const registerDevice = mutation({
       thermalState: v.optional(v.union(v.literal("nominal"), v.literal("warm"), v.literal("hot"))),
     })),
     publicKey: v.optional(v.string()),
+    signPublicKey: v.optional(v.string()),
     quicHost: v.string(),
     quicPort: v.number(),
     publicEndpoints: v.optional(v.array(v.string())),
@@ -583,6 +584,9 @@ export const registerDevice = mutation({
         isOnline: true,
         needsAuth: false,
         lastHeartbeat: Date.now(),
+        // Only stamp the signing pubkey when the agent sent one (older agents
+        // omit it) so a re-register from an old build doesn't wipe it.
+        ...(args.signPublicKey ? { signPublicKey: args.signPublicKey } : {}),
         ...(args.hardwareId ? { hardwareId: args.hardwareId } : {}),
         ...(args.hardwareProfile ? { hardwareProfile: args.hardwareProfile } : {}),
         ...(args.recoveryPosture ? { recoveryPosture: args.recoveryPosture } : {}),
@@ -689,6 +693,7 @@ export const registerDevice = mutation({
       deviceClass: args.deviceClass,
       edgeProfile: args.edgeProfile,
       publicKey: args.publicKey,
+      signPublicKey: args.signPublicKey,
       quicHost: args.quicHost,
       quicPort: args.quicPort,
       publicEndpoints: args.publicEndpoints,
@@ -2002,5 +2007,44 @@ export const seedAutoPublicUrls = mutation({
       updated++;
     }
     return { ok: true, updated, skipped, total: devices.length };
+  },
+});
+
+/** resolveDeviceSig — the relay's signature-auth resolver
+ *  (docs/yaver-relay-asymmetric-auth.md). Given the SIGNER device (whose key
+ *  signed the request) and the TARGET device it wants to reach, return the
+ *  signer's ed25519 signing pubkey (so the relay can verify the signature) and
+ *  whether the signer's owner also owns the target — the same-user mesh rule.
+ *  ok=false when either device is unknown, the signer has no sign key, or the
+ *  owners differ. Internal: the /relay/resolve-sig HTTP route (relay-auth, no
+ *  user session) calls it; it exposes only a PUBLIC key + a userId, never a
+ *  secret. */
+export const resolveDeviceSig = internalQuery({
+  args: { signerDeviceId: v.string(), targetDeviceId: v.optional(v.string()) },
+  handler: async (ctx, { signerDeviceId, targetDeviceId }) => {
+    const deny = { ok: false as const, userId: "", signerPublicKey: "" };
+    const signer = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", signerDeviceId))
+      .unique();
+    if (!signer || !signer.signPublicKey) return deny;
+
+    const target =
+      targetDeviceId && targetDeviceId !== signerDeviceId
+        ? await ctx.db
+            .query("devices")
+            .withIndex("by_deviceId", (q) => q.eq("deviceId", targetDeviceId))
+            .unique()
+        : signer;
+    if (!target) return deny;
+
+    // The signer's owner must own the target too (same-user mesh).
+    if (String(signer.userId) !== String(target.userId)) return deny;
+
+    return {
+      ok: true as const,
+      userId: String(signer.userId),
+      signerPublicKey: signer.signPublicKey,
+    };
   },
 });

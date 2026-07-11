@@ -22,7 +22,7 @@ func signLikeAgent(priv ed25519.PrivateKey, deviceID, method, path string, body 
 	canonical := strings.Join([]string{method, path, deviceID, ts, nonce, hex.EncodeToString(sum[:])}, "\n")
 	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte(canonical)))
 	req := httptest.NewRequest(method, path, nil)
-	req.Header.Set("Authorization", "Yaver-Sig v1")
+	req.Header.Set("X-Yaver-Sig", "v1")
 	req.Header.Set("X-Yaver-Device", deviceID)
 	req.Header.Set("X-Yaver-Timestamp", ts)
 	req.Header.Set("X-Yaver-Nonce", nonce)
