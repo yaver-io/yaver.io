@@ -31,6 +31,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Preflight — required config present + target reachable
+        run: |
+          # Fail FAST and CLEARLY on missing config, instead of a cryptic
+          # "Could not resolve hostname ''" halfway through. This is the class
+          # of failure that silently blocked a prior deploy.
+          fail=0
+          if [ -z "${{ secrets.RELAY_SSH_HOST }}" ]; then
+            echo "::error::RELAY_SSH_HOST secret is not set — cannot reach the relay box. Set it to the box's IP/hostname (same box as RELAY_HTTP_URL)."
+            fail=1
+          fi
+          if [ -z "${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" ]; then
+            echo "::error::HCLOUD_SSH_PRIVATE_KEY secret is not set — no SSH key to reach the box."
+            fail=1
+          fi
+          [ "$fail" = 1 ] && exit 1
+          HOST='${{ secrets.RELAY_SSH_HOST }}'
+          if ! getent hosts "$HOST" >/dev/null 2>&1 && ! echo "$HOST" | grep -qE '^[0-9.]+$'; then
+            echo "::error::RELAY_SSH_HOST '$HOST' does not resolve."
+            exit 1
+          fi
+          if ! nc -z -w 5 "$HOST" 22 2>/dev/null; then
+            echo "::error::RELAY_SSH_HOST '$HOST' is not reachable on port 22 (box down / firewall?)."
+            exit 1
+          fi
+          echo "Preflight OK — config present and $HOST:22 reachable."
+
       - name: Resolve target version
         run: |
           V='${{ github.event.inputs.version }}'
@@ -113,20 +139,46 @@ jobs:
           rm -f "$NEW" "$UNIT_NEW"
 
           systemctl daemon-reload
-          "$BIN" --help 2>&1 | head -3 || true
+          # Sanity: the new binary must at least run.
+          if ! "$BIN" --version >/dev/null 2>&1 && ! "$BIN" --help >/dev/null 2>&1; then
+            echo "::error::new binary won't execute — rolling back before restart"
+            [ -f "$BIN.previous" ] && install -m 0755 "$BIN.previous" "$BIN"
+            [ -f "$UNIT.previous" ] && cp "$UNIT.previous" "$UNIT"
+            systemctl daemon-reload; systemctl restart yaver-relay || true
+            exit 1
+          fi
 
           systemctl restart yaver-relay
-          sleep 2
-          systemctl --no-pager --lines=20 status yaver-relay
-          echo "=== first 20 log lines after restart ==="
-          journalctl -u yaver-relay --no-pager -n 20
+          sleep 3
 
-          echo "=== probe localhost :8080 with shared password ==="
-          PW=$(awk -F'--password ' '/--password/ {print $2}' /etc/systemd/system/yaver-relay.service | awk '{print $1}')
-          curl -s -m 4 -i "http://127.0.0.1:8080/d/fc30be6e-f87a-4e52-b340-fbad1ba1800e/health?__rp=$PW" | head -8
+          # HEALTH-GATED AUTO-ROLLBACK: if the new relay isn't serving /health,
+          # restore the .previous binary+unit and restart, so a bad deploy
+          # self-corrects instead of leaving the fallback path down.
+          if curl -fsS -m 5 "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
+            echo "=== health OK on new binary v${RELAY_VERSION} ==="
+            systemctl --no-pager --lines=10 status yaver-relay || true
+          else
+            echo "::error::new relay v${RELAY_VERSION} failed /health — AUTO-ROLLBACK to previous"
+            journalctl -u yaver-relay --no-pager -n 30 || true
+            [ -f "$BIN.previous" ] && install -m 0755 "$BIN.previous" "$BIN"
+            [ -f "$UNIT.previous" ] && cp "$UNIT.previous" "$UNIT"
+            systemctl daemon-reload
+            systemctl restart yaver-relay
+            sleep 3
+            if curl -fsS -m 5 "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
+              echo "rolled back to previous — healthy again"
+            else
+              echo "::error::ROLLBACK ALSO UNHEALTHY — manual intervention required"
+            fi
+            exit 1
+          fi
           REMOTE
 
-      - name: Probe public endpoint to confirm fix
+      - name: Probe public endpoint to confirm live
         run: |
+          # /health is unauthenticated — no secret in the workflow (the old
+          # hardcoded ?__rp=<password> was a committed credential; removed).
           sleep 3
-          curl -s -m 5 -i "https://public.yaver.io/d/fc30be6e-f87a-4e52-b340-fbad1ba1800e/health?__rp=afe47cbe5207aa99b721052bf264d96f" | head -8
+          code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "https://public.yaver.io/health" || echo 000)
+          echo "public.yaver.io/health → $code"
+          [ "$code" = "200" ] || { echo "::error::public relay health not 200"; exit 1; }

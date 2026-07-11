@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -111,6 +112,12 @@ type RelayServer struct {
 	// with RELAY_* env vars so existing clients keep working.
 	abuseGuard *abuseGuard
 	sigNonces  *sigNonceCache
+	// Auth-mix telemetry: how many proxy auths used a device signature vs the
+	// shared password. The password cutover (removing password auth) must be
+	// data-driven — flip it off only once authViaSig ≈ total. Exposed at
+	// /authmix (admin-authed).
+	authViaSig atomic.Uint64
+	authViaPw  atomic.Uint64
 }
 
 type exposeRoute struct {
@@ -263,6 +270,30 @@ func (s *RelayServer) authorizeAdmin(w http.ResponseWriter, r *http.Request) boo
 		"error": "unauthorized: provide Authorization: Bearer <RELAY_ADMIN_TOKEN> or X-Relay-Password",
 	})
 	return false
+}
+
+// handleAuthMix reports the sig-vs-password auth mix so the password cutover is
+// data-driven: flip password auth off only once device signatures are ≈ 100% of
+// proxy auths. Admin-authed, read-only.
+func (s *RelayServer) handleAuthMix(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	sig := s.authViaSig.Load()
+	pw := s.authViaPw.Load()
+	total := sig + pw
+	sigPct := 0.0
+	if total > 0 {
+		sigPct = float64(sig) / float64(total) * 100
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"authViaSig":      sig,
+		"authViaPassword": pw,
+		"total":           total,
+		"sigPercent":      sigPct,
+		"note":            "flip password auth off only when sigPercent is ~100",
+	})
 }
 
 // secretEqual is a constant-time string comparison for secrets (passwords,
@@ -787,6 +818,7 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux.HandleFunc("/presence", s.handlePresence)
 	mux.HandleFunc("/admin/set-password", s.handleSetPassword)
 	mux.HandleFunc("/admin/status", s.handleAdminStatus)
+	mux.HandleFunc("/authmix", s.handleAuthMix)
 	mux.HandleFunc("/admin/bandwidth", s.handleBandwidthStats)
 	// P2P bus — per-user fanout (see relay/bus.go). Not a broker;
 	// relay holds no topic state, just forwards events.
@@ -1129,6 +1161,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if hasDeviceSig(r) {
 		if uid, sigOK := s.authorizeProxyViaSig(r, deviceID); sigOK {
 			userID, authed = uid, true
+			s.authViaSig.Add(1)
 		}
 	}
 	if !authed {
@@ -1149,6 +1182,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		userID = uid
+		s.authViaPw.Add(1)
 	}
 	if userID != "" && !s.abuseGuard.allow("proxy-user:"+userID, s.abuseGuard.cfg.ProxyPerUserPerMin, s.abuseGuard.cfg.ProxyBurstPerUser) {
 		s.abuseGuard.logLimited("proxy-user", userID)
