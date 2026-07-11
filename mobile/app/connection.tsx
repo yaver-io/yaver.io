@@ -4,12 +4,14 @@
 // live MCP transport (network_interfaces / ip_route / ping / dns_lookup) via
 // callMcpDirect, so you can see both ends of the link from your phone.
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import type { ThemeColors } from "../src/constants/colors";
 import { useDevice } from "../src/context/DeviceContext";
+import { useAuth } from "../src/context/AuthContext";
+import { startManagedCloudMachine } from "../src/lib/subscription";
 import { quicClient } from "../src/lib/quic";
 import { callMcpDirect } from "../src/lib/yaverMcpDirect";
 import {
@@ -54,10 +56,48 @@ export default function ConnectionScreen() {
   const s = makeStyles(c);
   const router = useRouter();
   const dev = useDevice() as any;
+  const { token } = useAuth();
   const connectionStatus: string = dev?.connectionStatus ?? "disconnected";
   const activeDevice = dev?.activeDevice ?? null;
   const lastError: string | null = dev?.lastError ?? null;
   const connected = connectionStatus === "connected";
+
+  // A managed box that auto-off'd (self-park after idle) reports
+  // machineStatus "paused"/"stopped" and has no live endpoint — that's why
+  // the runner reads DISCONNECTED with a dead host. Detect it so we can
+  // explain "asleep, not broken" and offer a one-tap Wake instead of a
+  // bare error + `http://null:null`.
+  const devicesPool: any[] = dev?.devices ?? [];
+  const primaryDeviceId: string | null = dev?.primaryDeviceId ?? null;
+  const sleepingDevice = React.useMemo(() => {
+    const asleep = (d: any) => {
+      const st = String(d?.machineStatus ?? "").toLowerCase();
+      return !!d?.managed && (st === "paused" || st === "stopped" || st === "off");
+    };
+    if (activeDevice && asleep(activeDevice)) return activeDevice;
+    const prim = devicesPool.find((d) => d?.id === primaryDeviceId);
+    if (prim && asleep(prim)) return prim;
+    return devicesPool.find(asleep) ?? null;
+  }, [devicesPool, activeDevice, primaryDeviceId]);
+
+  const [waking, setWaking] = useState(false);
+  const [wakeMsg, setWakeMsg] = useState<string | null>(null);
+  const handleWake = useCallback(async () => {
+    const mid = sleepingDevice?.machineId;
+    if (!token || !mid) return;
+    setWaking(true);
+    setWakeMsg(null);
+    try {
+      await startManagedCloudMachine(token, mid);
+      setWakeMsg("Waking your box — it recreates from the latest snapshot and reconnects in ~1–2 min.");
+      // Kick a device refresh so the new status/IP flows in as it comes up.
+      dev?.refreshDevices?.();
+    } catch (e: any) {
+      setWakeMsg(e?.message ? `Wake failed: ${e.message}` : "Wake failed — try again from Devices.");
+    } finally {
+      setWaking(false);
+    }
+  }, [token, sleepingDevice, dev]);
 
   const [device, setDevice] = useState<DeviceNetwork | null>(null);
   const [internet, setInternet] = useState<InternetProbe | null>(null);
@@ -332,8 +372,39 @@ export default function ConnectionScreen() {
           {activeDevice?.name && <Row label="Device" value={activeDevice.name} />}
           {quicClient.connectionMode && <Row label="Transport" value={String(quicClient.connectionMode)} />}
           {quicClient.networkType && <Row label="Path network" value={String(quicClient.networkType)} />}
-          {quicClient.baseUrl && <Row label="Endpoint" value={quicClient.baseUrl} />}
+          {/* A stale `http://null:null` (no active device / paused box) is noise —
+              only show a real endpoint. */}
+          {quicClient.baseUrl && !/null/i.test(String(quicClient.baseUrl)) && (
+            <Row label="Endpoint" value={quicClient.baseUrl} />
+          )}
           {lastError && <Row label="Last error" value={lastError} valueColor={c.error} />}
+          {!connected && sleepingDevice && (
+            <View style={{ paddingTop: 10, gap: 8 }}>
+              <Text style={{ fontSize: 13, color: c.textSecondary, lineHeight: 18 }}>
+                {sleepingDevice.name || "Your box"} is asleep — it auto-off'd after idle to save cost
+                (nothing is broken). Wake it to reconnect.
+              </Text>
+              <Pressable
+                onPress={handleWake}
+                disabled={waking}
+                style={{
+                  alignSelf: "flex-start",
+                  paddingHorizontal: 16,
+                  paddingVertical: 9,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: c.accent,
+                  backgroundColor: c.accentSoft,
+                  opacity: waking ? 0.6 : 1,
+                }}
+              >
+                <Text style={{ color: c.accent, fontWeight: "700", fontSize: 14 }}>
+                  {waking ? "Waking…" : "Wake box"}
+                </Text>
+              </Pressable>
+              {wakeMsg && <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 16 }}>{wakeMsg}</Text>}
+            </View>
+          )}
         </View>
 
         {/* Deep troubleshoot — runner */}

@@ -4054,7 +4054,7 @@ export default function TasksScreen() {
                     style={[s.discoverSecondaryBtn, { borderColor: c.border, marginTop: 14 }]}
                     onPress={() => { void refreshDevices(); }}
                   >
-                    <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Retry</Text>
+                    <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Refresh</Text>
                   </Pressable>
                 ) : null}
               </View>

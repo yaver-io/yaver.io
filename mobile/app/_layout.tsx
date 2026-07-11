@@ -25,7 +25,7 @@ import { Stack, usePathname, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import * as ScreenOrientation from "expo-screen-orientation";
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { AppState, Dimensions, NativeModules, Platform, ScrollView, Text, View } from "react-native";
 import { breakpoints } from "../src/theme/tokens";
 import { AuthProvider } from "../src/context/AuthContext";
@@ -36,6 +36,7 @@ import { ShareComposeModal } from "../src/components/ShareComposeModal";
 import { DogfoodCaptureHost } from "../src/components/DogfoodCaptureHost";
 import { RunningTasksPill } from "../src/components/RunningTasksPill";
 import { WatchBridgeHost } from "../src/components/WatchBridgeHost";
+import YaverSplash from "../src/components/YaverSplash";
 import { AuthPushHost } from "../src/components/AuthPushHost";
 import { PairLinkHandler } from "../src/lib/pairLinkHandler";
 import { ShareIntentReceiver } from "../src/lib/shareReceiver";
@@ -81,6 +82,10 @@ function InnerLayout() {
   const { user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  // Branded cold-start overlay ("Remote Runtime AI"). Shows on top of the
+  // app the moment the native splash hides, then fades itself out via
+  // onDone. One-shot per app launch.
+  const [showSplash, setShowSplash] = useState(true);
   useEffect(() => {
     void SplashScreen.hideAsync().catch(() => {});
   }, []);
@@ -166,6 +171,7 @@ function InnerLayout() {
       <DogfoodCaptureHost />
       <WatchBridgeHost />
       <AuthPushHost />
+      {showSplash ? <YaverSplash onDone={() => setShowSplash(false)} /> : null}
     </>
   );
 }

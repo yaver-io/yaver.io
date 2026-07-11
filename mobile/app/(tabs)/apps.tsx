@@ -1531,6 +1531,36 @@ export default function AppsScreen() {
           <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
             Connect to a device to see your projects
           </Text>
+          {/* Explicit Refresh — pull-to-refresh isn't discoverable when the
+              list is empty. Re-polls the device list + projects so a box that
+              just came back online (or woke from auto-off) reconnects without
+              leaving the tab. */}
+          <Pressable
+            onPress={onPullRefresh}
+            disabled={pullRefreshing}
+            style={{
+              marginTop: 18,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              paddingHorizontal: 18,
+              paddingVertical: 10,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: c.accent,
+              backgroundColor: c.accent + "18",
+              opacity: pullRefreshing ? 0.6 : 1,
+            }}
+          >
+            {pullRefreshing ? (
+              <ActivityIndicator size="small" color={c.accent} />
+            ) : (
+              <Ionicons name="refresh" size={16} color={c.accent} />
+            )}
+            <Text style={{ color: c.accent, fontWeight: "700", fontSize: 14 }}>
+              {pullRefreshing ? "Refreshing…" : "Refresh"}
+            </Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
