@@ -96,3 +96,55 @@ func reportMachineActivity() {
 		_ = resp.Body.Close()
 	}()
 }
+
+// HasActiveTasks reports whether any task is running or queued — one "box is in
+// use" signal for the managed-box idle monitor.
+func (tm *TaskManager) HasActiveTasks() bool {
+	if tm == nil {
+		return false
+	}
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	for _, t := range tm.tasks {
+		if t.Status == TaskStatusRunning || t.Status == TaskStatusQueued {
+			return true
+		}
+	}
+	return false
+}
+
+// machineInUse reports whether ANY "the box is being used" signal is live, so
+// the managed-box idle sweep never snapshot+deletes a box mid-work. Mirrors the
+// operator's idle definition (2026-07-11): a box is IDLE only when there is
+//   - no wrapped runner attached (codex / claude-code / opencode via /ws/runner,
+//     which also covers a phone / web UI / CLI connected to one),
+//   - no dev server serving (Metro / Vite / Hermes reload / Next), and
+//   - no agent task running or queued.
+func (s *HTTPServer) machineInUse() bool {
+	if len(listRunnerPTYSessions()) > 0 {
+		return true
+	}
+	if s.devServerMgr != nil && s.devServerMgr.Status() != nil {
+		return true
+	}
+	if s.taskMgr != nil && s.taskMgr.HasActiveTasks() {
+		return true
+	}
+	return false
+}
+
+// startMachineActivityMonitor keeps a MANAGED box's idle clock fresh while it is
+// genuinely in use, so cloudLifecycle.idleSweep never reaps it out from under an
+// active session. reportMachineActivity is throttled + a no-op off a managed box
+// (identity file absent), so the loop is cheap everywhere.
+func (s *HTTPServer) startMachineActivityMonitor() {
+	if loadMachineIdentity() == nil {
+		return // not a managed box — nothing to keep alive
+	}
+	SupervisedGo("machine-activity", 90*time.Second, false, func(ctx context.Context) error {
+		if s.machineInUse() {
+			reportMachineActivity()
+		}
+		return nil
+	})
+}

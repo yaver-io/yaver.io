@@ -208,6 +208,7 @@ type HTTPServer struct {
 	// Health monitor (production URL pinging)
 	healthMon        *HealthMonitor
 	agentGraphMgr    *AgentGraphManager
+	finalizeMgr      *FinalizeManager
 	publishMgr       *PublishManager
 	remoteRuntimeMgr *RemoteRuntimeManager
 
@@ -249,6 +250,7 @@ func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname s
 		convexURL:             convexURL,
 		hostname:              hostname,
 		taskMgr:               taskMgr,
+		finalizeMgr:           NewFinalizeManager(taskMgr),
 		streams:               NewLogStreamRegistry(),
 		hostShareWorkspaceMgr: hostShareWorkspaceMgr,
 		heartbeatKick:         make(chan struct{}, 1),
@@ -276,6 +278,14 @@ func (s *HTTPServer) TriggerHeartbeat() {
 // Start starts the HTTP server and blocks until the context is cancelled.
 func (s *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
+	if s.finalizeMgr != nil {
+		s.finalizeMgr.Start(ctx)
+	}
+
+	// Managed-box idle keep-alive: on a Yaver-managed cloud box, report activity
+	// while a runner/dev-server/task is live so the server-side idle sweep never
+	// snapshot+deletes the box mid-work. No-op off a managed box.
+	s.startMachineActivityMonitor()
 
 	// Wire this server into the dev-bundle bearer fallback so unauth
 	// /dev/native-bundle / /dev/web-bundle requests carrying a known
@@ -289,6 +299,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Authenticated
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
 	mux.HandleFunc("/tasks/", s.auth(s.handleTaskByID))
+	mux.HandleFunc("/finalize", s.auth(s.handleFinalize))
+	mux.HandleFunc("/finalize/", s.auth(s.handleFinalizeByID))
 	// Mobile Sandbox → remote runner (GLM): edit the phone-only sandbox tree on
 	// this box. See sandbox_remote.go.
 	mux.HandleFunc("/sandbox/run", s.auth(s.handleSandboxRun))
