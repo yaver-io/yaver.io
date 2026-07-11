@@ -6968,6 +6968,36 @@ http.route({
   }),
 });
 
+/** POST /machine/park-self — a MANAGED box asks to be scaled to zero because
+ *  its OWN agent (machine_activity.go) decided it has been idle past the
+ *  grace-confirmed threshold. Machine-token authed: the box parks itself.
+ *
+ *  This is the cost-free replacement for the removed idle-sweep Convex cron
+ *  (crons.ts) — no perpetual server-side polling; the box that isn't running
+ *  pays nothing to decide it should stop, and the server only does work at the
+ *  instant a box parks. Opt-in via YAVER_CLOUD_IDLE_ENABLE; pauseMachine is
+ *  itself HCLOUD_TOKEN-fail-closed and snapshots BEFORE deleting (a failed
+ *  snapshot aborts the delete — never lose an unrecoverable box). */
+http.route({
+  path: "/machine/park-self",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const machineId = new URL(request.url).searchParams.get("machineId");
+    const auth = await authenticateMachineRequest(ctx, request, machineId);
+    if (!auth.ok) return errorResponse(auth.error, auth.status);
+    // Same opt-in gate as the sweep: never auto-delete unless the operator
+    // turned idle auto-off on. The agent also gates on this, so this is
+    // defense-in-depth.
+    if (!process.env.YAVER_CLOUD_IDLE_ENABLE) {
+      return jsonResponse({ ok: false, skipped: "idle auto-off disabled (YAVER_CLOUD_IDLE_ENABLE unset)" });
+    }
+    await ctx.scheduler.runAfter(0, internal.cloudLifecycle.pauseMachine, {
+      machineId: auth.machine._id,
+    });
+    return jsonResponse({ ok: true, parking: true });
+  }),
+});
+
 /** POST /machine/tls-issued — reconciler reports a successful cert issue. */
 http.route({
   path: "/machine/tls-issued",

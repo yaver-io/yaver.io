@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -139,12 +141,89 @@ func (s *HTTPServer) machineInUse() bool {
 // (identity file absent), so the loop is cheap everywhere.
 func (s *HTTPServer) startMachineActivityMonitor() {
 	if loadMachineIdentity() == nil {
-		return // not a managed box — nothing to keep alive
+		return // not a managed box — nothing to keep alive or park
 	}
 	SupervisedGo("machine-activity", 90*time.Second, false, func(ctx context.Context) error {
 		if s.machineInUse() {
 			reportMachineActivity()
+			touchParkActivity() // pin the idle clock + cancel any armed park
+			return nil
 		}
+		// Idle. Self-park is the COST-FREE replacement for the removed Convex
+		// idle-sweep cron (crons.ts): the box decides locally via the same
+		// idle+grace-confirm policy the watch/car use (scaleToZeroDecision), and
+		// only calls the server at the instant it actually parks. A box that
+		// isn't running pays nothing to decide it should stop.
+		s.maybeSelfPark(ctx)
 		return nil
 	})
+}
+
+// maybeSelfPark decides, locally and for free, whether this managed box should
+// scale itself to zero, and if so asks the server to snapshot+delete it. Opt-in
+// (YAVER_CLOUD_IDLE_ENABLE) and grace-confirmed — a notify arms a grace window;
+// any activity or a machine_keepalive during it cancels the park.
+func (s *HTTPServer) maybeSelfPark(ctx context.Context) {
+	if strings.TrimSpace(os.Getenv("YAVER_CLOUD_IDLE_ENABLE")) == "" {
+		return // auto-off is opt-in — mirrors the server-side gate
+	}
+	id := loadMachineIdentity()
+	if id == nil {
+		return // managed boxes only
+	}
+	now := time.Now()
+	parkMu.Lock()
+	lastActive := parkLastActiveAt
+	notifiedAt := parkNotifiedAt
+	keepUntil := parkKeepAliveUntil
+	parkMu.Unlock()
+
+	in := ScaleToZeroInput{
+		Tier:           HostingManaged, // identity file present ⇒ managed
+		ActiveSessions: 0,              // machineInUse() already returned false
+		IdleFor:        durSince(now, lastActive),
+		IdleTimeout:    parkEnvMinutes("YAVER_CLOUD_IDLE_MINUTES", 45),
+		GraceNotified:  !notifiedAt.IsZero(),
+		GraceFor:       durSince(now, notifiedAt),
+		GraceWindow:    parkEnvMinutes("YAVER_CLOUD_IDLE_GRACE_MINUTES", 2),
+		KeepAlive:      now.Before(keepUntil),
+	}
+	switch scaleToZeroDecision(in) {
+	case ParkNotify:
+		parkMu.Lock()
+		if parkNotifiedAt.IsZero() {
+			parkNotifiedAt = now
+		}
+		parkMu.Unlock()
+		// The grace WINDOW is the real safety (activity cancels the park); a
+		// delivered push is a refinement. Say `yaver machine keepalive` or use
+		// the box to cancel.
+		log.Printf("[machine-park] idle past threshold — parking in ~%s unless kept alive",
+			parkEnvMinutes("YAVER_CLOUD_IDLE_GRACE_MINUTES", 2))
+	case ParkExecute:
+		s.parkSelf(ctx, id)
+		// Reset the idle clock so a delayed teardown doesn't re-request every
+		// cycle; if the box survives, it re-evaluates after another idle window.
+		touchParkActivity()
+	}
+}
+
+// parkSelf asks the server to scale THIS managed box to zero (snapshot+delete).
+// Machine-token authed — the box parking itself. The server gates on
+// YAVER_CLOUD_IDLE_ENABLE + HCLOUD_TOKEN and snapshots before deleting.
+func (s *HTTPServer) parkSelf(ctx context.Context, id *machineIdentity) {
+	url := id.ConvexSite + "/machine/park-self?machineId=" + id.MachineID
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return
+	}
+	req.Header.Set("X-Machine-Token", id.MachineToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[machine-park] park-self request failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("[machine-park] requested self-park (idle past threshold); server status %d", resp.StatusCode)
 }

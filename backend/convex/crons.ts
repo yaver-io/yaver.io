@@ -1,5 +1,4 @@
 import { cronJobs } from "convex/server";
-import { internal } from "./_generated/api";
 
 // All cron schedules moved to a self-hosted box (the yaver-test-ephemeral box).
 // Systemd timers POST to /crons/run with a bearer token (CRON_TRIGGER_SECRET).
@@ -26,17 +25,15 @@ import { internal } from "./_generated/api";
 //       /machine/activity; pause is HCLOUD_TOKEN/dryRun fail-closed.)
 const crons = cronJobs();
 
-// Auto-off (scale-to-zero): every 15 min, snapshot+delete managed boxes idle
-// past YAVER_CLOUD_IDLE_MINUTES so the owner NEVER pays for an unused box. This
-// one runs natively in Convex (unlike the self-hosted crons above) precisely
-// because a "don't bill me for idle" guarantee must not depend on an external
-// box staying up. Fail-closed: no-op unless YAVER_CLOUD_IDLE_ENABLE is set AND
-// HCLOUD_TOKEN is present (pauseMachine token-gates itself).
-crons.interval(
-  "cloud idle sweep",
-  { minutes: 15 },
-  internal.cloudLifecycle.idleSweepCron,
-  {},
-);
+// Auto-off (scale-to-zero) is NOT a Convex cron — a perpetual 15-min sweep is
+// recurring Convex compute you'd pay for precisely to save money, which is
+// backwards (and fights the Convex cost-optimization work). Instead the box
+// DRIVES ITS OWN PARK: the agent's activity monitor (machine_activity.go) runs
+// every 90s locally (free), and when a managed/byo box has been idle past the
+// grace-confirmed threshold it calls POST /machine/park-self, which schedules
+// cloudLifecycle.pauseMachine for exactly that box. Zero cost while active; one
+// call at the moment of parking; the box that isn't running pays nothing to
+// decide it should stop. idleSweep stays callable via POST /crons/run
+// {name:"cloudIdleSweep"} for a manual fleet-wide sweep if ever needed.
 
 export default crons;
