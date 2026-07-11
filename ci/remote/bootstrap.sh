@@ -18,6 +18,18 @@ export DEBIAN_FRONTEND=noninteractive
 SKIP_OLLAMA="${YAVER_SKIP_OLLAMA:-0}"
 export NEEDRESTART_MODE=a
 
+# Target architecture. The box may be arm64 (cax) OR amd64 (cx/cpx) — everything
+# arch-specific below (Go tarball, JDK path, Android ABI, yaver asset, apt
+# hygiene) keys off DEB_ARCH so the SAME bootstrap runs on either. Added
+# 2026-07-11 so a Hetzner arm capacity outage isn't fatal — when cax is sold out
+# we provision cx (amd64) instead. See docs/yaver-provisioning-robustness.md.
+DEB_ARCH="$(dpkg --print-architecture 2>/dev/null || echo arm64)"
+case "$DEB_ARCH" in
+  amd64) GO_ARCH=amd64; ANDROID_ABI=x86_64;   YAVER_ARCH=amd64 ;;
+  *)     DEB_ARCH=arm64; GO_ARCH=arm64; ANDROID_ABI=arm64-v8a; YAVER_ARCH=arm64 ;;
+esac
+log "target arch: $DEB_ARCH (go=$GO_ARCH android=$ANDROID_ABI)"
+
 log "apt base"
 # Multi-arch hygiene FIRST. On a previous-state box where someone ran
 # `dpkg --add-architecture amd64`, the Hetzner ports mirror 404s on
@@ -43,14 +55,15 @@ Acquire::http::Timeout "5";
 Acquire::https::Timeout "5";
 EOF
 
-# Strip explicit `[arch=amd64]` references from any sources.list.d/*
-# entry left behind by the prior provisioning. Even after the
-# foreign-arch removal above, apt still TRIES amd64 repos when they're
-# in sources files. sed is idempotent + harmless on lines without the
-# pattern.
-find /etc/apt/sources.list.d -type f -name '*.list' -exec \
-  sed -i 's/\[arch=amd64\]//g; s/\[arch=amd64,arm64\]/[arch=arm64]/g' {} \;
-sed -i 's/\[arch=amd64\]//g; s/\[arch=amd64,arm64\]/[arch=arm64]/g' /etc/apt/sources.list 2>/dev/null || true
+# Strip explicit `[arch=amd64]` references from any sources.list.d/* entry left
+# behind by prior provisioning — ARM boxes only. On an amd64 box amd64 IS the
+# native arch, so stripping it (or the arm64-force rewrite) would break apt; skip
+# the whole arm-only hygiene there.
+if [ "$DEB_ARCH" = "arm64" ]; then
+  find /etc/apt/sources.list.d -type f -name '*.list' -exec \
+    sed -i 's/\[arch=amd64\]//g; s/\[arch=amd64,arm64\]/[arch=arm64]/g' {} \;
+  sed -i 's/\[arch=amd64\]//g; s/\[arch=amd64,arm64\]/[arch=arm64]/g' /etc/apt/sources.list 2>/dev/null || true
+fi
 
 apt-get update -y || true
 apt-get install -y --no-install-recommends \
@@ -131,7 +144,7 @@ log "go 1.22"
 GO_VERSION="1.22.8"
 if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go${GO_VERSION}"; then
   rm -rf /usr/local/go
-  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz" \
+  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" \
     -o /tmp/go.tgz
   tar -C /usr/local -xzf /tmp/go.tgz
   rm -f /tmp/go.tgz
@@ -161,7 +174,7 @@ if ! command -v java >/dev/null 2>&1 || ! java -version 2>&1 | grep -q '"17'; th
   apt-get install -y openjdk-17-jdk-headless
 fi
 install -m 0644 /dev/stdin /etc/profile.d/java.sh <<'EOF'
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-${DEB_ARCH}
 EOF
 
 log "android sdk + emulator + ARM64-v8a system image"
@@ -190,7 +203,7 @@ export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platfo
 yes | "$SDKMGR" --install \
   "platform-tools" "emulator" \
   "platforms;android-35" \
-  "system-images;android-35;google_atd;arm64-v8a" 2>&1 | tail -8 || true
+  "system-images;android-35;google_atd;${ANDROID_ABI}" 2>&1 | tail -8 || true
 # Belt-and-suspenders: confirm the bits we need actually landed.
 "$SDKMGR" --list_installed 2>&1 \
   | grep -E "platform-tools|emulator|platforms;android-35|system-images;android-35" \
@@ -203,7 +216,7 @@ AVDMGR="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 if [ -x "$AVDMGR" ] && ! "$AVDMGR" list avd 2>&1 | grep -q "Yaver_API_35"; then
   echo "no" | "$AVDMGR" create avd \
     -n Yaver_API_35 \
-    -k "system-images;android-35;google_atd;arm64-v8a" \
+    -k "system-images;android-35;google_atd;${ANDROID_ABI}" \
     -d "pixel_7" || true
 fi
 install -m 0644 /dev/stdin /etc/profile.d/android.sh <<EOF
@@ -352,13 +365,13 @@ if ! command -v opencode >/dev/null 2>&1; then
   fi
 fi
 
-log "yaver CLI (linux-arm64)"
+log "yaver CLI (linux-$YAVER_ARCH)"
 if ! command -v yaver >/dev/null 2>&1; then
   deb_url="$(curl -fsSL https://api.github.com/repos/kivanccakmak/yaver.io/releases/latest \
-    | jq -r '.assets[]? | select(.name|test("_arm64\\.deb$")) | .browser_download_url' \
+    | jq -r --arg a "_${YAVER_ARCH}.deb" '.assets[]? | select(.name|endswith($a)) | .browser_download_url' \
     | head -1)"
   tgz_url="$(curl -fsSL https://api.github.com/repos/kivanccakmak/yaver.io/releases/latest \
-    | jq -r '.assets[]? | select(.name=="yaver-linux-arm64.tar.gz") | .browser_download_url' \
+    | jq -r --arg n "yaver-linux-${YAVER_ARCH}.tar.gz" '.assets[]? | select(.name==$n) | .browser_download_url' \
     | head -1)"
   if [ -n "${deb_url:-}" ] && [ "$deb_url" != "null" ]; then
     curl -fsSL "$deb_url" -o /tmp/yaver.deb
