@@ -64,6 +64,22 @@ runner creds move local→box over the encrypted relay/direct channel (QUIC/TLS)
 `/vault/peer-sync` — **never through Convex, never through the MCP tool result, never
 logged.**
 
+### 3.5 OAuth-sync broker — shipped core (2026-07-11)
+
+The "box born authenticated" path is now real (no interactive OAuth on the box):
+- **Convex `deviceCode.createAuthorizedDeviceCode` + `POST /auth/device-code/broker`**
+  (deployed prod). An authenticated caller mints a PRE-authorized device code for a
+  new box in one call; gated on the caller's own session so the box binds to the
+  SAME user. Returns only the 15-min `deviceCode` handle — the real 256-bit token
+  is fetched once by the box via the existing `GET /auth/device-code/poll`
+  (`pendingToken` cleared on first read), so the injected handle is spent + worthless
+  after first boot even though cloud metadata is rooted-readable.
+- **Agent `cloud_broker.go`**: `brokerNewMachineDeviceCode()` (daemon calls the broker
+  route with its own session) + `machineSelfRegisterScript()` (cloud-init snippet: poll
+  once → write `~/.yaver/config.json` → `yaver serve` → registers as the user's device).
+- **Remaining**: wire these into `machine create`'s `user_data` (bootstrap +
+  self-register) so `yaver machine create` = zero-code OAuth end to end.
+
 ## 4. Multi-surface access + the one new architectural piece
 
 - **CLI, Yaver mobile/watch/car/TV** — already work (relay/direct + persisted device
@@ -120,7 +136,8 @@ Driving via Claude/ChatGPT mobile means Anthropic/OpenAI see every MCP call+resu
 | Managed provision + subscription gate | ✅ `cloudMachines.ts` fail-closed |
 | Golden image (runners pre-installed) | ⏳ baking (arm-capacity blocked) |
 | Device hosting tag (managed count) | ✅ 2026-07-11 |
-| **Machine quota (per-plan cap, Convex-enforced)** | ⏳ this doc's first build |
+| **Machine quota (per-plan cap, Convex-enforced)** | ✅ built |
+| **OAuth-sync broker — box born authenticated (zero code)** | ✅ core built + deployed 2026-07-11 |
 | **`machine_onboard` one-verb orchestration** | ❌ build |
 | **Surface-aware runner-auth default** | ❌ build |
 | **Hosted/remote MCP endpoint (OAuth, relay-proxy, quota-aware)** | ❌ build — linchpin for Claude/ChatGPT mobile |
