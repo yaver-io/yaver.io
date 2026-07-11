@@ -2,7 +2,7 @@ import { httpRouter } from "convex/server";
 import { v } from "convex/values";
 import { httpAction, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { sha256Hex } from "./auth";
+import { sha256Hex, randomHex } from "./auth";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
 import { decryptStoredOidcSecret } from "./admin";
 import { estimatedHourlyCents, minimumReserveCents } from "./cloudLifecycle";
@@ -582,7 +582,7 @@ for (const path of [
   "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/test/oauth-signin",
-  "/auth/device-code/authorize",
+  "/auth/device-code/authorize", "/auth/device-code/broker",
   "/auth/passkey/register/start", "/auth/passkey/register/finish",
   "/auth/passkey/login/start", "/auth/passkey/login/finish",
   "/auth/passkey/signup/start", "/auth/passkey/signup/finish",
@@ -3846,6 +3846,7 @@ http.route({
         machineName: typeof body?.machineName === "string" ? body.machineName : undefined,
         platform: typeof body?.platform === "string" ? body.platform : undefined,
         arch: typeof body?.arch === "string" ? body.arch : undefined,
+        deviceId: typeof body?.deviceId === "string" ? body.deviceId : undefined,
       });
       return jsonResponse(result);
     } catch (e: any) {
@@ -4455,15 +4456,28 @@ http.route({
     const hetznerServerId = (body.hetznerServerId ?? "").toString().trim();
     if (!hetznerServerId) return errorResponse("hetznerServerId is required", 400);
     try {
+      const adoptDeviceId = (body.deviceId ?? "").toString().trim();
       const machineId = await ctx.runMutation(internal.cloudMachines.adoptExisting, {
         userId: session.userDocId as any,
         hetznerServerId,
         region: (body.region ?? "eu").trim() || "eu",
         serverIp: body.serverIp,
         hostname: body.hostname,
-        deviceId: (body.deviceId ?? "").toString().trim() || undefined,
+        deviceId: adoptDeviceId || undefined,
       });
-      return jsonResponse({ ok: true, machineId, origin: "managed", mode: "dev-adopt" });
+      // Mint a machine token so the box can report activity + self-park (auto-off).
+      // Returned ONCE here; the caller writes it to /etc/yaver/machine.json on the
+      // box. Only when a deviceId is supplied (setByoBootstrap requires it).
+      let machineToken: string | undefined;
+      if (adoptDeviceId) {
+        machineToken = randomHex(24);
+        await ctx.runMutation(internal.cloudMachines.setByoBootstrap, {
+          machineId,
+          machineTokenHash: await sha256Hex(machineToken),
+          deviceId: adoptDeviceId,
+        });
+      }
+      return jsonResponse({ ok: true, machineId, origin: "managed", mode: "dev-adopt", machineToken });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : String(error), 500);
     }
