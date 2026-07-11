@@ -53,11 +53,14 @@ interface BannerPalette {
 
 export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: RemoteBoxBannerProps) {
   const c = useColors();
-  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError } = useDevice();
+  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError, everHadDevices } = useDevice();
   // "Never added a remote device" is distinct from "have devices but none
   // selected/reachable" — show a create/pair prompt rather than a misleading
   // "Disconnected".
-  const noDevicesYet = devices.length === 0 && !activeDevice;
+  // Only "never added a device" for a genuine first-run user. If they've ever
+  // had devices, a transient empty (VPN/network) must NOT read as "No remote
+  // device added" — it's the "No device selected / reconnecting" case instead.
+  const noDevicesYet = devices.length === 0 && !activeDevice && !everHadDevices;
   const [pickerVisible, setPickerVisible] = useState(false);
 
   // Honest status: connectionStatus can be optimistically "connected"

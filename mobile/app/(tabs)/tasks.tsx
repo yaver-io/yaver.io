@@ -1477,7 +1477,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, deviceListError, unreachableDeviceIds, stopReconnectAndBounce, retryConnection, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, everHadDevices, refreshDevices, deviceListError, unreachableDeviceIds, stopReconnectAndBounce, retryConnection, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -4040,12 +4040,23 @@ export default function TasksScreen() {
                   No tasks yet. Tap the + button to create your first task.
                 </Text>
               </View>
-            ) : isLoadingDevices ? (
+            ) : isLoadingDevices || (devices.length === 0 && everHadDevices) ? (
+              // Transient empty (VPN / network / token drift) for a user who HAS
+              // had devices: show a graceful "looking" state + retry, NEVER regress
+              // to the first-run "pair your computer" onboarding below.
               <View style={s.emptyList}>
                 <ActivityIndicator size="large" color={c.accent} />
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 16 }]}>
-                  Looking for devices...
+                  {isLoadingDevices ? "Looking for devices..." : "Reconnecting to your devices..."}
                 </Text>
+                {!isLoadingDevices ? (
+                  <Pressable
+                    style={[s.discoverSecondaryBtn, { borderColor: c.border, marginTop: 14 }]}
+                    onPress={() => { void refreshDevices(); }}
+                  >
+                    <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Retry</Text>
+                  </Pressable>
+                ) : null}
               </View>
             ) : devices.length === 0 ? (
               <View style={s.discoverEmpty}>

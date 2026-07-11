@@ -687,6 +687,10 @@ export interface DeviceState {
   activeDevice: Device | null;
   connectionStatus: ConnectionStatus;
   isLoadingDevices: boolean;
+  /** true once the user has ever had ≥1 device (persisted). Distinguishes a
+   *  genuine first-run empty from a transient empty (VPN/network/token drift),
+   *  so the app never regresses an existing user to first-run onboarding. */
+  everHadDevices: boolean;
   /** true when user explicitly disconnected (not a network failure) */
   userDisconnected: boolean;
   /** Last connection error message (null if no error) */
@@ -855,6 +859,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   }, [uid, RELAYS_KEY, TUNNELS_KEY]);
 
   const [devices, setDevices] = useState<Device[]>([]);
+  // Once the user has EVER had devices, a later empty result is a transient
+  // (VPN / network / token-drift) blip — NOT genuine "no devices" — so we never
+  // regress an existing user to the first-run "pair your computer" onboarding.
+  // Persisted so it survives an app restart on a flaky network (the VPN case).
+  const [everHadDevices, setEverHadDevices] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem("@yaver/ever_had_devices")
+      .then((v) => { if (v === "1") setEverHadDevices(true); })
+      .catch(() => {});
+  }, []);
   const [activeDevice, setActiveDevice] = useState<Device | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected");
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
@@ -1142,6 +1156,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           ? [localBox, ...finalDevices.filter((d) => d.id !== LOCAL_BOX_DEVICE_ID)]
           : finalDevices;
         setDevices(withLocalBox);
+        if (withLocalBox.length > 0) {
+          setEverHadDevices((prev) => {
+            if (!prev) AsyncStorage.setItem("@yaver/ever_had_devices", "1").catch(() => {});
+            return true;
+          });
+        }
       } else {
         appLog("warn", `/devices/list failed: ${devicesRes.status} via ${convexSiteUrl}`);
         setDeviceListError(`Device list request failed: HTTP ${devicesRes.status}`);
@@ -3180,6 +3200,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       activeDevice,
       connectionStatus,
       isLoadingDevices,
+      everHadDevices,
       userDisconnected,
       lastError,
       deviceListError,
@@ -3218,7 +3239,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;
