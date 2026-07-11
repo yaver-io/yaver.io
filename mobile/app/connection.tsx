@@ -11,7 +11,7 @@ import { useColors } from "../src/context/ThemeContext";
 import type { ThemeColors } from "../src/constants/colors";
 import { useDevice } from "../src/context/DeviceContext";
 import { useAuth } from "../src/context/AuthContext";
-import { startManagedCloudMachine } from "../src/lib/subscription";
+import { isDeviceAsleep, wakeManagedDevice } from "../src/lib/wakeMachine";
 import { quicClient } from "../src/lib/quic";
 import { callMcpDirect } from "../src/lib/yaverMcpDirect";
 import {
@@ -70,14 +70,10 @@ export default function ConnectionScreen() {
   const devicesPool: any[] = dev?.devices ?? [];
   const primaryDeviceId: string | null = dev?.primaryDeviceId ?? null;
   const sleepingDevice = React.useMemo(() => {
-    const asleep = (d: any) => {
-      const st = String(d?.machineStatus ?? "").toLowerCase();
-      return !!d?.managed && (st === "paused" || st === "stopped" || st === "off");
-    };
-    if (activeDevice && asleep(activeDevice)) return activeDevice;
+    if (activeDevice && isDeviceAsleep(activeDevice)) return activeDevice;
     const prim = devicesPool.find((d) => d?.id === primaryDeviceId);
-    if (prim && asleep(prim)) return prim;
-    return devicesPool.find(asleep) ?? null;
+    if (prim && isDeviceAsleep(prim)) return prim;
+    return devicesPool.find((d) => isDeviceAsleep(d)) ?? null;
   }, [devicesPool, activeDevice, primaryDeviceId]);
 
   const [waking, setWaking] = useState(false);
@@ -87,16 +83,15 @@ export default function ConnectionScreen() {
     if (!token || !mid) return;
     setWaking(true);
     setWakeMsg(null);
-    try {
-      await startManagedCloudMachine(token, mid);
+    const res = await wakeManagedDevice(token, mid);
+    if (res.ok) {
       setWakeMsg("Waking your box — it recreates from the latest snapshot and reconnects in ~1–2 min.");
       // Kick a device refresh so the new status/IP flows in as it comes up.
       dev?.refreshDevices?.();
-    } catch (e: any) {
-      setWakeMsg(e?.message ? `Wake failed: ${e.message}` : "Wake failed — try again from Devices.");
-    } finally {
-      setWaking(false);
+    } else {
+      setWakeMsg(res.error ? `Wake failed: ${res.error}` : "Wake failed — try again from Devices.");
     }
+    setWaking(false);
   }, [token, sleepingDevice, dev]);
 
   const [device, setDevice] = useState<DeviceNetwork | null>(null);

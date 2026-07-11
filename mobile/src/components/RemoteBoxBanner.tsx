@@ -1,10 +1,12 @@
-import React, { useState } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useState } from "react";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useDevice } from "../context/DeviceContext";
+import { useAuth } from "../context/AuthContext";
 import { useColors } from "../context/ThemeContext";
 import { typography } from "../theme/tokens";
 import RemoteBoxPickerModal from "./RemoteBoxPickerModal";
 import { deriveEffectiveConnectionState, type EffectiveConnectionState } from "../lib/connectionState";
+import { isDeviceAsleep, wakeManagedDevice } from "../lib/wakeMachine";
 
 // RemoteBoxBanner — single shared widget for the per-tab connection
 // status + machine switcher.
@@ -53,7 +55,26 @@ interface BannerPalette {
 
 export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: RemoteBoxBannerProps) {
   const c = useColors();
-  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError, everHadDevices } = useDevice();
+  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError, everHadDevices, refreshDevices } = useDevice();
+  const { token } = useAuth();
+
+  // A managed box that auto-off'd (self-park after idle) reports
+  // machineStatus paused/stopped and has no live endpoint — that's why the
+  // runner reads "Disconnected". Surface it as its own "Asleep" state with a
+  // one-tap Wake on every tab, rather than a dead-end "Disconnected".
+  const asleep = isDeviceAsleep(activeDevice as any);
+  const [waking, setWaking] = useState(false);
+  const [wakeErr, setWakeErr] = useState<string | null>(null);
+  const handleWake = useCallback(async () => {
+    if (waking) return;
+    setWaking(true);
+    setWakeErr(null);
+    const res = await wakeManagedDevice(token, (activeDevice as any)?.machineId);
+    if (!res.ok) setWakeErr(res.error ?? "Wake failed.");
+    // Refresh so the box's status/IP flows in as it boots + re-registers.
+    try { await refreshDevices?.(); } catch {}
+    setWaking(false);
+  }, [waking, token, activeDevice, refreshDevices]);
   // "Never added a remote device" is distinct from "have devices but none
   // selected/reachable" — show a create/pair prompt rather than a misleading
   // "Disconnected".
@@ -119,14 +140,14 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
           },
         ]}
       >
-        <View style={[styles.accent, { backgroundColor: needsPick ? c.warn : palette.stripe }]} />
+        <View style={[styles.accent, { backgroundColor: needsPick ? c.warn : asleep ? c.accent : palette.stripe }]} />
         <View style={styles.stack}>
           <View style={styles.row}>
             <View style={styles.rowMain}>
               <View style={styles.statusLine}>
-                <View style={[styles.dot, { backgroundColor: needsPick ? c.warn : palette.dot }]} />
-                <Text style={[styles.label, { color: needsPick ? c.warn : palette.text }]} numberOfLines={1}>
-                  {noDevicesYet ? "Not set up" : needsPick ? "No machine selected" : palette.label}
+                <View style={[styles.dot, { backgroundColor: needsPick ? c.warn : asleep ? c.accent : palette.dot }]} />
+                <Text style={[styles.label, { color: needsPick ? c.warn : asleep ? c.accent : palette.text }]} numberOfLines={1}>
+                  {noDevicesYet ? "Not set up" : needsPick ? "No machine selected" : asleep ? (waking ? "Waking…" : "Asleep") : palette.label}
                 </Text>
               </View>
               {roleLabel ? (
@@ -141,7 +162,27 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
                 {noDevicesYet && deviceListError ? deviceListError : needsPick ? "Tap to choose where tasks run" : deviceLabel}
               </Text>
             </View>
-            {!disableTap && (
+            {asleep ? (
+              // Wake takes priority over Switch when the focused box is
+              // asleep — one tap resumes it from its snapshot. Its own
+              // Pressable so it fires Wake (not the row's picker tap), and
+              // it shows even on disableTap surfaces (a paused box is
+              // actionable regardless of the row's switch UX).
+              <Pressable
+                onPress={handleWake}
+                disabled={waking}
+                hitSlop={6}
+                style={[
+                  styles.inlineChip,
+                  styles.ctaPill,
+                  styles.wakeChip,
+                  { borderColor: c.accent, backgroundColor: c.accentSoft, opacity: waking ? 0.6 : 1 },
+                ]}
+              >
+                {waking ? <ActivityIndicator size="small" color={c.accent} /> : null}
+                <Text style={[styles.cta, { color: c.accent }]}>{waking ? "Waking" : "Wake"}</Text>
+              </Pressable>
+            ) : !disableTap ? (
               <View
                 style={[
                   styles.inlineChip,
@@ -153,8 +194,11 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
               >
                 <Text style={[styles.cta, { color: needsPick ? c.accent : c.textSecondary }]}>{ctaLabel} ›</Text>
               </View>
-            )}
+            ) : null}
           </View>
+          {asleep && wakeErr ? (
+            <Text style={[styles.wakeErr, { color: c.error }]} numberOfLines={2}>{wakeErr}</Text>
+          ) : null}
           {/* Per-tab affordances (transport · ping · re-auth) get their OWN row
               below the status line. Inlining them into rowMain made the row wrap
               to two lines while the Switch/Pick chip stayed vertically centered —
@@ -233,8 +277,17 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flexShrink: 0,
   },
+  wakeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   cta: {
     ...typography.caption,
     fontWeight: "700",
+  },
+  wakeErr: {
+    ...typography.caption,
+    marginTop: 6,
   },
 });
