@@ -2604,7 +2604,21 @@ export default function DevicesView({
                       ) : null}
                       <DeviceLifecycleBadge device={device} />
                     </div>
-                    <div className="mt-1"><TransportBadge device={device} /></div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <TransportBadge device={device} />
+                      {device.hosting ? (
+                        <span
+                          className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                            device.hosting === "yaver-hosted"
+                              ? "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
+                              : "border-slate-300 bg-slate-50 text-slate-600 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-300"
+                          }`}
+                          title={device.hosting === "yaver-hosted" ? "Managed by Yaver (paid via LemonSqueezy or owner-adopted)" : "Your own self-hosted box"}
+                        >
+                          {device.hosting === "yaver-hosted" ? "Yaver-hosted" : "Self-hosted"}
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="mt-1 text-sm text-slate-600 dark:text-surface-400">
                       <p>
                         {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}

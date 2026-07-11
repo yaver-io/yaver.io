@@ -123,6 +123,12 @@ export interface Device {
   /** Epoch ms of the last server-side write of agentVersion. */
   agentVersionReportedAt?: number;
   /**
+   * Hosting provenance from listMyDevices. "yaver-hosted" = a Yaver-managed box
+   * (paid via LemonSqueezy or owner-adopted); "self-hosted" = the user's own box.
+   */
+  hosting?: "yaver-hosted" | "self-hosted";
+  managed?: boolean;
+  /**
    * True when this row lacks both hardwareId and publicKey AND is not a
    * guest. Such rows have unstable identity — a rename or platform
    * change splits them, and two unrelated boxes can collapse onto the
@@ -541,6 +547,9 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         agentVersion: typeof d.agentVersion === "string" ? d.agentVersion : undefined,
         agentVersionReportedAt:
           typeof d.agentVersionReportedAt === "number" ? d.agentVersionReportedAt : undefined,
+        hosting:
+          d.hosting === "yaver-hosted" || d.hosting === "self-hosted" ? d.hosting : undefined,
+        managed: typeof d.managed === "boolean" ? d.managed : undefined,
         // Ghost: non-guest row lacking both stable identifiers. Cannot
         // be reliably reconnect-targeted. Surfaced in the UI so the
         // user knows to re-pair from the device.

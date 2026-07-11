@@ -42,6 +42,9 @@ export interface CoreDevice {
   /** Unix ms of the latest heartbeat the agent sent to Convex. */
   lastHeartbeat: number;
   isGuest: boolean;
+  /** Hosting provenance: "yaver-hosted" = Yaver-managed box (paid/adopted); "self-hosted" = own box. */
+  hosting?: 'yaver-hosted' | 'self-hosted';
+  managed?: boolean;
   hostName?: string;
   hostEmail?: string;
   accessScope?: 'owner' | 'shared-scoped' | 'shared-legacy';

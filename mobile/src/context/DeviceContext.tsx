@@ -329,6 +329,9 @@ export interface Device {
   lanIps?: string[];
   /** true when this device belongs to a host who granted us guest access */
   isGuest?: boolean;
+  /** Hosting provenance: "yaver-hosted" = Yaver-managed box (paid/adopted); "self-hosted" = own box. */
+  hosting?: 'yaver-hosted' | 'self-hosted';
+  managed?: boolean;
   /** host's display name (only set when isGuest=true) */
   hostName?: string;
   /** host's email (only set when isGuest=true) */
@@ -1078,6 +1081,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             lastTunnelEvent,
             needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
+            hosting: d.hosting === "yaver-hosted" || d.hosting === "self-hosted" ? d.hosting : undefined,
+            managed: typeof d.managed === "boolean" ? d.managed : undefined,
             hostName: d.hostName,
             hostEmail: d.hostEmail,
             accessScope: d.accessScope,

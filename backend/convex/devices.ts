@@ -188,6 +188,16 @@ type ListedDevice = {
   hardwareProfile?: Doc<"devices">["hardwareProfile"];
   agentVersion?: string;
   agentVersionReportedAt?: number;
+  /**
+   * Hosting provenance for the UI badge. "yaver-hosted" = a Yaver-managed box:
+   * it has a cloudMachines row that is Yaver-side (paid via LemonSqueezy or
+   * owner-adopted; origin !== "self-hosted"). "self-hosted" = the user's own
+   * box with no managed row. Informational only — entitlement gates stay
+   * server-side. Absent on guest-shared devices (the host's provenance isn't
+   * exposed to the guest).
+   */
+  hosting?: "yaver-hosted" | "self-hosted";
+  managed?: boolean;
 };
 
 function mergeHardwareProfile(
@@ -1176,6 +1186,22 @@ export const listMyDevices = query({
       .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
       .collect();
 
+    // Hosting provenance. A device is "yaver-hosted" (managed) when it has a
+    // cloudMachines row that is Yaver-side (origin !== "self-hosted" — managed or
+    // legacy-absent per schema). Paid-via-LemonSqueezy and owner-adopted boxes both
+    // land here; plain BYO boxes have no such row ⇒ "self-hosted". Purely
+    // informational; entitlement gates stay server-side.
+    const userCloudMachines = await ctx.db
+      .query("cloudMachines")
+      .withIndex("by_user", (q) => q.eq("userId", session.user._id))
+      .collect();
+    const managedDeviceIds = new Set<string>();
+    for (const m of userCloudMachines) {
+      if (typeof m.deviceId === "string" && m.deviceId.trim() !== "" && m.origin !== "self-hosted") {
+        managedDeviceIds.add(m.deviceId);
+      }
+    }
+
     const activeGuestAccessRecords = await ctx.db
       .query("guestAccess")
       .withIndex("by_hostUserId", (q) => q.eq("hostUserId", session.user._id))
@@ -1276,6 +1302,8 @@ export const listMyDevices = query({
       geoRegion: d.geoRegion,
       edgeProfile: d.edgeProfile,
       recoveryPosture: d.recoveryPosture,
+      managed: managedDeviceIds.has(d.deviceId),
+      hosting: (managedDeviceIds.has(d.deviceId) ? "yaver-hosted" : "self-hosted") as "yaver-hosted" | "self-hosted",
     }));
 
     // Device LIST (UI) must drop hidden beta grants — a beta user must never see

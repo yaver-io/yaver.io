@@ -646,6 +646,8 @@ function DeviceCard({
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <Text style={[styles.deviceName, { color: c.textPrimary }]}>{device.name}</Text>
             {device.isGuest ? <StatusChip tone="blue" label="SHARED" isDark={isDark} /> : null}
+            {!device.isGuest && device.hosting === "yaver-hosted" ? <StatusChip tone="blue" label="YAVER-HOSTED" isDark={isDark} /> : null}
+            {!device.isGuest && device.hosting === "self-hosted" ? <StatusChip tone="slate" label="SELF-HOSTED" isDark={isDark} /> : null}
             {isPrimary ? <StatusChip tone="indigo" label="PRIMARY ★" isDark={isDark} /> : null}
             {!isPrimary && isSecondary ? <StatusChip tone="violet" label="SECONDARY ☆" isDark={isDark} /> : null}
             {defaultRunner ? <StatusChip tone="violet" label={`★ ${labelForRunnerId(defaultRunner)}`} isDark={isDark} /> : null}
