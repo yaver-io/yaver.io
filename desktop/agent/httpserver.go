@@ -236,6 +236,22 @@ type HTTPServer struct {
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
+// SetOwnerUserID adopts a freshly-validated owner id (used by the boot-time
+// owner self-heal when the box came up before the network was ready, and by
+// auth recovery). Also clears any cached token→user verdicts so a stale
+// "different user" decision can't linger. Idempotent.
+func (s *HTTPServer) SetOwnerUserID(uid string) {
+	uid = strings.TrimSpace(uid)
+	if uid == "" || uid == s.ownerUserID {
+		return
+	}
+	s.ownerUserID = uid
+	s.tokenCache.Range(func(k, _ interface{}) bool {
+		s.tokenCache.Delete(k)
+		return true
+	})
+}
+
 func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname string, taskMgr *TaskManager) *HTTPServer {
 	currentLocalAgentPort.Store(int64(port))
 	var hostShareWorkspaceMgr *HostShareWorkspaceManager

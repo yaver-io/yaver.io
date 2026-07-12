@@ -2554,20 +2554,41 @@ func runServe(args []string) {
 		log.Fatalf("save config: %v", err)
 	}
 
-	// Get owner userId and email for multi-token auth and dev logging
+	// Get owner userId and email for multi-token auth and dev logging.
+	//
+	// RETRY at boot: on a freshly-recreated cloud box the network is often not
+	// ready for the first second or two, so a single validation attempt fails
+	// and we'd fall to ownerUserID="offline" — which then makes the HTTP auth
+	// check reject the REAL OWNER as "token belongs to a different user" until a
+	// lucky restart. Retry with backoff first (mirrors the mobile AuthContext),
+	// and even if we still fall to offline, a background self-heal (below)
+	// re-validates and adopts the real owner id once the network recovers.
 	var ownerUserID, ownerEmail string
 	offlineMode := false
-	ownerInfo, err := ValidateTokenInfo(cfg.ConvexSiteURL, cfg.AuthToken)
-	if err != nil {
-		log.Printf("Warning: token validation failed (%v) — starting in offline mode", err)
-		log.Printf("Run 'yaver auth' to re-authenticate. Local features (dev server, tasks) still work.")
-		offlineMode = true
-		ownerUserID = "offline"
-		ownerEmail = "offline"
-	} else {
-		ownerUserID = ownerInfo.UserID
-		ownerEmail = ownerInfo.Email
-		log.Printf("Token validated. Owner: %s (%s)", ownerUserID, ownerEmail)
+	var ownerInfo *UserInfo
+	{
+		var vErr error
+		for _, backoff := range []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second} {
+			if backoff > 0 {
+				time.Sleep(backoff)
+			}
+			ownerInfo, vErr = ValidateTokenInfo(cfg.ConvexSiteURL, cfg.AuthToken)
+			if vErr == nil {
+				break
+			}
+		}
+		if vErr != nil {
+			log.Printf("Warning: token validation failed after retries (%v) — starting in offline mode", vErr)
+			log.Printf("Run 'yaver auth' to re-authenticate. Local features (dev server, tasks) still work.")
+			log.Printf("Background self-heal will keep retrying — the box becomes owner-reachable automatically once the network is up.")
+			offlineMode = true
+			ownerUserID = "offline"
+			ownerEmail = "offline"
+		} else {
+			ownerUserID = ownerInfo.UserID
+			ownerEmail = ownerInfo.Email
+			log.Printf("Token validated. Owner: %s (%s)", ownerUserID, ownerEmail)
+		}
 	}
 
 	// Register device
@@ -3025,6 +3046,31 @@ func runServe(args []string) {
 	globalAgentGraphMgr = httpServer.agentGraphMgr
 
 	// Start heartbeat loop (needs httpServer for authExpired flag)
+	// Owner self-heal: if we booted before the network was ready (ownerUserID
+	// == "offline"), keep re-validating in the background and adopt the real
+	// owner id the moment Convex is reachable. Without this, a box that lost
+	// the boot-time validation race stays permanently unreachable to its own
+	// owner (every request 403s "token belongs to a different user"). Cheap:
+	// stops as soon as it succeeds.
+	if offlineMode {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(15 * time.Second):
+				}
+				info, e := ValidateTokenInfo(cfg.ConvexSiteURL, cfg.AuthToken)
+				if e != nil || info == nil || strings.TrimSpace(info.UserID) == "" {
+					continue
+				}
+				httpServer.SetOwnerUserID(info.UserID)
+				log.Printf("[owner-self-heal] Network recovered — adopted owner %s (%s); box is now owner-reachable.", info.UserID, info.Email)
+				return
+			}
+		}()
+	}
+
 	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr, httpServer)
 
 	// Instant git provisioning: a fresh MANAGED box with no git creds pulls
