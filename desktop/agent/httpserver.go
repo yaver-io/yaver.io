@@ -16047,6 +16047,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if handled, result := dispatchAndroidAppMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
+		// Store Studio permission prose/video jobs, including Redroid proof capture.
+		if handled, result := dispatchStudioMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
 		// Monorepo detection — mcp_monorepo.go
 		if handled, result := dispatchMonorepoMCP(s, call.Name, call.Arguments); handled {
 			return result
