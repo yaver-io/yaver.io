@@ -23,20 +23,21 @@ import (
 // Idempotent + best-effort: no-ops if creds already exist, if this box IS the
 // primary, or if the primary is unreachable; retries briefly on boot since the
 // relay tunnel + the primary may not be reachable the instant we come up.
-func autoHydrateGitCredentialsOnManagedBox(deviceID string) {
+func autoHydrateGitCredentialsOnManagedBox(cfg *Config) {
 	// Only managed cloud boxes have /etc/yaver/machine.json. A user's own
 	// Mac/laptop is the SOURCE of creds, never a hydration target.
-	if loadMachineIdentity() == nil {
+	if cfg == nil || loadMachineIdentity() == nil {
 		return
 	}
 	// Already have git creds? Idempotent no-op across restarts.
 	if creds, _ := loadGitCredentials(); len(creds) > 0 {
 		return
 	}
+	selfID := cfg.DeviceID
 
 	for attempt := 1; attempt <= 6; attempt++ {
-		// Back off across boot so the relay tunnel + the primary have time to
-		// be reachable: 10s, 20s, … 60s.
+		// Back off across boot so the relay tunnel + peers have time to be
+		// reachable: 10s, 20s, … 60s.
 		time.Sleep(time.Duration(attempt*10) * time.Second)
 
 		// A concurrent OAuth / machine-onboarding may have populated creds
@@ -45,22 +46,39 @@ func autoHydrateGitCredentialsOnManagedBox(deviceID string) {
 			return
 		}
 
-		primaryID, err := resolvePrimaryDeviceIDForMCP()
-		if err != nil || primaryID == "" || primaryID == deviceID {
-			continue // no primary yet, or WE are the primary (nothing to pull from)
+		// Candidate sources, in preference order: the PRIMARY first (usually
+		// the user's main machine), then ANY other online owner device that
+		// might hold creds. Pulling only from the primary meant a fresh box got
+		// NO git creds whenever there was no primary set (e.g. right after the
+		// old primary was retired) — friction the "auth once, works everywhere"
+		// promise is supposed to eliminate.
+		var candidates []string
+		seen := map[string]bool{selfID: true}
+		if pid, err := resolvePrimaryDeviceIDForMCP(); err == nil && pid != "" && !seen[pid] {
+			candidates = append(candidates, pid)
+			seen[pid] = true
+		}
+		if devs, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); err == nil {
+			for _, d := range filterOnlineDevices(devs) {
+				if d.DeviceID != "" && !seen[d.DeviceID] {
+					candidates = append(candidates, d.DeviceID)
+					seen[d.DeviceID] = true
+				}
+			}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-		creds, err := toolchainGitCredentialsFromPeer(ctx, primaryID)
-		cancel()
-		if err != nil || len(creds) == 0 {
-			continue
-		}
-
-		imported, _, _ := importToolchainGitCredentials(creds, false /*removeMissing*/, false /*dryRun*/)
-		if len(imported) > 0 {
-			log.Printf("[git-autohydrate] pulled %d git credential(s) from primary %s — private clone/push ready", len(imported), primaryID)
-			return
+		for _, srcID := range candidates {
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			creds, err := toolchainGitCredentialsFromPeer(ctx, srcID)
+			cancel()
+			if err != nil || len(creds) == 0 {
+				continue
+			}
+			imported, _, _ := importToolchainGitCredentials(creds, false /*removeMissing*/, false /*dryRun*/)
+			if len(imported) > 0 {
+				log.Printf("[git-autohydrate] pulled %d git credential(s) from %s — private clone/push ready", len(imported), srcID)
+				return
+			}
 		}
 	}
 }
