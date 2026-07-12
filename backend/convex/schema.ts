@@ -1195,6 +1195,19 @@ export default defineSchema({
     // resubscribe). byok boxes are disposable → none of this applies.
     deprovisionAt: v.optional(v.number()),
     scheduledDestroyId: v.optional(v.id("_scheduled_functions")),
+    // Auto-park (auto-close) is OPT-OUT: undefined === enabled, so an idle box
+    // still stops its own meter by default. Only an explicit `false` keeps a
+    // box running while idle (the owner accepts the bill). Surfaced as a toggle
+    // in mobile + web; enforced in cloudLifecycle.listIdleCandidates.
+    autoParkEnabled: v.optional(v.boolean()),
+    // Minutes of idleness before auto-park fires (default 45 when unset).
+    autoParkMinutes: v.optional(v.number()),
+    // Persistent Hetzner Volume holding the workspace/Docker/model data. It
+    // SURVIVES the server delete and re-attaches in seconds, so a park does not
+    // need to snapshot the data and a wake does not need to restore it — the
+    // difference between a ~10 min wake and a ~60-90s one.
+    volumeId: v.optional(v.string()),
+    volumeSizeGb: v.optional(v.number()),
     status: v.string(),               // "provisioning" | "active" | "grace" | "stopping" | "stopped" | "paused" | "resuming" | "suspended" | "error"
     // First-class onboarding (project_managed_cloud_onboarding_gap).
     // Granular phase + 0-100 progress so web/mobile show a real

@@ -2075,6 +2075,42 @@ export const reconcileSubscriptions = internalAction({
 });
 
 /** Update machine status (called by provisioning scripts via webhook). */
+/**
+ * setAutoPark — owner toggle for auto-close (auto-park when idle).
+ *
+ * Default is ON (the field is undefined === enabled), so a forgotten box still
+ * stops its own meter. Turning it OFF is an explicit, informed choice: the box
+ * keeps running (and billing) until parked by hand. Enforced in
+ * cloudLifecycle.listIdleCandidates.
+ */
+export const setAutoPark = internalMutation({
+  args: {
+    userDocId: v.id("users"),
+    machineId: v.id("cloudMachines"),
+    enabled: v.boolean(),
+    idleMinutes: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const machine = await ctx.db.get(args.machineId);
+    if (!machine) throw new Error("Machine not found");
+    if (String(machine.userId) !== String(args.userDocId)) throw new Error("Not your machine");
+
+    const patch: Record<string, unknown> = {
+      autoParkEnabled: args.enabled,
+      updatedAt: Date.now(),
+    };
+    if (typeof args.idleMinutes === "number" && args.idleMinutes > 0) {
+      patch.autoParkMinutes = args.idleMinutes;
+    }
+    await ctx.db.patch(args.machineId, patch);
+    return {
+      ok: true,
+      autoParkEnabled: args.enabled,
+      autoParkMinutes: (patch.autoParkMinutes as number | undefined) ?? machine.autoParkMinutes ?? 45,
+    };
+  },
+});
+
 export const updateStatus = mutation({
   args: {
     machineId: v.id("cloudMachines"),

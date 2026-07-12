@@ -830,6 +830,10 @@ export const listIdleCandidates = internalQuery({
     const rows = await ctx.db.query("cloudMachines").collect();
     return rows
       .filter((m: any) => m.status === "active" && (m.origin ?? "managed") === "managed")
+      // Auto-park is OPT-OUT: it stays ON by default (undefined === enabled), so
+      // an idle box still stops its own meter unless the owner explicitly turns
+      // it off. Only an explicit `false` keeps a box running while idle.
+      .filter((m: any) => m.autoParkEnabled !== false)
       .map((m: any) => ({
         machineId: m._id,
         lastActivityAt: m.lastActivityAt ?? m.provisionPhaseAt ?? m.createdAt ?? 0,

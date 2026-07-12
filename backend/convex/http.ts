@@ -598,6 +598,7 @@ for (const path of [
   "/billing/yaver-cloud/provision",
   "/billing/yaver-cloud/start",
   "/billing/yaver-cloud/stop",
+  "/billing/yaver-cloud/auto-park",
   "/billing/yaver-cloud/dev-activate",
   "/billing/yaver-cloud/dev-adopt",
   "/billing/yaver-cloud/dev-deprovision",
@@ -5108,6 +5109,38 @@ http.route({
       amountCents: Math.round(amountCents),
     });
     return jsonResponse({ ok: true, mode: "owner-dev", ...result });
+  }),
+});
+
+/** POST /billing/yaver-cloud/auto-park — owner toggle for auto-close.
+ *
+ *  Auto-park stays ON by default (so a forgotten box always stops its own
+ *  meter); this lets the owner explicitly opt OUT and keep it running. */
+http.route({
+  path: "/billing/yaver-cloud/auto-park",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const body = await request.json().catch(() => ({}));
+    const machineId = String(body.machineId ?? "").trim();
+    if (!machineId) return errorResponse("machineId is required", 400);
+    if (typeof body.enabled !== "boolean") {
+      return errorResponse("enabled (boolean) is required", 400);
+    }
+    const idleMinutes =
+      typeof body.idleMinutes === "number" && body.idleMinutes > 0 ? body.idleMinutes : undefined;
+    try {
+      const r = await ctx.runMutation(internal.cloudMachines.setAutoPark, {
+        userDocId: session.userDocId as any,
+        machineId: machineId as any,
+        enabled: body.enabled,
+        idleMinutes,
+      });
+      return jsonResponse({ ...r, machineId });
+    } catch (e) {
+      return errorResponse(e instanceof Error ? e.message : "Failed", 400);
+    }
   }),
 });
 
