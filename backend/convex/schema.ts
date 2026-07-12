@@ -1162,6 +1162,14 @@ export default defineSchema({
     teamId: v.optional(v.string()),   // if team-owned, all team members can access
     subscriptionId: v.optional(v.id("subscriptions")),
     machineType: v.string(),          // "cpu" | "gpu"
+    // The CONCRETE provider server type this box was actually created on
+    // (e.g. "cpx51"). Recorded at provision so a resume-from-snapshot
+    // recreates on the SAME type — critical because a snapshot's disk image
+    // can only be restored onto a server type whose disk is >= it. Without
+    // this, resume used the current global default (YAVER_CLOUD_CPU_TYPE),
+    // which fails with Hetzner 422 "image disk is bigger than server type
+    // disk" whenever the default was downsized after the box was created.
+    serverType: v.optional(v.string()),
     // Provenance tag. "managed" = provisioned/adopted by Yaver (bought
     // from us, billed via LemonSqueezy or owner dev-adopt). Plain BYO
     // boxes are not cloudMachines rows at all, so they read as
@@ -1258,7 +1266,25 @@ export default defineSchema({
       arch: v.string(),               // "arm64" | "amd64"
       gpu: v.optional(v.string()),    // "rtx4000" | null
       vram: v.optional(v.number()),   // GB
+      // Seeded from the box itself (agent) so Convex reflects reality, not a
+      // provisioning-time guess. Hardware/OS facts are NOT P2P-sensitive
+      // (unlike task IO / paths), so they may live in Convex. Drives capacity
+      // planning, the resume server-type choice, and machine policies.
+      os: v.optional(v.string()),     // "linux" | "darwin" | "windows"
+      distro: v.optional(v.string()), // "ubuntu-24.04" | "debian-12" | …
+      kernel: v.optional(v.string()),
     })),
+    // Which coding runners are installed + authed on this box, seeded by the
+    // agent. Same privacy class as specs — capability metadata, no secrets.
+    // Lets the fleet/policy layer route work to a box that has the right
+    // runner ready without waking it first.
+    runnersAvailable: v.optional(v.array(v.object({
+      id: v.string(),                 // "claude" | "codex" | "opencode" | "glm"
+      name: v.optional(v.string()),
+      installed: v.optional(v.boolean()),
+      authed: v.optional(v.boolean()),
+      authSource: v.optional(v.string()),
+    }))),
     createdAt: v.number(),
     updatedAt: v.number(),
     lastHealthCheck: v.optional(v.number()),

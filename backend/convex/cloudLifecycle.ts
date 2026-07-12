@@ -515,6 +515,28 @@ function hetznerServerType(machineType: string): string {
   }
   return process.env.YAVER_CLOUD_GPU_TYPE || "cpx51";
 }
+
+// Smallest Hetzner CPX type whose disk can hold a snapshot of `diskGb`. Used
+// as a resume fallback for boxes provisioned before serverType was recorded:
+// a snapshot only restores onto a server type with disk >= the source disk, so
+// we must pick a type big enough regardless of the (possibly downsized) global
+// default. Returns undefined when the disk is unknown so the caller falls
+// through to the machineType default.
+function hetznerServerTypeForDisk(diskGb: number | undefined): string | undefined {
+  if (!diskGb || diskGb <= 0) return undefined;
+  // Hetzner CPX (AMD, shared) disk sizes, ascending.
+  const ladder: Array<{ type: string; disk: number }> = [
+    { type: "cpx11", disk: 40 },
+    { type: "cpx21", disk: 80 },
+    { type: "cpx31", disk: 160 },
+    { type: "cpx41", disk: 240 },
+    { type: "cpx51", disk: 360 },
+  ];
+  for (const rung of ladder) {
+    if (rung.disk >= diskGb) return rung.type;
+  }
+  return "cpx51"; // biggest CPX; larger snapshots need a bigger family (rare)
+}
 function hetznerLocation(region: string | undefined): string {
   return region === "us" ? "ash" : "nbg1";
 }
@@ -544,29 +566,54 @@ async function hetznerCreateFromImage(
   token: string,
   name: string,
   serverType: string,
-  location: string,
+  locations: string[],
   imageId: string,
-): Promise<{ serverId: string; ip: string }> {
+): Promise<{ serverId: string; ip: string; location: string }> {
   const imageVal: string | number = /^\d+$/.test(imageId) ? Number(imageId) : imageId;
-  const r = await fetch(`${HETZNER_API}/servers`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name,
-      server_type: serverType,
-      image: imageVal,
-      location,
-      labels: { service: "yaver-cloud-machine", managed: "true", resumed: "true" },
-    }),
-  });
-  if (!r.ok) throw new Error(`create-from-snapshot HTTP ${r.status}: ${await r.text()}`);
-  const j = (await r.json()) as {
-    server?: { id?: number; public_net?: { ipv4?: { ip?: string } } };
-  };
-  const id = j.server?.id;
-  const ip = j.server?.public_net?.ipv4?.ip;
-  if (!id || !ip) throw new Error("create-from-snapshot returned no id/ip");
-  return { serverId: String(id), ip };
+  // Try each candidate location, moving on when a location can't serve this
+  // type or is out of capacity — a snapshot restore must land SOMEWHERE, and
+  // a box created in fsn1 whose region maps to nbg1 would otherwise fail hard
+  // with "unsupported location for server type". Non-location errors (bad
+  // image, auth) throw immediately.
+  const tried = Array.from(new Set(locations.filter(Boolean)));
+  let lastErr = "";
+  for (const location of tried) {
+    const r = await fetch(`${HETZNER_API}/servers`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        server_type: serverType,
+        image: imageVal,
+        location,
+        labels: { service: "yaver-cloud-machine", managed: "true", resumed: "true" },
+      }),
+    });
+    if (r.ok) {
+      const j = (await r.json()) as {
+        server?: { id?: number; public_net?: { ipv4?: { ip?: string } } };
+      };
+      const id = j.server?.id;
+      const ip = j.server?.public_net?.ipv4?.ip;
+      if (!id || !ip) throw new Error("create-from-snapshot returned no id/ip");
+      return { serverId: String(id), ip, location };
+    }
+    const body = await r.text();
+    lastErr = `HTTP ${r.status}: ${body}`;
+    // Only advance to the next location for location/capacity problems.
+    const retryable = /unsupported location|resource_unavailable|no available|capacity|placement/i.test(body);
+    if (!retryable) throw new Error(`create-from-snapshot ${lastErr}`);
+  }
+  throw new Error(`create-from-snapshot exhausted locations [${tried.join(", ")}]: ${lastErr}`);
+}
+
+// EU/US candidate locations for a resume, primary first. cpx (AMD) types are
+// offered in fsn1/nbg1/hel1 (EU) and ash/hil (US); trying several rides out a
+// per-location "unsupported type"/capacity gap.
+function resumeLocationCandidates(region: string | undefined): string[] {
+  return region === "us"
+    ? ["ash", "hil"]
+    : ["fsn1", "nbg1", "hel1"];
 }
 
 // Re-point (or create) the box's A record. A resumed box gets a NEW
@@ -848,16 +895,32 @@ export const resumeMachine = internalAction({
       machineId, phase: "booting", progress: 20,
     });
     try {
+      // Recreate on the SAME server type the box was originally created on.
+      // A snapshot can only restore onto a disk >= the source disk, so falling
+      // back to the current global default (which may have been downsized)
+      // would 422 with "image disk is bigger than server type disk". Prefer the
+      // recorded serverType; fall back to the type implied by specs.diskGb, then
+      // the machineType default.
+      const serverType =
+        machine.serverType ||
+        hetznerServerTypeForDisk(machine.specs?.diskGb) ||
+        hetznerServerType(machine.machineType ?? "cpu");
+      // Prefer the region's primary location, then fall back across the same
+      // zone so a type/capacity gap in one location doesn't block the wake.
+      const locationCandidates = Array.from(new Set([
+        hetznerLocation(machine.region),
+        ...resumeLocationCandidates(machine.region),
+      ]));
       const { serverId, ip } = await hetznerCreateFromImage(
         token!,
         machine.hostname || `yaver-${machineId}`,
-        hetznerServerType(machine.machineType ?? "cpu"),
-        hetznerLocation(machine.region),
+        serverType,
+        locationCandidates,
         machine.lastSnapshotId,
       );
       await ctx.runMutation(internal.cloudMachines.setProvisioned, {
         machineId, hetznerServerId: serverId, serverIp: ip,
-        hostname: machine.hostname || "",
+        hostname: machine.hostname || "", serverType,
       });
       // Resumed box has a NEW IP — re-point its DNS A record so the
       // <id>.cloud.yaver.io hostname keeps resolving (IP-direct works

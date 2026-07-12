@@ -1079,6 +1079,56 @@ export const ensureForSubscription = mutation({
 // ─── Internal helpers used by the provisioning action ─────────────
 
 /** Patch the machine row from inside an action (actions cannot touch db directly). */
+// seedMachineInfo — write the box's REAL properties (server type, specs,
+// OS/distro, available+authed runners) into Convex. Called by the agent once
+// it's up (and usable to correct a row whose provisioning-time specs were a
+// guess). Hardware/OS/runner capability is NOT P2P-sensitive, so it's allowed
+// in Convex; it powers capacity planning, the resume server-type choice, and
+// machine policies. specs are MERGED so a partial report never nulls a field.
+export const seedMachineInfo = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    serverType: v.optional(v.string()),
+    specs: v.optional(v.object({
+      vcpu: v.optional(v.number()),
+      ramGb: v.optional(v.number()),
+      diskGb: v.optional(v.number()),
+      arch: v.optional(v.string()),
+      gpu: v.optional(v.string()),
+      vram: v.optional(v.number()),
+      os: v.optional(v.string()),
+      distro: v.optional(v.string()),
+      kernel: v.optional(v.string()),
+    })),
+    runnersAvailable: v.optional(v.array(v.object({
+      id: v.string(),
+      name: v.optional(v.string()),
+      installed: v.optional(v.boolean()),
+      authed: v.optional(v.boolean()),
+      authSource: v.optional(v.string()),
+    }))),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.machineId);
+    if (!row) return;
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (args.serverType) patch.serverType = args.serverType;
+    if (args.runnersAvailable) patch.runnersAvailable = args.runnersAvailable;
+    if (args.specs) {
+      const prev = (row as any).specs ?? {};
+      const merged: Record<string, unknown> = { ...prev };
+      for (const [k, v2] of Object.entries(args.specs)) {
+        if (v2 !== undefined) merged[k] = v2;
+      }
+      // arch is required by the validator — keep a sane default if neither
+      // the report nor the prior row carried one.
+      if (merged.arch === undefined) merged.arch = "amd64";
+      patch.specs = merged;
+    }
+    await ctx.db.patch(args.machineId, patch);
+  },
+});
+
 export const setProvisioned = internalMutation({
   args: {
     machineId: v.id("cloudMachines"),
@@ -1088,6 +1138,7 @@ export const setProvisioned = internalMutation({
     machineTokenHash: v.optional(v.string()),
     deviceId: v.optional(v.string()),
     bootImageSource: v.optional(v.string()),
+    serverType: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {
@@ -1103,6 +1154,7 @@ export const setProvisioned = internalMutation({
     if (args.machineTokenHash) patch.machineTokenHash = args.machineTokenHash;
     if (args.deviceId) patch.deviceId = args.deviceId;
     if (args.bootImageSource) patch.bootImageSource = args.bootImageSource;
+    if (args.serverType) patch.serverType = args.serverType;
     await ctx.db.patch(args.machineId, patch);
   },
 });
@@ -1625,6 +1677,17 @@ export const provision = internalAction({
 
     try {
       // ── 1. Hetzner server ───────────────────────────────────────
+      // Test-only cost override: YAVER_CLOUD_CPU_TYPE swaps the cpu SKU's
+      // Hetzner type (e.g. cpx22 €9.49 vs cpx42 €29.99) so headless/e2e
+      // provisions are cheap throwaways. Unset ⇒ the real SKU type. Only
+      // applies to machineType "cpu". Must be a non-deprecated type orderable
+      // in the resolved location. Captured so we can RECORD it on the row and
+      // recreate on the exact same type at resume (a snapshot won't restore
+      // onto a smaller disk).
+      const createdServerType =
+        machine.machineType === "cpu" && process.env.YAVER_CLOUD_CPU_TYPE
+          ? process.env.YAVER_CLOUD_CPU_TYPE
+          : specDef.hetznerType;
       const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
         method: "POST",
         headers: {
@@ -1633,15 +1696,7 @@ export const provision = internalAction({
         },
         body: JSON.stringify({
           name: serverName,
-          // Test-only cost override: YAVER_CLOUD_CPU_TYPE swaps the cpu
-          // SKU's Hetzner type (e.g. cpx22 €9.49 vs cpx42 €29.99) so
-          // headless/e2e provisions are cheap throwaways. Unset ⇒ the
-          // real SKU type. Only applies to machineType "cpu". Must be a
-          // non-deprecated type orderable in the resolved location.
-          server_type:
-            machine.machineType === "cpu" && process.env.YAVER_CLOUD_CPU_TYPE
-              ? process.env.YAVER_CLOUD_CPU_TYPE
-              : specDef.hetznerType,
+          server_type: createdServerType,
           image: bootImage,
           location,
           labels: {
@@ -1711,6 +1766,8 @@ export const provision = internalAction({
         // golden snapshot configured for this arch) is visible on the
         // card instead of looking like a hang.
         bootImageSource: goldenImageId ? "golden" : "vanilla",
+        // Persist the concrete type so resume-from-snapshot recreates on it.
+        serverType: createdServerType,
       });
 
       // ── 4b. Phase 2B+2C — managed box doubles as this user's relay ──
