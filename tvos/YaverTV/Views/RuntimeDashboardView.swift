@@ -15,8 +15,10 @@ struct RuntimeDashboardView: View {
     @State private var runners: RunnerSessions?
     @State private var platformMatrix: PlatformMatrixReport?
     @State private var authSession: RunnerAuthSession?
+    @State private var gitAuthSession: GitAuthSession?
     @State private var authPollingTask: Task<Void, Never>?
     @State private var authStartingRunner: String?
+    @State private var gitAuthStartingProvider: String?
     @State private var notice: String?
     @State private var refreshTask: Task<Void, Never>?
     @State private var reloading = false
@@ -115,7 +117,7 @@ struct RuntimeDashboardView: View {
                                     Label("Claude Code", systemImage: "sparkles")
                                         .frame(minWidth: 210)
                                 }
-                                .disabled(authStartingRunner != nil)
+                                .disabled(authStartingRunner != nil || gitAuthStartingProvider != nil)
 
                                 Button {
                                     Task { await startRunnerAuth("codex") }
@@ -123,7 +125,23 @@ struct RuntimeDashboardView: View {
                                     Label("Codex", systemImage: "terminal")
                                         .frame(minWidth: 160)
                                 }
-                                .disabled(authStartingRunner != nil)
+                                .disabled(authStartingRunner != nil || gitAuthStartingProvider != nil)
+
+                                Button {
+                                    Task { await startGitAuth("github") }
+                                } label: {
+                                    Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                                        .frame(minWidth: 160)
+                                }
+                                .disabled(authStartingRunner != nil || gitAuthStartingProvider != nil)
+
+                                Button {
+                                    Task { await startGitAuth("gitlab") }
+                                } label: {
+                                    Label("GitLab", systemImage: "arrow.triangle.branch")
+                                        .frame(minWidth: 160)
+                                }
+                                .disabled(authStartingRunner != nil || gitAuthStartingProvider != nil)
                             }
 
                             if let authSession {
@@ -139,12 +157,22 @@ struct RuntimeDashboardView: View {
                                         .lineLimit(2)
                                 }
                             }
+                            if let gitAuthSession {
+                                RuntimeRow("Git", gitProviderLabel(gitAuthSession.provider))
+                                RuntimeRow("Status", gitAuthSession.state ?? "pending")
+                                if let code = gitAuthSession.userCode, !code.isEmpty {
+                                    RuntimeRow("Code", code)
+                                }
+                                if let username = gitAuthSession.username, !username.isEmpty {
+                                    RuntimeRow("User", username)
+                                }
+                            }
                         }
                         .frame(width: 880, alignment: .leading)
 
                         ZStack {
                             RoundedRectangle(cornerRadius: 18).fill(.white)
-                            if let url = authSession?.openURL, let img = qrImage(url) {
+                            if let url = authSession?.openURL ?? gitAuthSession?.verificationURI, let img = qrImage(url) {
                                 Image(uiImage: img)
                                     .interpolation(.none)
                                     .resizable()
@@ -154,7 +182,7 @@ struct RuntimeDashboardView: View {
                                     Image(systemName: "qrcode.viewfinder")
                                         .font(.system(size: 54))
                                         .foregroundStyle(.black.opacity(0.75))
-                                    Text(authStartingRunner == nil ? "Choose a runner" : "Starting...")
+                                    Text((authStartingRunner == nil && gitAuthStartingProvider == nil) ? "Choose auth" : "Starting...")
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundStyle(.black.opacity(0.75))
                                 }
@@ -260,8 +288,32 @@ struct RuntimeDashboardView: View {
                 return
             }
             authSession = session
+            gitAuthSession = nil
             notice = session.openURL == nil ? "Waiting for \(runnerLabel(session.runner)) OAuth URL..." : "Scan the QR to authorize \(runnerLabel(session.runner))."
             pollRunnerAuth(session.id)
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    private func startGitAuth(_ provider: String) async {
+        guard let client = store.client() else {
+            notice = "No runtime machine selected"
+            return
+        }
+        gitAuthStartingProvider = provider
+        authPollingTask?.cancel()
+        defer { gitAuthStartingProvider = nil }
+        do {
+            let session = try await client.startGitAuth(provider)
+            guard !session.sessionId.isEmpty else {
+                notice = "Git auth did not return a session"
+                return
+            }
+            gitAuthSession = session
+            authSession = nil
+            notice = session.verificationURI == nil ? "Waiting for \(gitProviderLabel(session.provider)) OAuth URL..." : "Scan the QR to authorize \(gitProviderLabel(session.provider))."
+            pollGitAuth(session.sessionId)
         } catch {
             notice = error.localizedDescription
         }
@@ -295,6 +347,32 @@ struct RuntimeDashboardView: View {
         }
     }
 
+    private func pollGitAuth(_ sessionId: String) {
+        authPollingTask?.cancel()
+        authPollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if Task.isCancelled { return }
+                guard let client = store.client() else { return }
+                do {
+                    let session = try await client.gitAuthStatus(sessionId: sessionId)
+                    gitAuthSession = session
+                    let state = (session.state ?? "").lowercased()
+                    if state == "done" || state == "completed" || state == "success" {
+                        notice = "\(gitProviderLabel(session.provider)) is authorized on the remote runtime."
+                        return
+                    }
+                    if state == "error" || state == "expired" || state == "failed" {
+                        notice = session.error ?? "\(gitProviderLabel(session.provider)) auth ended with \(state)."
+                        return
+                    }
+                } catch {
+                    notice = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func triggerReload(mode: String) async {
         guard let client = store.client() else { return }
         reloading = true
@@ -319,6 +397,15 @@ struct RuntimeDashboardView: View {
             return value
         default:
             return "Runner"
+        }
+    }
+
+    private func gitProviderLabel(_ provider: String?) -> String {
+        switch provider?.lowercased() {
+        case "gitlab":
+            return "GitLab"
+        default:
+            return "GitHub"
         }
     }
 

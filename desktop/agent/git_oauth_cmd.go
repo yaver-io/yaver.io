@@ -11,12 +11,18 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 )
 
 func runGitOAuth(args []string) {
+	if len(args) > 0 && args[0] == "status" {
+		runGitOAuthStatus(args[1:])
+		return
+	}
 	fs := flag.NewFlagSet("git oauth", flag.ExitOnError)
 	var (
 		host     string
@@ -26,12 +32,13 @@ func runGitOAuth(args []string) {
 		timeout  int
 	)
 	fs.StringVar(&host, "host", "", "Provider host (defaults to github.com or gitlab.com)")
-	fs.StringVar(&device, "device", "", "Owned remote device id/alias to run the flow on (default: this machine)")
+	fs.StringVar(&device, "device", "", "Owned remote device id/alias to run the flow on: BYO Hetzner, Yaver-managed cloud, or another paired runtime (default: this machine)")
 	fs.BoolVar(&openBrwr, "open", false, "Try to open the verification URL in the local browser")
 	fs.BoolVar(&outJSON, "json", false, "Emit a JSON summary instead of waiting interactively")
 	fs.IntVar(&timeout, "timeout", 600, "Seconds to wait for the user to approve before giving up")
 	if len(args) == 0 {
 		fmt.Println("usage: yaver git oauth <github|gitlab> [--device <id>] [--host <host>] [--open]")
+		fmt.Println("       yaver git oauth status [--device <id>] <session_id>")
 		os.Exit(2)
 	}
 	provider := strings.ToLower(strings.TrimSpace(args[0]))
@@ -41,18 +48,7 @@ func runGitOAuth(args []string) {
 	}
 	_ = fs.Parse(args[1:])
 
-	target := strings.TrimSpace(device)
-	if target != "" {
-		// Resolve aliases / partial ids the same way push-creds does so
-		// the user can type `yaver git oauth github --device test`.
-		cfg := mustLoadAuthConfig()
-		known, err := listDevicesEnsuringAuth(cfg)
-		if err == nil {
-			if d, rerr := resolveDevice(target, known); rerr == nil {
-				target = d.DeviceID
-			}
-		}
-	}
+	target := resolveGitOAuthDeviceFlag(device)
 
 	startResp, err := callGitOAuthStart(provider, host, target)
 	if err != nil {
@@ -65,7 +61,7 @@ func runGitOAuth(args []string) {
 		whichBox = shortDeviceID(target)
 	}
 	fmt.Printf("Open this URL on any device:\n\n  %s\n\nAnd enter this code:\n\n  %s\n\n", startResp.VerificationURI, startResp.UserCode)
-	fmt.Printf("(Approval will save the resulting OAuth token on %s. Polling every %ds, gives up in %ds…)\n\n", whichBox, startResp.Interval, timeout)
+	fmt.Printf("(Approval will save clone/push credentials and a local CI/deploy vault token on %s. Polling every %ds, gives up in %ds…)\n\n", whichBox, startResp.Interval, timeout)
 
 	if openBrwr && target == "" {
 		_ = openInBrowser(startResp.VerificationURI)
@@ -83,7 +79,7 @@ func runGitOAuth(args []string) {
 	}
 	for {
 		if time.Now().After(deadline) {
-			fmt.Fprintln(os.Stderr, "git oauth: client-side timeout reached. The agent will keep polling — re-check with: yaver git oauth status "+startResp.SessionID)
+			fmt.Fprintf(os.Stderr, "git oauth: client-side timeout reached. The agent will keep polling — re-check with: yaver git oauth status %s%s\n", deviceStatusFlag(target), startResp.SessionID)
 			os.Exit(1)
 		}
 		time.Sleep(time.Duration(interval) * time.Second)
@@ -95,7 +91,7 @@ func runGitOAuth(args []string) {
 		}
 		switch st.State {
 		case "done":
-			fmt.Printf("✓ %s linked as %s on %s\n", st.Provider, st.Username, whichBox)
+			fmt.Printf("✓ %s linked as %s on %s (git clone/push + CI/deploy vault token ready)\n", st.Provider, st.Username, whichBox)
 			return
 		case "error":
 			fmt.Fprintf(os.Stderr, "✗ %s\n", st.Error)
@@ -117,6 +113,71 @@ func runGitOAuth(args []string) {
 			os.Exit(1)
 		}
 	}
+}
+
+func runGitOAuthStatus(args []string) {
+	fs := flag.NewFlagSet("git oauth status", flag.ExitOnError)
+	var (
+		device  string
+		outJSON bool
+	)
+	fs.StringVar(&device, "device", "", "Owned remote device id/alias that started the flow")
+	fs.BoolVar(&outJSON, "json", false, "Emit JSON instead of text")
+	_ = fs.Parse(args)
+	if fs.NArg() != 1 {
+		fmt.Println("usage: yaver git oauth status [--device <id>] <session_id>")
+		os.Exit(2)
+	}
+	target := resolveGitOAuthDeviceFlag(device)
+	st, err := callGitOAuthStatus(fs.Arg(0), target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "git oauth status: %v\n", err)
+		os.Exit(1)
+	}
+	if outJSON {
+		fmt.Println(jsonOrEmpty(st))
+		return
+	}
+	whichBox := "this machine"
+	if target != "" {
+		whichBox = shortDeviceID(target)
+	}
+	switch st.State {
+	case "done":
+		fmt.Printf("done: %s linked as %s on %s\n", st.Provider, st.Username, whichBox)
+	case "pending":
+		fmt.Printf("pending: waiting for browser approval on %s\n", whichBox)
+	case "error":
+		fmt.Fprintf(os.Stderr, "error: %s\n", st.Error)
+		os.Exit(1)
+	case "expired":
+		fmt.Fprintln(os.Stderr, "expired: re-run yaver git oauth to start a fresh code")
+		os.Exit(1)
+	default:
+		fmt.Printf("%s: %s\n", st.State, st.Error)
+	}
+}
+
+func resolveGitOAuthDeviceFlag(device string) string {
+	target := strings.TrimSpace(device)
+	if target == "" {
+		return ""
+	}
+	cfg := mustLoadAuthConfig()
+	known, err := listDevicesEnsuringAuth(cfg)
+	if err == nil {
+		if d, rerr := resolveDevice(target, known); rerr == nil {
+			return d.DeviceID
+		}
+	}
+	return target
+}
+
+func deviceStatusFlag(target string) string {
+	if strings.TrimSpace(target) == "" {
+		return ""
+	}
+	return "--device " + shortDeviceID(target) + " "
 }
 
 type gitOAuthStartResponse struct {
@@ -150,9 +211,12 @@ type gitOAuthStatusResponse struct {
 func callGitOAuthStart(provider, host, target string) (*gitOAuthStartResponse, error) {
 	body, _ := json.Marshal(map[string]string{"provider": provider, "host": host})
 	if target != "" {
-		_, raw, err := proxyToDevice(context.Background(), "git_oauth_start", target, "POST", "/git/provider/oauth/start", body)
+		status, raw, err := proxyToDevice(context.Background(), "git_oauth_start", target, http.MethodPost, "/git/provider/oauth/start", body)
 		if err != nil {
 			return nil, err
+		}
+		if status/100 != 2 {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(string(raw)))
 		}
 		var r gitOAuthStartResponse
 		if jerr := json.Unmarshal(raw, &r); jerr != nil {
@@ -185,10 +249,13 @@ func callGitOAuthStart(provider, host, target string) (*gitOAuthStartResponse, e
 
 func callGitOAuthStatus(sessionID, target string) (*gitOAuthStatusResponse, error) {
 	if target != "" {
-		path := "/git/provider/oauth/status?session=" + sessionID
-		_, raw, err := proxyToDevice(context.Background(), "git_oauth_status", target, "GET", path, nil)
+		path := "/git/provider/oauth/status?session=" + url.QueryEscape(sessionID)
+		status, raw, err := proxyToDevice(context.Background(), "git_oauth_status", target, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, err
+		}
+		if status/100 != 2 {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(string(raw)))
 		}
 		var r gitOAuthStatusResponse
 		if jerr := json.Unmarshal(raw, &r); jerr != nil {

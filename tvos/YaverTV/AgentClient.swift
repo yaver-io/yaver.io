@@ -131,6 +131,16 @@ actor AgentClient {
         try await ops("runner_auth", ["op": "browser_status", "sessionId": sessionId], as: RunnerAuthStartResult.self)
     }
 
+    func startGitAuth(_ provider: String, host: String? = nil) async throws -> GitAuthSession {
+        var payload: [String: Any] = ["provider": provider]
+        if let host, !host.isEmpty { payload["host"] = host }
+        return try await ops("git_connect", payload, as: GitAuthSession.self)
+    }
+
+    func gitAuthStatus(sessionId: String) async throws -> GitAuthSession {
+        try await ops("git_connect_status", ["sessionId": sessionId], as: GitAuthSession.self)
+    }
+
     func reload(mode: String = "dev", workDir: String? = nil) async throws -> ReloadResult {
         var payload: [String: Any] = ["mode": mode]
         if let workDir, !workDir.isEmpty { payload["workDir"] = workDir }

@@ -128,7 +128,7 @@ func runExec(args []string) {
 
 // resolveDeviceURL discovers a device and returns its HTTP base URL.
 func resolveDeviceURL(cfg *Config, deviceHint string, useRelay bool) string {
-	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	devices, err := listDevicesEnsuringAuth(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing devices: %v\n", err)
 		os.Exit(1)
@@ -139,58 +139,88 @@ func resolveDeviceURL(cfg *Config, deviceHint string, useRelay bool) string {
 	}
 
 	var target *DeviceInfo
-	for i := range devices {
-		d := &devices[i]
-		if deviceHint != "" {
-			if strings.HasPrefix(d.DeviceID, deviceHint) || strings.EqualFold(d.Name, deviceHint) || strings.HasPrefix(strings.ToLower(d.Name), strings.ToLower(deviceHint)) {
-				target = d
+	if strings.TrimSpace(deviceHint) != "" {
+		resolved, rerr := resolveDevice(deviceHint, devices)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", rerr)
+			printExecDeviceList(devices)
+			os.Exit(1)
+		}
+		target = resolved
+	} else {
+		for i := range devices {
+			if devices[i].IsOnline {
+				target = &devices[i]
 				break
 			}
-		} else if d.IsOnline {
-			target = d
-			break
 		}
 	}
 
 	if target == nil {
-		fmt.Fprintln(os.Stderr, "No matching online device. Your devices:")
-		for _, d := range devices {
-			status := "offline"
-			if d.IsOnline {
-				status = "online"
-			}
-			fmt.Fprintf(os.Stderr, "  %s  %-20s  %s\n", d.DeviceID[:8], d.Name, status)
-		}
+		fmt.Fprintln(os.Stderr, "No online device found. Your devices:")
+		printExecDeviceList(devices)
+		os.Exit(1)
+	}
+	if !target.IsOnline {
+		fmt.Fprintf(os.Stderr, "Device %s (%s) is offline.\n", firstNonEmpty(strings.TrimSpace(target.Alias), target.Name), target.DeviceID[:8])
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Connected to %s (%s)\n", target.Name, target.DeviceID[:8])
+	label := firstNonEmpty(strings.TrimSpace(target.Alias), target.Name, target.DeviceID)
+	fmt.Fprintf(os.Stderr, "Connected to %s (%s)\n", label, target.DeviceID[:8])
 
-	if useRelay {
-		// Try relay servers
-		relays, err := FetchRelayServers(cfg.ConvexSiteURL)
-		if err == nil {
-			for _, r := range relays {
-				if r.HttpURL != "" {
-					return strings.TrimRight(r.HttpURL, "/") + "/d/" + target.DeviceID
-				}
+	candidates, err := buildRemoteAgentCandidates(cfg, target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving remote transports: %v\n", err)
+		os.Exit(1)
+	}
+	var filtered []RemoteAgentCandidate
+	for _, candidate := range candidates {
+		if useRelay {
+			if candidate.Kind == "relay" {
+				filtered = append(filtered, candidate)
 			}
+			continue
 		}
-		// Also try config relay servers
-		for _, r := range cfg.RelayServers {
-			if r.HttpURL != "" {
-				return strings.TrimRight(r.HttpURL, "/") + "/d/" + target.DeviceID
-			}
+		if candidate.Kind != "relay" {
+			filtered = append(filtered, candidate)
 		}
-		for _, r := range cfg.CachedRelayServers {
-			if r.HttpURL != "" {
-				return strings.TrimRight(r.HttpURL, "/") + "/d/" + target.DeviceID
-			}
+	}
+	if len(filtered) == 0 {
+		mode := "relay"
+		if !useRelay {
+			mode = "direct"
+		}
+		fmt.Fprintf(os.Stderr, "No %s transport candidates for %s (%s).\n", mode, label, target.DeviceID[:8])
+		os.Exit(1)
+	}
+	for _, candidate := range filtered {
+		if strings.TrimSpace(candidate.BaseURL) != "" {
+			return strings.TrimRight(candidate.BaseURL, "/")
 		}
 	}
 
-	// Direct connection (HTTP API defaults to port 18080)
-	return fmt.Sprintf("http://%s:18080", target.QuicHost)
+	fmt.Fprintf(os.Stderr, "No usable transport candidates for %s (%s).\n", label, target.DeviceID[:8])
+	os.Exit(1)
+	return ""
+}
+
+func printExecDeviceList(devices []DeviceInfo) {
+	for _, d := range devices {
+		status := "offline"
+		if d.IsOnline {
+			status = "online"
+		}
+		label := d.Name
+		if alias := strings.TrimSpace(d.Alias); alias != "" {
+			label = label + " @" + alias
+		}
+		id := d.DeviceID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		fmt.Fprintf(os.Stderr, "  %s  %-28s  %s\n", id, label, status)
+	}
 }
 
 // execHTTP makes an HTTP request with auth and JSON body.
@@ -205,12 +235,14 @@ func execHTTP(method, url, token string, body map[string]interface{}) (map[strin
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	relayPassword, err := relayPasswordForBase(url)
+	headers, err := transportHeadersForBase(nil, url)
 	if err != nil {
 		return nil, err
 	}
-	if relayPassword != "" {
-		req.Header.Set("X-Relay-Password", relayPassword)
+	for k, v := range headers {
+		if strings.TrimSpace(v) != "" {
+			req.Header.Set(k, v)
+		}
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")

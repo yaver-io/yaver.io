@@ -25,9 +25,8 @@ type repeatableFlag []string
 func (r *repeatableFlag) String() string     { return strings.Join(*r, ",") }
 func (r *repeatableFlag) Set(v string) error { *r = append(*r, v); return nil }
 
-// runGitCLI dispatches `yaver git <subcommand>`. Today only `push-creds`
-// lives here; future git-related convenience commands hang off the same
-// dispatcher rather than getting their own top-level case in main.go.
+// runGitCLI dispatches `yaver git <subcommand>`. Git credential commands
+// live here rather than getting their own top-level case in main.go.
 // (Named runGitCLI rather than runGit because git_http.go already owns
 // a runGit helper that shells out to the git binary.)
 func runGitCLI(args []string) {
@@ -37,7 +36,8 @@ func runGitCLI(args []string) {
 		fmt.Println("subcommands:")
 		fmt.Println("  push-creds <device|alias> [...]   forward local GitHub/GitLab creds to one or more owned machines")
 		fmt.Println("  push-creds --all                  forward to every owned online peer")
-		fmt.Println("  oauth <github|gitlab> [--device <id>]   start a Device Flow on the local or a remote agent")
+		fmt.Println("  oauth <github|gitlab> [--device <id>]   start Device Flow on this Mac or an owned BYO/managed runtime")
+		fmt.Println("  oauth status [--device <id>] <session>  check an in-flight Device Flow")
 		os.Exit(2)
 	}
 	switch args[0] {

@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+Access-Control-Allow-Headers: Authorization, Content-Type, X-Yaver-Caller, X-Relay-Password
+Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
+Access-Control-Allow-Origin: *
+Content-Type: application/json
+Date: Sun, 12 Jul 2026 10:48:46 GMT
+Content-Length: 955
+Connection: close
+
+{"ok":true,"task":{"id":"1a7c58b0","title":"GLM hello world in Android sandbox","description":"","status":"failed","runnerId":"custom","deviceName":"localhost","output":"sh: /usr/local/bin/claude: not found\n\n⚠️ Agent process crashed — restarting (attempt 1/4)...\nsh: /usr/local/bin/claude: not found\n","resultText":"sh: /usr/local/bin/claude: not found\n\n⚠️ Agent process crashed — restarting (attempt 1/4)...\nsh: /usr/local/bin/claude: not found","turns":[{"role":"user","content":"GLM hello world in Android sandbox","timestamp":"2026-07-12T10:48:33.735664175Z"},{"role":"assistant","content":"sh: /usr/local/bin/claude: not found\n\n⚠️ Agent process crashed — restarting (attempt 1/4)...\nsh: /usr/local/bin/claude: not found","timestamp":"2026-07-12T10:48:35.878481257Z"}],"source":"mobile","createdAt":"2026-07-12T10:48:33.735664175Z","startedAt":"2026-07-12T10:48:35.8655173Z","finishedAt":"2026-07-12T10:48:35.878481257Z"}}

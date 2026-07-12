@@ -398,7 +398,7 @@ func verifyGitHubToken(token string) (username, avatarURL string, err error) {
 func verifyGitLabToken(host, token string) (username, avatarURL string, err error) {
 	apiURL := fmt.Sprintf("https://%s/api/v4/user", host)
 	req, _ := http.NewRequest("GET", apiURL, nil)
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -535,7 +535,7 @@ func listGitHubRepos(token string, page, perPage int) ([]RemoteRepo, error) {
 func listGitLabRepos(host, token string, page, perPage int) ([]RemoteRepo, error) {
 	url := fmt.Sprintf("https://%s/api/v4/projects?membership=true&order_by=updated_at&sort=desc&per_page=%d&page=%d", host, perPage, page)
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -670,7 +670,7 @@ func addSSHKeyToGitLab(host, token, title, pubKey string) error {
 	body := fmt.Sprintf(`{"title":%q,"key":%q}`, title, pubKey)
 	apiURL := fmt.Sprintf("https://%s/api/v4/user/keys", host)
 	req, _ := http.NewRequest("POST", apiURL, strings.NewReader(body))
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -1653,14 +1653,14 @@ func createRepoOnGitLab(host, token, name, description string, private bool) (cl
 		visibility = "private"
 	}
 	body := map[string]interface{}{
-		"name":         name,
-		"description":  description,
-		"visibility":   visibility,
+		"name":                   name,
+		"description":            description,
+		"visibility":             visibility,
 		"initialize_with_readme": true,
 	}
 	buf, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", "https://"+host+"/api/v4/projects", strings.NewReader(string(buf)))
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

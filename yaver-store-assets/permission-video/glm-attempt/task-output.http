@@ -1,0 +1,20 @@
+HTTP/1.1 200 OK
+Access-Control-Allow-Headers: Authorization, Content-Type, X-Yaver-Caller, X-Relay-Password
+Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
+Access-Control-Allow-Origin: *
+Cache-Control: no-cache
+Content-Type: text/event-stream
+Date: Sun, 12 Jul 2026 10:48:46 GMT
+Connection: close
+Transfer-Encoding: chunked
+
+af
+data: {"text":"sh: /usr/local/bin/claude: not found\n\n⚠️ Agent process crashed — restarting (attempt 1/4)...\nsh: /usr/local/bin/claude: not found\n","type":"output"}
+
+
+29
+data: {"status":"failed","type":"done"}
+
+
+0
+

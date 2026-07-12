@@ -1,0 +1,77 @@
+[
+  {
+    "text": "1. Open mobile — an on-device tool",
+    "startSec": 6.79e-7,
+    "endSec": 5.258346924
+  },
+  {
+    "text": "2. The user starts an on-device coding agent running a user-started mobile development task",
+    "startSec": 5.258355657,
+    "endSec": 11.01839332
+  },
+  {
+    "text": "Give the on-device agent a real task",
+    "startSec": 11.018398272,
+    "endSec": 14.477487129
+  },
+  {
+    "text": "[step error: local: exit status 1: ]",
+    "startSec": 11.018398272,
+    "endSec": 14.477490971
+  },
+  {
+    "text": "Lock or leave the app while the task continues",
+    "startSec": 14.477492515,
+    "endSec": 19.139411821
+  },
+  {
+    "text": "Yaver keeps a foreground notification while work is running",
+    "startSec": 19.139416895,
+    "endSec": 23.142340603
+  },
+  {
+    "text": "3. The task is doing real work — this can take minutes",
+    "startSec": 23.142341368,
+    "endSec": 58.034738604
+  },
+  {
+    "text": "[step error: timed out waiting for \"Running\"]",
+    "startSec": 23.142341368,
+    "endSec": 58.034739524
+  },
+  {
+    "text": "4. A foreground notification shows it running — Android keeps the process alive",
+    "startSec": 58.034741827,
+    "endSec": 63.143805105
+  },
+  {
+    "text": "5. We leave the app. Without a foreground service Android would kill this mid-task and lose the work",
+    "startSec": 63.143830576,
+    "endSec": 68.304655857
+  },
+  {
+    "text": "6. The task keeps running in the background and finishes",
+    "startSec": 68.304656343,
+    "endSec": 221.234341109
+  },
+  {
+    "text": "[step error: timed out waiting for \"Task finished\"]",
+    "startSec": 68.304656343,
+    "endSec": 221.234342418
+  },
+  {
+    "text": "7. A “task finished” notification confirms the work completed while backgrounded",
+    "startSec": 221.234349179,
+    "endSec": 226.319122579
+  },
+  {
+    "text": "8. The user can stop the agent anytime — the service and notification end",
+    "startSec": 226.319123016,
+    "endSec": 230.51229974
+  },
+  {
+    "text": "[step error: local: exit status 255: Stopping service: Intent { cmp=io.yaver.mobile/.sandbox.SandboxService }\nService stopped]",
+    "startSec": 226.319123016,
+    "endSec": 230.512300762
+  }
+]

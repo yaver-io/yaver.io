@@ -1228,6 +1228,10 @@ export default function HomePage() {
       {/* ── Section 1: Hero — mobile-first feedback + AI debugging wedge ── */}
       <section className="px-6 pb-10 pt-20 md:pt-28">
         <div className="mx-auto max-w-5xl text-center">
+          {/* Short product brandline — mirrors the mobile splash. */}
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.25em] text-surface-400">
+            Remote AI Runtime
+          </p>
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             Open source · Self-hostable · Mobile-first

@@ -204,6 +204,8 @@ export default function CarVoiceCodingScreen() {
         return runtimeSurfaceClient.gitIssues(deviceId, payload as any);
       if (verb === "git_ci_status")
         return runtimeSurfaceClient.gitCIStatus(deviceId, payload as any);
+      if (verb === "git_connect")
+        return runtimeSurfaceClient.gitConnect(deviceId, payload as any);
       if (verb === "media_open")
         return runtimeSurfaceClient.mediaOpen(deviceId, payload as any);
       if (verb === "maps_open")

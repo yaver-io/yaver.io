@@ -14,7 +14,8 @@ test("buildManagedCloudInit writes managed agent config and service", () => {
     convexSite: "https://example.convex.site",
     machineId: "machine_12345678",
     machineToken: "machine-token-abc",
-    userSessionToken: "session-token-xyz",
+    bootstrapDeviceCode: "device-code-xyz",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-12345678",
     hostname: "12345678.cloud.yaver.io",
     yaverArch: "amd64",
@@ -24,10 +25,13 @@ test("buildManagedCloudInit writes managed agent config and service", () => {
   });
 
   assert.match(cloudInit, /cat > \/home\/yaver\/\.yaver\/config\.json/);
-  assert.match(cloudInit, /"auth_token": "session-token-xyz"/);
+  assert.doesNotMatch(cloudInit, /"auth_token":/);
   assert.match(cloudInit, /"convex_site_url": "https:\/\/example\.convex\.site"/);
   assert.match(cloudInit, /"device_id": "cloud-12345678"/);
   assert.match(cloudInit, /"public_endpoints": \["https:\/\/12345678\.cloud\.yaver\.io"\]/);
+  assert.match(cloudInit, /cat > \/home\/yaver\/\.yaver\/pending-auth\.json/);
+  assert.match(cloudInit, /"deviceCode": "device-code-xyz"/);
+  assert.match(cloudInit, /auth --headless --background-wait --convex-url 'https:\/\/example\.convex\.site'/);
   assert.match(cloudInit, /cat > \/home\/yaver\/\.config\/opencode\/opencode\.json/);
   assert.match(cloudInit, /"model": "zai-coding-plan\/glm-4\.7"/);
   assert.match(cloudInit, /"enabled_providers": \[\n\s+"zai-coding-plan"\n\s+\]/);
@@ -58,7 +62,8 @@ test("buildManagedCloudInit fetches the yaver agent as a .tar.gz and extracts it
     convexSite: "https://example.convex.site",
     machineId: "machine_tar",
     machineToken: "machine-token-tar",
-    userSessionToken: "session-token-tar",
+    bootstrapDeviceCode: "device-code-tar",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-tar",
     hostname: "tar.cloud.yaver.io",
     yaverArch: "amd64",
@@ -80,7 +85,8 @@ test("buildManagedCloudInit includes GPU bootstrap only for GPU machines", () =>
     convexSite: "https://example.convex.site",
     machineId: "machine_gpu",
     machineToken: "machine-token-gpu",
-    userSessionToken: "session-token-gpu",
+    bootstrapDeviceCode: "device-code-gpu",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-gpu",
     hostname: "gpu.cloud.yaver.io",
     yaverArch: "amd64",
@@ -97,7 +103,8 @@ test("buildManagedCloudInit runs self-hosted Convex only for the hosted tier", (
     convexSite: "https://example.convex.site",
     machineId: "machine_tier",
     machineToken: "machine-token-tier",
-    userSessionToken: "session-token-tier",
+    bootstrapDeviceCode: "device-code-tier",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-tier",
     hostname: "tier.cloud.yaver.io",
     yaverArch: "amd64" as const,
@@ -161,7 +168,8 @@ test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self
     convexSite: "https://example.convex.site",
     machineId: "machine_ctr",
     machineToken: "machine-token-ctr",
-    userSessionToken: "session-token-ctr",
+    bootstrapDeviceCode: "device-code-ctr",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-ctr",
     hostname: "ctr.cloud.yaver.io",
     yaverArch: "amd64" as const,
@@ -214,7 +222,8 @@ test("buildManagedCloudInitContainer: observability beacon + optional ssh/relay"
     convexSite: "https://example.convex.site",
     machineId: "machine_obs",
     machineToken: "machine-token-obs",
-    userSessionToken: "session-token-obs",
+    bootstrapDeviceCode: "device-code-obs",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-obs",
     hostname: "obs.cloud.yaver.io",
     yaverArch: "amd64" as const,
@@ -270,7 +279,8 @@ test("buildManagedCloudInitContainer: auto-cert the box's own subdomain (no shar
     convexSite: "https://example.convex.site",
     machineId: "machine_cert",
     machineToken: "machine-token-cert",
-    userSessionToken: "session-token-cert",
+    bootstrapDeviceCode: "device-code-cert",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-cert",
     hostname: "cert42.cloud.yaver.io",
     yaverArch: "amd64" as const,
@@ -319,7 +329,8 @@ test("buildManagedCloudInitContainer: Phase 2 — bundled yaver-relay (in-image,
     convexSite: "https://example.convex.site",
     machineId: "machine_relay",
     machineToken: "machine-token-relay",
-    userSessionToken: "session-token-relay",
+    bootstrapDeviceCode: "device-code-relay",
+    bootstrapExpiresAt: 1893456000000,
     deviceId: "cloud-relay",
     hostname: "relay42.cloud.yaver.io",
     yaverArch: "amd64" as const,

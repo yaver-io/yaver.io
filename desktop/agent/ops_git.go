@@ -40,7 +40,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "git_connect",
-		Description: "Start a first-class GitHub/GitLab OAuth Device Flow (RFC 8628). Returns {user_code, verification_uri} to open in any browser. Pass deviceId to run the flow ON a newly-provisioned box (self-hosted or managed) so that box gets its own git creds first-class. Token is persisted to git-credentials.json on the target (P2P) and NEVER reaches Convex. Poll git_connect_status.",
+		Description: "Start a first-class GitHub/GitLab OAuth Device Flow (RFC 8628). Returns {user_code, verification_uri} to open in any browser. Pass deviceId to run the flow ON a newly-provisioned box (self-hosted or managed) so that box gets its own git creds first-class. Token is persisted to git-credentials.json plus the local vault on the target (P2P) and NEVER reaches Convex. Poll git_connect_status.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"provider"},

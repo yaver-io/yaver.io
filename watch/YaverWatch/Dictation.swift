@@ -23,6 +23,7 @@ enum Dictation {
     /// Present the watch dictation UI and resolve with the spoken text, or nil
     /// if the user cancelled / said nothing. Never throws — a cancelled
     /// dictation is a normal outcome, not an error.
+    @MainActor
     static func dictate() async -> String? {
         #if canImport(WatchKit)
         await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in

@@ -83,9 +83,11 @@ Key backend anchors: `backend/convex/http.ts:3071` checkout,
 2. **No real-time "box ready" feedback.** Provision is async; only a
    manual-refresh owner panel + `GET /subscription`. No polling, no
    mobile managed view, no notification.
-3. **Git connect is CLI/MCP-only.** `yaver git push-creds <device>`
-   works but there's no one-click "Connect GitHub to this box" in
-   web/mobile after purchase.
+3. **Git connect needs product surfacing everywhere.** `yaver git
+   oauth <provider> --device <device>`, MCP `git_oauth_start/status`,
+   ops `git_connect/status`, and mobile/TV/watch/car/glass entrypoints
+   can run Device Flow on an owned BYO Hetzner or Yaver-managed runtime,
+   but the post-purchase card still needs the cleanest one-click wrapper.
 
 ## 3. Phased plan
 
@@ -111,11 +113,13 @@ Key backend anchors: `backend/convex/http.ts:3071` checkout,
   Start preview.
 
 ### Phase D3 — One-click Git connect (web + mobile)
-- Wrap the existing `git_oauth_start`/`git_push_creds` MCP tools in a
-  "Connect GitHub/GitLab" button on the managed-machine card (web +
-  mobile). Device-flow code shown inline; on success creds are pushed
-  to the box (`/machine/onboarding/apply`). Optional repo picker →
-  set `repoUrl` (cloud-init already clones it).
+- Wrap the existing `git_connect` ops path in a "Connect GitHub/GitLab"
+  button on the managed-machine card (web + mobile). Device-flow code
+  is shown inline; the OAuth flow runs on the target box, so the token
+  lands directly in that box's git credential cache and vault. Keep
+  `git_push_creds` as the fallback for copying already-connected local
+  creds to an owned box. Optional repo picker → set `repoUrl`
+  (cloud-init already clones it).
 
 ### Phase D4 — Dev loop entrypoints parity
 - WebRTC remote-runtime: add a web panel + MCP tool wrapper
@@ -138,8 +142,9 @@ Key backend anchors: `backend/convex/http.ts:3071` checkout,
 ## 4. Cleanest happy path (today, MCP/CLI — what to productize)
 
 `POST /billing/yaver-cloud/checkout` → pay → webhook provisions →
-poll `GET /subscription` until `status:active` → `yaver git
-push-creds <deviceId>` → `ops <deviceId> reload` / remote-runtime /
+poll `GET /subscription` until `status:active` → `yaver git oauth
+github --device <deviceId>` (or `git_push_creds` fallback) →
+`ops <deviceId> reload` / remote-runtime /
 `ops web-preview` → `ops deploy <target>`. Phases D1–D5 wrap each
 hop in a web/mobile/MCP button. Owner can skip LemonSqueezy via the
 allowlist + `dev-adopt` (already shipped).

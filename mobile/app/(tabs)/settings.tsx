@@ -39,7 +39,7 @@ import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
-import { quicClient, type AgentStatus, type CapabilitySnapshot, type EnvironmentProfileApplyResult, type IncidentEvent, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
+import { quicClient, type AgentStatus, type CapabilitySnapshot, type EnvironmentProfileApplyResult, type GitOAuthStatus, type IncidentEvent, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
 import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { OPTIONAL_MORE_TOOLS, normalizeOptionalMoreTools, type OptionalMoreToolId } from "../../src/lib/moreOptionalTools";
@@ -256,6 +256,8 @@ export default function SettingsScreen() {
   const [gitlabHost, setGitlabHost] = useState("gitlab.com");
   const [isApplyingMachineOnboarding, setIsApplyingMachineOnboarding] = useState(false);
   const [removingOnboardingProvider, setRemovingOnboardingProvider] = useState<"github" | "gitlab" | null>(null);
+  const [startingGitOAuthProvider, setStartingGitOAuthProvider] = useState<"github" | "gitlab" | null>(null);
+  const [gitOAuthFlow, setGitOAuthFlow] = useState<(GitOAuthStatus & { deviceId: string; deviceName: string }) | null>(null);
   const [selectedOnboardingTargetIds, setSelectedOnboardingTargetIds] = useState<string[]>([]);
   const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
   const [showToolchainSync, setShowToolchainSync] = useState(false);
@@ -1031,6 +1033,91 @@ export default function SettingsScreen() {
     setMachineOnboardingRowsByDevice(next);
     setMachineOnboardingRows(next[uniqueIds[0]] || []);
   };
+
+  const startGitOAuthOnboarding = async (provider: "github" | "gitlab") => {
+    if (connectionStatus !== "connected") {
+      Alert.alert("Connect a device", "Connect to your own Yaver machine to authorize GitHub or GitLab.");
+      return;
+    }
+    if (activeDevice?.isGuest) {
+      Alert.alert("Guest machine", "Git authorization is disabled on guest connections. Connect to your own host machine instead.");
+      return;
+    }
+    if (selectedOnboardingTargets.length !== 1) {
+      Alert.alert("Pick one machine", "Choose exactly one owned live machine to authorize. You can repeat this for another runtime afterwards.");
+      return;
+    }
+    const device = selectedOnboardingTargets[0];
+    const target = resolveOnboardingTargetArg(device.id);
+    setStartingGitOAuthProvider(provider);
+    try {
+      const start = await quicClient.gitOAuthStart(
+        provider,
+        target,
+        provider === "gitlab" ? (gitlabHost.trim() || "gitlab.com") : undefined,
+      );
+      if (!start.ok || !start.sessionId || !start.userCode || !start.verificationUri) {
+        Alert.alert(
+          "Couldn't Start Authorization",
+          start.error || "The runtime could not start provider authorization. The Yaver OAuth app client ID may not be configured on that runtime yet.",
+        );
+        return;
+      }
+      const flow: GitOAuthStatus & { deviceId: string; deviceName: string } = {
+        ...start,
+        state: "pending",
+        deviceId: device.id,
+        deviceName: device.name,
+      };
+      setGitOAuthFlow(flow);
+      await ExpoClipboard.setStringAsync(start.userCode).catch(() => {});
+      await Linking.openURL(start.verificationUri).catch(() => {});
+      Alert.alert("Authorize Git", `Code ${start.userCode} was copied. Approve ${provider} in the browser, then return to Yaver.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start provider authorization.";
+      Alert.alert("Authorization Failed", `Yaver couldn't start Git authorization on ${device.name}.\n\n${message}`);
+    } finally {
+      setStartingGitOAuthProvider(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!gitOAuthFlow || gitOAuthFlow.state !== "pending") return;
+    let cancelled = false;
+    const intervalMs = Math.max(2, gitOAuthFlow.interval || 5) * 1000;
+    const timer = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const target = activeDevice?.id === gitOAuthFlow.deviceId ? undefined : gitOAuthFlow.deviceId;
+        const status = await quicClient.gitOAuthStatus(gitOAuthFlow.sessionId, gitOAuthFlow.provider, target);
+        if (cancelled || status.state === "pending") return;
+        setGitOAuthFlow((prev) => (
+          prev && prev.sessionId === gitOAuthFlow.sessionId
+            ? { ...prev, ...status, deviceId: prev.deviceId, deviceName: prev.deviceName }
+            : prev
+        ));
+        if (status.state === "done") {
+          await loadMachineOnboardingStatusForTargets([gitOAuthFlow.deviceId]);
+          Alert.alert("Git Authorized", `${gitOAuthFlow.provider} is ready on ${gitOAuthFlow.deviceName}${status.username ? ` as ${status.username}` : ""}.`);
+        } else {
+          Alert.alert("Authorization Didn't Complete", status.error || "The provider authorization expired or was denied. Start it again when you're ready.");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : "Failed to check authorization status.";
+          setGitOAuthFlow((prev) => (
+            prev && prev.sessionId === gitOAuthFlow.sessionId
+              ? { ...prev, state: "error", error: message }
+              : prev
+          ));
+        }
+      }
+    }, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeDevice?.id, gitOAuthFlow?.sessionId, gitOAuthFlow?.state, gitOAuthFlow?.interval, gitOAuthFlow?.deviceId, gitOAuthFlow?.provider]);
 
   const syncAiProvidersToRunners = async () => {
     if (connectionStatus !== "connected") {
@@ -5010,7 +5097,7 @@ export default function SettingsScreen() {
 
               <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 15 }}>Remote machine onboarding</Text>
               <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
-                Use this as a 2-step flow: first connect GitHub or GitLab to this Yaver account, then push git credentials into one or more owned live machines. Linking helps sign-in and recovery; the tokens here are what actually grant machine clone/pull and CI/deploy access.
+                Connect GitHub or GitLab directly on an owned runtime so clone, pull, push, and deploy flows work there without pasting a PAT.
               </Text>
 
               <View style={{
@@ -5024,7 +5111,7 @@ export default function SettingsScreen() {
               }}>
                 <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13 }}>Step 1 · Connect provider to Yaver</Text>
                 <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16 }}>
-                  Connect GitHub or GitLab to this same Yaver account so the provider appears in your sign-in methods. This does not populate machine git credentials by itself.
+                  Optional for sign-in and account recovery. Runtime authorization below is what grants repo access.
                 </Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                   {(["github", "gitlab"] as const).map((provider) => {
@@ -5068,7 +5155,7 @@ export default function SettingsScreen() {
 
               <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Step 2 · Populate owned live boxes</Text>
               <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
-                Pick the owned live boxes that should receive GitHub or GitLab clone credentials plus CI/deploy tokens.
+                Pick one runtime for browser authorization, or select one or more runtimes for manual token fallback.
               </Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
                 {onboardingTargetCandidates.length === 0 ? (
@@ -5109,6 +5196,80 @@ export default function SettingsScreen() {
                   })
                 )}
               </View>
+
+              <View style={{
+                marginTop: 12,
+                borderWidth: 1,
+                borderColor: c.border,
+                borderRadius: 10,
+                backgroundColor: c.bgCardElevated,
+                padding: 12,
+                gap: 10,
+              }}>
+                <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13 }}>Authorize in browser</Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {(["github", "gitlab"] as const).map((provider) => {
+                    const busy = startingGitOAuthProvider === provider;
+                    const disabled = !!startingGitOAuthProvider || connectionStatus !== "connected" || !!activeDevice?.isGuest || selectedOnboardingTargets.length !== 1;
+                    return (
+                      <Pressable
+                        key={provider}
+                        onPress={() => void startGitOAuthOnboarding(provider)}
+                        disabled={disabled}
+                        style={({ pressed }) => [
+                          {
+                            flex: 1,
+                            paddingVertical: 10,
+                            borderRadius: 8,
+                            backgroundColor: c.accent,
+                            alignItems: "center",
+                            opacity: disabled ? 0.5 : 1,
+                          },
+                          pressed && !disabled && { opacity: 0.75 },
+                        ]}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}>
+                          {busy ? "Starting..." : `Authorize ${provider}`}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                {gitOAuthFlow ? (
+                  <View style={{ borderTopWidth: 1, borderTopColor: c.borderSubtle, paddingTop: 10, gap: 6 }}>
+                    <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 12 }}>
+                      {gitOAuthFlow.provider} on {gitOAuthFlow.deviceName}: {gitOAuthFlow.state}
+                    </Text>
+                    {gitOAuthFlow.state === "pending" ? (
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <Pressable
+                          onPress={() => Linking.openURL(gitOAuthFlow.verificationUri).catch(() => {})}
+                          style={{ flex: 1, paddingVertical: 9, borderRadius: 8, borderWidth: 1, borderColor: c.border, alignItems: "center" }}
+                        >
+                          <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 12 }}>Open browser</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => ExpoClipboard.setStringAsync(gitOAuthFlow.userCode)}
+                          style={{ flex: 1, paddingVertical: 9, borderRadius: 8, borderWidth: 1, borderColor: c.border, alignItems: "center" }}
+                        >
+                          <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 12 }}>Copy {gitOAuthFlow.userCode}</Text>
+                        </Pressable>
+                      </View>
+                    ) : (
+                      <Text style={{ color: gitOAuthFlow.state === "done" ? c.success : c.error, fontSize: 11 }}>
+                        {gitOAuthFlow.state === "done"
+                          ? `Ready${gitOAuthFlow.username ? ` as ${gitOAuthFlow.username}` : ""}.`
+                          : gitOAuthFlow.error || "Authorization did not complete."}
+                      </Text>
+                    )}
+                  </View>
+                ) : null}
+              </View>
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Manual token fallback</Text>
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                Use this only when browser authorization is unavailable.
+              </Text>
 
               <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>GitHub token</Text>
               <TextInput

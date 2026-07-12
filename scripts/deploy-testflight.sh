@@ -1,7 +1,14 @@
 #!/bin/bash
 set -eo pipefail
 
-cd "$(dirname "$0")/../mobile/ios"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Keep the Apple Watch companion target present in the committed iOS project.
+# The phone bridge is injected by Expo prebuild; this target is what makes the
+# real paired watch app install alongside the iPhone app.
+node "$ROOT/scripts/add-watch-ios-target.js"
+
+cd "$ROOT/mobile/ios"
 
 # Load secrets from the Yaver vault (project="mobile" + globals). Vault
 # values win when present; values not in the vault fall through from the
@@ -40,6 +47,7 @@ NEW_BUILD=$((CURRENT_BUILD + 1))
 echo "Build $CURRENT_BUILD → $NEW_BUILD"
 
 # Clean stale archive so a failed build can't silently reuse it
+ls -la /tmp/Yaver.xcarchive 2>/dev/null || true
 rm -rf /tmp/Yaver.xcarchive
 
 # Archive

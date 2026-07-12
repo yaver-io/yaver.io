@@ -1,0 +1,10 @@
+HTTP/1.1 201 Created
+Access-Control-Allow-Headers: Authorization, Content-Type, X-Yaver-Caller, X-Relay-Password
+Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
+Access-Control-Allow-Origin: *
+Content-Type: application/json
+Date: Sun, 12 Jul 2026 10:48:33 GMT
+Content-Length: 121
+Connection: close
+
+{"deviceName":"localhost","model":"","ok":true,"project":"/","runnerId":"custom","status":"running","taskId":"1a7c58b0"}

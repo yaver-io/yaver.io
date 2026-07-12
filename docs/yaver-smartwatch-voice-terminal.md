@@ -316,28 +316,31 @@ that build on a device, exactly like `tvos/`.
 > code has **zero** errors of its own (confirmed by isolating it); that
 > conflict is someone else's WIP to resolve, not part of this work.
 
-**Scaffolded (native, build on device — like `tvos/`):**
-- `watch/` — watchOS SwiftUI app (XcodeGen `project.yml`, bundle `io.yaver.watch`):
-  WCSession phone-paired primary + standalone LAN `AgentClient`/device-code auth.
-  `xcodegen generate` validated; `swiftc -parse` passes on SDK-independent files.
+**Native watch surfaces:**
+- `watch/` — watchOS SwiftUI app (XcodeGen `project.yml`, bundle
+  `io.yaver.mobile.watch`): WCSession phone-paired primary + standalone LAN
+  `AgentClient`/device-code auth. The shipping iOS project embeds it through
+  `scripts/add-watch-ios-target.js`, and `scripts/deploy-testflight.sh` runs
+  that script before archive.
 - `wear/` — standalone Wear OS Compose project (`io.yaver.wear`): Wear Data Layer
   primary + standalone LAN client.
 - `mobile/native-watch/ios/` (WCSession bridge), `mobile/native-wear/android/`
   (Wear Data Layer module + listener service + ReactPackage), and
-  `mobile/plugins/withWatchBridge.js` (copies sources on prebuild) — the plugin
-  loads cleanly and is **deliberately unregistered** in `app.json` (same posture
-  as `withMeshTunnel.js`) until the native targets are built on a Mac/device.
+  `mobile/plugins/withWatchBridge.js` (copies sources on prebuild). The plugin
+  is registered in `mobile/app.json`, and `mobile/app/_layout.tsx` mounts
+  `WatchBridgeHost`.
 
 **Wire protocol v1** (one source of truth, mirrored 4×): `watchBridge.ts` ↔
 `watch_http.go` ↔ `WatchProtocol.swift` ↔ `WatchProtocol.kt`. Watch→server:
 `transcript` / `confirm{token,reply}` / `intent`. Server→watch: `ack` /
 `confirm-needed{token,prompt}` / `working` / `summary` / `error` / `handoff`.
 
-**Remaining to ship (need a Mac + paired devices):** add the watchOS companion
-target to the Xcode project and register `withWatchBridge.js`; build `wear/` and
-install on a paired watch; on-device pair test (Simulator/emulator
-WCSession/Data-Layer pairing is unreliable). Then P1 (complications + canned
-confirm), P2 (gateway CRUD once the ACT layer lands), P3 (relay + push-wake).
+**Remaining to validate on hardware:** run an iPhone + paired Apple Watch archive
+from `scripts/deploy-testflight.sh`, verify WCSession delivery on device, build
+`wear/` and install on a paired Wear OS watch, and run on-device pair tests
+(Simulator/emulator WCSession/Data-Layer pairing is unreliable). Then P1
+(complication widget target + canned confirm), P2 (gateway CRUD once the ACT
+layer lands), P3 (relay + push-wake).
 
 ## 11. Verdict
 

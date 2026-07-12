@@ -325,6 +325,7 @@ type runnerPassthroughOpts struct {
 	sync        bool // mirror the CWD project onto the box (implied by `remote`)
 	noSync      bool // explicit opt-out
 	fresh       bool // discard the remote tmux session and start the runner clean
+	finalize    bool // yaver-owned closed-loop finalizer mode
 	passthrough []string
 }
 
@@ -361,6 +362,23 @@ func parseRunnerPassthrough(args []string) runnerPassthroughOpts {
 			opts.noSync = true
 		case a == "--yaver-fresh":
 			opts.fresh = true
+		case a == "--yaver-mode" && i+1 < len(args):
+			i++
+			if strings.EqualFold(strings.TrimSpace(args[i]), "finalize") {
+				opts.finalize = true
+			} else {
+				opts.passthrough = append(opts.passthrough, "--yaver-mode", args[i])
+			}
+		case strings.HasPrefix(a, "--yaver-mode="):
+			v := strings.TrimPrefix(a, "--yaver-mode=")
+			if strings.EqualFold(strings.TrimSpace(v), "finalize") {
+				opts.finalize = true
+			} else {
+				opts.passthrough = append(opts.passthrough, a)
+			}
+		case a == "--mode" && i+1 < len(args) && strings.EqualFold(strings.TrimSpace(args[i+1]), "finalize"):
+			i++
+			opts.finalize = true
 		case a == "--chrome":
 			opts.chrome = true
 		case strings.HasPrefix(a, "--yaver-cwd="):
@@ -427,6 +445,15 @@ func runRunnerPassthrough(runnerName string, args []string) {
 			runnerName, strings.Join(supportedRunnerIDs, ", "))
 		os.Exit(1)
 	}
+
+	if opts.finalize {
+		if err := runFinalizeFromRunnerPassthrough(runnerID, opts, passthrough); err != nil {
+			fmt.Fprintf(os.Stderr, "%s finalize: %v\n", runnerName, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if !opts.yaverSafe {
 		passthrough = applyRunnerYoloDefaults(runnerID, passthrough)
 	}

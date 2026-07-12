@@ -106,6 +106,7 @@ export function WatchBridgeHost() {
         if (verb === "git_prs") return runtimeSurfaceClient.gitPRs(targetDeviceId, payload as any);
         if (verb === "git_issues") return runtimeSurfaceClient.gitIssues(targetDeviceId, payload as any);
         if (verb === "git_ci_status") return runtimeSurfaceClient.gitCIStatus(targetDeviceId, payload as any);
+        if (verb === "git_connect") return runtimeSurfaceClient.gitConnect(targetDeviceId, payload as any);
         if (verb === "media_open") return runtimeSurfaceClient.mediaOpen(targetDeviceId, payload as any);
         if (verb === "maps_open") return runtimeSurfaceClient.mapsOpen(targetDeviceId, payload as any);
         throw new Error(`unsupported watch ops verb ${verb}`);

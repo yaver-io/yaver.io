@@ -8,10 +8,11 @@ MAIN_APPLICATION="$ROOT/mobile/android/app/src/main/java/io/yaver/mobile/MainApp
 NATIVE_DIR="$ROOT/mobile/native-androidauto/android"
 UPLOAD=0
 BUILD=0
+SKIP_SOURCE_PREFLIGHT=0
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy-android-auto.sh [--upload] [--build]
+Usage: scripts/deploy-android-auto.sh [--upload] [--build] [--skip-source-preflight]
 
 Preflight the Android Auto messaging release lane. Android Auto ships through
 the shared Play AAB, but this script fails fast if the car metadata, Automotive
@@ -20,6 +21,8 @@ descriptor, native MessagingStyle bridge, or RemoteInput reply receiver drift.
 Options:
   --upload  Run the shared Play build/upload lane after preflight passes.
   --build   Run the shared Play build after preflight passes, without upload.
+  --skip-source-preflight
+            Only verify an already-built release manifest/AAB.
 EOF
 }
 
@@ -27,6 +30,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --upload) UPLOAD=1 ;;
     --build) BUILD=1 ;;
+    --skip-source-preflight) SKIP_SOURCE_PREFLIGHT=1 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -54,24 +58,26 @@ require_text() {
   fi
 }
 
-require_file "$MANIFEST" "Android manifest"
-require_file "$AUTOMOTIVE_DESC" "Android Auto automotive app descriptor"
-require_file "$MAIN_APPLICATION" "MainApplication"
-require_file "$NATIVE_DIR/YaverCarMessagingModule.kt" "Android Auto native module"
-require_file "$NATIVE_DIR/YaverCarMessagingPackage.kt" "Android Auto package"
+if [ "$SKIP_SOURCE_PREFLIGHT" != "1" ]; then
+  require_file "$MANIFEST" "Android manifest"
+  require_file "$AUTOMOTIVE_DESC" "Android Auto automotive app descriptor"
+  require_file "$MAIN_APPLICATION" "MainApplication"
+  require_file "$NATIVE_DIR/YaverCarMessagingModule.kt" "Android Auto native module"
+  require_file "$NATIVE_DIR/YaverCarMessagingPackage.kt" "Android Auto package"
 
-xmllint --noout "$MANIFEST"
-xmllint --noout "$AUTOMOTIVE_DESC"
+  xmllint --noout "$MANIFEST"
+  xmllint --noout "$AUTOMOTIVE_DESC"
 
-require_text "$MANIFEST" 'com.google.android.gms.car.application' "Manifest declares Android Auto application metadata"
-require_text "$MANIFEST" '@xml/automotive_app_desc' "Manifest points at automotive_app_desc"
-require_text "$MANIFEST" 'io.yaver.mobile.car.YaverCarReplyReceiver' "Manifest registers Android Auto reply receiver"
-require_text "$AUTOMOTIVE_DESC" '<uses name="notification"' "Automotive descriptor uses notification/messaging lane"
-require_text "$MAIN_APPLICATION" 'import io.yaver.mobile.car.YaverCarMessagingPackage' "MainApplication imports Android Auto package"
-require_text "$MAIN_APPLICATION" 'add(YaverCarMessagingPackage())' "MainApplication registers Android Auto package"
-require_text "$NATIVE_DIR/YaverCarMessagingModule.kt" 'NotificationCompat.MessagingStyle' "Native module builds MessagingStyle notifications"
-require_text "$NATIVE_DIR/YaverCarMessagingModule.kt" 'RemoteInput.Builder' "Native module exposes Android Auto voice reply"
-require_text "$NATIVE_DIR/YaverCarMessagingModule.kt" 'YaverCarReplyReceiver' "Native module targets reply receiver"
+  require_text "$MANIFEST" 'com.google.android.gms.car.application' "Manifest declares Android Auto application metadata"
+  require_text "$MANIFEST" '@xml/automotive_app_desc' "Manifest points at automotive_app_desc"
+  require_text "$MANIFEST" 'io.yaver.mobile.car.YaverCarReplyReceiver' "Manifest registers Android Auto reply receiver"
+  require_text "$AUTOMOTIVE_DESC" '<uses name="notification"' "Automotive descriptor uses notification/messaging lane"
+  require_text "$MAIN_APPLICATION" 'import io.yaver.mobile.car.YaverCarMessagingPackage' "MainApplication imports Android Auto package"
+  require_text "$MAIN_APPLICATION" 'add(YaverCarMessagingPackage())' "MainApplication registers Android Auto package"
+  require_text "$NATIVE_DIR/YaverCarMessagingModule.kt" 'NotificationCompat.MessagingStyle' "Native module builds MessagingStyle notifications"
+  require_text "$NATIVE_DIR/YaverCarMessagingModule.kt" 'RemoteInput.Builder' "Native module exposes Android Auto voice reply"
+  require_text "$NATIVE_DIR/YaverCarMessagingModule.kt" 'YaverCarReplyReceiver' "Native module targets reply receiver"
+fi
 
 echo "Android Auto preflight passed: shared Play AAB is car-messaging eligible."
 

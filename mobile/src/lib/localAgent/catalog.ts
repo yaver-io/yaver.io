@@ -61,8 +61,8 @@ export const ACTION_CATALOG: ActionSpec[] = [
   // Git OAuth (device flow) + project setup. Starting the OAuth is SAFE — the
   // browser approval on the box is its own consent gate; the returned
   // {user_code, verification_uri} is read aloud. Creds land in
-  // git-credentials.json on the box, P2P, never Convex.
-  { id: "git.connect", description: "Start GitHub/GitLab sign-in (device-flow OAuth) on a device so it can clone/push.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "git_connect" },
+  // git-credentials.json plus the local vault on the box, P2P, never Convex.
+  { id: "git.connect", description: "Start GitHub/GitLab sign-in (device-flow OAuth) on a device so it can clone, push, and deploy.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "git_connect" },
   { id: "project.prepare", description: "Discover a project's state on a device and return a plan to make it serve-able.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "prepare" },
   { id: "project.select", description: "Select/prepare the active project (work dir) on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "prepare" },
   { id: "project.new", description: "Scaffold a fresh project / workspace on a device.", tier: "SAFE_WRITE", needsDevice: true, via: "ops", opsVerb: "workspace" },
@@ -89,7 +89,7 @@ export const ACTION_CATALOG: ActionSpec[] = [
   // CREDENTIAL to another owned box is sensitive even though it's owned-only
   // and never touches Convex → CONFIRM.
   { id: "git.push", description: "Push committed code to its git remote (publishes).", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "run" },
-  { id: "git.pushCreds", description: "Copy this machine's git credentials to one owned remote box so it can clone/pull.", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "git_push" },
+  { id: "git.pushCreds", description: "Copy this machine's git credentials to one owned remote box so it can clone, pull, and deploy.", tier: "CONFIRM", needsDevice: true, via: "ops", opsVerb: "git_push" },
 
   // ── BLOCKED (never from voice; irreversible / costly) ─────────────
   { id: "device.remove", description: "Permanently remove a device from the account.", tier: "BLOCKED", needsDevice: true, via: "context" },

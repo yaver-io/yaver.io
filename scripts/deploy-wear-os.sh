@@ -5,8 +5,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPLOAD=0
 SKIP_BUILD=0
 PACKAGE="${WEAR_PACKAGE:-io.yaver.mobile}"
-VERSION_CODE="${WEAR_VERSION_CODE:-263}"
-VERSION_NAME="${WEAR_VERSION_NAME:-1.18.141-watch}"
+MOBILE_GRADLE="$ROOT/mobile/android/app/build.gradle"
+MOBILE_VERSION_CODE="$(grep 'versionCode ' "$MOBILE_GRADLE" | head -1 | sed 's/[^0-9]//g')"
+MOBILE_VERSION_NAME="$(grep 'versionName ' "$MOBILE_GRADLE" | head -1 | sed 's/.*versionName[[:space:]]*"\([^"]*\)".*/\1/')"
+VERSION_CODE="${WEAR_VERSION_CODE:-$((MOBILE_VERSION_CODE + 1))}"
+VERSION_NAME="${WEAR_VERSION_NAME:-${MOBILE_VERSION_NAME}-wear}"
 
 usage() {
   cat <<'EOF'
@@ -19,8 +22,9 @@ this artifact watch-targeted.
 
 Environment:
   WEAR_PACKAGE       Package for the bundle. Defaults to io.yaver.mobile.
-  WEAR_VERSION_CODE  Version code for Play upload. Defaults to 263.
-  WEAR_VERSION_NAME  Version name. Defaults to 1.18.141-watch.
+  WEAR_VERSION_CODE  Version code for Play upload. Defaults to mobile versionCode + 1.
+  WEAR_VERSION_NAME  Version name. Defaults to mobile versionName + "-wear".
+  PLAY_TRACK         Google Play track for upload. Defaults to internal.
 
 Options:
   --upload      Upload the built AAB to Google Play internal testing.
@@ -78,10 +82,13 @@ if [ ! -f "$AAB" ]; then
 fi
 
 echo "Wear OS AAB ready: $AAB"
+echo "  package: $PACKAGE"
+echo "  versionCode: $VERSION_CODE"
+echo "  versionName: $VERSION_NAME"
 
 if [ "$UPLOAD" = "1" ]; then
   PLAY_STORE_KEY_FILE="${PLAY_STORE_KEY_FILE:-$ROOT/keys/google-play-service-account.json}" \
   AAB_PATH="$AAB" \
-  PLAY_TRACK="${PLAY_TRACK:-wear:internal}" \
+  PLAY_TRACK="${PLAY_TRACK:-internal}" \
     python3 "$ROOT/scripts/upload-playstore.py"
 fi

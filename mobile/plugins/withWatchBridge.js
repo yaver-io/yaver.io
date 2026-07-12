@@ -8,10 +8,9 @@
 // REGISTERED in mobile/app.json (activated 2026-07-10). Registration was the
 // ACTIVATION step; it now runs on every `expo prebuild`:
 //   iOS     — copies YaverWatchBridge.swift/.m into the app target. The
-//             watchOS companion target itself (watch/) is a separate XcodeGen
-//             project that must be embedded in the iOS app for WCSession to
-//             have a peer. That embedding is a one-time Xcode step (see
-//             watch/README.md §"Creating the Xcode target").
+//             watchOS companion target itself is kept durable in the committed
+//             pbxproj by scripts/add-watch-ios-target.js, which embeds the
+//             watch/YaverWatch sources as Yaver.app under Watch/.
 //   Android — copies the Wear bridge Kotlin sources into the app package,
 //             registers YaverWearListenerService (intent-filter PATH_TURN) in
 //             the manifest, adds the play-services-wearable dependency, and
@@ -44,9 +43,9 @@ function withWatchIosSources(config) {
         const from = path.join(src, f);
         if (fs.existsSync(from)) fs.copyFileSync(from, path.join(destApp, f));
       }
-      // TODO(activation): add the watchOS companion app target (sources in
-      // watch/YaverWatch) and embed it in the iOS app so WCSession has a peer.
-      // Best done with @config-plugins/apple-target or in Xcode once.
+      // The companion target is not added here because Expo prebuild churns the
+      // pbxproj; scripts/add-watch-ios-target.js patches the committed project
+      // and deploy-testflight.sh runs it before archive.
       return cfg;
     },
   ]);

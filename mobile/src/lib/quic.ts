@@ -933,6 +933,24 @@ export interface MachineOnboardingApplyParams {
   notes?: string;
 }
 
+export interface GitOAuthSession {
+  ok: boolean;
+  sessionId: string;
+  provider: "github" | "gitlab";
+  host: string;
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresAt?: number;
+  byoClient?: boolean;
+  error?: string;
+}
+
+export interface GitOAuthStatus extends GitOAuthSession {
+  state: "pending" | "done" | "error" | "expired" | "unknown";
+  username?: string;
+}
+
 export interface AgentStatus {
   runner: {
     id: string;
@@ -3526,6 +3544,72 @@ export class QuicClient {
       ok: true,
       removed: Array.isArray(data?.removed) ? data.removed : [],
       providers: Array.isArray(data?.providers) ? data.providers : [],
+    };
+  }
+
+  async gitOAuthStart(
+    provider: "github" | "gitlab",
+    target?: string,
+    host?: string,
+  ): Promise<GitOAuthSession> {
+    this.assertConnected();
+    const base = this.peerEndpoint(target, "/git/provider/oauth/start");
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, host }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.ok === false) {
+      return {
+        ok: false,
+        sessionId: "",
+        provider,
+        host: host || (provider === "github" ? "github.com" : "gitlab.com"),
+        userCode: "",
+        verificationUri: "",
+        interval: 5,
+        error: data?.error || `HTTP ${res.status}`,
+      };
+    }
+    return {
+      ok: true,
+      sessionId: String(data?.session_id || ""),
+      provider,
+      host: String(data?.host || host || (provider === "github" ? "github.com" : "gitlab.com")),
+      userCode: String(data?.user_code || ""),
+      verificationUri: String(data?.verification_uri || ""),
+      interval: Number(data?.interval || 5),
+      expiresAt: typeof data?.expires_at === "number" ? data.expires_at : undefined,
+      byoClient: data?.byo_client === true,
+    };
+  }
+
+  async gitOAuthStatus(
+    sessionId: string,
+    provider: "github" | "gitlab",
+    target?: string,
+  ): Promise<GitOAuthStatus> {
+    this.assertConnected();
+    const base = this.peerEndpoint(target, `/git/provider/oauth/status?session=${encodeURIComponent(sessionId)}`);
+    const res = await fetch(base, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    const state = ["pending", "done", "error", "expired", "unknown"].includes(String(data?.state))
+      ? String(data.state) as GitOAuthStatus["state"]
+      : "unknown";
+    return {
+      ok: res.ok && data?.ok !== false,
+      sessionId: String(data?.session_id || sessionId),
+      provider,
+      host: String(data?.host || (provider === "github" ? "github.com" : "gitlab.com")),
+      userCode: String(data?.user_code || ""),
+      verificationUri: String(data?.verification_uri || ""),
+      interval: Number(data?.interval || 5),
+      expiresAt: typeof data?.expires_at === "number" ? data.expires_at : undefined,
+      state,
+      username: typeof data?.username === "string" ? data.username : undefined,
+      error: data?.error || (!res.ok ? `HTTP ${res.status}` : undefined),
+      byoClient: data?.byo_client === true,
     };
   }
 

@@ -179,6 +179,53 @@ struct RunnerAuthSession: Decodable, Identifiable {
     }
 }
 
+struct GitAuthSession: Decodable, Identifiable {
+    var sessionId: String
+    var id: String { sessionId }
+    var ok: Bool?
+    var provider: String?
+    var host: String?
+    var state: String?
+    var username: String?
+    var userCode: String?
+    var verificationURI: String?
+    var interval: Int?
+    var expiresAt: Int?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, provider, host, state, username, interval, error
+        case sessionId
+        case snakeSessionId = "session_id"
+        case userCode
+        case snakeUserCode = "user_code"
+        case verificationURI
+        case snakeVerificationURI = "verification_uri"
+        case expiresAt
+        case snakeExpiresAt = "expires_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+            ?? c.decodeIfPresent(String.self, forKey: .snakeSessionId)
+            ?? ""
+        ok = try c.decodeIfPresent(Bool.self, forKey: .ok)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider)
+        host = try c.decodeIfPresent(String.self, forKey: .host)
+        state = try c.decodeIfPresent(String.self, forKey: .state)
+        username = try c.decodeIfPresent(String.self, forKey: .username)
+        userCode = try c.decodeIfPresent(String.self, forKey: .userCode)
+            ?? c.decodeIfPresent(String.self, forKey: .snakeUserCode)
+        verificationURI = try c.decodeIfPresent(String.self, forKey: .verificationURI)
+            ?? c.decodeIfPresent(String.self, forKey: .snakeVerificationURI)
+        interval = try c.decodeIfPresent(Int.self, forKey: .interval)
+        expiresAt = try c.decodeIfPresent(Int.self, forKey: .expiresAt)
+            ?? c.decodeIfPresent(Int.self, forKey: .snakeExpiresAt)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
 struct PairedATV: Decodable, Identifiable {
     let identifier: String
     let name: String

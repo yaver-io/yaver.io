@@ -7,6 +7,9 @@ test("walking ideas default to idea capture, not implementation", () => {
   assert.equal(classifyWatchPrompt("idea for sfmg owner mode sponsor board"), "idea-capture");
   const plan = buildWatchPrompt("idea for sfmg owner mode sponsor board");
   assert.equal(plan.mode, "idea-capture");
+  assert.match(plan.prompt, /Apple Watch \/ smartwatch voice command/i);
+  assert.match(plan.prompt, /STT/i);
+  assert.match(plan.prompt, /TTS/i);
   assert.match(plan.prompt, /Do not edit code/i);
   assert.match(plan.prompt, /acceptance criteria/i);
 });
@@ -15,6 +18,8 @@ test("explicit build request becomes implementation", () => {
   const plan = buildWatchPrompt("add this to sfmg owner mode");
   assert.equal(plan.mode, "implementation");
   assert.match(plan.prompt, /permission to work/i);
+  assert.match(plan.prompt, /active Yaver device, current repo, selected project/i);
+  assert.match(plan.prompt, /Never put code, diffs, secrets, tokens, file dumps, or long logs/i);
 });
 
 test("confirmed operational commands become implementation", () => {

@@ -229,6 +229,37 @@ export const runtimeSurfaceClient = {
       60000,
     ),
 
+  gitConnect: (
+    target: OpsTarget,
+    args: {
+      provider?: string;
+      host?: string;
+      surface?: string;
+    } = {},
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "git_connect",
+      args as Record<string, unknown>,
+      60000,
+    ),
+
+  gitConnectStatus: (
+    target: OpsTarget,
+    args: {
+      sessionId?: string;
+      session_id?: string;
+      provider?: string;
+      surface?: string;
+    },
+  ) =>
+    callSurfaceOps<unknown>(
+      target,
+      "git_connect_status",
+      args as Record<string, unknown>,
+      30000,
+    ),
+
   mediaOpen: (
     target: OpsTarget,
     args: {

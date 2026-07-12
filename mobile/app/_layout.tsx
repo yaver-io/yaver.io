@@ -82,7 +82,7 @@ function InnerLayout() {
   const { user } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  // Branded cold-start overlay ("Remote Runtime AI"). Shows on top of the
+  // Branded cold-start overlay ("Remote AI Runtime"). Shows on top of the
   // app the moment the native splash hides, then fades itself out via
   // onDone. One-shot per app launch.
   const [showSplash, setShowSplash] = useState(true);

@@ -27,6 +27,8 @@ const PHASE_LABEL: Record<string, string> = {
   "starting-agent": "Starting the Yaver agent…",
   registering: "Registering your device…",
   "authorizing-runners": "Almost there — finishing setup…",
+  snapshotting: "Saving a snapshot…",
+  "powering-down": "Powering down…",
   ready: "Ready",
   error: "Setup failed",
 };
@@ -224,6 +226,7 @@ export default function ManagedCloudCard({
       ) : (
         machines.map((m) => {
           const phase = m.provisionPhase ?? null;
+          const phaseInProgress = !!phase && phase !== "ready" && phase !== "error";
           const pct =
             typeof m.provisionProgress === "number"
               ? m.provisionProgress
@@ -232,14 +235,13 @@ export default function ManagedCloudCard({
                 : 10;
           const initializing =
             m.status === "provisioning" ||
-            (!!phase &&
-              phase !== "ready" &&
+            m.status === "resuming" ||
+            m.status === "stopping" ||
+            (phaseInProgress &&
               m.status !== "error" &&
               m.status !== "stopped" &&
               m.status !== "paused" &&
-              m.status !== "suspended" &&
-              m.status !== "resuming" &&
-              m.status !== "active");
+              m.status !== "suspended");
           return (
             <View
               key={m.id}
@@ -323,8 +325,12 @@ export default function ManagedCloudCard({
               {initializing ? (
                 <View style={{ gap: 4 }}>
                   <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                    Setting up your box —{" "}
-                    {phase ? PHASE_LABEL[phase] ?? phase : "initializing…"}
+                    {m.status === "stopping"
+                      ? "Closing down your box"
+                      : m.status === "resuming"
+                        ? "Waking your box"
+                        : "Setting up your box"}{" "}
+                    — {phase ? PHASE_LABEL[phase] ?? phase : "initializing…"}
                   </Text>
                   {m.bootImageSource === "golden" ? (
                     <Text style={{ color: "#059669", fontSize: 10 }}>⚡ Fast boot from a prebuilt image</Text>
@@ -349,10 +355,6 @@ export default function ManagedCloudCard({
               ) : m.status === "paused" || m.status === "suspended" ? (
                 <Text style={{ color: c.textMuted, fontSize: 11 }}>
                   ⏸ Paused — snapshot kept, ~€0.50/mo (vs ~€30/mo running). Resume recreates it in ~2-3 min.
-                </Text>
-              ) : m.status === "resuming" ? (
-                <Text style={{ color: "#0ea5e9", fontSize: 11 }}>
-                  Resuming from snapshot…
                 </Text>
               ) : null}
 

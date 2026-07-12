@@ -95,6 +95,16 @@ func TestBuildWatchPromptModes(t *testing.T) {
 		if !strings.Contains(plan.Prompt, "Watch transcript: "+tc.in) {
 			t.Fatalf("prompt missing original transcript: %s", plan.Prompt)
 		}
+		for _, shared := range []string{
+			"Apple Watch / smartwatch voice command",
+			"STT",
+			"TTS",
+			"Never put code, diffs, secrets, tokens, file dumps, or long logs",
+		} {
+			if !strings.Contains(plan.Prompt, shared) {
+				t.Fatalf("prompt missing shared watch contract %q: %s", shared, plan.Prompt)
+			}
+		}
 	}
 }
 

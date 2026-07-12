@@ -642,6 +642,8 @@ func TestParseRunnerPassthroughRemoteSugar(t *testing.T) {
 		{"remote only counts as first token", []string{"exec", "remote"}, "", []string{"exec", "remote"}},
 		{"machine flag still works", []string{"--machine", "mypi", "hello"}, "mypi", []string{"hello"}},
 		{"no machine → local", []string{"hello world"}, "", []string{"hello world"}},
+		{"yaver finalize mode stripped", []string{"--machine", "mypi", "--yaver-mode", "finalize", "ship it"}, "mypi", []string{"ship it"}},
+		{"generic finalize mode sugar stripped", []string{"--mode", "finalize", "ship it"}, "", []string{"ship it"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -651,6 +653,9 @@ func TestParseRunnerPassthroughRemoteSugar(t *testing.T) {
 			}
 			if strings.Join(got.passthrough, "\x00") != strings.Join(tc.wantPass, "\x00") {
 				t.Errorf("passthrough = %v, want %v", got.passthrough, tc.wantPass)
+			}
+			if strings.Contains(tc.name, "finalize") && !got.finalize {
+				t.Errorf("finalize = false, want true")
 			}
 		})
 	}

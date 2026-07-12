@@ -81,7 +81,80 @@ func saveGitCredentials(creds []GitCredential) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	if !runningGoTest() {
+		if err := syncNativeGitCredentialStore(creds); err != nil {
+			log.Printf("[git-credentials] warning: native git credential store sync failed: %v", err)
+		}
+	}
+	return nil
+}
+
+func runningGoTest() bool {
+	return strings.HasSuffix(os.Args[0], ".test")
+}
+
+func syncNativeGitCredentialStore(creds []GitCredential) error {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return fmt.Errorf("home directory unavailable")
+	}
+
+	managedHosts := make(map[string]bool)
+	for _, c := range creds {
+		host := strings.ToLower(strings.TrimSpace(c.Host))
+		if host != "" {
+			managedHosts[host] = true
+		}
+	}
+
+	path := filepath.Join(home, ".git-credentials")
+	var lines []string
+	if raw, err := os.ReadFile(path); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if u, perr := url.Parse(line); perr == nil && managedHosts[strings.ToLower(u.Hostname())] {
+				continue
+			}
+			lines = append(lines, line)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	for _, c := range creds {
+		host := strings.TrimSpace(c.Host)
+		username := strings.TrimSpace(c.Username)
+		token := strings.TrimSpace(c.Token)
+		if host == "" || username == "" || token == "" {
+			continue
+		}
+		u := url.URL{
+			Scheme: "https",
+			Host:   host,
+			User:   url.UserPassword(username, token),
+		}
+		lines = append(lines, u.String())
+	}
+
+	data := []byte(strings.Join(lines, "\n"))
+	if len(data) > 0 {
+		data = append(data, '\n')
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	_ = os.Chmod(path, 0600)
+
+	if _, err := osexec.LookPath("git"); err == nil {
+		_ = osexec.Command("git", "config", "--global", "credential.helper", "store").Run()
+	}
+	return nil
 }
 
 func findCredentialForHost(host string) *GitCredential {

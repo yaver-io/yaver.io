@@ -22,6 +22,18 @@ func runMachine(args []string) {
 		os.Exit(0)
 	}
 	switch args[0] {
+	case "create", "new":
+		runMachineCreateCmd(args[1:])
+	case "up", "start", "wake":
+		runMachineUpCmd(args[1:])
+	case "down", "stop", "sleep":
+		runMachineDownCmd(args[1:])
+	case "rm", "remove", "destroy":
+		runMachineRmCmd(args[1:])
+	case "list", "ls":
+		runMachineListCmd()
+	case "status", "info":
+		runMachineStatusCmd(args[1:])
 	case "health":
 		runMachineHealthCmd()
 	case "scan":
@@ -43,9 +55,22 @@ func runMachine(args []string) {
 }
 
 func printMachineUsage() {
-	fmt.Print(`Yaver machine — headless hardware management.
+	fmt.Print(`Yaver machine — your own cloud box + headless hardware management.
 
-Usage:
+Own cloud box (BYO Hetzner, scale-to-zero — you pay your provider directly):
+  yaver machine create <name> [--plan starter|pro|scale] [--region eu|us]
+                                  Provision a new box on your Hetzner account
+  yaver machine up <name>         Recreate a stopped box from its snapshot (~min)
+  yaver machine down <name>       Scale to zero: snapshot then delete (stops billing)
+  yaver machine rm <name> [--purge]
+                                  Snapshot then delete + mark removed (--purge drops snapshot)
+  yaver machine list              Show your boxes and their power state
+  yaver machine status <name>     One box's detail
+
+Default is OFF: nothing runs until you create/up a box, and `+"`down`"+` returns it to a
+cheap snapshot. `+"`yaver codex --machine=<name>`"+` auto-wakes a stopped box.
+
+Headless hardware:
   yaver machine health            Print the latest disk + SMART snapshot
   yaver machine scan              Force a fresh scan now
   yaver machine onboarding ...    Configure OpenAI / GitHub / GitLab on this or a remote machine

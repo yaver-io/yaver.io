@@ -68,12 +68,11 @@ if ! xcodebuild -showsdks | grep -q "watchos"; then
   exit 1
 fi
 
-if [ ! -d "$WATCH_DIR/YaverWatch.xcodeproj" ]; then
-  if ! command -v xcodegen >/dev/null 2>&1; then
-    echo "ERROR: watch/YaverWatch.xcodeproj is missing and xcodegen is not installed." >&2
-    exit 1
-  fi
+if command -v xcodegen >/dev/null 2>&1; then
   (cd "$WATCH_DIR" && xcodegen generate)
+elif [ ! -d "$WATCH_DIR/YaverWatch.xcodeproj" ]; then
+  echo "ERROR: watch/YaverWatch.xcodeproj is missing and xcodegen is not installed." >&2
+  exit 1
 fi
 
 EXTRA_SETTINGS=()

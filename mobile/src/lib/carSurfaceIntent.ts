@@ -14,6 +14,7 @@ export type CarSurfaceIntentKind =
   | "mail_send"
   | "git_prs"
   | "git_issues"
+  | "git_connect"
   | "git_ci_status"
   | "media_open"
   | "maps_open";
@@ -157,11 +158,21 @@ export function classifyCarSurfaceIntent(
   }
 
   const gitish =
-    /\b(github|gitlab|git|pull request|pull requests|pr|prs|merge request|merge requests|mr|mrs|issue|issues|ci|pipeline|pipelines|actions|workflow|workflows)\b/.test(
+    /\b(github|gitlab|git|pull request|pull requests|pr|prs|merge request|merge requests|mr|mrs|issue|issues|ci|pipeline|pipelines|actions|workflow|workflows|oauth|authorize|authenticate)\b/.test(
       t,
     );
   if (gitish) {
     const provider = gitProviderFromText(t);
+    if (
+      /\b(connect|sign in|signin|log in|login|authorize|auth|authenticate|oauth|onboard|setup|set up)\b/.test(
+        t,
+      )
+    ) {
+      return {
+        kind: "git_connect",
+        payload: { provider, surface: "car" },
+      };
+    }
     if (
       /\b(ci|pipeline|pipelines|actions|workflow|workflows|build|builds)\b/.test(
         t,
@@ -279,6 +290,24 @@ export function spokenForCarIntent(
           : "No open pull requests.";
       return count ? `${count} open issues.` : "No open issues.";
     }
+    case "git_connect": {
+      if (typeof data?.spoken === "string" && data.spoken.trim())
+        return data.spoken;
+      if (typeof data?.error === "string" && data.error.trim())
+        return `Could not start git authorization: ${data.error}`;
+      const provider = gitProviderLabel(data?.provider || intent.payload.provider);
+      const code = data?.user_code || data?.userCode || data?.code;
+      const url = data?.verification_uri || data?.verificationUri || data?.openUrl;
+      if (code && url)
+        return `${provider} authorization started. Code ${spellCodeForSpeech(
+          String(code),
+        )}. Open ${shortHostForSpeech(String(url))} on your phone.`;
+      if (code)
+        return `${provider} authorization started. Code ${spellCodeForSpeech(
+          String(code),
+        )}. Check your phone for the link.`;
+      return `${provider} authorization started. Check your phone for the browser approval.`;
+    }
     case "media_open":
     case "maps_open": {
       if (typeof data?.spoken === "string" && data.spoken.trim())
@@ -314,7 +343,28 @@ function gitProviderFromText(t: string): string {
   if (/\bgitlab|merge request|merge requests|mr|mrs\b/.test(t)) return "gitlab";
   if (/\bgithub|pull request|pull requests|pr|prs|actions\b/.test(t))
     return "github";
-  return "auto";
+  return "github";
+}
+
+function gitProviderLabel(value: unknown): string {
+  const s = String(value || "").toLowerCase();
+  if (s === "gitlab") return "GitLab";
+  return "GitHub";
+}
+
+function spellCodeForSpeech(code: string): string {
+  return code
+    .replace(/[^A-Z0-9-]/gi, "")
+    .split("")
+    .join(" ");
+}
+
+function shortHostForSpeech(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
 }
 
 function mediaProviderFromText(t: string): string {
