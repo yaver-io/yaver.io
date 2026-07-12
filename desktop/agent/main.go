@@ -3016,6 +3016,12 @@ func runServe(args []string) {
 	// Start heartbeat loop (needs httpServer for authExpired flag)
 	go heartbeatLoop(ctx, cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID, taskMgr, httpServer)
 
+	// Instant git provisioning: a fresh MANAGED box with no git creds pulls
+	// the owner's gh/glab creds from their primary device (P2P over the relay)
+	// so private clone/push works immediately — the payoff of the registered
+	// Device-Flow OAuth apps. Best-effort, managed-boxes-only, idempotent.
+	go autoHydrateGitCredentialsOnManagedBox(cfg.DeviceID)
+
 	// Resume any self-hosted CI runners (managed-cloud CI absorption) so a
 	// registered runner survives an agent restart. No-ops when no CI runner
 	// is registered. See docs/yaver-managed-cloud-ci-absorption.md.

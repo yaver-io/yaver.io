@@ -970,6 +970,49 @@ export const heartbeat = mutation({
     }
     await ctx.db.patch(device._id, patch);
 
+    // Best-effort: seed the managed cloudMachines row's REAL specs + available
+    // runners from the box's own heartbeat. The provisioning-time specs were a
+    // guess (e.g. 16/32/360 recorded for an actual 8/16/160 cx43), which broke
+    // resume server-type selection. Hardware/OS/runner capability is NOT
+    // P2P-sensitive, so it's allowed in Convex; it powers capacity planning,
+    // the resume server-type choice, and machine policies. Never blocks a
+    // heartbeat (wrapped best-effort).
+    try {
+      const managed = await ctx.db
+        .query("cloudMachines")
+        .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+        .first();
+      if (managed) {
+        const cp: Record<string, unknown> = {};
+        const hw = args.hardwareProfile;
+        // Only sync onto an EXISTING specs object so the schema-required
+        // diskGb is preserved (heartbeat carries no total-disk figure).
+        if (hw && managed.specs) {
+          const specs: Record<string, unknown> = { ...(managed.specs as Record<string, unknown>) };
+          if (typeof hw.numCores === "number" && hw.numCores > 0) specs.vcpu = hw.numCores;
+          if (typeof hw.ramMb === "number" && hw.ramMb > 0) specs.ramGb = Math.max(1, Math.round(hw.ramMb / 1024));
+          if (hw.arch) specs.arch = hw.arch;
+          if (hw.os) specs.os = hw.os;
+          if (hw.osVersion) specs.distro = hw.osVersion;
+          cp.specs = specs;
+        }
+        if (args.installedRunnerIds && args.installedRunnerIds.length) {
+          const statusById = new Map<string, string>();
+          for (const r of args.runners ?? []) if (r?.runnerId) statusById.set(r.runnerId, String(r.status ?? ""));
+          cp.runnersAvailable = Array.from(new Set(args.installedRunnerIds)).map((id) => {
+            const st = statusById.get(id);
+            return { id, installed: true, ...(st === "ready" ? { authed: true } : st === "needs-auth" ? { authed: false } : {}) };
+          });
+        }
+        if (Object.keys(cp).length > 0) {
+          (cp as { updatedAt: number }).updatedAt = Date.now();
+          await ctx.db.patch(managed._id, cp);
+        }
+      }
+    } catch {
+      /* best-effort: seeding must never fail a heartbeat */
+    }
+
     // Metrics piggyback: record each buffered sample at its own capture time
     // (mirrors deviceMetrics.report) so the mobile CPU/RAM sparkline keeps
     // working without a separate call. Prune once per beat, not per sample.
