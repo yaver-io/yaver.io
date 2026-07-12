@@ -154,11 +154,14 @@ jobs:
           # HEALTH-GATED AUTO-ROLLBACK: if the new relay isn't serving /health,
           # restore the .previous binary+unit and restart, so a bad deploy
           # self-corrects instead of leaving the fallback path down.
+          # NB: RELAY_VERSION is a runner env var — NOT available inside this
+          # box-side (quoted heredoc) shell, and `set -u` would kill an echo that
+          # references it. Keep box-side messages version-free.
           if curl -fsS -m 5 "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
-            echo "=== health OK on new binary v${RELAY_VERSION} ==="
+            echo "=== health OK on the new binary ==="
             systemctl --no-pager --lines=10 status yaver-relay || true
           else
-            echo "::error::new relay v${RELAY_VERSION} failed /health — AUTO-ROLLBACK to previous"
+            echo "::error::new relay failed /health — AUTO-ROLLBACK to previous"
             journalctl -u yaver-relay --no-pager -n 30 || true
             [ -f "$BIN.previous" ] && install -m 0755 "$BIN.previous" "$BIN"
             [ -f "$UNIT.previous" ] && cp "$UNIT.previous" "$UNIT"
