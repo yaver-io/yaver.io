@@ -4189,7 +4189,7 @@ export default function TasksScreen() {
                     reason as trailing detail). This is the "connect attempt
                     failed" case (b) above: reconnectError / lastError were set
                     but never rendered, so the row just stopped spinning. */}
-                {(reconnectError || lastError) ? (
+                {(reconnectError || lastError) && connectionStatus !== "connecting" && connectionStatus !== "connected" ? (
                   <View style={[s.reconnectErrorBox, { borderColor: "#ef444455", backgroundColor: "#ef44441a", marginTop: 0, marginBottom: 16 }]}>
                     <Text style={[s.reconnectError, { color: "#fca5a5", marginTop: 0 }]}>
                       Couldn't connect.
@@ -6070,8 +6070,8 @@ const s = StyleSheet.create({
   // your N devices" is always visible without scrolling up.
   emptyPickerHeader: { paddingHorizontal: 24, paddingTop: 32, paddingBottom: 16, borderBottomWidth: StyleSheet.hairlineWidth },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { ...typography.pageTitle, fontSize: 22, marginTop: 24, marginBottom: 8 },
-  emptySubtitle: { ...typography.body, textAlign: "center", lineHeight: 22, maxWidth: 280 },
+  emptyTitle: { ...typography.pageTitle, fontSize: 22, marginTop: 24, marginBottom: 8, textAlign: "center" },
+  emptySubtitle: { ...typography.body, textAlign: "center", lineHeight: 22, maxWidth: 280, alignSelf: "center" },
 
   // Inline connect button (reconnect after user disconnect)
   inlineConnectBtn: { marginTop: 20, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 10 },

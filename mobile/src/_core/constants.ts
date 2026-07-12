@@ -63,7 +63,7 @@ export const DEFAULT_BEACON_UDP_PORT = 19837;
  * flapping. Sub-minute death detection comes from the P2P bus, not
  * this threshold.
  */
-export const HEARTBEAT_STALE_MS = 360_000;
+export const HEARTBEAT_STALE_MS = 900_000;
 
 /**
  * How long after the last UDP beacon an agent is still considered

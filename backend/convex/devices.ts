@@ -75,7 +75,15 @@ const hardwareProfileValidator = v.object({
 // subscribe to /bus/events for live presence instead of polling
 // Convex. Keep this constant in sync with mobile/_core/constants.ts
 // and web/lib/use-devices.ts.
-const HEARTBEAT_STALE_MS = 360 * 1000;
+// Widened from 6 min → 15 min for 100k-user cost control: the agent now
+// beats adaptively (2 min active, 10 min idle — see desktop/agent/main.go
+// heartbeatInterval), so the freshness window must cover the idle cadence
+// plus jitter. Real-time death detection comes from the relay tunnel event
+// (applyRelayPresence) and the P2P bus, so a wider Convex fallback window is
+// safe for relay/bus-connected devices; LAN-only devices trade a slower
+// offline flip for far fewer writes. Keep in sync with
+// mobile/_core/constants.ts and web/lib/use-devices.ts.
+const HEARTBEAT_STALE_MS = 900 * 1000;
 
 // HEARTBEAT_WRITE_BUCKET_MS: presence-write coalescing for cost control at
 // scale (100k+ free users). A heartbeat that changes NOTHING but "still
@@ -86,7 +94,7 @@ const HEARTBEAT_STALE_MS = 360 * 1000;
 // and real-time presence comes from the relay/bus regardless. Meaningful
 // changes (offline→online, runner/field changes) always write immediately.
 // Must stay < HEARTBEAT_STALE_MS.
-const HEARTBEAT_WRITE_BUCKET_MS = 4 * 60 * 1000;
+const HEARTBEAT_WRITE_BUCKET_MS = 8 * 60 * 1000;
 
 /**
  * deriveIsOnline returns the user-visible online state, reconciling

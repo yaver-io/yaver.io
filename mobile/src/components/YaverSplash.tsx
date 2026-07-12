@@ -1,31 +1,27 @@
 import React, { useEffect, useRef } from "react";
-import { Animated, Easing, Platform, StyleSheet, Text, View } from "react-native";
-import { getLocales } from "expo-localization";
-import { useColors } from "../context/ThemeContext";
+import { Animated, Easing, Image, StyleSheet, Text, View } from "react-native";
+import { useColors, useTheme } from "../context/ThemeContext";
 
-// YaverSplash — the branded cold-start overlay ("Remote Runtime AI").
+// Real app icon (same asset expo uses for the home-screen icon) — shown on
+// the cold-start splash instead of a bare "Y" glyph so the mark matches the
+// installed app icon.
+const APP_ICON = require("../../assets/icon.png");
+
+// YaverSplash — the branded cold-start overlay ("Remote AI Runtime").
 //
 // Rendered ON TOP of the app the instant the native expo splash hides, so
 // there's no flash of an empty shell while DeviceContext / auth hydrate.
-// It runs a short intro (wordmark pop + a pulsing brand-purple glow +
-// tagline rise), then fades itself out and calls onDone so the host can
-// unmount it. Pure Animated API — no extra native deps, no blur/gradient
-// library — so it works inside the Hermes container on every surface.
+// It runs a short intro (wordmark pop + a soft monochrome glow + tagline
+// rise), then fades itself out and calls onDone so the host can unmount it.
+// Pure Animated API — no extra native deps, no blur/gradient library — so it
+// works inside the Hermes container on every surface.
 //
-// The tagline is locale-aware: Turkish on tr-locale devices, English
-// everywhere else (the user asked for "both / locale-aware").
+// Palette is strictly monochrome — black / gray / white, theme-aware (white
+// wordmark on black in dark mode, near-black on white in light mode). No brand
+// accent color. Copy is always English.
 
-/** Localized product tagline — Turkish for tr-locale devices, English otherwise. */
-function splashTagline(): string {
-  try {
-    const locales = getLocales?.() ?? [];
-    const code = (locales[0]?.languageCode ?? "").toLowerCase();
-    if (code === "tr") return "Uzaktan Çalışan Yapay Zeka";
-  } catch {
-    // getLocales can throw on a stripped Hermes build — fall through to English.
-  }
-  return "Remote Runtime AI";
-}
+/** Product tagline — English on every locale. */
+const SPLASH_TAGLINE = "Remote AI Runtime";
 
 export interface YaverSplashProps {
   /** Fired after the intro plays and the overlay has faded out. The host
@@ -35,6 +31,7 @@ export interface YaverSplashProps {
 
 export default function YaverSplash({ onDone }: YaverSplashProps) {
   const c = useColors();
+  const { isDark } = useTheme();
   const screen = useRef(new Animated.Value(0)).current; // whole-overlay fade
   const mark = useRef(new Animated.Value(0.82)).current; // wordmark pop-in
   const glow = useRef(new Animated.Value(0.35)).current; // pulsing ring
@@ -98,8 +95,16 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
   }, [screen, mark, glow, row, onDone]);
 
   const glowScale = glow.interpolate({ inputRange: [0.35, 1], outputRange: [0.9, 1.28] });
-  const glowOpacity = glow.interpolate({ inputRange: [0.35, 1], outputRange: [0.1, 0.34] });
+  const glowOpacity = glow.interpolate({ inputRange: [0.35, 1], outputRange: [0.06, 0.16] });
   const taglineShift = row.interpolate({ inputRange: [0, 1], outputRange: [8, 0] });
+
+  // Strict monochrome palette — the halo and mark tile are neutral gray,
+  // the glyph/wordmark are the theme's primary ink (white on black in dark,
+  // near-black on white in light). No brand accent.
+  const glowColor = isDark ? "#FFFFFF" : "#000000";
+  const tileBg = c.surfaceElevated;
+  const tileBorder = c.borderStrong;
+  const ink = c.textPrimary;
 
   return (
     <Animated.View
@@ -110,14 +115,14 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
         <Animated.View
           style={[
             styles.glow,
-            { backgroundColor: c.accent, opacity: glowOpacity, transform: [{ scale: glowScale }] },
+            { backgroundColor: glowColor, opacity: glowOpacity, transform: [{ scale: glowScale }] },
           ]}
         />
         <Animated.View style={{ transform: [{ scale: mark }], alignItems: "center" }}>
-          <View style={[styles.markTile, { backgroundColor: c.accentSoft, borderColor: c.accent }]}>
-            <Text style={[styles.markGlyph, { color: c.accent }]}>Y</Text>
+          <View style={[styles.markTile, { backgroundColor: tileBg, borderColor: tileBorder }]}>
+            <Image source={APP_ICON} style={styles.markImage} resizeMode="cover" />
           </View>
-          <Text style={[styles.wordmark, { color: c.textPrimary }]}>yaver</Text>
+          <Text style={[styles.wordmark, { color: ink }]}>yaver</Text>
         </Animated.View>
         <Animated.Text
           style={[
@@ -125,7 +130,7 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
             { color: c.textMuted, opacity: row, transform: [{ translateY: taglineShift }] },
           ]}
         >
-          {splashTagline().toUpperCase()}
+          {SPLASH_TAGLINE.toUpperCase()}
         </Animated.Text>
       </View>
     </Animated.View>
@@ -150,12 +155,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 18,
+    overflow: "hidden",
   },
-  markGlyph: {
-    fontSize: 46,
-    fontWeight: "800",
-    fontFamily: Platform.OS === "ios" ? undefined : undefined,
-    includeFontPadding: false,
+  markImage: {
+    width: "100%",
+    height: "100%",
   },
   wordmark: {
     fontSize: 34,
