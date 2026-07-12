@@ -12,6 +12,7 @@ import {
   getManagedCloudBalance,
   getManagedCloudUsage,
   getManagedSubscription,
+  setManagedCloudAutoPark,
   startManagedCloudMachine,
   stopManagedCloudMachine,
   type ManagedCloudBalanceSummary,
@@ -354,9 +355,52 @@ export default function ManagedCloudCard({
                 </Text>
               ) : m.status === "paused" || m.status === "suspended" ? (
                 <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                  ⏸ Paused — snapshot kept, ~€0.50/mo (vs ~€30/mo running). Resume recreates it in ~2-3 min.
+                  ⏸ Paused — data kept, meter stopped (~€0.50/mo vs ~€30/mo running).
                 </Text>
               ) : null}
+
+              {/* Auto-close (auto-park). ON by default so a forgotten box always
+                  stops its own meter; turning it OFF means it keeps billing. */}
+              <Pressable
+                disabled={busy !== null}
+                onPress={() => {
+                  const nowOn = m.autoParkEnabled !== false; // undefined === ON
+                  const next = !nowOn;
+                  const go = async () => {
+                    if (!token) return;
+                    setBusy(`autopark:${m.id}`);
+                    try {
+                      await setManagedCloudAutoPark(token, m.id, next);
+                      await load();
+                    } catch (e: any) {
+                      Alert.alert("Couldn't change auto-close", e?.message ?? "Try again.");
+                    } finally {
+                      setBusy(null);
+                    }
+                  };
+                  if (next) return void go();
+                  Alert.alert(
+                    "Turn off auto-close?",
+                    "This box will KEEP RUNNING (and billing, ~€30/mo) when idle until you pause it yourself. Auto-close is what stops the meter for you.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      { text: "Turn off", style: "destructive", onPress: () => void go() },
+                    ],
+                  );
+                }}
+                style={{ marginTop: 6, flexDirection: "row", alignItems: "center", gap: 6, opacity: busy ? 0.5 : 1 }}
+              >
+                {busy === `autopark:${m.id}` ? (
+                  <ActivityIndicator size="small" color={c.textMuted} />
+                ) : (
+                  <Text style={{ fontSize: 13 }}>{m.autoParkEnabled === false ? "☐" : "☑"}</Text>
+                )}
+                <Text style={{ color: c.textMuted, fontSize: 11, flex: 1 }}>
+                  {m.autoParkEnabled === false
+                    ? "Auto-close OFF — this box keeps billing when idle."
+                    : `Auto-close ON — parks itself after ${m.autoParkMinutes ?? 45} min idle so it stops billing.`}
+                </Text>
+              </Pressable>
 
               {m.errorMessage ? (
                 <Text style={{ color: "#e11d48", fontSize: 11 }}>{m.errorMessage}</Text>

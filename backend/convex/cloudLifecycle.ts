@@ -576,6 +576,71 @@ async function hetznerSnapshot(token: string, serverId: string, desc: string): P
   return String(j.image.id);
 }
 /**
+ * ---------------------------------------------------------------------------
+ * Persistent data Volume — the fix for a 10-minute wake.
+ * ---------------------------------------------------------------------------
+ * Scale-to-zero has to DELETE the server (Hetzner bills stopped ones), so the
+ * old model snapshotted the whole boot disk and restored it on every wake —
+ * ~10 minutes of re-imaging data that never changes.
+ *
+ * Instead we keep all mutable state (workspace, ~/.yaver, Docker data, model
+ * weights) on a Hetzner Volume. A Volume SURVIVES the server delete and
+ * re-attaches at create time (`volumes: [id]` + `automount`). So:
+ *   • park  = just delete the server → near-instant, no snapshot to wait on,
+ *             and no snapshot that can fail and lose the box,
+ *   • wake  = create a server from a SLIM base image + attach the volume →
+ *             ~1-2 min instead of ~10.
+ * Idle cost is the volume (~€0.044/GB/mo) instead of snapshot storage — still
+ * pennies next to a running box.
+ */
+async function hetznerCreateVolume(
+  token: string,
+  name: string,
+  sizeGb: number,
+  location: string,
+): Promise<string> {
+  const r = await fetch(`${HETZNER_API}/volumes`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name, size: sizeGb, location, format: "ext4" }),
+  });
+  if (!r.ok) throw new Error(`create volume HTTP ${r.status}: ${await r.text()}`);
+  const j = (await r.json()) as { volume?: { id?: number } };
+  if (!j.volume?.id) throw new Error("create volume returned no id");
+  return String(j.volume.id);
+}
+
+/** Returns the volume's status + the server it is attached to (if any). */
+async function hetznerVolumeInfo(
+  token: string,
+  volumeId: string,
+): Promise<{ status: string; serverId: string | null; location: string }> {
+  const r = await fetch(`${HETZNER_API}/volumes/${volumeId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`volume info HTTP ${r.status}`);
+  const j = (await r.json()) as {
+    volume?: { status?: string; server?: number | null; location?: { name?: string } };
+  };
+  return {
+    status: String(j.volume?.status ?? "unknown"),
+    serverId: j.volume?.server ? String(j.volume.server) : null,
+    location: String(j.volume?.location?.name ?? ""),
+  };
+}
+
+/** Detach a volume (server delete detaches automatically; this is for repair). */
+async function hetznerDetachVolume(token: string, volumeId: string): Promise<void> {
+  const r = await fetch(`${HETZNER_API}/volumes/${volumeId}/actions/detach`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok && r.status !== 404 && r.status !== 409) {
+    throw new Error(`detach volume HTTP ${r.status}`);
+  }
+}
+
+/**
  * Status of a snapshot image: "creating" | "available" | "unavailable".
  *
  * create_image hands back an image id as soon as Hetzner ACCEPTS the action —
@@ -606,6 +671,7 @@ async function hetznerCreateFromImage(
   locations: string[],
   imageId: string,
   sshKeys: string[] = [],
+  volumeIds: string[] = [],
 ): Promise<{ serverId: string; ip: string; location: string }> {
   const imageVal: string | number = /^\d+$/.test(imageId) ? Number(imageId) : imageId;
   // Try each candidate location, moving on when a location can't serve this
@@ -629,6 +695,13 @@ async function hetznerCreateFromImage(
         // clean self-start. Tenant-aware: only our OWN boxes carry the operator
         // key (see resolveBootSshKeys); we never bake it into sold customer boxes.
         ...(sshKeys.length ? { ssh_keys: sshKeys } : {}),
+        // Attach the persistent data volume AT CREATE — Hetzner mounts it for
+        // us (automount), so a wake never has to restore the data. This is the
+        // whole ~10min → ~1-2min win: the boot image stays slim and all the
+        // heavy, unchanging state simply re-appears with the volume.
+        ...(volumeIds && volumeIds.length
+          ? { volumes: volumeIds.map((v) => Number(v)), automount: true }
+          : {}),
         labels: { service: "yaver-cloud-machine", managed: "true", resumed: "true" },
       }),
     });
@@ -768,11 +841,36 @@ export const pauseMachine = internalAction({
     // while the snapshot — the slow part — runs. "stopping" is in the
     // healthy/in-flight status set, so this doesn't read as an outage.
     await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "stopping" });
+
+    // FAST PATH — the box keeps its state on a persistent Volume, so there is
+    // NOTHING to snapshot: just delete the server. The volume survives and
+    // re-attaches on the next wake. Park becomes near-instant, and there is no
+    // snapshot that can fail and take the box with it.
+    if (machine.volumeId) {
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "powering-down", progress: 78,
+      });
+      try {
+        await hetznerDelete(token!, machine.hetznerServerId);
+      } catch (e) {
+        await ctx.runMutation(internal.cloudMachines.setStatus, {
+          machineId, status: "error",
+          errorMessage: `Delete failed: ${e instanceof Error ? e.message : String(e)} — box may still bill. Data is safe on volume ${machine.volumeId}. Retry pause.`,
+        });
+        return { ok: false, reason: "delete failed (data safe on volume)" };
+      }
+      await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "paused" });
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "parked", progress: 100,
+      });
+      return { ok: true, status: "paused", dryRun: false };
+    }
+
     await ctx.runMutation(internal.cloudMachines.setPhase, {
       machineId, phase: "snapshotting", progress: 35,
     });
-    // Real: snapshot first; a failed snapshot ABORTS (never delete an
-    // unrecoverable box) — mirrors cloudMachines.ts destroy invariant.
+    // LEGACY (no volume yet): snapshot first; a failed snapshot ABORTS (never
+    // delete an unrecoverable box) — mirrors cloudMachines.ts destroy invariant.
     let snapId: string;
     try {
       snapId = await hetznerSnapshot(
@@ -985,6 +1083,64 @@ export const finalizePause = internalAction({
   },
 });
 
+/**
+ * ensureVolume — create + attach the persistent data Volume for a machine that
+ * doesn't have one yet (the migration path off full-disk snapshots).
+ *
+ * Safe by construction: it only ADDS a volume. It never touches the boot disk,
+ * never deletes anything, and is idempotent — if the machine already has a
+ * volume, it's a no-op. Moving the data onto the volume happens ON THE BOX
+ * (see scripts/machine-volume-migrate.sh); this action just makes the disk exist
+ * and be attached so the box can rsync into it.
+ */
+export const ensureVolume = internalAction({
+  args: {
+    machineId: v.id("cloudMachines"),
+    sizeGb: v.optional(v.number()),
+  },
+  handler: async (ctx, { machineId, sizeGb }): Promise<LifecycleResult> => {
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    if (!machine) return { ok: false, reason: "machine not found" };
+    if (machine.volumeId) {
+      return { ok: true, status: machine.status, reason: "volume already present" };
+    }
+    const token = process.env.HCLOUD_TOKEN;
+    if (!token) return { ok: false, reason: "HCLOUD_TOKEN unset" };
+    if (!machine.hetznerServerId) {
+      return { ok: false, reason: "machine has no running server to attach to — wake it first" };
+    }
+    // Size the volume off the box's real disk so the data actually fits.
+    const size = Math.max(10, Math.round(sizeGb ?? machine.specs?.diskGb ?? 100));
+    const location = hetznerLocation(machine.region);
+    let volumeId: string;
+    try {
+      volumeId = await hetznerCreateVolume(
+        token,
+        `yaver-data-${machineId}`.slice(0, 60),
+        size,
+        location,
+      );
+    } catch (e) {
+      return { ok: false, reason: `create volume failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    // Attach to the currently-running server so the box can migrate its data in.
+    try {
+      const r = await fetch(`${HETZNER_API}/volumes/${volumeId}/actions/attach`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ server: Number(machine.hetznerServerId), automount: true }),
+      });
+      if (!r.ok) throw new Error(`attach HTTP ${r.status}: ${await r.text()}`);
+    } catch (e) {
+      return { ok: false, reason: `attach volume failed: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    await ctx.runMutation(internal.cloudMachines.setVolume, {
+      machineId, volumeId, volumeSizeGb: size,
+    });
+    return { ok: true, status: machine.status, reason: `volume ${volumeId} (${size}GB) created + attached` };
+  },
+});
+
 export const resumeMachine = internalAction({
   args: {
     machineId: v.id("cloudMachines"),
@@ -1041,17 +1197,31 @@ export const resumeMachine = internalAction({
         hetznerServerType(machine.machineType ?? "cpu");
       // Prefer the region's primary location, then fall back across the same
       // zone so a type/capacity gap in one location doesn't block the wake.
-      const locationCandidates = Array.from(new Set([
+      let locationCandidates = Array.from(new Set([
         hetznerLocation(machine.region),
         ...resumeLocationCandidates(machine.region),
       ]));
+      // A Volume is bound to ONE location — the server MUST be created there or
+      // the attach fails. So when we have a volume, its location wins outright.
+      const volumeIds: string[] = [];
+      if (machine.volumeId) {
+        const vol = await hetznerVolumeInfo(token!, machine.volumeId);
+        if (vol.location) locationCandidates = [vol.location];
+        volumeIds.push(machine.volumeId);
+      }
+      // With a volume, the boot image is a SLIM base (OS + toolchain only) — the
+      // data rides on the volume, so there is no fat disk to restore. That is
+      // the ~10min → ~1-2min win. Without a volume we fall back to the old
+      // full-disk snapshot.
+      const bootImage = (machine.volumeId && machine.baseImageId) || machine.lastSnapshotId;
       const { serverId, ip } = await hetznerCreateFromImage(
         token!,
         machine.hostname || `yaver-${machineId}`,
         serverType,
         locationCandidates,
-        machine.lastSnapshotId,
+        bootImage,
         resolveBootSshKeys(machine),
+        volumeIds,
       );
       await ctx.runMutation(internal.cloudMachines.setProvisioned, {
         machineId, hetznerServerId: serverId, serverIp: ip,

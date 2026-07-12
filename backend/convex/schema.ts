@@ -1208,6 +1208,10 @@ export default defineSchema({
     // difference between a ~10 min wake and a ~60-90s one.
     volumeId: v.optional(v.string()),
     volumeSizeGb: v.optional(v.number()),
+    // SLIM boot image (OS + toolchain, no user data) used to recreate the
+    // server on wake when a volume holds the state. Restoring this is fast;
+    // the old full-disk snapshot (lastSnapshotId) is the legacy fallback.
+    baseImageId: v.optional(v.string()),
     status: v.string(),               // "provisioning" | "active" | "grace" | "stopping" | "stopped" | "paused" | "resuming" | "suspended" | "error"
     // First-class onboarding (project_managed_cloud_onboarding_gap).
     // Granular phase + 0-100 progress so web/mobile show a real

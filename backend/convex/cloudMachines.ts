@@ -2083,6 +2083,30 @@ export const reconcileSubscriptions = internalAction({
  * keeps running (and billing) until parked by hand. Enforced in
  * cloudLifecycle.listIdleCandidates.
  */
+/** Record the persistent data volume attached to a machine. */
+export const setVolume = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    volumeId: v.string(),
+    volumeSizeGb: v.optional(v.number()),
+  },
+  handler: async (ctx, { machineId, volumeId, volumeSizeGb }) => {
+    const patch: Record<string, unknown> = { volumeId, updatedAt: Date.now() };
+    if (typeof volumeSizeGb === "number") patch.volumeSizeGb = volumeSizeGb;
+    await ctx.db.patch(machineId, patch);
+    return { ok: true, volumeId };
+  },
+});
+
+/** Record the SLIM boot image used to recreate the server on wake. */
+export const setBaseImage = internalMutation({
+  args: { machineId: v.id("cloudMachines"), baseImageId: v.string() },
+  handler: async (ctx, { machineId, baseImageId }) => {
+    await ctx.db.patch(machineId, { baseImageId, updatedAt: Date.now() });
+    return { ok: true, baseImageId };
+  },
+});
+
 export const setAutoPark = internalMutation({
   args: {
     userDocId: v.id("users"),

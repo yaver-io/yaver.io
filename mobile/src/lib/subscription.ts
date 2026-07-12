@@ -21,6 +21,11 @@ export interface ManagedCloudMachineSummary {
   stoppedAt?: number | null;
   prepaidBalanceCents?: number | null;
   estimatedHourlyCents?: number | null;
+  /** Auto-park (auto-close) when idle. Undefined === ON (the default), so a
+   *  forgotten box always stops its own meter. Only an explicit false keeps it
+   *  running while idle. */
+  autoParkEnabled?: boolean | null;
+  autoParkMinutes?: number | null;
 }
 
 export interface ManagedCloudBalanceSummary {
@@ -123,6 +128,24 @@ export function stopManagedCloudMachine(token: string, machineId: string) {
     token,
     "/billing/yaver-cloud/stop",
     { machineId },
+  );
+}
+
+/**
+ * Auto-park (auto-close): the box parks itself when idle so it stops billing.
+ * ON by default — turning it OFF means the box keeps running (and charging)
+ * until you park it by hand.
+ */
+export function setManagedCloudAutoPark(
+  token: string,
+  machineId: string,
+  enabled: boolean,
+  idleMinutes?: number,
+) {
+  return managedCloudPost<{ ok: boolean; autoParkEnabled?: boolean; autoParkMinutes?: number }>(
+    token,
+    "/billing/yaver-cloud/auto-park",
+    { machineId, enabled, ...(idleMinutes ? { idleMinutes } : {}) },
   );
 }
 

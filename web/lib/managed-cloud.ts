@@ -50,6 +50,24 @@ export function startManagedCloudMachine(token: string, machineId: string) {
   );
 }
 
+/**
+ * Auto-close (auto-park): the box parks itself when idle so it stops billing.
+ * ON by default — turning it OFF means it keeps running (and charging) until
+ * you pause it by hand.
+ */
+export function setManagedCloudAutoPark(
+  token: string,
+  machineId: string,
+  enabled: boolean,
+  idleMinutes?: number,
+) {
+  return managedCloudPost<{ ok: boolean; autoParkEnabled?: boolean; autoParkMinutes?: number }>(
+    token,
+    "/billing/yaver-cloud/auto-park",
+    { machineId, enabled, ...(idleMinutes ? { idleMinutes } : {}) },
+  );
+}
+
 /** True when a device row is a Yaver-managed box we can pause/resume. */
 export function isManagedCloudDevice(d: {
   managed?: boolean;

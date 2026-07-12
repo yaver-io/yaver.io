@@ -5315,6 +5315,13 @@ http.route({
             cloudResourceId: machine.cloudResourceId ?? machine.hetznerServerId ?? null,
             hetznerServerId: machine.hetznerServerId ?? null,
             deviceId: machine.deviceId ?? null,
+            // Auto-close state, so mobile/web can render the toggle truthfully.
+            // undefined === ON (the default), so we normalise to a real boolean.
+            autoParkEnabled: machine.autoParkEnabled !== false,
+            autoParkMinutes: machine.autoParkMinutes ?? 45,
+            // Fast-wake: a persistent volume means park/wake no longer restore a
+            // fat disk. Surfaced so the UI can say "wakes in ~1-2 min".
+            hasVolume: Boolean(machine.volumeId),
             // First-class onboarding: web/mobile render an
             // initializing state + progress bar + "Authorize runners"
             // from these (project_managed_cloud_onboarding_gap).
