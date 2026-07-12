@@ -63,6 +63,74 @@ export const PHASE_META: Record<LifecyclePhase, PhaseMeta> = {
   error: { label: "Something went wrong", short: "Error", percent: 100, kind: "terminal", tone: "error" },
 };
 
+/**
+ * How long each phase TYPICALLY takes, measured against a real cx43 with a
+ * 160 GB disk: recreating the server is a quick API call, but restoring the
+ * snapshot + booting is the long pole (~8-10 min), and the agent then needs a
+ * moment to start and dial the relay. Used for two things:
+ *   1. creep — move the bar continuously inside a phase so a 10-minute boot
+ *      never looks like a frozen 52%,
+ *   2. stall hints — after ~2x typical, say what's actually happening instead
+ *      of silently spinning.
+ */
+export const PHASE_TYPICAL_MS: Partial<Record<LifecyclePhase, number>> = {
+  requested: 10_000,
+  resuming: 60_000,
+  booting: 480_000, // snapshot restore + OS boot — genuinely minutes
+  registering: 90_000,
+  online: 20_000,
+  snapshotting: 300_000, // provider finalizes the image before we delete
+  "powering-down": 60_000,
+};
+
+/**
+ * creepPercent — extra progress to add INSIDE the current phase, so the bar
+ * keeps inching toward (but never reaches) the next step while we wait. Pure.
+ */
+export function creepPercent(phase: LifecyclePhase, elapsedMs: number, steps: LifecyclePhase[]): number {
+  const typical = PHASE_TYPICAL_MS[phase];
+  if (!typical || !isPhaseInFlight(phase)) return 0;
+  const idx = steps.indexOf(phase);
+  const here = PHASE_META[phase].percent;
+  const next = idx >= 0 && idx + 1 < steps.length ? PHASE_META[steps[idx + 1]].percent : here + 6;
+  const gap = Math.max(0, next - here);
+  // Asymptotic: fast at first, never spans more than ~85% of the gap, so the
+  // bar can't lie by arriving at the next step before the server says so.
+  const ratio = 1 - Math.exp(-elapsedMs / typical);
+  return gap * 0.85 * ratio;
+}
+
+/** True when a phase has run well past its typical duration. */
+export function isPhaseStalled(phase: LifecyclePhase, elapsedMs: number): boolean {
+  const typical = PHASE_TYPICAL_MS[phase];
+  if (!typical || !isPhaseInFlight(phase)) return false;
+  return elapsedMs > typical * 2;
+}
+
+/**
+ * stallHint — an HONEST explanation of what's happening when a phase overruns.
+ * These are the sentences the user needed when the bar sat silently at 80%.
+ */
+export function stallHint(phase: LifecyclePhase, elapsedMs: number): string | null {
+  if (!isPhaseStalled(phase, elapsedMs)) return null;
+  switch (phase) {
+    case "resuming":
+      return "Still recreating the server from your snapshot. Large disks take a few minutes.";
+    case "booting":
+      return "The machine is rebooting and restoring your snapshot — this can take up to ~10 minutes on a big disk.";
+    case "registering":
+      return "The box is up but hasn't finished connecting to the relay yet. It retries automatically; give it a minute.";
+    case "online":
+      return "Almost there — waiting for the runners to finish signing in.";
+    case "snapshotting":
+      return "Saving your snapshot. We won't delete the server until the snapshot is safely stored.";
+    case "powering-down":
+      return "Snapshot is safe — removing the server so billing stops.";
+    default:
+      return null;
+  }
+}
+
 /** Ordered steps for the wake stepper (excludes the resting/terminal ends). */
 export const WAKE_STEPS: LifecyclePhase[] = ["resuming", "booting", "registering", "online", "ready"];
 /** Ordered steps for the park stepper. */

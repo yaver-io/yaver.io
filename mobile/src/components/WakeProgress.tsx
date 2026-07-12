@@ -134,9 +134,17 @@ export default function WakeProgress({ state, compact }: WakeProgressProps) {
             </View>
           ) : phase === "error" ? null : (
             <Text style={[styles.hint, { color: c.textMuted }]}>
-              {isPark ? "Snapshot is kept — waking later is fast." : "Recreating from snapshot — about a minute."}
+              {isPark
+                ? "Snapshot is kept — the server is only removed once it's safely stored."
+                : "Restoring your snapshot and booting — this can take several minutes."}
             </Text>
           )}
+
+          {/* Honest explanation when a phase overruns — replaces a silently
+              frozen bar (the old "stuck at 80%" with no idea why). */}
+          {state.stallHint ? (
+            <Text style={[styles.hint, { color: c.warn, marginTop: 4 }]}>{state.stallHint}</Text>
+          ) : null}
         </>
       ) : null}
     </View>

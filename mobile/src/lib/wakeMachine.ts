@@ -19,9 +19,13 @@ export {
   type WakeableDevice,
 } from "./wakeMachineCore";
 import {
+  creepPercent,
   deriveServerPhase,
   isDeviceAsleep,
+  PARK_STEPS,
   PHASE_META,
+  stallHint,
+  WAKE_STEPS,
   type LifecyclePhase,
   type PhaseMeta,
   type WakeableDevice,
@@ -110,6 +114,11 @@ export interface MachineLifecycleState {
   busy: boolean;
   /** Last action error, if any. */
   error: string | null;
+  /** An honest explanation when the current phase is overrunning (e.g. a long
+   *  snapshot-restore boot, or the box not yet on the relay). Null when normal. */
+  stallHint: string | null;
+  /** How long we've been in the current phase (ms). */
+  elapsedInPhaseMs: number;
   /** The freshest managed-machine summary we polled, if available. */
   machine: ManagedCloudMachineSummary | null;
   wake: () => Promise<void>;
@@ -146,6 +155,11 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
   const [machine, setMachine] = useState<ManagedCloudMachineSummary | null>(null);
   const [optimistic, setOptimistic] = useState<LifecyclePhase | null>(null);
   const floorRef = useRef(0); // monotonic percent floor within a run
+  // When the current phase began — for in-phase creep + stall hints.
+  const phaseStartRef = useRef<{ phase: LifecyclePhase; at: number }>({ phase: "asleep", at: Date.now() });
+  // Re-render on a slow tick so the creep advances (and a stall hint appears)
+  // even between server polls; otherwise a long boot would look frozen.
+  const [, setTick] = useState(0);
 
   const onTickRef = useRef(onTick);
   onTickRef.current = onTick;
@@ -165,13 +179,35 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
   }
   if (deviceReachable && direction === "wake" && machine?.runnersAuthorized !== false) phase = "ready";
 
-  // Monotonic progress within a run.
-  let percent = PHASE_META[phase].percent;
+  // Time spent in the CURRENT phase — drives the in-phase creep (so a ~10 min
+  // snapshot-restore boot never looks like a frozen bar) and the stall hints
+  // (so a long "connecting over the relay" says what's actually happening
+  // instead of silently sitting at 80%).
+  if (phaseStartRef.current.phase !== phase) {
+    phaseStartRef.current = { phase, at: Date.now() };
+  }
+  const elapsedInPhaseMs = Date.now() - phaseStartRef.current.at;
+
+  // Monotonic progress within a run, plus a continuous creep inside the phase.
+  const steps = direction === "park" ? PARK_STEPS : WAKE_STEPS;
+  const creep = direction ? creepPercent(phase, elapsedInPhaseMs, steps) : 0;
+  let percent = PHASE_META[phase].percent + creep;
   if (direction) {
     percent = Math.max(floorRef.current, percent);
     if (percent > floorRef.current) floorRef.current = percent;
   }
+  percent = Math.min(100, percent);
   const meta = PHASE_META[phase];
+  const hint = direction ? stallHint(phase, elapsedInPhaseMs) : null;
+
+  // Keep the bar alive while a run is in flight: a 1s tick re-renders so the
+  // in-phase creep advances and the stall hint appears on time, independent of
+  // the (slower) server poll.
+  useEffect(() => {
+    if (!direction) return;
+    const iv = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(iv);
+  }, [direction]);
 
   // Adopt an externally-initiated transition — if the box starts resuming
   // or parking from another surface (or another device), reflect it here
@@ -263,5 +299,17 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
     setBusy(false);
   }, [busy, token, machineId]);
 
-  return { phase, meta, percent, direction, busy, error, machine, wake, park };
+  return {
+    phase,
+    meta,
+    percent,
+    direction,
+    busy,
+    error,
+    stallHint: hint,
+    elapsedInPhaseMs,
+    machine,
+    wake,
+    park,
+  };
 }
