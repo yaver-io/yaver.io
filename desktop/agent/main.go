@@ -2294,6 +2294,10 @@ func runServe(args []string) {
 			fmt.Printf("  %s\n", msg)
 		}
 	}
+	// Self-heal systemd ExecStart drift (fix C): a box that upgraded its binary
+	// but whose unit still points at the old path would keep restarting stale
+	// code (and stale relay logic). Repoint drifted units at ~/.yaver/bin/current.
+	reconcileSystemdBinaryPath()
 
 	// Bootstrap mode: if we have no token yet, don't exit with
 	// "Not signed in" — run a minimal pairing HTTP server so the
@@ -9592,7 +9596,20 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	// Convex call volume — the web dashboard can regain sub-minute
 	// responsiveness by subscribing to /bus/events on the agent
 	// directly (follow-up PR).
-	ticker := time.NewTicker(5 * time.Minute)
+	// Adaptive heartbeat cadence (100k-user Convex cost control): beat every
+	// 2 min while there's active work (a runner running), back off to 10 min
+	// when idle. Real-time presence still comes from the relay/bus; the Convex
+	// heartbeat is only the freshness fallback (HEARTBEAT_STALE_MS is widened
+	// to match). Idle boxes — the vast majority at scale — thus beat ~5x less.
+	const hbActive = 2 * time.Minute
+	const hbIdle = 10 * time.Minute
+	heartbeatInterval := func() time.Duration {
+		if taskMgr != nil && len(taskMgr.GetRunnerInfos()) > 0 {
+			return hbActive
+		}
+		return hbIdle
+	}
+	ticker := time.NewTicker(hbIdle)
 	defer ticker.Stop()
 
 	currentToken := func() string {
@@ -9778,6 +9795,14 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		// heartbeat select loop and delay eager kicks. nil until the first
 		// sample lands; the beat then just omits metrics.
 		metricsSamples := drainDeviceMetrics()
+		// Tier-3 cost control: only SHIP CPU/RAM samples while there's active
+		// work (a runner running) — that's when someone is plausibly watching
+		// the sparkline. Idle boxes still drain the buffer (so it never grows)
+		// but omit the metrics from the beat, cutting the per-heartbeat
+		// deviceMetrics inserts that dominate at 100k idle boxes.
+		if taskMgr == nil || len(taskMgr.GetRunnerInfos()) == 0 {
+			metricsSamples = nil
+		}
 		// Effective heartbeat result (nil if the beat + retry both failed);
 		// drives the claim-poll gating at the end of sendOne.
 		var hbResult *HeartbeatResult
@@ -9902,12 +9927,16 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 			}
 		case <-ticker.C:
 			sendOne()
+			// Re-pace: active work → 2 min, idle → 10 min.
+			ticker.Reset(heartbeatInterval())
 		case <-kickChan:
 			// Eager beat triggered by a handler that changed reportable
-			// state (e.g. remote codex/claude sign-in just finished). The
-			// 5 min ticker is left running — we don't try to reset it, the
-			// next tick is still a useful freshness signal.
+			// state (e.g. remote codex/claude sign-in just finished). A kick
+			// usually means the box just became active, so re-pace off the
+			// current state too (and reset the phase so the next tick is a
+			// full interval away, not a stale short remainder).
 			sendOne()
+			ticker.Reset(heartbeatInterval())
 		}
 	}
 }

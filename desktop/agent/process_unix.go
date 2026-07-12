@@ -406,6 +406,92 @@ WantedBy=default.target
 	return nil
 }
 
+// reconcileSystemdBinaryPath self-heals systemd-unit ExecStart drift on serve
+// startup. If a unit points at a stale/other yaver binary (e.g. a manual
+// /usr/local/bin/yaver) while the updaters (npm postinstall, GitHub
+// auto-update) maintain the newest binary under ~/.yaver/bin/current, repoint
+// the unit's ExecStart at that stable "current" symlink so a restart always
+// launches the newest binary. Without this, a box can upgrade its binary but
+// keep restarting the OLD one forever — which also pins it to old relay logic
+// and defeats the relay self-heal. Best-effort; never blocks serve.
+func reconcileSystemdBinaryPath() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	matches, _ := filepath.Glob(filepath.Join(home, ".yaver", "bin", "current", "*", "yaver"))
+	var stable string
+	for _, m := range matches {
+		if fi, statErr := os.Stat(m); statErr == nil && !fi.IsDir() {
+			stable = m
+			break
+		}
+	}
+	if stable == "" {
+		return // no cached-binary layout to point at
+	}
+	reloadUser, reloadSystem := false, false
+	for _, t := range detectSystemdExecTargets() {
+		if t.Binary == "" || t.Binary == stable {
+			continue
+		}
+		if !rewriteUnitExecStartBinary(t.Unit, stable) {
+			continue
+		}
+		log.Printf("[binary-paths] repointed %s ExecStart %s → %s (self-heal so a restart runs the newest binary)", t.Unit, t.Binary, stable)
+		if strings.Contains(filepath.ToSlash(t.Unit), "/.config/systemd/user/") {
+			reloadUser = true
+		} else {
+			reloadSystem = true
+		}
+	}
+	if reloadUser {
+		osexec.Command("systemctl", "--user", "daemon-reload").Run()
+	}
+	if reloadSystem {
+		osexec.Command("systemctl", "daemon-reload").Run()
+	}
+}
+
+// rewriteUnitExecStartBinary rewrites ONLY the binary (first field) of a unit's
+// ExecStart line to newBinary, preserving indentation, an optional leading '-',
+// and all args + the rest of the unit body. Returns true if it changed + wrote.
+func rewriteUnitExecStartBinary(unitPath, newBinary string) bool {
+	data, err := os.ReadFile(unitPath)
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(data), "\n")
+	changed := false
+	for i, line := range lines {
+		idx := strings.Index(line, "ExecStart=")
+		if idx < 0 || strings.TrimSpace(line[:idx]) != "" {
+			continue
+		}
+		prefix := line[:idx]
+		raw := strings.TrimPrefix(line[idx:], "ExecStart=")
+		dash := ""
+		if strings.HasPrefix(raw, "-") {
+			dash = "-"
+			raw = strings.TrimLeft(raw, "-")
+		}
+		fields := strings.Fields(raw)
+		if len(fields) == 0 || canonicalBinaryPath(fields[0]) == newBinary {
+			continue
+		}
+		fields[0] = newBinary
+		lines[i] = prefix + "ExecStart=" + dash + strings.Join(fields, " ")
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	return os.WriteFile(unitPath, []byte(strings.Join(lines, "\n")), 0644) == nil
+}
+
 // isAutoStartInstalled checks if the auto-start service file exists.
 func isAutoStartInstalled() bool {
 	home, err := os.UserHomeDir()
