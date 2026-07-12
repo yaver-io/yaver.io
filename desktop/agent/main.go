@@ -2701,15 +2701,22 @@ func runServe(args []string) {
 	}
 
 	// Build relay server list: config.json > user settings matched with platform > platform config
-	if !*noRelay && len(relayServers) == 0 && userSettingsErr == nil && userSettings.RelayUrl != "" && platformErr == nil {
-		// Match user's relayUrl against platform config to get full relay info (incl. QUIC address)
-		for _, rs := range platformCfg.RelayServers {
-			if relayHTTPURLsMatch(rs.HttpURL, userSettings.RelayUrl) {
-				relayServers = append(relayServers, rs)
-				log.Printf("Using relay from user settings: %s (QUIC: %s)", rs.HttpURL, rs.QuicAddr)
-				break
+	if !*noRelay && len(relayServers) == 0 && userSettingsErr == nil && userSettings.RelayUrl != "" {
+		// Match user's relayUrl against platform config to get full relay info
+		// (incl. QUIC address) — only possible when the /config fetch succeeded.
+		if platformErr == nil {
+			for _, rs := range platformCfg.RelayServers {
+				if relayHTTPURLsMatch(rs.HttpURL, userSettings.RelayUrl) {
+					relayServers = append(relayServers, rs)
+					log.Printf("Using relay from user settings: %s (QUIC: %s)", rs.HttpURL, rs.QuicAddr)
+					break
+				}
 			}
 		}
+		// Synth fallback needs ONLY /settings (relayUrl + password), so it works
+		// even when the /config fetch failed — the routine boot-window race on a
+		// freshly-recreated cloud box that used to leave the box relay-less and
+		// unreachable (mobile Wake dead-ends at "connecting over the relay").
 		if len(relayServers) == 0 {
 			// Phase 2D — the user's managed-cloud box doubles as their
 			// own relay (cloudMachines.provision Phase 2C wires
@@ -3610,7 +3617,12 @@ func runServe(args []string) {
 	// Start relay tunnels with hot-reload support
 	// Initial relay tunnels are started, and config is polled for changes every 30s
 	relayMgr := newRelayManager(ctx, cfg.DeviceID, cfg.AuthToken, fmt.Sprintf("127.0.0.1:%d", *httpPort), effectiveRelayPassword, cfg.ConvexSiteURL)
-	if userSettings != nil && userSettings.RelayUrl != "" {
+	// Only prime the reconciler's change-detector if we ACTUALLY resolved a
+	// relay this boot. Priming it unconditionally (even with relayServers
+	// empty) poisoned watchConfig into believing it was already synced, so a
+	// box that came up relay-less could never self-heal. Leaving it empty lets
+	// the next watchConfig tick re-resolve.
+	if userSettings != nil && userSettings.RelayUrl != "" && len(relayServers) > 0 {
 		relayMgr.lastSettingsRelay = userSettings.RelayUrl
 	}
 	// Share the relay expose manager with the HTTP server so /expose/relay/* endpoints work.
@@ -10239,10 +10251,17 @@ func (rm *relayManager) watchConfig(ctx context.Context) {
 				continue
 			}
 
-			// No local config — check Convex user settings for relay changes
+			// No local config — reconcile against Convex user settings. This is
+			// the SELF-HEAL path for a managed box that came up relay-less (a
+			// transient /config fetch failure at boot, or a snapshot taken
+			// before it ever resolved a relay). We re-resolve when the relay URL
+			// changed OR when there are zero live tunnels right now — the latter
+			// guarantees a relay-less box recovers within one tick instead of
+			// staying permanently unreachable.
 			if rm.convexSiteURL == "" {
 				continue
 			}
+			noTunnels := len(rm.activeTunnels) == 0
 			settings, err := FetchUserSettings(rm.convexSiteURL, rm.authToken)
 			if err != nil {
 				continue
@@ -10250,22 +10269,38 @@ func (rm *relayManager) watchConfig(ctx context.Context) {
 			if settings.RelayUrl == "" {
 				continue
 			}
-			// Only re-apply if the relay URL changed
-			if settings.RelayUrl == rm.lastSettingsRelay {
+			if settings.RelayUrl == rm.lastSettingsRelay && !noTunnels {
 				continue
 			}
-			rm.lastSettingsRelay = settings.RelayUrl
-			log.Printf("[RELAY] User settings relay changed: %s", settings.RelayUrl)
-			servers := []RelayServerInfo{{
-				ID:       "user-settings",
-				HttpURL:  settings.RelayUrl,
-				Region:   "user",
-				Priority: 1,
-			}}
+			log.Printf("[RELAY] Reconciling relay from user settings: %s (live tunnels=%d)", settings.RelayUrl, len(rm.activeTunnels))
+			// Build a DIALABLE relay entry: match the platform list first (real
+			// QUIC addr + id), else synth host:4433 from the URL. The old path
+			// built an entry with an empty QuicAddr, which could never dial.
+			var servers []RelayServerInfo
 			passwords := make(map[string]string)
+			if platformCfg, perr := FetchPlatformConfig(rm.convexSiteURL); perr == nil {
+				for _, rs := range platformCfg.RelayServers {
+					if relayHTTPURLsMatch(rs.HttpURL, settings.RelayUrl) {
+						servers = append(servers, rs)
+						break
+					}
+				}
+			}
+			if len(servers) == 0 {
+				if synth, ok := synthRelayServerInfoFromURL(settings.RelayUrl); ok {
+					servers = append(servers, synth)
+					if settings.RelayPassword != "" {
+						passwords[synth.QuicAddr] = settings.RelayPassword
+					}
+				}
+			}
+			if len(servers) == 0 {
+				continue // couldn't resolve a dialable relay; retry next tick
+			}
 			if settings.RelayPassword != "" {
 				rm.globalPassword = settings.RelayPassword
 			}
+			rm.lastSettingsRelay = settings.RelayUrl
 			rm.applyRelayServers(servers, passwords)
 		}
 	}
