@@ -77,6 +77,17 @@ const hardwareProfileValidator = v.object({
 // and web/lib/use-devices.ts.
 const HEARTBEAT_STALE_MS = 360 * 1000;
 
+// HEARTBEAT_WRITE_BUCKET_MS: presence-write coalescing for cost control at
+// scale (100k+ free users). A heartbeat that changes NOTHING but "still
+// alive" must not rewrite the device row every cycle — at 100k always-on
+// devices that write is the dominant Convex cost. We persist a
+// presence-only heartbeat at most once per bucket; `lastHeartbeat` still
+// advances well within HEARTBEAT_STALE_MS so deriveIsOnline keeps working,
+// and real-time presence comes from the relay/bus regardless. Meaningful
+// changes (offline→online, runner/field changes) always write immediately.
+// Must stay < HEARTBEAT_STALE_MS.
+const HEARTBEAT_WRITE_BUCKET_MS = 4 * 60 * 1000;
+
 /**
  * deriveIsOnline returns the user-visible online state, reconciling
  * the explicit isOnline flag with heartbeat freshness. Use this
@@ -968,7 +979,40 @@ export const heartbeat = mutation({
     if (args.publishCapabilities !== undefined) {
       patch.publishCapabilities = args.publishCapabilities;
     }
-    await ctx.db.patch(device._id, patch);
+
+    // Presence-write coalescing (100k-user cost control). Everything the
+    // conditional blocks above added to `patch` (beyond the 5 always-present
+    // presence keys) counts as a MEANINGFUL change and forces a write. A
+    // heartbeat that is presence-only AND still fresh within the bucket is
+    // skipped entirely — no row rewrite. Real-time presence still comes from
+    // the relay/bus; this only throttles the redundant "still online" writes.
+    const PRESENCE_ONLY_KEYS = new Set([
+      "isOnline",
+      "lastHeartbeat",
+      "needsAuth",
+      "runners",
+      "installedRunnerIds",
+    ]);
+    const hasFieldChange = Object.keys(patch).some((k) => !PRESENCE_ONLY_KEYS.has(k));
+    const runnersChanged =
+      JSON.stringify(args.runners ?? []) !== JSON.stringify(device.runners ?? []);
+    const installedChanged =
+      JSON.stringify(args.installedRunnerIds ?? []) !==
+      JSON.stringify(device.installedRunnerIds ?? []);
+    const meaningful =
+      !device.isOnline || // offline → online transition must persist
+      device.needsAuth === true || // clearing bootstrap flag must persist
+      runnersChanged ||
+      installedChanged ||
+      hasFieldChange;
+    const freshWithinBucket =
+      typeof device.lastHeartbeat === "number" &&
+      Date.now() - device.lastHeartbeat < HEARTBEAT_WRITE_BUCKET_MS;
+    if (meaningful || !freshWithinBucket) {
+      await ctx.db.patch(device._id, patch);
+    }
+    // else: device is already online, unchanged, and its lastHeartbeat is
+    // still fresh within the bucket — skip the write to save Convex cost.
 
     // Best-effort: seed the managed cloudMachines row's REAL specs + available
     // runners from the box's own heartbeat. The provisioning-time specs were a
