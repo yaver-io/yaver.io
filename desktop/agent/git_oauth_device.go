@@ -43,12 +43,13 @@ import (
 	"time"
 )
 
-// Yaver-owned Device Flow OAuth App client IDs. Empty by default; fill
-// in once the Apps are registered. Until they are, users hit BYO mode
-// (vault entry or env var) — the privacy story is the same either way.
+// Yaver-owned Device Flow OAuth App client IDs. Device Flow uses ONLY a
+// public client_id (no client secret), so these are safe to ship in a
+// public repo — a reader gains nothing. Users can still override via vault
+// (`github-oauth-client-id`) or env (YAVER_GITHUB_OAUTH_CLIENT_ID) for BYO.
 const (
-	defaultYaverGitHubOAuthClientID = ""
-	defaultYaverGitLabOAuthClientID = ""
+	defaultYaverGitHubOAuthClientID = "Ov23li3ej15Y0rXCRtfM"
+	defaultYaverGitLabOAuthClientID = "a84514539b56da5dfc708b416a7a0457d8dc017f2c1066d6fae1883deedede25"
 )
 
 // gitOAuthSession is one in-flight Device Flow attempt. Held in memory
@@ -229,7 +230,9 @@ func gitOAuthDeviceEndpoints(provider, host string) (deviceURL string, scopes []
 	case "github":
 		return "https://github.com/login/device/code", []string{"repo", "read:org", "read:user"}
 	case "gitlab":
-		return fmt.Sprintf("https://%s/oauth/authorize_device", host), []string{"api", "read_user", "read_repository", "write_repository"}
+		// `api` already includes user read, so read_user is redundant; the
+		// Yaver GitLab app grants api/read_repository/write_repository.
+		return fmt.Sprintf("https://%s/oauth/authorize_device", host), []string{"api", "read_repository", "write_repository"}
 	}
 	return "", nil
 }
@@ -392,8 +395,8 @@ func finishGitOAuthSession(sessionID, token string) {
 
 // persistGitProviderTokenForOAuth mirrors the persistence half of
 // handleGitProviderSetup so the OAuth path lands in the same on-disk
-// stores: ~/.yaver/git-credentials.json (clone-pull) and the provider
-// metadata file.
+// stores: ~/.yaver/git-credentials.json (clone-pull), the provider
+// metadata file, and the vault CI/deploy token entry when vault is available.
 func persistGitProviderTokenForOAuth(provider, host, token, username, avatarURL string) error {
 	creds, _ := loadGitCredentials()
 	found := false
@@ -432,7 +435,22 @@ func persistGitProviderTokenForOAuth(provider, host, token, username, avatarURL 
 	if !updated {
 		providers = append(providers, pp)
 	}
-	return saveGitProviders(providers)
+	if err := saveGitProviders(providers); err != nil {
+		return err
+	}
+
+	vaultNotes := fmt.Sprintf("%s OAuth token for %s (%s)", provider, host, username)
+	switch provider {
+	case "github":
+		if err := setVaultEntry("github-token", "git-credential", token, vaultNotes); err != nil {
+			log.Printf("[git-oauth] warning: could not save github-token to vault: %v", err)
+		}
+	case "gitlab":
+		if _, err := setGitLabVaultEntry(host, token, vaultNotes); err != nil {
+			log.Printf("[git-oauth] warning: could not save gitlab token to vault: %v", err)
+		}
+	}
+	return nil
 }
 
 func markGitOAuthError(sessionID, code, msg string) {
@@ -472,4 +490,3 @@ func getGitOAuthSession(sessionID string) (*gitOAuthSession, bool) {
 	cp.DeviceCode = ""
 	return &cp, true
 }
-
