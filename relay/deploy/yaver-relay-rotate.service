@@ -1,0 +1,8 @@
+[Unit]
+Description=Yaver relay — rotate shared password (health-gated, auto-rollback)
+After=network-online.target yaver-relay.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/yaver-relay/rotate-relay-password-local.sh
