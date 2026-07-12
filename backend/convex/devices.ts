@@ -57,6 +57,10 @@ const hardwareProfileValidator = v.object({
   arch: v.optional(v.string()),
   iosSimulators: v.optional(v.array(v.string())),
   androidEmulators: v.optional(v.array(v.string())),
+  // The agent reports isWsl on WSL2 hosts. Without it in the validator, every
+  // heartbeat AND registerDevice from a WSL box hard-fails with
+  // ArgumentValidationError — the device can never come online at all.
+  isWsl: v.optional(v.boolean()),
 });
 
 // HEARTBEAT_STALE_MS: how long after the last heartbeat we still

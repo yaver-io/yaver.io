@@ -881,8 +881,15 @@ export const idleSweepCron = internalAction({
 // pause snapshot → persist new id/ip → status "active". HCLOUD_TOKEN
 // absent ⇒ dry-run state transition.
 export const resumeMachine = internalAction({
-  args: { machineId: v.id("cloudMachines"), dryRun: v.optional(v.boolean()) },
-  handler: async (ctx, { machineId, dryRun }): Promise<LifecycleResult> => {
+  args: {
+    machineId: v.id("cloudMachines"),
+    dryRun: v.optional(v.boolean()),
+    // Set only by the transient-retry self-schedule below (snapshot still
+    // finalizing on the provider). Bounds the auto-retry loop.
+    resumeAttempt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<LifecycleResult> => {
+    const { machineId, dryRun } = args;
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
     if (!machine) return { ok: false, reason: "machine not found" };
     if (machine.status !== "paused" && machine.status !== "suspended") {
@@ -963,9 +970,35 @@ export const resumeMachine = internalAction({
       });
       return { ok: true, status: "active", serverId, ip, dryRun: false };
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // TRANSIENT: Hetzner is still finalizing the snapshot ("image not yet
+      // available"). A park immediately followed by a wake hits this every
+      // time on a large disk (a 160 GB snapshot takes minutes to become
+      // available). Burning the machine into `error` here was a dead end — the
+      // start route then refuses with "not resumable" and the box can only be
+      // rescued by hand-editing the row. Keep it `paused` (so Wake still works
+      // and the UI shows Wake, not a fatal error) and auto-retry.
+      const transient =
+        /image not yet available|not yet available|is locked|being created|resource_unavailable/i.test(msg);
+      if (transient) {
+        await ctx.runMutation(internal.cloudMachines.setStatus, {
+          machineId,
+          status: "paused",
+          errorMessage: `Snapshot ${machine.lastSnapshotId} is still finalizing on the provider — waking automatically as soon as it's ready.`,
+        });
+        // Self-retry with backoff until the image finalizes.
+        const attempt = (args.resumeAttempt ?? 0) + 1;
+        if (attempt <= 10) {
+          await ctx.scheduler.runAfter(60_000, internal.cloudLifecycle.resumeMachine, {
+            machineId,
+            resumeAttempt: attempt,
+          });
+        }
+        return { ok: false, reason: "snapshot still finalizing — wake will retry automatically", retryable: true };
+      }
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId, status: "error",
-        errorMessage: `Resume failed: recreate-from-snapshot ${e instanceof Error ? e.message : String(e)}. Snapshot ${machine.lastSnapshotId} retained — retry.`,
+        errorMessage: `Resume failed: recreate-from-snapshot ${msg}. Snapshot ${machine.lastSnapshotId} retained — retry.`,
       });
       return { ok: false, reason: "recreate failed (snapshot retained)" };
     }
