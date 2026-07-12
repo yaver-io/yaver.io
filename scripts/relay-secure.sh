@@ -73,6 +73,26 @@ fi
 PASS=(); [ -n "$SSH_KEY" ] && PASS=(--ssh-key "$SSH_KEY")
 YES=(); [ "$ASSUME_YES" = 1 ] && YES=(--yes)
 
+# AUTHORIZATION: this script is public, but it is inert without YOUR credentials.
+# Every box step runs over SSH, and the box is key-only (harden-relay-ssh.sh), so
+# only an authorized private key can run them. Verify that up front — an
+# unauthorized runner (no key) fails here, before touching anything. The GitHub
+# secret step is separately gated by repo-owner `gh` auth.
+if [ "$((DO_ROTATE+DO_HARDEN+DO_TIMER))" -gt 0 ]; then
+  echo "Verifying SSH access to root@$HOST (key-gated — this is the access control)…"
+  if [ -n "$SSH_KEY" ]; then
+    ssh_ok() { ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -i "$SSH_KEY" "root@$HOST" true 2>/dev/null; }
+  else
+    ssh_ok() { ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "root@$HOST" true 2>/dev/null; }
+  fi
+  if ! ssh_ok; then
+    echo "ERROR: cannot SSH to root@$HOST with your key — not authorized to run the box steps." >&2
+    echo "  This IS the access control: the relay box is key-only. Only your key works." >&2
+    exit 1
+  fi
+  echo "✓ SSH authorized (your key)."
+fi
+
 # 2. RELAY_SSH_HOST secret.
 if [ "$DO_HOST_SECRET" = 1 ]; then
   printf '%s' "$HOST" | gh secret set RELAY_SSH_HOST -R "$REPO"
@@ -80,18 +100,20 @@ if [ "$DO_HOST_SECRET" = 1 ]; then
 fi
 
 # 3. Rotate (delegates to the health-gated rotation script).
+# NB: ${arr[@]+"${arr[@]}"} — expand safely even when the array is empty; plain
+# "${arr[@]}" throws "unbound variable" under set -u on macOS's bash 3.2.
 if [ "$DO_ROTATE" = 1 ]; then
-  "$HERE/rotate-relay-password.sh" --host "$HOST" --repo "$REPO" "${PASS[@]}" "${YES[@]}"
+  "$HERE/rotate-relay-password.sh" --host "$HOST" --repo "$REPO" ${PASS[@]+"${PASS[@]}"} ${YES[@]+"${YES[@]}"}
 fi
 
 # 4. Harden SSH.
 if [ "$DO_HARDEN" = 1 ]; then
-  "$HERE/harden-relay-ssh.sh" --host "$HOST" "${PASS[@]}" "${YES[@]}"
+  "$HERE/harden-relay-ssh.sh" --host "$HOST" ${PASS[@]+"${PASS[@]}"} ${YES[@]+"${YES[@]}"}
 fi
 
 # 5. Timer.
 if [ "$DO_TIMER" = 1 ]; then
-  "$HERE/install-relay-rotation-timer.sh" --host "$HOST" "${PASS[@]}"
+  "$HERE/install-relay-rotation-timer.sh" --host "$HOST" ${PASS[@]+"${PASS[@]}"}
 fi
 
 echo
