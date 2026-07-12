@@ -21,6 +21,7 @@
 import { internalMutation, internalQuery, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { isOwnerUserId } from "./ownerAllowlist";
 
 // Markup over raw provider COGS, per SKU, env-overridable. Defaults:
 // cpu 2x (100% margin), gpu 3x (GPU COGS is lumpier + pricier). Set
@@ -541,6 +542,21 @@ function hetznerLocation(region: string | undefined): string {
   return region === "us" ? "ash" : "nbg1";
 }
 
+// Tenant-aware boot SSH keys for a Hetzner create. Returns the (already
+// registered) key NAMES to attach so no root password is set.
+//   • OWNER/internal boxes → our operator boot key (YAVER_CLOUD_SSH_KEY_NAME,
+//     a Convex env — never a source literal). Full ops SSH; it's our box.
+//   • CUSTOMER-sold boxes → NEVER our operator key. Managed via the
+//     control-plane; a customer key would be attached from machine.sshPublicKey
+//     once registered. Empty ⇒ no operator footprint on the tenant box.
+function resolveBootSshKeys(machine: { userId?: unknown }): string[] {
+  if (isOwnerUserId(String(machine?.userId ?? ""))) {
+    const name = (process.env.YAVER_CLOUD_SSH_KEY_NAME || "").trim();
+    return name ? [name] : [];
+  }
+  return [];
+}
+
 // Snapshot a server, returning the created image id. Throws on
 // failure so the caller can ABORT the delete (fail-closed: never
 // delete a box without a recoverable snapshot).
@@ -568,6 +584,7 @@ async function hetznerCreateFromImage(
   serverType: string,
   locations: string[],
   imageId: string,
+  sshKeys: string[] = [],
 ): Promise<{ serverId: string; ip: string; location: string }> {
   const imageVal: string | number = /^\d+$/.test(imageId) ? Number(imageId) : imageId;
   // Try each candidate location, moving on when a location can't serve this
@@ -586,6 +603,11 @@ async function hetznerCreateFromImage(
         server_type: serverType,
         image: imageVal,
         location,
+        // Passing an SSH key makes Hetzner set NO root password — no "server
+        // created" email, no forced-expiry that blocks the agent's boot, and a
+        // clean self-start. Tenant-aware: only our OWN boxes carry the operator
+        // key (see resolveBootSshKeys); we never bake it into sold customer boxes.
+        ...(sshKeys.length ? { ssh_keys: sshKeys } : {}),
         labels: { service: "yaver-cloud-machine", managed: "true", resumed: "true" },
       }),
     });
@@ -917,6 +939,7 @@ export const resumeMachine = internalAction({
         serverType,
         locationCandidates,
         machine.lastSnapshotId,
+        resolveBootSshKeys(machine),
       );
       await ctx.runMutation(internal.cloudMachines.setProvisioned, {
         machineId, hetznerServerId: serverId, serverIp: ip,

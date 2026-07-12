@@ -1614,8 +1614,22 @@ export const provision = internalAction({
     // byte-identical to before (no ssh key, no relay password). Set via
     // `npx convex env set --prod MANAGED_CLOUD_SSH_PUBKEY "ssh-ed25519 …"`
     // and `… MANAGED_CLOUD_RELAY_PASSWORD "<platform relay password>"`.
-    const sshAuthorizedKey = (process.env.MANAGED_CLOUD_SSH_PUBKEY || "").trim();
+    // Tenant-aware SSH: our OPERATOR key goes ONLY onto our own (owner) boxes.
+    // A box we SELL to a customer must NEVER carry our operator root key — it
+    // gets the customer's OWN key (machine.sshPublicKey) and is managed via the
+    // control-plane. This bounds operator footprint for the resale product.
+    const ownerBox = isOwnerUserId(machine.userId);
+    const sshAuthorizedKey = ownerBox
+      ? (process.env.MANAGED_CLOUD_SSH_PUBKEY || "").trim()
+      : ((machine as { sshPublicKey?: string }).sshPublicKey || "").trim();
     const relayPassword = (process.env.MANAGED_CLOUD_RELAY_PASSWORD || "").trim();
+    // Attaching an SSH key on create makes Hetzner set NO root password (no
+    // "server created" email, no forced-expiry that blocks the agent boot).
+    // Owner boxes attach the operator boot key (Convex env, never a source
+    // literal); customer boxes never attach it here.
+    const bootSshKeyNames = ownerBox && (process.env.YAVER_CLOUD_SSH_KEY_NAME || "").trim()
+      ? [(process.env.YAVER_CLOUD_SSH_KEY_NAME || "").trim()]
+      : [];
     // Phase 2A — per-box self-relay password. Generated unconditionally
     // (no env gate) for every managed box that has a subscription,
     // because the relay sidecar is the whole point of the architecture:
@@ -1699,6 +1713,7 @@ export const provision = internalAction({
           server_type: createdServerType,
           image: bootImage,
           location,
+          ...(bootSshKeyNames.length ? { ssh_keys: bootSshKeyNames } : {}),
           labels: {
             service: "yaver-cloud-machine",
             machine_type: machine.machineType,
