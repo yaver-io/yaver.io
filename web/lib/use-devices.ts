@@ -129,6 +129,10 @@ export interface Device {
    */
   hosting?: "yaver-hosted" | "byo" | "self-hosted";
   managed?: boolean;
+  /** Managed-cloud machine id + status — needed to Pause (snapshot+delete) or
+   *  Resume a Yaver-hosted box from the web dashboard, same as mobile does. */
+  machineId?: string;
+  machineStatus?: string;
   /**
    * True when this row lacks both hardwareId and publicKey AND is not a
    * guest. Such rows have unstable identity — a rename or platform
@@ -553,6 +557,8 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
             ? d.hosting
             : undefined,
         managed: typeof d.managed === "boolean" ? d.managed : undefined,
+        machineId: typeof d.machineId === "string" ? d.machineId : undefined,
+        machineStatus: typeof d.machineStatus === "string" ? d.machineStatus : undefined,
         // Ghost: non-guest row lacking both stable identifiers. Cannot
         // be reliably reconnect-targeted. Surfaced in the UI so the
         // user knows to re-pair from the device.

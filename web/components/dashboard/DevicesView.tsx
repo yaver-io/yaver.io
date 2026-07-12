@@ -11,6 +11,12 @@ import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
+import {
+  isMachinePaused,
+  isManagedCloudDevice,
+  startManagedCloudMachine,
+  stopManagedCloudMachine,
+} from "@/lib/managed-cloud";
 import { classifyFetchError, type ClassifiedFailure } from "@/lib/connection-error";
 import {
   probeAllowed,
@@ -2267,6 +2273,76 @@ function useManagedMachines(token: string | null | undefined): ManagedMachineSum
   return machines;
 }
 
+/**
+ * ManagedPowerButton — Pause / Resume a Yaver-hosted box from the WEB dashboard.
+ * Mobile has had this (Devices tab ⏸ Pause / ▶ Resume); web did not, so the only
+ * way to stop the meter from a laptop was the phone. Pause = snapshot then DELETE
+ * the server (Hetzner bills stopped servers, so scale-to-zero must delete);
+ * Resume recreates it from the snapshot.
+ */
+function ManagedPowerButton({
+  device,
+  token,
+  onDone,
+}: {
+  device: Device;
+  token: string | null | undefined;
+  onDone?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!token || !isManagedCloudDevice(device) || !device.machineId) return null;
+  const paused = isMachinePaused(device.machineStatus);
+
+  const act = async () => {
+    if (!device.machineId || !token) return;
+    if (
+      !paused &&
+      !window.confirm(
+        `Pause ${device.name || "this box"}?\n\nYaver snapshots it, then DELETES the server so billing stops. Resume recreates it from the snapshot (~2-3 min).`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      if (paused) await startManagedCloudMachine(token, device.machineId);
+      else await stopManagedCloudMachine(token, device.machineId);
+      onDone?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={() => void act()}
+      disabled={busy}
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors disabled:opacity-60 ${
+        paused
+          ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-500/20 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
+          : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-500/20 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+      }`}
+      title={
+        paused
+          ? "Resume this box — recreate it from its latest snapshot (~2-3 min)"
+          : "Pause this box — snapshot then delete the server so billing stops (scale to zero)"
+      }
+    >
+      {busy ? "…" : paused ? "▶ Resume" : "⏸ Pause"}
+      {err ? (
+        <span className="ml-1 normal-case text-red-600 dark:text-red-300" title={err}>
+          ✗
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 export default function DevicesView({
   devices,
   onRefresh,
@@ -2626,6 +2702,9 @@ export default function DevicesView({
                           {device.hosting === "yaver-hosted" ? "Yaver-hosted" : device.hosting === "byo" ? "BYO" : "Self-hosted"}
                         </span>
                       ) : null}
+                      {/* Yaver-managed box → Pause (snapshot+delete, meter stops)
+                          / Resume, same control the mobile Devices tab has. */}
+                      <ManagedPowerButton device={device} token={token} />
                     </div>
                     <div className="mt-1 text-sm text-slate-600 dark:text-surface-400">
                       <p>
