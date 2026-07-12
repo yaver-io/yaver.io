@@ -38,11 +38,20 @@ if mountpoint -q /root && grep -q " /root " /proc/mounts; then
   exit 0
 fi
 
-# Format only if the volume has no filesystem. Hetzner pre-formats ext4 when the
-# volume is created with format=ext4; this guard means we never wipe real data.
+# Hetzner pre-formats the volume ext4 at create (format=ext4), so in the normal
+# path there is nothing to format — and the box's Policy Guard blocks mkfs on a
+# block device anyway. Only format a genuinely blank volume, and require an
+# explicit opt-in so this can never silently wipe data.
 if ! blkid "$DEV" >/dev/null 2>&1; then
-  log "volume is blank — creating ext4"
-  mkfs.ext4 -F "$DEV"
+  if [ "${YAVER_VOLUME_ALLOW_FORMAT:-}" = "1" ]; then
+    log "volume is blank — creating ext4 (YAVER_VOLUME_ALLOW_FORMAT=1)"
+    mkfs.ext4 -F "$DEV"
+  else
+    log "ERROR: volume has no filesystem and formatting is not permitted here."
+    log "       Re-create the volume with format=ext4 (the default), or re-run"
+    log "       with YAVER_VOLUME_ALLOW_FORMAT=1 to format it. Aborting — safe."
+    exit 1
+  fi
 fi
 
 mkdir -p "$MNT"
