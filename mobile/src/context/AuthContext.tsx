@@ -206,7 +206,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (!result.ok && !result.networkError) {
-        console.log("[auth] Token revoked by server — logging out");
+        // The /auth/refresh endpoint said no — but it can 401 SPURIOUSLY for a
+        // token that is still perfectly valid for normal API calls (e.g. a
+        // bearer that can't be rotated again, or a transient refresh-path
+        // fault). Nuking the session on that alone is exactly how a working
+        // login got silently logged out mid-session, stranding the user on a
+        // tokenless shell. Confirm with an AUTHORITATIVE validate before we
+        // clear anything: only a genuinely invalid token gets signed out; a
+        // token that still validates keeps its session.
+        const check = await validateTokenDetailed(snapshotToken);
+        if (currentTokenRef.current !== snapshotToken) return;
+        if (check.kind === "valid") {
+          // False alarm — token still works. Keep the session intact.
+          return;
+        }
+        if (check.kind === "networkError") {
+          // Ambiguous — don't log out on a network blip.
+          return;
+        }
+        console.log("[auth] Token confirmed invalid — logging out");
         await clearToken();
         if (currentTokenRef.current !== snapshotToken) return;
         setToken(null);

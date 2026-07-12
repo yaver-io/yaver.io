@@ -1,4 +1,4 @@
-import { Tabs, useRouter } from "expo-router";
+import { Redirect, Tabs, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6,6 +6,7 @@ import * as ExpoDevice from "expo-device";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { YaverGlass } from "../../src/components/YaverGlass";
+import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { isBundleLoaderAvailable, loadApp } from "../../src/lib/bundleLoader";
@@ -83,6 +84,15 @@ export default function TabLayout() {
   const { isDark } = useTheme();
   const router = useRouter();
   const layout = useResponsiveLayout();
+  // Auth invariant: the tab shell must NEVER stay mounted without a valid
+  // token. `app/index.tsx` only gates on mount, so when a token is later
+  // revoked/rotated/dropped (e.g. a 401 on /auth/refresh during app-resume
+  // flips isAuthenticated=false while the user is already inside the tabs),
+  // nothing re-routed them — they were stranded on a signed-in-looking shell
+  // where every /devices/list poll hit `no token, skipping` and spun
+  // "Reconnecting…" forever. Re-gating here sends any auth loss straight
+  // back to sign-in so the session self-heals instead of dead-ending.
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const { connectionStatus, activeDevice, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
   const [devServerRunning, setDevServerRunning] = useState(false);
@@ -248,6 +258,14 @@ export default function TabLayout() {
     return unsubscribe;
   }, [isConnected, devices]);
 
+  // Re-gate after every hook has run (keeps hook order stable). Any auth
+  // loss while inside the tabs routes back to sign-in instead of stranding
+  // the user on a tokenless shell. `authLoading` guards the boot window so
+  // a slow token-restore doesn't flash the login screen.
+  if (!authLoading && !isAuthenticated) {
+    return <Redirect href="/login" />;
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -340,15 +358,9 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="shortcuts"
-        options={{
-          title: "Shortcuts",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon label="Shortcuts" focused={focused} rail={useLeftRail} />
-          ),
-        }}
-      />
+      {/* Shortcuts removed from the tab bar (kept as a hidden route so any
+          existing deep links / navigation don't 404). */}
+      <Tabs.Screen name="shortcuts" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="builds" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="publish" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="shots" options={{ href: null, headerShown: false }} />

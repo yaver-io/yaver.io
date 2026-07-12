@@ -15,6 +15,7 @@ import { isDeviceAsleep, useMachineLifecycle } from "../src/lib/wakeMachine";
 import WakeProgress from "../src/components/WakeProgress";
 import { quicClient } from "../src/lib/quic";
 import { callMcpDirect } from "../src/lib/yaverMcpDirect";
+import { getConvexSiteUrl } from "../src/lib/auth";
 import {
   getDeviceNetwork,
   netInfoAvailable,
@@ -52,6 +53,125 @@ function toText(r: { ok: boolean; result?: unknown; error?: string }): string {
   return String(v);
 }
 
+// ---- Yaver Connectivity (Doctor) ----------------------------------------
+// Phone-DIRECT probes that work even when no device is connected (the exact
+// broken state where the MCP-based runner diagnostics above are useless).
+// Answers: is the backend reachable? is my token valid? can I reach the
+// relay? how many of my devices are online? — the four things that would
+// have made the "signed-in but zero devices" bug obvious at a glance.
+type ProbeResult = { label: string; ok: boolean; detail: string; ms?: number };
+type YaverDoctorReport = {
+  backend: ProbeResult;
+  auth: ProbeResult;
+  relay: ProbeResult[];
+  devices: { total: number; online: number; offline: number };
+  tailscaleHint: string;
+};
+
+async function timedFetch(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = 8000,
+): Promise<{ status: number; ms: number; body?: any; error?: string }> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  const start = Date.now();
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    const ms = Date.now() - start;
+    let body: any;
+    try {
+      body = await res.json();
+    } catch {
+      /* non-JSON body is fine — we only need the status */
+    }
+    return { status: res.status, ms, body };
+  } catch (e: any) {
+    return {
+      status: 0,
+      ms: Date.now() - start,
+      error: e?.name === "AbortError" ? `timeout after ${timeoutMs}ms` : String(e?.message || e),
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function runYaverDoctor(
+  token: string | null,
+  devices: any[],
+  relays: { httpUrl?: string }[],
+): Promise<YaverDoctorReport> {
+  const site = getConvexSiteUrl();
+  let backend: ProbeResult;
+  let auth: ProbeResult;
+  if (!token) {
+    backend = { label: "Backend", ok: false, detail: "Can't verify — no auth token on this device." };
+    auth = { label: "Auth token", ok: false, detail: "Missing — app is signed in without a bearer. Sign out and back in." };
+  } else {
+    // /devices/list is the exact call the app depends on — probing it tests
+    // backend reachability AND token validity in one round-trip.
+    const r = await timedFetch(`${site}/devices/list?_=${Date.now()}`, {
+      headers: { Authorization: `Bearer ${token}`, "Cache-Control": "no-cache, no-store", Connection: "close" },
+    });
+    if (r.status === 200) {
+      const arr = Array.isArray(r.body?.devices) ? r.body.devices : Array.isArray(r.body) ? r.body : [];
+      backend = { label: "Backend", ok: true, detail: `Reachable — returned ${arr.length} device(s)`, ms: r.ms };
+      auth = { label: "Auth token", ok: true, detail: "Valid — backend accepted the bearer.", ms: r.ms };
+    } else if (r.status === 401 || r.status === 403) {
+      backend = { label: "Backend", ok: true, detail: `Reachable (HTTP ${r.status})`, ms: r.ms };
+      auth = { label: "Auth token", ok: false, detail: `Rejected (HTTP ${r.status}) — expired/revoked. Sign out and back in.`, ms: r.ms };
+    } else if (r.status === 0) {
+      backend = { label: "Backend", ok: false, detail: `Unreachable — ${r.error}`, ms: r.ms };
+      auth = { label: "Auth token", ok: false, detail: "Could not verify (backend unreachable)." };
+    } else {
+      backend = { label: "Backend", ok: false, detail: `Unexpected HTTP ${r.status}`, ms: r.ms };
+      auth = { label: "Auth token", ok: false, detail: `Backend returned ${r.status}.` };
+    }
+  }
+  // Relay reachability — fall back to the public relay when the account has
+  // none configured (so the row is never empty).
+  const relayUrls = relays.map((r) => r.httpUrl).filter(Boolean) as string[];
+  if (relayUrls.length === 0) relayUrls.push("https://public.yaver.io");
+  const relay: ProbeResult[] = await Promise.all(
+    relayUrls.map(async (u) => {
+      const host = u.replace(/^https?:\/\//, "");
+      const r = await timedFetch(u, { method: "GET" }, 6000);
+      if (r.status > 0) return { label: host, ok: r.status < 500, detail: `HTTP ${r.status}`, ms: r.ms };
+      return { label: host, ok: false, detail: r.error || "unreachable", ms: r.ms };
+    }),
+  );
+  const online = devices.filter((d) => d?.online).length;
+  const tsDevices = devices.filter(
+    (d) => Array.isArray(d?.lanIps) && d.lanIps.some((ip: string) => typeof ip === "string" && ip.startsWith("100.")),
+  ).length;
+  return {
+    backend,
+    auth,
+    relay,
+    devices: { total: devices.length, online, offline: devices.length - online },
+    tailscaleHint:
+      tsDevices > 0
+        ? `${tsDevices} device(s) advertise a Tailscale (100.x) address — reachable only while this phone's Tailscale is connected. On cellular without Tailscale, connect over the relay instead.`
+        : "No Tailscale-addressed devices detected. On cellular without Tailscale, devices connect over the relay.",
+  };
+}
+
+function DoctorRow({ c, s, p }: { c: ThemeColors; s: any; p: ProbeResult }) {
+  const color = p.ok ? c.success : c.error;
+  return (
+    <View style={s.row}>
+      <Text style={[s.rowLabel, { color: c.textSecondary }]}>{p.label}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, justifyContent: "flex-end" }}>
+        <View style={[s.dot, { backgroundColor: color }]} />
+        <Text style={{ fontSize: 12.5, fontWeight: "600", color, flexShrink: 1, textAlign: "right" }}>
+          {p.detail}{p.ms != null ? ` · ${p.ms}ms` : ""}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function ConnectionScreen() {
   const c = useColors();
   const s = makeStyles(c);
@@ -69,6 +189,10 @@ export default function ConnectionScreen() {
   // explain "asleep, not broken" and offer a one-tap Wake instead of a
   // bare error + `http://null:null`.
   const devicesPool: any[] = dev?.devices ?? [];
+  // Keep a live ref so the doctor probe reads the freshest device list
+  // without forcing loadAll to re-create on every render.
+  const devicesRef = React.useRef(devicesPool);
+  devicesRef.current = devicesPool;
   const primaryDeviceId: string | null = dev?.primaryDeviceId ?? null;
   const sleepingDevice = React.useMemo(() => {
     if (activeDevice && isDeviceAsleep(activeDevice)) return activeDevice;
@@ -94,6 +218,7 @@ export default function ConnectionScreen() {
   const [doctor, setDoctor] = useState<NetDoctorReport | null>(null);
   const [runnerDoctor, setRunnerDoctor] = useState<any | null>(null);
   const [runner, setRunner] = useState<RunnerNet | null>(null);
+  const [yaverDoc, setYaverDoc] = useState<YaverDoctorReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
 
@@ -107,6 +232,13 @@ export default function ConnectionScreen() {
     setDevice(d);
     setInternet(net);
     setDoctor(doc);
+
+    // Yaver connectivity doctor — phone-direct, works with no device connected.
+    // Read devices from a ref so this callback stays stable (devicesPool is a
+    // fresh array each render; depending on it would re-run the effect forever).
+    runYaverDoctor(token, devicesRef.current, quicClient.relayServersSnapshot ?? [])
+      .then(setYaverDoc)
+      .catch(() => setYaverDoc(null));
 
     // Runner-side network — only if a runner is actually connected.
     if (connected && quicClient.baseUrl) {
@@ -142,7 +274,7 @@ export default function ConnectionScreen() {
     }
     setProbing(false);
     setLoading(false);
-  }, [connected]);
+  }, [connected, token]);
 
   useEffect(() => {
     loadAll();
@@ -290,6 +422,31 @@ export default function ConnectionScreen() {
             <Text style={{ fontSize: 13, color: c.textMuted, paddingVertical: 8 }}>Running layered diagnosis…</Text>
           </View>
         )}
+
+        {/* Yaver connectivity doctor — phone-direct, works with no device connected */}
+        <Text style={[s.section, { color: c.textMuted }]}>YAVER CONNECTIVITY</Text>
+        <View style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+          {yaverDoc ? (
+            <>
+              <DoctorRow c={c} s={s} p={yaverDoc.backend} />
+              <DoctorRow c={c} s={s} p={yaverDoc.auth} />
+              <View style={s.row}>
+                <Text style={[s.rowLabel, { color: c.textSecondary }]}>Devices</Text>
+                <Text style={[s.rowValue, { color: c.textPrimary }]}>
+                  {yaverDoc.devices.online}/{yaverDoc.devices.total} online
+                </Text>
+              </View>
+              {yaverDoc.relay.map((r, i) => (
+                <DoctorRow key={i} c={c} s={s} p={{ ...r, label: `Relay · ${r.label}` }} />
+              ))}
+              <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 8, lineHeight: 17 }}>
+                {yaverDoc.tailscaleHint}
+              </Text>
+            </>
+          ) : (
+            <Text style={{ fontSize: 13, color: c.textMuted, paddingVertical: 8 }}>Probing backend, auth & relay…</Text>
+          )}
+        </View>
 
         {/* This phone */}
         <Text style={[s.section, { color: c.textMuted }]}>THIS PHONE / LOCAL NETWORK</Text>
