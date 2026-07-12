@@ -499,6 +499,10 @@ type LifecycleResult = {
   status?: string;
   dryRun?: boolean;
   reason?: string;
+  /** True when the failure is transient (e.g. the provider is still finalizing
+   *  the snapshot) and the wake will retry itself — the caller should show
+   *  "waking, hang on" rather than a fatal error. */
+  retryable?: boolean;
   snapshotId?: string;
   serverId?: string;
   ip?: string;
@@ -570,6 +574,23 @@ async function hetznerSnapshot(token: string, serverId: string, desc: string): P
   const j = (await r.json()) as { image?: { id?: number } };
   if (!j.image?.id) throw new Error("snapshot returned no image id");
   return String(j.image.id);
+}
+/**
+ * Status of a snapshot image: "creating" | "available" | "unavailable".
+ *
+ * create_image hands back an image id as soon as Hetzner ACCEPTS the action —
+ * the image is still being written to storage. Deleting the source server at
+ * that point can abort the image and leave the box UNRECOVERABLE (this is how
+ * snapshot 407385579 was lost). So the park path must never delete a server
+ * until its snapshot reports `available`.
+ */
+async function hetznerImageStatus(token: string, imageId: string): Promise<string> {
+  const r = await fetch(`${HETZNER_API}/images/${imageId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`image status HTTP ${r.status}`);
+  const j = (await r.json()) as { image?: { status?: string } };
+  return String(j.image?.status ?? "unknown");
 }
 async function hetznerDelete(token: string, serverId: string): Promise<void> {
   const r = await fetch(`${HETZNER_API}/servers/${serverId}`, {
@@ -771,24 +792,16 @@ export const pauseMachine = internalAction({
     await ctx.runMutation(internal.cloudMachines.setStatus, {
       machineId, status: "stopping", lastSnapshotId: snapId,
     });
-    // Snapshot captured — now the (fast) server delete. "powering-down"
-    // drives the second half of the park ladder.
+    // Snapshot ACCEPTED — but Hetzner is still writing the image. Deleting the
+    // server now can abort it and lose the box for good. Hand off to
+    // finalizePause, which deletes ONLY once the image reports `available`.
     await ctx.runMutation(internal.cloudMachines.setPhase, {
       machineId, phase: "powering-down", progress: 78,
     });
-    try {
-      await hetznerDelete(token!, machine.hetznerServerId);
-    } catch (e) {
-      await ctx.runMutation(internal.cloudMachines.setStatus, {
-        machineId, status: "error", lastSnapshotId: snapId,
-        errorMessage: `Snapshot ok (image ${snapId}) but delete failed: ${e instanceof Error ? e.message : String(e)} — box may still bill. Retry pause.`,
-      });
-      return { ok: false, reason: "delete failed (snapshot safe)", snapshotId: snapId };
-    }
-    await ctx.runMutation(internal.cloudMachines.setStatus, {
-      machineId, status: "paused", lastSnapshotId: snapId,
+    await ctx.scheduler.runAfter(15_000, internal.cloudLifecycle.finalizePause, {
+      machineId, snapshotId: snapId, attempt: 1,
     });
-    return { ok: true, status: "paused", snapshotId: snapId, dryRun: false };
+    return { ok: true, status: "stopping", snapshotId: snapId, dryRun: false };
   },
 });
 
@@ -880,6 +893,94 @@ export const idleSweepCron = internalAction({
 // RESUME = prepaid-floor gate → recreate the Hetzner server from the
 // pause snapshot → persist new id/ip → status "active". HCLOUD_TOKEN
 // absent ⇒ dry-run state transition.
+/**
+ * finalizePause — the SAFE half of scale-to-zero.
+ *
+ * pauseMachine only *starts* the snapshot. This action polls the image until
+ * Hetzner reports it `available`, and only THEN deletes the server. Invariants:
+ *   • never delete a server whose snapshot is still being written (that is how
+ *     a box gets lost forever),
+ *   • if the image ends up `unavailable` (creation failed), do NOT delete —
+ *     leave the box running with its data intact and surface an error,
+ *   • the box keeps billing while we wait (a few minutes of cents) — losing the
+ *     machine is far more expensive than that, so safety wins.
+ */
+export const finalizePause = internalAction({
+  args: {
+    machineId: v.id("cloudMachines"),
+    snapshotId: v.string(),
+    attempt: v.number(),
+  },
+  handler: async (ctx, { machineId, snapshotId, attempt }): Promise<LifecycleResult> => {
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    if (!machine) return { ok: false, reason: "machine not found" };
+    if (!machine.hetznerServerId) {
+      // Already deleted — just settle the row.
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId, status: "paused", lastSnapshotId: snapshotId,
+      });
+      return { ok: true, status: "paused", snapshotId };
+    }
+    const token = process.env.HCLOUD_TOKEN;
+    if (!token) return { ok: false, reason: "HCLOUD_TOKEN unset" };
+
+    let status: string;
+    try {
+      status = await hetznerImageStatus(token, snapshotId);
+    } catch (e) {
+      // Transient API blip — retry rather than risk anything.
+      if (attempt < 60) {
+        await ctx.scheduler.runAfter(15_000, internal.cloudLifecycle.finalizePause, {
+          machineId, snapshotId, attempt: attempt + 1,
+        });
+      }
+      return { ok: false, reason: `image status check failed: ${e instanceof Error ? e.message : String(e)}`, retryable: true };
+    }
+
+    if (status === "creating") {
+      // Still being written — wait. ~15 min budget (60 × 15s).
+      if (attempt < 60) {
+        await ctx.scheduler.runAfter(15_000, internal.cloudLifecycle.finalizePause, {
+          machineId, snapshotId, attempt: attempt + 1,
+        });
+        return { ok: false, reason: "snapshot still finalizing", retryable: true };
+      }
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId, status: "error", lastSnapshotId: snapshotId,
+        errorMessage: `Snapshot ${snapshotId} never finalized — server NOT deleted (data safe). Retry pause.`,
+      });
+      return { ok: false, reason: "snapshot did not finalize — not deleted (data safe)" };
+    }
+
+    if (status !== "available") {
+      // Creation failed. NEVER delete — the box is the only copy of the data.
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId, status: "error", lastSnapshotId: snapshotId,
+        errorMessage: `Snapshot ${snapshotId} is ${status} — server NOT deleted (data safe). Retry pause.`,
+      });
+      return { ok: false, reason: `snapshot ${status} — not deleted (data safe)` };
+    }
+
+    // Image is durable. Now it is safe to stop the meter.
+    try {
+      await hetznerDelete(token, machine.hetznerServerId);
+    } catch (e) {
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId, status: "error", lastSnapshotId: snapshotId,
+        errorMessage: `Snapshot ${snapshotId} available but delete failed: ${e instanceof Error ? e.message : String(e)} — box may still bill. Retry pause.`,
+      });
+      return { ok: false, reason: "delete failed (snapshot safe)", snapshotId };
+    }
+    await ctx.runMutation(internal.cloudMachines.setStatus, {
+      machineId, status: "paused", lastSnapshotId: snapshotId,
+    });
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId, phase: "parked", progress: 100,
+    });
+    return { ok: true, status: "paused", snapshotId };
+  },
+});
+
 export const resumeMachine = internalAction({
   args: {
     machineId: v.id("cloudMachines"),
