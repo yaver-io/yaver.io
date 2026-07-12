@@ -44,6 +44,8 @@ struct SessionView: View {
     @State private var sent = false
     @State private var loading = false
     @State private var error: String?
+    @State private var boxUnreachable = false
+    @StateObject private var lifecycle = BoxLifecycle()
 
     private var client: SessionClient? {
         guard let box = store.selectedBox else { return nil }
@@ -61,7 +63,9 @@ struct SessionView: View {
             } else {
                 promptBar
             }
-            if let error {
+            if boxUnreachable {
+                wakeBar
+            } else if let error {
                 Text(error)
                     .font(.system(size: 16, design: .monospaced))
                     .foregroundStyle(.red)
@@ -70,6 +74,47 @@ struct SessionView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
+        .onChange(of: lifecycle.phase) { _, phase in
+            // Box came back — clear the asleep state so the prompt bar returns.
+            if phase == .ready { boxUnreachable = false }
+        }
+    }
+
+    // MARK: - Wake bar (box asleep)
+
+    @ViewBuilder private var wakeBar: some View {
+        if lifecycle.isRunning {
+            WakeProgressView(lifecycle: lifecycle, boxName: store.selectedBox?.name)
+                .padding(.horizontal, 48).padding(.bottom, 20)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 20) {
+                    Label("Box asleep", systemImage: "moon.zzz.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    if let box = store.selectedBox, box.wakeable {
+                        Button {
+                            lifecycle.wake(box, token: store.token)
+                        } label: {
+                            Label(lifecycle.error == nil ? "Wake" : "Try again", systemImage: "power")
+                                .font(.system(size: 20, weight: .semibold))
+                                .padding(.horizontal, 26).padding(.vertical, 12)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Text("Start it from your computer or phone.")
+                            .font(.system(size: 18)).foregroundStyle(.secondary)
+                    }
+                }
+                if let err = lifecycle.error {
+                    Text(err)
+                        .font(.system(size: 16, design: .monospaced))
+                        .foregroundStyle(.red)
+                }
+            }
+            .padding(.horizontal, 48).padding(.vertical, 18)
+        }
     }
 
     // MARK: - Header
@@ -107,7 +152,6 @@ struct SessionView: View {
             Text(pane.isEmpty ? "Send a prompt to start the session." : pane)
                 .font(.system(size: 20, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
                 .padding(24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -175,8 +219,7 @@ struct SessionView: View {
             let result = try await client.sendText(text)
             applyResult(result)
         } catch {
-            self.error = error.localizedDescription
-            Speech.speak("Something went wrong.")
+            handleTurnError(error)
         }
         loading = false
     }
@@ -189,10 +232,22 @@ struct SessionView: View {
             let result = try await client.sendChoice(choice)
             applyResult(result)
         } catch {
+            handleTurnError(error)
+        }
+        loading = false
+    }
+
+    /// A connection-level failure (box down / parked) surfaces the Wake
+    /// affordance instead of a bare error; anything else stays a plain error.
+    private func handleTurnError(_ error: Error) {
+        if error is URLError, let box = store.selectedBox {
+            boxUnreachable = true
+            lifecycle.markUnreachable(box)
+            Speech.speak("Your box is asleep.")
+        } else {
             self.error = error.localizedDescription
             Speech.speak("Something went wrong.")
         }
-        loading = false
     }
 
     private func applyResult(_ result: SessionTurnResult) {

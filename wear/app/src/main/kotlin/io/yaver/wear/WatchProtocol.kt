@@ -46,6 +46,7 @@ object WatchProtocol {
     private const val K_TASK_ID = "taskId"
     private const val K_STATUS = "status"
     private const val K_TARGET = "target"
+    private const val K_MACHINE_ID = "machineId"
 
     // ========================================================================
     //  Watch → Phone  (outbound turns)
@@ -74,6 +75,16 @@ object WatchProtocol {
             .put(K_V, PROTOCOL_VERSION)
             .put(K_KIND, "intent")
             .put(K_INTENT, intent.wire)
+            .toString()
+
+    /** {"v":1,"kind":"wake","machineId":"<id>"} — resume a parked managed box.
+     *  Rides PATH_TURN like every other request. machineId omitted when empty so
+     *  the phone resolves the current/primary managed box. */
+    fun wake(machineId: String): String =
+        JSONObject()
+            .put(K_V, PROTOCOL_VERSION)
+            .put(K_KIND, "wake")
+            .apply { if (machineId.isNotEmpty()) put(K_MACHINE_ID, machineId) }
             .toString()
 
     enum class ConfirmReply(val wire: String) {
@@ -110,8 +121,11 @@ object WatchProtocol {
         /** {"v":1,"kind":"summary","taskId":"...","status":"completed","spoken":"Done. Tests pass."} */
         data class Summary(val taskId: String, val status: String, val spoken: String) : Reply()
 
-        /** {"v":1,"kind":"error","spoken":"I couldn't reach your box."} */
-        data class Error(val spoken: String) : Reply()
+        /** {"v":1,"kind":"error","spoken":"I couldn't reach your box."}
+         *  `boxUnreachable` is set when the failure was a connectivity failure to
+         *  the box (connection refused / timeout) — i.e. a self-parked box — so
+         *  the wrist can offer "Wake" instead of a bare error line. */
+        data class Error(val spoken: String, val boxUnreachable: Boolean = false) : Reply()
 
         /** {"v":1,"kind":"handoff","target":"phone","spoken":"Sent it to your phone."} */
         data class Handoff(val target: String, val spoken: String) : Reply()

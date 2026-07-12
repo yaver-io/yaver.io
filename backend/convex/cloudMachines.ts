@@ -50,7 +50,8 @@ type ManagedCloudBootstrapSpec = {
   convexSite: string;
   machineId: string;
   machineToken: string;
-  userSessionToken: string;
+  bootstrapDeviceCode: string;
+  bootstrapExpiresAt: number;
   deviceId: string;
   hostname: string;
   yaverArch: "amd64" | "arm64";
@@ -261,7 +262,6 @@ ${optionalRepoClone}    SCRIPT
   // agent auto-discovers relay servers from /config, but the browser
   // dashboard path is relay-only and the relay is password-gated.
   const configFields = [
-    `      "auth_token": ${jsonString(spec.userSessionToken)}`,
     `      "convex_site_url": ${jsonString(spec.convexSite)}`,
     `      "device_id": ${jsonString(spec.deviceId)}`,
     // Advertise the box's HTTPS endpoint so the browser dashboard
@@ -282,6 +282,14 @@ ${optionalRepoClone}    SCRIPT
     configFields.push(`      "relay_password": ${jsonString(spec.relayPassword)}`);
   }
   const configBody = `    {\n${configFields.join(",\n")}\n    }`;
+  const pendingAuthBody = `    {
+      "deviceCode": ${jsonString(spec.bootstrapDeviceCode)},
+      "userCode": "BROKERED",
+      "url": "",
+      "convexUrl": ${jsonString(spec.convexSite)},
+      "expiresAt": ${spec.bootstrapExpiresAt},
+      "createdAt": ${Date.now()}
+    }`;
 
   // Phase 2 — yaver-relay BUNDLED into the same yaver-cloud container
   // (not a sidecar). The image's entrypoint wrapper backgrounds
@@ -374,6 +382,11 @@ ${relayUfwRules}  - ufw --force enable || true
 ${configBody}
     EOF
   - chmod 0600 /srv/yaver/state/.yaver/config.json
+  - |
+    cat > /srv/yaver/state/.yaver/pending-auth.json <<'EOF'
+${pendingAuthBody}
+    EOF
+  - chmod 0600 /srv/yaver/state/.yaver/pending-auth.json
   - mkdir -p /srv/yaver/state/.config/opencode
   - |
     cat > /srv/yaver/state/.config/opencode/opencode.json <<'EOF'
@@ -385,6 +398,7 @@ ${managedOpenCodeConfigBody("/usr/local/bin/yaver")
   - chmod 0600 /srv/yaver/state/.config/opencode/opencode.json
 ${workspaceBootstrap}  # ── run the yaver image (the box IS this container) ────────────────
 ${phasePost("pulling-image")}  - docker pull ${shellSingleQuote(image)}
+  - docker run --rm -v /srv/yaver/state:/root ${shellSingleQuote(image)} auth --headless --background-wait --convex-url ${shellSingleQuote(spec.convexSite)} || echo "[cloud-init] brokered yaver auth skipped"
 ${phasePost("starting-agent")}  - |
 ${yaverDockerRun}
   - mkdir -p /etc/nginx/snippets
@@ -635,13 +649,25 @@ runcmd:
   - |
     cat > /home/yaver/.yaver/config.json <<'EOF'
     {
-      "auth_token": ${jsonString(spec.userSessionToken)},
       "convex_site_url": ${jsonString(spec.convexSite)},
       "device_id": ${jsonString(spec.deviceId)},
       "public_endpoints": [${jsonString("https://" + spec.hostname)}]
     }
     EOF
   - chown yaver:yaver /home/yaver/.yaver/config.json && chmod 0600 /home/yaver/.yaver/config.json
+  - |
+    cat > /home/yaver/.yaver/pending-auth.json <<'EOF'
+    {
+      "deviceCode": ${jsonString(spec.bootstrapDeviceCode)},
+      "userCode": "BROKERED",
+      "url": "",
+      "convexUrl": ${jsonString(spec.convexSite)},
+      "expiresAt": ${spec.bootstrapExpiresAt},
+      "createdAt": ${Date.now()}
+    }
+    EOF
+  - chown yaver:yaver /home/yaver/.yaver/pending-auth.json && chmod 0600 /home/yaver/.yaver/pending-auth.json
+  - sudo -u yaver -H /usr/local/bin/yaver auth --headless --background-wait --convex-url ${shellSingleQuote(spec.convexSite)} || echo "[cloud-init] brokered yaver auth skipped"
   - |
     cat > /home/yaver/.config/opencode/opencode.json <<'EOF'
 ${managedOpenCodeConfigBody("/usr/local/bin/yaver")
@@ -1087,7 +1113,7 @@ export const setProvisioned = internalMutation({
 // cloud-init (reusing buildManagedCloudInit), but DOES NOT call Hetzner.
 // The phone creates the server itself with the user's OWN Hetzner token
 // (which never touches Convex). The box self-installs yaver, auths as
-// the user via the baked userSessionToken, registers as a device, and
+// the user via the brokered one-time pending-auth handle, registers as a device, and
 // mirrors the runner — same vibe-ready bootstrap as a managed box, on
 // the user's own account.
 
@@ -1187,16 +1213,13 @@ export const mintByoBootstrap = internalAction({
 
     const machineToken = randomHex(24);
     const machineTokenHash = await sha256Hex(machineToken);
-    const userSessionToken = randomHex(32);
-    const userSessionTokenHash = await sha256Hex(userSessionToken);
     const convexSite = process.env.CONVEX_SITE_URL || "https://perceptive-minnow-557.eu-west-1.convex.site";
-
-    // Box auths as the user via this session; valid 1 year.
-    await ctx.runMutation(api.auth.createSession, {
-      tokenHash: userSessionTokenHash,
+    const brokeredAuth = await ctx.runMutation(internal.deviceCode.createAuthorizedDeviceCodeForUserInternal, {
       userId: args.userId,
+      machineName: serverName,
+      platform: "linux",
+      arch: specDef.arch,
       deviceId,
-      expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
     });
 
     await ctx.runMutation(internal.cloudMachines.setByoBootstrap, {
@@ -1211,7 +1234,8 @@ export const mintByoBootstrap = internalAction({
       convexSite,
       machineId: machineId.toString(),
       machineToken,
-      userSessionToken,
+      bootstrapDeviceCode: brokeredAuth.deviceCode,
+      bootstrapExpiresAt: brokeredAuth.expiresAt,
       deviceId,
       hostname: deviceId,
       yaverArch,
@@ -1524,10 +1548,14 @@ export const provision = internalAction({
     // so the explicit value still wins.
     const convexSite = process.env.CONVEX_SITE_URL || "https://perceptive-minnow-557.eu-west-1.convex.site";
     const machineIdStr = machine._id.toString();
-    const userSessionToken = randomHex(32);
-    const userSessionTokenHash = await sha256Hex(userSessionToken);
     const deviceId = `cloud-${shortId}`;
-    const sessionExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
+    const brokeredAuth = await ctx.runMutation(internal.deviceCode.createAuthorizedDeviceCodeForUserInternal, {
+      userId: machine.userId,
+      machineName: serverName,
+      platform: "linux",
+      arch: specDef.arch,
+      deviceId,
+    });
 
     // Operator-only injection points (same class as HCLOUD_TOKEN —
     // Convex env, never git). Both optional: unset ⇒ cloud-init is
@@ -1550,7 +1578,8 @@ export const provision = internalAction({
       convexSite,
       machineId: machineIdStr,
       machineToken,
-      userSessionToken,
+      bootstrapDeviceCode: brokeredAuth.deviceCode,
+      bootstrapExpiresAt: brokeredAuth.expiresAt,
       deviceId,
       hostname: autoDomain,
       yaverArch,
@@ -1633,13 +1662,6 @@ export const provision = internalAction({
       };
       const hetznerServerId = String(hetznerData.server.id);
       const serverIp = hetznerData.server.public_net.ipv4.ip;
-
-      await ctx.runMutation(api.auth.createSession, {
-        tokenHash: userSessionTokenHash,
-        userId: machine.userId,
-        deviceId,
-        expiresAt: sessionExpiresAt,
-      });
 
       // ── 2. Cloudflare DNS for the auto subdomain ───────────────
       const cfResp = await fetch(
@@ -1832,6 +1854,66 @@ export const healthCheck = internalAction({
       return;
     }
     await ctx.scheduler.runAfter(2 * 60 * 1000, internal.cloudMachines.healthCheck, {
+      machineId,
+      attempt: attempt + 1,
+    });
+  },
+});
+
+/** Wake-side health poll. A resumed box's server RECORD exists (status
+ *  "active") long before its OS boots and its agent re-registers. This
+ *  polls /health and only flips the phase to "ready" (or
+ *  "authorizing-runners" when runner OAuth is still pending) once the box
+ *  actually answers — so the wake progress never lies about reachability.
+ *  Self-limiting: gives up after ~10 attempts, leaving the phase at
+ *  "registering" (clients still derive readiness from device presence). */
+export const resumeHealthCheck = internalAction({
+  args: {
+    machineId: v.id("cloudMachines"),
+    attempt: v.number(),
+  },
+  handler: async (ctx, { machineId, attempt }) => {
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    // Only meaningful while a resumed box is still finishing. If it was
+    // re-paused, errored, or already reached "ready", stop.
+    if (!machine || machine.status !== "active") return;
+    if (machine.provisionPhase === "ready") return;
+    if (!machine.hostname) return;
+
+    let healthy = false;
+    for (const proto of ["https", "http"]) {
+      try {
+        const resp = await fetch(`${proto}://${machine.hostname}:18080/health`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (resp.ok) {
+          const data = (await resp.json()) as { ok?: boolean };
+          if (data.ok) {
+            healthy = true;
+            break;
+          }
+        }
+      } catch {
+        /* try next protocol / retry */
+      }
+    }
+
+    if (healthy) {
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: machine.runnersAuthorized === false ? "authorizing-runners" : "ready",
+        progress: machine.runnersAuthorized === false ? 90 : 100,
+      });
+      console.log(`[cloudMachines.resumeHealthCheck] ready: ${machine.hostname}`);
+      return;
+    }
+    if (attempt >= 10) {
+      // Give up quietly — the box may still be reachable P2P over the
+      // relay even if the hostname /health probe never succeeded.
+      console.log(`[cloudMachines.resumeHealthCheck] gave up after ${attempt}: ${machine.hostname}`);
+      return;
+    }
+    await ctx.scheduler.runAfter(15_000, internal.cloudMachines.resumeHealthCheck, {
       machineId,
       attempt: attempt + 1,
     });

@@ -87,4 +87,21 @@ class PhoneBridge(context: Context) {
     /** Watch → Phone: a fixed one-tap intent (run-tests / deploy / status). */
     suspend fun sendIntent(intent: WatchProtocol.FixedIntent) =
         send(WatchProtocol.intent(intent))
+
+    /**
+     * Watch → Phone: wake a self-parked managed box.
+     *
+     * Rides the SAME PATH_TURN channel as every other request (as a
+     * {"v":1,"kind":"wake",...} turn), so the phone's existing
+     * YaverWearListenerService → JS watchEntry → watchBridge `wake` handler →
+     * startManagedCloudMachine picks it up with no separate control path. The
+     * phone runs the real resume; the watch drives progress via [BoxLifecycle]
+     * + the box's /health. Throws [PhoneUnreachableException] if no phone node
+     * is reachable, so the caller can show "Open Yaver on your phone."
+     *
+     * @param machineId the managed machine id, or "" to let the phone resolve
+     *   the user's current/primary managed box.
+     */
+    suspend fun sendWakeBox(machineId: String) =
+        send(WatchProtocol.wake(machineId))
 }

@@ -5195,13 +5195,11 @@ http.route({
     const r = await ctx.runAction(internal.cloudLifecycle.resumeMachine, {
       machineId: machineId as any,
     });
-    if (r.ok) {
-      await ctx.runMutation(internal.cloudMachines.setPhase, {
-        machineId: machineId as any,
-        phase: machine.runnersAuthorized === false ? "authorizing-runners" : "ready",
-        progress: machine.runnersAuthorized === false ? 90 : 100,
-      });
-    }
+    // NOTE: resumeMachine owns the wake phase ladder now (booting →
+    // registering, then resumeHealthCheck → ready once /health answers).
+    // We deliberately do NOT pin phase="ready" here — doing so used to
+    // paint 100% the instant the server record was created, long before
+    // the box was reachable.
     return jsonResponse(
       { machineId, balanceCents: gate.balanceCents, requiredCents: gate.requiredCents, ...r },
       r.ok ? 200 : 409,

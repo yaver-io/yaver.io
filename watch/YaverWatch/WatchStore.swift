@@ -7,6 +7,7 @@
 // confirm, a transport mode, and (only for standalone) a token + selected box.
 // No task list, no history, no code. The phone/runner is the brain-of-record.
 
+import Combine
 import Foundation
 import SwiftUI
 
@@ -41,6 +42,13 @@ final class WatchStore: ObservableObject {
 
     let phone = PhoneSession.shared
 
+    /// Box-wake lifecycle: models "the box we tried is asleep" and drives the
+    /// Asleep→…→Ready ladder when the user taps Wake. Its `objectWillChange` is
+    /// forwarded through this store (see init) so any view reading `store` also
+    /// re-renders on a phase change.
+    let lifecycle = BoxLifecycle()
+    private var cancellables = Set<AnyCancellable>()
+
     struct PendingConfirm: Equatable {
         let token: String
         let prompt: String
@@ -51,6 +59,11 @@ final class WatchStore: ObservableObject {
         if !storedBoxJSON.isEmpty {
             box = try? JSONDecoder().decode(BoxTarget.self, from: Data(storedBoxJSON.utf8))
         }
+        // Re-publish the lifecycle's changes as our own so RootView (which reads
+        // `store`) re-renders as the wake ladder advances.
+        lifecycle.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
         // Pick up phone→watch background pushes (task-completion wake) and fold
         // them into the same reduce path as a direct reply.
         // (RootView observes phone.lastPushedReply and calls absorb().)
@@ -150,8 +163,47 @@ final class WatchStore: ObservableObject {
             let reply = try await op(transport)
             reduce(reply)
         } catch {
+            // A managed box that self-parked answers a turn with connection-
+            // refused / timeout. Instead of a bare error, flip into the "asleep,
+            // offer Wake" state so the wrist can start it back up. We can only do
+            // this when we know which box to wake (standalone creds present).
+            if WatchStore.isUnreachable(error), let box {
+                lifecycle.markAsleep(box: box)
+                reduce(WatchReply(kind: .error, spoken: "Box asleep. Tap Wake to start it."))
+                return
+            }
             reduce(WatchReply(kind: .error, spoken: friendly(error)))
         }
+    }
+
+    /// Ask the phone to wake the box we last failed against, and drive the
+    /// Asleep→…→Ready ladder. The control-plane token lives on the phone, so the
+    /// request is routed via PhoneSession; `machineId` is nil here because the
+    /// phone resolves it from the box's deviceId.
+    func wakeBox() {
+        guard let box = lifecycle.box ?? box else { return }
+        lifecycle.wake(box: box, machineId: nil, using: phone)
+    }
+
+    /// Classify a transport error as "the box is unreachable" (parked / offline)
+    /// vs a genuine failure. Covers URLError's connection-shaped codes and the
+    /// AgentError strings SessionClient throws on a dead socket.
+    private static func isUnreachable(_ error: Error) -> Bool {
+        if let url = error as? URLError {
+            switch url.code {
+            case .cannotConnectToHost, .timedOut, .networkConnectionLost,
+                 .cannotFindHost, .notConnectedToInternet, .dnsLookupFailed:
+                return true
+            default:
+                return false
+            }
+        }
+        if let a = error as? AgentError {
+            let m = a.message.lowercased()
+            return m.contains("no response") || m.contains("timed out")
+                || m.contains("could not connect") || m.contains("connection refused")
+        }
+        return false
     }
 
     /// Phone-paired wins when reachable; otherwise standalone (session) if
@@ -182,6 +234,9 @@ final class WatchStore: ObservableObject {
     private func reduce(_ reply: WatchReply) {
         Haptics.forReply(reply)
         Speech.forReply(reply)
+        // Any non-error reply means the box answered — clear any stale asleep
+        // state so the record button comes back.
+        if reply.kind != .error { lifecycle.markReachable() }
         switch reply.kind {
         case .ack:
             lastLine = reply.spoken ?? "On it."

@@ -20,7 +20,16 @@ struct RootView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     resultLine
-                    recordButton
+                    // A parked box takes over the interaction area: show the wake
+                    // ladder while it's starting, or a "Box asleep — Wake" callout
+                    // if a turn just found it asleep. Otherwise, the record button.
+                    if store.lifecycle.isWaking {
+                        WakeProgressView(lifecycle: store.lifecycle)
+                    } else if store.lifecycle.needsWake {
+                        wakeCallout
+                    } else {
+                        recordButton
+                    }
                     catalogHint
                     transportHint
                 }
@@ -82,6 +91,37 @@ struct RootView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!store.canDispatch)
         }
+    }
+
+    // Shown when a turn found the box parked: a clear cue + a Wake button that
+    // routes the wake through the paired iPhone (which holds the control token).
+    private var wakeCallout: some View {
+        VStack(spacing: 8) {
+            Label("Box asleep", systemImage: "moon.zzz.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.orange)
+            Text("It parked itself to save cost.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button {
+                store.wakeBox()
+            } label: {
+                Label("Wake", systemImage: "sunrise.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            if let message = store.lifecycle.message {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 88)
     }
 
     private var transportHint: some View {

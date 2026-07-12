@@ -48,7 +48,9 @@ test("a safe transcript dispatches and streams ack then summary", async () => {
   );
   assert.equal(final.kind, "summary");
   assert.match(final.spoken!, /Done\./);
-  assert.match(dispatchedPrompt, /smartwatch/i);
+  assert.match(dispatchedPrompt, /Apple Watch \/ smartwatch voice command/i);
+  assert.match(dispatchedPrompt, /STT/i);
+  assert.match(dispatchedPrompt, /TTS/i);
   assert.match(dispatchedPrompt, /Watch transcript: add a test/i);
   const kinds = sent.map((r) => r.kind);
   assert.deepEqual(kinds[0], "ack");          // "On it" fires first
@@ -206,4 +208,46 @@ test("empty transcript is handled, not dispatched", async () => {
   );
   assert.equal(final.kind, "error");
   assert.equal(dispatched, false);
+});
+
+// ── wake: the wrist asks the phone to resume a parked box ─────────────
+
+test("a wake turn calls the injected wake fn and acks 'Waking'", async () => {
+  const { send, sent } = capture();
+  let askedFor: string | undefined = "unset";
+  const final = await handleWatchTurn(
+    { v: 1, kind: "wake", machineId: "m-123" } as WatchTurn,
+    deps(),
+    {},
+    send,
+    undefined,
+    async (machineId) => { askedFor = machineId; return { ok: true }; },
+  );
+  assert.equal(askedFor, "m-123");
+  assert.equal(final.kind, "working");
+  assert.equal(final.status, "waking");
+  assert.ok(final.spoken && /waking/i.test(final.spoken));
+  assert.ok(sent.some((r) => r.kind === "working"));
+});
+
+test("a wake turn with no wake fn tells the user to use the phone", async () => {
+  const final = await handleWatchTurn(
+    { v: 1, kind: "wake" } as WatchTurn,
+    deps(),
+  );
+  assert.equal(final.kind, "error");
+  assert.ok(final.spoken && /phone/i.test(final.spoken));
+});
+
+test("a failed wake surfaces the reason, not a crash", async () => {
+  const final = await handleWatchTurn(
+    { v: 1, kind: "wake", machineId: "m-9" } as WatchTurn,
+    deps(),
+    {},
+    () => {},
+    undefined,
+    async () => ({ ok: false, error: "insufficient balance" }),
+  );
+  assert.equal(final.kind, "error");
+  assert.ok(final.spoken && /insufficient balance/i.test(final.spoken));
 });

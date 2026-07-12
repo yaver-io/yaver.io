@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import android.content.Intent
 import androidx.lifecycle.lifecycleScope
+import io.yaver.wear.BoxLifecycle
 import io.yaver.wear.Dictation
 import io.yaver.wear.Haptics
 import io.yaver.wear.PhoneBridge
@@ -42,6 +43,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var dictationLauncher: ActivityResultLauncher<Intent>
     private var sessionClient: SessionClient? = null
 
+    /** The last transcript we tried to send — re-sent once a wake completes so
+     *  the user doesn't have to speak it again after the box comes back. */
+    private var pendingTranscript: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -76,6 +81,8 @@ class MainActivity : ComponentActivity() {
                 onConfirm = { token -> onConfirm(token, WatchProtocol.ConfirmReply.CONFIRM) },
                 onCancel = { token -> onConfirm(token, WatchProtocol.ConfirmReply.CANCEL) },
                 onIntent = { intent -> onIntent(intent) },
+                onWake = { onWake() },
+                onDismissWake = { BoxLifecycle.reset() },
             )
         }
 
@@ -116,10 +123,10 @@ class MainActivity : ComponentActivity() {
                     } else {
                         // Drive the live session directly. The reply is
                         // synchronous (the endpoint waits + reads the pane),
-                        // so we apply it right here.
+                        // so we apply it right here. If the box is unreachable
+                        // (self-parked), this surfaces "Box asleep — Wake".
                         val reply = client.sendText(transcript)
-                        WatchState.applyReply(reply)
-                        Haptics(applicationContext).fire(WatchState.hapticFor(reply))
+                        applyStandaloneReply(reply, retryTranscript = transcript)
                     }
                 }
             } catch (_: PhoneBridge.PhoneUnreachableException) {
@@ -151,8 +158,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         // Session choice: confirm → "1", cancel → "2".
                         val r = client.sendConfirm(reply)
-                        WatchState.applyReply(r)
-                        Haptics(applicationContext).fire(WatchState.hapticFor(r))
+                        applyStandaloneReply(r, retryTranscript = null)
                     }
                 }
             } catch (_: Throwable) {
@@ -181,8 +187,7 @@ class MainActivity : ComponentActivity() {
                         // Expand the intent to a transcript and send as a session prompt.
                         val text = intentToTranscript(intent)
                         val r = client.sendText(text)
-                        WatchState.applyReply(r)
-                        Haptics(applicationContext).fire(WatchState.hapticFor(r))
+                        applyStandaloneReply(r, retryTranscript = text)
                     }
                 }
             } catch (_: Throwable) {
@@ -204,8 +209,67 @@ class MainActivity : ComponentActivity() {
         } else {
             lifecycleScope.launch {
                 val r = client.sendText(transcript)
-                WatchState.applyReply(r)
-                Haptics(applicationContext).fire(WatchState.hapticFor(r))
+                applyStandaloneReply(r, retryTranscript = transcript)
+            }
+        }
+    }
+
+    /**
+     * Apply a standalone (box) reply. If the box was unreachable — a self-parked
+     * managed box — don't show a bare error: surface "Box asleep — Wake" and
+     * remember the transcript so we can re-send it once the box comes back.
+     */
+    private fun applyStandaloneReply(reply: WatchProtocol.Reply, retryTranscript: String?) {
+        if (reply is WatchProtocol.Reply.Error && reply.boxUnreachable) {
+            pendingTranscript = retryTranscript
+            WatchState.setPhase(WatchState.Phase.Idle)
+            BoxLifecycle.markAsleep()
+            haptics.failure()
+            return
+        }
+        WatchState.applyReply(reply)
+        Haptics(applicationContext).fire(WatchState.hapticFor(reply))
+    }
+
+    /**
+     * Wake a self-parked box. The watch can't reach the control plane, so it
+     * routes the intent to the paired phone (a wake turn on Data Layer PATH_TURN); the phone
+     * runs the real resume. We then drive the wrist progress ladder by polling
+     * the box's /health (see [BoxLifecycle]). If no phone is reachable, tell the
+     * user to open Yaver on their phone.
+     */
+    private fun onWake() {
+        haptics.click()
+        lifecycleScope.launch {
+            try {
+                if (!phoneBridge.isPhoneReachable()) {
+                    BoxLifecycle.markPhoneNeeded()
+                    haptics.failure()
+                    return@launch
+                }
+                phoneBridge.sendWakeBox(StandaloneStore.machineId(applicationContext))
+                // Drive the ladder. Use the standalone box URL for the /health
+                // confirmation when we have one (null in pure phone-paired mode).
+                val boxUrl = StandaloneStore.boxUrl(this@MainActivity).takeIf { it.isNotEmpty() }
+                BoxLifecycle.startWake(
+                    scope = lifecycleScope,
+                    boxBaseUrl = boxUrl,
+                    onReady = {
+                        haptics.success()
+                        // Re-send the command the box missed while it was asleep.
+                        pendingTranscript?.let { t ->
+                            pendingTranscript = null
+                            onTranscript(t)
+                        }
+                    },
+                    onTimeout = { haptics.failure() },
+                )
+            } catch (_: PhoneBridge.PhoneUnreachableException) {
+                BoxLifecycle.markPhoneNeeded()
+                haptics.failure()
+            } catch (_: Throwable) {
+                BoxLifecycle.markAsleep()
+                haptics.failure()
             }
         }
     }

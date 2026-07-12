@@ -20,6 +20,7 @@ import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import io.yaver.wear.BoxLifecycle
 import io.yaver.wear.WatchProtocol
 import io.yaver.wear.WatchState
 
@@ -40,10 +41,13 @@ fun WearApp(
     onConfirm: (token: String) -> Unit,
     onCancel: (token: String) -> Unit,
     onIntent: (WatchProtocol.FixedIntent) -> Unit,
+    onWake: () -> Unit,
+    onDismissWake: () -> Unit,
 ) {
     val line by WatchState.line.collectAsState()
     val phase by WatchState.phase.collectAsState()
     val phoneReachable by WatchState.phoneReachable.collectAsState()
+    val wakeStatus by BoxLifecycle.status.collectAsState()
 
     MaterialTheme {
         Box(
@@ -52,13 +56,24 @@ fun WearApp(
                 .padding(8.dp),
             contentAlignment = Alignment.Center,
         ) {
-            when (val p = phase) {
-                is WatchState.Phase.Confirm ->
+            when {
+                // Box wake/park takes over the whole face while it's relevant —
+                // an asleep box, an in-flight wake, or "open your phone".
+                wakeStatus !is BoxLifecycle.WakeStatus.None ->
+                    WakeProgress(
+                        status = wakeStatus,
+                        onWake = onWake,
+                        onDismiss = onDismissWake,
+                    )
+
+                phase is WatchState.Phase.Confirm -> {
+                    val p = phase as WatchState.Phase.Confirm
                     ConfirmScreen(
                         prompt = p.prompt,
                         onConfirm = { onConfirm(p.token) },
                         onCancel = { onCancel(p.token) },
                     )
+                }
 
                 else -> MainScreen(
                     line = line,

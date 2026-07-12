@@ -673,6 +673,14 @@ export const pauseMachine = internalAction({
       return { ok: true, status: "paused", dryRun: true,
         reason: token ? undefined : "HCLOUD_TOKEN unset — fail-closed dry-run (no real spend)" };
     }
+    // Flip to "stopping" + "snapshotting" phase up front so EVERY surface
+    // (not just the one that tapped Park) can render the close-down ladder
+    // while the snapshot — the slow part — runs. "stopping" is in the
+    // healthy/in-flight status set, so this doesn't read as an outage.
+    await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "stopping" });
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId, phase: "snapshotting", progress: 35,
+    });
     // Real: snapshot first; a failed snapshot ABORTS (never delete an
     // unrecoverable box) — mirrors cloudMachines.ts destroy invariant.
     let snapId: string;
@@ -686,10 +694,18 @@ export const pauseMachine = internalAction({
         machineId, status: "error",
         errorMessage: `Pause aborted: snapshot failed (${e instanceof Error ? e.message : String(e)}). Box still running, data safe — retry.`,
       });
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "error", error: "snapshot failed",
+      });
       return { ok: false, reason: "snapshot failed — NOT deleted (recover-safety)" };
     }
     await ctx.runMutation(internal.cloudMachines.setStatus, {
       machineId, status: "stopping", lastSnapshotId: snapId,
+    });
+    // Snapshot captured — now the (fast) server delete. "powering-down"
+    // drives the second half of the park ladder.
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId, phase: "powering-down", progress: 78,
     });
     try {
       await hetznerDelete(token!, machine.hetznerServerId);
@@ -826,6 +842,11 @@ export const resumeMachine = internalAction({
       return { ok: false, reason: "no snapshot id" };
     }
     await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "resuming" });
+    // Clear any stale "ready" left from before the park so no surface
+    // briefly shows 100% while the box is still cold.
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId, phase: "booting", progress: 20,
+    });
     try {
       const { serverId, ip } = await hetznerCreateFromImage(
         token!,
@@ -843,6 +864,17 @@ export const resumeMachine = internalAction({
       // regardless; this keeps the hostname/tunnel path alive).
       if (machine.hostname) await cloudflareUpsertA(machine.hostname, ip);
       await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "active" });
+      // Server RECORD exists, but the OS is still booting + the agent
+      // hasn't re-registered on the relay yet. Do NOT claim "ready" — sit
+      // at "registering"/85 and let resumeHealthCheck flip to ready only
+      // once /health actually answers. This is the fix for the wake that
+      // used to jump to 100% while the box was still cold.
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "registering", progress: 85,
+      });
+      await ctx.scheduler.runAfter(20_000, internal.cloudMachines.resumeHealthCheck, {
+        machineId, attempt: 1,
+      });
       return { ok: true, status: "active", serverId, ip, dryRun: false };
     } catch (e) {
       await ctx.runMutation(internal.cloudMachines.setStatus, {

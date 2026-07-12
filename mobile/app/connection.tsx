@@ -11,7 +11,8 @@ import { useColors } from "../src/context/ThemeContext";
 import type { ThemeColors } from "../src/constants/colors";
 import { useDevice } from "../src/context/DeviceContext";
 import { useAuth } from "../src/context/AuthContext";
-import { isDeviceAsleep, wakeManagedDevice } from "../src/lib/wakeMachine";
+import { isDeviceAsleep, useMachineLifecycle } from "../src/lib/wakeMachine";
+import WakeProgress from "../src/components/WakeProgress";
 import { quicClient } from "../src/lib/quic";
 import { callMcpDirect } from "../src/lib/yaverMcpDirect";
 import {
@@ -76,23 +77,17 @@ export default function ConnectionScreen() {
     return devicesPool.find((d) => isDeviceAsleep(d)) ?? null;
   }, [devicesPool, activeDevice, primaryDeviceId]);
 
-  const [waking, setWaking] = useState(false);
-  const [wakeMsg, setWakeMsg] = useState<string | null>(null);
-  const handleWake = useCallback(async () => {
-    const mid = sleepingDevice?.machineId;
-    if (!token || !mid) return;
-    setWaking(true);
-    setWakeMsg(null);
-    const res = await wakeManagedDevice(token, mid);
-    if (res.ok) {
-      setWakeMsg("Waking your box — it recreates from the latest snapshot and reconnects in ~1–2 min.");
-      // Kick a device refresh so the new status/IP flows in as it comes up.
-      dev?.refreshDevices?.();
-    } else {
-      setWakeMsg(res.error ? `Wake failed: ${res.error}` : "Wake failed — try again from Devices.");
-    }
-    setWaking(false);
-  }, [token, sleepingDevice, dev]);
+  // Managed box that's a candidate for a park (close-down) action: the
+  // connected active box if it's managed. Wake targets the sleeping box;
+  // park targets the connected managed box.
+  const managedActive = activeDevice?.managed ? activeDevice : null;
+  const lifecycle = useMachineLifecycle({
+    token,
+    device: (sleepingDevice ?? managedActive) as any,
+    deviceReachable: connected,
+    onTick: dev?.refreshDevices,
+  });
+  const running = lifecycle.direction !== null || lifecycle.phase === "error";
 
   const [device, setDevice] = useState<DeviceNetwork | null>(null);
   const [internet, setInternet] = useState<InternetProbe | null>(null);
@@ -372,16 +367,23 @@ export default function ConnectionScreen() {
           {quicClient.baseUrl && !/null/i.test(String(quicClient.baseUrl)) && (
             <Row label="Endpoint" value={quicClient.baseUrl} />
           )}
-          {lastError && <Row label="Last error" value={lastError} valueColor={c.error} />}
-          {!connected && sleepingDevice && (
+          {lastError && !running && <Row label="Last error" value={lastError} valueColor={c.error} />}
+
+          {/* Live wake/park ladder — full variant with labelled steps + a
+              network line. Shows whenever a run is in flight (from here or
+              any other surface). */}
+          {running && <WakeProgress state={lifecycle} />}
+
+          {/* Asleep + not mid-run → offer Wake. */}
+          {!running && !connected && sleepingDevice && (
             <View style={{ paddingTop: 10, gap: 8 }}>
               <Text style={{ fontSize: 13, color: c.textSecondary, lineHeight: 18 }}>
                 {sleepingDevice.name || "Your box"} is asleep — it auto-off'd after idle to save cost
                 (nothing is broken). Wake it to reconnect.
               </Text>
               <Pressable
-                onPress={handleWake}
-                disabled={waking}
+                onPress={lifecycle.wake}
+                disabled={lifecycle.busy}
                 style={{
                   alignSelf: "flex-start",
                   paddingHorizontal: 16,
@@ -390,14 +392,38 @@ export default function ConnectionScreen() {
                   borderWidth: 1,
                   borderColor: c.accent,
                   backgroundColor: c.accentSoft,
-                  opacity: waking ? 0.6 : 1,
+                  opacity: lifecycle.busy ? 0.6 : 1,
                 }}
               >
-                <Text style={{ color: c.accent, fontWeight: "700", fontSize: 14 }}>
-                  {waking ? "Waking…" : "Wake box"}
-                </Text>
+                <Text style={{ color: c.accent, fontWeight: "700", fontSize: 14 }}>Wake box</Text>
               </Pressable>
-              {wakeMsg && <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 16 }}>{wakeMsg}</Text>}
+            </View>
+          )}
+
+          {/* Connected managed box → offer Park (close down) with the same
+              cool progress treatment on the way down. */}
+          {!running && connected && managedActive && (
+            <View style={{ paddingTop: 10, gap: 8 }}>
+              <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 16 }}>
+                Done for now? Park {managedActive.name || "your box"} to stop the meter — it snapshots,
+                powers down, and wakes back in ~1–2 min next time.
+              </Text>
+              <Pressable
+                onPress={lifecycle.park}
+                disabled={lifecycle.busy}
+                style={{
+                  alignSelf: "flex-start",
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: c.border,
+                  backgroundColor: c.bgInput,
+                  opacity: lifecycle.busy ? 0.6 : 1,
+                }}
+              >
+                <Text style={{ color: c.textSecondary, fontWeight: "700", fontSize: 13 }}>⏸ Park box</Text>
+              </Pressable>
             </View>
           )}
         </View>

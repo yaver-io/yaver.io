@@ -6,6 +6,7 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject var store: YaverStore
     @State private var showAddBox = false
+    @StateObject private var lifecycle = BoxLifecycle()
 
     var body: some View {
         NavigationStack {
@@ -16,6 +17,8 @@ struct DashboardView: View {
                     if store.selectedBox == nil {
                         emptyBoxPrompt
                     } else {
+                        wakePanel
+
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 24)], spacing: 24) {
                             NavigationLink(destination: SessionView()) {
                                 Tile(icon: "terminal.fill", title: "Session", detail: "Drive a live coding session")
@@ -44,6 +47,44 @@ struct DashboardView: View {
                 .padding(56)
             }
             .sheet(isPresented: $showAddBox) { AddBoxView() }
+            .task(id: store.selectedBox?.id) {
+                if let box = store.selectedBox { lifecycle.refreshReachability(box) }
+            }
+        }
+    }
+
+    // Shown above the tiles when the selected box is unreachable, and while a
+    // wake is running. A reachable box shows nothing here.
+    @ViewBuilder private var wakePanel: some View {
+        if lifecycle.isRunning {
+            WakeProgressView(lifecycle: lifecycle, boxName: store.selectedBox?.name)
+        } else if (lifecycle.needsWake || lifecycle.error != nil), let box = store.selectedBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Label("Box asleep", systemImage: "moon.zzz.fill")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.orange)
+                if box.wakeable {
+                    Text("\(box.name) isn't answering. It may have parked itself to save cost. Wake it to keep working.")
+                        .font(.system(size: 19)).foregroundStyle(.secondary).frame(maxWidth: 820, alignment: .leading)
+                    Button {
+                        lifecycle.wake(box, token: store.token)
+                    } label: {
+                        Label(lifecycle.error == nil ? "Wake" : "Try again", systemImage: "power")
+                            .font(.system(size: 22, weight: .semibold))
+                            .padding(.horizontal, 28).padding(.vertical, 12)
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Text("\(box.name) isn't answering, and it can't be woken from the TV — start it from your computer or phone.")
+                        .font(.system(size: 19)).foregroundStyle(.secondary).frame(maxWidth: 820, alignment: .leading)
+                }
+                if let err = lifecycle.error {
+                    Text(err).font(.system(size: 16, design: .monospaced)).foregroundStyle(.red)
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
         }
     }
 
@@ -92,16 +133,21 @@ struct AddBoxView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var host = ""
+    @State private var machineId = ""
 
     var body: some View {
         VStack(spacing: 24) {
             Text("Add a box").font(.system(size: 34, weight: .bold))
             TextField("Name (e.g. magara)", text: $name)
             TextField("LAN host or IP (e.g. 192.168.1.20)", text: $host)
+            TextField("Machine ID (managed cloud box — optional, enables Wake)", text: $machineId)
             Button("Save") {
                 let trimmed = host.trimmingCharacters(in: .whitespaces)
                 guard !trimmed.isEmpty else { return }
-                let box = BoxTarget(id: trimmed, name: name.isEmpty ? trimmed : name, host: trimmed)
+                let mid = machineId.trimmingCharacters(in: .whitespaces)
+                let box = BoxTarget(id: trimmed, name: name.isEmpty ? trimmed : name, host: trimmed,
+                                    managed: mid.isEmpty ? nil : true,
+                                    machineId: mid.isEmpty ? nil : mid)
                 store.addBox(box)
                 store.select(box)
                 dismiss()

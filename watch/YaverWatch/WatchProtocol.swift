@@ -33,6 +33,7 @@ enum WatchRequestKind: String, Codable {
     case transcript   // a spoken command
     case confirm      // answer to a confirmNeeded prompt
     case intent       // a fixed complication quick-action
+    case wake         // resume a parked managed box (phone holds the token)
 }
 
 /// Reply to a confirm prompt.
@@ -54,6 +55,7 @@ enum WatchIntent: String, Codable, CaseIterable {
 ///   {"v":1,"kind":"transcript","text":"<spoken command>"}
 ///   {"v":1,"kind":"confirm","token":"<token>","reply":"confirm"|"cancel"}
 ///   {"v":1,"kind":"intent","intent":"run-tests"|"deploy"|"status"}
+///   {"v":1,"kind":"wake","machineId":"<managed machine id, optional>"}
 struct WatchRequest: Codable {
     var v: Int = WatchWire.version
     var kind: WatchRequestKind
@@ -61,8 +63,9 @@ struct WatchRequest: Codable {
     var token: String?          // confirm
     var reply: ConfirmReply?    // confirm
     var intent: WatchIntent?    // intent
+    var machineId: String?      // wake (optional — phone resolves if absent)
 
-    enum CodingKeys: String, CodingKey { case v, kind, text, token, reply, intent }
+    enum CodingKeys: String, CodingKey { case v, kind, text, token, reply, intent, machineId }
 
     static func transcript(_ text: String) -> WatchRequest {
         WatchRequest(kind: .transcript, text: text)
@@ -72,6 +75,9 @@ struct WatchRequest: Codable {
     }
     static func intent(_ intent: WatchIntent) -> WatchRequest {
         WatchRequest(kind: .intent, intent: intent)
+    }
+    static func wake(machineId: String?) -> WatchRequest {
+        WatchRequest(kind: .wake, machineId: machineId)
     }
 }
 

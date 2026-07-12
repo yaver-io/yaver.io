@@ -61,6 +61,52 @@ final class PhoneSession: NSObject, ObservableObject {
         try await send(.intent(intent))
     }
 
+    // MARK: - Control channel (wake box)
+
+    /// Outcome of a wake-box request routed through the phone.
+    enum WakeDispatch {
+        case sent               // phone acked; the box is (re)starting
+        case phoneUnreachable   // no phone in reach to carry the request
+        case failed(String)     // phone reached but couldn't wake the box
+    }
+
+    /// Ask the paired iPhone to wake a self-parked managed box. The watch does
+    /// NOT hold the control-plane token, so the phone (already signed in) is the
+    /// one that can call the resume API — the watch only carries the intent.
+    ///
+    /// ─────────────────────────────────────────────────────────────────────────
+    /// The wake rides the SAME "yaverWatch" envelope as every other request, so
+    /// the phone's existing WCSession bridge (YaverWatchBridge.swift → JS
+    /// watchEntry → watchBridge `wake` handler → startManagedCloudMachine) picks
+    /// it up with no bespoke control channel. Wire shape:
+    ///
+    ///   Watch → Phone   {"v":1,"kind":"wake","machineId":"<optional>"}
+    ///
+    /// The phone resolves the managed machineId (from `machineId`, else its
+    /// current/primary managed box) and calls its existing wake capability
+    /// (startManagedCloudMachine — the same one behind mobile `wakeManagedDevice`),
+    /// replying with a normal WatchReply (`working` on accept, `error` on
+    /// failure). The box then boots + re-registers over the relay asynchronously;
+    /// the watch drives the rest by polling /health. An unreachable phone throws
+    /// (→ `phoneUnreachable`, the "open Yaver" hint).
+    /// ─────────────────────────────────────────────────────────────────────────
+    func requestWakeBox(machineId: String?, deviceId: String) async -> WakeDispatch {
+        do {
+            let reply = try await send(.wake(machineId: machineId))
+            if reply.kind == .error {
+                return .failed(reply.spoken ?? "Your phone couldn't wake the box.")
+            }
+            return .sent
+        } catch {
+            // Delivery failed (phone dropped out, or an older build without the
+            // wake handler). Tell the user to open the app rather than spinning a
+            // ladder that will never advance.
+            return .phoneUnreachable
+        }
+    }
+
+    // MARK: - Outbound turns (core)
+
     /// Core: encode the request into the "yaverWatch" envelope, sendMessage, and
     /// decode the reply. No force-unwraps on the network path.
     private func send(_ req: WatchRequest) async throws -> WatchReply {

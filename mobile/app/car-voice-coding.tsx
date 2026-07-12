@@ -33,6 +33,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
+import { useAuth } from "../src/context/AuthContext";
+import { isDeviceAsleep, useMachineLifecycle } from "../src/lib/wakeMachine";
+import WakeProgress from "../src/components/WakeProgress";
 import { connectionManager } from "../src/lib/connectionManager";
 import { quicClient } from "../src/lib/quic";
 import { loadLocalSpeechConfig } from "../src/lib/auth";
@@ -92,6 +95,7 @@ export default function CarVoiceCodingScreen() {
   const glass = params.surface === "glass";
   const deviceCtx = useDevice();
   const devices = ((deviceCtx as any).devices as any[]) || [];
+  const { token } = useAuth();
 
   const [deviceId, setDeviceId] = useState("");
   const [status, setStatus] = useState<
@@ -118,6 +122,16 @@ export default function CarVoiceCodingScreen() {
   );
 
   const pickedDevice = devices.find((d) => (d.id || d.deviceId) === deviceId);
+  // Wake a self-parked box straight from the car picker — a spoken task to a
+  // sleeping box would otherwise just fail. Big, glanceable progress only.
+  const carLifecycle = useMachineLifecycle({
+    token,
+    device: pickedDevice as any,
+    deviceReachable: !!pickedDevice?.online,
+    onTick: (deviceCtx as any).refreshDevices,
+  });
+  const carRunning = carLifecycle.direction !== null || carLifecycle.phase === "error";
+  const pickedAsleep = isDeviceAsleep(pickedDevice as any);
   const carConversationId = deviceId ? `car:${deviceId}` : "car:yaver";
   const carContactName = `Yaver · ${pickedDevice?.name || pickedDevice?.alias || deviceId || "runtime"}`;
 
@@ -615,6 +629,7 @@ export default function CarVoiceCodingScreen() {
           </Text>
           {devices.map((d) => {
             const id = d.id || d.deviceId;
+            const sleeping = isDeviceAsleep(d);
             return (
               <Pressable
                 key={id}
@@ -637,8 +652,8 @@ export default function CarVoiceCodingScreen() {
                 >
                   {d.name || d.alias || id}
                 </Text>
-                <Text style={{ color: d.online ? "#22c55e" : c.textMuted }}>
-                  {d.online ? "online" : "offline"}
+                <Text style={{ color: d.online ? "#22c55e" : sleeping ? c.accent : c.textMuted }}>
+                  {d.online ? "online" : sleeping ? "asleep · tap to wake" : "offline"}
                 </Text>
               </Pressable>
             );
@@ -648,6 +663,33 @@ export default function CarVoiceCodingScreen() {
               No devices yet. Sign a box in first.
             </Text>
           )}
+
+          {/* Live wake ladder for the picked box (big + glanceable for the car). */}
+          {carRunning && (
+            <View style={[card, { marginTop: 4 }]}>
+              <WakeProgress state={carLifecycle} />
+            </View>
+          )}
+          {!carRunning && pickedAsleep && (
+            <Pressable
+              onPress={carLifecycle.wake}
+              disabled={carLifecycle.busy}
+              style={[
+                card,
+                {
+                  marginTop: 4,
+                  alignItems: "center",
+                  borderColor: c.accent,
+                  backgroundColor: c.accentSoft,
+                  opacity: carLifecycle.busy ? 0.6 : 1,
+                },
+              ]}
+            >
+              <Text style={{ color: c.accent, fontWeight: "800", fontSize: 16 }}>
+                Wake {pickedDevice?.name || "box"}
+              </Text>
+            </Pressable>
+          )}
         </ScrollView>
       </View>
     );
@@ -656,6 +698,31 @@ export default function CarVoiceCodingScreen() {
   // ── glass HUD (compact: just the PTT + last status) ───────────────
   if (glass) {
     const last = turns[0];
+    // A parked box can't run a spoken task — surface a big, glanceable wake
+    // state on the HUD instead of a mic that would just fail.
+    if (carRunning) {
+      return (
+        <View style={{ flex: 1, backgroundColor: c.bg, alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <View
+            style={{
+              width: 160, height: 160, borderRadius: 80, borderWidth: 6,
+              borderColor: carLifecycle.phase === "error" ? c.error : c.accent,
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <Text style={{ color: c.textPrimary, fontSize: 34, fontWeight: "900", fontVariant: ["tabular-nums"] }}>
+              {Math.round(carLifecycle.percent)}%
+            </Text>
+          </View>
+          <Text style={{ color: c.textPrimary, marginTop: 18, fontSize: 20, fontWeight: "800", textAlign: "center" }}>
+            {carLifecycle.meta.short}
+          </Text>
+          <View style={{ width: "90%", marginTop: 10 }}>
+            <WakeProgress state={carLifecycle} compact />
+          </View>
+        </View>
+      );
+    }
     return (
       <View
         style={{
@@ -667,20 +734,21 @@ export default function CarVoiceCodingScreen() {
         }}
       >
         <Pressable
-          onPress={onPressTalk}
+          onPress={pickedAsleep ? carLifecycle.wake : onPressTalk}
+          disabled={pickedAsleep && carLifecycle.busy}
           style={{
             width: 160,
             height: 160,
             borderRadius: 80,
-            backgroundColor: TALK_COLOR,
+            backgroundColor: pickedAsleep ? c.accent : TALK_COLOR,
             alignItems: "center",
             justifyContent: "center",
           }}
           accessibilityRole="button"
-          accessibilityLabel={talkLabel}
+          accessibilityLabel={pickedAsleep ? `Wake ${pickedDevice?.name || "box"}` : talkLabel}
         >
-          <Text style={{ color: "#fff", fontSize: 20, fontWeight: "800" }}>
-            {status === "recording" ? "■" : "🎤"}
+          <Text style={{ color: "#fff", fontSize: pickedAsleep ? 22 : 20, fontWeight: "800" }}>
+            {pickedAsleep ? "Wake" : status === "recording" ? "■" : "🎤"}
           </Text>
         </Pressable>
         <Text
@@ -692,7 +760,7 @@ export default function CarVoiceCodingScreen() {
           }}
           numberOfLines={3}
         >
-          {last?.spoken || talkLabel}
+          {pickedAsleep ? `${pickedDevice?.name || "Box"} is asleep — tap to wake` : last?.spoken || talkLabel}
         </Text>
       </View>
     );

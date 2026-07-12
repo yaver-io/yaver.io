@@ -20,6 +20,7 @@ object StandaloneStore {
     private const val KEY_TOKEN = "yaver.watch.token"
     private const val KEY_BOX_URL = "yaver.watch.boxUrl"
     private const val KEY_OPT_IN = "yaver.watch.standaloneOptIn"
+    private const val KEY_MACHINE_ID = "yaver.watch.machineId"
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -33,11 +34,19 @@ object StandaloneStore {
     /** Whether the user opted into "use without your phone" mode. */
     fun optIn(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_OPT_IN, false)
 
-    /** Persist standalone creds (called after device-code auth succeeds). */
-    fun save(ctx: Context, token: String, boxUrl: String) {
+    /** The managed machine id of the box, if known. Empty = unknown; the phone
+     *  resolves the target box from the user's current/primary machine when the
+     *  wake intent carries an empty id. */
+    fun machineId(ctx: Context): String = prefs(ctx).getString(KEY_MACHINE_ID, "") ?: ""
+
+    /** Persist standalone creds (called after device-code auth succeeds).
+     *  `machineId` is optional — pass the managed machine id so the wrist can
+     *  route a targeted wake; empty is fine (the phone resolves it). */
+    fun save(ctx: Context, token: String, boxUrl: String, machineId: String = "") {
         prefs(ctx).edit()
             .putString(KEY_TOKEN, token)
             .putString(KEY_BOX_URL, boxUrl)
+            .putString(KEY_MACHINE_ID, machineId)
             .apply()
     }
 

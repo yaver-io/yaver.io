@@ -202,4 +202,15 @@ struct BoxTarget: Codable, Identifiable, Equatable {
     var name: String
     var host: String        // LAN IP / hostname running `yaver serve`
     var port: Int = Backend.agentPort
+    /// Set for a managed cloud box that can be woken from the control plane.
+    /// Optional because the manual Add-Box flow only knows host/port; a future
+    /// Convex device-registry sync would populate these automatically. When a
+    /// machineId is present the box can be resumed from the TV; otherwise wake
+    /// is unavailable (start it from a computer/phone). Both decode to nil for
+    /// boxes persisted before these fields existed.
+    var managed: Bool? = nil
+    var machineId: String? = nil
+
+    /// True when this box can be resumed from the TV (managed + has a machineId).
+    var wakeable: Bool { (managed ?? false) && (machineId?.isEmpty == false) }
 }

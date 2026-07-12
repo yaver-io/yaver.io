@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo } from "react";
 import { NativeEventEmitter, NativeModules, Platform } from "react-native";
 import { useDevice } from "../context/DeviceContext";
+import { useAuth } from "../context/AuthContext";
 import { makeRealCarVoiceDeps, type CarVoiceConfig, type CarVoiceTaskRef } from "../lib/carVoiceCoding";
 import { connectionManager } from "../lib/connectionManager";
 import { appLog } from "../lib/logger";
 import { runtimeSurfaceClient } from "../lib/runtimeSurfaceClient";
 import { watchBridgeBus } from "../lib/watchEntry";
+import { isDeviceAsleep, wakeManagedDevice } from "../lib/wakeMachine";
 
 type NativeWatchBridge = {
   sendToWatch?: (json: string) => void;
@@ -17,6 +19,18 @@ type NativeWatchBridge = {
 function nativeBridge(): NativeWatchBridge | null {
   const mod = (NativeModules as { YaverWatchBridge?: NativeWatchBridge }).YaverWatchBridge;
   return mod && typeof mod.sendToWatch === "function" ? mod : null;
+}
+
+/** Resolve which managed machine the wrist's Wake should target: an explicit
+ *  machineId from the message wins; else the focused/active box if it's a
+ *  managed box that's asleep; else the first asleep managed box we know. */
+function resolveWakeMachineId(devices: any[], activeDevice: any | null, explicit?: string): string | undefined {
+  if (explicit) return explicit;
+  if (activeDevice?.managed && activeDevice?.machineId) return activeDevice.machineId;
+  const sleeping = devices.find((d) => isDeviceAsleep(d) && d?.machineId);
+  if (sleeping?.machineId) return sleeping.machineId;
+  const anyManaged = devices.find((d) => d?.managed && d?.machineId);
+  return anyManaged?.machineId;
 }
 
 function pickDeviceId(devices: any[], activeDevice: any | null): string {
@@ -67,6 +81,7 @@ function makeWatchDeps(deviceId: string) {
 
 export function WatchBridgeHost() {
   const deviceCtx = useDevice();
+  const { token } = useAuth();
   const devices = (deviceCtx.devices as any[]) || [];
   const activeDevice = deviceCtx.activeDevice as any | null;
   const targetDeviceId = useMemo(
@@ -95,10 +110,19 @@ export function WatchBridgeHost() {
         if (verb === "maps_open") return runtimeSurfaceClient.mapsOpen(targetDeviceId, payload as any);
         throw new Error(`unsupported watch ops verb ${verb}`);
       },
+      // The wrist can ask the phone to wake a parked managed box — the phone
+      // holds the control-plane token; the watch then polls /health and drives
+      // its own wake ladder to Ready.
+      wakeBox: async (machineId) => {
+        const mid = resolveWakeMachineId(devices, activeDevice, machineId);
+        if (!mid) return { ok: false, error: "No parked managed box to wake." };
+        return wakeManagedDevice(token, mid);
+      },
       sender: (json) => bridge.sendToWatch?.(json),
     });
     return () => watchBridgeBus.reset();
-  }, [targetDeviceId]);
+    // token in deps so the wakeBox closure re-binds once auth is available.
+  }, [targetDeviceId, token]);
 
   useEffect(() => {
     const bridge = nativeBridge();

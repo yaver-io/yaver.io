@@ -11,13 +11,16 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 type byoMachineRow struct {
@@ -209,14 +212,62 @@ func runMachineUpCmd(args []string) {
 	if r := firstNonEmpty(flags["region"], row.Region); r != "" {
 		payload["region"] = r
 	}
-	fmt.Printf("Recreating %q from snapshot %s (~minutes)…\n", name, row.SnapshotImageID)
+	fmt.Printf("↻ Restoring %q from snapshot %s…\n", name, row.SnapshotImageID)
+	started := time.Now()
 	res, err := callMachineOp("machine_up", payload)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "machine up: %v\n", err)
 		os.Exit(1)
 	}
 	init := machineInitial(res)
-	fmt.Printf("✓ up: server %v  ip %v. It re-registers over the relay automatically.\n", init["started"], init["ip"])
+	ip := fmt.Sprintf("%v", init["ip"])
+	fmt.Printf("✓ Server created — %v (%s)\n", ip, init["started"])
+	// Don't fire-and-return: stream the ~1-2 min boot + relay re-registration
+	// so the CLI shows the same waking ladder as mobile/TV, and confirm the
+	// box is actually reachable before we hand control back.
+	streamMachineWake(name, ip, started)
+}
+
+// streamMachineWake polls the freshly-recreated box's /health until it
+// answers, printing a live "booting → connecting → online" line. Mirrors
+// the mobile/TV wake ladder for the terminal. Probes the user's OWN box
+// (self-signed TLS on :18080), https then http, up to ~2.5 min.
+func streamMachineWake(name, ip string, started time.Time) {
+	if strings.TrimSpace(ip) == "" || strings.EqualFold(ip, "<nil>") {
+		fmt.Println("  It re-registers over the relay automatically — `yaver machine status " + name + "`.")
+		return
+	}
+	client := &http.Client{
+		Timeout:   6 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+	fmt.Print("  ⏳ Booting + connecting over the free relay ")
+	deadline := time.Now().Add(150 * time.Second)
+	for time.Now().Before(deadline) {
+		if machineHealthOK(client, ip) {
+			fmt.Printf(" ✓\n  ✅ Online (%ds) — ready to work.\n", int(time.Since(started).Seconds()))
+			return
+		}
+		fmt.Print("·")
+		time.Sleep(4 * time.Second)
+	}
+	fmt.Printf("\n  … still coming up after %ds. It re-registers over the relay automatically — check `yaver machine status %s`.\n",
+		int(time.Since(started).Seconds()), name)
+}
+
+func machineHealthOK(client *http.Client, ip string) bool {
+	for _, scheme := range []string{"https", "http"} {
+		resp, err := client.Get(fmt.Sprintf("%s://%s:18080/health", scheme, ip))
+		if err != nil {
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == 200 {
+			return true
+		}
+	}
+	return false
 }
 
 func runMachineRmCmd(args []string) {

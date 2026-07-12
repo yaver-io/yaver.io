@@ -31,7 +31,7 @@
 //   posture as withMeshTunnel.js).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { handleWatchTurn, type WatchReply, type WatchTurn } from "./watchBridge";
+import { handleWatchTurn, type WatchReply, type WatchTurn, type WatchWakeFn } from "./watchBridge";
 import type { CarVoiceConfig, CarVoiceDeps } from "./carVoiceCoding";
 import type { CarSurfaceOps } from "./carSurfaceIntent";
 
@@ -45,6 +45,9 @@ export interface WatchBridgeWiring {
   config?: () => CarVoiceConfig;
   /** Optional constrained-surface ops handler for mail/meetings/media/maps. */
   ops?: CarSurfaceOps;
+  /** Resume a parked managed box on the wrist's behalf (the phone holds the
+   *  control-plane token). Wire to startManagedCloudMachine. */
+  wakeBox?: WatchWakeFn;
   /** Ship a reply JSON string back to the wrist (the native sender). */
   sender: (json: string) => void;
 }
@@ -81,7 +84,7 @@ export const watchBridgeBus: WatchBridgeBus = {
     }
     const config = w.config?.() ?? {};
     try {
-      return await handleWatchTurn(msg, w.makeDeps(), config, (r) => safeSend(w, r), w.ops);
+      return await handleWatchTurn(msg, w.makeDeps(), config, (r) => safeSend(w, r), w.ops, w.wakeBox);
     } catch (e) {
       const err: WatchReply = {
         v: 1,
@@ -119,6 +122,10 @@ export function parseTurn(json: string): WatchTurn | null {
         : null;
     case "intent":
       return typeof m.intent === "string" ? { v: 1, kind: "intent", intent: m.intent } : null;
+    case "wake":
+      // machineId is optional — the phone resolves the current/primary managed
+      // box when absent.
+      return { v: 1, kind: "wake", machineId: typeof m.machineId === "string" ? m.machineId : undefined };
     default:
       return null;
   }

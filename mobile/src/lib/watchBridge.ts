@@ -52,7 +52,19 @@ export const WATCH_PROTOCOL_VERSION = 1 as const;
 export type WatchTurn =
   | { v: 1; kind: "transcript"; text: string }
   | { v: 1; kind: "confirm"; token: string; reply: string }
-  | { v: 1; kind: "intent"; intent: string };
+  | { v: 1; kind: "intent"; intent: string }
+  // The wrist asks the phone to WAKE a parked managed box (the watch can't
+  // hold the control-plane token cleanly, so the phone does it). machineId
+  // is optional — the phone resolves the current/primary managed box when
+  // absent. The watch then confirms recovery itself by polling /health and
+  // drives its own wake ladder. Mirrored by watch/WatchProtocol.swift +
+  // wear/WatchProtocol.kt.
+  | { v: 1; kind: "wake"; machineId?: string };
+
+/** Injected wake capability — the phone calls its managed-cloud resume
+ *  (startManagedCloudMachine) on the watch's behalf. Kept as a dep so the
+ *  bridge stays headless-testable. */
+export type WatchWakeFn = (machineId?: string) => Promise<{ ok: boolean; error?: string }>;
 
 /** Phone → watch. Only the fields relevant to `kind` are set. */
 export interface WatchReply {
@@ -115,8 +127,21 @@ export async function handleWatchTurn(
   config: CarVoiceConfig = {},
   send: (r: WatchReply) => void = () => {},
   ops?: CarSurfaceOps,
+  wakeBox?: WatchWakeFn,
 ): Promise<WatchReply> {
   switch (msg.kind) {
+    case "wake": {
+      if (!wakeBox) {
+        return emit(send, reply("error", { spoken: "I can't wake your box from here — open Yaver on your phone." }));
+      }
+      const res = await wakeBox(msg.machineId);
+      if (!res.ok) {
+        return emit(send, reply("error", { spoken: res.error ? `Couldn't wake it: ${res.error}` : "Couldn't wake your box." }));
+      }
+      // The box is recreating from its snapshot; the wrist polls /health and
+      // drives its own progress ladder to Ready.
+      return emit(send, reply("working", { status: "waking", spoken: "Waking your box — about a minute." }));
+    }
     case "intent": {
       const text = watchIntentToTranscript(msg.intent);
       if (!text) return emit(send, reply("error", { spoken: "I don't know that shortcut." }));

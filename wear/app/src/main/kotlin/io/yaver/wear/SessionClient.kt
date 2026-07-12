@@ -64,7 +64,7 @@ class SessionClient(
      */
     suspend fun sendText(text: String): WatchProtocol.Reply = withContext(Dispatchers.IO) {
         if (lastAwaitingChoice) {
-            parseChoice(text)?.let { choice -> return@withContext turn(choice = choice) }
+            parseChoice(text)?.let { choice -> return@withContext turn(text = null, choice = choice) }
         }
         turn(text = text, choice = null)
     }
@@ -121,7 +121,9 @@ class SessionClient(
                 mapSessionResponse(text)
             }
         } catch (_: Throwable) {
-            WatchProtocol.Reply.Error("I couldn't reach your box.")
+            // Connection refused / timeout — the box is unreachable (likely a
+            // self-parked managed box). Flag it so the wrist offers "Wake".
+            WatchProtocol.Reply.Error("I couldn't reach your box.", boxUnreachable = true)
         }
     }
 
