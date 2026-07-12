@@ -629,6 +629,24 @@ async function hetznerVolumeInfo(
   };
 }
 
+/** Permanently delete a volume (must be detached first). Best-effort. */
+async function hetznerDeleteVolume(token: string, volumeId: string): Promise<void> {
+  const r = await fetch(`${HETZNER_API}/volumes/${volumeId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok && r.status !== 404) throw new Error(`delete volume HTTP ${r.status}`);
+}
+
+/** Permanently delete a snapshot image. Best-effort. */
+async function hetznerDeleteImage(token: string, imageId: string): Promise<void> {
+  const r = await fetch(`${HETZNER_API}/images/${imageId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok && r.status !== 404) throw new Error(`delete image HTTP ${r.status}`);
+}
+
 /** Detach a volume (server delete detaches automatically; this is for repair). */
 async function hetznerDetachVolume(token: string, volumeId: string): Promise<void> {
   const r = await fetch(`${HETZNER_API}/volumes/${volumeId}/actions/detach`, {
@@ -1141,6 +1159,48 @@ export const ensureVolume = internalAction({
   },
 });
 
+/**
+ * purgeMachineResources — permanently tear down a managed machine's cloud
+ * resources (server + volume + its snapshots) and clear the pointers on the
+ * record. Used to fully retire a box / reset for a clean re-provision. Careful:
+ * this DELETES the snapshot(s), so the data is gone — only call when the box is
+ * genuinely being retired.
+ */
+export const purgeMachineResources = internalAction({
+  args: {
+    machineId: v.id("cloudMachines"),
+    deleteSnapshots: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { machineId, deleteSnapshots }): Promise<LifecycleResult> => {
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    if (!machine) return { ok: false, reason: "machine not found" };
+    const token = process.env.HCLOUD_TOKEN;
+    if (!token) return { ok: false, reason: "HCLOUD_TOKEN unset" };
+    const done: string[] = [];
+
+    if (machine.hetznerServerId) {
+      try { await hetznerDelete(token, machine.hetznerServerId); done.push("server"); } catch { /* best-effort */ }
+    }
+    if (machine.volumeId) {
+      try { await hetznerDetachVolume(token, machine.volumeId); } catch { /* may already be detached */ }
+      // detach is async — give it a beat before delete
+      for (let i = 0; i < 8; i++) {
+        try {
+          const info = await hetznerVolumeInfo(token, machine.volumeId);
+          if (!info.serverId) break;
+        } catch { break; }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      try { await hetznerDeleteVolume(token, machine.volumeId); done.push("volume"); } catch { /* best-effort */ }
+    }
+    if (deleteSnapshots && machine.lastSnapshotId) {
+      try { await hetznerDeleteImage(token, machine.lastSnapshotId); done.push("snapshot"); } catch { /* best-effort */ }
+    }
+    await ctx.runMutation(internal.cloudMachines.clearResources, { machineId });
+    return { ok: true, reason: `purged: ${done.join(", ") || "nothing"}` };
+  },
+});
+
 export const resumeMachine = internalAction({
   args: {
     machineId: v.id("cloudMachines"),
@@ -1207,6 +1267,22 @@ export const resumeMachine = internalAction({
       if (machine.volumeId) {
         const vol = await hetznerVolumeInfo(token!, machine.volumeId);
         if (vol.location) locationCandidates = [vol.location];
+        // A park deletes the server but the volume can linger "attached" to the
+        // now-gone server, and create-with-volumes then 422s "volume already
+        // attached". Detach it first so wake self-heals instead of dead-ending.
+        if (vol.serverId) {
+          try {
+            await hetznerDetachVolume(token!, machine.volumeId);
+            // Detach is async; give Hetzner a moment to release it.
+            for (let i = 0; i < 10; i++) {
+              const again = await hetznerVolumeInfo(token!, machine.volumeId);
+              if (!again.serverId) break;
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+          } catch {
+            /* best-effort — if it's actually free the create will succeed */
+          }
+        }
         volumeIds.push(machine.volumeId);
       }
       // With a volume, the boot image is a SLIM base (OS + toolchain only) — the

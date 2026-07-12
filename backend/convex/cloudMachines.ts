@@ -2098,6 +2098,23 @@ export const setVolume = internalMutation({
   },
 });
 
+/** Clear all cloud-resource pointers after a full purge (retire/reset). */
+export const clearResources = internalMutation({
+  args: { machineId: v.id("cloudMachines") },
+  handler: async (ctx, { machineId }) => {
+    await ctx.db.patch(machineId, {
+      status: "removed",
+      hetznerServerId: undefined,
+      serverIp: undefined,
+      volumeId: undefined,
+      volumeSizeGb: undefined,
+      baseImageId: undefined,
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
 /** Record the SLIM boot image used to recreate the server on wake. */
 export const setBaseImage = internalMutation({
   args: { machineId: v.id("cloudMachines"), baseImageId: v.string() },
