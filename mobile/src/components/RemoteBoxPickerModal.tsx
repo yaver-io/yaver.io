@@ -1,6 +1,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Platform,
   Pressable,
@@ -583,6 +584,25 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                     onPress={() => {
                       setPickedDeviceId(device.id);
                     }}
+                    // Long-press a device → quick actions (Disconnect). Tearing
+                    // down the client for this device frees its relay tunnel +
+                    // stream slots without leaving the picker.
+                    onLongPress={() => {
+                      const connected = connectionManager.clientFor(device.id).isConnected;
+                      Alert.alert(
+                        device.name,
+                        device.alias ? `@${device.alias}` : undefined,
+                        [
+                          {
+                            text: connected ? "Disconnect" : "Disconnect (not connected)",
+                            style: "destructive",
+                            onPress: () => connectionManager.disconnect(device.id),
+                          },
+                          { text: "Cancel", style: "cancel" },
+                        ],
+                      );
+                    }}
+                    delayLongPress={350}
                     style={({ pressed }) => ({
                       marginBottom: 10,
                       padding: 14,
