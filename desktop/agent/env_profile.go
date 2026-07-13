@@ -621,6 +621,14 @@ func (s *HTTPServer) handleToolchainGitCredentials(w http.ResponseWriter, r *htt
 		jsonError(w, http.StatusMethodNotAllowed, "use GET")
 		return
 	}
+	// SECURITY (audit 2026-07-13): plaintext git PATs are a local secret and must
+	// never cross machines. A same-user remote worker (relay-bridged / proxied /
+	// non-loopback) must not be able to pull them — same boundary as ops secret
+	// verbs. Local owner tooling on 127.0.0.1 keeps access.
+	if opsCallIsRemote(r) {
+		jsonError(w, http.StatusForbidden, "git credentials are local-only and cannot be read from another device")
+		return
+	}
 	creds, err := loadGitCredentials()
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "failed to load git credentials: "+err.Error())
