@@ -3484,18 +3484,44 @@ func runServe(args []string) {
 	if !meshOptedOut {
 		go func() {
 			defer func() { _ = recover() }()
-			if warn := httpServer.autoEnableMesh(cfg); warn != "" {
-				log.Printf("[mesh] default-on: overlay not active (%s) — serving over relay/direct; `yaver mesh status` for detail", warn)
-				return
+			// Self-healing: a boot-time failure (vault locked, Convex blip, or
+			// not-yet-signed-in) must not strand the overlay "disabled" until
+			// the next restart. Retry with backoff until it comes up, the user
+			// opts out, or the failure is a permanent local condition.
+			waits := []time.Duration{0, 30 * time.Second, 60 * time.Second, 2 * time.Minute, 5 * time.Minute}
+			for i, wait := range waits {
+				if wait > 0 {
+					time.Sleep(wait)
+				}
+				// Re-check opt-out each pass — a `yaver mesh down` mid-loop wins.
+				if os.Getenv("YAVER_MESH_DISABLE") == "1" || (cfg.Mesh != nil && cfg.Mesh.Disabled) {
+					return
+				}
+				warn := httpServer.autoEnableMesh(cfg)
+				if warn == "" {
+					httpServer.meshMu.Lock()
+					mgr := httpServer.meshMgr
+					httpServer.meshMu.Unlock()
+					iface := ""
+					if mgr != nil {
+						iface = mgr.Status().IfaceName
+					}
+					log.Printf("[mesh] overlay up (default-on): %s on %s", cfg.Mesh.MeshIPv4, iface)
+					return
+				}
+				// Elevated-privilege is permanent on an unprivileged desktop —
+				// retrying won't help. Log once and stop (control-plane stays
+				// registered; relay/direct/LAN are unaffected).
+				if strings.Contains(strings.ToLower(warn), "privilege") {
+					log.Printf("[mesh] default-on: overlay not active (%s) — serving over relay/direct; `yaver mesh status` for detail", warn)
+					return
+				}
+				if i == len(waits)-1 {
+					log.Printf("[mesh] default-on: overlay still not active after retries (%s) — serving over relay/direct; `yaver mesh status` for detail", warn)
+					return
+				}
+				log.Printf("[mesh] default-on: not active yet (%s) — retrying", warn)
 			}
-			httpServer.meshMu.Lock()
-			mgr := httpServer.meshMgr
-			httpServer.meshMu.Unlock()
-			iface := ""
-			if mgr != nil {
-				iface = mgr.Status().IfaceName
-			}
-			log.Printf("[mesh] overlay up (default-on): %s on %s", cfg.Mesh.MeshIPv4, iface)
 		}()
 	}
 
