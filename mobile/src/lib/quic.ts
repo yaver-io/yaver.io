@@ -5936,9 +5936,21 @@ export class QuicClient {
     for (const ip of this._lanIps) {
       // Tag Tailscale IPs distinctly so the log shows which path actually won.
       const path: ConnectionPath = this.isTailscaleIP(ip) ? "lan-tailscale" : "lan-heartbeat";
+      const isPriv = this.isPrivateIP(ip);
       if (path === "lan-tailscale" && !policy.allowTailnet) continue;
-      if (path !== "lan-tailscale" && !policy.allowPrivateDirect) continue;
+      // A private RFC1918 LAN IP is always cheap + safe to probe and is
+      // bounded by DIRECT_PHASE_DEADLINE_MS below — so never let a
+      // connection-preference silently strip the one candidate that would
+      // have worked on-LAN (the "online but unreachable at 10.0.0.x" case).
+      // Only gate NON-private (public) heartbeat IPs behind the explicit
+      // direct preference.
+      if (path === "lan-heartbeat" && !isPriv && !policy.allowPrivateDirect) continue;
       push(ip, port, path);
+      // Port fallback: the agent's HTTP server is on 18080, but `port` here
+      // is quicPort/port from the Convex row, which can differ. Probe 18080
+      // too for private LAN candidates so a stale/mismatched quicPort doesn't
+      // silently defeat an otherwise-reachable box.
+      if (isPriv && port !== 18080) push(ip, 18080, path);
     }
 
     // Convex-stored primary IP last — kept for backwards-compat with agents
@@ -6147,6 +6159,32 @@ export class QuicClient {
         }
       }
 
+      // 1b. If the happy-eyeballs relay probe already has a hit, adopt it NOW
+      //     rather than grinding through the serial, 8s-per-entry Cloudflare
+      //     tunnel loop below — which can blow the caller's 20s connect budget
+      //     when tunnels are configured but slow. Non-blocking peek: an
+      //     already-resolved probe (a microtask) beats the setTimeout(0)
+      //     macrotask; a still-pending probe loses and we fall through to
+      //     tunnels then the normal relay step (3).
+      if (!connected && policy.allowRelay && this.deviceId && this.relayServers.length > 0) {
+        const p = startRelayProbe();
+        if (p) {
+          const early = await Promise.race([
+            p,
+            new Promise<undefined>((r) => setTimeout(() => r(undefined), 0)),
+          ]);
+          if (early) {
+            this.agentAuthExpired = early.authExpired;
+            this.activeRelayUrl = early.relay.httpUrl;
+            this.activeRelayPassword = early.relay.password || null;
+            this.setConnectionMode("relay");
+            this._connectionPath = "relay";
+            connected = true;
+            console.log("[QUIC] Relay (early-adopt) via", early.relay.id);
+          }
+        }
+      }
+
       // 2. Try Cloudflare Tunnels (works through any firewall)
       const tunnels = this.effectiveTunnelServers;
       if (!connected && policy.allowTunnel && tunnels.length > 0) {
@@ -6211,7 +6249,36 @@ export class QuicClient {
       }
 
       if (!connected) {
-        throw new Error(this._lastTransportError || "Could not reach agent (direct or via relay)");
+        // Honest per-leg failure — say WHICH transports were tried/skipped and
+        // WHY, instead of a generic "couldn't reach". The most common real
+        // cause is a box that heartbeats (shows "online") but has no live relay
+        // tunnel, so the phone's only off-LAN route 502s. Name that explicitly.
+        const legs: string[] = [];
+        const directTried =
+          !this._forceRelay &&
+          (policy.allowPrivateDirect || policy.allowLanDirect) &&
+          (isWifi || this._lanIps.length > 0);
+        if (!directTried) {
+          legs.push(
+            this._forceRelay
+              ? "direct skipped (relay-only mode)"
+              : !isWifi && this._lanIps.length === 0
+                ? "direct skipped (no LAN address on cellular)"
+                : "direct skipped (disabled in connection preferences)",
+          );
+        } else {
+          legs.push("direct: no LAN address answered");
+        }
+        if (!policy.allowRelay) {
+          legs.push("relay disabled in preferences");
+        } else if (this.relayServers.length === 0) {
+          legs.push("relay: none configured");
+        } else if (this._lastTransportError) {
+          legs.push(`relay: ${this._lastTransportError}`);
+        } else {
+          legs.push("relay: box is online but has no live tunnel (not relay-connected)");
+        }
+        throw new Error(`Could not reach agent — ${legs.join("; ")}`);
       }
 
       this.setReconnectAttempt(0);
