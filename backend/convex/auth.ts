@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query, internalQuery, QueryCtx, MutationCtx } from "./_generated/server";
+import { mutation, query, internalMutation, internalQuery, QueryCtx, MutationCtx } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { deleteInfraGrantArtifactsForUser } from "./access";
@@ -569,6 +569,10 @@ export async function validateSessionInternal(
     platformRole?: "admin";
   };
   sessionId: Id<"sessions">;
+  /** Auth scope: "full" = a normal owner login; "machine" = a managed box's
+   *  token (restricted from account-level/destructive ops). Undefined in the
+   *  row means "full" (backward-compatible). */
+  scope: "full" | "machine";
 } | null> {
   let session = await ctx.db
     .query("sessions")
@@ -599,7 +603,7 @@ export async function validateSessionInternal(
   const user = await ctx.db.get(session.userId);
   if (!user) return null;
 
-  return { user, sessionId: session._id };
+  return { user, sessionId: session._id, scope: session.scope ?? "full" };
 }
 
 // ── Mutations ────────────────────────────────────────────────────────
@@ -669,7 +673,7 @@ async function findExistingUserForAutoLink(
  * Upsert a user by provider + providerId.
  * Returns the user's _id.
  */
-export const createOrUpdateUser = mutation({
+export const createOrUpdateUser = internalMutation({
   args: {
     email: v.string(),
     fullName: v.string(),
@@ -840,7 +844,7 @@ export const createOAuthLinkIntent = mutation({
   },
 });
 
-export const completeOAuthLink = mutation({
+export const completeOAuthLink = internalMutation({
   args: {
     linkToken: v.string(),
     provider: v.union(
@@ -1197,7 +1201,7 @@ export const cancelAccountMergeIntent = mutation({
  * Create a session for a user. Accepts a pre-hashed token (sha256).
  * Returns the session _id.
  */
-export const createSession = mutation({
+export const createSession = internalMutation({
   args: {
     tokenHash: v.string(),
     userId: v.id("users"),
@@ -1283,6 +1287,9 @@ export const validateSession = query({
       // in any client bundle. Clients read user.isOwner; the daemon reads it
       // from /auth/validate. See mcp_owner_gate.go, OwnerGate.tsx.
       isOwner: isOwner(result.user.email, result.user.userId),
+      // Auth scope: "machine" = a managed-box token (restricted from
+      // account-level/destructive ops); "full" = a normal owner login.
+      scope: result.scope,
     };
   },
 });
@@ -1402,7 +1409,7 @@ export const deleteAllSessions = mutation({
   },
 });
 
-export const deleteSessionsByDeviceId = mutation({
+export const deleteSessionsByDeviceId = internalMutation({
   args: {
     userId: v.id("users"),
     deviceId: v.string(),
@@ -1636,7 +1643,7 @@ export const confirmEmailVerification = mutation({
 /**
  * Look up an email user for login. Returns user with passwordHash.
  */
-export const lookupEmailUser = query({
+export const lookupEmailUser = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, args) => {
     const user = await ctx.db
@@ -1691,7 +1698,7 @@ export const getUserDocId = query({
  * Resolve a userDocId to the public user profile (for signup/login to surface
  * the stable, shareable userId string instead of the internal doc id).
  */
-export const getUserPublicProfile = query({
+export const getUserPublicProfile = internalQuery({
   args: { userDocId: v.id("users") },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userDocId);
@@ -1710,7 +1717,7 @@ export const getUserPublicProfile = query({
  * http.ts. Kept separate from getUserPublicProfile so the public
  * profile shape stays minimal.
  */
-export const getUserByDocId = query({
+export const getUserByDocId = internalQuery({
   args: { userDocId: v.id("users") },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userDocId);

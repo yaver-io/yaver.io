@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
 import { validateSessionInternal, sha256Hex, randomHex } from "./auth";
 
 // ── TOTP Algorithm (RFC 6238) ───────────────────────────────────────
@@ -226,7 +226,7 @@ export const getTotpStatus = query({
  * Create a pending auth record (called when login succeeds but 2FA is required).
  * Returns a pendingToken for the client to use with verifyTotpForLogin.
  */
-export const createPendingAuth = mutation({
+export const createPendingAuth = internalMutation({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
     const pendingToken = randomHex(20); // 40-char hex
@@ -245,7 +245,7 @@ export const createPendingAuth = mutation({
  * Verify TOTP code for a pending auth and create a real session.
  * Supports both TOTP codes and recovery codes.
  */
-export const verifyTotpForLogin = mutation({
+export const verifyTotpForLogin = internalMutation({
   args: {
     pendingToken: v.string(),
     code: v.string(),

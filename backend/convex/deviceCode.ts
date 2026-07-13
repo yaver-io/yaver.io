@@ -154,10 +154,17 @@ export const pollDeviceCode = mutation({
 });
 
 /**
- * Authorize a device code. Called from the web after user authenticates.
- * Creates a session and stores the raw token on the device code for CLI retrieval.
+ * Authorize a device code. Called from the web/mobile after the user
+ * authenticates, via POST /auth/device-code/authorize which derives `userId`
+ * from the caller's bearer token.
+ *
+ * internalMutation, NOT public: it mints a 1-year session for the `userId`
+ * argument. Public exposure would let anyone with the deployment URL create a
+ * session for an ARBITRARY userId (userCode phishing with no server-side
+ * userCode→initiator binding). The HTTP route is the only legitimate caller
+ * and it binds userId to the authenticated session.
  */
-export const authorizeDeviceCode = mutation({
+export const authorizeDeviceCode = internalMutation({
   args: {
     userCode: v.string(),
     userId: v.id("users"),
@@ -288,8 +295,14 @@ async function createAuthorizedDeviceCodeForUser(
  *     cloud metadata is rooted-readable.
  *   - deviceCode is 40-char hex (randomHex(20)); the box's real token is a fresh
  *     256-bit secret never exposed to the caller.
+ *
+ * internalMutation, NOT public: auth here is a caller-SUPPLIED `tokenHash`, so
+ * a public export would let anyone who learns a stored session-token hash (DB
+ * leak, log line) mint fresh 1-year tokens — no proof-of-possession of the
+ * actual bearer. The broker HTTP route (POST /auth/device-code/broker) is the
+ * only caller; it authenticates the real bearer and derives the hash itself.
  */
-export const createAuthorizedDeviceCode = mutation({
+export const createAuthorizedDeviceCode = internalMutation({
   args: {
     tokenHash: v.string(), // caller's session token hash (the broker) — REQUIRED
     machineName: v.optional(v.string()),

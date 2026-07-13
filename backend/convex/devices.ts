@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query, internalQuery } from "./_generated/server";
+import { mutation, query, internalQuery, internalMutation } from "./_generated/server";
 import { Doc } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
 import {
@@ -741,7 +741,7 @@ export const registerDevice = mutation({
  * this on behalf of the caller and the host check is what gates
  * the recovery action.
  */
-export const ownerByHardwareId = query({
+export const ownerByHardwareId = internalQuery({
   args: {
     hardwareId: v.string(),
   },
@@ -1215,7 +1215,7 @@ export const backfillConnectionPreferences = mutation({
  * last tunnel event so reactive clients can show "just disconnected"
  * vs "offline for hours" accurately.
  */
-export const presenceUpdate = mutation({
+export const presenceUpdate = internalMutation({
   args: {
     deviceId: v.string(),
     online: v.boolean(),
@@ -1695,7 +1695,7 @@ export const setRunnerDown = mutation({
  * This lets mobile/web show the device as "NEEDS AUTH" in the list so
  * the user can push an encrypted token to re-auth it remotely.
  */
-export const markBootstrap = mutation({
+export const markBootstrap = internalMutation({
   args: {
     deviceId: v.string(),
     hardwareId: v.string(),
@@ -2058,7 +2058,7 @@ export const selectDevices = query({
  * Run once with:
  *   npx convex run devices:seedAutoPublicUrls --arg exposeDomain=dev.yaver.io
  */
-export const seedAutoPublicUrls = mutation({
+export const seedAutoPublicUrls = internalMutation({
   args: {
     exposeDomain: v.string(),
     tokenHash: v.optional(v.string()),

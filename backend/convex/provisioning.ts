@@ -43,7 +43,7 @@ import {
   query,
   internalMutation,
 } from "./_generated/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { sha256Hex, validateSessionInternal } from "./auth";
 import * as ed from "@noble/ed25519";
 
@@ -410,7 +410,7 @@ export const attest = internalMutation({
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
     const tokenHash = await sha256Hex(token);
-    await ctx.runMutation(api.auth.createSession, {
+    await ctx.runMutation(internal.auth.createSession, {
       tokenHash,
       userId: row.ownerUserId,
       deviceId: row.deviceId,

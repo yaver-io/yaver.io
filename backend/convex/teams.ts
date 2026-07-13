@@ -1,10 +1,10 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 // ─── Queries ────────────────────────────────────────────────────
 
 /** Get team by teamId. */
-export const getByTeamId = query({
+export const getByTeamId = internalQuery({
   args: { teamId: v.string() },
   handler: async (ctx, { teamId }) => {
     return await ctx.db
@@ -15,7 +15,7 @@ export const getByTeamId = query({
 });
 
 /** Get all teams owned by a user. */
-export const getByOwner = query({
+export const getByOwner = internalQuery({
   args: { ownerId: v.id("users") },
   handler: async (ctx, { ownerId }) => {
     return await ctx.db
@@ -26,7 +26,7 @@ export const getByOwner = query({
 });
 
 /** Get all teams a user is a member of. */
-export const getTeamsForUser = query({
+export const getTeamsForUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     const memberships = await ctx.db
@@ -49,7 +49,7 @@ export const getTeamsForUser = query({
 });
 
 /** List members of a team. */
-export const listMembers = query({
+export const listMembers = internalQuery({
   args: { teamId: v.string() },
   handler: async (ctx, { teamId }) => {
     const members = await ctx.db
@@ -75,7 +75,7 @@ export const listMembers = query({
 });
 
 /** Check if a user is a member of a team. */
-export const isMember = query({
+export const isMember = internalQuery({
   args: { teamId: v.string(), userId: v.id("users") },
   handler: async (ctx, { teamId, userId }) => {
     const member = await ctx.db
@@ -89,7 +89,7 @@ export const isMember = query({
 // ─── Mutations ──────────────────────────────────────────────────
 
 /** Create a new team. The creator becomes the admin. */
-export const create = mutation({
+export const create = internalMutation({
   args: {
     name: v.string(),
     ownerId: v.id("users"),
@@ -124,7 +124,7 @@ export const create = mutation({
 });
 
 /** Invite a user to a team by email. Creates membership if user exists. */
-export const addMember = mutation({
+export const addMember = internalMutation({
   args: {
     teamId: v.string(),
     userEmail: v.string(),
@@ -182,7 +182,7 @@ export const addMember = mutation({
 });
 
 /** Remove a member from a team. */
-export const removeMember = mutation({
+export const removeMember = internalMutation({
   args: {
     teamId: v.string(),
     userId: v.id("users"),
@@ -213,7 +213,7 @@ export const removeMember = mutation({
 });
 
 /** Update team info. */
-export const update = mutation({
+export const update = internalMutation({
   args: {
     teamId: v.string(),
     name: v.optional(v.string()),

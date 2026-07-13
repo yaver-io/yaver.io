@@ -2,7 +2,7 @@
 // passkeys.ts (which is a "use node" actions file) because Convex
 // disallows queries/mutations in Node-runtime modules.
 
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { randomHex } from "./auth";
@@ -16,7 +16,7 @@ const challengePurpose = v.union(
 
 // ── Challenges ──────────────────────────────────────────────────────
 
-export const recordChallenge = mutation({
+export const recordChallenge = internalMutation({
   args: {
     challenge: v.string(),
     purpose: challengePurpose,
@@ -36,7 +36,7 @@ export const recordChallenge = mutation({
   },
 });
 
-export const findChallenge = query({
+export const findChallenge = internalQuery({
   args: {
     challenge: v.string(),
     purpose: challengePurpose,
@@ -53,7 +53,7 @@ export const findChallenge = query({
   },
 });
 
-export const consumeChallenge = mutation({
+export const consumeChallenge = internalMutation({
   args: { challenge: v.string() },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -67,7 +67,7 @@ export const consumeChallenge = mutation({
 // Sweep stale challenges. Called from the existing cleanup cron so we
 // don't accumulate 5-minute rows indefinitely. Safe to call on a
 // schedule even when nobody is registering.
-export const sweepExpiredChallenges = mutation({
+export const sweepExpiredChallenges = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
@@ -82,7 +82,7 @@ export const sweepExpiredChallenges = mutation({
 
 // ── Credentials ─────────────────────────────────────────────────────
 
-export const listForUser = query({
+export const listForUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
     const rows = await ctx.db
@@ -101,7 +101,7 @@ export const listForUser = query({
   },
 });
 
-export const insertCredential = mutation({
+export const insertCredential = internalMutation({
   args: {
     userId: v.id("users"),
     credentialId: v.string(),
@@ -130,7 +130,7 @@ export const insertCredential = mutation({
   },
 });
 
-export const findByCredentialId = query({
+export const findByCredentialId = internalQuery({
   args: { credentialId: v.string() },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -149,7 +149,7 @@ export const findByCredentialId = query({
   },
 });
 
-export const touchCredential = mutation({
+export const touchCredential = internalMutation({
   args: { credentialId: v.string(), counter: v.number() },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -164,7 +164,7 @@ export const touchCredential = mutation({
   },
 });
 
-export const removeCredential = mutation({
+export const removeCredential = internalMutation({
   args: { userId: v.id("users"), credentialId: v.string() },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -190,7 +190,7 @@ export const removeCredential = mutation({
 //   { available: false, hasPasskey: false }— email exists via OAuth/email; user
 //                                            should sign in normally + enroll
 //                                            from settings (PasskeyEnrollPrompt)
-export const emailAvailable = query({
+export const emailAvailable = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, args) => {
     const normalized = args.email.trim().toLowerCase();
@@ -235,7 +235,7 @@ export const emailAvailable = query({
 //      email signup.
 //
 // Returns the new userDocId so the action can mint a session token.
-export const createPasskeyUser = mutation({
+export const createPasskeyUser = internalMutation({
   args: {
     email: v.string(),
     fullName: v.string(),

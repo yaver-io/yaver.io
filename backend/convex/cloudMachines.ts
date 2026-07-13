@@ -333,6 +333,13 @@ ${optionalRepoClone}    SCRIPT
   yaverDockerRunLines.push(`      ${selfhostedEnv} \\`);
   yaverDockerRunLines.push(`      -v /srv/yaver/state:/root \\`);
   yaverDockerRunLines.push(`      -v /srv/yaver/state/Workspace:/srv/yaver/workspace \\`);
+  // Mount the host's /etc/yaver so the CONTAINERIZED agent can read
+  // machine.json (managed-box identity). Without it loadMachineIdentity() is
+  // nil inside the container and git-autohydrate + idle-auto-off silently
+  // no-op — the box never inherits the owner's gh/glab creds and never parks
+  // itself. Bind mount reflects host writes live, so ordering vs the
+  // machine.json write in cloud-init doesn't matter.
+  yaverDockerRunLines.push(`      -v /etc/yaver:/etc/yaver \\`);
   yaverDockerRunLines.push(`      ${shellSingleQuote(image)}`);
   const yaverDockerRun = yaverDockerRunLines.join("\n");
 
@@ -784,7 +791,11 @@ ${hostedSnippet}${gpuSnippet}`;
 // ─── Queries ────────────────────────────────────────────────────
 
 /** Get all machines for a user (owned + team-shared). */
-export const listForUser = query({
+// internalQuery: returns a user's machines (IPs, hostnames, provider IDs).
+// Public exposure let any caller read ANY user's fleet by passing their userId.
+// Callers are server-side HTTP routes that pass the authenticated session's own
+// userDocId.
+export const listForUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     // Direct machines
@@ -844,7 +855,9 @@ export const listForUser = query({
 });
 
 /** Get a specific machine by ID. */
-export const get = query({
+// internalQuery: single-machine read by id (see getInternal for the
+// server-trusted variant). Public exposure leaked any machine's row by id.
+export const get = internalQuery({
   args: { machineId: v.id("cloudMachines") },
   handler: async (ctx, { machineId }) => {
     return await ctx.db.get(machineId);
@@ -972,7 +985,12 @@ async function createCloudMachine(
 }
 
 /** Create a new cloud machine and start provisioning. */
-export const create = mutation({
+// internalMutation, NOT public: it inserts a machine row + schedules a
+// billable Hetzner provision. Reachable only via server-side HTTP routes
+// (POST /machines, /billing/yaver-cloud/provision) that authenticate the
+// bearer + scope userId to the caller's own session. A public mutation here
+// would let anyone with the deployment URL create rows for any userId.
+export const create = internalMutation({
   args: {
     userId: v.id("users"),
     machineType: v.string(),        // "cpu" | "gpu"
@@ -1030,7 +1048,9 @@ export const adoptExisting = internalMutation({
   },
 });
 
-export const ensureForSubscription = mutation({
+// internalMutation: creates/revives a machine off a subscription. Only the
+// LemonSqueezy webhook path and the subscription-reconcile action call it.
+export const ensureForSubscription = internalMutation({
   args: {
     userId: v.id("users"),
     machineType: v.string(),
@@ -1470,7 +1490,7 @@ export const activeCountForUser = internalQuery({
  * cap. Lets the AI say "you're at 1 of 1 — upgrade for more" BEFORE the wall,
  * instead of a silent create failure. Enforcement still lives in provision().
  */
-export const quota = query({
+export const quota = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     const rows = await ctx.db
@@ -2059,7 +2079,7 @@ export const reconcileSubscriptions = internalAction({
       // ("yaver-cloud-gpu" ⇒ gpu). Tier defaults byok (a hosted sub
       // still gets a working box; hosted Convex re-bootstraps).
       const machineType = s.plan.includes("gpu") ? "gpu" : "cpu";
-      await ctx.runMutation(api.cloudMachines.ensureForSubscription, {
+      await ctx.runMutation(internal.cloudMachines.ensureForSubscription, {
         userId: s.userId,
         machineType,
         subscriptionId: s.subscriptionId,
@@ -2152,7 +2172,10 @@ export const setAutoPark = internalMutation({
   },
 });
 
-export const updateStatus = mutation({
+// internalMutation: rewrites status/serverIp/hetznerServerId for a machine.
+// Public exposure would let anyone mark a live billing box "stopped" or
+// corrupt the teardown pointer (hetznerServerId) that destroy() relies on.
+export const updateStatus = internalMutation({
   args: {
     machineId: v.id("cloudMachines"),
     status: v.string(),
@@ -2211,8 +2234,12 @@ export function snapshotIsMandatory(tier: string | undefined): boolean {
   return tier === "hosted";
 }
 
-/** Stop and deprovision a machine. force=true skips the hosted grace. */
-export const deprovision = mutation({
+/** Stop and deprovision a machine. force=true skips the hosted grace.
+ *  internalMutation: this cancels the subscription AND schedules the real
+ *  Hetzner destroy — the single most destructive resource op. Ownership is
+ *  enforced by the calling HTTP routes (per-machine userId === session), so
+ *  this must never be publicly callable with only a machineId. */
+export const deprovision = internalMutation({
   args: { machineId: v.id("cloudMachines"), force: v.optional(v.boolean()) },
   handler: async (ctx, { machineId, force }) => {
     const machine = await ctx.db.get(machineId);

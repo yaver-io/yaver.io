@@ -95,3 +95,6 @@ ci/.artifacts/
 .claude/
 IstanbulDigerK4.pdf
 desktop/agent/agent.exe
+
+# Local penetration-testing suite (offensive tooling — keep out of public repo)
+security/pentest/

@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 
 /**
  * Admin utilities. The cleanup helpers below are callable from
@@ -18,7 +18,7 @@ import { mutation, query } from "./_generated/server";
  */
 
 /** List all users. */
-export const listAllUsers = query({
+export const listAllUsers = internalQuery({
   args: {},
   handler: async (ctx) => {
     return await ctx.db.query("users").collect();
@@ -26,7 +26,7 @@ export const listAllUsers = query({
 });
 
 /** List all sessions. */
-export const listAllSessions = query({
+export const listAllSessions = internalQuery({
   args: {},
   handler: async (ctx) => {
     return await ctx.db.query("sessions").collect();
@@ -34,7 +34,7 @@ export const listAllSessions = query({
 });
 
 /** List all devices. */
-export const listAllDevices = query({
+export const listAllDevices = internalQuery({
   args: {},
   handler: async (ctx) => {
     return await ctx.db.query("devices").collect();
@@ -42,7 +42,7 @@ export const listAllDevices = query({
 });
 
 /** List recent auth logs. */
-export const listAuthLogs = query({
+export const listAuthLogs = internalQuery({
   args: {},
   handler: async (ctx) => {
     return await ctx.db
@@ -54,7 +54,7 @@ export const listAuthLogs = query({
 });
 
 /** Find all users by email. Returns array of user documents. */
-export const getUsersByEmail = query({
+export const getUsersByEmail = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
@@ -65,7 +65,7 @@ export const getUsersByEmail = query({
 });
 
 /** Export one user's account bundle for migration between deployments. */
-export const exportUserBundleByEmail = query({
+export const exportUserBundleByEmail = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, args) => {
     const user = await ctx.db
@@ -89,7 +89,7 @@ export const exportUserBundleByEmail = query({
 });
 
 /** Import or update one user's account bundle from another deployment. */
-export const importUserBundle = mutation({
+export const importUserBundle = internalMutation({
   args: {
     user: v.object({
       email: v.string(),
@@ -223,7 +223,7 @@ export const importUserBundle = mutation({
 });
 
 /** Delete ALL user data from the system — every table that holds user/device/session state. */
-export const deleteAllUserData = mutation({
+export const deleteAllUserData = internalMutation({
   args: {},
   handler: async (ctx) => {
     const tables = [
@@ -269,7 +269,7 @@ export const deleteAllUserData = mutation({
 });
 
 /** Delete all rows from a single table (paginated to stay within limits). */
-export const clearTable = mutation({
+export const clearTable = internalMutation({
   args: { table: v.string() },
   handler: async (ctx, args) => {
     const docs = await ctx.db.query(args.table as any).take(500);
@@ -281,7 +281,7 @@ export const clearTable = mutation({
 });
 
 /** Inspect one active guest grant by host+guest email. CLI/dashboard only. */
-export const getActiveGuestGrantByEmails = query({
+export const getActiveGuestGrantByEmails = internalQuery({
   args: {
     hostEmail: v.string(),
     guestEmail: v.string(),
@@ -328,7 +328,7 @@ export const getActiveGuestGrantByEmails = query({
 });
 
 /** Patch one active guest grant in place by host+guest email. CLI/dashboard only. */
-export const patchActiveGuestGrantByEmails = mutation({
+export const patchActiveGuestGrantByEmails = internalMutation({
   args: {
     hostEmail: v.string(),
     guestEmail: v.string(),
@@ -385,7 +385,7 @@ export const patchActiveGuestGrantByEmails = mutation({
 });
 
 /** Delete a user and ALL their data by user _id. */
-export const deleteUserData = mutation({
+export const deleteUserData = internalMutation({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
@@ -421,7 +421,7 @@ export const deleteUserData = mutation({
 // these queries assume the caller has already passed it.
 
 /** Aggregated counts + fleet-health alerts for the Overview tab. */
-export const dashboardCounts = query({
+export const dashboardCounts = internalQuery({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
@@ -472,7 +472,7 @@ export const dashboardCounts = query({
 /** Recent merged audit feed (userActivity + securityEvents) for the
  *  Overview "last 5" card. The Audit page below uses mergedAuditFeed
  *  with a paginate cursor. */
-export const recentAuditEvents = query({
+export const recentAuditEvents = internalQuery({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = Math.min(Math.max(args.limit ?? 5, 1), 50);
@@ -532,7 +532,7 @@ export const recentAuditEvents = query({
 /** Merged audit feed with filters + cursor pagination — backs the
  *  Audit tab. Cursor is the timestamp of the last seen row; pass
  *  cursor=undefined for the first page. */
-export const mergedAuditFeed = query({
+export const mergedAuditFeed = internalQuery({
   args: {
     limit: v.optional(v.number()),
     cursor: v.optional(v.number()),
@@ -632,7 +632,7 @@ export const mergedAuditFeed = query({
 });
 
 /** All devices with the owner email joined — backs the Devices tab. */
-export const fleetDevices = query({
+export const fleetDevices = internalQuery({
   args: {},
   handler: async (ctx) => {
     const devices = await ctx.db.query("devices").collect();
@@ -667,7 +667,7 @@ export const fleetDevices = query({
 
 /** Org-wide Yaver Mesh fleet view: every meshNode with owner email + device
  *  alias + advertised routes/exit-node + liveness. Powers /admin/network. */
-export const fleetMesh = query({
+export const fleetMesh = internalQuery({
   args: {},
   handler: async (ctx) => {
     const nodes = await ctx.db.query("meshNodes").collect();
@@ -707,7 +707,7 @@ export const fleetMesh = query({
 });
 
 /** Active sessions with user email + device alias joined. */
-export const activeSessionsForAdmin = query({
+export const activeSessionsForAdmin = internalQuery({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
@@ -739,7 +739,7 @@ export const activeSessionsForAdmin = query({
 /** All users with derived fields (mfa status, team count, last seen).
  *  Used by the Users tab (and scaffolded as the structured response
  *  even though the UI ships paginated/searched next pass). */
-export const allUsersForAdmin = query({
+export const allUsersForAdmin = internalQuery({
   args: {},
   handler: async (ctx) => {
     const users = await ctx.db.query("users").collect();
@@ -891,7 +891,7 @@ export async function decryptStoredOidcSecret(blob: string): Promise<string> {
  *  themselves an admin (env-var allowlist or platformRole === "admin");
  *  the schema migration that adds the column has shipped, so this is
  *  now the authoritative promotion path. */
-export const promoteToAdmin = mutation({
+export const promoteToAdmin = internalMutation({
   args: {
     targetEmail: v.string(),
     callerDocId: v.id("users"),
@@ -918,7 +918,7 @@ export const promoteToAdmin = mutation({
 
 /** Revoke the admin role. Refuses if the target is the only remaining
  *  admin and there is no env-var bootstrap admin to take over. */
-export const demoteFromAdmin = mutation({
+export const demoteFromAdmin = internalMutation({
   args: {
     targetDocId: v.id("users"),
     callerDocId: v.id("users"),
@@ -956,7 +956,7 @@ export const demoteFromAdmin = mutation({
 
 /** Delete every session token for a user. Forces re-auth on next
  *  request from every surface (web, mobile, CLI). */
-export const signOutUserAllSessions = mutation({
+export const signOutUserAllSessions = internalMutation({
   args: {
     targetDocId: v.id("users"),
     callerDocId: v.id("users"),
@@ -984,7 +984,7 @@ export const signOutUserAllSessions = mutation({
  *  historical backlog accreted before that fix (one account reached 362
  *  sessions / 184 valid). Pass targetDocId to prune one user, or omit to
  *  sweep every user. */
-export const pruneSurfaceSessions = mutation({
+export const pruneSurfaceSessions = internalMutation({
   args: {
     targetDocId: v.optional(v.id("users")),
     keepNewest: v.optional(v.number()),
@@ -1036,7 +1036,7 @@ export const pruneSurfaceSessions = mutation({
  *  upserts an "email" authIdentity without creating a second user row.
  *  passwordHash must be in the backend's PBKDF2 format (`saltB64:hashB64`,
  *  SHA-256, 100k iterations). Pairs with the relaxed lookupEmailUser gate. */
-export const setUserPassword = mutation({
+export const setUserPassword = internalMutation({
   args: {
     targetDocId: v.id("users"),
     passwordHash: v.string(),
@@ -1070,7 +1070,7 @@ export const setUserPassword = mutation({
 /** Cascade delete a user across every user-scoped table. GDPR
  *  right-to-erasure. Audit row is written BEFORE the user row is
  *  deleted so the foreign-key reference resolves. */
-export const deleteUserCascade = mutation({
+export const deleteUserCascade = internalMutation({
   args: {
     targetDocId: v.id("users"),
     callerDocId: v.id("users"),
@@ -1130,7 +1130,7 @@ export const deleteUserCascade = mutation({
 
 /** Full single-user bundle for GDPR export. Same shape as
  *  exportUserBundleByEmail but takes the doc id directly. */
-export const exportUserBundleById = query({
+export const exportUserBundleById = internalQuery({
   args: { targetDocId: v.id("users") },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.targetDocId);
@@ -1165,7 +1165,7 @@ export const exportUserBundleById = query({
 // ── Session actions ──────────────────────────────────────────────────
 
 /** Revoke one session by its document id. */
-export const revokeSession = mutation({
+export const revokeSession = internalMutation({
   args: {
     sessionDocId: v.id("sessions"),
     callerDocId: v.id("users"),
@@ -1188,7 +1188,7 @@ export const revokeSession = mutation({
 /** Queue a rescue command for the device. The agent polls
  *  agentRescueCommands on every heartbeat. Commands are strict-enum
  *  so a compromised UI cannot inject arbitrary shell. */
-export const queueAgentRescue = mutation({
+export const queueAgentRescue = internalMutation({
   args: {
     deviceDocId: v.id("devices"),
     command: v.union(
@@ -1224,7 +1224,7 @@ export const queueAgentRescue = mutation({
 /** Detach a device from its owner: delete every session attached to
  *  the deviceId and the device row itself. The agent will fail its
  *  next heartbeat and prompt the user to re-auth. */
-export const revokeDevice = mutation({
+export const revokeDevice = internalMutation({
   args: {
     deviceDocId: v.id("devices"),
     callerDocId: v.id("users"),
@@ -1251,7 +1251,7 @@ export const revokeDevice = mutation({
 
 /** Read the org policy singleton — null when the deployment has not
  *  yet configured one. Callers fall back to defaults. */
-export const getOrgPolicy = query({
+export const getOrgPolicy = internalQuery({
   args: {},
   handler: async (ctx) => {
     const row = await ctx.db
@@ -1263,7 +1263,7 @@ export const getOrgPolicy = query({
   },
 });
 
-export const setOrgPolicy = mutation({
+export const setOrgPolicy = internalMutation({
   args: {
     callerDocId: v.id("users"),
     enforceRelay: v.optional(v.boolean()),
@@ -1306,7 +1306,7 @@ export const setOrgPolicy = mutation({
 /** Read the OIDC config — returns the safe-to-display shape (no
  *  ciphertext / secret bytes). hasClientSecret signals whether the
  *  caller needs to provide a new secret on save. */
-export const getOidcConfig = query({
+export const getOidcConfig = internalQuery({
   args: {},
   handler: async (ctx) => {
     const row = await ctx.db
@@ -1333,7 +1333,7 @@ export const getOidcConfig = query({
 
 /** Internal — returns the full row including ciphertext. Only the
  *  HTTP callback handler should call this. */
-export const getOidcConfigRaw = query({
+export const getOidcConfigRaw = internalQuery({
   args: {},
   handler: async (ctx) => {
     return await ctx.db
@@ -1343,7 +1343,7 @@ export const getOidcConfigRaw = query({
   },
 });
 
-export const setOidcConfig = mutation({
+export const setOidcConfig = internalMutation({
   args: {
     callerDocId: v.id("users"),
     enabled: v.boolean(),
@@ -1403,7 +1403,7 @@ export const setOidcConfig = mutation({
   },
 });
 
-export const clearOidcConfig = mutation({
+export const clearOidcConfig = internalMutation({
   args: { callerDocId: v.id("users") },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -1418,7 +1418,7 @@ export const clearOidcConfig = mutation({
 
 // ── OIDC ephemeral state (PKCE + nonce + return-to) ──────────────────
 
-export const startOidcAttempt = mutation({
+export const startOidcAttempt = internalMutation({
   args: {
     state: v.string(),
     codeVerifier: v.string(),
@@ -1438,7 +1438,7 @@ export const startOidcAttempt = mutation({
   },
 });
 
-export const consumeOidcAttempt = mutation({
+export const consumeOidcAttempt = internalMutation({
   args: { state: v.string() },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -1459,7 +1459,7 @@ export const consumeOidcAttempt = mutation({
 /** Upsert a user signed in via OIDC. Provider = "oidc"; providerId =
  *  `${issuer}|${sub}` so two different IdPs with the same subject
  *  identifier don't collide. */
-export const upsertOidcUser = mutation({
+export const upsertOidcUser = internalMutation({
   args: {
     issuer: v.string(),
     sub: v.string(),

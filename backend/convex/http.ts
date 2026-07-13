@@ -370,7 +370,7 @@ async function attachPreviewMachineToSharedServer(
     process.env.YAVER_CLOUD_PREVIEW_PROVIDER_ID ||
     `preview-${region}`;
 
-  await ctx.runMutation(api.cloudMachines.updateStatus, {
+  await ctx.runMutation(internal.cloudMachines.updateStatus, {
     machineId,
     status: "active",
     hostname,
@@ -387,7 +387,7 @@ async function ensurePreviewCloudMachine(
   userDocId: string,
   region: string,
 ) {
-  const machines = await ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId });
+  const machines = await ctx.runQuery(internal.cloudMachines.listForUser, { userId: userDocId });
   const existing = Array.isArray(machines)
     ? machines.find((machine) => machine.machineType === "cpu" && machine.status !== "stopped")
     : null;
@@ -396,7 +396,7 @@ async function ensurePreviewCloudMachine(
     return existing._id;
   }
 
-  const machineId = await ctx.runMutation(api.cloudMachines.create, {
+  const machineId = await ctx.runMutation(internal.cloudMachines.create, {
     userId: userDocId,
     machineType: "cpu",
     region,
@@ -419,6 +419,9 @@ async function authenticateRequest(
   surveyCompleted: boolean;
   emailVerified: boolean;
   isOwner: boolean;
+  /** Auth scope. "machine" = a managed-box token, denied on account-level +
+   *  spend routes; "full"/undefined = a normal owner login. */
+  scope: "full" | "machine";
 } | null> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -449,7 +452,55 @@ async function authenticateRequest(
     // Owner flag drives owner-only hardware-cell visibility on every client
     // (web/mobile/daemon) without shipping any owner identity to the client.
     isOwner: (result as { isOwner?: boolean }).isOwner === true,
+    scope: (result as { scope?: "full" | "machine" }).scope === "machine" ? "machine" : "full",
   };
+}
+
+/**
+ * requireFullScope — deny a MACHINE-scoped token (a managed box's session) on
+ * account-level / spend routes. A rooted box holds a full-owner *bearer* today;
+ * this collapses its blast radius: the box can heartbeat + run its own tasks,
+ * but it can NEVER provision, spend, or park/wake machines from the billing API.
+ * Returns an error Response to return early, or null to proceed.
+ */
+function requireFullScope(
+  auth: { scope: "full" | "machine" },
+): Response | null {
+  if (auth.scope === "machine") {
+    return errorResponse(
+      "This token is machine-scoped and cannot perform account-level operations.",
+      403,
+    );
+  }
+  return null;
+}
+
+/**
+ * requireServerSecret — gate the server-to-server auth-provisioning routes
+ * (`/auth/create-session`, `/auth/upsert-user`, `/auth/totp/create-pending`).
+ * These are called by the web OAuth callback AFTER it has verified the provider
+ * assertion; they trust a body-supplied `userId`/`email`, so without this gate
+ * anyone who knows the deployment URL can mint a session or upsert-identity for
+ * an arbitrary user (full account takeover — audit C1/C2/C7).
+ *
+ * The caller proves it is our own web backend by presenting the shared secret
+ * `CONVEX_INTERNAL_SECRET` in the `X-Internal-Secret` header. Compared via SHA-256
+ * hex (constant-length, constant-time) so neither the value nor its length leaks.
+ *
+ * STAGED ROLLOUT (fail-open until provisioned): when `CONVEX_INTERNAL_SECRET` is
+ * unset on the deployment the check is skipped, so deploying this code cannot
+ * break login before the web side is shipped with the header. Sequence:
+ *   1. deploy this (env unset → no enforcement),
+ *   2. ship web sending `X-Internal-Secret`,
+ *   3. `npx convex env set CONVEX_INTERNAL_SECRET <secret>` → enforcement turns on.
+ */
+async function requireServerSecret(request: Request): Promise<Response | null> {
+  const expected = process.env.CONVEX_INTERNAL_SECRET;
+  if (!expected) return null; // not yet provisioned — staged rollout, allow
+  const provided = request.headers.get("X-Internal-Secret") || "";
+  const [a, b] = await Promise.all([sha256Hex(provided), sha256Hex(expected)]);
+  if (a !== b) return errorResponse("Forbidden", 403);
+  return null;
 }
 
 // ── Password Hashing Helpers (PBKDF2-SHA256) ────────────────────────
@@ -507,7 +558,7 @@ async function createSessionToken(
     .join("");
   const tokenHash = await sha256Hex(token);
   const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
-  await ctx.runMutation(api.auth.createSession, { tokenHash, userId, deviceId, expiresAt });
+  await ctx.runMutation(internal.auth.createSession, { tokenHash, userId, deviceId, expiresAt });
   return token;
 }
 
@@ -676,7 +727,7 @@ http.route({
     const token = await createSessionToken(ctx, userId);
     // userId returned to the client is the public userId string (stable,
     // shareable). Keep userDocId in its own field for back-compat.
-    const publicUser = await ctx.runQuery(api.auth.getUserPublicProfile, { userDocId: userId });
+    const publicUser = await ctx.runQuery(internal.auth.getUserPublicProfile, { userDocId: userId });
     return jsonResponse({
       token,
       userId: publicUser?.userId ?? String(userId),
@@ -703,7 +754,7 @@ http.route({
       return errorResponse("Too many failed attempts. Try again later.", 429);
     }
 
-    const user = await ctx.runQuery(api.auth.lookupEmailUser, {
+    const user = await ctx.runQuery(internal.auth.lookupEmailUser, {
       email: normEmail,
     });
 
@@ -722,7 +773,7 @@ http.route({
     // Check if 2FA is enabled
     const fullUser = await ctx.runQuery(api.auth.getUserWithTotp, { userId: user._id });
     if (fullUser?.totpEnabled) {
-      const { pendingToken } = await ctx.runMutation(api.totp.createPendingAuth, { userId: user._id });
+      const { pendingToken } = await ctx.runMutation(internal.totp.createPendingAuth, { userId: user._id });
       return jsonResponse({ requires2fa: true, pendingToken });
     }
 
@@ -747,7 +798,7 @@ http.route({
     const body = await request.json().catch(() => ({} as any));
     const origin = request.headers.get("Origin") || "";
     try {
-      const options = await ctx.runAction(api.passkeys.registerStart, {
+      const options = await ctx.runAction(internal.passkeys.registerStart, {
         userDocId: session.userDocId as any,
         origin,
         deviceLabel: typeof body?.deviceLabel === "string" ? body.deviceLabel : undefined,
@@ -770,7 +821,7 @@ http.route({
     if (!body?.response) return errorResponse("Missing response", 400);
     const origin = request.headers.get("Origin") || "";
     try {
-      const result = await ctx.runAction(api.passkeys.registerFinish, {
+      const result = await ctx.runAction(internal.passkeys.registerFinish, {
         userDocId: session.userDocId as any,
         origin,
         response: body.response,
@@ -956,7 +1007,7 @@ http.route({
     if (!email || !email.includes("@")) {
       return jsonResponse({ hasPasskey: false, emailRegistered: false });
     }
-    const result = await ctx.runQuery(api.passkeysDb.emailAvailable, { email });
+    const result = await ctx.runQuery(internal.passkeysDb.emailAvailable, { email });
     return jsonResponse({
       hasPasskey: result.available === false && result.hasPasskey === true,
       emailRegistered: result.available === false,
@@ -971,7 +1022,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    const rows = await ctx.runQuery(api.passkeysDb.listForUser, {
+    const rows = await ctx.runQuery(internal.passkeysDb.listForUser, {
       userId: session.userDocId as any,
     });
     return jsonResponse({ passkeys: rows });
@@ -989,7 +1040,7 @@ http.route({
     const credentialId = String(body?.credentialId || "").trim();
     if (!credentialId) return errorResponse("Missing credentialId", 400);
     try {
-      const result = await ctx.runMutation(api.passkeysDb.removeCredential, {
+      const result = await ctx.runMutation(internal.passkeysDb.removeCredential, {
         userId: session.userDocId as any,
         credentialId,
       });
@@ -1108,7 +1159,7 @@ http.route({
     }
 
     // Look up the email user to get the password hash
-    const emailUser = await ctx.runQuery(api.auth.lookupEmailUser, { email: user.email });
+    const emailUser = await ctx.runQuery(internal.auth.lookupEmailUser, { email: user.email });
     if (!emailUser || !emailUser.passwordHash) {
       return errorResponse("Password change is only available for email accounts", 400);
     }
@@ -1187,8 +1238,10 @@ http.route({
   path: "/auth/upsert-user",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const denied = await requireServerSecret(request);
+    if (denied) return denied;
     const body = await request.json();
-    const userId = await ctx.runMutation(api.auth.createOrUpdateUser, {
+    const userId = await ctx.runMutation(internal.auth.createOrUpdateUser, {
       email: body.email,
       fullName: body.fullName,
       provider: body.provider,
@@ -1248,7 +1301,7 @@ http.route({
       return errorResponse("linkToken, provider, providerId, email required", 400);
     }
     try {
-      const result = await ctx.runMutation(api.auth.completeOAuthLink, {
+      const result = await ctx.runMutation(internal.auth.completeOAuthLink, {
         linkToken: body.linkToken,
         provider: body.provider,
         providerId: body.providerId,
@@ -1423,8 +1476,10 @@ http.route({
   path: "/auth/create-session",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const denied = await requireServerSecret(request);
+    if (denied) return denied;
     const body = await request.json();
-    const sessionId = await ctx.runMutation(api.auth.createSession, {
+    const sessionId = await ctx.runMutation(internal.auth.createSession, {
       tokenHash: body.tokenHash,
       userId: body.userId,
       deviceId: body.deviceId,
@@ -1453,7 +1508,7 @@ http.route({
       return errorResponse("unknown provider", 400);
     }
 
-    const userId = await ctx.runMutation(api.auth.createOrUpdateUser, {
+    const userId = await ctx.runMutation(internal.auth.createOrUpdateUser, {
       email: String(body.email).trim().toLowerCase(),
       fullName: typeof body.fullName === "string" ? body.fullName.trim() : "",
       provider: provider as "google" | "microsoft" | "apple" | "github" | "gitlab" | "email",
@@ -1512,7 +1567,7 @@ http.route({
 
     let teams: { teamId: string; role: string }[] = [];
     if (userDocId) {
-      const userTeams = await ctx.runQuery(api.teams.getTeamsForUser, { userId: userDocId });
+      const userTeams = await ctx.runQuery(internal.teams.getTeamsForUser, { userId: userDocId });
       teams = (userTeams || []).map((t: any) => ({ teamId: t.teamId, role: t.role }));
     }
 
@@ -1622,7 +1677,7 @@ http.route({
     }
 
     // Upsert user
-    const userId = await ctx.runMutation(api.auth.createOrUpdateUser, {
+    const userId = await ctx.runMutation(internal.auth.createOrUpdateUser, {
       email: email.toLowerCase(),
       fullName: fullName || "",
       provider: "apple",
@@ -1632,7 +1687,7 @@ http.route({
     // Check if 2FA is enabled
     const totpCheck = await ctx.runQuery(api.auth.getUserWithTotp, { userId });
     if (totpCheck?.totpEnabled) {
-      const { pendingToken } = await ctx.runMutation(api.totp.createPendingAuth, { userId });
+      const { pendingToken } = await ctx.runMutation(internal.totp.createPendingAuth, { userId });
       return jsonResponse({ requires2fa: true, pendingToken });
     }
 
@@ -1646,7 +1701,7 @@ http.route({
     const tokenHash = await sha256Hex(token);
     const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000; // 30 days
 
-    await ctx.runMutation(api.auth.createSession, {
+    await ctx.runMutation(internal.auth.createSession, {
       tokenHash,
       userId,
       deviceId: body.deviceId || undefined,
@@ -1710,7 +1765,7 @@ http.route({
       return errorResponse("Unauthorized", 401);
     }
 
-    await ctx.runMutation(api.auth.deleteSessionsByDeviceId, {
+    await ctx.runMutation(internal.auth.deleteSessionsByDeviceId, {
       userId: session.userDocId,
       deviceId: body.deviceId,
     });
@@ -1785,7 +1840,7 @@ http.route({
       return errorResponse("deviceId, hardwareId, publicKey required", 400);
     }
     try {
-      const res = await ctx.runMutation(api.devices.markBootstrap, {
+      const res = await ctx.runMutation(internal.devices.markBootstrap, {
         deviceId: body.deviceId,
         hardwareId: body.hardwareId,
         publicKey: body.publicKey,
@@ -2497,7 +2552,7 @@ http.route({
     if (!body?.deviceId || typeof body.deviceId !== "string") {
       return errorResponse("deviceId required", 400);
     }
-    await ctx.runMutation(api.devices.presenceUpdate, {
+    await ctx.runMutation(internal.devices.presenceUpdate, {
       deviceId: body.deviceId,
       online: body.online === true,
       peerAddr: typeof body.peerAddr === "string" ? body.peerAddr : undefined,
@@ -3441,7 +3496,7 @@ http.route({
     const authHeader = request.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
     const tokenHash = await sha256Hex(authHeader.slice(7));
-    const result = await ctx.runMutation(api.userSettings.repairRelayPassword, { tokenHash });
+    const result = await ctx.runMutation(internal.userSettings.repairRelayPassword, { tokenHash });
     if (!result.ok) return errorResponse(result.reason || "repair failed", 401);
     return jsonResponse(result);
   }),
@@ -3463,7 +3518,7 @@ http.route({
         typeof body.token === "string" && body.token
           ? await sha256Hex(body.token)
           : undefined;
-      const result = await ctx.runQuery(api.userSettings.validateRelayPassword, {
+      const result = await ctx.runQuery(internal.userSettings.validateRelayPassword, {
         password: body.password,
         deviceId: typeof body.deviceId === "string" ? body.deviceId : undefined,
         action: typeof body.action === "string" ? body.action : undefined,
@@ -3717,9 +3772,11 @@ http.route({
   path: "/auth/totp/create-pending",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const denied = await requireServerSecret(request);
+    if (denied) return denied;
     const body = await request.json();
     if (!body.userId) return errorResponse("userId required", 400);
-    const result = await ctx.runMutation(api.totp.createPendingAuth, { userId: body.userId });
+    const result = await ctx.runMutation(internal.totp.createPendingAuth, { userId: body.userId });
     return jsonResponse(result);
   }),
 });
@@ -3735,7 +3792,7 @@ http.route({
     }
 
     try {
-      const result = await ctx.runMutation(api.totp.verifyTotpForLogin, {
+      const result = await ctx.runMutation(internal.totp.verifyTotpForLogin, {
         pendingToken: body.pendingToken,
         code: body.code,
       });
@@ -3837,7 +3894,7 @@ http.route({
     }
 
     try {
-      await ctx.runMutation(api.deviceCode.authorizeDeviceCode, {
+      await ctx.runMutation(internal.deviceCode.authorizeDeviceCode, {
         userCode: userCode.toUpperCase().trim(),
         userId: userDoc,
       });
@@ -3869,7 +3926,7 @@ http.route({
     const tokenHash = await sha256Hex(token);
     const body = await request.json().catch(() => ({}) as any);
     try {
-      const result = await ctx.runMutation(api.deviceCode.createAuthorizedDeviceCode, {
+      const result = await ctx.runMutation(internal.deviceCode.createAuthorizedDeviceCode, {
         tokenHash,
         machineName: typeof body?.machineName === "string" ? body.machineName : undefined,
         platform: typeof body?.platform === "string" ? body.platform : undefined,
@@ -4128,7 +4185,7 @@ http.route({
           if (productType === "cpu" || productType === "gpu" || isCloudPreviewProduct) {
             // Cloud dev machine — create and provision
             const teamId = payload.meta?.custom_data?.team_id;
-            await ctx.runMutation(api.cloudMachines.ensureForSubscription, {
+            await ctx.runMutation(internal.cloudMachines.ensureForSubscription, {
               userId: user._id,
               machineType: productType === "gpu" ? "gpu" : machineType,
               teamId,
@@ -4215,7 +4272,7 @@ http.route({
 
           for (const machine of machines) {
             if (machine.status !== "stopped" && machine.status !== "stopping") {
-              await ctx.runMutation(api.cloudMachines.deprovision, {
+              await ctx.runMutation(internal.cloudMachines.deprovision, {
                 machineId: machine._id,
               });
             }
@@ -4577,6 +4634,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
     // Open to any cloud-access user — they can only ever decommission a
     // box they own (the per-machine ownership check below enforces it),
     // and a prepaid user must be able to tear down their own box.
@@ -4596,7 +4655,7 @@ http.route({
     if (String(machine.userId) !== String(session.userDocId)) {
       return errorResponse("Not your machine", 403);
     }
-    await ctx.runMutation(api.cloudMachines.deprovision, { machineId: machineId as any });
+    await ctx.runMutation(internal.cloudMachines.deprovision, { machineId: machineId as any });
     return jsonResponse({ ok: true, machineId, mode: "dev-deprovision", note: "snapshot+delete scheduled" });
   }),
 });
@@ -4962,7 +5021,7 @@ http.route({
     const region = (body.region ?? "eu").trim() === "us" ? "us" : "eu";
     // Anti-fan-out: cap BYO rows per user the same way managed does.
     const MAX = Number(process.env.YAVER_CLOUD_MAX_MACHINES_PER_USER) || 10;
-    const existing = await ctx.runQuery(api.cloudMachines.listForUser, { userId: session.userDocId as any });
+    const existing = await ctx.runQuery(internal.cloudMachines.listForUser, { userId: session.userDocId as any });
     const live = Array.isArray(existing) ? existing.filter((m: any) => m.status && m.status !== "stopped").length : 0;
     if (live >= MAX) {
       return jsonResponse({ ok: false, error: `Machine limit reached (${MAX}).` }, 409);
@@ -4999,7 +5058,7 @@ http.route({
       return errorResponse("machineId + hetznerServerId required", 400);
     }
     // Ownership check: the row must belong to the caller.
-    const machine = await ctx.runQuery(api.cloudMachines.get, { machineId: body.machineId as any }).catch(() => null);
+    const machine = await ctx.runQuery(internal.cloudMachines.get, { machineId: body.machineId as any }).catch(() => null);
     if (!machine || String(machine.userId) !== String(session.userDocId)) {
       return errorResponse("Not found", 404);
     }
@@ -5025,6 +5084,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
     if (!cloudAccessAllowed(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
@@ -5045,7 +5106,7 @@ http.route({
     // absolute count. This bounds the TOCTOU window of canStart (which
     // only checks a single-box reserve) to nothing meaningful.
     const MAX_MACHINES = Number(process.env.YAVER_CLOUD_MAX_MACHINES_PER_USER) || 10;
-    const existing = await ctx.runQuery(api.cloudMachines.listForUser, {
+    const existing = await ctx.runQuery(internal.cloudMachines.listForUser, {
       userId: session.userDocId as any,
     });
     const liveCount = Array.isArray(existing)
@@ -5073,7 +5134,7 @@ http.route({
     }
 
     try {
-      const machineId = await ctx.runMutation(api.cloudMachines.create, {
+      const machineId = await ctx.runMutation(internal.cloudMachines.create, {
         userId: session.userDocId as any,
         machineType,
         region,
@@ -5096,6 +5157,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
     if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Owner-only (private preview) on this account", 403);
     }
@@ -5155,6 +5218,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
     if (!cloudAccessAllowed(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
@@ -5193,6 +5258,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
     if (!cloudAccessAllowed(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
@@ -5259,7 +5326,7 @@ http.route({
     const [subscription, relay, machines, wallet] = await Promise.all([
       ctx.runQuery(api.subscriptions.getByUser, { userId: userDocId }),
       ctx.runQuery(api.managedRelays.getByUser, { userId: userDocId }),
-      ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId }),
+      ctx.runQuery(internal.cloudMachines.listForUser, { userId: userDocId }),
       ctx.runQuery(internal.cloudLifecycle.getWallet, { userId: userDocId }),
     ]);
 
@@ -5362,7 +5429,7 @@ http.route({
     const userDocId = await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
     if (!userDocId) return errorResponse("User not found", 404);
 
-    const teams = await ctx.runQuery(api.teams.getTeamsForUser, { userId: userDocId });
+    const teams = await ctx.runQuery(internal.teams.getTeamsForUser, { userId: userDocId });
     return jsonResponse({ teams });
   }),
 });
@@ -5383,7 +5450,7 @@ http.route({
     if (!userDocId) return errorResponse("User not found", 404);
 
     const body = await request.json();
-    const teamId = await ctx.runMutation(api.teams.create, {
+    const teamId = await ctx.runMutation(internal.teams.create, {
       name: body.name || "My Team",
       ownerId: userDocId,
       plan: body.plan || "cpu",
@@ -5413,14 +5480,14 @@ http.route({
     if (!body.teamId || !body.email) return errorResponse("teamId and email required", 400);
 
     // Verify caller is team admin
-    const team = await ctx.runQuery(api.teams.getByTeamId, { teamId: body.teamId });
+    const team = await ctx.runQuery(internal.teams.getByTeamId, { teamId: body.teamId });
     if (!team) return errorResponse("Team not found", 404);
 
-    const isMember = await ctx.runQuery(api.teams.isMember, { teamId: body.teamId, userId: userDocId });
+    const isMember = await ctx.runQuery(internal.teams.isMember, { teamId: body.teamId, userId: userDocId });
     if (!isMember) return errorResponse("Not a team member", 403);
 
     try {
-      const result = await ctx.runMutation(api.teams.addMember, {
+      const result = await ctx.runMutation(internal.teams.addMember, {
         teamId: body.teamId,
         userEmail: body.email,
         role: body.role || "member",
@@ -5450,7 +5517,7 @@ http.route({
     const teamId = url.searchParams.get("teamId");
     if (!teamId) return errorResponse("teamId required", 400);
 
-    const members = await ctx.runQuery(api.teams.listMembers, { teamId });
+    const members = await ctx.runQuery(internal.teams.listMembers, { teamId });
     return jsonResponse({ members });
   }),
 });
@@ -5475,7 +5542,7 @@ http.route({
     const teamId = url.searchParams.get("teamId");
     if (!teamId) return errorResponse("teamId required", 400);
 
-    const isMember = await ctx.runQuery(api.teams.isMember, { teamId, userId: userDocId });
+    const isMember = await ctx.runQuery(internal.teams.isMember, { teamId, userId: userDocId });
     return jsonResponse({ isMember, teamId, userId: session.userId });
   }),
 });
@@ -5577,7 +5644,7 @@ http.route({
     const userDocId = await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
     if (!userDocId) return errorResponse("User not found", 404);
 
-    const machines = await ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId });
+    const machines = await ctx.runQuery(internal.cloudMachines.listForUser, { userId: userDocId });
     return jsonResponse({ machines });
   }),
 });
@@ -5593,12 +5660,14 @@ http.route({
 
     const session = await ctx.runQuery(api.auth.validateSession, { tokenHash });
     if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
 
     const userDocId = await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
     if (!userDocId) return errorResponse("User not found", 404);
 
     const body = await request.json();
-    const machineId = await ctx.runMutation(api.cloudMachines.create, {
+    const machineId = await ctx.runMutation(internal.cloudMachines.create, {
       userId: userDocId,
       machineType: body.machineType || "cpu",
       teamId: body.teamId,
@@ -7529,7 +7598,7 @@ async function requireAdminRequest(
   let isSchemaAdmin = false;
   if (!isAllowlistAdmin) {
     try {
-      const userDoc = await ctx.runQuery(api.auth.getUserByDocId, {
+      const userDoc = await ctx.runQuery(internal.auth.getUserByDocId, {
         userDocId: user.userDocId,
       });
       isSchemaAdmin = userDoc?.platformRole === "admin";
@@ -7556,9 +7625,9 @@ async function requireAdminRequest(
   // admins fall through to this check.
   if (!isAllowlistAdmin) {
     try {
-      const policy = await ctx.runQuery(api.admin.getOrgPolicy, {});
+      const policy = await ctx.runQuery(internal.admin.getOrgPolicy, {});
       if (policy?.requireMfaForAdmins) {
-        const userDoc = await ctx.runQuery(api.auth.getUserByDocId, {
+        const userDoc = await ctx.runQuery(internal.auth.getUserByDocId, {
           userDocId: user.userDocId,
         });
         if (!userDoc?.totpEnabled) {
@@ -7587,8 +7656,8 @@ http.route({
     const gate = await requireAdminRequest(ctx, request);
     if (!gate.ok) return gate.response;
     const [counts, recent] = await Promise.all([
-      ctx.runQuery(api.admin.dashboardCounts, {}),
-      ctx.runQuery(api.admin.recentAuditEvents, { limit: 5 }),
+      ctx.runQuery(internal.admin.dashboardCounts, {}),
+      ctx.runQuery(internal.admin.recentAuditEvents, { limit: 5 }),
     ]);
     return jsonResponse({ ...counts, recent });
   }),
@@ -7600,7 +7669,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const gate = await requireAdminRequest(ctx, request);
     if (!gate.ok) return gate.response;
-    const rows = await ctx.runQuery(api.admin.fleetDevices, {});
+    const rows = await ctx.runQuery(internal.admin.fleetDevices, {});
     return jsonResponse({ rows });
   }),
 });
@@ -7611,7 +7680,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const gate = await requireAdminRequest(ctx, request);
     if (!gate.ok) return gate.response;
-    const rows = await ctx.runQuery(api.admin.activeSessionsForAdmin, {});
+    const rows = await ctx.runQuery(internal.admin.activeSessionsForAdmin, {});
     return jsonResponse({ rows });
   }),
 });
@@ -7622,7 +7691,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const gate = await requireAdminRequest(ctx, request);
     if (!gate.ok) return gate.response;
-    const data = await ctx.runQuery(api.admin.fleetMesh, {});
+    const data = await ctx.runQuery(internal.admin.fleetMesh, {});
     return jsonResponse(data);
   }),
 });
@@ -7633,7 +7702,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const gate = await requireAdminRequest(ctx, request);
     if (!gate.ok) return gate.response;
-    const rows = await ctx.runQuery(api.admin.allUsersForAdmin, {});
+    const rows = await ctx.runQuery(internal.admin.allUsersForAdmin, {});
     return jsonResponse({ rows });
   }),
 });
@@ -7656,7 +7725,7 @@ http.route({
       const v = params.get(key);
       return v === null || v === "" ? undefined : v;
     };
-    const result = await ctx.runQuery(api.admin.mergedAuditFeed, {
+    const result = await ctx.runQuery(internal.admin.mergedAuditFeed, {
       limit: numOrUndef("limit") ?? 50,
       cursor: numOrUndef("cursor"),
       actorEmail: strOrUndef("actor"),
@@ -7680,7 +7749,7 @@ http.route({
     if (!user) return errorResponse("Unauthorized", 401);
     let schemaAdmin = false;
     try {
-      const doc = await ctx.runQuery(api.auth.getUserByDocId, {
+      const doc = await ctx.runQuery(internal.auth.getUserByDocId, {
         userDocId: user.userDocId as any,
       });
       schemaAdmin = doc?.platformRole === "admin";
@@ -7762,7 +7831,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.queueAgentRescue, {
+      const result = await ctx.runMutation(internal.admin.queueAgentRescue, {
         deviceDocId: body.deviceDocId,
         command: body.command,
         callerDocId,
@@ -7785,7 +7854,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.revokeDevice, {
+      const result = await ctx.runMutation(internal.admin.revokeDevice, {
         deviceDocId: body.deviceDocId,
         callerDocId,
       });
@@ -7811,7 +7880,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.revokeSession, {
+      const result = await ctx.runMutation(internal.admin.revokeSession, {
         sessionDocId: body.sessionDocId,
         callerDocId,
       });
@@ -7835,7 +7904,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.promoteToAdmin, {
+      const result = await ctx.runMutation(internal.admin.promoteToAdmin, {
         targetEmail: body.targetEmail,
         callerDocId,
       });
@@ -7857,7 +7926,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.demoteFromAdmin, {
+      const result = await ctx.runMutation(internal.admin.demoteFromAdmin, {
         targetDocId: body.targetDocId,
         callerDocId,
       });
@@ -7879,7 +7948,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.signOutUserAllSessions, {
+      const result = await ctx.runMutation(internal.admin.signOutUserAllSessions, {
         targetDocId: body.targetDocId,
         callerDocId,
       });
@@ -7899,7 +7968,7 @@ http.route({
     const body = await parseJsonBody(request);
     if (!body?.targetDocId) return errorResponse("targetDocId required", 400);
     try {
-      const bundle = await ctx.runQuery(api.admin.exportUserBundleById, {
+      const bundle = await ctx.runQuery(internal.admin.exportUserBundleById, {
         targetDocId: body.targetDocId,
       });
       if (!bundle) return errorResponse("User not found", 404);
@@ -7928,7 +7997,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.deleteUserCascade, {
+      const result = await ctx.runMutation(internal.admin.deleteUserCascade, {
         targetDocId: body.targetDocId,
         callerDocId,
       });
@@ -7947,7 +8016,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const gate = await requireAdminRequest(ctx, request);
     if (!gate.ok) return gate.response;
-    const policy = await ctx.runQuery(api.admin.getOrgPolicy, {});
+    const policy = await ctx.runQuery(internal.admin.getOrgPolicy, {});
     return jsonResponse({ policy });
   }),
 });
@@ -7963,7 +8032,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.setOrgPolicy, {
+      const result = await ctx.runMutation(internal.admin.setOrgPolicy, {
         callerDocId,
         enforceRelay: body.enforceRelay,
         allowedRunners: body.allowedRunners,
@@ -7990,7 +8059,7 @@ http.route({
   path: "/auth/oidc/info",
   method: "GET",
   handler: httpAction(async (ctx) => {
-    const cfg = await ctx.runQuery(api.admin.getOidcConfig, {});
+    const cfg = await ctx.runQuery(internal.admin.getOidcConfig, {});
     if (!cfg || !cfg.enabled) {
       return jsonResponse({ enabled: false });
     }
@@ -8008,7 +8077,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const gate = await requireAdminRequest(ctx, request);
     if (!gate.ok) return gate.response;
-    const cfg = await ctx.runQuery(api.admin.getOidcConfig, {});
+    const cfg = await ctx.runQuery(internal.admin.getOidcConfig, {});
     return jsonResponse({ config: cfg });
   }),
 });
@@ -8089,7 +8158,7 @@ http.route({
     // row.
     const discovery = await discoverOidc(body.issuerUrl);
     if (!discovery.ok) {
-      const existing = await ctx.runQuery(api.admin.getOidcConfig, {});
+      const existing = await ctx.runQuery(internal.admin.getOidcConfig, {});
       if (!existing || !existing.authorizationEndpoint) {
         return errorResponse(
           `Discovery failed: ${discovery.status}. Fix the issuer URL or test from the Test button first.`,
@@ -8098,7 +8167,7 @@ http.route({
       }
     }
     try {
-      const result = await ctx.runMutation(api.admin.setOidcConfig, {
+      const result = await ctx.runMutation(internal.admin.setOidcConfig, {
         callerDocId,
         enabled: body.enabled === true,
         issuerUrl: body.issuerUrl,
@@ -8123,7 +8192,7 @@ http.route({
     const callerDocId = await getCallerDocId(ctx, request);
     if (!callerDocId) return errorResponse("Unauthorized", 401);
     try {
-      const result = await ctx.runMutation(api.admin.clearOidcConfig, {
+      const result = await ctx.runMutation(internal.admin.clearOidcConfig, {
         callerDocId,
       });
       return jsonResponse(result);
@@ -8182,7 +8251,7 @@ http.route({
   path: "/auth/oidc/start",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
-    const cfg = await ctx.runQuery(api.admin.getOidcConfig, {});
+    const cfg = await ctx.runQuery(internal.admin.getOidcConfig, {});
     if (!cfg || !cfg.enabled || !cfg.authorizationEndpoint) {
       return errorResponse(
         "OIDC is not configured on this deployment.",
@@ -8197,7 +8266,7 @@ http.route({
     const challenge = await pkceChallenge(verifier);
     const nonce = randomBase64Url(16);
 
-    await ctx.runMutation(api.admin.startOidcAttempt, {
+    await ctx.runMutation(internal.admin.startOidcAttempt, {
       state,
       codeVerifier: verifier,
       nonce,
@@ -8245,12 +8314,12 @@ http.route({
     if (errParam) return redirectToAuth({ oidc_error: errParam });
     if (!code || !state) return redirectToAuth({ oidc_error: "missing_params" });
 
-    const cfg = await ctx.runQuery(api.admin.getOidcConfigRaw, {});
+    const cfg = await ctx.runQuery(internal.admin.getOidcConfigRaw, {});
     if (!cfg || !cfg.enabled || !cfg.tokenEndpoint || !cfg.userinfoEndpoint) {
       return redirectToAuth({ oidc_error: "config_missing" });
     }
 
-    const attempt = await ctx.runMutation(api.admin.consumeOidcAttempt, { state });
+    const attempt = await ctx.runMutation(internal.admin.consumeOidcAttempt, { state });
     if (!attempt) return redirectToAuth({ oidc_error: "invalid_state" });
 
     // Exchange code → tokens.
@@ -8341,7 +8410,7 @@ http.route({
     if (!email) return redirectToAuth({ oidc_error: "no_email" });
 
     // Upsert + session mint.
-    const upserted = await ctx.runMutation(api.admin.upsertOidcUser, {
+    const upserted = await ctx.runMutation(internal.admin.upsertOidcUser, {
       issuer: cfg.issuerUrl,
       sub,
       email,
@@ -8355,7 +8424,7 @@ http.route({
     const rawToken = randomBase64Url(32);
     const tokenHash = await sha256Hex(rawToken);
     const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
-    await ctx.runMutation(api.auth.createSession, {
+    await ctx.runMutation(internal.auth.createSession, {
       tokenHash,
       userId: upserted.userDocId,
       expiresAt,

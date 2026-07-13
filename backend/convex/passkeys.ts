@@ -11,9 +11,9 @@
 // already issues, so downstream code (validate / refresh / device
 // pairing / heartbeat) doesn't need to know about WebAuthn.
 
-import { action } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -78,7 +78,7 @@ function b64urlToBytes(input: string): Uint8Array {
  * this action). Returns the WebAuthn options blob the browser hands to
  * navigator.credentials.create().
  */
-export const registerStart = action({
+export const registerStart = internalAction({
   args: {
     userDocId: v.id("users"),
     origin: v.string(),
@@ -90,12 +90,12 @@ export const registerStart = action({
     }
     const rpID = rpIdForOrigin(args.origin);
 
-    const profile = await ctx.runQuery(api.auth.getUserPublicProfile, {
+    const profile = await ctx.runQuery(internal.auth.getUserPublicProfile, {
       userDocId: args.userDocId,
     });
     if (!profile) throw new Error("user not found");
 
-    const existing = await ctx.runQuery(api.passkeysDb.listForUser, {
+    const existing = await ctx.runQuery(internal.passkeysDb.listForUser, {
       userId: args.userDocId,
     });
 
@@ -126,7 +126,7 @@ export const registerStart = action({
       },
     });
 
-    await ctx.runMutation(api.passkeysDb.recordChallenge, {
+    await ctx.runMutation(internal.passkeysDb.recordChallenge, {
       challenge: options.challenge,
       purpose: "register",
       userId: args.userDocId,
@@ -141,7 +141,7 @@ export const registerStart = action({
  * verify it against the challenge we issued in step 1, then persist
  * the credential.
  */
-export const registerFinish = action({
+export const registerFinish = internalAction({
   args: {
     userDocId: v.id("users"),
     origin: v.string(),
@@ -159,7 +159,7 @@ export const registerFinish = action({
       : null;
     if (!expectedChallenge) throw new Error("invalid response");
 
-    const challengeRow = await ctx.runQuery(api.passkeysDb.findChallenge, {
+    const challengeRow = await ctx.runQuery(internal.passkeysDb.findChallenge, {
       challenge: expectedChallenge,
       purpose: "register",
     });
@@ -181,7 +181,7 @@ export const registerFinish = action({
     const credentialIdB64 = cred.id; // already base64url string in v13
     const publicKeyB64 = bytesToB64url(cred.publicKey);
 
-    await ctx.runMutation(api.passkeysDb.insertCredential, {
+    await ctx.runMutation(internal.passkeysDb.insertCredential, {
       userId: args.userDocId,
       credentialId: credentialIdB64,
       publicKey: publicKeyB64,
@@ -191,7 +191,7 @@ export const registerFinish = action({
       backedUp: verification.registrationInfo.credentialBackedUp,
     });
 
-    await ctx.runMutation(api.passkeysDb.consumeChallenge, {
+    await ctx.runMutation(internal.passkeysDb.consumeChallenge, {
       challenge: expectedChallenge,
     });
 
@@ -226,7 +226,7 @@ export const loginStart = action({
       userVerification: "preferred",
     });
 
-    await ctx.runMutation(api.passkeysDb.recordChallenge, {
+    await ctx.runMutation(internal.passkeysDb.recordChallenge, {
       challenge: options.challenge,
       purpose: "login",
       userId: undefined,
@@ -257,7 +257,7 @@ export const loginFinish = action({
       : null;
     if (!expectedChallenge) throw new Error("invalid response");
 
-    const challengeRow = await ctx.runQuery(api.passkeysDb.findChallenge, {
+    const challengeRow = await ctx.runQuery(internal.passkeysDb.findChallenge, {
       challenge: expectedChallenge,
       purpose: "login",
     });
@@ -274,7 +274,7 @@ export const loginFinish = action({
       counter: number;
       transports: string[] | null;
     };
-    const stored = (await ctx.runQuery(api.passkeysDb.findByCredentialId, {
+    const stored = (await ctx.runQuery(internal.passkeysDb.findByCredentialId, {
       credentialId,
     })) as StoredCred | null;
     if (!stored) throw new Error("unknown credential");
@@ -294,11 +294,11 @@ export const loginFinish = action({
     });
     if (!verification.verified) throw new Error("assertion failed");
 
-    await ctx.runMutation(api.passkeysDb.touchCredential, {
+    await ctx.runMutation(internal.passkeysDb.touchCredential, {
       credentialId: stored.credentialId,
       counter: verification.authenticationInfo.newCounter,
     });
-    await ctx.runMutation(api.passkeysDb.consumeChallenge, {
+    await ctx.runMutation(internal.passkeysDb.consumeChallenge, {
       challenge: expectedChallenge,
     });
 
@@ -310,13 +310,13 @@ export const loginFinish = action({
       .join("");
     const tokenHash = await sha256HexLocal(token);
     const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
-    await ctx.runMutation(api.auth.createSession, {
+    await ctx.runMutation(internal.auth.createSession, {
       tokenHash,
       userId: stored.userId,
       expiresAt,
     });
 
-    const profile: { userId: string; email: string } | null = await ctx.runQuery(api.auth.getUserPublicProfile, {
+    const profile: { userId: string; email: string } | null = await ctx.runQuery(internal.auth.getUserPublicProfile, {
       userDocId: stored.userId,
     });
 
@@ -379,7 +379,7 @@ export const signupStart = action({
       hasPasskey: boolean;
       providers?: string[];
       emailVerified?: boolean;
-    } = await ctx.runQuery(api.passkeysDb.emailAvailable, { email });
+    } = await ctx.runQuery(internal.passkeysDb.emailAvailable, { email });
     if (!availability.available) {
       // Don't leak emailVerified here — it's an internal account-state
       // flag and anonymous callers don't need it for the UI routing.
@@ -412,7 +412,7 @@ export const signupStart = action({
       },
     });
 
-    await ctx.runMutation(api.passkeysDb.recordChallenge, {
+    await ctx.runMutation(internal.passkeysDb.recordChallenge, {
       challenge: options.challenge,
       purpose: "signup",
       userId: undefined,
@@ -450,7 +450,7 @@ export const signupFinish = action({
       : null;
     if (!expectedChallenge) throw new Error("invalid response");
 
-    const challengeRow = await ctx.runQuery(api.passkeysDb.findChallenge, {
+    const challengeRow = await ctx.runQuery(internal.passkeysDb.findChallenge, {
       challenge: expectedChallenge,
       purpose: "signup",
     });
@@ -474,7 +474,7 @@ export const signupFinish = action({
     // createPasskeyUser is atomic: re-checks email + credentialId
     // uniqueness inside a single mutation, so a concurrent signup with
     // the same email racing this one safely fails with EMAIL_EXISTS.
-    const userDocId = await ctx.runMutation(api.passkeysDb.createPasskeyUser, {
+    const userDocId = await ctx.runMutation(internal.passkeysDb.createPasskeyUser, {
       email,
       fullName: args.fullName,
       credentialId: credentialIdB64,
@@ -485,7 +485,7 @@ export const signupFinish = action({
       backedUp: verification.registrationInfo.credentialBackedUp,
     });
 
-    await ctx.runMutation(api.passkeysDb.consumeChallenge, {
+    await ctx.runMutation(internal.passkeysDb.consumeChallenge, {
       challenge: expectedChallenge,
     });
 
@@ -497,14 +497,14 @@ export const signupFinish = action({
       .join("");
     const tokenHash = await sha256HexLocal(token);
     const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
-    await ctx.runMutation(api.auth.createSession, {
+    await ctx.runMutation(internal.auth.createSession, {
       tokenHash,
       userId: userDocId,
       expiresAt,
     });
 
     const profile: { userId: string; email: string } | null = await ctx.runQuery(
-      api.auth.getUserPublicProfile,
+      internal.auth.getUserPublicProfile,
       { userDocId },
     );
 
