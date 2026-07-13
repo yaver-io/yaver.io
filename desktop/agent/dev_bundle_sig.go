@@ -308,18 +308,11 @@ func isLoopbackRequest(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
-	host := r.Host
-	if i := strings.IndexByte(host, ':'); i >= 0 {
-		host = host[:i]
-	}
-	if host == "" {
-		host = clientIP(r)
-	}
-	if host == "127.0.0.1" || host == "::1" || host == "localhost" {
-		return true
-	}
-	if rip := clientIP(r); rip == "127.0.0.1" || rip == "::1" {
-		return true
-	}
-	return false
+	// Trust ONLY the real transport peer (RemoteAddr via clientIP, which does
+	// not honor X-Forwarded-For), never the Host header. The Host header is
+	// fully attacker-controlled on a direct LAN request — trusting it let a
+	// LAN attacker send `Host: 127.0.0.1` to skip the dev-bundle HMAC signature
+	// check and pull the compiled bundle / transpiled web source unsigned.
+	rip := clientIP(r)
+	return rip == "127.0.0.1" || rip == "::1"
 }

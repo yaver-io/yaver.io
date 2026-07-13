@@ -2147,3 +2147,22 @@ export const resolveDeviceSig = internalQuery({
     };
   },
 });
+
+/**
+ * purgeStaleDevicesByPrefix — internal cleanup for legacy/ephemeral device rows
+ * whose deviceId starts with a given prefix (e.g. "test-docker-" for CI docker
+ * runner VMs that registered as devices and were never reaped). Deletes in
+ * bounded batches so a single mutation stays within transaction limits; call
+ * repeatedly until { deleted: 0 }. Internal-only — never client-callable.
+ */
+export const purgeStaleDevicesByPrefix = internalMutation({
+  args: { prefix: v.string(), batch: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const batch = Math.min(args.batch ?? 200, 400);
+    const scan = await ctx.db.query("devices").take(1500);
+    const stale = scan.filter((r) => (r.deviceId ?? "").startsWith(args.prefix));
+    const toDelete = stale.slice(0, batch);
+    for (const r of toDelete) await ctx.db.delete(r._id);
+    return { deleted: toDelete.length, remainingInScan: stale.length - toDelete.length };
+  },
+});

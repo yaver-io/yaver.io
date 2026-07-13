@@ -98,3 +98,12 @@ desktop/agent/agent.exe
 
 # Local penetration-testing suite (offensive tooling — keep out of public repo)
 security/pentest/
+
+# Security working docs — attack-surface catalogs / fix trackers. Never commit
+# to the public repo (they enumerate live/unfixed surface). Post-fix public
+# write-ups go in docs/ deliberately, not these.
+/SECURITY_AUDIT_BRIEF.md
+/SECURITY_FIX_PROGRESS.md
+/SECURITY_AUDIT_FINDINGS.md
+/docs/security-audit-2026-07-13.md
+/docs/security/security_audit.md

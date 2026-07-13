@@ -40,6 +40,23 @@ function getConvexSiteUrl(): string {
   return process.env.CONVEX_SITE_URL || "";
 }
 
+/**
+ * Headers for server-to-server calls to Convex's auth-provisioning routes
+ * (upsert-user / create-session / totp/*). These routes trust a body-supplied
+ * identity, so they are gated by the shared secret `CONVEX_INTERNAL_SECRET`
+ * (see backend `requireServerSecret`). We attach it here so the deployed web
+ * backend is the only principal that can mint sessions / upsert identities.
+ * When the env is unset (local dev, or before the secret is provisioned on both
+ * sides) we send no header — the backend fails open in that state, so nothing
+ * breaks during the staged rollout.
+ */
+function internalAuthHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  const secret = process.env.CONVEX_INTERNAL_SECRET;
+  if (secret) h["X-Internal-Secret"] = secret;
+  return h;
+}
+
 async function logToConvex(
   provider: string,
   step: string,
@@ -111,7 +128,7 @@ async function handleCallback(
   if (state.intent === "link" && state.linkToken) {
     const linkRes = await fetch(`${convexSiteUrl}/auth/oauth-link/complete`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: internalAuthHeaders(),
       body: JSON.stringify({
         linkToken: state.linkToken,
         provider,
@@ -146,7 +163,7 @@ async function handleCallback(
   try {
     const userRes = await fetch(`${convexSiteUrl}/auth/upsert-user`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: internalAuthHeaders(),
       body: JSON.stringify({
         email: userInfo.email.toLowerCase(),
         fullName: userInfo.name || "",
@@ -177,7 +194,7 @@ async function handleCallback(
   try {
     const totpCheckRes = await fetch(`${convexSiteUrl}/auth/totp/check-user`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: internalAuthHeaders(),
       body: JSON.stringify({ userId }),
     });
 
@@ -187,7 +204,7 @@ async function handleCallback(
         // Create pending auth instead of session
         const pendingRes = await fetch(`${convexSiteUrl}/auth/totp/create-pending`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: internalAuthHeaders(),
           body: JSON.stringify({ userId }),
         });
 
@@ -222,7 +239,7 @@ async function handleCallback(
   try {
     const sessionRes = await fetch(`${convexSiteUrl}/auth/create-session`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: internalAuthHeaders(),
       body: JSON.stringify({ tokenHash, userId, expiresAt }),
     });
 

@@ -612,13 +612,22 @@ func (s *HTTPServer) handleRepoClone(w http.ResponseWriter, r *http.Request) {
 
 	clonePath := filepath.Join(targetDir, repoName)
 
+	// Refuse option-looking URL/branch: a value beginning with "-" is parsed
+	// by git as an option (e.g. --upload-pack=…, --config=core.fsmonitor=…)
+	// which executes commands on ssh/local transports. Reject before building
+	// argv, and separate positionals with "--".
+	if strings.HasPrefix(req.URL, "-") || strings.HasPrefix(req.Branch, "-") {
+		jsonError(w, http.StatusBadRequest, "invalid repo URL or branch")
+		return
+	}
+
 	// Build git clone command
 	args := []string{"clone"}
 	if req.Branch != "" {
 		args = append(args, "-b", req.Branch)
 	}
 	cloneURL := injectCredentials(req.URL)
-	args = append(args, cloneURL, clonePath)
+	args = append(args, "--", cloneURL, clonePath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -695,7 +704,7 @@ func (s *HTTPServer) handleRepoPull(w http.ResponseWriter, r *http.Request) {
 	if originURL := gitRemoteURL(workDir, "origin"); originURL != "" {
 		if injected := injectCredentials(originURL); injected != originURL {
 			pullURL = injected
-			pullArgs = []string{"pull", injected}
+			pullArgs = []string{"pull", "--", injected}
 		}
 	}
 	cmd := osexec.CommandContext(ctx, "git", pullArgs...)

