@@ -141,6 +141,11 @@ func detectTestCommand(dir string) string {
 // ---------------------------------------------------------------------------
 
 func mcpHTTPRequest(method, url string, headers map[string]string, body string) interface{} {
+	// SECURITY (audit 2026-07-13, A3): refuse cloud-metadata / link-local
+	// targets and non-http(s) schemes before shelling out to curl.
+	if err := guardOutboundHTTPURL(url); err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
 	args := []string{"-s", "-w", "\n---HTTP_STATUS:%{http_code}---", "-X", method}
 	for k, v := range headers {
 		args = append(args, "-H", k+": "+v)

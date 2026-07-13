@@ -291,6 +291,9 @@ func mcpBandwidthTest(host string) interface{} {
 }
 
 func mcpCurlTimings(urlStr string) interface{} {
+	if err := guardOutboundHTTPURL(urlStr); err != nil { // A3: no metadata/link-local SSRF
+		return map[string]interface{}{"error": err.Error()}
+	}
 	format := `{"time_namelookup": %{time_namelookup}, "time_connect": %{time_connect}, "time_appconnect": %{time_appconnect}, "time_pretransfer": %{time_pretransfer}, "time_starttransfer": %{time_starttransfer}, "time_total": %{time_total}, "http_code": %{http_code}, "size_download": %{size_download}, "speed_download": %{speed_download}}`
 	out, err := runCmd("curl", "-so", "/dev/null", "-w", format, urlStr)
 	if err != nil {

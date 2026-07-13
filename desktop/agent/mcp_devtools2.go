@@ -164,6 +164,9 @@ func mcpSSLCheck(host string) interface{} {
 }
 
 func mcpHTTPTiming(url string) interface{} {
+	if err := guardOutboundHTTPURL(url); err != nil { // A3: no metadata/link-local SSRF
+		return map[string]interface{}{"error": err.Error()}
+	}
 	start := time.Now()
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
