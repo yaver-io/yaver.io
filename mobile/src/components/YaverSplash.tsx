@@ -129,14 +129,17 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
       {/* Branded gradient + soft center glow */}
       <Svg style={StyleSheet.absoluteFill} width={width} height={height}>
         <Defs>
-          <LinearGradient id="yv-bg" x1="0" y1="0" x2="0.35" y2="1">
-            <Stop offset="0" stopColor="#0f1b34" />
-            <Stop offset="0.55" stopColor="#152540" />
-            <Stop offset="1" stopColor="#070b13" />
+          <LinearGradient id="yv-bg" x1="0" y1="0" x2="0.2" y2="1">
+            <Stop offset="0" stopColor="#1a2c4e" />
+            <Stop offset="0.5" stopColor="#1d3357" />
+            <Stop offset="1" stopColor="#0b1526" />
           </LinearGradient>
-          <RadialGradient id="yv-halo" cx="50%" cy="44%" r="60%">
-            <Stop offset="0" stopColor="#3c5e9e" stopOpacity="0.35" />
-            <Stop offset="1" stopColor="#3c5e9e" stopOpacity="0" />
+          {/* Bright luminous center glow — the depth that reads as "premium
+              navy" rather than flat dark. */}
+          <RadialGradient id="yv-halo" cx="50%" cy="42%" r="72%">
+            <Stop offset="0" stopColor="#5a82c8" stopOpacity="0.55" />
+            <Stop offset="0.5" stopColor="#3f63a8" stopOpacity="0.22" />
+            <Stop offset="1" stopColor="#3f63a8" stopOpacity="0" />
           </RadialGradient>
         </Defs>
         <Rect x="0" y="0" width={width} height={height} fill="url(#yv-bg)" />
@@ -150,7 +153,7 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
             key={t.key}
             name={t.name as keyof typeof MaterialCommunityIcons.glyphMap}
             size={30}
-            color="rgba(150,180,222,0.055)"
+            color="rgba(165,195,235,0.07)"
             style={[styles.tile, { left: t.x, top: t.y, transform: [{ rotate: `${t.rot}deg` }] }]}
           />
         ))}
