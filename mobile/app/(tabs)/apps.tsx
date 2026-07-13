@@ -35,7 +35,6 @@ import { isActiveDevServerStatus } from "../../src/lib/devServerState";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
-import { yaverNativeSurfaceSummary } from "../../src/lib/yaverNativeCatalog";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -1576,25 +1575,6 @@ export default function AppsScreen() {
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <RemoteBoxBanner />
       <View style={s.container}>
-        <Pressable
-          style={[s.card, s.catalogCard, { backgroundColor: c.bgCard, borderColor: c.accent + "55" }]}
-          onPress={() => router.push("/yaver-catalog?surface=ios" as any)}
-        >
-          <View style={s.cardHeader}>
-            <Ionicons name="game-controller-outline" size={24} color={c.accent} />
-            <View style={s.cardTitleContainer}>
-              <Text style={[s.cardTitle, { color: c.textPrimary }]}>Yaver Catalog</Text>
-              <Text style={[s.cardMeta, { color: c.textSecondary }]} numberOfLines={2}>
-                {yaverNativeSurfaceSummary(Platform.OS === "android" ? "android" : "ios")}
-              </Text>
-              <Text style={[s.cardMeta, { color: c.textMuted }]}>
-                yaver.app.yaml / yaver.game.yaml · OAuth required
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={c.textMuted} />
-          </View>
-        </Pressable>
-
         {/* Running app — green card */}
         {devStatus && (
           <View style={[s.card, s.activeCard]}>
