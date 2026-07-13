@@ -7,9 +7,10 @@
 // writes to the same cache the coding backend loads from.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "../src/context/ThemeContext";
 import LocalModelPicker from "../src/components/LocalModelPicker";
 import { getModel, type ModelAvailability } from "../src/lib/localAgent/models";
@@ -32,6 +33,7 @@ import { releaseLocalModel } from "../src/lib/codingBackendStore";
 
 export default function LocalModelsScreen() {
   const c = useColors();
+  const router = useRouter();
   const { tier, totalRamMb } = useDeviceCapability();
 
   const [downloads, setDownloads] = useState<DownloadMap>({});
@@ -99,6 +101,16 @@ export default function LocalModelsScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <Stack.Screen options={{ title: "On-device AI" }} />
+      <Pressable
+        onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+        hitSlop={12}
+        style={{ flexDirection: "row", alignItems: "center", marginTop: 12, marginHorizontal: 16, alignSelf: "flex-start" }}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+      >
+        <Ionicons name="chevron-back" size={22} color={c.textSecondary} />
+        <Text style={{ color: c.textSecondary, fontSize: 16, marginLeft: 2, fontWeight: "600" }}>Back</Text>
+      </Pressable>
       <View style={[styles.banner, { backgroundColor: c.bgCard, borderColor: c.border }]}>
         <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 13 }}>
           This device{totalRamMb ? ` · ${(totalRamMb / 1024).toFixed(0)} GB RAM` : ""}

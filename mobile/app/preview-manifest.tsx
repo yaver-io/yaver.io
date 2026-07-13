@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -25,6 +26,7 @@ const RECENT_MANIFEST_KEY = "@yaver/third_party_preview_manifest_url";
 
 export default function PreviewManifestScreen() {
   const c = useColors();
+  const router = useRouter();
   const params = useLocalSearchParams<{ project?: string; path?: string; framework?: string }>();
   const [manifestUrl, setManifestUrl] = useState("");
   const [manifest, setManifest] = useState<ThirdPartyPreviewManifest | null>(null);
@@ -83,6 +85,16 @@ export default function PreviewManifestScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]}>
       <ScrollView contentContainerStyle={styles.content}>
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+          hitSlop={12}
+          style={{ flexDirection: "row", alignItems: "center", marginBottom: 12, alignSelf: "flex-start" }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Ionicons name="chevron-back" size={22} color={c.textSecondary} />
+          <Text style={{ color: c.textSecondary, fontSize: 16, marginLeft: 2, fontWeight: "600" }}>Back</Text>
+        </Pressable>
         <Text style={[styles.title, { color: c.textPrimary }]}>Third-Party Preview</Text>
         <Text style={[styles.subtitle, { color: c.textMuted }]}>
           Load a Hermes preview manifest and run that bundle inside Yaver without rebuilding the app binary.

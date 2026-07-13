@@ -23,6 +23,14 @@ import {
   probeMobileDeviceStatus,
   type CodingRunnerProbe,
 } from "../lib/deviceStatus";
+import {
+  useParkedMachines,
+  deriveWakeView,
+  specSummary,
+  timeAgo,
+  WAKE_STAGES,
+} from "../lib/parkedMachines";
+import type { ManagedCloudMachineSummary } from "../lib/subscription";
 
 interface Props {
   visible: boolean;
@@ -66,6 +74,128 @@ async function waitForClientConnected(deviceId: string, timeoutMs = 2500): Promi
   return connectionManager.clientFor(deviceId).isConnected;
 }
 
+function managedMachineName(m: ManagedCloudMachineSummary): string {
+  const raw = (m.hostname || m.serverType || m.machineType || "Managed box").trim();
+  return raw || "Managed box";
+}
+
+// A single parked/managed machine rendered inline in the picker list, styled to
+// match the device rows. Its primary action is Wake (a parked box is not a
+// selectable remote box until it's awake); once it wakes it self-registers as a
+// device and moves into the connectable list above. Shows the same staged
+// waking-up ladder the Infra tab uses so the transition (parked → resuming →
+// active) reads as forward motion, not a bare spinner.
+function SleepingMachineRow({
+  c,
+  machine,
+  waking,
+  error,
+  onWake,
+}: {
+  c: any;
+  machine: ManagedCloudMachineSummary;
+  waking: boolean;
+  error?: string;
+  onWake: () => void;
+}) {
+  const view = deriveWakeView(machine, waking);
+  const parked = view.tone === "parked";
+  const failed = view.tone === "error";
+  const accent = failed ? c.warn : c.accent;
+  const slept = timeAgo(machine.lastParkedAt);
+
+  return (
+    <View
+      style={{
+        marginBottom: 10,
+        padding: 14,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: view.inFlight ? c.accent : c.border,
+        backgroundColor: c.bgCard,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }} numberOfLines={1}>
+            {managedMachineName(machine)}
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }} numberOfLines={1}>
+            {specSummary(machine)}
+          </Text>
+          {parked && slept ? (
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>Slept {slept}</Text>
+          ) : null}
+        </View>
+        {parked ? (
+          <View style={{ backgroundColor: c.warn + "22", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+            <Text style={{ color: c.warn, fontSize: 10, fontWeight: "800", letterSpacing: 0.5 }}>ASLEEP</Text>
+          </View>
+        ) : view.inFlight ? (
+          <View style={{ backgroundColor: c.accent + "22", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+            <Text style={{ color: c.accent, fontSize: 10, fontWeight: "800", letterSpacing: 0.5 }}>WAKING</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Staged waking-up ladder — driven by the box's real status + phase. */}
+      {view.inFlight ? (
+        <View style={{ gap: 6, marginTop: 12 }}>
+          <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border, overflow: "hidden" }}>
+            <View
+              style={{
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: c.accent,
+                width: `${Math.max(5, Math.min(100, view.percent))}%`,
+              }}
+            />
+          </View>
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>
+            {WAKE_STAGES[view.stageIndex]?.label ?? "Waking up"}…
+          </Text>
+          {machine.hasVolume ? (
+            <Text style={{ color: c.success, fontSize: 10 }}>⚡ Fast wake — data on a persistent volume (~1-2 min).</Text>
+          ) : machine.bootImageSource === "vanilla" ? (
+            <Text style={{ color: c.textMuted, fontSize: 10 }}>First boot — building the image (~3-5 min).</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {failed && view.error ? (
+        <Text style={{ color: c.warn, fontSize: 11, marginTop: 8 }}>{view.error}</Text>
+      ) : null}
+      {error ? <Text style={{ color: c.warn, fontSize: 11, marginTop: 6 }}>{error}</Text> : null}
+
+      {parked || failed ? (
+        <Pressable
+          onPress={onWake}
+          disabled={waking}
+          style={({ pressed }) => ({
+            alignSelf: "flex-start",
+            marginTop: 12,
+            paddingHorizontal: 16,
+            paddingVertical: 9,
+            borderRadius: 8,
+            backgroundColor: accent,
+            flexDirection: "row",
+            alignItems: "center",
+            opacity: waking ? 0.6 : pressed ? 0.85 : 1,
+          })}
+        >
+          {waking ? (
+            <ActivityIndicator size="small" color="#000" />
+          ) : (
+            <Text style={{ color: "#000", fontSize: 13, fontWeight: "700" }}>
+              {failed ? "Try wake again" : "⏻ Wake"}
+            </Text>
+          )}
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: Props) {
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -98,6 +228,25 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
         return a.name.localeCompare(b.name);
       }),
     [devices, connectedSet, activeDevice?.id, primaryDeviceId, secondaryDeviceId],
+  );
+
+  // Parked/managed machines — not devices, so they never surface in the
+  // eligibleDevices list. We pull them from /subscription (via the same hook
+  // the Infra tab uses) so a sleeping box can be seen + woken from where the
+  // remote box is chosen, not only in Infra. Once a machine wakes to "active"
+  // it self-registers as a normal device and drops out of this list.
+  const {
+    machines: managedMachines,
+    wakingId: managedWakingId,
+    errors: managedWakeErrors,
+    wake: wakeManagedMachine,
+  } = useParkedMachines(token);
+  const sleepingMachines = React.useMemo(
+    () =>
+      managedMachines.filter(
+        (m) => deriveWakeView(m, managedWakingId === m.id).tone !== "online",
+      ),
+    [managedMachines, managedWakingId],
   );
 
   const [pickedDeviceId, setPickedDeviceId] = React.useState<string | null>(null);
@@ -781,6 +930,28 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                 );
               })
             )}
+
+            {sleepingMachines.length > 0 ? (
+              <View style={{ marginTop: 8 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "700", marginBottom: 2 }}>
+                  Sleeping machines
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 12 }}>
+                  Yaver-managed boxes parked to stop their meter. Wake one to use it as a remote box.
+                </Text>
+                {sleepingMachines.map((machine) => (
+                  <SleepingMachineRow
+                    key={machine.id}
+                    c={c}
+                    machine={machine}
+                    waking={managedWakingId === machine.id}
+                    error={managedWakeErrors[machine.id]}
+                    onWake={() => { void wakeManagedMachine(machine.id); }}
+                  />
+                ))}
+              </View>
+            ) : null}
+
             <View style={{ height: 16 }} />
             <Pressable
               onPress={() => { void handleContinue(); }}

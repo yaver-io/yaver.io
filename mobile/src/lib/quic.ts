@@ -5972,22 +5972,73 @@ export class QuicClient {
         });
     };
 
+    // Hard wall-clock deadline for the WHOLE direct phase. Each probe
+    // already aborts at 2.5s, but Promise.any only settles once a probe
+    // succeeds or EVERY probe rejects — and a fetch to an unroutable
+    // CGNAT/Tailscale address (the phone isn't on that tailnet) does not
+    // always reject promptly after abort() on Hermes/RN. One wedged
+    // direct candidate therefore keeps this whole phase pending, so
+    // _doAttemptConnect never advances to the relay step and the connect
+    // fails via the caller's outer timeout ("Couldn't reach <box>") even
+    // though the relay is up. This deadline guarantees the direct phase
+    // resolves (null) on schedule so the relay fallback is always tried.
+    const DIRECT_PHASE_DEADLINE_MS = 2800;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>((resolve) => {
+      deadlineTimer = setTimeout(() => resolve(null), DIRECT_PHASE_DEADLINE_MS);
+    });
+    // Promise.any rejects (AggregateError) when all probes fail; fold that
+    // into null so the race below only ever resolves to a winner or null.
+    const anyProbe = Promise.any(candidates.map((c, i) => probe(c, i))).catch(() => null);
     try {
-      const winner = await Promise.any(candidates.map((c, i) => probe(c, i)));
-      // Cancel every other in-flight probe — they're losers now.
+      const winner = await Promise.race([anyProbe, deadline]);
+      // Cancel every still-in-flight probe. On a deadline hit (winner ===
+      // null) that abandons the wedged socket(s) too, so nothing leaks and
+      // relay gets a clean, full attempt.
       for (let i = 0; i < controllers.length; i++) {
         const c = controllers[i];
         if (!c) continue;
-        if (winner.ip !== candidates[i].ip || winner.port !== candidates[i].port) {
+        if (!winner || winner.ip !== candidates[i].ip || winner.port !== candidates[i].port) {
           try { c.abort(); } catch {}
         }
       }
       return winner;
-    } catch {
-      // All failed — Promise.any rejects with AggregateError; the relay
-      // path will be tried next by the caller.
-      return null;
+    } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
     }
+  }
+
+  /** Probe every configured relay server serially and return the first
+   *  one whose `/d/<device>/health` answers 200 (plus the agent's
+   *  authExpired signal), or null if none respond. Pure probe — it does
+   *  NOT mutate connection state, so it is safe to run concurrently with
+   *  the direct race (happy-eyeballs) before we know whether direct wins.
+   *  The caller adopts the relay (sets activeRelayUrl / mode / path) only
+   *  when it decides to use this result. Never rejects — records the last
+   *  non-200 as _lastTransportError and resolves null. */
+  private async probeRelayServers(): Promise<{ relay: RelayServer; authExpired: boolean } | null> {
+    if (!this.deviceId || this.relayServers.length === 0) return null;
+    for (const relay of this.relayServers) {
+      try {
+        const relayDeviceUrl = `${relay.httpUrl}/d/${this.deviceId}`;
+        console.log("[QUIC] Trying relay:", relay.id, relayDeviceUrl);
+        const probeHeaders: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+        if (relay.password) {
+          probeHeaders['X-Relay-Password'] = relay.password;
+        }
+        const res = await this.fetchWithTimeout(`${relayDeviceUrl}/health`, {
+          headers: probeHeaders,
+        }, 8000);
+        if (res.ok) {
+          const healthData = await res.json().catch(() => ({}));
+          return { relay, authExpired: !!healthData.authExpired };
+        }
+        this._lastTransportError = await responseErrorMessage(res, `Relay ${relay.id} returned HTTP ${res.status}`);
+      } catch (e) {
+        console.log("[QUIC] Relay", relay.id, "failed:", e);
+      }
+    }
+    return null;
   }
 
   private async attemptConnect(): Promise<void> {
@@ -6050,6 +6101,22 @@ export class QuicClient {
         }
       }
 
+      // Happy-eyeballs relay probe. Started (below) in parallel with the
+      // direct race so a slow or unreachable direct/Tailscale candidate can
+      // never starve the relay fallback: by the time the bounded direct
+      // phase gives up, this probe is already in flight — often already
+      // resolved — so the relay step (3) adopts it instantly instead of
+      // starting a cold 8s serial loop. Pure probe (no state mutation), so
+      // a direct win simply ignores its result. Lazily created so a fast
+      // LAN win never fires an unnecessary relay request.
+      let relayProbe: Promise<{ relay: RelayServer; authExpired: boolean } | null> | null = null;
+      const startRelayProbe = (): Promise<{ relay: RelayServer; authExpired: boolean } | null> | null => {
+        if (relayProbe) return relayProbe;
+        if (!(policy.allowRelay && this.deviceId && this.relayServers.length > 0)) return null;
+        relayProbe = this.probeRelayServers();
+        return relayProbe;
+      };
+
       // 1. Try direct connection first — race every direct candidate IP in
       //    parallel. Candidates: LAN beacon (freshest), heartbeat-advertised
       //    localIps (Wi-Fi + Tailscale + Ethernet), then the Convex-stored
@@ -6058,7 +6125,16 @@ export class QuicClient {
       //    waterfall into a single ~2s window and survives stale Convex IPs
       //    because the freshest signal wins, not the first-tried one.
       if (!connected && !this._forceRelay && (policy.allowPrivateDirect || policy.allowLanDirect) && (isWifi || this._lanIps.length > 0)) {
-        const winner = await this.raceDirectCandidates({ includeStoredHost: isWifi });
+        // Give direct a short head start; if it hasn't landed by then, kick
+        // the relay probe off in parallel so it overlaps the rest of the
+        // (bounded) direct window rather than running strictly after it.
+        const relayHeadStart = setTimeout(() => { startRelayProbe(); }, 700);
+        let winner: Awaited<ReturnType<typeof this.raceDirectCandidates>> = null;
+        try {
+          winner = await this.raceDirectCandidates({ includeStoredHost: isWifi });
+        } finally {
+          clearTimeout(relayHeadStart);
+        }
         if (winner) {
           this.host = winner.ip;
           this.port = winner.port;
@@ -6112,35 +6188,25 @@ export class QuicClient {
         }
       }
 
-      // 3. Try relay servers (fallback for cellular, or when direct failed)
+      // 3. Try relay servers (fallback for cellular, or when direct/tunnel
+      //    failed). This is ALWAYS reached when the earlier paths don't
+      //    connect — the direct phase is wall-clock bounded, so an
+      //    unreachable direct/Tailscale candidate can no longer stall us
+      //    here. If the happy-eyeballs probe was already started during the
+      //    direct race, we just await its (likely-resolved) result instead
+      //    of starting a fresh cold serial loop.
       if (!connected && policy.allowRelay && this.deviceId && this.relayServers.length > 0) {
         console.log("[QUIC] Trying", this.relayServers.length, "relay server(s)");
-        for (const relay of this.relayServers) {
-          try {
-            const relayDeviceUrl = `${relay.httpUrl}/d/${this.deviceId}`;
-            console.log("[QUIC] Trying relay:", relay.id, relayDeviceUrl);
-            const probeHeaders: Record<string, string> = { Authorization: `Bearer ${this.token}` };
-            if (relay.password) {
-              probeHeaders['X-Relay-Password'] = relay.password;
-            }
-            const res = await this.fetchWithTimeout(`${relayDeviceUrl}/health`, {
-              headers: probeHeaders,
-            }, 8000);
-            if (res.ok) {
-              const healthData = await res.json().catch(() => ({}));
-              this.agentAuthExpired = !!healthData.authExpired;
-              this.activeRelayUrl = relay.httpUrl;
-              this.activeRelayPassword = relay.password || null;
-              this.setConnectionMode("relay");
-              this._connectionPath = "relay";
-              connected = true;
-              console.log("[QUIC] Relay connection succeeded via", relay.id);
-              break;
-            }
-            this._lastTransportError = await responseErrorMessage(res, `Relay ${relay.id} returned HTTP ${res.status}`);
-          } catch (e) {
-            console.log("[QUIC] Relay", relay.id, "failed:", e);
-          }
+        const probe = startRelayProbe();
+        const hit = probe ? await probe : null;
+        if (hit) {
+          this.agentAuthExpired = hit.authExpired;
+          this.activeRelayUrl = hit.relay.httpUrl;
+          this.activeRelayPassword = hit.relay.password || null;
+          this.setConnectionMode("relay");
+          this._connectionPath = "relay";
+          connected = true;
+          console.log("[QUIC] Relay connection succeeded via", hit.relay.id);
         }
       }
 

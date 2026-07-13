@@ -15,7 +15,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 import { useColors } from "../src/context/ThemeContext";
 import { useAuth } from "../src/context/AuthContext";
@@ -36,6 +37,7 @@ type Busy = "idle" | "installing" | "starting" | "hosting" | "stopping";
 
 export default function LocalBoxScreen() {
   const c = useColors();
+  const router = useRouter();
   const { token } = useAuth();
 
   const supported = isSandboxSupported();
@@ -145,6 +147,16 @@ export default function LocalBoxScreen() {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
         <Stack.Screen options={{ title: "This phone as a box" }} />
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+          hitSlop={12}
+          style={{ flexDirection: "row", alignItems: "center", marginTop: 12, marginHorizontal: 16, alignSelf: "flex-start" }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Ionicons name="chevron-back" size={22} color={c.textSecondary} />
+          <Text style={{ color: c.textSecondary, fontSize: 16, marginLeft: 2, fontWeight: "600" }}>Back</Text>
+        </Pressable>
         <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, margin: 16 }]}>
           <Text style={[styles.h, { color: c.textPrimary }]}>Not available on this device</Text>
           <Text style={[styles.p, { color: c.textMuted }]}>
@@ -178,6 +190,16 @@ export default function LocalBoxScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <Stack.Screen options={{ title: "This phone as a box" }} />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+          hitSlop={12}
+          style={{ flexDirection: "row", alignItems: "center", marginBottom: 12, alignSelf: "flex-start" }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Ionicons name="chevron-back" size={22} color={c.textSecondary} />
+          <Text style={{ color: c.textSecondary, fontSize: 16, marginLeft: 2, fontWeight: "600" }}>Back</Text>
+        </Pressable>
         <Text style={[styles.p, { color: c.textMuted }]}>
           Turn this phone into its own Linux coding box: a proot Alpine userland
           (node · git · ripgrep · hermesc + claude/codex/opencode) hosting the
