@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { internalQuery, internalMutation } from "./_generated/server";
 
 /**
  * Platform-level configuration managed by Yaver (not by customers).
@@ -16,7 +16,7 @@ import { query, mutation } from "./_generated/server";
  */
 
 /** Get a config value by key. */
-export const get = query({
+export const get = internalQuery({
   args: { key: v.string() },
   handler: async (ctx, args) => {
     const config = await ctx.db
@@ -28,7 +28,7 @@ export const get = query({
 });
 
 /** Get all config values needed by clients (relay servers, etc.). */
-export const getClientConfig = query({
+export const getClientConfig = internalQuery({
   args: {},
   handler: async (ctx) => {
     const configs = await ctx.db.query("platformConfig").collect();
@@ -46,7 +46,7 @@ export const getClientConfig = query({
  * It is NOT exposed via any HTTP endpoint, so users who clone this repo
  * cannot modify platform config from the client side.
  */
-export const set = mutation({
+export const set = internalMutation({
   args: {
     key: v.string(),
     value: v.string(),

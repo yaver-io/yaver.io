@@ -712,7 +712,7 @@ http.route({
 
     let userId;
     try {
-      userId = await ctx.runMutation(api.auth.createEmailUser, {
+      userId = await ctx.runMutation(internal.auth.createEmailUser, {
         email: email.toLowerCase().trim(),
         fullName: fullName.trim(),
         passwordHash,
@@ -771,7 +771,7 @@ http.route({
     clearLoginFailures(attemptKey);
 
     // Check if 2FA is enabled
-    const fullUser = await ctx.runQuery(api.auth.getUserWithTotp, { userId: user._id });
+    const fullUser = await ctx.runQuery(internal.auth.getUserWithTotp, { userId: user._id });
     if (fullUser?.totpEnabled) {
       const { pendingToken } = await ctx.runMutation(internal.totp.createPendingAuth, { userId: user._id });
       return jsonResponse({ requires2fa: true, pendingToken });
@@ -937,7 +937,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
     const email = (url.searchParams.get("email") || "").trim().toLowerCase();
-    const data = await ctx.runQuery(api.auth.lookupExistingProvidersByEmail, { email });
+    const data = await ctx.runQuery(internal.auth.lookupExistingProvidersByEmail, { email });
     return jsonResponse(data);
   }),
 });
@@ -1296,6 +1296,8 @@ http.route({
   path: "/auth/oauth-link/complete",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const denied = await requireServerSecret(request);
+    if (denied) return denied;
     const body = await request.json().catch(() => ({}));
     if (!body.linkToken || !body.provider || !body.providerId || !body.email) {
       return errorResponse("linkToken, provider, providerId, email required", 400);
@@ -1685,7 +1687,7 @@ http.route({
     });
 
     // Check if 2FA is enabled
-    const totpCheck = await ctx.runQuery(api.auth.getUserWithTotp, { userId });
+    const totpCheck = await ctx.runQuery(internal.auth.getUserWithTotp, { userId });
     if (totpCheck?.totpEnabled) {
       const { pendingToken } = await ctx.runMutation(internal.totp.createPendingAuth, { userId });
       return jsonResponse({ requires2fa: true, pendingToken });
@@ -2537,7 +2539,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const provided = request.headers.get("X-Relay-Secret") ?? "";
     if (!provided) return errorResponse("Missing X-Relay-Secret", 401);
-    const expected = await ctx.runQuery(api.platformConfig.get, {
+    const expected = await ctx.runQuery(internal.platformConfig.get, {
       key: "relay_presence_secret",
     });
     if (!expected) {
@@ -3643,7 +3645,7 @@ http.route({
         userId = user.userId;
       }
 
-      await ctx.runMutation(api.developerLogs.writeLog, {
+      await ctx.runMutation(internal.developerLogs.writeLog, {
         email,
         userId,
         source: body.source || "agent",
@@ -3668,7 +3670,7 @@ http.route({
     const url = new URL(request.url);
     const limit = parseInt(url.searchParams.get("limit") || "50");
     const email = url.searchParams.get("email") || undefined;
-    const logs = await ctx.runQuery(api.developerLogs.getLogs, { limit, email });
+    const logs = await ctx.runQuery(internal.developerLogs.getLogs, { limit, email });
     return jsonResponse({ logs });
   }),
 });
@@ -3760,9 +3762,11 @@ http.route({
   path: "/auth/totp/check-user",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const denied = await requireServerSecret(request);
+    if (denied) return denied;
     const body = await request.json();
     if (!body.userId) return errorResponse("userId required", 400);
-    const result = await ctx.runQuery(api.auth.getUserWithTotp, { userId: body.userId });
+    const result = await ctx.runQuery(internal.auth.getUserWithTotp, { userId: body.userId });
     return jsonResponse({ totpEnabled: result?.totpEnabled ?? false });
   }),
 });
@@ -3948,7 +3952,7 @@ http.route({
   path: "/downloads/list",
   method: "GET",
   handler: httpAction(async (ctx) => {
-    const downloads = await ctx.runQuery(api.downloads.listDownloads, {});
+    const downloads = await ctx.runQuery(internal.downloads.listDownloads, {});
     return new Response(JSON.stringify({ downloads }), {
       status: 200,
       headers: {
@@ -3967,7 +3971,7 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx) => {
     const [config, runners, models] = await Promise.all([
-      ctx.runQuery(api.platformConfig.getClientConfig, {}),
+      ctx.runQuery(internal.platformConfig.getClientConfig, {}),
       ctx.runQuery(api.aiRunners.list, {}),
       ctx.runQuery(api.aiModels.list, {}),
     ]);
@@ -4020,7 +4024,7 @@ http.route({
   path: "/packages",
   method: "GET",
   handler: httpAction(async (ctx) => {
-    const rows = await ctx.runQuery(api.packages.list, {});
+    const rows = await ctx.runQuery(internal.packages.list, {});
     return new Response(JSON.stringify(rows), {
       status: 200,
       headers: {
@@ -4737,7 +4741,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    const sub = await ctx.runQuery(api.subscriptions.getByUser, {
+    const sub = await ctx.runQuery(internal.subscriptions.getByUser, {
       userId: session.userDocId as any,
     });
     const allowance = await ctx.runQuery(internal.cloudLifecycle.getAllowance, {
@@ -4779,7 +4783,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    const sub = await ctx.runQuery(api.subscriptions.getByUser, {
+    const sub = await ctx.runQuery(internal.subscriptions.getByUser, {
       userId: session.userDocId as any,
     });
     const lsId = sub?.lemonSqueezyId;
@@ -4828,7 +4832,7 @@ http.route({
     if (targetPlan !== "cloud-agent" && targetPlan !== "cloud-workspace") {
       return errorResponse("plan must be 'cloud-agent' or 'cloud-workspace'", 400);
     }
-    const sub = await ctx.runQuery(api.subscriptions.getByUser, {
+    const sub = await ctx.runQuery(internal.subscriptions.getByUser, {
       userId: session.userDocId as any,
     });
     if (!sub || sub.status !== "active") {
@@ -5324,8 +5328,8 @@ http.route({
     if (!userDocId) return errorResponse("User not found", 404);
 
     const [subscription, relay, machines, wallet] = await Promise.all([
-      ctx.runQuery(api.subscriptions.getByUser, { userId: userDocId }),
-      ctx.runQuery(api.managedRelays.getByUser, { userId: userDocId }),
+      ctx.runQuery(internal.subscriptions.getByUser, { userId: userDocId }),
+      ctx.runQuery(internal.managedRelays.getByUser, { userId: userDocId }),
       ctx.runQuery(internal.cloudMachines.listForUser, { userId: userDocId }),
       ctx.runQuery(internal.cloudLifecycle.getWallet, { userId: userDocId }),
     ]);
@@ -7156,7 +7160,7 @@ http.route({
     if (!auth.ok) return errorResponse(auth.error, auth.status);
     const domain = String(body.domain ?? "").trim().toLowerCase();
     if (!domain) return errorResponse("Missing domain", 400);
-    const row = await ctx.runQuery(api.userDomains.getByDomain, { domain });
+    const row = await ctx.runQuery(internal.userDomains.getByDomain, { domain });
     if (!row) return errorResponse("Unknown domain", 404);
     if (row.targetId !== auth.machine._id.toString()) {
       return errorResponse("Domain not routed to this machine", 403);
@@ -7176,7 +7180,7 @@ http.route({
     if (!auth.ok) return errorResponse(auth.error, auth.status);
     const domain = String(body.domain ?? "").trim().toLowerCase();
     if (!domain) return errorResponse("Missing domain", 400);
-    const row = await ctx.runQuery(api.userDomains.getByDomain, { domain });
+    const row = await ctx.runQuery(internal.userDomains.getByDomain, { domain });
     if (!row) return errorResponse("Unknown domain", 404);
     if (row.targetId !== auth.machine._id.toString()) {
       return errorResponse("Domain not routed to this machine", 403);

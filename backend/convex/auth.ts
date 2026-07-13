@@ -1430,7 +1430,7 @@ export const deleteSessionsByDeviceId = internalMutation({
 /**
  * Create a user with email/password.
  */
-export const createEmailUser = mutation({
+export const createEmailUser = internalMutation({
   args: {
     email: v.string(),
     fullName: v.string(),
@@ -1497,7 +1497,7 @@ export const createEmailUser = mutation({
  * presence signal is already leakable via /auth/login wrong-password
  * vs unknown-user responses, so this isn't strictly new surface.
  */
-export const lookupExistingProvidersByEmail = query({
+export const lookupExistingProvidersByEmail = internalQuery({
   args: { email: v.string() },
   handler: async (ctx, args) => {
     const normalized = args.email.trim().toLowerCase();
@@ -1672,7 +1672,7 @@ export const lookupEmailUser = internalQuery({
 /**
  * Check if a user has TOTP enabled. Used by login to decide if 2FA is required.
  */
-export const getUserWithTotp = query({
+export const getUserWithTotp = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);

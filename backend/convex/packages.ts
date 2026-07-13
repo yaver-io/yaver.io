@@ -9,11 +9,11 @@
 // This is a PUBLIC endpoint. Nothing in here should be user-specific
 // or sensitive. See `backend/convex/schema.ts` for the contract.
 
-import { query, mutation } from "./_generated/server";
+import { internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 
 /** List the whole catalogue, sorted by (kind, sortOrder, name). */
-export const list = query({
+export const list = internalQuery({
   args: {
     kind: v.optional(v.string()),
   },
@@ -41,7 +41,7 @@ export const list = query({
 });
 
 /** Look up a single package by slug. */
-export const get = query({
+export const get = internalQuery({
   args: { name: v.string() },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -65,7 +65,7 @@ export const get = query({
 
 // Admin-only (dev) — upsert a single entry. Invoked by `npx convex run
 // packages:upsert '{...}'` during seeding or when adding a new tool.
-export const upsert = mutation({
+export const upsert = internalMutation({
   args: {
     name: v.string(),
     kind: v.string(),
@@ -109,7 +109,7 @@ export const upsert = mutation({
 
 // Initial seed — runnable via `npx convex run packages:seed`.
 // Keep this small; most growth should happen via `upsert`.
-export const seed = mutation({
+export const seed = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();

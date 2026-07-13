@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 // Only emails listed in CLOUD_PREVIEW_OWNER_EMAIL can write/read developer logs.
@@ -18,7 +18,7 @@ function isDeveloper(email?: string): boolean {
 }
 
 /** Write a developer log entry. Only accepted from developer emails. */
-export const writeLog = mutation({
+export const writeLog = internalMutation({
   args: {
     email: v.optional(v.string()),
     userId: v.optional(v.string()),
@@ -44,7 +44,7 @@ export const writeLog = mutation({
 });
 
 /** Get recent developer logs. */
-export const getLogs = query({
+export const getLogs = internalQuery({
   args: {
     limit: v.optional(v.number()),
     email: v.optional(v.string()),
@@ -66,7 +66,7 @@ export const getLogs = query({
 });
 
 /** Clear all developer logs. */
-export const clearLogs = mutation({
+export const clearLogs = internalMutation({
   args: {},
   handler: async (ctx) => {
     const logs = await ctx.db.query("developerLogs").collect();

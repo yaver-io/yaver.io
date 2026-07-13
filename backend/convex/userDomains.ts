@@ -10,13 +10,13 @@ import { internal } from "./_generated/api";
 
 // ─── Public queries ─────────────────────────────────────────────
 
-export const listForUser = query({
+export const listForUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) =>
     ctx.db.query("userDomains").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
 });
 
-export const getByDomain = query({
+export const getByDomain = internalQuery({
   args: { domain: v.string() },
   handler: async (ctx, { domain }) =>
     ctx.db
@@ -29,7 +29,7 @@ export const getByDomain = query({
 // The user names the domain + target; we generate a verification
 // token and return the DNS instructions they need to set.
 
-export const add = mutation({
+export const add = internalMutation({
   args: {
     userId: v.id("users"),
     domain: v.string(),
@@ -105,7 +105,7 @@ export const add = mutation({
 });
 
 /** Returns the DNS records a user needs to create at their registrar. */
-export const instructions = query({
+export const instructions = internalQuery({
   args: { domainId: v.id("userDomains") },
   handler: async (ctx, { domainId }) => {
     const row = await ctx.db.get(domainId);
@@ -151,7 +151,7 @@ export const instructions = query({
   },
 });
 
-export const remove = mutation({
+export const remove = internalMutation({
   args: { domainId: v.id("userDomains"), userId: v.id("users") },
   handler: async (ctx, { domainId, userId }) => {
     const row = await ctx.db.get(domainId);

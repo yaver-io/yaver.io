@@ -9,7 +9,7 @@ import { isOwnerEmail, isOwnerUserId } from "./ownerAllowlist";
 // the OLDEST row by index order — so the Billing page could display a
 // long-dead subscription. Pick deterministically: an `active` row
 // wins; among equals, the most recently updated. null when none.
-export const getByUser = query({
+export const getByUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     const rows = await ctx.db

@@ -1,13 +1,13 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 
 /** Generate a Convex upload URL for file storage. */
-export const generateUploadUrl = mutation(async (ctx) => {
+export const generateUploadUrl = internalMutation(async (ctx) => {
   return await ctx.storage.generateUploadUrl();
 });
 
 /** Record a new download entry after uploading a file. */
-export const createDownload = mutation({
+export const createDownload = internalMutation({
   args: {
     platform: v.union(
       v.literal("macos"),
@@ -46,7 +46,7 @@ export const createDownload = mutation({
 });
 
 /** Delete a download entry and its storage file. */
-export const deleteDownload = mutation({
+export const deleteDownload = internalMutation({
   args: {
     platform: v.union(
       v.literal("macos"),
@@ -73,7 +73,7 @@ export const deleteDownload = mutation({
 });
 
 /** List all available downloads. */
-export const listDownloads = query({
+export const listDownloads = internalQuery({
   args: {},
   handler: async (ctx) => {
     const downloads = await ctx.db.query("downloads").collect();
@@ -95,7 +95,7 @@ export const listDownloads = query({
 });
 
 /** Resolve a single download by platform, arch, and format. */
-export const getDownload = query({
+export const getDownload = internalQuery({
   args: {
     platform: v.union(
       v.literal("macos"),
