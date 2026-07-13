@@ -13,7 +13,8 @@
   "dependencies": {
     "@noble/ed25519": "^2.3.0",
     "@simplewebauthn/server": "^13.3.0",
-    "convex": "^1.41.0"
+    "convex": "^1.41.0",
+    "jose": "^6.2.3"
   },
   "overrides": {
     "ws": "^8.21.0"

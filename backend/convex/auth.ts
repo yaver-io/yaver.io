@@ -170,7 +170,10 @@ async function requireFreshTotp(
   if (!user.totpEnabled) return;
   const code = (providedCode ?? "").trim();
   if (!code) throw new Error("TOTP_REQUIRED");
-  if (!user.totpSecret) return; // misconfigured — fail open rather than lock the user out
+  // SECURITY (audit 2026-07-13): fail CLOSED on a misconfigured 2FA account
+  // (enabled but no seed). Failing open here silently bypassed the second factor
+  // on exactly the destructive flows this guard protects (unlink, account merge).
+  if (!user.totpSecret) throw new Error("TOTP_MISCONFIGURED");
 
   const secretBytes = base32Decode(user.totpSecret);
   const ok = await verifyTOTP(secretBytes, code);

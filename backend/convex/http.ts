@@ -3,9 +3,18 @@ import { v } from "convex/values";
 import { httpAction, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { sha256Hex, randomHex } from "./auth";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
 import { decryptStoredOidcSecret } from "./admin";
 import { estimatedHourlyCents, minimumReserveCents } from "./cloudLifecycle";
+
+// Apple Sign-In identity-token verification (audit 2026-07-13). JWKS is fetched
+// + cached by jose. Audience = the native app bundle id; override via env if the
+// bundle id changes so this never needs a code edit to stay correct.
+const APPLE_JWKS = createRemoteJWKSet(
+  new URL("https://appleid.apple.com/auth/keys"),
+);
+const APPLE_NATIVE_AUDIENCE = process.env.APPLE_NATIVE_AUDIENCE || "io.yaver.mobile";
 
 const http = httpRouter();
 
@@ -1657,18 +1666,22 @@ http.route({
       return errorResponse("Missing identityToken", 400);
     }
 
-    // Decode Apple's identity token (JWT) to extract email and sub
-    const parts = identityToken.split(".");
-    if (parts.length !== 3) {
-      return errorResponse("Invalid identityToken format", 400);
-    }
-
+    // SECURITY (audit 2026-07-13): VERIFY Apple's identity token signature
+    // against Apple's JWKS before trusting any claim. Previously this handler
+    // base64-decoded the payload WITHOUT verifying the signature, so anyone
+    // could POST a self-crafted unsigned JWT carrying a victim's email and mint
+    // a session for that account (zero-secret account takeover). jwtVerify
+    // checks the RS256 signature, issuer, audience, and expiry.
     let payload: Record<string, unknown>;
     try {
-      const decoded = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
-      payload = JSON.parse(decoded);
-    } catch {
-      return errorResponse("Failed to decode identityToken", 400);
+      const { payload: verified } = await jwtVerify(identityToken, APPLE_JWKS, {
+        issuer: "https://appleid.apple.com",
+        audience: APPLE_NATIVE_AUDIENCE,
+      });
+      payload = verified as Record<string, unknown>;
+    } catch (e: any) {
+      console.error("[apple-native] identity token verification failed:", e?.message);
+      return errorResponse("Invalid Apple identity token", 401);
     }
 
     const email = payload.email as string;
@@ -1676,6 +1689,15 @@ http.route({
 
     if (!email || !sub) {
       return errorResponse("Token missing email or sub", 400);
+    }
+    // Apple sets email_verified as string "true"/"false" or boolean.
+    const emailVerifiedClaim = payload.email_verified;
+    const emailVerified =
+      emailVerifiedClaim === true || emailVerifiedClaim === "true";
+    if (!emailVerified && !payload.is_private_email) {
+      // Only trust the email for auto-link/verified-provider flows when Apple
+      // says it's verified (private-relay emails are Apple-controlled → trusted).
+      return errorResponse("Apple email not verified", 401);
     }
 
     // Upsert user
@@ -1849,7 +1871,12 @@ http.route({
         quicHost: body.quicHost || undefined,
         quicPort: body.quicPort || undefined,
       });
-      return jsonResponse({ ok: true, userId: res.userId });
+      // SECURITY (audit 2026-07-13): do NOT return the owning account's userId
+      // to this route's caller — it authenticates only by the device triple
+      // (deviceId+hardwareId+publicKey), and the agent needs nothing beyond
+      // {ok:true}. Returning userId leaked device→account linkage.
+      void res;
+      return jsonResponse({ ok: true });
     } catch (e: any) {
       // "Device not found" is the structured signal an agent uses to
       // decide whether to fall back to /devices/bootstrap-pending.

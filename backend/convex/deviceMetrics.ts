@@ -66,6 +66,18 @@ export const getMetrics = query({
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
 
+    // SECURITY (audit 2026-07-13): verify the device belongs to the caller —
+    // mirrors the ownership check the `report` write path already has. Without
+    // it any signed-in user could read another user's device telemetry by
+    // supplying a known deviceId (authenticated IDOR).
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device || device.userId !== session.user._id) {
+      throw new Error("Device not found or unauthorized");
+    }
+
     const cutoff = Date.now() - ONE_HOUR_MS;
     const metrics = await ctx.db
       .query("deviceMetrics")

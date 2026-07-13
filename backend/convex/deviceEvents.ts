@@ -66,6 +66,17 @@ export const getEvents = query({
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
 
+    // SECURITY (audit 2026-07-13): verify device ownership before returning its
+    // event history — mirrors the `record` write path. Prevents authenticated
+    // IDOR read of another user's device lifecycle events.
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device || device.userId !== session.user._id) {
+      throw new Error("Device not found or unauthorized");
+    }
+
     const limit = args.limit ?? 50;
     const events = await ctx.db
       .query("deviceEvents")
