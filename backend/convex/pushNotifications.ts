@@ -1,4 +1,4 @@
-import { mutation, internalQuery, action } from "./_generated/server";
+import { mutation, internalQuery, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { validateSessionInternal } from "./auth";
@@ -61,7 +61,7 @@ export const tokensForUser = internalQuery({
  * provider key is needed server-side); native tokens would dispatch the same
  * way through their own sender.
  */
-export const sendDeviceAuthPush = action({
+export const sendDeviceAuthPush = internalAction({
   args: {
     userId: v.id("users"),
     userCode: v.string(),

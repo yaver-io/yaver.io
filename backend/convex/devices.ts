@@ -773,7 +773,7 @@ export const ownerByHardwareId = internalQuery({
  * users whose hardwareId is shared with stale rows owned by other
  * userIds.
  */
-export const ownerByHardwareIdForCaller = query({
+export const ownerByHardwareIdForCaller = internalQuery({
   args: {
     hardwareId: v.string(),
     callerUserId: v.string(),

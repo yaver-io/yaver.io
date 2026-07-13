@@ -1,7 +1,7 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
-export const writeLog = mutation({
+export const writeLog = internalMutation({
   args: {
     userId: v.optional(v.string()),
     platform: v.string(),
@@ -20,7 +20,7 @@ export const writeLog = mutation({
   },
 });
 
-export const recent = query({
+export const recent = internalQuery({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     return await ctx.db
@@ -31,7 +31,7 @@ export const recent = query({
   },
 });
 
-export const clearAll = mutation({
+export const clearAll = internalMutation({
   args: {},
   handler: async (ctx) => {
     const logs = await ctx.db.query("mobileStreamLogs").collect();

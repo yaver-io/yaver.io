@@ -1814,7 +1814,7 @@ http.route({
     // breaking remote re-auth for users whose hardwareId is shared.
     // Guests still correctly fail isOwner here (they don't own any row
     // with this hwid) so security is unchanged.
-    const owner = await ctx.runQuery(api.devices.ownerByHardwareIdForCaller, {
+    const owner = await ctx.runQuery(internal.devices.ownerByHardwareIdForCaller, {
       hardwareId: body.hardwareId,
       callerUserId: caller.userDocId,
     });
@@ -3609,7 +3609,7 @@ http.route({
       const user = await authenticateRequest(ctx, request);
       if (user) userId = user.userId;
 
-      await ctx.runMutation(api.mobileStreamLogs.writeLog, {
+      await ctx.runMutation(internal.mobileStreamLogs.writeLog, {
         userId,
         platform: body.platform || "unknown",
         appVersion: body.appVersion || "unknown",
