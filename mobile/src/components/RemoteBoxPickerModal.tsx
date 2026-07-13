@@ -710,6 +710,17 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                       : ` · yaver ${agentVer} · ${distance} behind`;
                 const probe = offlineProbe[device.id];
                 const reachableNow = !!probe?.ok;
+                const lastSeenTs = (device as any).lastSeen ?? (device as any).lastHeartbeat ?? 0;
+                // A healthy agent heartbeats ~every 30s. If Convex still flags a
+                // box "online" but it hasn't beat in >2min, it's very likely
+                // unreachable (stale flag / dropped tunnel) — warn instead of a
+                // misleading "Online · tap to select" that then fails on switch.
+                const staleOnline =
+                  device.online &&
+                  !connectedSet.has(device.id) &&
+                  !reachableNow &&
+                  lastSeenTs > 0 &&
+                  Date.now() - lastSeenTs > 120_000;
                 const isDown = !connectedSet.has(device.id) && !device.online && !reachableNow;
                 const statusLine = connectedSet.has(device.id)
                   ? ping && ping.ok
@@ -717,11 +728,13 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                     : ping && !ping.ok
                       ? "Connected (pool) · ping failed"
                       : "Connected · pinging…"
-                  : device.online
-                    ? "Online · tap to select"
-                    : reachableNow
-                      ? `Reachable · ${probe?.line ?? ""} · tap to select`
-                      : `Down · ${lastSeenLabel((device as any).lastSeen)}`;
+                  : staleOnline
+                    ? `Last seen ${lastSeenLabel(lastSeenTs)} · may be unreachable`
+                    : device.online
+                      ? "Online · tap to select"
+                      : reachableNow
+                        ? `Reachable · ${probe?.line ?? ""} · tap to select`
+                        : `Down · ${lastSeenLabel((device as any).lastSeen)}`;
                 const roleLabel =
                   device.id === primaryDeviceId
                     ? "Primary"
@@ -786,7 +799,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                           </View>
                         ) : null}
                         <Text
-                          style={{ color: isDown ? c.warn : c.textMuted, fontSize: 11, marginTop: 4 }}
+                          style={{ color: isDown || staleOnline ? c.warn : c.textMuted, fontSize: 11, marginTop: 4 }}
                         >
                           {statusLine}
                           {activeDevice?.id === device.id ? " · Focused" : ""}
@@ -839,7 +852,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             {hermesReady?.reason || "Hermes reload prerequisites missing"}
                           </Text>
                         )}
-                        {hermesReady && !hermesReady.enabled && hermesReady.notes?.[0] ? (
+                        {hermesReady && !hermesReady.enabled && hermesReady.notes?.[0] && !hermesReady.notes[0].includes("://") ? (
                           <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={2}>
                             {hermesReady.notes[0]}
                           </Text>
@@ -917,14 +930,16 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                           </Text>
                         ) : null}
                       </View>
-                      <Text style={{ color: selected ? c.accent : isDown ? c.warn : c.textMuted, fontSize: 12, fontWeight: "700" }}>
+                      <Text style={{ color: selected ? c.accent : isDown || staleOnline ? c.warn : c.textMuted, fontSize: 12, fontWeight: "700" }}>
                         {selected
                           ? "SELECTED"
                           : connectedSet.has(device.id)
                             ? "CONNECTED"
                             : isDown
                               ? "DOWN"
-                              : "LIVE"}
+                              : staleOnline
+                                ? "STALE"
+                                : "LIVE"}
                       </Text>
                     </View>
                   </Pressable>
