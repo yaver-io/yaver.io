@@ -25,7 +25,11 @@ import {
 // A parked box is one whose server was deleted but can be recreated from its
 // snapshot. All three read as "Parked" in the UI.
 export function isParkedStatus(status?: string | null): boolean {
-  return status === "paused" || status === "stopped" || status === "suspended";
+  // NOTE: "stopped" is intentionally excluded — a stopped managed box is NOT
+  // resumable (resumeMachine only accepts paused/suspended), so showing it as a
+  // wakeable "ASLEEP" row just produces a 409 on Wake. Only paused/suspended
+  // are genuinely wakeable.
+  return status === "paused" || status === "suspended";
 }
 
 // True while the box is actively coming back (server record recreated, OS +
@@ -211,7 +215,21 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
     setLoading(false);
   }, [token]);
 
-  const machines = data?.machines ?? [];
+  // Frontend defense mirroring the backend /subscription filter: only surface
+  // machines the user can act on (wakeable parked or live), never terminal
+  // (removed/stopped) or duplicate rows sharing a deviceId. Guards against
+  // stale/cached payloads from an un-updated backend so the picker never shows
+  // "tons of devices to wake".
+  const machines = (data?.machines ?? [])
+    .filter((m) => {
+      const s = String((m as any).status || "");
+      return s !== "removed" && s !== "stopped";
+    })
+    .filter((m, i, arr) => {
+      const dev = (m as any).deviceId;
+      if (!dev) return true;
+      return arr.findIndex((x) => (x as any).deviceId === dev) === i;
+    });
   const anyInFlight = machines.some(
     (m) => isWakingStatus(m.status) || optimisticRef.current.has(m.id),
   );

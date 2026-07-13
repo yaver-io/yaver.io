@@ -5396,7 +5396,30 @@ http.route({
         httpPort: relay.httpPort,
       } : null,
       machines: Array.isArray(machines)
-        ? machines.map((machine) => ({
+        ? machines
+            // Only surface machines the user can actually act on: a genuinely
+            // wakeable parked box (paused/suspended WITH a recovery pointer) or
+            // a live one. `removed` = decommissioned, `stopped` = not resumable
+            // (waking it 409s) — both are dead rows that only clutter the picker
+            // and cause failed wakes. Also collapse duplicate rows that share a
+            // deviceId (the _id-truncation collision), keeping the first.
+            .filter((machine) => {
+              const s = String(machine.status || "");
+              if (s === "removed" || s === "stopped") return false;
+              if (s === "paused" || s === "suspended") {
+                // Un-wakeable parked row (no snapshot/volume pointer) — hide it
+                // rather than offer a Wake that can't succeed.
+                return !!(machine.lastSnapshotId || (machine.volumeId && machine.baseImageId));
+              }
+              return true;
+            })
+            .filter((machine, i, arr) => {
+              // Collapse duplicate rows sharing a deviceId — keep the first.
+              const dev = machine.deviceId;
+              if (!dev) return true;
+              return arr.findIndex((m) => m.deviceId === dev) === i;
+            })
+            .map((machine) => ({
             id: String(machine._id),
             machineType: machine.machineType,
             status: machine.status,
