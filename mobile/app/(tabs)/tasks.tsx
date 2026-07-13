@@ -57,6 +57,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 import { Badge } from "../../src/components/Badge";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
+import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import {
   runYaverAgent,
   loadYaverAgentLocalConfig,
@@ -803,6 +804,7 @@ function PhaseStatusLine({ task }: { task: Task }) {
 type RunnerBannerKind =
   | "ok"
   | "authNeeded"
+  | "needsConfig"
   | "notRunnable"
   | "notInstalled"
   | "blocked";
@@ -810,6 +812,7 @@ type RunnerBannerKind =
 const RUNNER_BANNER_TONES: Record<RunnerBannerKind, string> = {
   ok: "#4ade80",
   authNeeded: "#fbbf24",
+  needsConfig: "#fbbf24",
   notRunnable: "#fbbf24",
   notInstalled: "#f87171",
   blocked: "#fbbf24",
@@ -865,6 +868,13 @@ function deriveRunnerBannerState(
       return make("authNeeded", `${label} needs sign-in`);
     }
     if (selectedRow.error) {
+      // OpenCode's "error" is almost always a provider/model config gap (the
+      // configured model points at a provider with no key). That's fixable
+      // right here via OpenCodeConfigModal, so route it to a distinct
+      // "needsConfig" kind with a Configure CTA rather than a dead "blocked".
+      if (wantId === "opencode") {
+        return make("needsConfig", `${label} needs setup`);
+      }
       // Installed + authed but the runner reported a fault.
       return make("blocked", `${label} blocked`);
     }
@@ -1632,6 +1642,11 @@ export default function TasksScreen() {
   // /runner-auth/browser/* through /peer/<id> so the OAuth flow runs on
   // the failing remote box, not on whichever agent is currently focused.
   const [runnerAuthModalTarget, setRunnerAuthModalTarget] = useState<string | null>(null);
+  // OpenCode provider/model/key editor — opened from the composer banner's
+  // "Configure" CTA when OpenCode reports a config gap (model's provider has
+  // no key). startInAdd jumps straight to the add-provider+key sheet.
+  const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
+  const [openCodeConfigStartInAdd, setOpenCodeConfigStartInAdd] = useState(false);
   const [showTmuxSessions, setShowTmuxSessions] = useState(false);
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
   const [isLoadingTmux, setIsLoadingTmux] = useState(false);
@@ -3765,10 +3780,21 @@ export default function TasksScreen() {
                         </Text>
                       </Pressable>
                     )}
-                    {runnerBannerState &&
-                    runnerBannerState.kind !== "ok" &&
-                    runnerBannerState.kind !== "authNeeded" &&
-                    (availableRunners.length > 0 || agentStatus) ? (
+                    {runnerBannerState?.kind === "needsConfig" ? (
+                      <Pressable
+                        onPress={() => {
+                          setOpenCodeConfigStartInAdd(true);
+                          setShowOpenCodeConfig(true);
+                        }}
+                        style={[s.bannerInlineBtn, { backgroundColor: c.accentSoft, flexDirection: "row", alignItems: "center", gap: 5 }]}
+                      >
+                        <Ionicons name="settings-outline" size={13} color={c.accent} />
+                        <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>Configure</Text>
+                      </Pressable>
+                    ) : runnerBannerState &&
+                      runnerBannerState.kind !== "ok" &&
+                      runnerBannerState.kind !== "authNeeded" &&
+                      (availableRunners.length > 0 || agentStatus) ? (
                       <Pressable
                         onPress={handleRestartRunner}
                         disabled={isRestartingRunner}
@@ -5268,6 +5294,17 @@ export default function TasksScreen() {
           onCompleted={() => {
             setRunnerAuthModalRunner(null);
             setRunnerAuthModalTarget(null);
+            void refreshRunnerState();
+          }}
+        />
+        <OpenCodeConfigModal
+          visible={showOpenCodeConfig}
+          startInAddProvider={openCodeConfigStartInAdd}
+          onClose={() => {
+            setShowOpenCodeConfig(false);
+            setOpenCodeConfigStartInAdd(false);
+            // A saved provider/key changes OpenCode readiness — re-poll so the
+            // banner flips from "needs setup" to "ready" without a manual nudge.
             void refreshRunnerState();
           }}
         />
