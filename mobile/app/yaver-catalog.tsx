@@ -46,6 +46,16 @@ export default function YaverCatalogScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.header}>
+          <Pressable
+            onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+            hitSlop={12}
+            style={{ flexDirection: "row", alignItems: "center", marginBottom: 12, alignSelf: "flex-start" }}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <Ionicons name="chevron-back" size={22} color={c.textSecondary} />
+            <Text style={{ color: c.textSecondary, fontSize: 16, marginLeft: 2, fontWeight: "600" }}>Back</Text>
+          </Pressable>
           <Text style={[styles.title, { color: c.textPrimary }]}>Yaver Catalog</Text>
           <Text style={[styles.subtitle, { color: c.textSecondary }]}>
             {surface} · {all.length} Yaver-native app{all.length === 1 ? "" : "s"}
