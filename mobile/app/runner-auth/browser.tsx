@@ -65,7 +65,7 @@ interface Snapshot {
   id?: string;
   runner?: string;
   status?: string;
-  openURL?: string;
+  openUrl?: string;
   code?: string;
   message?: string;
   error?: string;
@@ -109,7 +109,7 @@ export default function RunnerAuthBrowserScreen(): React.JSX.Element {
       const sess: Snapshot = body.session ?? {};
       setSnapshot(sess);
       setSessionId(sess.id ?? "");
-      if (sess.openURL) setPhase("ready_to_sign_in");
+      if (sess.openUrl) setPhase("ready_to_sign_in");
       else setPhase("awaiting_url"); // openURL may arrive on a subsequent poll
     } catch (err: any) {
       setErrorMsg(err?.message ?? String(err));
@@ -133,7 +133,7 @@ export default function RunnerAuthBrowserScreen(): React.JSX.Element {
         const body = await r.json();
         const sess: Snapshot = body.session ?? {};
         setSnapshot(sess);
-        setPhase((prev) => (sess.openURL && prev === "awaiting_url" ? "ready_to_sign_in" : prev));
+        setPhase((prev) => (sess.openUrl && prev === "awaiting_url" ? "ready_to_sign_in" : prev));
         const s = (sess.status ?? "").toLowerCase();
         if (s === "completed" || s === "success") setPhase("completed");
         if (s === "cancelled" || s === "canceled") setPhase("cancelled");
@@ -160,7 +160,7 @@ export default function RunnerAuthBrowserScreen(): React.JSX.Element {
   // a Custom Tab. When the sheet is dismissed we auto-read the clipboard
   // so the copied code lands in the field with no manual paste.
   const openSignIn = useCallback(async () => {
-    const url = snapshot?.openURL;
+    const url = snapshot?.openUrl;
     if (!url) return;
     setErrorMsg("");
     try {
@@ -193,7 +193,7 @@ export default function RunnerAuthBrowserScreen(): React.JSX.Element {
         setPhase("error");
       }
     }
-  }, [snapshot?.openURL, runner, c.accent, c.bgCard]);
+  }, [snapshot?.openUrl, runner, c.accent, c.bgCard]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -271,7 +271,7 @@ export default function RunnerAuthBrowserScreen(): React.JSX.Element {
   }, [sessionId, router]);
 
   const runnerLabel = runner === "claude" ? "Claude Code" : runner === "codex" ? "Codex" : runner;
-  const hasUrl = !!snapshot?.openURL;
+  const hasUrl = !!snapshot?.openUrl;
   const wantsPaste = runner === "claude" && (phase === "awaiting_code" || phase === "submitting");
   const canSignIn = hasUrl && (phase === "ready_to_sign_in" || phase === "signing_in" || phase === "awaiting_code" || phase === "error");
 
@@ -325,7 +325,7 @@ export default function RunnerAuthBrowserScreen(): React.JSX.Element {
                 ? " At the end, tap Copy on the code, then Done — we'll fill it in for you."
                 : " Codex finishes automatically — just close the sheet when done."}
             </Text>
-            <Pressable onPress={() => snapshot?.openURL && Linking.openURL(snapshot.openURL)} hitSlop={8}>
+            <Pressable onPress={() => snapshot?.openUrl && Linking.openURL(snapshot.openUrl)} hitSlop={8}>
               <Text style={[styles.linkFallback, { color: c.textMuted }]}>
                 Trouble? Open in your default browser instead
               </Text>

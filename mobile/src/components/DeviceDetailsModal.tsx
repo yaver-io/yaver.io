@@ -12,6 +12,7 @@ import { useColors, useTheme } from "../context/ThemeContext";
 import { quicClient, type RunnerAuthStatusRow } from "../lib/quic";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import RunnerAuthModal from "./RunnerAuthModal";
+import { OpenCodeConfigModal } from "./OpenCodeConfigModal";
 import { ScreenlogSection } from "./ScreenlogSection";
 import { NetCaptureSection } from "./NetCaptureSection";
 
@@ -777,6 +778,10 @@ export function CodingAgentsSection({ device }: { device: Device }) {
   const [statusRows, setStatusRows] = useState<RunnerAuthStatusRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [authModalRunner, setAuthModalRunner] = useState<string | null>(null);
+  // OpenCode/GLM don't do browser OAuth — they need a provider/API-key. Route
+  // their "Sign in" to the config sheet instead of the browser-auth modal,
+  // which errors with "unsupported runner" for anything but claude/codex.
+  const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
   const [defaultBusy, setDefaultBusy] = useState<string | null>(null);
   const [modelBusy, setModelBusy] = useState<string | null>(null);
   // Per-runner install state (claude / codex / opencode). Backs the
@@ -1052,13 +1057,24 @@ export function CodingAgentsSection({ device }: { device: Device }) {
             </View>
             {showSignIn ? (
               <Pressable
-                onPress={() => setAuthModalRunner(id)}
+                onPress={() => {
+                  const nid = String(id).toLowerCase();
+                  // opencode/glm authenticate via a provider API key, not
+                  // browser OAuth — send them to the config sheet.
+                  if (nid === "opencode" || nid === "glm") {
+                    setShowOpenCodeConfig(true);
+                  } else {
+                    setAuthModalRunner(id);
+                  }
+                }}
                 style={{
                   paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
                   backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
                 }}
               >
-                <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>Sign in →</Text>
+                <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
+                  {String(id).toLowerCase() === "opencode" || String(id).toLowerCase() === "glm" ? "Set up →" : "Sign in →"}
+                </Text>
               </Pressable>
             ) : null}
             {showInstall ? (
@@ -1225,6 +1241,14 @@ export function CodingAgentsSection({ device }: { device: Device }) {
         }}
         onCompleted={() => {
           setAuthModalRunner(null);
+          void refresh();
+        }}
+      />
+      <OpenCodeConfigModal
+        visible={showOpenCodeConfig}
+        startInAddProvider
+        onClose={() => {
+          setShowOpenCodeConfig(false);
           void refresh();
         }}
       />

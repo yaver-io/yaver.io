@@ -24,10 +24,10 @@ import (
 )
 
 type opsProvisionPayload struct {
-	Plan    string `json:"plan"`
-	Region  string `json:"region,omitempty"`
-	SSHKey  string `json:"sshKey,omitempty"`
-	Label   string `json:"label,omitempty"`
+	Plan   string `json:"plan"`
+	Region string `json:"region,omitempty"`
+	SSHKey string `json:"sshKey,omitempty"`
+	Label  string `json:"label,omitempty"`
 }
 
 type opsDestroyPayload struct {
@@ -196,6 +196,87 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "cloud_wake",
+		Description: "Wake (resume from snapshot) a PARKED managed-cloud box by machineId. Authed proxy to Convex POST /billing/yaver-cloud/start — recreates the Hetzner server from lastSnapshotId on the recorded serverType, re-points DNS, flips the row resuming→ready. Balance-gated (402 on insufficient funds). machineId comes from cloud_status. Scale-to-zero counterpart of cloud_park. Token from agent config, never payload.",
+		Schema: map[string]interface{}{
+			"type":     "object",
+			"required": []string{"machineId"},
+			"properties": map[string]interface{}{
+				"machineId": map[string]interface{}{"type": "string", "description": "Managed cloudMachines row id (from cloud_status). NOT a provider serverId."},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsCloudWakeHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "cloud_park",
+		Description: "Park (sleep) a running managed-cloud box by machineId: snapshot + DELETE the Hetzner server (scale-to-zero — a stopped server still bills; only delete stops the meter). Authed proxy to Convex POST /billing/yaver-cloud/stop. A failed snapshot ABORTS the delete (never lose an unrecoverable box). machineId comes from cloud_status. Wake again with cloud_wake. Token from agent config, never payload.",
+		Schema: map[string]interface{}{
+			"type":     "object",
+			"required": []string{"machineId"},
+			"properties": map[string]interface{}{
+				"machineId": map[string]interface{}{"type": "string", "description": "Managed cloudMachines row id (from cloud_status). NOT a provider serverId."},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsCloudParkHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// opsCloudWakeHandler / opsCloudParkHandler drive the MANAGED lifecycle (Convex
+// cloudMachines row + balance gate + status ladder + lastParkedAt/lastWokeAt),
+// distinct from the raw-Hetzner cloud_stop/cloud_start (BYO-token, serverId,
+// dry-run-by-default). These are what a headless box / MCP client uses to wake
+// or sleep a parked managed box by its machineId.
+func opsCloudWakeHandler(_ OpsContext, payload json.RawMessage) OpsResult {
+	return opsCloudLifecycleProxy(payload, "/billing/yaver-cloud/start", "wake")
+}
+
+func opsCloudParkHandler(_ OpsContext, payload json.RawMessage) OpsResult {
+	return opsCloudLifecycleProxy(payload, "/billing/yaver-cloud/stop", "park")
+}
+
+func opsCloudLifecycleProxy(payload json.RawMessage, route, action string) OpsResult {
+	var p struct {
+		MachineID string `json:"machineId"`
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+		}
+	}
+	if strings.TrimSpace(p.MachineID) == "" {
+		return OpsResult{OK: false, Code: "bad_payload", Error: "machineId is required (get it from cloud_status)"}
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.ConvexSiteURL) == "" || strings.TrimSpace(cfg.AuthToken) == "" {
+		return OpsResult{OK: false, Code: "not_authed", Error: "agent not authed (missing convex site url / token) — run `yaver auth`"}
+	}
+	body, _ := json.Marshal(map[string]string{"machineId": strings.TrimSpace(p.MachineID)})
+	req, err := newBearerRequest("POST", cfg.ConvexSiteURL+route, cfg.AuthToken, bytes.NewReader(body))
+	if err != nil {
+		return OpsResult{OK: false, Code: "request_error", Error: err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Wake/park kick off async provider work on the Convex side and return
+	// promptly; 30s covers the initial mutation + scheduling.
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return OpsResult{OK: false, Code: "convex_unreachable", Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]interface{}
+	_ = json.Unmarshal(raw, &out)
+	if resp.StatusCode != http.StatusOK {
+		return OpsResult{OK: false, Code: "lifecycle_failed", Error: fmt.Sprintf("%s HTTP %d: %s", action, resp.StatusCode, strings.TrimSpace(string(raw))), Initial: out}
+	}
+	return OpsResult{OK: true, Initial: out}
 }
 
 // opsCloudSnapshotDeleteHandler removes one snapshot image by id using
@@ -266,8 +347,8 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 		// never list, snapshot, or delete another developer's resources
 		// through it. Managed-cloud teardown is a separate, Convex-
 		// ownership-checked path — never this raw verb.
-		Snapshot       bool `json:"snapshot"`
-		Confirm        bool `json:"confirm"`
+		Snapshot bool `json:"snapshot"`
+		Confirm  bool `json:"confirm"`
 		// Convex device row (deviceId UUID) to deregister as part of
 		// teardown. The cloud server is about to be destroyed, so the
 		// row must be removed by whoever runs this — there is no
