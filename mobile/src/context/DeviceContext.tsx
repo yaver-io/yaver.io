@@ -17,7 +17,7 @@ import * as WebBrowser from "expo-web-browser";
 import { quicClient, RecoveryResult, RelayServer, TunnelServer } from "../lib/quic";
 import { connectionManager } from "../lib/connectionManager";
 import { useAuth } from "./AuthContext";
-import { getConvexSiteUrl, getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS } from "../lib/auth";
+import { getConvexSiteUrl, getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS, UserSettingsUnavailableError } from "../lib/auth";
 import { appLog } from "../lib/logger";
 import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
@@ -40,6 +40,7 @@ function userKey(userId: string | undefined, key: string): string {
 // Exported so settings screen can read/write with user scope
 export function customRelaysKey(userId?: string): string { return userKey(userId, "custom_relays"); }
 export function customTunnelsKey(userId?: string): string { return userKey(userId, "custom_tunnels"); }
+function resolvedRelaysCacheKey(userId?: string): string { return userKey(userId, "resolved_relays_cache"); }
 function relayOnboardingKey(userId?: string): string { return userKey(userId, "relay_onboarding_done"); }
 function relaySyncKey(userId?: string): string { return userKey(userId, "relay_sync_enabled"); }
 function debugLogsKey(): string { return "@yaver/debug_logs_enabled"; } // global, not per-user
@@ -499,6 +500,53 @@ function resolveRelayServers(
   ]);
 }
 
+function parseStoredRelays(raw: string | null): RelayServer[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function sameRelayUrlSet(a: RelayServer[], b: RelayServer[]): boolean {
+  const urlsA = new Set(a.map((r) => normalizedURL(r.httpUrl)).filter(Boolean));
+  const urlsB = new Set(b.map((r) => normalizedURL(r.httpUrl)).filter(Boolean));
+  if (urlsA.size !== urlsB.size) return false;
+  for (const url of urlsA) {
+    if (!urlsB.has(url)) return false;
+  }
+  return true;
+}
+
+function looksLikeManualRelayOverride(
+  relays: RelayServer[],
+  platformServers: RelayServer[],
+  accountRelayUrl?: string,
+): boolean {
+  if (relays.length === 0) return false;
+  if (relays.some((relay) => relay.region === "custom")) return true;
+  const accountUrl = normalizedURL(accountRelayUrl);
+  if (accountUrl && relays.some((relay) => normalizedURL(relay.httpUrl) === accountUrl)) {
+    return false;
+  }
+  if (platformServers.length > 0 && sameRelayUrlSet(relays, platformServers)) {
+    return false;
+  }
+  return platformServers.length === 0;
+}
+
+function isRelayAuthError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("invalid relay password") ||
+    lower.includes("relay password mismatch") ||
+    lower.includes("too many invalid relay password attempts") ||
+    lower.includes("relay authentication failed")
+  );
+}
+
 function deviceEndpointKey(device: Pick<Device, "host" | "port" | "isGuest">): string | null {
   if (device.isGuest) return null;
   const host = normalizedHost(device.host);
@@ -833,6 +881,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
   // User-scoped storage keys (different user = different settings)
   const RELAYS_KEY = customRelaysKey(uid);
+  const RELAY_CACHE_KEY = resolvedRelaysCacheKey(uid);
   const TUNNELS_KEY = customTunnelsKey(uid);
   const ONBOARDING_KEY = relayOnboardingKey(uid);
   const SYNC_KEY = relaySyncKey(uid);
@@ -898,6 +947,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // can render "3 devices connected" without each consumer reaching
   // into the manager directly.
   const [connectedDeviceIds, setConnectedDeviceIds] = useState<string[]>([]);
+  const fetchRelayServersRef = useRef<(() => Promise<number>) | null>(null);
   // Auto-pair failure tracking. Each auto-pair path (LAN beacon / relay /
   // direct) records per-device failures; after MAX_PAIR_ATTEMPTS we add
   // the deviceId to `manualAuthRequiredSet` and the polling loops skip
@@ -1260,18 +1310,32 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // ensureConnected so a parallel boot-time warm-up attempt
         // and this user-driven attempt share one QuicClient.connect
         // call instead of trampling each other's relay/attempt state.
-        const connectPromise = connectionManager.ensureConnected(device.id, {
+        const connectParams = {
           host: device.host,
           port: device.port,
           token,
           lanIps: device.lanIps,
           sessionTunnels: tunnelServersForDevice(device),
           connectionPreferences: device.connectionPreferences,
-        });
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Could not connect in 20s")), 20000)
-        );
-        await Promise.race([connectPromise, timeoutPromise]);
+        };
+        const connectOnce = async (timeoutMs: number) => {
+          const connectPromise = connectionManager.ensureConnected(device.id, connectParams);
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Could not connect in ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
+          );
+          await Promise.race([connectPromise, timeoutPromise]);
+        };
+
+        try {
+          await connectOnce(20000);
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          if (!isRelayAuthError(errMsg)) throw e;
+          sendTelemetry(token, "connect-relay-auth-refresh", `Refreshing relay credentials for ${device.name}`, errMsg);
+          await AsyncStorage.removeItem(RELAY_CACHE_KEY).catch(() => {});
+          await fetchRelayServersRef.current?.();
+          await connectOnce(12000);
+        }
         sendTelemetry(token, "connect-success", `Connected via ${client.connectionMode}`, JSON.stringify({
           device: device.name, path: client.connectionPath, network: client.networkType, mode: client.connectionMode,
         }));
@@ -1312,7 +1376,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         markDeviceUnreachable(device.id);
       }
     },
-    [token]
+    [RELAY_CACHE_KEY, token]
   );
 
   const disconnect = useCallback(() => {
@@ -1833,23 +1897,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     setAutoConnectNonce((n) => n + 1);
   }, []);
 
-  // Fetch relay servers: local AsyncStorage > Convex user settings > Convex platform config
+  // Fetch relay servers: fresh Convex/platform config > real custom relays > cached resolved relays.
   // Extracted so it can be called on startup AND on reconnection (when relay list is empty).
   // Returns the number of relays ultimately loaded into the QUIC client — 0 means "no relays
   // from any source", which the startup retry loop uses as the trigger to back off and retry.
   const fetchRelayServers = useCallback(async (): Promise<number> => {
     try {
-      // 1. Check for user-configured custom relays in local storage first
-      const customRaw = await AsyncStorage.getItem(RELAYS_KEY);
-      if (customRaw) {
-        const customRelays: RelayServer[] = JSON.parse(customRaw);
-        if (customRelays.length > 0) {
-          connectionManager.setRelayServersOnAll(customRelays);
-          mirrorRelayPasswordToNative(customRelays);
-          console.log("[DeviceContext] Using", customRelays.length, "custom relay server(s)");
-          return customRelays.length;
-        }
-      }
+      const localRelays = parseStoredRelays(await AsyncStorage.getItem(RELAYS_KEY));
 
       let platformServers: RelayServer[] = [];
       try {
@@ -1865,42 +1919,123 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // Best-effort — account relay may still work on mobile without platform config.
       }
 
-      // 2. No local relays — check Convex user settings (account-level relay config)
+      let settingsRelayUrl: string | undefined;
+      let settingsRelayPassword: string | undefined;
+      // Distinguish "account genuinely has no relay settings" from "we could not
+      // read them". Only the former may fall through to the password-less
+      // platform set below; the latter must keep whatever credential we already
+      // hold, because /config deliberately strips the relay password (it is
+      // per-user, not shared). Installing a password-less relay makes every
+      // relay request 401 "invalid relay password", and the reconnect loop then
+      // trips the relay's invalid-auth rate limiter — which bans the whole
+      // public IP, taking out every other device behind the same NAT.
+      let settingsUnavailable = false;
       if (token) {
         try {
           const settings = await getUserSettings(token);
+          settingsRelayUrl = settings.relayUrl;
+          settingsRelayPassword = settings.relayPassword;
           if (settings.relayUrl) {
             const resolved = resolveRelayServers(platformServers, settings.relayUrl, settings.relayPassword);
             connectionManager.setRelayServersOnAll(resolved);
             // Persist the resolved fallback set so the app can reconnect offline too.
-            await AsyncStorage.setItem(RELAYS_KEY, JSON.stringify(resolved));
+            await AsyncStorage.setItem(RELAY_CACHE_KEY, JSON.stringify(resolved));
             await AsyncStorage.setItem(SYNC_KEY, "true");
+            if (!looksLikeManualRelayOverride(localRelays, platformServers, settings.relayUrl)) {
+              await AsyncStorage.removeItem(RELAYS_KEY);
+            }
             mirrorRelayPasswordToNative(resolved, settings.relayPassword);
             console.log("[DeviceContext] Loaded", resolved.length, "relay server(s) from Convex user settings");
             return resolved.length;
           }
-        } catch {
-          // Best-effort — fall through to platform config
+        } catch (e) {
+          settingsUnavailable = true;
+          const unauthorized = e instanceof UserSettingsUnavailableError && e.unauthorized;
+          appLog(
+            "warn",
+            unauthorized
+              ? "[relay] session rejected by /settings — cannot read this account's relay password. Sign in again."
+              : `[relay] could not read /settings: ${e instanceof Error ? e.message : String(e)}`,
+          );
+          if (unauthorized) setLastError("Session expired — sign in again to reconnect.");
         }
       }
 
-      // 3. No account-level relay — fall back to Convex platform config.
-      // mirrorRelayPasswordToNative runs here too so accounts that use
-      // the platform default relay (the common case — settings.relayUrl
-      // is empty) still get an X-Relay-Password value into native
-      // UserDefaults. Without this, every native pane request 401'd
-      // with "invalid relay password" / "Relay password mismatch"
-      // because the password lived only on the per-server entry
-      // platformServers carries from /config.
-      connectionManager.setRelayServersOnAll(platformServers);
-      mirrorRelayPasswordToNative(platformServers);
-      console.log("[DeviceContext] Loaded", platformServers.length, "relay server(s) from Convex");
-      return platformServers.length;
+      if (looksLikeManualRelayOverride(localRelays, platformServers, settingsRelayUrl)) {
+        connectionManager.setRelayServersOnAll(localRelays);
+        mirrorRelayPasswordToNative(localRelays, settingsRelayPassword);
+        console.log("[DeviceContext] Using", localRelays.length, "custom relay server(s)");
+        return localRelays.length;
+      }
+
+      // Account has no custom relayUrl but does have a per-user password: the
+      // common case. /config no longer carries a password, so attach ours to
+      // the platform servers rather than shipping them bare.
+      if (platformServers.length > 0 && settingsRelayPassword) {
+        const passworded = platformServers.map((server) => ({
+          ...server,
+          password: server.password || settingsRelayPassword,
+        }));
+        connectionManager.setRelayServersOnAll(passworded);
+        await AsyncStorage.setItem(RELAY_CACHE_KEY, JSON.stringify(passworded));
+        if (localRelays.length > 0) await AsyncStorage.removeItem(RELAYS_KEY);
+        mirrorRelayPasswordToNative(passworded, settingsRelayPassword);
+        console.log("[DeviceContext] Loaded", passworded.length, "platform relay server(s) with account password");
+        return passworded.length;
+      }
+
+      // We could not read the account's settings. Prefer the last known-good
+      // cached set (it still carries a password) over the bare platform set —
+      // and never persist the bare set over it.
+      if (settingsUnavailable) {
+        const lastKnownGood = parseStoredRelays(await AsyncStorage.getItem(RELAY_CACHE_KEY));
+        if (lastKnownGood.length > 0) {
+          connectionManager.setRelayServersOnAll(lastKnownGood);
+          mirrorRelayPasswordToNative(lastKnownGood);
+          console.log("[DeviceContext] Settings unavailable — reusing", lastKnownGood.length, "cached relay server(s)");
+          return lastKnownGood.length;
+        }
+      }
+
+      // No account-level relay at all. Only reachable when /settings was read
+      // successfully and genuinely carries no password (self-hosted,
+      // password-less relay), or when we have nothing else to try.
+      if (platformServers.length > 0) {
+        connectionManager.setRelayServersOnAll(platformServers);
+        if (!settingsUnavailable) {
+          await AsyncStorage.setItem(RELAY_CACHE_KEY, JSON.stringify(platformServers));
+          if (localRelays.length > 0) await AsyncStorage.removeItem(RELAYS_KEY);
+        }
+        mirrorRelayPasswordToNative(platformServers);
+        console.log("[DeviceContext] Loaded", platformServers.length, "relay server(s) from Convex");
+        return platformServers.length;
+      }
+
+      const cachedRelays = parseStoredRelays(await AsyncStorage.getItem(RELAY_CACHE_KEY));
+      if (cachedRelays.length > 0) {
+        connectionManager.setRelayServersOnAll(cachedRelays);
+        mirrorRelayPasswordToNative(cachedRelays, settingsRelayPassword);
+        console.log("[DeviceContext] Using", cachedRelays.length, "cached relay server(s)");
+        return cachedRelays.length;
+      }
+
+      if (localRelays.length > 0) {
+        connectionManager.setRelayServersOnAll(localRelays);
+        mirrorRelayPasswordToNative(localRelays, settingsRelayPassword);
+        console.log("[DeviceContext] Using", localRelays.length, "stored relay server(s)");
+        return localRelays.length;
+      }
+
+      connectionManager.setRelayServersOnAll([]);
+      mirrorRelayPasswordToNative([], settingsRelayPassword);
+      return 0;
     } catch {
       sendTelemetry(token, "relays-failed", "Could not fetch relay config");
       return 0;
     }
-  }, [token]);
+  }, [RELAY_CACHE_KEY, RELAYS_KEY, SYNC_KEY, token]);
+
+  fetchRelayServersRef.current = fetchRelayServers;
 
   // Initial relay fetch on mount. If we end up with zero relays (likely a
   // transient `/config` fetch failure at boot — DNS not resolved yet,

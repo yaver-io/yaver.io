@@ -31,6 +31,12 @@ export type PasskeyAuthResult = {
   userId: string;
   userDocId: string;
   email: string | null;
+} | {
+  requires2fa: true;
+  pendingToken: string;
+  userId: string;
+  userDocId: string;
+  email: string | null;
 };
 
 export class PasskeyCancelled extends Error {

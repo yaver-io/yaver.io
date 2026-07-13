@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import QRCode from "qrcode";
 import { CONVEX_URL } from "@/lib/constants";
 
 type TwoFactorViewProps = {
   token: string | null;
+  autoStart?: boolean;
 };
 
-export default function TwoFactorView({ token }: TwoFactorViewProps) {
+export default function TwoFactorView({ token, autoStart = false }: TwoFactorViewProps) {
   const [enabled, setEnabled] = useState(false);
   const [recoveryCodesRemaining, setRecoveryCodesRemaining] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -16,6 +18,7 @@ export default function TwoFactorView({ token }: TwoFactorViewProps) {
   const [step, setStep] = useState<"idle" | "setup" | "verify" | "recovery" | "disable">("idle");
   const [secret, setSecret] = useState("");
   const [otpAuthUrl, setOtpAuthUrl] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
   const [code, setCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -26,6 +29,30 @@ export default function TwoFactorView({ token }: TwoFactorViewProps) {
     fetchStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  useEffect(() => {
+    if (!autoStart || loading || enabled || step !== "idle" || submitting) return;
+    handleSetup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, loading, enabled, step, submitting]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!otpAuthUrl) {
+      setQrDataUrl("");
+      return;
+    }
+    QRCode.toDataURL(otpAuthUrl, { margin: 1, width: 200 })
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [otpAuthUrl]);
 
   const fetchStatus = async () => {
     try {
@@ -182,15 +209,16 @@ export default function TwoFactorView({ token }: TwoFactorViewProps) {
             Scan this QR code with your authenticator app (Google Authenticator, 1Password, Authy, etc.):
           </p>
 
-          <div className="mx-auto mb-4 w-fit rounded-lg bg-white p-4">
-            {/* Use Google Charts QR API for display */}
-            <img
-              src={`https://chart.googleapis.com/chart?cht=qr&chs=200x200&chl=${encodeURIComponent(otpAuthUrl)}&choe=UTF-8`}
-              alt="TOTP QR Code"
-              width={200}
-              height={200}
-            />
-          </div>
+          {qrDataUrl && (
+            <div className="mx-auto mb-4 w-fit rounded-lg bg-white p-4">
+              <img
+                src={qrDataUrl}
+                alt="TOTP QR Code"
+                width={200}
+                height={200}
+              />
+            </div>
+          )}
 
           <div className="mb-4">
             <p className="text-xs text-surface-500">Or enter this secret manually:</p>

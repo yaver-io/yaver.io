@@ -190,45 +190,46 @@ async function handleCallback(
     throw err;
   }
 
-  // Check if user has 2FA enabled before creating session
-  try {
-    const totpCheckRes = await fetch(`${convexSiteUrl}/auth/totp/check-user`, {
+  // Check if user has 2FA enabled before creating a session. This must fail
+  // closed: if the TOTP status lookup cannot be trusted, issuing an OAuth
+  // session would silently bypass an enrolled second factor.
+  const totpCheckRes = await fetch(`${convexSiteUrl}/auth/totp/check-user`, {
+    method: "POST",
+    headers: internalAuthHeaders(),
+    body: JSON.stringify({ userId }),
+  });
+  if (!totpCheckRes.ok) {
+    const text = await totpCheckRes.text();
+    await logToConvex(provider, "2fa_check", "error", "TOTP check failed; refusing session", text);
+    throw new Error("Could not verify two-factor status. Please try again.");
+  }
+  const totpData = await totpCheckRes.json();
+  if (totpData.totpEnabled) {
+    const pendingRes = await fetch(`${convexSiteUrl}/auth/totp/create-pending`, {
       method: "POST",
       headers: internalAuthHeaders(),
       body: JSON.stringify({ userId }),
     });
 
-    if (totpCheckRes.ok) {
-      const totpData = await totpCheckRes.json();
-      if (totpData.totpEnabled) {
-        // Create pending auth instead of session
-        const pendingRes = await fetch(`${convexSiteUrl}/auth/totp/create-pending`, {
-          method: "POST",
-          headers: internalAuthHeaders(),
-          body: JSON.stringify({ userId }),
-        });
-
-        if (pendingRes.ok) {
-          const { pendingToken } = await pendingRes.json();
-          await logToConvex(provider, "2fa_required", "info", "2FA required, redirecting to TOTP page");
-
-          // All clients go to web TOTP page first
-          const totpUrl = new URL("/auth/totp", baseUrl);
-          totpUrl.searchParams.set("pendingToken", pendingToken);
-          totpUrl.searchParams.set("client", state.client || "web");
-          if (state.returnTo) {
-            totpUrl.searchParams.set("return", state.returnTo);
-          }
-          if (state.openerOrigin) {
-            totpUrl.searchParams.set("openerOrigin", state.openerOrigin);
-          }
-          return NextResponse.redirect(totpUrl.toString(), 303);
-        }
-      }
+    if (!pendingRes.ok) {
+      const text = await pendingRes.text();
+      await logToConvex(provider, "2fa_pending", "error", "Could not create TOTP pending auth", text);
+      throw new Error("Could not start two-factor verification. Please try again.");
     }
-  } catch (err) {
-    // If TOTP check fails, fall through to normal session creation
-    await logToConvex(provider, "2fa_check", "warn", "TOTP check failed, proceeding without 2FA");
+
+    const { pendingToken } = await pendingRes.json();
+    await logToConvex(provider, "2fa_required", "info", "2FA required, redirecting to TOTP page");
+
+    const totpUrl = new URL("/auth/totp", baseUrl);
+    totpUrl.searchParams.set("pendingToken", pendingToken);
+    totpUrl.searchParams.set("client", state.client || "web");
+    if (state.returnTo) {
+      totpUrl.searchParams.set("return", state.returnTo);
+    }
+    if (state.openerOrigin) {
+      totpUrl.searchParams.set("openerOrigin", state.openerOrigin);
+    }
+    return NextResponse.redirect(totpUrl.toString(), 303);
   }
 
   // Create session via Convex HTTP action

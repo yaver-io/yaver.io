@@ -164,6 +164,13 @@ export default function LoginScreen() {
         }
       }
       const result = await passkeySignin(getConvexSiteUrl());
+      if (!("token" in result)) {
+        router.replace({
+          pathname: "/two-factor-challenge",
+          params: { pendingToken: result.pendingToken },
+        });
+        return;
+      }
       await login(result.token);
       router.replace("/");
     } catch (e: unknown) {
@@ -230,6 +237,13 @@ export default function LoginScreen() {
         } else if (outcome.error === "INVALID_EMAIL") {
           setEmailError("Email looks invalid.");
         }
+        return;
+      }
+      if (!("token" in outcome.result)) {
+        router.replace({
+          pathname: "/two-factor-challenge",
+          params: { pendingToken: outcome.result.pendingToken },
+        });
         return;
       }
       await login(outcome.result.token);

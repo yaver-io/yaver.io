@@ -57,6 +57,7 @@ function AuthContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rePassword, setRePassword] = useState("");
+  const [setup2faAfterSignup, setSetup2faAfterSignup] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
@@ -236,6 +237,13 @@ function AuthContent() {
         return;
       }
       const data = await finishRes.json();
+      if (data.requires2fa && data.pendingToken) {
+        const totpUrl = `/auth/totp?pendingToken=${encodeURIComponent(data.pendingToken)}&client=${encodeURIComponent(client)}`;
+        window.location.href = returnUrl
+          ? `${totpUrl}&return=${encodeURIComponent(returnUrl)}`
+          : totpUrl;
+        return;
+      }
       const token = data?.token;
       if (!token) {
         setFormError("No token received from server.");
@@ -461,6 +469,11 @@ function AuthContent() {
       localStorage.setItem("yaver_auth_token", token);
       document.cookie = `yaver_auth_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; secure; samesite=lax`;
 
+      if (mode === "signup" && setup2faAfterSignup && !returnUrl && client === "web") {
+        window.location.href = "/dashboard?tab=security&setup2fa=1";
+        return;
+      }
+
       await redirectAfterAuth(token);
     } catch {
       setFormError("Network error. Please try again.");
@@ -671,6 +684,22 @@ function AuthContent() {
               required
               className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
             />
+          )}
+          {mode === "signup" && (
+            <label className={`flex items-start gap-3 border border-surface-800 bg-surface-900/70 text-left ${isSdkPopup ? "rounded-xl px-4 py-3" : "rounded-lg px-4 py-3"}`}>
+              <input
+                type="checkbox"
+                checked={setup2faAfterSignup}
+                onChange={(e) => setSetup2faAfterSignup(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-surface-700 bg-surface-950"
+              />
+              <span>
+                <span className="block text-sm font-medium text-surface-200">Set up authenticator 2FA after signup</span>
+                <span className="mt-1 block text-xs leading-5 text-surface-500">
+                  Optional. Works with Microsoft Authenticator, Google Authenticator, 1Password, and other TOTP apps.
+                </span>
+              </span>
+            </label>
           )}
           <button
             type="submit"

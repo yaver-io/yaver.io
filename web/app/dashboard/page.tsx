@@ -834,6 +834,7 @@ export default function DashboardPage() {
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
   const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "stores" | "cloud" | "build" | "arm" | "appletv" | "packages" | "verbs">("devices");
+  const [autoStart2faSetup, setAutoStart2faSetup] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -855,6 +856,13 @@ export default function DashboardPage() {
   // Optional secondary slot — auto-connect fallback when primary is
   // offline. Loaded from /settings alongside primaryDeviceId.
   const [secondaryDeviceId, setSecondaryDeviceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "security") setActiveTab("security");
+    if (params.get("setup2fa") === "1") setAutoStart2faSetup(true);
+  }, []);
 
   const repairRelay = useCallback(async () => {
     if (!token) throw new Error("Not signed in");
@@ -2782,7 +2790,7 @@ export default function DashboardPage() {
           ) : activeTab === "convex" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><ConvexView /></div>
           ) : activeTab === "security" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><TwoFactorView token={token} /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><TwoFactorView token={token} autoStart={autoStart2faSetup} /></div>
           ) : activeTab === "settings" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <SettingsView user={user as any} onLogout={logout} />

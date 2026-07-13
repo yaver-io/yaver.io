@@ -246,7 +246,13 @@ export const loginFinish = action({
     origin: v.string(),
     response: v.any(), // AuthenticationResponseJSON
   },
-  handler: async (ctx, args): Promise<{ token: string; userId: string; userDocId: string; email: string | null }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    | { token: string; userId: string; userDocId: string; email: string | null }
+    | { requires2fa: true; pendingToken: string; userId: string; userDocId: string; email: string | null }
+  > => {
     if (!allowedOrigins().includes(args.origin)) {
       throw new Error("origin not allowed");
     }
@@ -302,6 +308,26 @@ export const loginFinish = action({
       challenge: expectedChallenge,
     });
 
+    const profile: { userId: string; email: string } | null = await ctx.runQuery(internal.auth.getUserPublicProfile, {
+      userDocId: stored.userId,
+    });
+
+    const totpCheck: { totpEnabled: boolean } | null = await ctx.runQuery(internal.auth.getUserWithTotp, {
+      userId: stored.userId,
+    });
+    if (totpCheck?.totpEnabled) {
+      const { pendingToken } = await ctx.runMutation(internal.totp.createPendingAuth, {
+        userId: stored.userId,
+      });
+      return {
+        requires2fa: true,
+        pendingToken,
+        userId: profile?.userId ?? String(stored.userId),
+        userDocId: String(stored.userId),
+        email: profile?.email ?? null,
+      };
+    }
+
     // Mint a session — same code path as /auth/login.
     const tokenBytes = new Uint8Array(32);
     crypto.getRandomValues(tokenBytes);
@@ -314,10 +340,6 @@ export const loginFinish = action({
       tokenHash,
       userId: stored.userId,
       expiresAt,
-    });
-
-    const profile: { userId: string; email: string } | null = await ctx.runQuery(internal.auth.getUserPublicProfile, {
-      userDocId: stored.userId,
     });
 
     return {
