@@ -17,6 +17,35 @@ import (
 	"strings"
 )
 
+// opsCallIsRemote reports whether this /ops call originates from another machine
+// — relay-bridged (X-Yaver-Via-Relay), proxied by another agent
+// (X-Yaver-Proxied-By), or a non-loopback peer. A same-machine owner MCP call is
+// loopback + unproxied.
+func opsCallIsRemote(r *http.Request) bool {
+	if isRelayBridged(r) {
+		return true
+	}
+	if strings.TrimSpace(r.Header.Get("X-Yaver-Proxied-By")) != "" {
+		return true
+	}
+	return !isLoopbackAddr(r.RemoteAddr)
+}
+
+// opsVerbIsLocalOnlySecret lists verbs that read/write LOCAL secrets and must
+// never run for a caller on another machine (REMOTE_WORKER.md: "secrets never
+// cross machines"). SECURITY (audit 2026-07-13): the client-side layer4Tools
+// denylist keyed on tool names that don't exist at runtime — ops verbs proxy as
+// "ops:<verb>", so ops:secrets / ops:env / ops:runner_auth slipped through and a
+// same-user remote worker could exfiltrate the owner's vault/env plaintext. This
+// holder-side gate cannot be bypassed by a hostile box.
+func opsVerbIsLocalOnlySecret(verb string) bool {
+	switch strings.TrimSpace(verb) {
+	case "secrets", "env", "runner_auth":
+		return true
+	}
+	return false
+}
+
 func (s *HTTPServer) handleOps(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -25,6 +54,15 @@ func (s *HTTPServer) handleOps(w http.ResponseWriter, r *http.Request) {
 	var req OpsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	if opsVerbIsLocalOnlySecret(req.Verb) && opsCallIsRemote(r) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(OpsResult{
+			OK:    false,
+			Code:  "local_only",
+			Error: "verb is local-only; secrets never cross machines",
+		})
 		return
 	}
 	// Derive caller role from the middleware-set headers. Auth is

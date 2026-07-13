@@ -78,7 +78,7 @@ func (s *HTTPServer) handleScreenlogStart(w http.ResponseWriter, r *http.Request
 	}
 	cfg.normalize()
 	caller := screenlogCaller{
-		Remote: !isLoopbackAddr(r.RemoteAddr),
+		Remote: !isLoopbackAddr(r.RemoteAddr) || isRelayBridged(r),
 		PeerID: r.Header.Get("X-Yaver-Peer"),
 	}
 	caller.Mesh = caller.PeerID != ""

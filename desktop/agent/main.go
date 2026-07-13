@@ -10802,6 +10802,12 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	for k, v := range req.Headers {
 		httpReq.Header.Set(k, v)
 	}
+	// SECURITY (audit 2026-07-13): a relay-bridged request is re-issued to the
+	// local mux as 127.0.0.1, which otherwise defeats every loopback-trust gate
+	// (dev-bundle HMAC skip, Remote Desktop control-allowed, secret verbs). Stamp
+	// a trusted marker AFTER copying client headers so those gates can treat
+	// relay traffic as genuinely remote. Client-supplied values are overridden.
+	httpReq.Header.Set("X-Yaver-Via-Relay", "1")
 
 	// Check if WebSocket upgrade (Metro HMR, debugger, /ws/terminal)
 	isWebSocket := strings.EqualFold(req.Headers["Upgrade"], "websocket")

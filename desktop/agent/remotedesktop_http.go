@@ -222,7 +222,7 @@ func (s *HTTPServer) handleRemoteDesktopInput(w http.ResponseWriter, r *http.Req
 		return
 	}
 	pol := loadRemoteDesktopPolicy()
-	remote := !isLoopbackAddr(r.RemoteAddr)
+	remote := !isLoopbackAddr(r.RemoteAddr) || isRelayBridged(r)
 	if ok, reason := rdControlEnforce(pol, remote); !ok {
 		appendRemoteDesktopAudit(rdAuditEntry{Action: "deny", Remote: remote, Note: reason})
 		jsonError(w, http.StatusForbidden, reason)

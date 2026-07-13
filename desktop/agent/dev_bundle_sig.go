@@ -304,8 +304,22 @@ func SetDevBundleServerRef(s *HTTPServer) { devBundleServerRef = s }
 // local machine. The dashboard's owner-side iframe + the dev preview
 // hit these endpoints from 127.0.0.1, which is already trust-bounded
 // to the agent's owner via OS-level isolation.
+// isRelayBridged reports whether this request was re-issued by the local relay
+// bridge (main.go), which stamps X-Yaver-Via-Relay after copying client headers.
+// Such a request has RemoteAddr=127.0.0.1 but is genuinely REMOTE and must not
+// inherit loopback trust. Clients cannot forge a "not bridged" state: direct
+// remote callers are caught by the non-loopback RemoteAddr, and the bridge
+// overrides any client-supplied value; a spoofed "1" only self-restricts.
+func isRelayBridged(r *http.Request) bool {
+	return r != nil && r.Header.Get("X-Yaver-Via-Relay") == "1"
+}
+
 func isLoopbackRequest(r *http.Request) bool {
 	if r == nil {
+		return false
+	}
+	// A relay-bridged request is never loopback-trusted (audit 2026-07-13).
+	if isRelayBridged(r) {
 		return false
 	}
 	// Trust ONLY the real transport peer (RemoteAddr via clientIP, which does
