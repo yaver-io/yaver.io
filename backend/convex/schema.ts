@@ -225,6 +225,14 @@ export default defineSchema({
     deviceId: v.optional(v.string()),
     expiresAt: v.number(),
     createdAt: v.number(),
+    // Auth SCOPE (machine-asymmetric-auth-design.md Phase 0). Undefined ⇒
+    // "full" (a normal owner login — every existing session is unaffected).
+    // "machine" = a managed-cloud box's token: it may heartbeat, report its own
+    // state, and pull its OWN resources, but account-level + destructive ops
+    // (spend, provision, act on OTHER devices) must reject it. A rooted box then
+    // can only hurt itself. Phase 0 only RECORDS the scope; enforcement lands in
+    // later phases behind a flag after the box's real call-set is measured.
+    scope: v.optional(v.union(v.literal("full"), v.literal("machine"))),
     // Rotation grace: when a token is rotated (X-Yaver-Rotate-Token),
     // the immediately-previous tokenHash stays valid until this time
     // (~2 min). Token rotation is otherwise instant-and-permanent, so

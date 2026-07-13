@@ -245,6 +245,12 @@ async function createAuthorizedDeviceCodeForUser(
     deviceId: args.deviceId,
     expiresAt: now + 365 * 24 * 60 * 60 * 1000,
     createdAt: now,
+    // Phase 0 of machine-asymmetric-auth-design.md: a brokered box token is
+    // MACHINE-scoped, not a full owner login. Recorded now (no enforcement yet)
+    // so the box's real call-set can be measured before later phases
+    // default-deny account-level ops for machine scope. Backward-compatible:
+    // undefined scope elsewhere still means "full".
+    scope: "machine" as const,
   });
 
   // Pre-authorized code: the box picks up `token` exactly once via
