@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getManagedSubscription,
   startManagedCloudMachine,
+  stopManagedCloudMachine,
   type ManagedCloudMachineSummary,
   type ManagedSubscriptionSummary,
 } from "./subscription";
@@ -180,9 +181,13 @@ export interface UseParkedMachinesResult {
   loading: boolean;
   /** machineId currently being woken (button spinner), or null. */
   wakingId: string | null;
-  /** Last wake error keyed by machineId. */
+  /** machineId currently being parked/slept (button spinner), or null. */
+  parkingId: string | null;
+  /** Last wake/park error keyed by machineId. */
   errors: Record<string, string>;
   wake: (machineId: string) => Promise<void>;
+  /** Park (sleep) a running managed box: snapshot + delete, scale-to-zero. */
+  park: (machineId: string) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -193,6 +198,7 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
   const [data, setData] = useState<ManagedSubscriptionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [wakingId, setWakingId] = useState<string | null>(null);
+  const [parkingId, setParkingId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   // machineIds we optimistically flipped to "waking" on tap, so the card shows
   // motion instantly before the server reports "resuming".
@@ -257,13 +263,41 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
     [token, wakingId, refresh],
   );
 
+  const park = useCallback(
+    async (machineId: string) => {
+      if (!token || parkingId) return;
+      setParkingId(machineId);
+      setErrors((e) => {
+        const next = { ...e };
+        delete next[machineId];
+        return next;
+      });
+      try {
+        await stopManagedCloudMachine(token, machineId);
+        await refresh();
+      } catch (e: any) {
+        setErrors((prev) => ({
+          ...prev,
+          [machineId]:
+            e?.message ||
+            "Yaver couldn't park this box right now. Try again in a moment.",
+        }));
+      } finally {
+        setParkingId(null);
+      }
+    },
+    [token, parkingId, refresh],
+  );
+
   return {
     machines,
     hasAccess: data?.cloudAccess === true || data?.cloudPreviewOwner === true,
     loading,
     wakingId,
+    parkingId,
     errors,
     wake,
+    park,
     refresh,
   };
 }

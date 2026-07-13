@@ -1000,7 +1000,7 @@ export default function InfraScreen() {
 // staged "waking up" ladder. Rendered only for accounts with managed-cloud
 // access; the server independently authorises + balance-gates every wake.
 function ParkedMachinesSection({ c, token }: { c: any; token: string | null | undefined }) {
-  const { machines, hasAccess, wakingId, errors, wake } = useParkedMachines(token);
+  const { machines, hasAccess, wakingId, parkingId, errors, wake, park } = useParkedMachines(token);
 
   // Only surface managed boxes that are parked, waking, or freshly awake — a
   // long-running active box is the local Infra card's job, not this section.
@@ -1029,8 +1029,10 @@ function ParkedMachinesSection({ c, token }: { c: any; token: string | null | un
             c={c}
             m={m}
             waking={wakingId === m.id}
+            parking={parkingId === m.id}
             error={errors[m.id]}
             onWake={() => void wake(m.id)}
+            onPark={() => void park(m.id)}
           />
         ))}
       </View>
@@ -1042,14 +1044,18 @@ function ParkedMachineCard({
   c,
   m,
   waking,
+  parking,
   error,
   onWake,
+  onPark,
 }: {
   c: any;
   m: ManagedCloudMachineSummary;
   waking: boolean;
+  parking?: boolean;
   error?: string;
   onWake: () => void;
+  onPark?: () => void;
 }) {
   const view = deriveWakeView(m, waking);
   const parked = view.tone === "parked";
@@ -1158,6 +1164,23 @@ function ParkedMachineCard({
             <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>
               {failed ? "Try wake again" : "⏻ Wake"}
             </Text>
+          )}
+        </Pressable>
+      ) : online && onPark ? (
+        // A running box bills every hour — offer Sleep (snapshot + delete,
+        // scale-to-zero) right where the user sees it's awake.
+        <Pressable
+          onPress={onPark}
+          disabled={parking}
+          style={[
+            actionBtn(c),
+            { backgroundColor: c.bgElevated || "#334155", borderWidth: 1, borderColor: c.border, marginTop: 4, flexDirection: "row", gap: 8, opacity: parking ? 0.6 : 1 },
+          ]}
+        >
+          {parking ? (
+            <ActivityIndicator size="small" color={c.textPrimary} />
+          ) : (
+            <Text style={{ color: c.textPrimary, fontWeight: "800", fontSize: 14 }}>⏸ Sleep (park)</Text>
           )}
         </Pressable>
       ) : null}

@@ -243,11 +243,30 @@ export default function RunnerAuthModal({
     }
   };
 
+  // Completing OAuth can briefly background the app (in-app browser / external
+  // fallback) and drop the relay; on return, authHeaders omits X-Relay-Password
+  // until the relay re-attaches, so a too-eager code POST is rejected BY THE
+  // RELAY with 401 and never reaches the agent. Wait for a live transport (and,
+  // on a relay route, the password back) before submitting.
+  const waitForLiveConnection = async (timeoutMs = 9000): Promise<boolean> => {
+    const relayReady = () =>
+      !(quicClient as any).activeRelayHttpUrl || !!(quicClient as any).activeRelayPasswordValue;
+    if (quicClient.isConnected && relayReady()) return true;
+    try { (quicClient as any).fullReconnect?.(); } catch { /* best effort */ }
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (quicClient.isConnected && relayReady()) return true;
+      await new Promise((res) => setTimeout(res, 250));
+    }
+    return quicClient.isConnected;
+  };
+
   const submitCode = async () => {
     if (!session || !pasteCode.trim()) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
+      await waitForLiveConnection();
       // Agent expects `id` in the URL query string and `code` in the body.
       // Pass session.id as the third arg so callRunnerAuth's direct-fetch
       // branch sets ?id=…; the body only carries the code.
