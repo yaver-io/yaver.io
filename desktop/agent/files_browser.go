@@ -499,6 +499,17 @@ func (s *HTTPServer) resolveHostShareRoot(r *http.Request, id, rootPath string) 
 	if err != nil || !info.IsDir() {
 		return nil
 	}
+	// SECURITY (audit 2026-07-13, P0): a caller-supplied absolute rootPath must
+	// stay inside the projects this host-share grant actually allows. Without
+	// this gate a guest scoped to one workspace could point rootPath at any
+	// directory on disk (~/.ssh, ~/.yaver, app-store keys) and read/write it.
+	// The sibling /files/list handler already filters through the same check
+	// (files_browser.go handleFilesList) — read/raw/write/mkdir/delete now match.
+	// AllowedProjects is server-stamped from the validated grant in
+	// allowHostShare(); a client cannot widen it.
+	if !hostShareCanAccessProject(r, abs) {
+		return nil
+	}
 	root := FileRoot{
 		ID:   projectFSID(abs),
 		Name: filepath.Base(abs),
