@@ -162,8 +162,15 @@ export async function probeMobileDeviceStatus(
 ): Promise<MobileDeviceStatusProbe> {
   const checkedAt = Date.now();
   const port = device.port || 18080;
-  let lastError = "No reachable transport";
 
+  // Race ALL transports (every relay + every direct target) in parallel and
+  // take the first that answers. The old code tried relay-first, serially — so
+  // a box whose relay tunnel is registered-but-not-forwarding (heartbeating
+  // "online" yet 502/timeout on the relay path) burned the full timeout on the
+  // dead relay before ever trying its working direct LAN leg. Racing lets the
+  // 40ms direct win regardless of a hung relay.
+  type Attempt = { base: string; headers: Record<string, string>; path: "relay" | "direct" };
+  const attempts: Attempt[] = [];
   if (token && device.id) {
     for (const relay of quicClient.getRelayServers()) {
       const headers: Record<string, string> = {
@@ -171,51 +178,46 @@ export async function probeMobileDeviceStatus(
         "X-Client-Platform": Platform.OS,
       };
       if (relay.password) headers["X-Relay-Password"] = relay.password;
-      const info = await fetchInfoAt(`${relay.httpUrl}/d/${device.id}`, headers, timeoutMs);
-      if (info) {
-        const parsed = parseInfo(info);
-        const codingRunners = await fetchCodingRunnersAt(`${relay.httpUrl}/d/${device.id}`, headers, timeoutMs);
-        return {
-          reachable: true,
-          bootstrap: parsed.bootstrap,
-          authExpired: parsed.authExpired,
-          codingReady: codingReady(codingRunners),
-          codingRunners,
-          lifecycleState: parsed.lifecycleState,
-          checkedAt,
-          path: "relay",
-          info,
-        };
-      }
-      lastError = `Relay ${relay.id || relay.httpUrl} unreachable`;
+      attempts.push({ base: `${relay.httpUrl}/d/${device.id}`, headers, path: "relay" });
     }
   }
-
-  const directTargets = Array.from(
+  const directHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  for (const target of Array.from(
     new Set([
       `http://${device.host}:${port}`,
-      ...(device.lanIps || []).filter(Boolean).map((ip) => `http://${ip}:${port}`),
+      // Probe the agent's real HTTP port (18080) too — a stale/mismatched
+      // Convex quicPort shouldn't hide a reachable box.
+      ...(device.host ? [`http://${device.host}:18080`] : []),
+      ...(device.lanIps || []).filter(Boolean).flatMap((ip) => [`http://${ip}:${port}`, `http://${ip}:18080`]),
     ]),
-  );
-  for (const target of directTargets) {
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-    const info = await fetchInfoAt(target, headers, timeoutMs);
-    if (info) {
-      const parsed = parseInfo(info);
-      const codingRunners = await fetchCodingRunnersAt(target, headers, timeoutMs);
-      return {
-        reachable: true,
-        bootstrap: parsed.bootstrap,
-        authExpired: parsed.authExpired,
-        codingReady: codingReady(codingRunners),
-        codingRunners,
-        lifecycleState: parsed.lifecycleState,
-        checkedAt,
-        path: "direct",
-        info,
-      };
-    }
-    lastError = `${target} unreachable`;
+  )) {
+    attempts.push({ base: target, headers: directHeaders, path: "direct" });
+  }
+
+  const winner = attempts.length
+    ? await Promise.any(
+        attempts.map(async (a) => {
+          const info = await fetchInfoAt(a.base, a.headers, timeoutMs);
+          if (!info) throw new Error(`${a.path} unreachable`);
+          return { a, info };
+        }),
+      ).catch(() => null)
+    : null;
+
+  if (winner) {
+    const parsed = parseInfo(winner.info);
+    const codingRunners = await fetchCodingRunnersAt(winner.a.base, winner.a.headers, timeoutMs);
+    return {
+      reachable: true,
+      bootstrap: parsed.bootstrap,
+      authExpired: parsed.authExpired,
+      codingReady: codingReady(codingRunners),
+      codingRunners,
+      lifecycleState: parsed.lifecycleState,
+      checkedAt,
+      path: winner.a.path,
+      info: winner.info,
+    };
   }
 
   return {
@@ -226,7 +228,7 @@ export async function probeMobileDeviceStatus(
     codingRunners: [],
     lifecycleState: null,
     checkedAt,
-    error: lastError,
+    error: attempts.length ? "No reachable transport (tried relay + direct)" : "No transport configured",
   };
 }
 

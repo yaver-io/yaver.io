@@ -257,6 +257,10 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   // successful switch isn't an instant silent dismiss (which read as "did it
   // even work?"). Holds the connected device's name.
   const [switchSuccess, setSwitchSuccess] = React.useState<string | null>(null);
+  // Live "connecting" feedback — a real reachability probe result shown while
+  // we connect, instead of a bare spinner. "Pinging…" → "Reachable via direct
+  // (40ms)" / "No route — box is online but not reachable".
+  const [probeStage, setProbeStage] = React.useState<string | null>(null);
   const [pingByDevice, setPingByDevice] = React.useState<
     Record<string, { rttMs: number; ok: boolean; at: number }>
   >({});
@@ -292,6 +296,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       setSwitching(false);
       setSwitchError(null);
       setSwitchSuccess(null);
+      setProbeStage(null);
       return;
     }
     if (activeDevice?.id && eligibleDevices.some((d) => d.id === activeDevice.id)) {
@@ -444,7 +449,26 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     if (!target) return;
     setSwitching(true);
     setSwitchError(null);
+    setProbeStage(`Pinging ${target.name}…`);
     try {
+      // Probe-first: do a real reachability check (the same relay+direct race
+      // `yaver ping` uses) and SHOW the result, instead of spinning blindly for
+      // up to 20s. If nothing answers, fail fast with an honest reason rather
+      // than grinding through the full connect timeout.
+      const probe = await probeMobileDeviceStatus(
+        { id: target.id, host: (target as any).host, port: (target as any).port, lanIps: (target as any).lanIps },
+        token,
+        4000,
+      );
+      if (probe.reachable) {
+        setProbeStage(`Reachable via ${probe.path === "relay" ? "relay" : "direct"} — connecting…`);
+      } else {
+        // Online-but-unreachable: name it and stop, don't fake a 20s attempt.
+        throw new Error(
+          `Couldn't reach ${target.name} — it's online but no transport answered (${probe.error || "no route"}). ` +
+            `If it's a remote box, it may be heartbeating without a live relay tunnel.`,
+        );
+      }
       // Always route through DeviceContext.selectDevice — even when
       // the picked box already has a pooled-connected client. The
       // earlier optimization called connectionManager.setFocused()
@@ -632,6 +656,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                     onPress={() => {
                       setSwitchError(null);
                       setSwitching(false);
+                      setProbeStage(null);
                     }}
                     style={({ pressed }) => ({
                       borderWidth: 1,
@@ -662,7 +687,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               <>
                 <ActivityIndicator color={c.accent} size="large" />
                 <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 14 }}>
-                  Connecting to {pickedDevice?.name || "remote box"}…
+                  {probeStage || `Connecting to ${pickedDevice?.name || "remote box"}…`}
                 </Text>
               </>
             )}

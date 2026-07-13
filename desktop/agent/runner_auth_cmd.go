@@ -493,7 +493,14 @@ func pluralS(n int) string {
 }
 
 func fetchRunnerAuthStatusRowsRemote(target string) ([]runnerAuthStatusRow, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// 7s (was 3s): the remote candidate walk dials each candidate for up to 3s,
+	// and a box advertising several LAN IPs (some on a subnet this host can't
+	// reach) burns a full 3s on the first dead one — exhausting a 3s total
+	// budget before the working direct/relay leg is ever tried, which made
+	// `yaver devices` print "unreachable" for boxes `yaver ping` reaches fine
+	// (its budget is 8s). These run in parallel across devices, so the wider
+	// budget doesn't slow the overall listing.
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
 	out, err := proxyToDeviceJSON(ctx, "runner-auth-status", target, http.MethodGet, "/agent/runners", nil)
 	if err != nil {
