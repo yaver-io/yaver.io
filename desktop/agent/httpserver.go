@@ -225,6 +225,15 @@ type HTTPServer struct {
 	meshMgr            *mesh.Manager
 	meshMu             sync.Mutex
 	meshDesiredStarted bool
+	// Additive overlay HTTP listeners (mesh-as-security-fabric): on relay-only
+	// (loopback-bound) boxes, once the mesh overlay IP exists we ALSO listen on
+	// it so the agent API is reachable over the encrypted overlay without ever
+	// exposing a public port. rootHandler is the same middleware-wrapped mux the
+	// primary listener uses; serveCtx drives graceful shutdown.
+	rootHandler    http.Handler
+	serveCtx       context.Context
+	overlayMu      sync.Mutex
+	overlayServers map[string]*http.Server
 
 	// Lets handlers that change reportable state (e.g. runner auth just
 	// completed via /runner-auth/browser/start) cut in front of the 30 s
@@ -1468,6 +1477,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/mcp/servers", s.auth(s.handleMCPServers))
 
 	handler := s.ipAllowlist(withCORS(mux))
+	// Stash the wrapped handler + serve context so a later mesh bring-up can add
+	// an additive listener on the overlay IP (addOverlayListener).
+	s.rootHandler = handler
+	s.serveCtx = ctx
 
 	// Operator boxes bind direct listeners to loopback so they're reachable
 	// only via the relay (never exposed on the operator's home/office LAN).
@@ -1548,6 +1561,64 @@ func (s *HTTPServer) directBindHost() string {
 		return "127.0.0.1"
 	}
 	return "0.0.0.0"
+}
+
+// addOverlayListener starts an ADDITIVE agent-API listener bound to the mesh
+// overlay IP, so the API is reachable over the encrypted overlay. It is:
+//   - safe: never fatal — a bind failure is logged and the box keeps serving.
+//   - idempotent: repeated calls for the same address are no-ops.
+//   - correct: only bound when the primary listener is loopback-only
+//     (relay-only boxes). When the primary already binds 0.0.0.0 the overlay IP
+//     is served by it, so a second listener would only EADDRINUSE.
+//
+// This is the reachability half of the mesh-as-security-fabric: a hardened box
+// can bind loopback + overlay and close its public port, and remain reachable
+// to its owner's fleet over WireGuard only.
+func (s *HTTPServer) addOverlayListener(ip string) {
+	ip = strings.TrimSpace(ip)
+	if ip == "" || s.rootHandler == nil {
+		return
+	}
+	if s.directBindHost() != "127.0.0.1" {
+		return // 0.0.0.0 already covers the overlay IP
+	}
+	addr := net.JoinHostPort(ip, strconv.Itoa(s.port))
+	s.overlayMu.Lock()
+	if s.overlayServers == nil {
+		s.overlayServers = map[string]*http.Server{}
+	}
+	if _, ok := s.overlayServers[addr]; ok {
+		s.overlayMu.Unlock()
+		return // already listening
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		s.overlayMu.Unlock()
+		log.Printf("[mesh] overlay listener on %s not started (%v) — API still reachable via relay", addr, err)
+		return
+	}
+	srv := &http.Server{
+		Handler:           s.rootHandler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	s.overlayServers[addr] = srv
+	s.overlayMu.Unlock()
+
+	if s.serveCtx != nil {
+		go func() {
+			<-s.serveCtx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shutdownCtx)
+		}()
+	}
+	log.Printf("[mesh] serving agent API over overlay at %s", addr)
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Printf("[mesh] overlay listener error: %v", err)
+		}
+	}()
 }
 
 // ---------------------------------------------------------------------------

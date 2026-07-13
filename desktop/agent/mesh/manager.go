@@ -45,6 +45,11 @@ type Manager struct {
 	aclSource  ACLSource
 	forwarding bool
 	derp       *DERPManager
+	// noHsSince tracks, per peer public-key (lowercase hex), when we first saw
+	// it without a live handshake — used to fall a peer over to the DERP relay
+	// after a direct-path grace period (H2). Cleared when the peer goes live or
+	// leaves. Accessed only under m.mu (applyPeers runs locked).
+	noHsSince map[string]time.Time
 }
 
 // SetRelayTransport enables the relay-as-DERP fallback: peers with no directly
@@ -57,19 +62,101 @@ func (m *Manager) SetRelayTransport(t RelayTransport) {
 	t.SetReceiver(m.derp.DeliverFrame)
 }
 
-// applyPeers substitutes a DERP shim endpoint for any peer that has no direct
-// endpoint (symmetric-NAT fallback), then applies the peer set to the device.
+const (
+	// endpointRoamGrace is how recently a peer must have completed a WireGuard
+	// handshake for us to treat its live endpoint as authoritative and stop
+	// re-asserting the (possibly stale) control-plane endpoint over it.
+	endpointRoamGrace = 180 * time.Second
+	// derpFalloverAfter is how long we give a peer's DIRECT endpoint to produce
+	// a handshake before falling it over to the DERP relay shim. Direct-first,
+	// relay-fallback: this is what makes symmetric-NAT pairs actually connect
+	// (H2 — previously DERP only engaged for an empty endpoint, which never
+	// happened once STUN/public endpoints were published).
+	derpFalloverAfter = 20 * time.Second
+)
+
+// applyPeers reconciles the desired peer set onto the device:
+//   - H1: endpoints WireGuard has roamed to are preserved (a peer that moved
+//     WiFi→cellular must not have its live endpoint clobbered by the reconcile).
+//   - H2: a non-live peer's direct endpoint gets derpFalloverAfter to produce a
+//     handshake; if it doesn't, the peer falls over to its DERP relay shim so
+//     symmetric-NAT pairs still connect.
+//   - M1: DERP shims for peers that went live or left are reclaimed, so the
+//     per-peer loopback socket + goroutine don't leak on churn.
 func (m *Manager) applyPeers(dev *Device, peers []Peer) error {
-	if m.derp != nil {
-		for i := range peers {
-			if peers[i].Endpoint == "" && peers[i].DeviceID != "" {
-				if ep, err := m.derp.EndpointFor(peers[i].DeviceID); err == nil {
-					peers[i].Endpoint = ep
-				}
+	if m.noHsSince == nil {
+		m.noHsSince = map[string]time.Time{}
+	}
+	live := m.livePeerKeys(dev)
+	now := time.Now()
+	seen := make(map[string]bool, len(peers)) // peer keys present this round
+	derpKeep := map[string]bool{}             // deviceIds that should keep a shim
+
+	for i := range peers {
+		hex, err := keyB64ToHex(peers[i].PublicKey)
+		lhex := strings.ToLower(hex)
+		if err == nil {
+			seen[lhex] = true
+		}
+		if err == nil && live[lhex] {
+			// H1: live → WireGuard owns the endpoint (roaming). Blank the
+			// control-plane endpoint so renderPeers omits it, and clear the
+			// fallover timer. Do NOT DERP this peer — it is reachable now.
+			peers[i].Endpoint = ""
+			delete(m.noHsSince, lhex)
+			continue
+		}
+		if m.derp == nil || peers[i].DeviceID == "" {
+			continue // no relay available / unknown device — leave endpoint as-is
+		}
+		// Not live. Start (or read) the direct-path grace timer.
+		if err == nil {
+			if _, ok := m.noHsSince[lhex]; !ok {
+				m.noHsSince[lhex] = now
+			}
+		}
+		stale := err == nil && now.Sub(m.noHsSince[lhex]) >= derpFalloverAfter
+		if peers[i].Endpoint == "" || stale {
+			// No direct candidate at all, or the direct path never handshook —
+			// bridge over the relay.
+			if ep, derr := m.derp.EndpointFor(peers[i].DeviceID); derr == nil {
+				peers[i].Endpoint = ep
+				derpKeep[peers[i].DeviceID] = true
 			}
 		}
 	}
+
+	// GC fallover timers for peers no longer in the set.
+	for k := range m.noHsSince {
+		if !seen[k] {
+			delete(m.noHsSince, k)
+		}
+	}
+	// M1: reclaim shims for peers that went live or left this round.
+	if m.derp != nil {
+		m.derp.ReconcilePeers(derpKeep)
+	}
 	return dev.SetPeers(peers)
+}
+
+// livePeerKeys returns the set of peer public keys (lowercase hex) that have a
+// handshake within endpointRoamGrace — i.e. currently reachable on their live
+// endpoint. Best-effort: on any read error it returns an empty set (all peers
+// treated as needing a control-plane endpoint), which is the safe pre-H1
+// behavior.
+func (m *Manager) livePeerKeys(dev *Device) map[string]bool {
+	live := map[string]bool{}
+	stats, err := dev.Stats()
+	if err != nil {
+		return live
+	}
+	cutoff := time.Now().Add(-endpointRoamGrace).Unix()
+	for _, s := range stats {
+		if s.LastHandshakeUnix > 0 && s.LastHandshakeUnix >= cutoff {
+			live[strings.ToLower(s.PublicKeyHex)] = true
+		}
+	}
+	return live
 }
 
 // SetForwarding marks this node as a subnet router / exit node so Start enables
@@ -160,11 +247,18 @@ func (m *Manager) Start() error {
 		}
 	}
 
-	// Port-level ACLs: compile and apply the inbound matcher (default-allow
-	// until the user authors rules).
+	// Port-level ACLs: compile and apply the inbound matcher. FAIL-CLOSED —
+	// if the rules can't be loaded (control-plane outage at boot) we install a
+	// deny-all matcher rather than leaving the device unfiltered (nil matcher =
+	// pass-through). The reconcile loop retries every interval and swaps in the
+	// real matcher on the first successful fetch. A successful fetch of zero
+	// rules is still default-allow (NewMatcher(nil)); only a FAILURE denies.
 	if m.aclSource != nil {
 		if matcher, aerr := m.aclSource(); aerr == nil {
 			dev.SetMatcher(matcher)
+		} else {
+			dev.SetMatcher(DenyAllMatcher())
+			m.lastErr = "acl load failed, fail-closed (deny-all until next fetch): " + aerr.Error()
 		}
 	}
 
@@ -183,18 +277,22 @@ func (m *Manager) Start() error {
 		}
 	}
 
-	go m.reconcileLoop()
+	// Pass the current stop channel by value so this goroutine always selects
+	// on its OWN channel. If Stop() then Start() reassigns m.stop, an old loop
+	// still parked in m.source() won't wake on the new (open) channel and leak
+	// — it dies on the close of the channel it captured (M2).
+	go m.reconcileLoop(m.stop)
 	return nil
 }
 
 // reconcileLoop re-pulls peers periodically and re-applies them, so revoked
 // shares drop out of the data plane and new peers/endpoints come in.
-func (m *Manager) reconcileLoop() {
+func (m *Manager) reconcileLoop(stop chan struct{}) {
 	t := time.NewTicker(m.interval)
 	defer t.Stop()
 	for {
 		select {
-		case <-m.stop:
+		case <-stop:
 			return
 		case <-t.C:
 			_, peers, err := m.source()

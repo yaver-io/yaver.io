@@ -646,6 +646,16 @@ export const validateRelayPassword = internalQuery({
           .withIndex("by_deviceId", (q) => q.eq("deviceId", deviceId))
           .first();
         if (device && device.userId !== match.userId) return null;
+        // Phone mesh nodes have no devices row, so bind them to their meshNodes
+        // owner instead — otherwise anyone could register (and intercept the
+        // DERP frame stream for) another user's phone deviceId.
+        if (!device) {
+          const node = await ctx.db
+            .query("meshNodes")
+            .withIndex("by_device", (q) => q.eq("deviceId", deviceId))
+            .first();
+          if (node && node.userId !== match.userId) return null;
+        }
       }
       return { userId: match.userId };
     }

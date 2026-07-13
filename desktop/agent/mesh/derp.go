@@ -144,6 +144,23 @@ func (m *DERPManager) RemovePeer(peerDeviceID string) {
 	}
 }
 
+// ReconcilePeers tears down shims for any device not in keep — a peer that
+// became directly reachable or left the peer set. Without this the per-peer
+// loopback socket + pumpOutbound goroutine leak on every churn (M1).
+func (m *DERPManager) ReconcilePeers(keep map[string]bool) {
+	m.mu.Lock()
+	var drop []string
+	for id := range m.peers {
+		if !keep[id] {
+			drop = append(drop, id)
+		}
+	}
+	m.mu.Unlock()
+	for _, id := range drop {
+		m.RemovePeer(id)
+	}
+}
+
 // Close tears down all shims.
 func (m *DERPManager) Close() {
 	m.mu.Lock()

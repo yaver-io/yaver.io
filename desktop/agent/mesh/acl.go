@@ -53,6 +53,16 @@ func NewMatcher(rules []IPRule) *Matcher {
 	return &Matcher{rules: rules, defaultAllow: len(rules) == 0}
 }
 
+// DenyAllMatcher blocks all modeled (IPv4 TCP/UDP) inbound traffic. It is the
+// fail-CLOSED default installed when ACL rules cannot be loaded yet (e.g. a
+// control-plane outage at boot), so the overlay never comes up unfiltered.
+// Non-IPv4 / unmodeled packets still pass (see allowPacket) so the WireGuard
+// tunnel and IPv6 ND keep working; only modeled peer traffic is denied until a
+// real rule set loads.
+func DenyAllMatcher() *Matcher {
+	return &Matcher{rules: nil, defaultAllow: false}
+}
+
 // Allow reports whether a packet src->dst proto/port is permitted. Rules are
 // evaluated in order; the first whose src/dst/proto/port all match decides
 // (accept or drop). If none match, the default applies: allow when there are no

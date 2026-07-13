@@ -75,6 +75,62 @@ async function allocateMeshIPv4(ctx: any): Promise<string> {
   throw new Error("mesh address space exhausted");
 }
 
+// assertDeviceNotOwnedByOther blocks the pre-claim takeover: a caller may only
+// create/patch a meshNode for a deviceId that either has NO devices row (phone
+// mesh tunnels, per docs/mesh-mobile-tunnel.md) or a devices row they own.
+// Registering another user's known deviceId is rejected outright.
+async function assertDeviceNotOwnedByOther(
+  ctx: any,
+  deviceId: string,
+  userId: Id<"users">,
+) {
+  const device = await ctx.db
+    .query("devices")
+    .withIndex("by_deviceId", (q: any) => q.eq("deviceId", deviceId))
+    .first();
+  if (device && device.userId !== userId) {
+    throw new Error("Forbidden: not your device");
+  }
+}
+
+// sanitizeMeshRoutes rejects advertised subnet routes that could be abused for
+// cross-tenant traffic capture: anything overlapping the mesh overlay range
+// (100.96.0.0/12) — a peer's reachable IPs are its own /32 only, added
+// implicitly — and any unparseable CIDR. A literal default route (0.0.0.0/0 or
+// ::/0) is preserved: that is the legitimate exit-node advertisement, gated on
+// the RECEIVER choosing this node as its exit node (agent side). Default-route
+// SPLITS (0.0.0.0/1 + 128.0.0.0/1) and other near-default prefixes are also
+// gated on the receiver by the agent; here we only strip overlay-overlapping
+// and malformed entries and cap the count.
+function sanitizeMeshRoutes(routes?: string[]): string[] | undefined {
+  if (!routes) return routes;
+  const out: string[] = [];
+  for (const raw of routes.slice(0, 64)) {
+    const cidr = String(raw).trim();
+    const slash = cidr.indexOf("/");
+    if (slash < 0) continue;
+    const ip = cidr.slice(0, slash);
+    const prefix = parseInt(cidr.slice(slash + 1), 10);
+    if (cidr.includes(":")) {
+      // IPv6: keep parseable prefixes; overlay is IPv4 so no overlap check.
+      if (Number.isNaN(prefix) || prefix < 0 || prefix > 128) continue;
+      out.push(cidr);
+      continue;
+    }
+    const n = ipv4ToInt(ip);
+    if (Number.isNaN(prefix) || prefix < 0 || prefix > 32) continue;
+    if (n === 0 && ip !== "0.0.0.0") continue; // unparseable
+    // Reject anything covering or inside the overlay range except the exact
+    // default route (handled/gated on the agent).
+    const overlayOverlap =
+      prefix >= 12 && (n & 0xfff00000) >>> 0 === MESH_BASE; // inside 100.96/12
+    const coversOverlay = prefix < 12 && cidr !== "0.0.0.0/0"; // straddles it
+    if (overlayOverlap || coversOverlay) continue;
+    out.push(cidr);
+  }
+  return out;
+}
+
 type JoinArgs = {
   deviceId: string;
   wgPublicKey: string;
@@ -91,12 +147,20 @@ async function joinMeshForUser(ctx: any, userId: Id<"users">, args: JoinArgs) {
     .first();
 
   const now = Date.now();
+  const routes = sanitizeMeshRoutes(args.advertisedRoutes);
   if (existing) {
+    // Ownership guard: only the owner may rebind a node's WG key/endpoints.
+    // Without this, any authenticated user who knows a deviceId (every shared
+    // peer does) could point the victim's stable overlay IP at their own key
+    // and endpoint, decrypting all traffic to that node.
+    if (existing.userId !== userId) {
+      throw new Error("Forbidden: not your node");
+    }
     await ctx.db.patch(existing._id, {
       wgPublicKey: args.wgPublicKey,
       endpoints: args.endpoints,
       meshIPv6: args.meshIPv6 ?? existing.meshIPv6,
-      advertisedRoutes: args.advertisedRoutes ?? existing.advertisedRoutes,
+      advertisedRoutes: routes ?? existing.advertisedRoutes,
       isExitNode: args.isExitNode ?? existing.isExitNode,
       online: true,
       updatedAt: now,
@@ -104,6 +168,8 @@ async function joinMeshForUser(ctx: any, userId: Id<"users">, args: JoinArgs) {
     return { meshIPv4: existing.meshIPv4, meshIPv6: existing.meshIPv6 };
   }
 
+  // New node: block pre-claiming another user's registered deviceId.
+  await assertDeviceNotOwnedByOther(ctx, args.deviceId, userId);
   const meshIPv4 = await allocateMeshIPv4(ctx);
   await ctx.db.insert("meshNodes", {
     userId,
@@ -112,7 +178,7 @@ async function joinMeshForUser(ctx: any, userId: Id<"users">, args: JoinArgs) {
     meshIPv4,
     meshIPv6: args.meshIPv6,
     endpoints: args.endpoints,
-    advertisedRoutes: args.advertisedRoutes,
+    advertisedRoutes: routes,
     isExitNode: args.isExitNode,
     online: true,
     updatedAt: now,
@@ -143,12 +209,13 @@ export const joinMesh = mutation({
 export const leaveMesh = mutation({
   args: { deviceId: v.string() },
   handler: async (ctx, args) => {
-    await resolveUser(ctx);
+    const userId = await resolveUser(ctx);
     const existing = await ctx.db
       .query("meshNodes")
       .withIndex("by_device", (q: any) => q.eq("deviceId", args.deviceId))
       .first();
     if (existing) {
+      if (existing.userId !== userId) throw new Error("Forbidden: not your node");
       await ctx.db.patch(existing._id, { online: false, updatedAt: Date.now() });
     }
     return null;
@@ -164,12 +231,13 @@ export const updateMeshEndpoints = mutation({
     online: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    await resolveUser(ctx);
+    const userId = await resolveUser(ctx);
     const existing = await ctx.db
       .query("meshNodes")
       .withIndex("by_device", (q: any) => q.eq("deviceId", args.deviceId))
       .first();
     if (!existing) return null;
+    if (existing.userId !== userId) throw new Error("Forbidden: not your node");
     await ctx.db.patch(existing._id, {
       endpoints: args.endpoints,
       lastHandshake: args.lastHandshake ?? existing.lastHandshake,
@@ -463,12 +531,15 @@ export const joinMeshWeb = mutation({
 export const leaveMeshWeb = mutation({
   args: { tokenHash: v.string(), deviceId: v.string() },
   handler: async (ctx, { tokenHash, deviceId }) => {
-    await webUser(ctx, tokenHash);
+    const userId = await webUser(ctx, tokenHash);
     const existing = await ctx.db
       .query("meshNodes")
       .withIndex("by_device", (q: any) => q.eq("deviceId", deviceId))
       .first();
-    if (existing) await ctx.db.patch(existing._id, { online: false, updatedAt: Date.now() });
+    if (existing) {
+      if (existing.userId !== userId) throw new Error("Forbidden: not your node");
+      await ctx.db.patch(existing._id, { online: false, updatedAt: Date.now() });
+    }
     return null;
   },
 });
@@ -494,7 +565,7 @@ export const setMeshNodeConfigWeb = mutation({
     if (args.wantEnabled !== undefined) patch.wantEnabled = args.wantEnabled;
     if (args.wantExitNode !== undefined) patch.wantExitNode = args.wantExitNode;
     if (args.wantUseExitNode !== undefined) patch.wantUseExitNode = args.wantUseExitNode;
-    if (args.wantRoutes !== undefined) patch.wantRoutes = args.wantRoutes;
+    if (args.wantRoutes !== undefined) patch.wantRoutes = sanitizeMeshRoutes(args.wantRoutes);
     await ctx.db.patch(node._id, patch);
     return null;
   },

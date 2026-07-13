@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -614,7 +615,7 @@ func TestMeshJoinPayload_isPublicOnly(t *testing.T) {
 		map[string]interface{}{
 			"deviceId":    "test-device",
 			"wgPublicKey": "TUVTSF9QVUJMSUNfS0VZX0JBU0U2NF8zMmI=",
-			"endpoints":   []interface{}{"192.168.1.20:51820"},
+			"endpoints":   []interface{}{"203.0.113.7:51820"}, // public only
 		},
 	)
 	if len(*buf) != 1 {
@@ -626,6 +627,52 @@ func TestMeshJoinPayload_isPublicOnly(t *testing.T) {
 		switch k {
 		case "wgPrivateKey", "wg_private_key", "meshPrivateKey", "privateKey":
 			t.Errorf("forbidden field %q must not be in the mesh join payload", k)
+		}
+	}
+	assertNoPrivateIP(t, rec)
+}
+
+// assertNoPrivateIP fails if any string value in the payload contains an RFC1918
+// / CGNAT address. meshNodes.endpoints is shared cross-tenant, so a private
+// address there leaks the user's internal subnet layout — forbidden by the
+// privacy contract. Guards against re-adding LAN IPs to the control-plane push.
+func assertNoPrivateIP(t *testing.T, rec recordedMutation) {
+	t.Helper()
+	var walk func(v interface{})
+	walk = func(v interface{}) {
+		switch x := v.(type) {
+		case string:
+			host := x
+			if h, _, err := net.SplitHostPort(x); err == nil {
+				host = h
+			}
+			if ip := net.ParseIP(host); ip != nil && ip.IsPrivate() {
+				t.Errorf("mutation %q payload leaks a private LAN IP %q — RFC1918 must never reach Convex", rec.Path, x)
+			}
+		case map[string]interface{}:
+			for _, v := range x {
+				walk(v)
+			}
+		case []interface{}:
+			for _, v := range x {
+				walk(v)
+			}
+		}
+	}
+	walk(rec.Args)
+}
+
+// TestMeshLocalEndpoints_NoPrivateIPs pins that the endpoint set the agent
+// publishes to the control plane never includes an RFC1918 address, regardless
+// of what LAN this test host is on.
+func TestMeshLocalEndpoints_NoPrivateIPs(t *testing.T) {
+	for _, ep := range meshLocalEndpoints() {
+		host := ep
+		if h, _, err := net.SplitHostPort(ep); err == nil {
+			host = h
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsPrivate() {
+			t.Errorf("meshLocalEndpoints returned a private LAN IP %q — must not be published to Convex", ep)
 		}
 	}
 }

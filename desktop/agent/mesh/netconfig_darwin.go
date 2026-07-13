@@ -29,6 +29,10 @@ func unregisterMeshDNS() error {
 	return nil
 }
 
+// cleanStaleArtifacts drops a resolver entry a crashed agent may have left
+// pointing at a dead overlay responder (M3).
+func cleanStaleArtifacts() { _ = unregisterMeshDNS() }
+
 // enableForwarding turns on IP forwarding. macOS NAT is done with pf; we enable
 // forwarding here and leave the pf nat anchor to a documented manual step (a
 // safe automatic pf rewrite is risky on a user's Mac). Servers acting as exit

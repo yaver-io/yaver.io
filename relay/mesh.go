@@ -20,6 +20,7 @@ import (
 
 type meshStreamHandle struct {
 	stream quic.Stream
+	userID string     // owner, resolved at registration; scopes forwarding
 	mu     sync.Mutex // serializes writes to this agent's stream
 }
 
@@ -32,8 +33,8 @@ func (h *meshStreamHandle) writeFrame(srcDeviceID string, payload []byte) error 
 // handleMeshStream registers a device's persistent mesh frame stream and pumps
 // inbound frames to their destination peers. br is positioned just past the
 // newline-terminated control header.
-func (s *RelayServer) handleMeshStream(stream quic.Stream, br *bufio.Reader, deviceID string) {
-	handle := &meshStreamHandle{stream: stream}
+func (s *RelayServer) handleMeshStream(stream quic.Stream, br *bufio.Reader, deviceID, userID string) {
+	handle := &meshStreamHandle{stream: stream, userID: userID}
 	s.meshMu.Lock()
 	// Replace any stale stream for this device.
 	s.meshStreams[deviceID] = handle
@@ -61,6 +62,16 @@ func (s *RelayServer) handleMeshStream(stream quic.Stream, br *bufio.Reader, dev
 		s.meshMu.RUnlock()
 		if target == nil {
 			continue // peer not connected to this relay for mesh; drop
+		}
+		// Cross-tenant isolation: only forward between mesh streams owned by the
+		// same user. Without this, any authenticated agent could address DERP
+		// frames at any other connected device's stream — a cross-user
+		// reachability + DoS surface the /d/ HTTP proxy path already closes.
+		// Frames are WG-encrypted so this is defense-in-depth, but it fails
+		// closed. Equality also holds for a self-hosted relay (no Convex →
+		// both userIDs empty → same single-tenant trust domain → forward).
+		if handle.userID != target.userID {
+			continue
 		}
 		if err := target.writeFrame(deviceID, payload); err != nil {
 			// A broken destination stream shouldn't kill the source loop.

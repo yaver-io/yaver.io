@@ -48,18 +48,24 @@ func transportKindRank(kind string) int {
 	switch kind {
 	case "same-lan":
 		return 0
-	case "tailscale":
+	case "mesh":
+		// Yaver Mesh overlay: encrypted, roams across networks, and (once
+		// H2/DERP is up) survives NAT + relay outages. Preferred over tailscale
+		// and every non-LAN transport. Only present when our own mesh is up
+		// (buildRemoteAgentCandidates drops mesh candidates otherwise).
 		return 1
-	case "direct":
+	case "tailscale":
 		return 2
-	case "cloudflare-tunnel":
+	case "direct":
 		return 3
-	case "hostname":
+	case "cloudflare-tunnel":
 		return 4
-	case "relay":
+	case "hostname":
 		return 5
-	default:
+	case "relay":
 		return 6
+	default:
+		return 7
 	}
 }
 
@@ -364,6 +370,20 @@ func buildRemoteAgentCandidates(cfg *Config, target *DeviceInfo) ([]RemoteAgentC
 		})
 	}
 
+	// Drop overlay candidates when our own mesh is down: a 100.96/12 URL is only
+	// reachable if THIS node is on the mesh. Mirrors the resolveSSHHost guard —
+	// otherwise we'd rank an unreachable overlay URL first and stall on connect.
+	if !localMeshUp() {
+		filtered := candidates[:0]
+		for _, c := range candidates {
+			if c.Kind == "mesh" {
+				continue
+			}
+			filtered = append(filtered, c)
+		}
+		candidates = filtered
+	}
+
 	orderRemoteAgentCandidates(candidates)
 	maybeRefreshRemoteAgentProbes(candidates)
 	orderRemoteAgentCandidates(candidates)
@@ -508,6 +528,11 @@ func classifyRemoteBaseKind(baseURL string) string {
 		return "hostname"
 	}
 	switch {
+	case isMeshOverlayIPv4(host):
+		// Must precede the tailscale case: the overlay (100.96/12) is a subrange
+		// of Tailscale's CGNAT (100.64/10), so tailscaleCGNAT.Contains would
+		// otherwise misclassify our own overlay as tailscale.
+		return "mesh"
 	case tailscaleCGNAT.Contains(ip):
 		return "tailscale"
 	case ip.IsPrivate() || ip.IsLinkLocalUnicast():

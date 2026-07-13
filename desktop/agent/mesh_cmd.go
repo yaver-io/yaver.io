@@ -34,6 +34,12 @@ import (
 // gates whether the data plane should come up.
 type MeshConfig struct {
 	Enabled bool `json:"enabled"`
+	// Disabled is the explicit opt-OUT for the default-on overlay. `yaver mesh
+	// down` sets it so the agent does NOT auto-rejoin on the next `yaver serve`.
+	// Distinct from !Enabled (which just means "not currently up"): default-on
+	// treats a nil/!Disabled config as "bring mesh up", and only a true Disabled
+	// (or the YAVER_MESH_DISABLE env) keeps it off.
+	Disabled bool `json:"disabled,omitempty"`
 	// PublicKey is the base64 WireGuard public key. The private half lives in
 	// the vault (project "mesh", name "wg_private_key") and is NEVER persisted
 	// here or synced to Convex.
@@ -51,6 +57,14 @@ type MeshConfig struct {
 	UseExitNode  string `json:"use_exit_node,omitempty"`
 	LastJoinedAt int64  `json:"last_joined_at,omitempty"`
 }
+
+// tailnetInteropRoutes is the Tailscale CGNAT range (100.64.0.0/10) split so it
+// EXCLUDES the Yaver Mesh overlay subrange (100.96.0.0/12). 100.64/11 covers
+// 100.64–100.95 and 100.112/12 covers 100.112–100.127; together they are
+// 100.64/10 minus 100.96/12. Advertising these (not raw 100.64/10) lets mesh
+// peers reach tailnet hosts through a dual-homed node without the route
+// capturing overlay traffic or being rejected by the peer-side overlap filter.
+var tailnetInteropRoutes = []string{"100.64.0.0/11", "100.112.0.0/12"}
 
 const (
 	meshVaultProject = "mesh"
@@ -103,6 +117,7 @@ func printMeshUsage() {
 	fmt.Println("  yaver mesh exit-node use <alias>      Route THIS node's traffic via an exit node")
 	fmt.Println("  yaver mesh exit-node clear            Stop using an exit node")
 	fmt.Println("  yaver mesh route advertise <cidr>     Advertise a subnet route (subnet router)")
+	fmt.Println("  yaver mesh route advertise --tailscale  Bridge your tailnet — mesh peers reach Tailscale hosts via this node")
 	fmt.Println("  yaver mesh route remove <cidr>        Withdraw a subnet route")
 	fmt.Println()
 	fmt.Println("The mesh is OFF until you run `yaver mesh up`. Disabling it changes")
@@ -155,6 +170,15 @@ func meshLocalEndpoints() []string {
 		}
 		ip := ipnet.IP
 		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			continue
+		}
+		// Privacy contract: RFC1918 LAN IPs must NEVER be published to Convex —
+		// meshNodes.endpoints is shared cross-tenant to grant counterparties, so
+		// a private address would leak the user's internal subnet layout. Only
+		// globally-routable on-interface IPs (e.g. a cloud box's public IP) and
+		// the STUN-discovered public endpoint go to the control plane. Same-LAN
+		// direct paths are exchanged P2P/relay-brokered, not via Convex.
+		if ip.IsPrivate() {
 			continue
 		}
 		if v4 := ip.To4(); v4 != nil {
@@ -306,6 +330,7 @@ func runMeshDown(_ []string) {
 		}
 	}
 	cfg.Mesh.Enabled = false
+	cfg.Mesh.Disabled = true // explicit opt-out: don't auto-rejoin on next serve
 	if err := SaveConfig(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: save config: %v\n", err)
 		os.Exit(1)
@@ -515,19 +540,43 @@ func runMeshRoute(args []string) {
 		cfg.Mesh = &MeshConfig{}
 	}
 	cidr := args[1]
+	// Tailscale interop: `--tailscale` advertises the tailnet CGNAT range so
+	// mesh peers reach tailnet hosts through this dual-homed node. We advertise
+	// 100.64/10 MINUS the overlay subrange (100.96/12) as two constituent CIDRs
+	// — advertising raw 100.64/10 would let this route capture overlay traffic
+	// (100.96/12 ⊂ 100.64/10) and get rejected by the peer-side overlap filter.
+	tailscaleRoute := cidr == "--tailscale" || cidr == "tailscale"
+	routes := []string{cidr}
+	if tailscaleRoute {
+		routes = tailnetInteropRoutes
+	}
 	switch args[0] {
 	case "advertise", "add":
-		cfg.Mesh.AdvertisedRoutes = appendUnique(cfg.Mesh.AdvertisedRoutes, cidr)
-		fmt.Printf("✓ Advertising subnet route %s (this node is now a subnet router).\n", cidr)
+		if tailscaleRoute && !localTailscaleUp() {
+			fmt.Fprintln(os.Stderr, "Error: --tailscale requires a running tailnet on this node (no 100.64/10 interface found).")
+			os.Exit(1)
+		}
+		for _, r := range routes {
+			cfg.Mesh.AdvertisedRoutes = appendUnique(cfg.Mesh.AdvertisedRoutes, r)
+		}
+		if tailscaleRoute {
+			fmt.Printf("✓ Advertising the tailnet (%s) — mesh peers can now reach your Tailscale hosts through this node.\n", strings.Join(routes, ", "))
+		} else {
+			fmt.Printf("✓ Advertising subnet route %s (this node is now a subnet router).\n", cidr)
+		}
 	case "remove", "rm":
+		drop := map[string]bool{}
+		for _, r := range routes {
+			drop[r] = true
+		}
 		out := cfg.Mesh.AdvertisedRoutes[:0]
 		for _, r := range cfg.Mesh.AdvertisedRoutes {
-			if r != cidr {
+			if !drop[r] {
 				out = append(out, r)
 			}
 		}
 		cfg.Mesh.AdvertisedRoutes = out
-		fmt.Printf("✓ Withdrew subnet route %s.\n", cidr)
+		fmt.Printf("✓ Withdrew subnet route(s) %s.\n", strings.Join(routes, ", "))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown route subcommand %q\n", args[0])
 		os.Exit(1)

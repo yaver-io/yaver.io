@@ -34,3 +34,11 @@ func cidrPrefix(cidr string) string {
 func (d *Device) ConfigureNetwork(selfIPv4, meshCIDR string) error {
 	return configureInterface(d.name, selfIPv4, meshCIDR)
 }
+
+// CleanStaleMeshArtifacts removes host-level artifacts a previous, crashed agent
+// may have left behind — notably a /etc/resolver/mesh entry (macOS) pointing at
+// a now-dead overlay responder, which would blackhole every *.mesh lookup until
+// removed by hand (M3). Safe to call at every `yaver serve` startup: if mesh
+// comes back up it re-establishes its own artifacts; if it doesn't, this ensures
+// a crashed instance leaves nothing behind.
+func CleanStaleMeshArtifacts() { cleanStaleArtifacts() }

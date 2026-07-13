@@ -84,13 +84,8 @@ func buildMeshPeerSource(deviceID string) mesh.PeerSource {
 			// DEFAULT route (0.0.0.0/0, ::/0) is only honored when this node has
 			// explicitly chosen this peer as its exit node — otherwise an exit
 			// node would silently capture every peer's traffic.
-			allowed := []string{r.MeshIPv4 + "/32"}
-			for _, route := range r.AdvertisedRoutes {
-				if isDefaultRoute(route) && r.DeviceID != useExitNode {
-					continue
-				}
-				allowed = append(allowed, route)
-			}
+			allowed := append([]string{r.MeshIPv4 + "/32"},
+				filterAdvertisedRoutes(r.AdvertisedRoutes, r.DeviceID, useExitNode)...)
 			peers = append(peers, mesh.Peer{
 				DeviceID:         r.DeviceID,
 				PublicKey:        r.WgPublicKey,
@@ -103,10 +98,57 @@ func buildMeshPeerSource(deviceID string) mesh.PeerSource {
 	}
 }
 
-// isDefaultRoute reports whether a CIDR is an IPv4/IPv6 default route.
-func isDefaultRoute(cidr string) bool {
-	c := strings.TrimSpace(cidr)
-	return c == "0.0.0.0/0" || c == "::/0"
+// cleanStaleMeshArtifacts clears host-level artifacts a crashed agent may have
+// left behind (see mesh.CleanStaleMeshArtifacts). Called once at serve startup.
+func cleanStaleMeshArtifacts() { mesh.CleanStaleMeshArtifacts() }
+
+// meshOverlayPrefix is the overlay address range (100.96.0.0/12). Advertised
+// subnet routes that overlap it are rejected so a peer can't claim another
+// node's overlay IP via AllowedIPs.
+var meshOverlayPrefix = netip.MustParsePrefix(mesh.MeshSubnetCIDR)
+
+// isDefaultishRoute reports whether a prefix is a default route OR a
+// default-route split/near-default prefix that would capture (nearly) all
+// traffic. This closes the 0.0.0.0/1 + 128.0.0.0/1 bypass of the exit-node
+// gate: two /1 halves tile the whole address space, so any prefix of length
+// <= 1 is treated as exit-node-equivalent and gated on the receiver's choice.
+func isDefaultishRoute(p netip.Prefix) bool {
+	return p.Bits() <= 1
+}
+
+// filterAdvertisedRoutes validates a peer's advertised routes before they enter
+// this node's WireGuard AllowedIPs. It drops unparseable CIDRs, gates any
+// default/near-default route on the receiver having chosen this peer as its
+// exit node, and rejects any non-default route overlapping the overlay range
+// (which would let the peer source-spoof other mesh nodes). The peer's own /32
+// is added by the caller and is not passed here.
+func filterAdvertisedRoutes(routes []string, peerDeviceID, useExitNode string) []string {
+	out := make([]string, 0, len(routes))
+	for _, route := range routes {
+		pfx, err := netip.ParsePrefix(strings.TrimSpace(route))
+		if err != nil {
+			continue // drop unparseable CIDRs
+		}
+		if isDefaultishRoute(pfx) {
+			// Default route (incl. the 0.0.0.0/1 + 128.0.0.0/1 split): honored
+			// ONLY when this node explicitly chose this peer as its exit node,
+			// else an exit node would silently capture every peer's egress.
+			if peerDeviceID == "" || peerDeviceID != useExitNode {
+				continue
+			}
+			out = append(out, pfx.String())
+			continue
+		}
+		// A non-default subnet route must NOT touch the overlay range: a peer's
+		// only reachable overlay address is its own /32. Letting it claim
+		// 100.96.0.0/12 or another node's /32 would let it source-spoof other
+		// mesh nodes and steal their traffic via WireGuard cryptokey routing.
+		if pfx.Overlaps(meshOverlayPrefix) {
+			continue
+		}
+		out = append(out, pfx.String())
+	}
+	return out
 }
 
 // localIPv4s returns this host's non-loopback IPv4 addresses, used to decide

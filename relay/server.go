@@ -132,6 +132,7 @@ type agentTunnel struct {
 	conn     quic.Connection
 	peerAddr string // observed public address
 	connAt   time.Time
+	userID   string // owner resolved at registration; scopes mesh forwarding
 }
 
 func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain string) *RelayServer {
@@ -700,7 +701,8 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	// relay this proves the password belongs to the same signed-in user as
 	// the agent token and, when the device row already exists, that the user
 	// owns the deviceId being registered.
-	if _, ok, authErr := s.validateRelayAccessE(reg.Password, "register", reg.DeviceID, reg.Token); !ok {
+	regUserID, ok, authErr := s.validateRelayAccessE(reg.Password, "register", reg.DeviceID, reg.Token)
+	if !ok {
 		// We could not REACH a verdict. Do not tell the agent its password is
 		// wrong (it will "self-heal" a credential that was never broken) and do
 		// not hold it against the IP. Say so, and let it retry.
@@ -767,6 +769,7 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		conn:     conn,
 		peerAddr: remoteAddr,
 		connAt:   time.Now(),
+		userID:   regUserID,
 	}
 	s.tunnels[reg.DeviceID] = tunnel
 	s.mu.Unlock()
@@ -828,7 +831,7 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	})
 
 	// Accept control streams (expose register/unregister) from agent
-	go s.handleAgentControlStreams(conn, reg.DeviceID)
+	go s.handleAgentControlStreams(conn, reg.DeviceID, regUserID)
 
 	// Keep connection alive — block until it dies
 	<-conn.Context().Done()
@@ -1579,17 +1582,17 @@ func (s *RelayServer) proxyWebSocket(w http.ResponseWriter, r *http.Request, str
 
 // --- Expose (subdomain routing) ---
 
-func (s *RelayServer) handleAgentControlStreams(conn quic.Connection, deviceID string) {
+func (s *RelayServer) handleAgentControlStreams(conn quic.Connection, deviceID, userID string) {
 	for {
 		stream, err := conn.AcceptStream(conn.Context())
 		if err != nil {
 			return // connection closed
 		}
-		go s.handleControlMsg(stream, deviceID)
+		go s.handleControlMsg(stream, deviceID, userID)
 	}
 }
 
-func (s *RelayServer) handleControlMsg(stream quic.Stream, deviceID string) {
+func (s *RelayServer) handleControlMsg(stream quic.Stream, deviceID, userID string) {
 	// Read a single header. Mesh streams send a newline-terminated header and
 	// then keep the stream open for binary frames; legacy one-shot control
 	// messages (expose_*) send a whole-stream JSON blob with no newline, so
@@ -1611,7 +1614,7 @@ func (s *RelayServer) handleControlMsg(stream quic.Stream, deviceID string) {
 
 	// Persistent mesh frame stream — do NOT close until the loop ends.
 	if peek.Type == "mesh_relay" {
-		s.handleMeshStream(stream, br, deviceID)
+		s.handleMeshStream(stream, br, deviceID, userID)
 		return
 	}
 

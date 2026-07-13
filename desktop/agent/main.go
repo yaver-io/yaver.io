@@ -3464,27 +3464,37 @@ func runServe(args []string) {
 		httpServer.companion.Reconcile()
 	}()
 
-	// Yaver Mesh — restore the OPTIONAL WireGuard overlay if (and only if) the
-	// user previously opted in with `yaver mesh up`. A device that never opted
-	// in has cfg.Mesh == nil and this block is skipped entirely — no TUN, no
-	// listener, no behavior change. Data-plane bring-up needs elevated
-	// privilege; failure is logged, never fatal (the box still serves normally).
-	if cfg.Mesh != nil && cfg.Mesh.Enabled {
+	// Clear any host-level mesh artifacts a previously-crashed agent may have
+	// left behind (e.g. a stale /etc/resolver/mesh pointing at a dead overlay
+	// responder). If mesh restores below it re-establishes its own; if not, this
+	// ensures a crash doesn't blackhole *.mesh lookups (M3).
+	cleanStaleMeshArtifacts()
+
+	// Yaver Mesh — DEFAULT-ON. The WireGuard overlay comes up automatically on
+	// serve unless explicitly opted out (`yaver mesh down` sets cfg.Mesh.Disabled,
+	// or the YAVER_MESH_DISABLE env forces it off — the escape hatch for
+	// unprivileged / no-TUN / UDP-blocked environments). It ALWAYS degrades: if
+	// the vault is locked, the control plane is unreachable, or the TUN needs a
+	// privilege we don't have, the reason is logged and the box keeps serving
+	// over relay/direct — never fatal. Mobile is out of scope here (it never
+	// takes the phone's system-VPN slot; it reaches the overlay app-scoped).
+	meshOptedOut := os.Getenv("YAVER_MESH_DISABLE") == "1" ||
+		(cfg.Mesh != nil && cfg.Mesh.Disabled)
+	if !meshOptedOut {
 		go func() {
 			defer func() { _ = recover() }()
+			if warn := httpServer.autoEnableMesh(cfg); warn != "" {
+				log.Printf("[mesh] default-on: overlay not active (%s) — serving over relay/direct; `yaver mesh status` for detail", warn)
+				return
+			}
 			httpServer.meshMu.Lock()
-			mgr, err := httpServer.ensureMeshManagerLocked(cfg.DeviceID)
+			mgr := httpServer.meshMgr
 			httpServer.meshMu.Unlock()
-			if err != nil {
-				log.Printf("[mesh] restore skipped: %v", err)
-				return
+			iface := ""
+			if mgr != nil {
+				iface = mgr.Status().IfaceName
 			}
-			if err := mgr.Start(); err != nil {
-				log.Printf("[mesh] data plane not started (run serve with privilege?): %v", err)
-				return
-			}
-			httpServer.startMeshDesiredLoop(cfg.DeviceID)
-			log.Printf("[mesh] overlay up: %s on %s", cfg.Mesh.MeshIPv4, mgr.Status().IfaceName)
+			log.Printf("[mesh] overlay up (default-on): %s on %s", cfg.Mesh.MeshIPv4, iface)
 		}()
 	}
 

@@ -49,6 +49,7 @@ func (s *HTTPServer) handleMeshUp(w http.ResponseWriter, r *http.Request) {
 		cfg.Mesh = &MeshConfig{}
 	}
 	cfg.Mesh.Enabled = true
+	cfg.Mesh.Disabled = false // explicit up clears any prior opt-out
 	cfg.Mesh.PublicKey = kp.PublicKey
 	cfg.Mesh.MeshIPv4 = assigned.MeshIPv4
 	cfg.Mesh.MeshIPv6 = assigned.MeshIPv6
@@ -80,6 +81,7 @@ func (s *HTTPServer) handleMeshUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.startMeshDesiredLoop(cfg.DeviceID)
+	s.addOverlayListener(cfg.Mesh.MeshIPv4)
 	resp["dataPlane"] = mgr.Status()
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -104,10 +106,12 @@ func (s *HTTPServer) handleMeshDown(w http.ResponseWriter, r *http.Request) {
 			"deviceId": cfg.DeviceID,
 		})
 	}
-	if cfg.Mesh != nil {
-		cfg.Mesh.Enabled = false
-		_ = SaveConfig(cfg)
+	if cfg.Mesh == nil {
+		cfg.Mesh = &MeshConfig{}
 	}
+	cfg.Mesh.Enabled = false
+	cfg.Mesh.Disabled = true // explicit opt-out: don't auto-rejoin on next serve
+	_ = SaveConfig(cfg)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -130,6 +134,51 @@ func (s *HTTPServer) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 		out["dataPlane"] = mgr.Status()
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// autoEnableMesh brings the overlay up as part of default-on: ensures a keypair,
+// joins the control plane (assigning/reusing the overlay IP), persists the
+// opt-in, and starts the data plane. It DEGRADES gracefully — a locked vault,
+// a control-plane failure, or a missing-privilege/TUN failure is returned as a
+// non-fatal reason string and the agent keeps serving over relay/direct. It
+// never brings the process down. Returns "" on full success.
+func (s *HTTPServer) autoEnableMesh(cfg *Config) (warning string) {
+	if cfg.AuthToken == "" || cfg.ConvexSiteURL == "" || cfg.DeviceID == "" {
+		return "not signed in"
+	}
+	kp, err := meshLoadOrCreateKeyPair()
+	if err != nil {
+		return "keys unavailable (vault locked?): " + err.Error()
+	}
+	endpoints := meshLocalEndpoints()
+	assigned, err := meshRegisterJoin(cfg, kp.PublicKey, endpoints)
+	if err != nil {
+		return "control plane: " + err.Error()
+	}
+	if cfg.Mesh == nil {
+		cfg.Mesh = &MeshConfig{}
+	}
+	cfg.Mesh.Enabled = true
+	cfg.Mesh.Disabled = false
+	cfg.Mesh.PublicKey = kp.PublicKey
+	cfg.Mesh.MeshIPv4 = assigned.MeshIPv4
+	cfg.Mesh.MeshIPv6 = assigned.MeshIPv6
+	cfg.Mesh.LastJoinedAt = time.Now().Unix()
+	if err := SaveConfig(cfg); err != nil {
+		return "save config: " + err.Error()
+	}
+	s.meshMu.Lock()
+	mgr, err := s.ensureMeshManagerLocked(cfg.DeviceID)
+	s.meshMu.Unlock()
+	if err != nil {
+		return err.Error()
+	}
+	if err := mgr.Start(); err != nil {
+		return err.Error() // commonly "elevated privilege required" — degrade
+	}
+	s.startMeshDesiredLoop(cfg.DeviceID)
+	s.addOverlayListener(cfg.Mesh.MeshIPv4)
+	return ""
 }
 
 // meshJoinResult is the assigned-address shape returned by mesh:joinMesh.

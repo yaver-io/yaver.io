@@ -17,6 +17,7 @@ func configureInterface(name, selfIPv4, meshCIDR string) error {
 
 func registerMeshDNS(selfIP string) error { return nil }
 func unregisterMeshDNS() error            { return nil }
+func cleanStaleArtifacts()                {}
 
 func enableForwarding(iface, meshCIDR string) error  { return nil }
 func disableForwarding(iface, meshCIDR string) error { return nil }

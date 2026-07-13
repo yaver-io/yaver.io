@@ -30,6 +30,7 @@ func maskFromCIDR(cidr string) string {
 // the responder still answers direct queries on the overlay IP.
 func registerMeshDNS(selfIP string) error { return nil }
 func unregisterMeshDNS() error            { return nil }
+func cleanStaleArtifacts()                {}
 
 // enableForwarding is a no-op on Windows for now (exit-node/subnet-router hosts
 // should run Linux); the data plane still works as a client.
