@@ -320,6 +320,10 @@ export interface Device {
     connectedAt?: number; // epoch ms
     durationSec?: number; // set on disconnect
   };
+  /** Agent's self-reported "I have a live relay tunnel right now" from its last
+   * heartbeat. When false, an "online" box has no off-LAN route — the phone
+   * shows "online · no relay path" instead of implying it's reachable. */
+  relayConnected?: boolean;
   peerState?: "online" | "stale" | "offline";
   peerLastSeen?: number;
   /** every reachable IPv4 the agent broadcast in heartbeat — Wi-Fi LAN,
@@ -1147,6 +1151,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             hardwareProfile: d.hardwareProfile ?? undefined,
             lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
             lastTunnelEvent,
+            relayConnected: typeof d.relayConnected === "boolean" ? d.relayConnected : undefined,
             needsAuth: d.needsAuth ?? false,
             isGuest: d.isGuest || false,
             hosting: d.hosting === "yaver-hosted" || d.hosting === "byo" || d.hosting === "self-hosted" ? d.hosting : undefined,

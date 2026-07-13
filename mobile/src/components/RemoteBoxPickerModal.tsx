@@ -747,6 +747,15 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                   lastSeenTs > 0 &&
                   Date.now() - lastSeenTs > 120_000;
                 const isDown = !connectedSet.has(device.id) && !device.online && !reachableNow;
+                // Box heartbeats ("online") but its agent reports no live relay
+                // tunnel — so it's only reachable from its own LAN, not off-LAN
+                // via relay. Say so honestly instead of a bare "Online" that
+                // 502s on cellular.
+                const noRelayPath =
+                  device.online &&
+                  !connectedSet.has(device.id) &&
+                  !reachableNow &&
+                  (device as any).relayConnected === false;
                 const statusLine = connectedSet.has(device.id)
                   ? ping && ping.ok
                     ? `Connected · ${ping.rttMs}ms`
@@ -755,6 +764,8 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                       : "Connected · pinging…"
                   : staleOnline
                     ? `Last seen ${lastSeenLabel(lastSeenTs)} · may be unreachable`
+                    : noRelayPath
+                      ? "Online · LAN-only (no relay path)"
                     : device.online
                       ? "Online · tap to select"
                       : reachableNow
@@ -824,7 +835,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                           </View>
                         ) : null}
                         <Text
-                          style={{ color: isDown || staleOnline ? c.warn : c.textMuted, fontSize: 11, marginTop: 4 }}
+                          style={{ color: isDown || staleOnline || noRelayPath ? c.warn : c.textMuted, fontSize: 11, marginTop: 4 }}
                         >
                           {statusLine}
                           {activeDevice?.id === device.id ? " · Focused" : ""}

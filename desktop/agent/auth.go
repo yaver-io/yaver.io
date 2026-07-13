@@ -1679,6 +1679,12 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	// bridge address in mobile's device list because the field was
 	// just never re-sent.
 	payload["quicHost"] = quicHost
+	// Publish whether this box currently has a LIVE relay tunnel (registered +
+	// serving), not just that it heartbeats. Convex stores this in-place on the
+	// device row (no history) so the phone/dashboard can show "online · no relay
+	// path" instead of a bare "online" that 502s when off-LAN. Decoupled from
+	// the relay's own presenceUpdate, which is opt-in and only fires on connect.
+	payload["relayConnected"] = anyRelayTunnelLive()
 	// Coerce nil slices to empty arrays so JSON encodes them as `[]` not
 	// `null`. The Convex http wrapper treats Array-valued localIps as
 	// "deliberate clear", but `null` short-circuits to `undefined` and

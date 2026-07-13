@@ -2176,6 +2176,8 @@ http.route({
         : body.publicEndpoints === null
           ? []
           : undefined,
+      relayConnected:
+        typeof body.relayConnected === "boolean" ? body.relayConnected : undefined,
       hardwareId: body.hardwareId || undefined,
       hardwareProfile: body.hardwareProfile || undefined,
       deviceClass: body.deviceClass || undefined,

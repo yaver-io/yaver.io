@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -10161,6 +10162,16 @@ func relayHealthFile() string {
 }
 
 // relayManager manages relay tunnel goroutines and hot-reloads config changes.
+// relayTunnelsLive counts relay tunnels currently registered AND serving (in
+// relayConnectAndServe's AcceptStream loop). Heartbeat reads it via
+// anyRelayTunnelLive() to publish `relayConnected` — so the phone/dashboard can
+// distinguish a box with a live relay DATA path from one that merely heartbeats
+// ("online" but 502s on the relay's /d/<id>/ path). Incremented after a
+// successful register, decremented when the serving loop exits.
+var relayTunnelsLive int32
+
+func anyRelayTunnelLive() bool { return atomic.LoadInt32(&relayTunnelsLive) > 0 }
+
 type relayManager struct {
 	parentCtx         context.Context
 	deviceID          string
@@ -10762,6 +10773,12 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 	}
 
 	log.Printf("[RELAY] Registered with relay as device %s", deviceID[:8])
+
+	// This tunnel is now registered + about to serve — count it live so the
+	// next heartbeat can honestly publish relayConnected=true. Decrement when
+	// this function returns (serving loop errored or ctx cancelled).
+	atomic.AddInt32(&relayTunnelsLive, 1)
+	defer atomic.AddInt32(&relayTunnelsLive, -1)
 
 	// Cache the relay-assigned subdomain URL so heartbeat publishes
 	// it as publicUrl. Fire-and-forget — heartbeat reads from the

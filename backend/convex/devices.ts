@@ -181,6 +181,7 @@ type ListedDevice = {
   installedRunnerIds?: string[];
   lastHeartbeat: number;
   lastTunnelEvent?: Doc<"devices">["lastTunnelEvent"];
+  relayConnected?: boolean;
   isGuest: boolean;
   hostUserId?: string;
   hostName?: string;
@@ -859,6 +860,7 @@ export const heartbeat = mutation({
     quicHost: v.optional(v.string()),
     localIps: v.optional(v.array(v.string())),
     publicEndpoints: v.optional(v.array(v.string())),
+    relayConnected: v.optional(v.boolean()),
     hardwareId: v.optional(v.string()),
     hardwareProfile: v.optional(hardwareProfileValidator),
     deviceClass: v.optional(
@@ -963,6 +965,14 @@ export const heartbeat = mutation({
     }
     if (args.publicEndpoints !== undefined) {
       patch.publicEndpoints = args.publicEndpoints;
+    }
+    // In-place, last-value-only (no history): whether the box has a live relay
+    // tunnel right now. Powers the "online · no relay path" distinction.
+    if (
+      args.relayConnected !== undefined &&
+      args.relayConnected !== device.relayConnected
+    ) {
+      patch.relayConnected = args.relayConnected;
     }
     // Capture hardwareId on heartbeats too — older agents that
     // were registered before the field existed will pick it up
@@ -1419,6 +1429,7 @@ export const listMyDevices = query({
       installedRunnerIds: d.installedRunnerIds ?? [],
       lastHeartbeat: d.lastHeartbeat,
       lastTunnelEvent: d.lastTunnelEvent,
+      relayConnected: d.relayConnected ?? false,
       agentVersion: d.agentVersion,
       agentVersionReportedAt: d.agentVersionReportedAt,
       isGuest: false as boolean,
@@ -1495,6 +1506,7 @@ export const listMyDevices = query({
           installedRunnerIds: d.installedRunnerIds ?? [],
           lastHeartbeat: d.lastHeartbeat,
           lastTunnelEvent: d.lastTunnelEvent,
+          relayConnected: d.relayConnected ?? false,
           isGuest: true,
           hostUserId: String(grant.hostUserId),
           hostName: host.fullName,
@@ -1561,6 +1573,7 @@ export const listMyDevices = query({
           installedRunnerIds: d.installedRunnerIds ?? [],
           lastHeartbeat: d.lastHeartbeat,
           lastTunnelEvent: d.lastTunnelEvent,
+          relayConnected: d.relayConnected ?? false,
           isGuest: true,
           hostUserId: String(access.hostUserId),
           hostName: host.fullName,
@@ -1632,6 +1645,7 @@ export const recommendTaskPlacement = query({
           runners: device.runners ?? [],
           lastHeartbeat: device.lastHeartbeat,
           lastTunnelEvent: device.lastTunnelEvent,
+          relayConnected: device.relayConnected ?? false,
           isGuest: false,
           accessScope: "owner",
           deviceClass: device.deviceClass,

@@ -369,6 +369,12 @@ export default defineSchema({
       connectedAt: v.optional(v.number()),         // epoch ms; matches the connect event
       durationSec: v.optional(v.number()),         // populated on disconnect
     })),
+    // Self-reported by the agent on every heartbeat: does this box currently
+    // have a LIVE relay tunnel (registered + serving)? Distinct from
+    // lastTunnelEvent (relay-pushed, opt-in). Lets clients show "online · no
+    // relay path" instead of a bare "online" that 502s when the phone is
+    // off-LAN. Stored in-place (last value only, no history).
+    relayConnected: v.optional(v.boolean()),
     createdAt: v.number(),
     // Bootstrap state: true when agent is running without a valid token.
     // Clients show a "NEEDS AUTH" badge and can auto-pair via relay.
