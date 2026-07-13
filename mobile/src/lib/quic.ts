@@ -1086,6 +1086,53 @@ export type SpeechContextInput = {
 // QuicClient applies it before the Settings screen is ever opened.
 const TTS_TASK_MODE_KEY = "tts_task_mode";
 
+// ── Per-host SSE stream budget ─────────────────────────────────────────
+//
+// iOS (NSURLSession, which RN's fetch/XHR sit on top of) hard-caps
+// concurrent connections to a SINGLE host at ~6. Every long-lived SSE
+// subscription (task output, bus events, dev-server logs, blackbox
+// command stream, install progress, netcapture) holds one of those slots
+// open for its entire lifetime. When several are open at once and the
+// user fires a task-send (POST /tasks) plus its follow-up one-shot GETs,
+// the pool starves: the 6 in-flight streams collapse together
+// ("broken pipe" / "connection reset") and the POST is aborted — the
+// exact "Task failed: Aborted → Transport pending → can't reach"
+// failure we saw in the relay logs.
+//
+// The fix is a client-side semaphore: never keep more than
+// MAX_SSE_STREAMS_PER_HOST long-lived streams open per host, leaving
+// headroom under the ~6 ceiling for the POST /tasks and a couple of
+// one-shot requests. When a new stream would exceed the cap we evict the
+// least-important idle stream first (task output is highest priority;
+// dev-events/bus are lowest), so a task can never be starved by
+// background streams. The cap is deliberately conservative (3) because
+// MJPEG image streams, health probes, and heartbeat also draw from the
+// same per-host pool.
+const MAX_SSE_STREAMS_PER_HOST = 3;
+
+// Relative importance of each SSE stream. Higher = keep; when the host is
+// at capacity the lowest-priority stream is closed to admit a new one (or
+// to free a slot for a task-send). Task output must survive everything.
+const STREAM_PRIORITY = {
+  taskOutput: 100, // live task output — the thing the user is watching
+  blackboxCommands: 80, // command bus that drives navigation / open-app
+  installProgress: 55, // install / uninstall / generic /streams progress
+  log: 50, // `yaver logs -f` style log tails
+  netcapture: 50, // wire-observe decoded events
+  busEvents: 40, // peer presence — cheap to re-poll
+  devEvents: 30, // dev-server log spray — caller re-subscribes freely
+} as const;
+
+// One live SSE subscription occupying a slot in the per-host budget.
+interface StreamSlot {
+  host: string; // origin key this slot is counted against
+  priority: number; // STREAM_PRIORITY.* — eviction picks the lowest
+  label: string; // for debugging only
+  openedAt: number; // tie-breaker: evict the oldest at equal priority
+  released: boolean; // idempotency guard for release/close
+  close: () => void; // abort the underlying fetch/XHR
+}
+
 export class QuicClient {
   private host: string | null = null;
   private port: number | null = null;
@@ -1149,6 +1196,12 @@ export class QuicClient {
 
   // Relay health tracking
   private _relayHealth: Map<string, { ok: boolean; latencyMs: number; lastChecked: number }> = new Map();
+
+  // Per-host SSE stream budget (see MAX_SSE_STREAMS_PER_HOST above). Keyed
+  // by origin (scheme://host:port) so every stream that shares the iOS
+  // ~6-connections-per-host pool is counted together, whether it goes
+  // direct or through the relay.
+  private streamSlots: Map<string, StreamSlot[]> = new Map();
 
   // Event listeners
   private listeners: { [K in EventName]: Array<EventMap[K]> } = {
@@ -1705,6 +1758,12 @@ export class QuicClient {
     // even for image-heavy tasks; the relay caps non-SSE proxies at
     // ~25s, so anything longer is the connection itself, not the work.
     const sc = this.withTtsMode(speechContext);
+    // Guarantee headroom under the iOS ~6-connections-per-host ceiling: if
+    // background SSE streams are already at the per-host cap, drop the
+    // least-important one so this POST (and the output stream + follow-up
+    // GETs it triggers) can never be starved. This is a plain short-lived
+    // fetchWithTimeout — it does NOT hold an SSE slot itself.
+    this.freeStreamSlotForRequest();
     const res = await this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -1847,6 +1906,8 @@ export class QuicClient {
   subscribeDevEvents(onEvent: (ev: { type: string; framework?: string; logLine?: string; message?: string; bundleUrl?: string; deepLink?: string; timestamp?: string }) => void): () => void {
     if (!this.isConnected) return () => {};
     const controller = new AbortController();
+    // Lowest-priority stream — first to be evicted when the host is busy.
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.devEvents, "dev/events", () => controller.abort());
     (async () => {
       try {
         const res = await fetch(`${this.baseUrl}/dev/events`, {
@@ -1879,9 +1940,14 @@ export class QuicClient {
         }
       } catch {
         // aborted or connection dropped — the caller re-subscribes on its own cadence
+      } finally {
+        this.releaseStreamSlot(slot);
       }
     })();
-    return () => controller.abort();
+    return () => {
+      this.releaseStreamSlot(slot);
+      controller.abort();
+    };
   }
 
   /**
@@ -1907,6 +1973,9 @@ export class QuicClient {
       ? `${this.baseUrl}/bus/events?prefix=${encodeURIComponent(opts.prefix)}`
       : `${this.baseUrl}/bus/events`;
     const controller = new AbortController();
+    // Low priority — peer presence is cheap to re-derive, so this yields
+    // its slot before task output / command streams.
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.busEvents, "bus/events", () => controller.abort());
     (async () => {
       try {
         const res = await fetch(url, {
@@ -1944,9 +2013,14 @@ export class QuicClient {
         if (err?.name !== "AbortError") {
           opts.onError?.(err);
         }
+      } finally {
+        this.releaseStreamSlot(slot);
       }
     })();
-    return () => controller.abort();
+    return () => {
+      this.releaseStreamSlot(slot);
+      controller.abort();
+    };
   }
 
   /** List all tasks from the desktop agent, falling back to cache on failure. */
@@ -2254,6 +2328,19 @@ export class QuicClient {
     let lastIndex = 0;
     let aborted = false;
 
+    // Highest-priority stream: the live output the user is watching. It
+    // still counts against the per-host budget (an XHR draws from the same
+    // iOS pool as fetch), but acquireStreamSlot will evict lower-priority
+    // streams before this one — so task output is never the victim.
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.taskOutput, "tasks/output", () => {
+      aborted = true;
+      try {
+        xhr.abort();
+      } catch {
+        // ignore
+      }
+    });
+
     const flushBuffer = (chunk: string) => {
       const lines = chunk.split("\n");
       for (const line of lines) {
@@ -2290,8 +2377,12 @@ export class QuicClient {
     };
     xhr.onerror = () => {
       // network error or abort — silent (matches the previous behavior)
+      this.releaseStreamSlot(slot);
     };
     xhr.onloadend = () => {
+      // Free the per-host slot whether or not we were aborted — the stream
+      // is done either way.
+      this.releaseStreamSlot(slot);
       if (aborted) return;
       // Drain any trailing buffer that arrived without a terminating \n.
       const tail = (xhr.responseText || "").slice(lastIndex);
@@ -2301,10 +2392,12 @@ export class QuicClient {
       xhr.send();
     } catch {
       // ignore — onerror will fire if the send itself was rejected
+      this.releaseStreamSlot(slot);
     }
 
     return () => {
       aborted = true;
+      this.releaseStreamSlot(slot);
       try {
         xhr.abort();
       } catch {
@@ -2401,6 +2494,7 @@ export class QuicClient {
     const controller = new AbortController();
     const url = `${this.baseUrl}/streams/${encodeURIComponent(streamName)}`;
     let aborted = false;
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.log, "streams/log", () => controller.abort());
     (async () => {
       try {
         const res = await fetch(url, {
@@ -2430,6 +2524,7 @@ export class QuicClient {
       } catch {
         // aborted or network error
       } finally {
+        this.releaseStreamSlot(slot);
         // Notify the caller the stream ended for ANY reason except an
         // explicit abort — this lets uninstall flows distinguish "user
         // navigated away" (don't show success) from "agent exited"
@@ -2441,6 +2536,7 @@ export class QuicClient {
     })();
     return () => {
       aborted = true;
+      this.releaseStreamSlot(slot);
       controller.abort();
     };
   }
@@ -2480,6 +2576,7 @@ export class QuicClient {
   netcaptureStream(streamName: string, target: string | undefined, onEvent: (ev: any) => void): () => void {
     const controller = new AbortController();
     const url = this.peerEndpoint(target, `/streams/${encodeURIComponent(streamName)}`);
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.netcapture, "netcapture", () => controller.abort());
     (async () => {
       try {
         const res = await fetch(url, {
@@ -2508,9 +2605,14 @@ export class QuicClient {
         }
       } catch {
         // aborted or network error
+      } finally {
+        this.releaseStreamSlot(slot);
       }
     })();
-    return () => controller.abort();
+    return () => {
+      this.releaseStreamSlot(slot);
+      controller.abort();
+    };
   }
 
   // ── Autoinit + Autoideas (cached project context + idea queue) ──
@@ -5640,6 +5742,105 @@ export class QuicClient {
 
   // ── Connection + reconnection ──────────────────────────────────────
 
+  // ── Per-host SSE stream budget helpers ───────────────────────────────
+  //
+  // Every long-lived SSE subscribe() below routes through acquireStreamSlot
+  // (when it opens) and releaseStreamSlot (when it ends, aborts, or is
+  // evicted). This is the single choke point that keeps concurrent streams
+  // per host under MAX_SSE_STREAMS_PER_HOST, so a task-send POST always has
+  // a free connection under iOS's ~6/host ceiling.
+
+  /** Origin key (scheme://host:port) for the current baseUrl — the unit the
+   *  iOS connection limit actually applies to. Streams that share an origin
+   *  (e.g. two devices via the same relay) share the budget. */
+  private streamHostKey(): string {
+    const base = this.baseUrl;
+    const m = /^(https?:\/\/[^/]+)/i.exec(base);
+    return m ? m[1] : base;
+  }
+
+  /**
+   * Reserve a slot in the per-host SSE budget for a new long-lived stream.
+   * If the host is already at MAX_SSE_STREAMS_PER_HOST, the least-important
+   * (lowest priority, oldest on ties) existing stream is closed first so we
+   * never exceed the cap. Returns the slot; the caller MUST call
+   * releaseStreamSlot(slot) when its stream ends for any reason.
+   */
+  private acquireStreamSlot(priority: number, label: string, close: () => void): StreamSlot {
+    const host = this.streamHostKey();
+    let slots = this.streamSlots.get(host);
+    if (!slots) {
+      slots = [];
+      this.streamSlots.set(host, slots);
+    }
+    // Evict the least-important stream(s) until there is room for one more.
+    while (slots.length >= MAX_SSE_STREAMS_PER_HOST) {
+      const victim = this.pickEvictable(slots);
+      if (!victim) break; // shouldn't happen, but never spin
+      this.removeSlot(host, slots, victim);
+    }
+    const slot: StreamSlot = { host, priority, label, openedAt: Date.now(), released: false, close };
+    slots.push(slot);
+    return slot;
+  }
+
+  /** Release a slot back to the budget. Idempotent — safe to call from the
+   *  stream's finally block AND its unsubscribe function AND on eviction. */
+  private releaseStreamSlot(slot: StreamSlot | null | undefined): void {
+    if (!slot || slot.released) return;
+    slot.released = true;
+    const slots = this.streamSlots.get(slot.host);
+    if (!slots) return;
+    const idx = slots.indexOf(slot);
+    if (idx >= 0) slots.splice(idx, 1);
+    if (slots.length === 0) this.streamSlots.delete(slot.host);
+  }
+
+  /** Lowest-priority (oldest on ties) slot — the eviction victim. */
+  private pickEvictable(slots: StreamSlot[]): StreamSlot | null {
+    let victim: StreamSlot | null = null;
+    for (const s of slots) {
+      if (
+        !victim ||
+        s.priority < victim.priority ||
+        (s.priority === victim.priority && s.openedAt < victim.openedAt)
+      ) {
+        victim = s;
+      }
+    }
+    return victim;
+  }
+
+  /** Remove a slot from the budget and abort its underlying stream. */
+  private removeSlot(host: string, slots: StreamSlot[], slot: StreamSlot): void {
+    const idx = slots.indexOf(slot);
+    if (idx >= 0) slots.splice(idx, 1);
+    if (slots.length === 0) this.streamSlots.delete(host);
+    if (!slot.released) {
+      slot.released = true;
+      try {
+        slot.close();
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  /**
+   * Proactively free one SSE slot before a burst of one-shot requests
+   * (e.g. sendTask's POST + follow-up GETs). Only closes a stream if the
+   * host is already at the cap, and only the least-important one — so a
+   * task-send is never blocked behind background streams. The evicted
+   * stream's caller re-subscribes on its own cadence.
+   */
+  private freeStreamSlotForRequest(): void {
+    const host = this.streamHostKey();
+    const slots = this.streamSlots.get(host);
+    if (!slots || slots.length < MAX_SSE_STREAMS_PER_HOST) return;
+    const victim = this.pickEvictable(slots);
+    if (victim) this.removeSlot(host, slots, victim);
+  }
+
   /** Create a fetch with a manual timeout (AbortSignal.timeout may not exist in Hermes). */
   private fetchWithTimeout(url: string, opts: RequestInit, timeoutMs: number): Promise<Response> {
     const controller = new AbortController();
@@ -6437,6 +6638,9 @@ export class QuicClient {
     appName = "Yaver",
   ): () => void {
     const controller = new AbortController();
+    // High priority — this is the command bus that drives navigation /
+    // open-app on the phone; only task output outranks it.
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.blackboxCommands, "blackbox/commands", () => controller.abort());
     const run = async () => {
       try {
         const res = await fetch(`${this.baseUrl}/blackbox/command-stream?device=${encodeURIComponent(deviceId)}`, {
@@ -6466,10 +6670,16 @@ export class QuicClient {
             } catch {}
           }
         }
-      } catch {}
+      } catch {
+      } finally {
+        this.releaseStreamSlot(slot);
+      }
     };
     run();
-    return () => controller.abort();
+    return () => {
+      this.releaseStreamSlot(slot);
+      controller.abort();
+    };
   }
 
   /** Start a dev server on the agent. */
@@ -6776,6 +6986,7 @@ export class QuicClient {
     const ctrl = new AbortController();
     const url = `${this.baseUrl}/streams/${encodeURIComponent(name)}`;
     const auth = this.authHeaders;
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.installProgress, "streams/install", () => ctrl.abort());
     (async () => {
       try {
         const res = await fetch(url, { headers: auth, signal: ctrl.signal });
@@ -6809,9 +7020,14 @@ export class QuicClient {
         }
       } catch {
         // network drop / cancel — caller should treat as ended
+      } finally {
+        this.releaseStreamSlot(slot);
       }
     })();
-    return () => ctrl.abort();
+    return () => {
+      this.releaseStreamSlot(slot);
+      ctrl.abort();
+    };
   }
 
   /** Stop serving the active preview/dev server.

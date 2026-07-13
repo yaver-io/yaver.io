@@ -5420,6 +5420,13 @@ http.route({
             // Fast-wake: a persistent volume means park/wake no longer restore a
             // fat disk. Surfaced so the UI can say "wakes in ~1-2 min".
             hasVolume: Boolean(machine.volumeId),
+            // Parked/wakeable machine surface: the mobile "Yaver-managed · Parked"
+            // card renders specs + "Slept/Woke N ago" from these. Absent on older
+            // rows → the card degrades to machineType/region.
+            serverType: machine.serverType ?? null,
+            specs: machine.specs ?? null,
+            lastParkedAt: machine.lastParkedAt ?? null,
+            lastWokeAt: machine.lastWokeAt ?? null,
             // First-class onboarding: web/mobile render an
             // initializing state + progress bar + "Authorize runners"
             // from these (project_managed_cloud_onboarding_gap).

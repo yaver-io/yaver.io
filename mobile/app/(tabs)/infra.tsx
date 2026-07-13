@@ -8,6 +8,16 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import ManagedCloudCard from "../../src/components/ManagedCloudCard";
 import { HIDE_PAID_UI } from "../../src/lib/launchFlags";
+import {
+  deriveWakeView,
+  isParkedStatus,
+  isWakingStatus,
+  specSummary,
+  timeAgo,
+  useParkedMachines,
+  WAKE_STAGES,
+} from "../../src/lib/parkedMachines";
+import type { ManagedCloudMachineSummary } from "../../src/lib/subscription";
 import { quicClient, type CapabilitySnapshot, type CompanionStatus, type IncidentEvent, type InfraSummary, type MicroserviceWrapResult } from "../../src/lib/quic";
 import { listGuests, type GuestInfo } from "../../src/lib/guests";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -403,6 +413,11 @@ export default function InfraScreen() {
             <Metric c={c} label="Disk" value={`${(summary.metrics?.diskPct || 0).toFixed(0)}%`} sub={`${fmtBytes(summary.metrics?.diskUsed)} / ${fmtBytes(summary.metrics?.diskTotal)}`} />
             <Metric c={c} label="Uptime" value={fmtUptime(summary.metrics?.uptime)} sub={summary.metrics?.hostname || summary.machine.deviceId} />
           </View>
+
+          {/* Yaver-managed parked boxes — a snapshotted+deleted cloud box that
+              costs nothing while asleep and can be recreated from its snapshot
+              on demand. Prominent Wake button + a staged waking-up ladder. */}
+          <ParkedMachinesSection c={c} token={token} />
 
           {/* Sudo password sheet. Only the install stream can open
               it; the password flows through /install/sudo and never
@@ -976,6 +991,176 @@ export default function InfraScreen() {
           </Section>
         </ScrollView>
       )}
+    </View>
+  );
+}
+
+// ParkedMachinesSection — lists the user's Yaver-managed cloud boxes that are
+// parked (asleep) or actively waking, each with a prominent Wake button and a
+// staged "waking up" ladder. Rendered only for accounts with managed-cloud
+// access; the server independently authorises + balance-gates every wake.
+function ParkedMachinesSection({ c, token }: { c: any; token: string | null | undefined }) {
+  const { machines, hasAccess, wakingId, errors, wake } = useParkedMachines(token);
+
+  // Only surface managed boxes that are parked, waking, or freshly awake — a
+  // long-running active box is the local Infra card's job, not this section.
+  const relevant = machines.filter(
+    (m) => isParkedStatus(m.status) || isWakingStatus(m.status) || m.status === "active",
+  );
+  // Keep an "active" box here only briefly after a wake (so the user sees it
+  // reach Online); a box that was already active on load isn't shown here.
+  const shown = relevant.filter((m) => {
+    if (m.status !== "active") return true;
+    return !!m.lastWokeAt; // woke at some point ⇒ show the Online confirmation
+  });
+
+  if (!token || !hasAccess || shown.length === 0) return null;
+
+  return (
+    <View style={[card(c), { gap: 6 }]}>
+      <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "700" }}>Cloud machines</Text>
+      <Text style={{ color: c.textMuted, fontSize: 11 }}>
+        Yaver-managed boxes. Parked boxes cost nothing while asleep — wake one to recreate it from its snapshot.
+      </Text>
+      <View style={{ gap: 10, marginTop: 4 }}>
+        {shown.map((m) => (
+          <ParkedMachineCard
+            key={m.id}
+            c={c}
+            m={m}
+            waking={wakingId === m.id}
+            error={errors[m.id]}
+            onWake={() => void wake(m.id)}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function ParkedMachineCard({
+  c,
+  m,
+  waking,
+  error,
+  onWake,
+}: {
+  c: any;
+  m: ManagedCloudMachineSummary;
+  waking: boolean;
+  error?: string;
+  onWake: () => void;
+}) {
+  const view = deriveWakeView(m, waking);
+  const parked = view.tone === "parked";
+  const online = view.tone === "online";
+  const failed = view.tone === "error";
+  const accent = online ? "#22c55e" : failed ? "#ef4444" : parked ? "#0ea5e9" : "#0ea5e9";
+  const slept = timeAgo(m.lastParkedAt);
+  const woke = timeAgo(m.lastWokeAt);
+
+  return (
+    <View style={[card(c), { gap: 8, borderColor: view.inFlight ? accent + "66" : c.border }]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <View
+          style={{
+            width: 9,
+            height: 9,
+            borderRadius: 5,
+            backgroundColor: online ? "#22c55e" : failed ? "#ef4444" : parked ? "#94a3b8" : "#0ea5e9",
+          }}
+        />
+        <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "800", flex: 1 }}>
+          {view.title}
+        </Text>
+        {parked ? (
+          <View style={{ backgroundColor: "#94a3b822", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+            <Text style={{ color: "#94a3b8", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 }}>ASLEEP</Text>
+          </View>
+        ) : online ? (
+          <View style={{ backgroundColor: "#22c55e22", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+            <Text style={{ color: "#22c55e", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 }}>ONLINE</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <Text style={{ color: c.textMuted, fontSize: 12, fontFamily: "monospace" }}>{specSummary(m)}</Text>
+
+      {parked && slept ? (
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>Slept {slept}</Text>
+      ) : null}
+      {online && woke ? (
+        <Text style={{ color: c.textMuted, fontSize: 11 }}>Woke {woke}</Text>
+      ) : null}
+
+      {/* Staged waking-up ladder — driven by the box's real status + phase. */}
+      {view.inFlight ? (
+        <View style={{ gap: 8, marginTop: 2 }}>
+          <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border, overflow: "hidden" }}>
+            <View
+              style={{
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: accent,
+                width: `${Math.max(5, Math.min(100, view.percent))}%`,
+              }}
+            />
+          </View>
+          <View style={{ gap: 4 }}>
+            {WAKE_STAGES.map((stage, i) => {
+              const done = i < view.stageIndex;
+              const activeStage = i === view.stageIndex;
+              return (
+                <View key={stage.key} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={{ fontSize: 12, width: 16, textAlign: "center" }}>
+                    {done ? "✓" : activeStage ? "→" : "·"}
+                  </Text>
+                  <Text
+                    style={{
+                      color: done ? "#22c55e" : activeStage ? c.textPrimary : c.textMuted,
+                      fontSize: 12,
+                      fontWeight: activeStage ? "700" : "500",
+                    }}
+                  >
+                    {stage.label}
+                    {activeStage ? "…" : ""}
+                  </Text>
+                  {activeStage ? <ActivityIndicator size="small" color={accent} style={{ marginLeft: 2 }} /> : null}
+                </View>
+              );
+            })}
+          </View>
+          {m.bootImageSource === "vanilla" ? (
+            <Text style={{ color: c.textMuted, fontSize: 10 }}>First boot — building the image (~3-5 min).</Text>
+          ) : m.hasVolume ? (
+            <Text style={{ color: "#22c55e", fontSize: 10 }}>⚡ Fast wake — data on a persistent volume (~1-2 min).</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {failed ? (
+        <Text style={{ color: "#ef4444", fontSize: 11 }}>{view.error}</Text>
+      ) : null}
+      {error ? <Text style={{ color: "#ef4444", fontSize: 11 }}>{error}</Text> : null}
+
+      {parked || failed ? (
+        <Pressable
+          onPress={onWake}
+          disabled={waking}
+          style={[
+            actionBtn(c),
+            { backgroundColor: accent, marginTop: 4, flexDirection: "row", gap: 8, opacity: waking ? 0.6 : 1 },
+          ]}
+        >
+          {waking ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>
+              {failed ? "Try wake again" : "⏻ Wake"}
+            </Text>
+          )}
+        </Pressable>
+      ) : null}
     </View>
   );
 }

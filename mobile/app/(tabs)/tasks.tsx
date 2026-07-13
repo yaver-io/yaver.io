@@ -818,28 +818,70 @@ const RUNNER_BANNER_TONES: Record<RunnerBannerKind, string> = {
 function deriveRunnerBannerState(
   runners: RunnerInfo[],
   agentStatus: AgentStatus | null,
-  // Per-device primary runner id from Convex (primaryRunnerByDevice).
-  // Wins over agentStatus.runner — that field reflects the agent's
-  // hardcoded defaultRunner ("claude"), not the user's per-machine
-  // pick. Without this, Codex-primary devices kept saying "Claude Code
-  // ready" in the banner even after the user had explicitly switched.
-  primaryRunnerId?: string,
+  // The runner the user is ACTUALLY about to run on this device: the
+  // resolved selection (composer chip → per-device primary → default),
+  // NOT the agent's hardcoded defaultRunner. Ids are normalized here
+  // ("claude-code" → "claude") so they match runner rows regardless of
+  // which id form the caller passes.
+  //
+  // This is the crux of the "OpenAI Codex not installed" bug on box
+  // "magara": the old code matched `r.id === primaryRunnerId` (raw, no
+  // normalization) AND only ever considered primaryRunnerByDevice — never
+  // the in-session chip pick. When that lookup missed it fell back to
+  // `agentStatus.runner` (the agent's default, Codex), so the header said
+  // "OpenAI Codex not installed" while the task ran fine on Claude Code.
+  selectedRunnerId?: string,
 ): { text: string; tone: string; kind: RunnerBannerKind } | null {
   if (runners.length === 0 && !agentStatus) return null;
 
   const installed = runners.filter((runner) => runner.installed);
   const runnable = installed.filter((runner) => !runner.error);
   const authed = installed.filter((runner) => runner.authConfigured);
-  const primaryRow = primaryRunnerId
-    ? runners.find((r) => r.id === primaryRunnerId)
-    : null;
-  const current = primaryRow ?? agentStatus?.runner;
   const make = (kind: RunnerBannerKind, text: string) => ({
     text,
     tone: RUNNER_BANNER_TONES[kind],
     kind,
   });
 
+  // Selected-runner-first: the header must describe the runner the user
+  // is about to run, by NAME, using the agent's authoritative per-runner
+  // health — never an aggregate and never the agent's default runner.
+  const wantId = normalizeTaskRunnerId(selectedRunnerId);
+  if (wantId && wantId !== "custom") {
+    const selectedRow = runners.find(
+      (r) => normalizeTaskRunnerId(r.id) === wantId,
+    );
+    // Always-distinct label ("Claude Code" / "OpenAI Codex" / "OpenCode"
+    // / "GLM (z.ai)") even when the runner has no row yet (not installed
+    // on this box). Prefer the agent's own name; fall back to the id map.
+    const label = selectedRow?.name || displayRunnerLabel(wantId);
+    if (!selectedRow || selectedRow.installed === false) {
+      // Say so for THIS runner + offer its setup — don't imply another
+      // agent. (e.g. user on Claude sees "Claude Code not installed",
+      // not "OpenAI Codex not installed".)
+      return make("notInstalled", `${label} not installed`);
+    }
+    if (selectedRow.authConfigured === false) {
+      return make("authNeeded", `${label} needs sign-in`);
+    }
+    if (selectedRow.error) {
+      // Installed + authed but the runner reported a fault.
+      return make("blocked", `${label} blocked`);
+    }
+    if (selectedRow.ready === false) {
+      // The agent reports authoritative health (ready). Honor it —
+      // otherwise the banner says "ready" while the runner can't start a
+      // task, and the user only finds out when it aborts.
+      return make("blocked", `${label} not ready`);
+    }
+    return make(
+      "ok",
+      `${label} ready${agentStatus?.runningTasks ? ` · ${agentStatus.runningTasks} running` : ""}`,
+    );
+  }
+
+  // No explicit selection resolved (rare): fall back to an aggregate view
+  // plus the agent's reported current runner.
   if (installed.length === 0) {
     return make("notInstalled", "No agents available");
   }
@@ -849,6 +891,7 @@ function deriveRunnerBannerState(
   if (runnable.length === 0) {
     return make("notRunnable", "Agents available, none runnable");
   }
+  const current = agentStatus?.runner;
   if (current?.installed === false) {
     return make("notInstalled", `${current.name} not installed`);
   }
@@ -859,11 +902,6 @@ function deriveRunnerBannerState(
     return make("blocked", `${current.name} blocked`);
   }
   if (current?.name) {
-    // The agent reports authoritative health (ready / authConfigured).
-    // Honor it — otherwise the banner says "ready" while the runner
-    // can't actually start a task, and the user only finds out when
-    // the task aborts. (Was the root of the "says ready, no response"
-    // UX bug.)
     if (current.authConfigured === false) {
       return make("authNeeded", `${current.name} needs sign-in`);
     }
@@ -3568,14 +3606,24 @@ export default function TasksScreen() {
     }
     return sections.filter(Boolean).join("\n\n");
   }, [logs, selectedTask, taskLogLines]);
-  const runnerBannerState = useMemo(
+  // The runner the banner describes = the runner a Send would actually
+  // use: the composer chip pick when the user tapped one this session,
+  // otherwise the per-device primary, otherwise the default. Same
+  // resolver the send path uses (resolveRunnerForRemoteSend) so the
+  // header can never disagree with what actually runs.
+  const bannerRunnerId = useMemo(
     () =>
-      deriveRunnerBannerState(
-        availableRunners,
-        agentStatus,
-        activeDevice ? primaryRunnerByDevice[activeDevice.id] : undefined,
-      ),
-    [availableRunners, agentStatus, activeDevice, primaryRunnerByDevice]
+      resolveRunnerForRemoteSend({
+        activeDeviceId: activeDevice?.id,
+        primaryRunnerByDevice,
+        selectedRunner,
+        userPickedRunner: userPickedRunnerRef.current,
+      }),
+    [activeDevice?.id, primaryRunnerByDevice, selectedRunner],
+  );
+  const runnerBannerState = useMemo(
+    () => deriveRunnerBannerState(availableRunners, agentStatus, bannerRunnerId),
+    [availableRunners, agentStatus, bannerRunnerId]
   );
 
   return (

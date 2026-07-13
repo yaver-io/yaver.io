@@ -19,6 +19,24 @@ export interface ManagedCloudMachineSummary {
   bootImageSource?: string | null;
   runnersAuthorized?: boolean;
   stoppedAt?: number | null;
+  /** True when a persistent volume holds the box's data, so wake skips the fat
+   *  disk restore (~1-2 min instead of ~10). Surfaced by /subscription. */
+  hasVolume?: boolean;
+  /** Concrete provider server type the box was created on (e.g. "cx43"). */
+  serverType?: string | null;
+  /** Hardware summary — surfaced on the Parked card ("8 vCPU · 16 GB · 160 GB").
+   *  Populated once the /subscription machine mapping carries it. */
+  specs?: {
+    vcpu?: number;
+    ramGb?: number;
+    diskGb?: number;
+    arch?: string;
+    gpu?: string | null;
+  } | null;
+  /** When the box last transitioned to a parked state — "slept 3h ago". */
+  lastParkedAt?: number | null;
+  /** When the last wake was requested — "woke 2m ago" once active again. */
+  lastWokeAt?: number | null;
   prepaidBalanceCents?: number | null;
   estimatedHourlyCents?: number | null;
   /** Auto-park (auto-close) when idle. Undefined === ON (the default), so a

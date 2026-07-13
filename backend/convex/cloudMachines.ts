@@ -1337,6 +1337,19 @@ export const setStatus = internalMutation({
     else if (args.status === "active" || args.status === "provisioning")
       patch.errorMessage = undefined;
     if (args.status === "active") patch.lastHealthCheck = Date.now();
+    // Wake/park timestamps — stamped here so EVERY transition path records
+    // them (idle sweep → paused, manual pause, wake() → resuming, resumeMachine
+    // → resuming/active). The UI shows "slept 3h ago" / "woke 2m ago" from these.
+    if (
+      args.status === "stopped" ||
+      args.status === "paused" ||
+      args.status === "suspended" ||
+      args.status === "stopping" ||
+      args.status === "grace"
+    ) {
+      patch.lastParkedAt = Date.now();
+    }
+    if (args.status === "resuming") patch.lastWokeAt = Date.now();
     if (args.lastSnapshotId) {
       patch.lastSnapshotId = args.lastSnapshotId;
       patch.lastSnapshotAt = Date.now();
@@ -1348,9 +1361,18 @@ export const setStatus = internalMutation({
 // seedParkedMachine records a PARKED, wakeable managed machine — a box that was
 // snapshotted + deleted (metered billing) so it accrues no server cost but can
 // be recreated from its snapshot on demand. Without a row here the mobile/web/
-// CLI surfaces render nothing for it (the box is invisible). status "stopped"
-// makes listForUser return it so every surface shows "Yaver-managed · Parked"
-// with a Wake action. Idempotent on (userId, lastSnapshotId).
+// CLI surfaces render nothing for it (the box is invisible). listForUser returns
+// any-status row so every surface shows "Yaver-managed · Parked" with a Wake
+// action. Idempotent on (userId, lastSnapshotId).
+//
+// STATUS = "paused": the wake path (POST /billing/yaver-cloud/start →
+// cloudLifecycle.resumeMachine, and the wake() mutation below) only resumes a box
+// whose status is "paused" or "suspended" — "stopped" is NOT resumable in the
+// current pipeline. So a parked-but-wakeable box MUST be stored as "paused" for
+// the recreate-from-snapshot to fire. The UI treats stopped|paused|suspended all
+// as "Parked", so a legacy "stopped" row still renders correctly; re-running this
+// seed migrates it to the wakeable "paused" state. lastParkedAt lets the card show
+// "slept N ago".
 export const seedParkedMachine = internalMutation({
   args: {
     userId: v.id("users"),
@@ -1372,12 +1394,14 @@ export const seedParkedMachine = internalMutation({
     ).find((m) => m.lastSnapshotId === args.lastSnapshotId);
     if (existing) {
       // Keep it parked + refresh the snapshot pointer; don't duplicate.
+      // "paused" (not "stopped") so the wake pipeline can recreate it.
       await ctx.db.patch(existing._id, {
-        status: "stopped",
+        status: "paused",
         origin: "managed",
         serverType: args.serverType,
         lastSnapshotId: args.lastSnapshotId,
         lastSnapshotAt: Date.now(),
+        lastParkedAt: Date.now(),
         updatedAt: Date.now(),
       });
       return existing._id;
@@ -1388,9 +1412,10 @@ export const seedParkedMachine = internalMutation({
       machineType: args.machineType ?? "cpu",
       serverType: args.serverType,
       origin: "managed",
-      status: "stopped", // parked = wakeable-from-snapshot
+      status: "paused", // parked = wakeable-from-snapshot (resumable status)
       lastSnapshotId: args.lastSnapshotId,
       lastSnapshotAt: now,
+      lastParkedAt: now,
       region: args.region ?? "eu",
       tools: [],
       specs: {
@@ -1402,6 +1427,71 @@ export const seedParkedMachine = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
+  },
+});
+
+// wake — owner-scoped WAKE entry point for a PARKED managed box. A parked box
+// (stopped/paused/suspended) has snapshot+deleted its server; this recreates it
+// from the snapshot by delegating to the real, Hetzner-integrated recreate path
+// (cloudLifecycle.resumeMachine) — we deliberately do NOT reinvent the Hetzner
+// API calls here.
+//
+// Contract:
+//   • Ownership is validated against the caller-supplied userId (the HTTP layer
+//     authenticates the Yaver session and passes the resolved userDocId — the
+//     same trust boundary every other internalMutation in this file relies on).
+//   • lastWokeAt is stamped now (the user's "when did I wake it" signal).
+//   • A "stopped" row is normalised to "paused" so resumeMachine's gate
+//     (paused|suspended only) passes — otherwise a legacy stopped box would
+//     dead-end at "not resumable from status stopped".
+//   • We then schedule internal.cloudLifecycle.resumeMachine, which owns the
+//     status ladder (paused → resuming → active) and the phase/progress ticks
+//     the mobile/web card animates. We do NOT pre-set "resuming" here: doing so
+//     would trip resumeMachine's own gate (it refuses anything but paused/
+//     suspended). resumeMachine flips to "resuming" itself within ~1s.
+//
+// NOTE (mobile today): the mobile app has no Convex client — it wakes via the
+// existing POST /billing/yaver-cloud/start HTTP route (→ resumeMachine). This
+// mutation is the owner-scoped programmatic entry point for web/CLI/tests and
+// the documented single place a future wake route can call. It is fully wired
+// except for that HTTP surface, which lives in http.ts (out of scope here).
+export const wake = internalMutation({
+  args: {
+    userId: v.id("users"),
+    machineId: v.id("cloudMachines"),
+  },
+  handler: async (ctx, args) => {
+    const machine = await ctx.db.get(args.machineId);
+    if (!machine) return { ok: false, error: "machine not found" };
+    // Ownership — one developer can never wake another's box even though all
+    // managed boxes share Yaver's platform token.
+    if (String(machine.userId) !== String(args.userId)) {
+      return { ok: false, error: "not your machine" };
+    }
+    if (machine.status === "active") {
+      return { ok: true, status: "active", alreadyAwake: true };
+    }
+    const wakeable =
+      machine.status === "stopped" ||
+      machine.status === "paused" ||
+      machine.status === "suspended";
+    if (!wakeable) {
+      return { ok: false, error: `not wakeable from status ${machine.status}` };
+    }
+    if (!machine.lastSnapshotId && !machine.baseImageId) {
+      return { ok: false, error: "no snapshot recorded — cannot recreate the box" };
+    }
+    // Normalise stopped → paused (resumeMachine's gate) + stamp the wake time.
+    await ctx.db.patch(args.machineId, {
+      status: "paused",
+      lastWokeAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    // Delegate to the real recreate-from-snapshot action (owns the wake ladder).
+    await ctx.scheduler.runAfter(0, internal.cloudLifecycle.resumeMachine, {
+      machineId: args.machineId,
+    });
+    return { ok: true, status: "resuming" };
   },
 });
 

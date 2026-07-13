@@ -1321,6 +1321,16 @@ export default defineSchema({
     // (snapshot+delete) so we never bill Hetzner hours nobody is using.
     // Privacy-safe: a single timestamp, no payload.
     lastActivityAt: v.optional(v.number()),
+    // Wake/park lifecycle timestamps the owner wants surfaced on the box
+    // card. lastParkedAt = when the box last transitioned to a parked
+    // (stopped/paused/suspended/grace) state — drives "slept 3h ago".
+    // lastWokeAt = when the last wake (resume-from-snapshot) was requested —
+    // drives "woke 2m ago" once the box is active again. Stamped centrally
+    // in setStatus so every park/wake path (idle sweep, manual pause, the
+    // wake mutation, resumeMachine) records them without extra wiring.
+    // Privacy-safe: plain timestamps, no payload.
+    lastParkedAt: v.optional(v.number()),
+    lastWokeAt: v.optional(v.number()),
     errorMessage: v.optional(v.string()),
     // Hash of a long-lived machine-auth token generated at provisioning
     // time. The plaintext is placed on the box in /etc/yaver/machine.json
