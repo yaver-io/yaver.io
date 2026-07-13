@@ -1345,6 +1345,66 @@ export const setStatus = internalMutation({
   },
 });
 
+// seedParkedMachine records a PARKED, wakeable managed machine — a box that was
+// snapshotted + deleted (metered billing) so it accrues no server cost but can
+// be recreated from its snapshot on demand. Without a row here the mobile/web/
+// CLI surfaces render nothing for it (the box is invisible). status "stopped"
+// makes listForUser return it so every surface shows "Yaver-managed · Parked"
+// with a Wake action. Idempotent on (userId, lastSnapshotId).
+export const seedParkedMachine = internalMutation({
+  args: {
+    userId: v.id("users"),
+    lastSnapshotId: v.string(),
+    serverType: v.string(),
+    machineType: v.optional(v.string()),
+    region: v.optional(v.string()),
+    vcpu: v.optional(v.number()),
+    ramGb: v.optional(v.number()),
+    diskGb: v.optional(v.number()),
+    arch: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = (
+      await ctx.db
+        .query("cloudMachines")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .collect()
+    ).find((m) => m.lastSnapshotId === args.lastSnapshotId);
+    if (existing) {
+      // Keep it parked + refresh the snapshot pointer; don't duplicate.
+      await ctx.db.patch(existing._id, {
+        status: "stopped",
+        origin: "managed",
+        serverType: args.serverType,
+        lastSnapshotId: args.lastSnapshotId,
+        lastSnapshotAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return existing._id;
+    }
+    const now = Date.now();
+    return await ctx.db.insert("cloudMachines", {
+      userId: args.userId,
+      machineType: args.machineType ?? "cpu",
+      serverType: args.serverType,
+      origin: "managed",
+      status: "stopped", // parked = wakeable-from-snapshot
+      lastSnapshotId: args.lastSnapshotId,
+      lastSnapshotAt: now,
+      region: args.region ?? "eu",
+      tools: [],
+      specs: {
+        vcpu: args.vcpu ?? 8,
+        ramGb: args.ramGb ?? 16,
+        diskGb: args.diskGb ?? 160,
+        arch: args.arch ?? "amd64",
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
 // Bump last-meaningful-activity (idle auto-shutdown signal). Called by
 // the box agent via the machine-token /machine/activity route when it
 // runs a task / has an interactive session, and by the gateway on
