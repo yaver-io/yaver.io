@@ -130,16 +130,16 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
       <Svg style={StyleSheet.absoluteFill} width={width} height={height}>
         <Defs>
           <LinearGradient id="yv-bg" x1="0" y1="0" x2="0.2" y2="1">
-            <Stop offset="0" stopColor="#1a2c4e" />
-            <Stop offset="0.5" stopColor="#1d3357" />
-            <Stop offset="1" stopColor="#0b1526" />
+            <Stop offset="0" stopColor="#161719" />
+            <Stop offset="0.5" stopColor="#101113" />
+            <Stop offset="1" stopColor="#050506" />
           </LinearGradient>
-          {/* Bright luminous center glow — the depth that reads as "premium
-              navy" rather than flat dark. */}
-          <RadialGradient id="yv-halo" cx="50%" cy="42%" r="72%">
-            <Stop offset="0" stopColor="#5a82c8" stopOpacity="0.55" />
-            <Stop offset="0.5" stopColor="#3f63a8" stopOpacity="0.22" />
-            <Stop offset="1" stopColor="#3f63a8" stopOpacity="0" />
+          {/* Subtle silver center glow — a faint light in the dark for an
+              elegant, mysterious depth (monochrome, no brand color). */}
+          <RadialGradient id="yv-halo" cx="50%" cy="42%" r="70%">
+            <Stop offset="0" stopColor="#c8ccd4" stopOpacity="0.15" />
+            <Stop offset="0.5" stopColor="#8a8f99" stopOpacity="0.05" />
+            <Stop offset="1" stopColor="#8a8f99" stopOpacity="0" />
           </RadialGradient>
         </Defs>
         <Rect x="0" y="0" width={width} height={height} fill="url(#yv-bg)" />
@@ -153,7 +153,7 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
             key={t.key}
             name={t.name as keyof typeof MaterialCommunityIcons.glyphMap}
             size={30}
-            color="rgba(165,195,235,0.07)"
+            color="rgba(205,210,220,0.05)"
             style={[styles.tile, { left: t.x, top: t.y, transform: [{ rotate: `${t.rot}deg` }] }]}
           />
         ))}
@@ -177,7 +177,7 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
             <React.Fragment key={p.label}>
               {i > 0 ? <View style={styles.pillarDot} /> : null}
               <View style={styles.pillar}>
-                <MaterialCommunityIcons name={p.icon} size={15} color="#9fbcef" />
+                <MaterialCommunityIcons name={p.icon} size={15} color="#c2c6cf" />
                 <Text style={styles.pillarText}>{p.label}</Text>
               </View>
             </React.Fragment>
@@ -185,7 +185,7 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
         </View>
 
         <View style={styles.loaderRow}>
-          <ActivityIndicator color="#9ab6e8" />
+          <ActivityIndicator color="#c0c4cc" />
           <Text style={styles.loaderText}>Starting Yaver…</Text>
         </View>
       </Animated.View>
@@ -194,7 +194,7 @@ export default function YaverSplash({ onDone }: YaverSplashProps) {
 }
 
 const styles = StyleSheet.create({
-  root: { backgroundColor: "#070b13", alignItems: "center", justifyContent: "center", zIndex: 9999 },
+  root: { backgroundColor: "#050506", alignItems: "center", justifyContent: "center", zIndex: 9999 },
   tile: { position: "absolute" },
   center: { alignItems: "center", paddingHorizontal: 32 },
   logoRow: { flexDirection: "row", alignItems: "center", gap: 14 },
@@ -204,21 +204,21 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(150,180,222,0.25)",
+    borderColor: "rgba(200,205,215,0.22)",
   },
   markImage: { width: "100%", height: "100%" },
   wordmark: {
-    color: "#f1f5f9",
+    color: "#f4f5f7",
     fontSize: 44,
     fontWeight: "800",
     letterSpacing: 7,
-    textShadowColor: "rgba(120,160,230,0.55)",
+    textShadowColor: "rgba(235,238,245,0.4)",
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 18,
   },
-  glowBar: { marginTop: 14, width: 132, height: 3, borderRadius: 2, backgroundColor: "#5b86c4" },
+  glowBar: { marginTop: 14, width: 132, height: 3, borderRadius: 2, backgroundColor: "#6b6f78" },
   tagline: {
-    color: "#9fb2cd",
+    color: "#9a9ea7",
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 3,
@@ -234,8 +234,8 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   pillar: { flexDirection: "row", alignItems: "center", gap: 5 },
-  pillarText: { color: "#c7d6ef", fontSize: 12, fontWeight: "700", letterSpacing: 0.3 },
-  pillarDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: "#3f5a73" },
+  pillarText: { color: "#d2d5db", fontSize: 12, fontWeight: "700", letterSpacing: 0.3 },
+  pillarDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: "#3a3d44" },
   loaderRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 28 },
-  loaderText: { color: "#aebfd6", fontSize: 13.5, fontWeight: "600" },
+  loaderText: { color: "#b0b4bc", fontSize: 13.5, fontWeight: "600" },
 });

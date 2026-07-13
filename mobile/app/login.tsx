@@ -451,7 +451,7 @@ export default function LoginScreen() {
                   isTabletPortrait && styles.subtitleTablet,
                 ]}
               >
-                {isTablet ? "Your coding agent builds on your machine — hot-reload it on your phone, from anywhere." : "Your coding agent builds on your machine — hot-reload it on your phone."}
+                {"Remote AI Runtime"}
               </Text>
               {isTabletLandscape && (
                 <Text style={[styles.tertiaryTagline, { color: c.textMuted }]}>
