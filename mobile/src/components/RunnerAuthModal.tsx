@@ -495,7 +495,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
-  infoText: { color: "#cbd5e1", fontSize: 12 },
+  // flex:1 so a long status line ("Authentication code submitted; waiting for
+  // Claude Code to confirm.") wraps inside the row next to the spinner instead
+  // of overflowing off the right edge.
+  infoText: { color: "#cbd5e1", fontSize: 12, flex: 1, flexShrink: 1, lineHeight: 17 },
 
   successBox: {
     backgroundColor: "rgba(16,185,129,0.07)",
@@ -543,7 +546,7 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 12,
   },
-  urlPendingText: { color: "#94a3b8", fontSize: 11 },
+  urlPendingText: { color: "#94a3b8", fontSize: 11, flex: 1, flexShrink: 1, lineHeight: 16 },
 
   codeBox: {
     backgroundColor: "rgba(30,41,59,0.5)",
