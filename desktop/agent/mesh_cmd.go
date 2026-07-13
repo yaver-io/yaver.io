@@ -128,9 +128,20 @@ func printMeshUsage() {
 // persisting the private half to the vault on first use. The public key is
 // recomputed from the private key so we only ever store one secret.
 func meshLoadOrCreateKeyPair() (mesh.KeyPair, error) {
-	vs, err := openVaultE()
-	if err != nil {
-		return mesh.KeyPair{}, fmt.Errorf("open vault: %w", err)
+	// Prefer the already-unlocked runtime vault store (opened once at early boot
+	// and kept re-keyed across token rotations). Re-opening from disk via
+	// openVaultE re-derives the master key and can fail on a headless box even
+	// when the runtime store holds the SAME vault open fine — that mismatch
+	// stranded mesh default-on with "wrong passphrase or corrupted vault" on a
+	// box whose vault was otherwise healthy. Fall back to a fresh open only when
+	// no runtime store exists (e.g. a one-shot `yaver mesh` CLI invocation).
+	vs := currentRuntimeVaultStore()
+	if vs == nil {
+		opened, err := openVaultE()
+		if err != nil {
+			return mesh.KeyPair{}, fmt.Errorf("open vault: %w", err)
+		}
+		vs = opened
 	}
 	if entry, err := vs.Get(meshVaultProject, meshVaultKeyName); err == nil && entry != nil && entry.Value != "" {
 		pub, perr := mesh.PublicFromPrivate(entry.Value)
