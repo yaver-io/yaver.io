@@ -389,6 +389,25 @@ func (g *abuseGuard) allowInvalidAuth(remoteAddr string) bool {
 	return ok
 }
 
+// clearInvalidAuth drops the invalid-auth strikes for an IP once a request
+// from it authenticates successfully.
+//
+// The bucket is keyed by public IP, but an IP is not a client: a home NAT —
+// and far worse, a carrier CGNAT — puts many independent clients behind one
+// address. Without this reset, a single misconfigured client (e.g. one that
+// retries with an empty password on a timer) drains the bucket and every
+// other client behind that NAT is refused with "too many invalid relay
+// password attempts", even though their credentials are perfectly good.
+// Proof of a valid credential from that IP is proof it is not a brute-force
+// source, so the strikes are cleared. Brute-forcers never reach this path,
+// so the rate limit still bites exactly the traffic it is meant to.
+func (g *abuseGuard) clearInvalidAuth(remoteAddr string) {
+	ip := g.remoteIP(remoteAddr)
+	g.mu.Lock()
+	delete(g.buckets, "invalid-auth:"+ip)
+	g.mu.Unlock()
+}
+
 func writeRelayError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

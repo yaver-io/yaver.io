@@ -2972,9 +2972,15 @@ export default function MoreScreen() {
       setMoreOptionalTools([]);
       return;
     }
-    getUserSettings(token).then((settings) => {
-      setMoreOptionalTools(normalizeOptionalMoreTools(settings.moreOptionalTools));
-    });
+    getUserSettings(token)
+      .then((settings) => {
+        setMoreOptionalTools(normalizeOptionalMoreTools(settings.moreOptionalTools));
+      })
+      .catch(() => {
+        // Settings unreadable (offline / expired session) — keep the current
+        // menu rather than blanking it. Relay credentials are handled in
+        // DeviceContext, which surfaces the auth failure properly.
+      });
   }, [token]);
 
   useEffect(() => {

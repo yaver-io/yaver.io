@@ -670,6 +670,9 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		rejectRegistration("invalid relay password", "invalid relay password")
 		return
 	}
+	// Valid credential from this IP — it is not a brute-force source. Clear any
+	// strikes so a broken client behind the same NAT can't lock this one out.
+	s.abuseGuard.clearInvalidAuth(remoteAddr)
 
 	// C-1 (audit 2026-05-02): refuse-on-collision instead of replace-on-collision.
 	//
@@ -1183,6 +1186,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		userID = uid
 		s.authViaPw.Add(1)
+		s.abuseGuard.clearInvalidAuth(s.abuseGuard.clientIP(r))
 	}
 	if userID != "" && !s.abuseGuard.allow("proxy-user:"+userID, s.abuseGuard.cfg.ProxyPerUserPerMin, s.abuseGuard.cfg.ProxyBurstPerUser) {
 		s.abuseGuard.logLimited("proxy-user", userID)

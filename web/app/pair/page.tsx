@@ -321,7 +321,7 @@ export default function PairPage() {
               className="mt-2 w-full rounded border border-surface-700 bg-surface-900 px-3 py-2 font-mono text-sm"
               value={agentBase}
               onChange={(e) => setAgentBase(normalizeAgentBase(e.target.value))}
-              placeholder="http://10.0.0.5:18080  or  https://relay.yaver.io/d/abc123"
+              placeholder="http://10.0.0.5:18080  or  https://public.yaver.io/d/abc123"
             />
             {probeBusy && <p className="mt-2 text-xs text-surface-500">Probing…</p>}
             {probe && probe.ok && (

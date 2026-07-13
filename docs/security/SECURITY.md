@@ -16,7 +16,7 @@ In-scope:
 - The Yaver agent (`desktop/agent/`), relay server (`relay/`), backend (`backend/`), mobile app (`mobile/`), desktop app (`desktop/app/`), desktop installer (`desktop/installer/`), and web app (`web/`).
 - Any of the open-source SDKs under `cli/` and `sdk/*`.
 - The Raspberry Pi dev-node image (`pi-image/`).
-- `yaver.io` and `relay.yaver.io` as operated by us.
+- `yaver.io` and `public.yaver.io` (the relay) as operated by us.
 
 Out of scope:
 - Self-hosted deployments operated by third parties.

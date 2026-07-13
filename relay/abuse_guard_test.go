@@ -157,3 +157,44 @@ func TestClientIP_TrustedProxyGating(t *testing.T) {
 		t.Fatalf("override should distrust Cloudflare, keyed real IP; got %q", got)
 	}
 }
+
+// A valid credential from an IP clears that IP's invalid-auth strikes.
+//
+// Regression: an IP is not a client. A home NAT (and worse, a carrier CGNAT)
+// puts many clients behind one address, so a single misconfigured client that
+// retries with a bad password on a timer would drain the shared bucket and
+// lock out every correctly-authenticated client behind the same IP with
+// "too many invalid relay password attempts". Observed in the field: a phone
+// with no relay password bricked relay access for every device on the same
+// home NAT.
+func TestClearInvalidAuth_ValidCredentialUnblocksSharedNAT(t *testing.T) {
+	cfg := defaultAbuseGuardConfig()
+	cfg.InvalidAuthPerIPPerMin = 1
+	cfg.InvalidAuthBurstPerIP = 2
+	g := newAbuseGuard(cfg)
+
+	const nat = "203.0.113.7:5555"
+
+	// A broken client behind the NAT burns the whole bucket.
+	for i := 0; i < 2; i++ {
+		if !g.allowInvalidAuth(nat) {
+			t.Fatalf("attempt %d should be within burst", i+1)
+		}
+	}
+	if g.allowInvalidAuth(nat) {
+		t.Fatal("bucket should be drained after the burst")
+	}
+
+	// A different client behind the SAME NAT authenticates successfully.
+	g.clearInvalidAuth(nat)
+
+	// The NAT is usable again — the good client is not punished for the bad one.
+	if !g.allowInvalidAuth(nat) {
+		t.Fatal("a successful auth from the IP must clear its invalid-auth strikes")
+	}
+
+	// And an unrelated IP still has its own independent bucket.
+	if !g.allowInvalidAuth("203.0.113.8:5555") {
+		t.Fatal("different IP should have an independent bucket")
+	}
+}

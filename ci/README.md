@@ -340,7 +340,8 @@ hcloud server delete yaver-test-ephemeral
 
 ## What this box **must not** become
 
-- A relay. Use `relay.yaver.io` or the proper relay setup in `relay/`.
+- A relay. Use `public.yaver.io` (the relay the platform config actually
+  serves) or the proper relay setup in `relay/`.
 - A managed customer machine. Use the `cloudMachines` provisioning flow.
 - An always-on CI runner. GitHub-hosted runners are cheaper and simpler for unit/lint/typecheck work — this box is strictly for tests that need a real remote Linux host (integration, guest-sharing, Cloudflare/Tailscale/relay connectivity, hybrid-mode with Ollama, OAuth callbacks against mocks).
 - A secret store. No prod tokens, no customer data, no real user-PII test fixtures.

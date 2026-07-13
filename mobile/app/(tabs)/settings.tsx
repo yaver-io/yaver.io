@@ -771,6 +771,9 @@ export default function SettingsScreen() {
         setMobileCodingProvider(s.mobileCodingProvider);
       }
       setMoreOptionalTools(normalizeOptionalMoreTools(s.moreOptionalTools));
+    }).catch(() => {
+      // Settings unreadable (offline / expired session) — leave the form on
+      // its current values instead of resetting it to defaults.
     });
     getUsageSummary(token).then(setUsageSummary);
   }, [token]);

@@ -803,17 +803,41 @@ export async function getAiRunners(): Promise<AiRunner[]> {
   }
 }
 
+/** Thrown when /settings could not be read (expired token, 5xx, offline).
+ *  Distinct from "the account genuinely has no settings" — callers that
+ *  derive relay credentials MUST NOT treat a failed fetch as an empty
+ *  account, or they fall back to a password-less relay and get 401'd into
+ *  the relay's invalid-auth rate limiter. `unauthorized` means the session
+ *  is dead and the user has to sign in again. */
+export class UserSettingsUnavailableError extends Error {
+  readonly unauthorized: boolean;
+  constructor(message: string, unauthorized: boolean) {
+    super(message);
+    this.name = "UserSettingsUnavailableError";
+    this.unauthorized = unauthorized;
+  }
+}
+
 export async function getUserSettings(token: string): Promise<UserSettings> {
+  let res: Response;
   try {
-    const res = await fetch(`${getConvexSiteUrl()}/settings`, {
+    res = await fetch(`${getConvexSiteUrl()}/settings`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return {};
-    const data = await res.json();
-    return data.settings || {};
-  } catch {
-    return {};
+  } catch (e) {
+    throw new UserSettingsUnavailableError(
+      `settings fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+      false,
+    );
   }
+  if (!res.ok) {
+    throw new UserSettingsUnavailableError(
+      `settings fetch failed: HTTP ${res.status}`,
+      res.status === 401 || res.status === 403,
+    );
+  }
+  const data = await res.json();
+  return data.settings || {};
 }
 
 export async function saveUserSettings(token: string, settings: Partial<UserSettings>): Promise<void> {

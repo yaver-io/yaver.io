@@ -5,7 +5,7 @@
 // Contract: the CLI prints a URL like
 //   https://yaver.io/support?agent=<base>&code=<CODE>
 // where <base> is either the host agent's relay URL
-// (https://relay.yaver.io/d/<deviceId>) or, for LAN testing, a raw
+// (https://public.yaver.io/d/<deviceId>) or, for LAN testing, a raw
 // http://ip:18080. The guest opens it, we POST the code against
 // <base>/support/redeem, and then speak to the host's agent with the
 // returned bearer — exec, files, basic status.
@@ -373,7 +373,7 @@ export default function SupportPage() {
           className="mt-2 w-full rounded border border-surface-700 bg-surface-900 px-3 py-2 font-mono text-sm"
           value={agentBase}
           onChange={(e) => setAgentBase(normalizeAgentBase(e.target.value))}
-          placeholder="https://relay.yaver.io/d/abc123  or  http://10.0.0.5:18080"
+          placeholder="https://public.yaver.io/d/abc123  or  http://10.0.0.5:18080"
         />
         {probe && (
           <p className="mt-2 text-xs text-surface-400">
