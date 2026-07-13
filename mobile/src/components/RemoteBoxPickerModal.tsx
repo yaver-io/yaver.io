@@ -12,6 +12,7 @@ import {
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../context/ThemeContext";
+import { useAuth } from "../context/AuthContext";
 import { AppScreenHeader } from "./AppScreenHeader";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
@@ -211,7 +212,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     latestCliVersion,
     lastError,
   } = deviceCtx;
-  const token = (deviceCtx as any).token as string | null;
+  const { token } = useAuth();
 
   const connectedSet = React.useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
   const eligibleDevices = React.useMemo(
