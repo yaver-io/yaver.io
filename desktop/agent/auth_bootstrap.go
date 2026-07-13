@@ -321,12 +321,26 @@ func runBootstrapServe(httpPort int) {
 	if cfg, loadErr := LoadConfig(); loadErr == nil && cfg != nil {
 		// Auto-mint a device_id when missing so a freshly-reset box
 		// can still come up reachable on the relay.
+		//
+		// A MANAGED box must recover its OWN identity rather than invent a new
+		// one. The control plane registers it as a deterministic
+		// `cloud-<shortId>` (cloudMachines.ts), and /etc/yaver/machine.json
+		// carries that shortId — so the id is always derivable. Minting a random
+		// UUID here orphans the box: it re-registers as a brand-new device while
+		// every pointer at the old one (primary, aliases, ACLs) quietly breaks,
+		// and the operator sees "no device responded" for a machine that is
+		// plainly running. That is exactly what happened on 2026-07-13.
 		if cfg.DeviceID == "" {
-			cfg.DeviceID = uuid.New().String()
-			if saveErr := SaveConfig(cfg); saveErr != nil {
-				log.Printf("[BOOTSTRAP-RELAY] could not persist new device_id: %v (continuing with in-memory id)", saveErr)
+			if derived := managedDeviceIDFromMachineIdentity(); derived != "" {
+				cfg.DeviceID = derived
+				log.Printf("[BOOTSTRAP-RELAY] recovered managed device_id %s from %s", derived, machineIdentityPath)
 			} else {
-				log.Printf("[BOOTSTRAP-RELAY] minted fresh device_id %s for bootstrap-mode tunnel", cfg.DeviceID[:8])
+				cfg.DeviceID = uuid.New().String()
+			}
+			if saveErr := SaveConfig(cfg); saveErr != nil {
+				log.Printf("[BOOTSTRAP-RELAY] could not persist device_id: %v (continuing with in-memory id)", saveErr)
+			} else {
+				log.Printf("[BOOTSTRAP-RELAY] using device_id %s for bootstrap-mode tunnel", cfg.DeviceID[:min(8, len(cfg.DeviceID))])
 			}
 		}
 		agentAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)

@@ -227,3 +227,30 @@ func (s *HTTPServer) parkSelf(ctx context.Context, id *machineIdentity) {
 	defer resp.Body.Close()
 	log.Printf("[machine-park] requested self-park (idle past threshold); server status %d", resp.StatusCode)
 }
+
+// managedDeviceIDFromMachineIdentity returns the deterministic device id a
+// MANAGED cloud box registers under — `cloud-<shortId>`, minted by the control
+// plane (backend/convex/cloudMachines.ts) and mirrored into
+// /etc/yaver/machine.json as `<shortId>.cloud.yaver.io`.
+//
+// This exists so a box that loses its config can recover its OWN identity
+// instead of minting a random UUID. An orphaned box re-registers as a new
+// device: the owner's primary pointer, aliases and ACLs still name the old id,
+// so the machine is running and healthy yet reports "no device responded".
+//
+// Returns "" on a non-managed box (no machine.json), where a random UUID is
+// the correct behavior.
+func managedDeviceIDFromMachineIdentity() string {
+	id := loadMachineIdentity()
+	if id == nil {
+		return ""
+	}
+	// Prefer the hostname (`<shortId>.cloud.yaver.io`) — that IS the shortId the
+	// control plane derived the device id from.
+	if host := strings.TrimSpace(id.Hostname); host != "" {
+		if short := strings.SplitN(host, ".", 2)[0]; short != "" {
+			return "cloud-" + short
+		}
+	}
+	return ""
+}

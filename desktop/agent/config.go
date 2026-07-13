@@ -30,9 +30,9 @@ type Config struct {
 	// permanently undecryptable. openVault walks this whole chain so the
 	// vault recovers as long as ANY token that ever encrypted it is
 	// still here. Capped at maxPrevAuthTokens; cleared on rekey success.
-	PreviousAuthTokens []string            `json:"previous_auth_tokens,omitempty"`
-	DeviceID           string              `json:"device_id,omitempty"`
-	ConvexSiteURL      string              `json:"convex_site_url,omitempty"`
+	PreviousAuthTokens []string `json:"previous_auth_tokens,omitempty"`
+	DeviceID           string   `json:"device_id,omitempty"`
+	ConvexSiteURL      string   `json:"convex_site_url,omitempty"`
 	// SSHTargets is a LOCAL device book so `yaver ssh <name>` works even
 	// when the agent isn't signed in (no Convex device lookup) or the box
 	// is offline. Maps a name/alias → how to reach it over plain SSH
@@ -41,15 +41,15 @@ type Config struct {
 	// `yaver ssh add <name> <user@host[:port]> [--identity <key>]`.
 	// Passwords are NOT stored here in plaintext — use an SSH key /
 	// ssh-agent (identity_file), the secure path magara already uses.
-	SSHTargets []SSHTarget `json:"ssh_targets,omitempty"`
-	WebBaseURL         string              `json:"web_base_url,omitempty"`
-	TLSCert            string              `json:"tls_cert,omitempty"`
-	TLSKey             string              `json:"tls_key,omitempty"`
-	AutoStart          bool                `json:"auto_start,omitempty"`
-	AutoUpdate         bool                `json:"auto_update,omitempty"`
-	HeadlessKeepAwake  *bool               `json:"headless_keep_awake,omitempty"`
-	RelayPassword      string              `json:"relay_password,omitempty"`
-	RelayServers       []RelayServerConfig `json:"relay_servers,omitempty"`
+	SSHTargets        []SSHTarget         `json:"ssh_targets,omitempty"`
+	WebBaseURL        string              `json:"web_base_url,omitempty"`
+	TLSCert           string              `json:"tls_cert,omitempty"`
+	TLSKey            string              `json:"tls_key,omitempty"`
+	AutoStart         bool                `json:"auto_start,omitempty"`
+	AutoUpdate        bool                `json:"auto_update,omitempty"`
+	HeadlessKeepAwake *bool               `json:"headless_keep_awake,omitempty"`
+	RelayPassword     string              `json:"relay_password,omitempty"`
+	RelayServers      []RelayServerConfig `json:"relay_servers,omitempty"`
 	// Cached relay settings come from Convex/user settings and are used as a
 	// reboot-safe fallback when the agent's auth token has expired.
 	CachedRelayPassword string                   `json:"cached_relay_password,omitempty"`
@@ -508,13 +508,61 @@ func LoadConfig() (*Config, error) {
 // sign-out paths (`runSignout`, `runAuthFactoryReset`, MCP
 // `authLogout`) call SaveConfigClearingAuth instead, which bypasses
 // the guard.
+// SaveConfig persists cfg, but never lets a write DESTROY credentials it did
+// not intend to touch.
+//
+// A failed *read* must never cause a destructive *write*. On 2026-07-13 an
+// agent that came up unable to resolve its config re-bootstrapped, minted a
+// fresh device_id, and saved — overwriting a config that held a live
+// auth_token, relay_password and convex_site_url. The box lost its identity
+// and its sign-in, and had to be re-authorized by hand. The pre-existing guard
+// below did not save it: it only protected AuthToken, and it silently skipped
+// itself whenever LoadConfig returned an error — which is exactly the
+// situation in which we are least entitled to overwrite anything.
+//
+// Rules:
+//  1. If the file exists but cannot be read/parsed, REFUSE to write. We cannot
+//     prove we are not clobbering credentials, so we fail closed and keep the
+//     bytes that are already there.
+//  2. Fields that are expensive or impossible to regenerate (auth token, relay
+//     password, device identity, backend URL) are carried over when the
+//     incoming cfg leaves them blank.
+//
+// Deliberate credential wipes (logout, factory reset) must call
+// SaveConfigClearingAuth, which bypasses all of this.
 func SaveConfig(cfg *Config) error {
-	if cfg != nil && strings.TrimSpace(cfg.AuthToken) == "" {
-		if onDisk, lerr := LoadConfig(); lerr == nil && onDisk != nil && strings.TrimSpace(onDisk.AuthToken) != "" {
-			log.Printf("[config] WARNING: SaveConfig called with empty AuthToken but on-disk file has one — preserving the existing token. Use SaveConfigClearingAuth to wipe deliberately.")
+	if cfg == nil {
+		return fmt.Errorf("save config: nil config")
+	}
+
+	onDisk, lerr := LoadConfig()
+	if lerr != nil {
+		// The file exists and we could not understand it. Writing now would
+		// replace credentials we cannot even see. Refuse.
+		return fmt.Errorf(
+			"save config: refusing to overwrite an unreadable config (that would destroy credentials): %w", lerr)
+	}
+
+	if onDisk != nil {
+		if strings.TrimSpace(cfg.AuthToken) == "" && strings.TrimSpace(onDisk.AuthToken) != "" {
+			log.Printf("[config] WARNING: SaveConfig called with empty AuthToken but the on-disk file has one — preserving it. Use SaveConfigClearingAuth to wipe deliberately.")
 			cfg.AuthToken = onDisk.AuthToken
 		}
+		// A fresh device_id orphans the machine: it re-registers as a NEW
+		// device, so every pointer at the old one (primary, aliases, ACLs)
+		// silently breaks. Never let a blank one overwrite a real one.
+		if strings.TrimSpace(cfg.DeviceID) == "" && strings.TrimSpace(onDisk.DeviceID) != "" {
+			log.Printf("[config] WARNING: SaveConfig called with empty DeviceID but the on-disk file has one — preserving %s.", onDisk.DeviceID)
+			cfg.DeviceID = onDisk.DeviceID
+		}
+		if strings.TrimSpace(cfg.RelayPassword) == "" && strings.TrimSpace(onDisk.RelayPassword) != "" {
+			cfg.RelayPassword = onDisk.RelayPassword
+		}
+		if strings.TrimSpace(cfg.ConvexSiteURL) == "" && strings.TrimSpace(onDisk.ConvexSiteURL) != "" {
+			cfg.ConvexSiteURL = onDisk.ConvexSiteURL
+		}
 	}
+
 	return saveConfigUnchecked(cfg)
 }
 
