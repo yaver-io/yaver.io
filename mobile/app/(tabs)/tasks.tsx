@@ -4807,6 +4807,47 @@ export default function TasksScreen() {
                     <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
                   </Pressable>
                   )}
+                  {/* Coding-agent chip — a quick, inline way to pick Claude
+                      Code / Codex / OpenCode without opening the full wizard.
+                      Only the agents actually installed on this box are
+                      offered, so the picker never lists something that can't
+                      run. Hidden while a wizard-locked target is bound. */}
+                  {!pendingTarget && availableRunners.filter((r) => r.installed).length > 0 && (
+                    <Pressable
+                      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                      style={({ pressed }) => [
+                        s.agentBadge,
+                        { backgroundColor: c.bgCardElevated, borderColor: c.border, flexShrink: 1, marginLeft: 8 },
+                        pressed && { opacity: 0.55 },
+                      ]}
+                      onPress={() => {
+                        const installed = availableRunners.filter((r) => r.installed);
+                        Alert.alert(
+                          "Coding agent",
+                          undefined,
+                          [
+                            ...installed.map((r) => ({
+                              text:
+                                displayRunnerLabel(r.id) +
+                                (normalizeTaskRunnerId(r.id) === normalizeTaskRunnerId(selectedRunner) ? "  ✓" : ""),
+                              onPress: () => {
+                                setSelectedRunner(normalizeTaskRunnerId(r.id));
+                                userPickedRunnerRef.current = true;
+                              },
+                            })),
+                            { text: "Cancel", style: "cancel" as const },
+                          ],
+                        );
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Choose coding agent"
+                    >
+                      <Text style={[s.agentBadgeText, { color: c.textSecondary, flexShrink: 1 }]} numberOfLines={1}>
+                        {selectedRunnerRow ? displayRunnerLabel(selectedRunnerRow.id) : "Agent"}
+                      </Text>
+                      <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
+                    </Pressable>
+                  )}
                 </View>
               </View>
               <View
