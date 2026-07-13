@@ -4812,7 +4812,7 @@ export default function TasksScreen() {
                       Only the agents actually installed on this box are
                       offered, so the picker never lists something that can't
                       run. Hidden while a wizard-locked target is bound. */}
-                  {!pendingTarget && availableRunners.filter((r) => r.installed).length > 0 && (
+                  {!pendingTarget && (availableRunners.length > 0 || !!selectedRunner) && (
                     <Pressable
                       hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                       style={({ pressed }) => [
@@ -4821,15 +4821,26 @@ export default function TasksScreen() {
                         pressed && { opacity: 0.55 },
                       ]}
                       onPress={() => {
+                        // Prefer the agents actually installed on this box, but
+                        // never leave the user stuck: if the runner list hasn't
+                        // (re)loaded — e.g. right after a task failed — fall back
+                        // to any known runner so they can always switch away from
+                        // a failed agent. Un-installed picks are marked so the
+                        // choice stays honest.
                         const installed = availableRunners.filter((r) => r.installed);
+                        const fallback = ["claude", "codex", "opencode"].map(
+                          (id) => availableRunners.find((r) => normalizeTaskRunnerId(r.id) === id) || ({ id, installed: false } as RunnerInfo),
+                        );
+                        const choices = installed.length > 0 ? installed : fallback;
                         Alert.alert(
                           "Coding agent",
                           undefined,
                           [
-                            ...installed.map((r) => ({
+                            ...choices.map((r) => ({
                               text:
                                 displayRunnerLabel(r.id) +
-                                (normalizeTaskRunnerId(r.id) === normalizeTaskRunnerId(selectedRunner) ? "  ✓" : ""),
+                                (normalizeTaskRunnerId(r.id) === normalizeTaskRunnerId(selectedRunner) ? "  ✓" : "") +
+                                (r.installed === false ? "  (not installed)" : ""),
                               onPress: () => {
                                 setSelectedRunner(normalizeTaskRunnerId(r.id));
                                 userPickedRunnerRef.current = true;
