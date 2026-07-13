@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -196,5 +198,57 @@ func TestClearInvalidAuth_ValidCredentialUnblocksSharedNAT(t *testing.T) {
 	// And an unrelated IP still has its own independent bucket.
 	if !g.allowInvalidAuth("203.0.113.8:5555") {
 		t.Fatal("different IP should have an independent bucket")
+	}
+}
+
+// An auth backend that is DOWN must never be reported as a bad credential.
+//
+// Regression (2026-07-13 outage): validateAndResolveViaConvex collapsed
+// transport errors, timeouts and 5xx into `false`, which every caller rendered
+// as "invalid relay password". A transient Convex hiccup therefore told every
+// agent and every client that its password was wrong. Agents then "self-healed"
+// a credential that was never broken, gave up when the refetched password came
+// back identical, and sat in a permanent rejection loop that only a process
+// restart could clear — a fleet-wide outage from a blip. Access still fails
+// CLOSED; only the reported reason changes.
+func TestAuthBackendDown_IsNotReportedAsInvalidPassword(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{"backend 500", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }},
+		{"unparseable body", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "not json") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := httptest.NewServer(tc.handler)
+			defer backend.Close()
+
+			s := NewRelayServer(0, 0, "", backend.URL, "")
+			_, ok, err := s.validateRelayAccessE("some-password", "register", "dev1", "tok")
+
+			if ok {
+				t.Fatal("must fail closed: a backend that cannot answer grants no access")
+			}
+			if !errors.Is(err, errAuthBackendUnavailable) {
+				t.Fatalf("want errAuthBackendUnavailable (so the caller is told to RETRY, not that its password is wrong); got %v", err)
+			}
+		})
+	}
+
+	// A real verdict (backend reachable, says no) must still be a rejection —
+	// otherwise this fix would hand attackers a bypass.
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		io.WriteString(w, `{"ok":false}`)
+	}))
+	defer backend.Close()
+
+	s := NewRelayServer(0, 0, "", backend.URL, "")
+	_, ok, err := s.validateRelayAccessE("wrong-password", "register", "dev1", "tok")
+	if ok {
+		t.Fatal("a genuine rejection must still deny access")
+	}
+	if err != nil {
+		t.Fatalf("a genuine rejection is a VERDICT, not a backend failure; got err=%v", err)
 	}
 }

@@ -10521,6 +10521,40 @@ func loadRelayHealth() []RelayHealthStatus {
 // thundering-herd it when it comes back. Healthy reconnects (short
 // blips < 30 s total) retry aggressively from 1 s so the user sees
 // fast recovery on normal network flaps.
+// currentRelayCredentials re-reads the credentials for relayAddr from the
+// on-disk config, which is the source of truth and is rewritten whenever the
+// auth token or relay password rotates.
+//
+// runRelayTunnel used to dial with the token/password it was handed at
+// goroutine start. That snapshot turned ANY credential rotation into a
+// permanent rejection loop: the tunnel kept replaying dead credentials, and
+// because the relay reports every auth failure as "invalid relay password",
+// the one self-heal we had refetched the *password*, found it unchanged, and
+// gave up — forever. Only a process restart cleared it, so a single relay
+// restart stranded every agent. Re-reading per attempt makes the tunnel
+// converge on the current credentials on its own.
+//
+// Empty returns mean "no better value than what the caller already has" — the
+// caller keeps its existing value rather than dialing with nothing.
+func currentRelayCredentials(relayAddr string) (token, password string) {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return "", ""
+	}
+	token = strings.TrimSpace(cfg.AuthToken)
+	// Per-relay password wins (a self-hosted/private relay has its own), then
+	// the account-wide per-user password, then the last cached one.
+	for _, rs := range cfg.RelayServers {
+		if rs.QuicAddr == relayAddr && strings.TrimSpace(rs.Password) != "" {
+			return token, strings.TrimSpace(rs.Password)
+		}
+	}
+	if pw := strings.TrimSpace(cfg.RelayPassword); pw != "" {
+		return token, pw
+	}
+	return token, strings.TrimSpace(cfg.CachedRelayPassword)
+}
+
 func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager, rm *relayManager) {
 	backoff := time.Second
 	unhealthySince := time.Time{}
@@ -10530,6 +10564,19 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 		case <-ctx.Done():
 			return
 		default:
+		}
+
+		// Dial with the CURRENT credentials, never the ones snapshotted when
+		// this goroutine started. See currentRelayCredentials.
+		if freshToken, freshPw := currentRelayCredentials(relayAddr); freshToken != "" || freshPw != "" {
+			if freshToken != "" && freshToken != token {
+				log.Printf("[RELAY %s] Auth token rotated since last attempt — using the current one", relayAddr)
+				token = freshToken
+			}
+			if freshPw != "" && freshPw != password {
+				log.Printf("[RELAY %s] Relay password changed since last attempt — using the current one", relayAddr)
+				password = freshPw
+			}
 		}
 
 		log.Printf("[RELAY] Connecting to relay %s...", relayAddr)

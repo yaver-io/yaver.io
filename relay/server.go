@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -349,12 +350,21 @@ func (s *RelayServer) validatePasswordViaConvex(pw string) bool {
 }
 
 func (s *RelayServer) validateRelayAccess(pw, action, deviceID, token string) (string, bool) {
+	uid, ok, _ := s.validateRelayAccessE(pw, action, deviceID, token)
+	return uid, ok
+}
+
+// validateRelayAccessE is validateRelayAccess plus an honest reason.
+// A non-nil error is always errAuthBackendUnavailable — "we could not check",
+// never "you are wrong". Access is still denied (fail closed); the difference
+// is what we tell the caller and whether it earns an invalid-auth strike.
+func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (string, bool, error) {
 	pw = strings.TrimSpace(pw)
 	action = strings.TrimSpace(action)
 	deviceID = strings.TrimSpace(deviceID)
 	token = strings.TrimSpace(token)
 	if pw == "" {
-		return "", false
+		return "", false, nil
 	}
 
 	// Self-hosted shared-password mode remains supported. The official free
@@ -362,20 +372,20 @@ func (s *RelayServer) validateRelayAccess(pw, action, deviceID, token string) (s
 	// backend ownership/quota path instead of accepting a universal shared key.
 	if s.convexURL == "" {
 		if sharedPw := s.getPassword(); sharedPw != "" {
-			return "", secretEqual(pw, sharedPw)
+			return "", secretEqual(pw, sharedPw), nil
 		}
-		return "", true
+		return "", true, nil
 	}
 
 	cacheKey := strings.Join([]string{"access", action, deviceID, pw, token}, "\x00")
 	s.validatedPwMu.RLock()
 	if expiry, ok := s.validatedPw[cacheKey]; ok && time.Now().Before(expiry) {
 		s.validatedPwMu.RUnlock()
-		return s.resolveUserIDFromPassword(pw), true
+		return s.resolveUserIDFromPassword(pw), true, nil
 	}
 	s.validatedPwMu.RUnlock()
 
-	userID, ok := s.validateAndResolveViaConvex(pw, action, deviceID, token)
+	userID, ok, err := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
 	if ok {
 		s.validatedPwMu.Lock()
 		s.validatedPw[cacheKey] = time.Now().Add(5 * time.Minute)
@@ -387,13 +397,35 @@ func (s *RelayServer) validateRelayAccess(pw, action, deviceID, token string) (s
 			s.pwUserIDMu.Unlock()
 		}
 	}
-	return userID, ok
+	return userID, ok, err
 }
 
 // validateAndResolveViaConvex returns both the validity and the
 // resolved userId. Same 5-minute cache as validatePassword. Used by
 // the bus to scope fanout per-user without a second Convex round-trip.
+// errAuthBackendUnavailable means we could not REACH a verdict — the auth
+// backend errored, timed out, or returned something unparseable. It is NOT a
+// rejection.
+//
+// Collapsing this into "invalid relay password" (the old behavior) is what
+// turns a transient Convex hiccup into a fleet-wide outage: every agent is
+// told its password is wrong, every client is told the same, the invalid-auth
+// limiter starts throttling them, and agents that snapshot their credentials
+// never recover. An unreachable backend must fail SOFT — say so honestly, do
+// not blame the caller's credential, and let them retry.
+var errAuthBackendUnavailable = errors.New("relay auth backend unavailable")
+
 func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token string) (string, bool) {
+	uid, ok, _ := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
+	return uid, ok
+}
+
+// validateAndResolveViaConvexE additionally reports errAuthBackendUnavailable
+// so callers can distinguish "your credential is wrong" from "we could not
+// check". Everything security-relevant still fails CLOSED: a non-nil error
+// grants no access. It only changes what we TELL the caller and whether we
+// hold it against them.
+func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token string) (string, bool, error) {
 	url := strings.TrimRight(s.convexURL, "/") + "/relay/validate"
 	payload := map[string]string{"password": pw}
 	if strings.TrimSpace(action) != "" {
@@ -410,9 +442,15 @@ func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token st
 	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		log.Printf("[RELAY] Convex validation error: %v", err)
-		return "", false
+		return "", false, errAuthBackendUnavailable
 	}
 	defer resp.Body.Close()
+
+	// 5xx is the backend failing, not the caller. 401 IS a real verdict.
+	if resp.StatusCode >= 500 {
+		log.Printf("[RELAY] Convex validation backend error: HTTP %d", resp.StatusCode)
+		return "", false, errAuthBackendUnavailable
+	}
 
 	var result struct {
 		OK     bool   `json:"ok"`
@@ -420,9 +458,9 @@ func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token st
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("[RELAY] Convex validation parse error: %v", err)
-		return "", false
+		return "", false, errAuthBackendUnavailable
 	}
-	return result.UserID, result.OK
+	return result.UserID, result.OK, nil
 }
 
 // resolveSigViaConvex fetches the SIGNER device's ed25519 signing public key
@@ -662,12 +700,24 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	// relay this proves the password belongs to the same signed-in user as
 	// the agent token and, when the device row already exists, that the user
 	// owns the deviceId being registered.
-	if _, ok := s.validateRelayAccess(reg.Password, "register", reg.DeviceID, reg.Token); !ok {
+	if _, ok, authErr := s.validateRelayAccessE(reg.Password, "register", reg.DeviceID, reg.Token); !ok {
+		// We could not REACH a verdict. Do not tell the agent its password is
+		// wrong (it will "self-heal" a credential that was never broken) and do
+		// not hold it against the IP. Say so, and let it retry.
+		if authErr != nil {
+			log.Printf("[RELAY] register %s: auth backend unavailable — telling the agent to retry", reg.DeviceID[:min(8, len(reg.DeviceID))])
+			rejectRegistration("relay auth backend unavailable — retry", "auth backend unavailable")
+			return
+		}
+		if strings.TrimSpace(reg.Password) == "" {
+			rejectRegistration("relay password missing", "no relay password")
+			return
+		}
 		if !s.abuseGuard.allowInvalidAuth(remoteAddr) {
 			rejectRegistration("too many invalid relay password attempts", "invalid password rate limited")
 			return
 		}
-		rejectRegistration("invalid relay password", "invalid relay password")
+		rejectRegistration("invalid relay credentials (password or session token)", "invalid relay credentials")
 		return
 	}
 	// Valid credential from this IP — it is not a brute-force source. Clear any
@@ -1168,8 +1218,20 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !authed {
-		uid, ok := s.validateRelayAccess(relayPw, "proxy", deviceID, "")
+		uid, ok, authErr := s.validateRelayAccessE(relayPw, "proxy", deviceID, "")
 		if !ok {
+			// Could not reach a verdict — 503, not 401. Telling a client its
+			// password is invalid when the auth backend is merely down sends it
+			// hunting a credential bug that does not exist (and, in the mobile
+			// client, into a retry loop that trips the limiter below).
+			if authErr != nil {
+				writeRelayError(w, http.StatusServiceUnavailable, "relay auth backend unavailable — retry")
+				return
+			}
+			if strings.TrimSpace(relayPw) == "" {
+				writeRelayError(w, http.StatusUnauthorized, "relay password missing — sign in again to fetch it")
+				return
+			}
 			// Throttle invalid-auth attempts so the account-wide relay password
 			// isn't brute-forcible over HTTP (relay security audit, finding #4).
 			// Keyed on the real client IP (trusted-proxy-aware clientIP).
