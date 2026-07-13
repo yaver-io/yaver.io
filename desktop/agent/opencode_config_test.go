@@ -307,3 +307,86 @@ func TestLoadOpenCodeConfigSummaryUsesAuthStoreForBuiltinCodingPlan(t *testing.T
 		t.Fatalf("unexpected diagnostics for builtin coding plan: %#v", summary.Diagnostics)
 	}
 }
+
+// TestOpenCodeConfiguredModelProblem covers the functional readiness check that
+// stops "opencode ready" from lying when the configured model's provider has no
+// key — the exact class of failure behind the cryptic "Unexpected server error
+// … ref: err_XXXX" a task hits mid-run.
+func TestOpenCodeConfiguredModelProblem(t *testing.T) {
+	// Isolate auth.json/config lookups to an empty temp home so
+	// openCodeAuthProviderKeySet() finds nothing on disk.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_AUTH", filepath.Join(home, "nonexistent-auth.json"))
+
+	model := func(m string) map[string]any { return map[string]any{"model": m} }
+
+	cases := []struct {
+		name      string
+		cfg       map[string]any
+		providers []openCodeRuntimeProvider
+		glm       bool
+		openai    bool
+		anthropic bool
+		local     bool
+		wantIssue bool
+	}{
+		{
+			name:      "glm model but no glm key -> problem (the reported bug)",
+			cfg:       model("zai-coding-plan/glm-4.7"),
+			wantIssue: true,
+		},
+		{
+			name: "glm model with glm key present -> ok",
+			cfg:  model("zai-coding-plan/glm-4.7"),
+			glm:  true,
+		},
+		{
+			name:      "anthropic model with anthropic key -> ok",
+			cfg:       model("anthropic/claude-sonnet-4-6"),
+			anthropic: true,
+		},
+		{
+			name: "no explicit model -> no verdict",
+			cfg:  map[string]any{},
+		},
+		{
+			name: "bare model id without provider -> no verdict",
+			cfg:  model("glm-4.7"),
+		},
+		{
+			name:  "local ollama needs no key -> ok",
+			cfg:   model("ollama/llama3"),
+			local: true,
+		},
+		{
+			name:      "custom provider with baseURL -> ok",
+			cfg:       model("mystack/foo"),
+			providers: []openCodeRuntimeProvider{{ID: "mystack", BaseURL: "http://127.0.0.1:8080"}},
+		},
+		{
+			name:      "custom provider with key -> ok",
+			cfg:       model("mystack/foo"),
+			providers: []openCodeRuntimeProvider{{ID: "mystack", HasAPIKey: true}},
+		},
+		{
+			name:      "default_agent build model overrides top-level, no key -> problem",
+			cfg:       map[string]any{"default_agent": "build", "agent": map[string]any{"build": map[string]any{"model": "zai-coding-plan/glm-4.7"}}},
+			wantIssue: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := openCodeConfiguredModelProblem(tc.cfg, tc.providers, tc.openai, false, tc.glm, tc.anthropic, tc.local)
+			if tc.wantIssue && strings.TrimSpace(got) == "" {
+				t.Fatalf("expected a configuration problem, got none")
+			}
+			if !tc.wantIssue && strings.TrimSpace(got) != "" {
+				t.Fatalf("expected no problem, got: %s", got)
+			}
+		})
+	}
+}

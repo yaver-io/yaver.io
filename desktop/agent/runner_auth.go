@@ -980,7 +980,96 @@ func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 	default:
 		status.Warning = "OpenCode auth was not detected. If tasks fail, run `opencode auth list` or `/connect`."
 	}
+
+	// Presence of *a* key doesn't mean the *configured model's* provider has
+	// one. OpenCode runs `opencode run` with no --model, so it uses the model
+	// from opencode.json — and if that model points at a provider with no key
+	// (the classic "model = zai-coding-plan/glm-4.7 but no GLM key" case), the
+	// task dies deep inside opencode with a cryptic "Unexpected server error …
+	// ref: err_XXXX". Catch it here so the runner honestly reports "needs
+	// configuration" up front instead of looking ready and then failing a task.
+	if problem := openCodeConfiguredModelProblem(
+		cfg, providers, hasOpenAIAPI, hasOpenAIOAuth, hasGLMAPI, hasAnthropicAPI, hasLocalProvider,
+	); problem != "" {
+		status.Ready = false
+		status.Error = problem
+	}
 	return status
+}
+
+// openCodeConfiguredModelProblem returns a human-actionable message when
+// opencode.json pins a default model whose provider has no usable API key on
+// this machine, "" when the configured model looks runnable (or when no
+// explicit model is set, in which case opencode picks its own default and we
+// can't second-guess it). This is the functional check `detectOpenCodeStatus`'s
+// presence heuristics miss — it's what turns "opencode ready" into "opencode
+// needs a GLM key" before a doomed task is dispatched.
+func openCodeConfiguredModelProblem(
+	cfg map[string]any,
+	providers []openCodeRuntimeProvider,
+	hasOpenAIAPI, hasOpenAIOAuth, hasGLMAPI, hasAnthropicAPI, hasLocalProvider bool,
+) string {
+	// `opencode run` uses the default agent's model, then the top-level model.
+	defaultAgent, _ := stringFromMap(cfg, "default_agent")
+	if strings.TrimSpace(defaultAgent) == "" {
+		defaultAgent = "build"
+	}
+	effModel := strings.TrimSpace(openCodeAgentModel(cfg, defaultAgent))
+	if effModel == "" {
+		effModel, _ = stringFromMap(cfg, "model")
+		effModel = strings.TrimSpace(effModel)
+	}
+	if effModel == "" {
+		return "" // no explicit model — opencode resolves its own default.
+	}
+	parts := strings.SplitN(effModel, "/", 2)
+	if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
+		return "" // bare model id, provider implicit — don't guess.
+	}
+	providerID := normalizeOpenCodeProvider(parts[0])
+
+	authKeys := openCodeAuthProviderKeySet()
+	providerHasKey := func(id string) bool {
+		for _, p := range providers {
+			if normalizeOpenCodeProvider(p.ID) == id && p.HasAPIKey {
+				return true
+			}
+		}
+		return authKeys[id] || authKeys[parts[0]]
+	}
+	providerHasBaseURL := func(id string) bool {
+		for _, p := range providers {
+			if normalizeOpenCodeProvider(p.ID) == id && strings.TrimSpace(p.BaseURL) != "" {
+				return true
+			}
+		}
+		return false
+	}
+
+	usable := false
+	switch providerID {
+	case "openai":
+		usable = hasOpenAIAPI || hasOpenAIOAuth || providerHasKey("openai")
+	case "anthropic":
+		usable = hasAnthropicAPI || providerHasKey("anthropic")
+	case "glm", "zai", "z-ai", "zai-coding-plan", "zhipu":
+		usable = hasGLMAPI || providerHasKey(providerID) ||
+			authKeys["zai-coding-plan"] || authKeys["glm"] || authKeys["zai"] || authKeys["z-ai"]
+	case "ollama", "lmstudio", "llama.cpp":
+		usable = true // local providers need no API key.
+	default:
+		// Unknown/custom provider: trust it if it carries a key, or a baseURL
+		// (which usually implies a keyless local/self-hosted endpoint).
+		usable = providerHasKey(providerID) || providerHasBaseURL(providerID)
+	}
+	if usable {
+		return ""
+	}
+	return fmt.Sprintf(
+		"OpenCode's default model %q uses provider %q, which has no API key on this machine. "+
+			"Add a key for %q in OpenCode settings — or pick a model whose provider is already configured.",
+		effModel, providerID, providerID,
+	)
 }
 
 type openCodeRuntimeProvider struct {
