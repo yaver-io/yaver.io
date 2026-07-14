@@ -647,6 +647,17 @@ async function hetznerDeleteImage(token: string, imageId: string): Promise<void>
   if (!r.ok && r.status !== 404) throw new Error(`delete image HTTP ${r.status}`);
 }
 
+// pruneOldSnapshot deletes a machine's PREVIOUS snapshot after a new park's
+// snapshot is confirmed durable — so a box keeps at most one snapshot, never
+// one per sleep. Best-effort: an orphan snapshot is a few cents/mo, so a delete
+// failure must never fail the park (the new snapshot + row are already correct).
+async function pruneOldSnapshot(previousId: string | undefined, currentId: string): Promise<void> {
+  if (!previousId || previousId === currentId) return;
+  const token = process.env.HCLOUD_TOKEN;
+  if (!token) return;
+  try { await hetznerDeleteImage(token, previousId); } catch { /* best-effort */ }
+}
+
 /** Detach a volume (server delete detaches automatically; this is for repair). */
 async function hetznerDetachVolume(token: string, volumeId: string): Promise<void> {
   const r = await fetch(`${HETZNER_API}/volumes/${volumeId}/actions/detach`, {
@@ -915,7 +926,12 @@ export const pauseMachine = internalAction({
       machineId, phase: "powering-down", progress: 78,
     });
     await ctx.scheduler.runAfter(15_000, internal.cloudLifecycle.finalizePause, {
+      // machine.lastSnapshotId here is the PRIOR park's snapshot (captured
+      // before this park overwrote it) — finalizePause deletes it once the new
+      // one is durable, so this machine keeps exactly one. Never another
+      // machine's / user's image; it's this row's own id.
       machineId, snapshotId: snapId, attempt: 1,
+      previousSnapshotId: machine.lastSnapshotId ?? undefined,
     });
     return { ok: true, status: "stopping", snapshotId: snapId, dryRun: false };
   },
@@ -1030,8 +1046,12 @@ export const finalizePause = internalAction({
     machineId: v.id("cloudMachines"),
     snapshotId: v.string(),
     attempt: v.number(),
+    // The machine's snapshot from a PRIOR park, captured before this park
+    // overwrote lastSnapshotId. Deleted once the new snapshot is confirmed
+    // durable so a box accumulates at most ONE snapshot, never one per sleep.
+    previousSnapshotId: v.optional(v.string()),
   },
-  handler: async (ctx, { machineId, snapshotId, attempt }): Promise<LifecycleResult> => {
+  handler: async (ctx, { machineId, snapshotId, attempt, previousSnapshotId }): Promise<LifecycleResult> => {
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
     if (!machine) return { ok: false, reason: "machine not found" };
     if (!machine.hetznerServerId) {
@@ -1039,6 +1059,7 @@ export const finalizePause = internalAction({
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId, status: "paused", lastSnapshotId: snapshotId,
       });
+      await pruneOldSnapshot(previousSnapshotId, snapshotId);
       return { ok: true, status: "paused", snapshotId };
     }
     const token = process.env.HCLOUD_TOKEN;
@@ -1051,7 +1072,7 @@ export const finalizePause = internalAction({
       // Transient API blip — retry rather than risk anything.
       if (attempt < 60) {
         await ctx.scheduler.runAfter(15_000, internal.cloudLifecycle.finalizePause, {
-          machineId, snapshotId, attempt: attempt + 1,
+          machineId, snapshotId, attempt: attempt + 1, previousSnapshotId,
         });
       }
       return { ok: false, reason: `image status check failed: ${e instanceof Error ? e.message : String(e)}`, retryable: true };
@@ -1061,7 +1082,7 @@ export const finalizePause = internalAction({
       // Still being written — wait. ~15 min budget (60 × 15s).
       if (attempt < 60) {
         await ctx.scheduler.runAfter(15_000, internal.cloudLifecycle.finalizePause, {
-          machineId, snapshotId, attempt: attempt + 1,
+          machineId, snapshotId, attempt: attempt + 1, previousSnapshotId,
         });
         return { ok: false, reason: "snapshot still finalizing", retryable: true };
       }
@@ -1094,6 +1115,11 @@ export const finalizePause = internalAction({
     await ctx.runMutation(internal.cloudMachines.setStatus, {
       machineId, status: "paused", lastSnapshotId: snapshotId,
     });
+    // New snapshot is durable and the server is gone — now safe to delete this
+    // machine's PREVIOUS snapshot so the user keeps exactly one (either a live
+    // server or one snapshot, never a pile from each sleep). Only this machine's
+    // own prior image is touched.
+    await pruneOldSnapshot(previousSnapshotId, snapshotId);
     await ctx.runMutation(internal.cloudMachines.setPhase, {
       machineId, phase: "parked", progress: 100,
     });
