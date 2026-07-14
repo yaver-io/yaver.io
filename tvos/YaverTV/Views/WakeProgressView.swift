@@ -61,6 +61,16 @@ struct WakeProgressView: View {
                 .font(.system(size: 20))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+
+            // A running wake must be escapable — before this, cancel() had no
+            // caller and a wake that stalled left the user stuck on the bar.
+            if lifecycle.isRunning {
+                Button(role: .cancel) { lifecycle.cancel() } label: {
+                    Label("Stop waiting", systemImage: "xmark")
+                        .font(.system(size: 20, weight: .semibold))
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(36)
         .frame(maxWidth: 1100, alignment: .leading)

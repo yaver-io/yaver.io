@@ -176,6 +176,13 @@ final class BoxLifecycle: ObservableObject {
 
         // 2. Poll /health until the box answers, walking Booting → Connecting
         //    while it's still cold so the bar keeps moving truthfully.
+        //
+        // Bounded: a wake that never lands must FAIL, not spin "Connecting…"
+        // forever. A managed resume is tens of seconds to a couple of minutes;
+        // past ~3 min the box isn't coming back at this address (resume rejected
+        // late, wrong host, relay down) and the user needs to know, with a way
+        // to retry — not a bar frozen at 90%.
+        let maxTicks = 45          // 45 × 4s ≈ 3 min
         var ticks = 0
         while !Task.isCancelled {
             if await healthOK(box: box) {
@@ -188,6 +195,10 @@ final class BoxLifecycle: ObservableObject {
                 return
             }
             ticks += 1
+            if ticks >= maxTicks {
+                finish(error: "The box didn't come back within 3 minutes. Try Wake again, or start it from a computer.")
+                return
+            }
             if ticks == 1 {
                 setPhase(.booting)
             } else if ticks >= 4 {          // ~16s in — relay leg is the slow part
