@@ -83,9 +83,12 @@ struct ProjectsView: View {
     }
 
     @ViewBuilder private func row(_ p: ProjectSummary) -> some View {
+        let style = FrameworkStyle.of(p.framework)
         NavigationLink(destination: destination(for: p)) {
             HStack(spacing: 18) {
-                Image(systemName: icon(for: p.kind)).font(.system(size: 26)).frame(width: 40)
+                // Same framework icon + brand color the phone shows (FrameworkIcon.tsx).
+                Image(systemName: style.symbol).font(.system(size: 26))
+                    .foregroundStyle(style.color).frame(width: 40)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(p.name).font(.system(size: 24, weight: .semibold))
                     Text([p.frameworkLabel, p.branch].compactMap { $0 }.joined(separator: " · "))
@@ -117,15 +120,6 @@ struct ProjectsView: View {
             Image(systemName: "questionmark.square.dashed").font(.system(size: 56)).foregroundStyle(.secondary)
             Text(msg).multilineTextAlignment(.center).frame(maxWidth: 640).foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black)
-    }
-
-    private func icon(for kind: ProjectSummary.Kind) -> String {
-        switch kind {
-        case .android: return "iphone.gen3"
-        case .web: return "globe"
-        case .flutter: return "f.square"
-        case .unknown: return "shippingbox"
-        }
     }
 
     private func center<C: View>(@ViewBuilder _ content: () -> C) -> some View {
