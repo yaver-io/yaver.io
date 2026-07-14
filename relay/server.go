@@ -755,7 +755,9 @@ func (s *RelayServer) Start(ctx context.Context) error {
 // --- QUIC Tunnel Listener (agents connect here) ---
 
 func (s *RelayServer) runQUICListener(ctx context.Context) error {
-	tlsCfg, err := generateRelayTLS()
+	// Persistent key so the SPKI is stable across restarts and agents can pin it.
+	// Falls back to an ephemeral key (logged) if the key path is unwritable.
+	tlsCfg, err := generatePersistentRelayTLS()
 	if err != nil {
 		return fmt.Errorf("TLS setup: %w", err)
 	}

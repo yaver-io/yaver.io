@@ -1352,6 +1352,10 @@ type RelayServerInfo struct {
 	HttpURL  string `json:"httpUrl"`  // e.g. "https://connect.yaver.io"
 	Region   string `json:"region"`
 	Priority int    `json:"priority"`
+	// SpkiPin: base64 SHA-256 of the relay's SubjectPublicKeyInfo. When set, the
+	// agent verifies the relay's self-signed QUIC cert against it (relay_pinning.go),
+	// closing the active-MITM gap. camelCase to match the platformConfig payload.
+	SpkiPin string `json:"spkiPin,omitempty"`
 }
 
 func configuredPublicEndpoints(cfg *Config) []string {
@@ -1699,6 +1703,11 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	// publishing relayConnected=true, so the phone kept choosing a relay path
 	// that could only ever time out.
 	payload["relayConnected"] = relayDataPathUsable()
+	// Can this agent actually reboot its host? Verified (root, or passwordless
+	// sudo), never inferred from the OS — so the phone and the dashboard can say
+	// "no permission on this machine" and offer the opt-in grant, instead of
+	// showing a Reboot button that can only fail when tapped.
+	payload["canReboot"] = canRebootHost()
 	// Coerce nil slices to empty arrays so JSON encodes them as `[]` not
 	// `null`. The Convex http wrapper treats Array-valued localIps as
 	// "deliberate clear", but `null` short-circuits to `undefined` and

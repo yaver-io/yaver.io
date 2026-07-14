@@ -122,6 +122,7 @@ func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[s
 			HttpURL:  rs.HttpURL,
 			Region:   rs.Region,
 			Priority: rs.Priority,
+			SpkiPin:  rs.SpkiPin,
 		})
 		if rs.Password != "" {
 			passwords[rs.QuicAddr] = rs.Password
@@ -209,6 +210,7 @@ func cacheResolvedRelayConfig(cfg *Config, servers []RelayServerInfo, globalPass
 			Password: perRelayPasswords[rs.QuicAddr],
 			Region:   rs.Region,
 			Priority: rs.Priority,
+			SpkiPin:  rs.SpkiPin,
 		})
 	}
 	if relayConfigMatches(cfg.CachedRelayServers, cached) && cfg.CachedRelayPassword == globalPassword {
@@ -5477,8 +5479,9 @@ func runStatus() {
 	// long before any task fails.
 	renderGitStatusBlock(os.Stdout, collectGitStatusSummary(), "")
 
-	// Validate token with a short timeout (3s) — don't block the user
-	statusClient := &http.Client{Timeout: 3 * time.Second}
+	// Validate token with a short timeout — don't let auxiliary backend
+	// checks dominate the basic console status path.
+	statusClient := &http.Client{Timeout: 2 * time.Second}
 	req, reqErr := newBearerRequest("GET", cfg.ConvexSiteURL+"/auth/validate", cfg.AuthToken, nil)
 	if reqErr != nil {
 		fmt.Printf("Auth:     \033[33m●\033[0m token present (validation skipped)\n")
@@ -5515,14 +5518,29 @@ func runStatus() {
 		fmt.Printf("Name:     %s\n", result.User.FullName)
 	}
 
-	// Show current runner
-	runnerID := getCurrentRunner(statusClient, cfg.ConvexSiteURL, cfg.AuthToken)
+	// Show current runner. The selected runner and catalog are independent
+	// backend reads, so fetch them together to keep the console path snappy.
+	type runnerCatalogResult struct {
+		runners []backendRunner
+		err     error
+	}
+	runnerIDCh := make(chan string, 1)
+	runnerCatalogCh := make(chan runnerCatalogResult, 1)
+	go func() {
+		runnerIDCh <- getCurrentRunner(statusClient, cfg.ConvexSiteURL, cfg.AuthToken)
+	}()
+	go func() {
+		runners, err := fetchRunnersFromBackend(statusClient, cfg.ConvexSiteURL)
+		runnerCatalogCh <- runnerCatalogResult{runners: runners, err: err}
+	}()
+
+	runnerID := <-runnerIDCh
 	if runnerID == "" {
 		runnerID = "claude"
 	}
 	runnerName := runnerID
-	if runners, err := fetchRunnersFromBackend(statusClient, cfg.ConvexSiteURL); err == nil {
-		for _, r := range runners {
+	if catalog := <-runnerCatalogCh; catalog.err == nil {
+		for _, r := range catalog.runners {
 			if r.RunnerID == runnerID {
 				runnerName = r.Name
 				break
@@ -5788,7 +5806,7 @@ func printStatusSharing(client *http.Client, cfg *Config) {
 		fmt.Println("  Shared sessions: unavailable (agent not in multi-user mode or not reachable)")
 	}
 
-	statusCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	statusCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	var (
@@ -7374,7 +7392,7 @@ func runDevices(args []string) {
 		runnerWG.Add(1)
 		go func() {
 			defer runnerWG.Done()
-			summary := summarizeDeviceRunners(cfg, d)
+			summary := summarizeDeviceRunnersWithTimeout(cfg, d, 1500*time.Millisecond)
 			runnerMu.Lock()
 			runnerByDevice[d.DeviceID] = summary
 			runnerMu.Unlock()
@@ -7439,7 +7457,7 @@ func runDevices(args []string) {
 // Skipped silently when nothing is attached AND no tooling is missing —
 // an empty header would just be noise.
 func printMobileDevicesSection(out io.Writer) {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 
 	wired := append([]wireDevice{}, listIOSWireDevices(ctx)...)
@@ -8733,6 +8751,10 @@ func statusDeviceLabel(d DeviceInfo, currentDeviceID string) string {
 }
 
 func summarizeDeviceRunners(cfg *Config, device DeviceInfo) string {
+	return summarizeDeviceRunnersWithTimeout(cfg, device, 7*time.Second)
+}
+
+func summarizeDeviceRunnersWithTimeout(cfg *Config, device DeviceInfo, timeout time.Duration) string {
 	deviceID := strings.TrimSpace(device.DeviceID)
 	if deviceID == "" {
 		return ""
@@ -8745,9 +8767,12 @@ func summarizeDeviceRunners(cfg *Config, device DeviceInfo) string {
 	if cfg.DeviceID != "" && deviceID == cfg.DeviceID {
 		rows, err = collectRunnerAuthStatusRows()
 	} else {
-		rows, err = fetchRunnerAuthStatusRowsRemote(deviceID)
+		rows, err = fetchRunnerAuthStatusRowsRemoteWithTimeout(deviceID, timeout)
 	}
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || strings.Contains(strings.ToLower(err.Error()), "deadline") {
+			return "timeout"
+		}
 		return "unreachable"
 	}
 	if len(rows) == 0 {
