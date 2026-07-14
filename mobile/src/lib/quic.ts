@@ -590,6 +590,19 @@ export interface InfraSummary {
   sharing: InfraSharingSummary;
   sandbox: SandboxStatus;
   capabilities: InfraCapabilities;
+  rebootGrant?: RebootGrantState;
+}
+
+export interface RebootGrantState {
+  canReboot: boolean;
+  /** true when reboot is not permitted but a sudo grant on this box could fix it. */
+  needsSudo: boolean;
+  agentUser: string;
+  /** exact shell command to grant it by hand, when the UI won't take a password. */
+  grantHint?: string;
+  /** true when OUR sudoers drop-in is what permits reboot (so it's revocable). */
+  granted: boolean;
+  checkedAt: number;
 }
 
 export interface IncidentEvent {
@@ -3914,6 +3927,22 @@ export class QuicClient {
       body: JSON.stringify({ action, confirm: true }),
     });
     return res.json();
+  }
+
+  /** Grant (or revoke) host-reboot permission with the owner's sudo password.
+   *  The password is sent once over the authenticated agent channel, used for a
+   *  single `sudo -S` on the box, and never stored. Returns the new capability
+   *  so the caller can re-render without waiting for a fresh summary. */
+  async infraRebootGrant(password: string, revoke = false): Promise<{ ok: boolean; canReboot: boolean }> {
+    if (!this.isConnected && !this.hasConnectionInfo) throw new Error("Not connected");
+    const res = await fetch(`${this.baseUrl}/infra/reboot-grant`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ password, revoke }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `reboot grant failed: ${res.status}`);
+    return data;
   }
 
   async microserviceWrap(req: MicroserviceWrapRequest, target?: string): Promise<MicroserviceWrapResult> {

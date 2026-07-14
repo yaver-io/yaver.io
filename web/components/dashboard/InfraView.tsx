@@ -33,6 +33,10 @@ export default function InfraView() {
   const [sandboxBusy, setSandboxBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sandboxMsg, setSandboxMsg] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+  const [rebootGrantOpen, setRebootGrantOpen] = useState(false);
+  const [rebootPw, setRebootPw] = useState("");
+  const [rebootGranting, setRebootGranting] = useState(false);
+  const [rebootErr, setRebootErr] = useState<string | null>(null);
 
   async function refresh() {
     setError(null);
@@ -70,6 +74,22 @@ export default function InfraView() {
       if (action !== "agent_shutdown") await refresh();
     } finally {
       setPowerBusy(null);
+    }
+  }
+
+  async function grantReboot() {
+    if (!rebootPw) return;
+    setRebootGranting(true);
+    setRebootErr(null);
+    try {
+      await agentClient.infraRebootGrant(rebootPw);
+      setRebootGrantOpen(false);
+      setRebootPw("");
+      await refresh();
+    } catch (e: any) {
+      setRebootErr(e?.message || "Couldn't grant reboot");
+    } finally {
+      setRebootGranting(false);
     }
   }
 
@@ -127,9 +147,38 @@ export default function InfraView() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => powerAction("agent_shutdown")} disabled={powerBusy !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Stop agent</button>
-          <button onClick={() => powerAction("host_reboot")} disabled={powerBusy !== null || !summary.capabilities.hostReboot} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300 hover:bg-red-500/20 disabled:opacity-50">Reboot host</button>
+          {!summary.capabilities.hostReboot && summary.rebootGrant?.needsSudo ? (
+            <button onClick={() => { setRebootPw(""); setRebootErr(null); setRebootGrantOpen(true); }} disabled={powerBusy !== null} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300 hover:bg-red-500/20 disabled:opacity-50">Enable reboot</button>
+          ) : (
+            <button onClick={() => powerAction("host_reboot")} disabled={powerBusy !== null || !summary.capabilities.hostReboot} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300 hover:bg-red-500/20 disabled:opacity-50">Reboot host</button>
+          )}
         </div>
       </div>
+
+      {rebootGrantOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => { if (!rebootGranting) setRebootGrantOpen(false); }}>
+          <div className="w-full max-w-md rounded-2xl border border-surface-700 bg-surface-900 p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-surface-100">Enable host reboot</h3>
+            <p className="mt-2 text-sm text-surface-400">
+              Yaver runs as {summary.rebootGrant?.agentUser || "a normal user"}, which can&apos;t reboot the machine. Your sudo password installs a scoped rule permitting <span className="font-medium text-surface-200">only the reboot commands</span> — not a root shell. Used once, validated with visudo, never stored, revocable later.
+            </p>
+            <input
+              type="password"
+              autoFocus
+              value={rebootPw}
+              onChange={(e) => setRebootPw(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void grantReboot(); }}
+              placeholder="sudo password"
+              className="mt-4 w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none focus:border-red-500/50"
+            />
+            {rebootErr && <p className="mt-2 text-sm text-red-400">{rebootErr}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => { setRebootGrantOpen(false); setRebootPw(""); }} disabled={rebootGranting} className="rounded-xl border border-surface-700 px-3 py-2 text-sm text-surface-300 hover:bg-surface-800 disabled:opacity-50">Cancel</button>
+              <button onClick={() => void grantReboot()} disabled={rebootGranting || !rebootPw} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300 hover:bg-red-500/20 disabled:opacity-50">{rebootGranting ? "Granting…" : "Enable reboot"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-4">
         <Metric label="CPU" value={`${(summary.metrics?.cpuPct || 0).toFixed(1)}%`} sub={`${summary.metrics?.cores || 0} cores`} />

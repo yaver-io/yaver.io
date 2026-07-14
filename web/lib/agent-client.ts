@@ -1163,6 +1163,14 @@ export interface InfraSummary {
   sharing: InfraSharingSummary;
   sandbox: SandboxStatus;
   capabilities: InfraCapabilities;
+  rebootGrant?: {
+    canReboot: boolean;
+    needsSudo: boolean;
+    agentUser: string;
+    grantHint?: string;
+    granted: boolean;
+    checkedAt: number;
+  };
   packageManagers?: string[];
   binaries?: { name: string; path: string; manager?: string }[];
 }
@@ -5868,6 +5876,21 @@ export class AgentClient {
       body: JSON.stringify({ action, confirm: true }),
     });
     return res.json();
+  }
+
+  // Grant (or revoke) host-reboot with the owner's sudo password. Sent once over
+  // the authenticated agent channel for a single `sudo -S` on the box; never
+  // stored. Installs a scoped sudoers rule (reboot binaries only), not root.
+  async infraRebootGrant(password: string, revoke = false): Promise<{ ok: boolean; canReboot: boolean }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/infra/reboot-grant`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ password, revoke }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `reboot grant failed: ${res.status}`);
+    return data;
   }
 
   async machineRemove(phrase: string): Promise<any> {

@@ -1,3 +1,11 @@
 yaver-relay
 yaver-relay-*
 /.relay-password
+
+# Compiled relay binaries. relay-linux-amd64 (12 MB) was committed and is a
+# build artifact: it silently drifts from source, and every rebuild is a 12 MB
+# diff in a public repo. Build it (`go build`) or pull it from the release —
+# never track it.
+/relay
+/relay-*
+!/relay-*.go

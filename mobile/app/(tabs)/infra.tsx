@@ -102,6 +102,12 @@ export default function InfraScreen() {
   // back to /install/sudo. Password lives only in component state.
   const [sudoPrompt, setSudoPrompt] = useState<{ tool: string; prompt: string; hint?: string } | null>(null);
   const [sudoPassword, setSudoPassword] = useState("");
+  // Reboot-grant: collect the owner's sudo password once to install the scoped
+  // sudoers rule, so a box that reports hostReboot=false can be made rebootable
+  // from here instead of the user SSHing in to run a command by hand.
+  const [rebootGrantOpen, setRebootGrantOpen] = useState(false);
+  const [rebootPw, setRebootPw] = useState("");
+  const [rebootGranting, setRebootGranting] = useState(false);
   const [sudoSubmitting, setSudoSubmitting] = useState(false);
 
   async function loadCatalogue() {
@@ -269,6 +275,21 @@ export default function InfraScreen() {
     );
   }
 
+  async function grantReboot() {
+    if (!rebootPw) return;
+    setRebootGranting(true);
+    try {
+      await quicClient.infraRebootGrant(rebootPw);
+      setRebootGrantOpen(false);
+      setRebootPw("");
+      await refresh(); // capability flips to true; the Reboot button enables
+    } catch (e: any) {
+      Alert.alert("Couldn't grant reboot", e?.message || "Unknown error");
+    } finally {
+      setRebootGranting(false);
+    }
+  }
+
   async function enableContainers(mode: "guests" | "host") {
     setBusy(`sandbox:${mode}`);
     try {
@@ -401,9 +422,17 @@ export default function InfraScreen() {
               <Pressable onPress={() => powerAction("agent_shutdown")} disabled={!!busy} style={[actionBtn(c), { backgroundColor: "#f59e0b22", flex: 1, opacity: busy ? 0.6 : 1 }]}>
                 <Text style={{ color: "#f59e0b", fontWeight: "700" }}>Stop agent</Text>
               </Pressable>
-              <Pressable onPress={() => powerAction("host_reboot")} disabled={!!busy || !summary.capabilities.hostReboot} style={[actionBtn(c), { backgroundColor: "#ef444422", flex: 1, opacity: busy || !summary.capabilities.hostReboot ? 0.6 : 1 }]}>
-                <Text style={{ color: "#ef4444", fontWeight: "700" }}>Reboot</Text>
-              </Pressable>
+              {!summary.capabilities.hostReboot && summary.rebootGrant?.needsSudo ? (
+                // Reboot isn't permitted yet, but it CAN be granted from here.
+                // Show the path forward instead of a dead greyed-out button.
+                <Pressable onPress={() => { setRebootPw(""); setRebootGrantOpen(true); }} disabled={!!busy} style={[actionBtn(c), { backgroundColor: "#ef444422", flex: 1, opacity: busy ? 0.6 : 1 }]}>
+                  <Text style={{ color: "#ef4444", fontWeight: "700" }}>Enable reboot</Text>
+                </Pressable>
+              ) : (
+                <Pressable onPress={() => powerAction("host_reboot")} disabled={!!busy || !summary.capabilities.hostReboot} style={[actionBtn(c), { backgroundColor: "#ef444422", flex: 1, opacity: busy || !summary.capabilities.hostReboot ? 0.6 : 1 }]}>
+                  <Text style={{ color: "#ef4444", fontWeight: "700" }}>Reboot</Text>
+                </Pressable>
+              )}
             </View>
           </View>
 
@@ -504,6 +533,44 @@ export default function InfraScreen() {
                     <Text style={{ color: "#fff", fontWeight: "800" }}>
                       {sudoSubmitting ? "Sending…" : "Send"}
                     </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
+          <Modal
+            visible={rebootGrantOpen}
+            transparent
+            animationType="slide"
+            onRequestClose={() => { if (!rebootGranting) { setRebootGrantOpen(false); setRebootPw(""); } }}
+          >
+            <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" }}>
+              <View style={{ backgroundColor: c.bgCard, borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 22, paddingBottom: insets.bottom + 22, gap: 12 }}>
+                <Text style={{ color: c.textPrimary, fontSize: 18, fontWeight: "800" }}>Enable host reboot</Text>
+                <Text style={{ color: c.textMuted, fontSize: 13, lineHeight: 19 }}>
+                  Yaver runs as {summary.rebootGrant?.agentUser || "a normal user"}, which can't reboot the machine. Your sudo password installs a scoped rule that permits ONLY the reboot commands — not a root shell. It's used once and never stored.
+                </Text>
+                <TextInput
+                  value={rebootPw}
+                  onChangeText={setRebootPw}
+                  placeholder="sudo password"
+                  placeholderTextColor={c.textMuted}
+                  secureTextEntry
+                  autoFocus
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{ borderWidth: 1, borderColor: c.border, backgroundColor: c.bg, color: c.textPrimary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 }}
+                />
+                <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16 }}>
+                  Sent once to this machine's stdin, validated with visudo, never stored, streamed, or passed to any AI agent. Revocable later.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <Pressable onPress={() => { setRebootGrantOpen(false); setRebootPw(""); }} disabled={rebootGranting} style={[actionBtn(c), { backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, flex: 1 }]}>
+                    <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Cancel</Text>
+                  </Pressable>
+                  <Pressable onPress={() => void grantReboot()} disabled={rebootGranting || !rebootPw} style={[actionBtn(c), { backgroundColor: "#ef4444", flex: 1, opacity: rebootGranting || !rebootPw ? 0.5 : 1 }]}>
+                    <Text style={{ color: "#fff", fontWeight: "800" }}>{rebootGranting ? "Granting…" : "Enable"}</Text>
                   </Pressable>
                 </View>
               </View>
