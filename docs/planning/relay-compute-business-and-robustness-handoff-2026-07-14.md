@@ -17,10 +17,13 @@ Three changes to the original draft. If you read nothing else, read these.
    help: Cloudflare's Free/Pro/Business terms restrict what you **serve through**
    them, not what you cache. Enforcement takes the whole `yaver.io` zone with it.
    Split by hostname: **control plane orange, data plane grey.**
-2. **W0 (multi-relay failover) is new and is the highest-robustness item here.**
-   Today one relay reboot disconnects the entire fleet, and no CDN can fix it —
-   the relay is stateful. It needs one extra heartbeat field (`relayHost`) and a
-   second €3.80/mo box.
+2. **W0 (multi-relay failover) is new and is the highest-robustness item here —
+   and it is a CONFIG task, not a code task.** Today one relay reboot
+   disconnects the entire fleet, and no CDN can fix it (the relay is stateful,
+   so a stateless proxy cannot route a deviceId to the origin holding its
+   socket). But the agent ALREADY opens a tunnel to every configured relay and
+   clients ALREADY probe every relay — so this is: stand up a second €3.80/mo
+   box, add it to `platformConfig`, done. **No agent release required.**
 3. **Cloudflare saves ~€0.** You are not egress-bound (20 TB included; MJPEG at
    ~2 GB/h ≈ 10,000 hours). Adopt Cloudflare for free WAF/DDoS on the control
    plane, never as a cost lever and never as a paid tier.
@@ -430,22 +433,43 @@ device tunnelled to relay A that lands on relay B finds no tunnel and 502s.
 **A stateless CDN cannot route by deviceId to the stateful origin holding the
 socket.** This is an application-layer routing problem; buy no product for it.
 
-The heartbeat currently publishes `relayConnected` as a **boolean**
-(`backend/convex/devices.ts:887`) — it never says *which* relay. That single
-missing field is what blocks the whole design.
+**CORRECTED after reading the code (do not skip this — it changes the work by an
+order of magnitude).** An earlier revision of this section proposed a new
+`relayHost` heartbeat field and per-device relay routing. **That is not needed.
+The code already supports N relays:**
 
-Implementation outline:
+- `relayManager.applyRelayServers` (`desktop/agent/main.go`) builds a `desired`
+  set from **every configured relay** and starts a tunnel to **each one** —
+  `for addr, pw := range desired { go runRelayTunnel(...) }`. An agent registers
+  with **all** relays it knows about, not one.
+- `buildRemoteAgentCandidates` (`desktop/agent/agent_mesh_remote.go:362`) emits
+  `<relay.HttpURL>/d/<deviceID>` for **every** relay in the list, so clients
+  already try all of them and (since the per-leg-deadline fix) race them
+  honestly.
 
-1. Agent publishes `relayHost` (the relay it is actually tunnelled to) in the
-   heartbeat, alongside the existing `relayConnected`. One field.
-2. Convex stores it on the device row; clients read it with the device.
-3. Clients dial **the relay that holds that device**, instead of "the" relay.
-4. Run 2–3 relays (~€3.80/mo each). Agents pick one; on failure they redial
-   another and republish `relayHost`. The pool self-heals.
-5. Relay list stays in `platformConfig` / `cached_relay_servers` (already
-   exists — the agent logs `Using 1 cached relay server(s)` today).
-6. Tests: kill relay A mid-session; the agent must land on relay B and the phone
-   must follow it there without user action.
+So a device is reachable through **any** relay it is tunnelled to, and a client
+will find it. **Multi-relay failover is therefore a CONFIG task, not a code
+task.** The reason it does not work today is simply that `platformConfig` lists
+**one relay** — which is why the agent logs `Using 1 cached relay server(s)`.
+
+Implementation outline (mostly ops):
+
+1. Stand up a second relay (`cax11`, ~€3.80/mo, different region/AZ from the
+   first). It must be always-on; relays cannot be scale-to-zero.
+2. Add it to `platformConfig` relay servers. Agents pick it up on the next config
+   refresh and open a second tunnel automatically. **No agent release required.**
+3. Verify: `yaver ops machine_doctor --payload='{"device":"<id>"}'` should now
+   show a `reachable` leg per relay. Kill relay A; the box must stay reachable
+   via relay B with no user action.
+4. Watch out: the relay is stateful per-process, so this works ONLY because the
+   agent registers with both. If a future change makes the agent pick a single
+   "best" relay, this property silently dies — add a test that asserts an agent
+   with two configured relays opens two tunnels.
+
+Optional optimisation (NOT required for HA): publish which relay is actually
+carrying the device so clients can skip probing the others. Worth it only if the
+probe fan-out becomes measurably slow; with the per-leg deadlines it is already
+acceptable. Do not build it before the second relay exists.
 
 Interaction with W1 and the zombie work: eviction (`relay/tunnel_liveness.go`)
 makes a dead tunnel *detectable*; W0 makes it *survivable*. Ship eviction first
