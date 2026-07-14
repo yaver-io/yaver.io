@@ -113,6 +113,19 @@ func resolveRunnerSession(name, runner string) (string, string, error) {
 	}
 }
 
+// runnerSessionIsConfirmed reports whether a runner process was actually observed
+// for this session, as opposed to inferred from its name or its scrollback.
+// Unknown session → false: refusing a turn is always recoverable, typing a
+// command into someone's shell is not.
+func runnerSessionIsConfirmed(name string) bool {
+	for _, s := range listRunnerPTYSessions() {
+		if s.Name == name {
+			return s.Confirmed
+		}
+	}
+	return false
+}
+
 // capturePaneTail returns the last n non-empty lines the pane is showing.
 func capturePaneTail(sessionName string, n int) string {
 	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", sessionName).Output()
@@ -175,6 +188,25 @@ func executeRunnerSessionTurn(req runnerSessionTurnRequest) (runnerSessionTurnRe
 	sessionName, runnerID, err := resolveRunnerSession(req.Session, req.Runner)
 	if err != nil {
 		return runnerSessionTurnResponse{Error: err.Error()}, http.StatusNotFound
+	}
+
+	// Never type into a session we only GUESSED was a runner.
+	//
+	// A session keeps its name and its scrollback after its runner exits, so
+	// `yaver-codex` can be a plain interactive shell — and tmux send-keys does not
+	// know the difference. Text meant as a prompt is then a COMMAND, and the Enter
+	// that "submits" it runs it. Observed on a live box: a turn aimed at a bare
+	// `yaver-codex` session executed the text (`zsh: command not found`). A prompt
+	// like "remove the old build directory" would not have been so harmless.
+	if !runnerSessionIsConfirmed(sessionName) {
+		return runnerSessionTurnResponse{
+			Session: sessionName,
+			Runner:  runnerID,
+			Pane:    capturePaneTail(sessionName, runnerTurnPaneLines),
+			Error: fmt.Sprintf("session %q is not running a coding agent right now — its pane is at a shell, "+
+				"so a prompt would be executed as a shell command. Start one with `yaver wrap %s`.",
+				sessionName, runnerID),
+		}, http.StatusConflict
 	}
 
 	reply := runnerSessionTurnResponse{Session: sessionName, Runner: runnerID}

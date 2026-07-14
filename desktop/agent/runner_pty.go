@@ -352,6 +352,21 @@ type RunnerPTYSession struct {
 	Command  string `json:"command,omitempty"`
 	Created  int64  `json:"created,omitempty"`
 	Attached bool   `json:"attached"`
+	// Confirmed is true only when a runner process was actually OBSERVED for this
+	// pane — its start command, its current command, or its process tree. It is
+	// false when the session was classified by the weak signals: a `yaver-` name
+	// prefix, or the pane text merely containing the word "codex"/"claude code".
+	//
+	// The difference is not cosmetic. A tmux session named `yaver-codex` whose
+	// runner has since exited is a plain interactive SHELL — and a "prompt" typed
+	// into a shell is not a prompt, it is a COMMAND, submitted with Enter. Sending
+	// dictated text there executes it. Verified on a live box: a turn aimed at a
+	// bare `yaver-codex` session ran the text and came back `zsh: command not
+	// found`. Sessions survive their runner (systemd `KillMode=process` keeps the
+	// tmux server up across restarts), so this is the normal end state, not a
+	// corner case. `executeRunnerSessionTurn` refuses to type into an unconfirmed
+	// session; listing them is fine, driving them is not.
+	Confirmed bool `json:"confirmed"`
 }
 
 type RunnerSessionCloseResult struct {
@@ -457,46 +472,73 @@ func listRunnerPTYSessions() []RunnerPTYSession {
 				curCmd = strings.TrimSpace(cols[1])
 			}
 		}
+		// A runner process we can actually see: the pane's start command or its
+		// current foreground command. These are the only two signals that prove a
+		// runner is there to receive a prompt.
+		confirmed := true
 		runner := runnerFromStartCommand(startCmd)
 		if runner == "" {
 			runner = runnerFromStartCommand(curCmd)
 		}
+		// Below here we are GUESSING. A name prefix and a word in the scrollback
+		// both survive the runner's death — the session stays, the agent is gone,
+		// and what is left listening on the pane is a shell. Keep listing these
+		// (they are still the user's sessions) but mark them unconfirmed so no
+		// caller types into one. See RunnerPTYSession.Confirmed.
 		if runner == "" && strings.HasPrefix(name, "yaver-") {
 			runner = normalizeRunnerID(strings.TrimPrefix(name, "yaver-"))
 			if !IsSupportedRunner(runner) {
 				runner = ""
 			}
+			confirmed = false
 		}
 		if runner == "" {
-			runner = detectRunnerFromTmuxSession(name)
+			// Process-tree detection is real observation; the pane-text fallback
+			// inside it is not. detectRunnerFromTmuxSession reports which it used.
+			var byProcess bool
+			runner, byProcess = detectRunnerFromTmuxSessionDetailed(name)
+			confirmed = byProcess
 		}
 		if runner == "" {
 			continue // not a runner wrap
 		}
 		out = append(out, RunnerPTYSession{
 			Name: name, Runner: runner, Command: startCmd,
-			Created: created, Attached: attached,
+			Created: created, Attached: attached, Confirmed: confirmed,
 		})
 	}
 	return out
 }
 
 func detectRunnerFromTmuxSession(name string) string {
+	runner, _ := detectRunnerFromTmuxSessionDetailed(name)
+	return runner
+}
+
+// detectRunnerFromTmuxSessionDetailed also reports whether the runner was found
+// by OBSERVING a process (byProcess=true) or merely inferred from pane text
+// (byProcess=false).
+//
+// The text fallback is a guess and must be labelled as one: it matches any pane
+// whose scrollback happens to contain "codex" or "openai" — a shell where someone
+// ran `git log`, or read this very file — and a caller that types a prompt into
+// that shell has executed a command. See RunnerPTYSession.Confirmed.
+func detectRunnerFromTmuxSessionDetailed(name string) (string, bool) {
 	if pid := getPanePID(name); pid > 0 {
 		if runner := normalizeRunnerID(detectAgentType(pid)); IsSupportedRunner(runner) {
-			return runner
+			return runner, true
 		}
 	}
 	preview := strings.ToLower(capturePanePreview(name, 80))
 	switch {
 	case strings.Contains(preview, "claude code") || strings.Contains(preview, "claude.ai") || strings.Contains(preview, "claude /login"):
-		return "claude"
+		return "claude", false
 	case strings.Contains(preview, "codex") || strings.Contains(preview, "openai"):
-		return "codex"
+		return "codex", false
 	case strings.Contains(preview, "opencode"):
-		return "opencode"
+		return "opencode", false
 	}
-	return ""
+	return "", false
 }
 
 // runnerFromStartCommand returns the runner id when the first token of a tmux
