@@ -5,7 +5,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject var store: YaverStore
-    @State private var showAddBox = false
+    @State private var showPicker = false
     @StateObject private var lifecycle = BoxLifecycle()
 
     var body: some View {
@@ -40,8 +40,8 @@ struct DashboardView: View {
                             NavigationLink(destination: AppleTVRemoteView(captureFirst: true)) {
                                 Tile(icon: "video", title: "Capture", detail: "Capture card view")
                             }
-                            Button { showAddBox = true } label: {
-                                Tile(icon: "server.rack", title: store.selectedBox?.name ?? "Box", detail: "Change box")
+                            Button { showPicker = true } label: {
+                                Tile(icon: "server.rack", title: store.selectedBox?.name ?? "Box", detail: "Switch machine")
                             }
                             Button { store.signOut() } label: {
                                 Tile(icon: "rectangle.portrait.and.arrow.right", title: "Sign out", detail: "")
@@ -51,7 +51,7 @@ struct DashboardView: View {
                 }
                 .padding(56)
             }
-            .sheet(isPresented: $showAddBox) { AddBoxView() }
+            .sheet(isPresented: $showPicker) { MachinePickerView() }
             .task(id: store.selectedBox?.id) {
                 if let box = store.selectedBox { lifecycle.refreshReachability(box) }
             }
@@ -103,11 +103,11 @@ struct DashboardView: View {
 
     private var emptyBoxPrompt: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Add the box running Yaver")
+            Text("Pick a machine")
                 .font(.system(size: 26, weight: .semibold))
-            Text("Enter the LAN address of a machine running `yaver serve` (e.g. a Raspberry Pi or your Mac). The Apple TV must be on the same network.")
+            Text("Choose one of the machines on your account, or type a LAN address. A machine appears here once it's running `yaver serve` signed in as you.")
                 .font(.system(size: 19)).foregroundStyle(.secondary).frame(maxWidth: 720, alignment: .leading)
-            Button("Add box") { showAddBox = true }.padding(.top, 8)
+            Button("Choose machine") { showPicker = true }.padding(.top, 8)
         }
     }
 }

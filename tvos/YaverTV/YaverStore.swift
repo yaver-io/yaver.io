@@ -32,6 +32,23 @@ final class YaverStore: ObservableObject {
     func signOut() {
         token = ""
         storedToken = ""
+        // Clear the machine list too. On a family Apple TV, leaving boxes behind
+        // hands the next person the previous user's machine names and LAN IPs.
+        boxes = []
+        selectedBox = nil
+        selectedBoxId = ""
+        storedBoxesJSON = "[]"
+    }
+
+    /// Remove a box (a typo'd address, a decommissioned machine). Without this a
+    /// bad entry was permanent — the dashboard could only ever ADD.
+    func removeBox(_ box: BoxTarget) {
+        boxes.removeAll { $0.id == box.id }
+        if selectedBox?.id == box.id {
+            selectedBox = boxes.first
+            selectedBoxId = boxes.first?.id ?? ""
+        }
+        persistBoxes()
     }
 
     func addBox(_ box: BoxTarget) {
