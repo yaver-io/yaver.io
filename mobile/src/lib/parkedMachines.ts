@@ -189,6 +189,18 @@ export interface UseParkedMachinesResult {
   parkingId: string | null;
   /** Last wake/park error keyed by machineId. */
   errors: Record<string, string>;
+  /** The most recent wake/park failure, NOT keyed by machine.
+   *
+   *  `errors` can only be rendered on a machine's own row, so a failure whose
+   *  row then leaves the list (filtered out by status, or dropped by the
+   *  /subscription payload) takes its explanation with it — the user taps Wake,
+   *  the row disappears, and nothing is ever said. Keep the last failure here
+   *  too so the picker can state it even with an empty list. */
+  lastFailure: { machineId: string; message: string } | null;
+  /** A machine that just finished waking, held briefly so a successful wake has
+   *  a visible ending. Without it, "success" looks identical to the bug: the row
+   *  silently vanishes from Sleeping the moment the box is usable. */
+  justWoke: ManagedCloudMachineSummary | null;
   wake: (machineId: string) => Promise<void>;
   /** Park (sleep) a running managed box: snapshot + delete, scale-to-zero. */
   park: (machineId: string) => Promise<void>;
@@ -204,9 +216,14 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
   const [wakingId, setWakingId] = useState<string | null>(null);
   const [parkingId, setParkingId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [lastFailure, setLastFailure] = useState<{ machineId: string; message: string } | null>(null);
+  const [justWoke, setJustWoke] = useState<ManagedCloudMachineSummary | null>(null);
   // machineIds we optimistically flipped to "waking" on tap, so the card shows
   // motion instantly before the server reports "resuming".
   const optimisticRef = useRef<Set<string>>(new Set());
+  // machineIds THIS session asked to wake — survives the whole run, so we can
+  // still announce the box when it finally lands on "active" (minutes later).
+  const wakeIntentRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -260,6 +277,24 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
     }
   }, [machines]);
 
+  // Watch for a box crossing into "usable" and hold it briefly. A wake that
+  // works ends with the row leaving this list (it is a device now, not a
+  // sleeping machine) — which, with no announcement, is exactly what a wake
+  // that FAILED used to look like. Give success its own visible ending.
+  //
+  // Intent is tracked in its OWN ref (not the optimistic flag, which the effect
+  // above clears the moment the server reports any progress — it would be gone
+  // before the box ever reached "active").
+  useEffect(() => {
+    for (const m of machines) {
+      if (m.status !== "active") continue;
+      if (!wakeIntentRef.current.has(m.id)) continue;
+      wakeIntentRef.current.delete(m.id);
+      setJustWoke(m);
+      setTimeout(() => setJustWoke((cur) => (cur?.id === m.id ? null : cur)), 8000);
+    }
+  }, [machines]);
+
   const wake = useCallback(
     async (machineId: string) => {
       if (!token || wakingId) return;
@@ -270,17 +305,19 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
         return next;
       });
       optimisticRef.current.add(machineId);
+      wakeIntentRef.current.add(machineId);
+      setLastFailure(null);
       try {
         await startManagedCloudMachine(token, machineId);
         await refresh();
       } catch (e: any) {
         optimisticRef.current.delete(machineId);
-        setErrors((prev) => ({
-          ...prev,
-          [machineId]:
-            e?.message ||
-            "Yaver couldn't wake this box right now. Check your balance and connection, then try again.",
-        }));
+        wakeIntentRef.current.delete(machineId);
+        const message =
+          e?.message ||
+          "Yaver couldn't wake this box right now. Check your balance and connection, then try again.";
+        setErrors((prev) => ({ ...prev, [machineId]: message }));
+        setLastFailure({ machineId, message });
       } finally {
         setWakingId(null);
       }
@@ -301,12 +338,10 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
         await stopManagedCloudMachine(token, machineId);
         await refresh();
       } catch (e: any) {
-        setErrors((prev) => ({
-          ...prev,
-          [machineId]:
-            e?.message ||
-            "Yaver couldn't park this box right now. Try again in a moment.",
-        }));
+        const message =
+          e?.message || "Yaver couldn't park this box right now. Try again in a moment.";
+        setErrors((prev) => ({ ...prev, [machineId]: message }));
+        setLastFailure({ machineId, message });
       } finally {
         setParkingId(null);
       }
@@ -321,6 +356,8 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
     wakingId,
     parkingId,
     errors,
+    lastFailure,
+    justWoke,
     wake,
     park,
     refresh,

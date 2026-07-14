@@ -774,6 +774,9 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	s.tunnels[reg.DeviceID] = tunnel
 	s.mu.Unlock()
 
+	// A registered tunnel is not the same thing as a WORKING one. Watch it.
+	go s.watchTunnelLiveness(tunnel)
+
 	// Auto-provision a `<deviceId>.<exposeDomain>` subdomain for
 	// every connected tunnel. This gives every device a clean
 	// HTTPS-direct origin (e.g. https://abc1234.dev.yaver.io)

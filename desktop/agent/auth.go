@@ -1694,7 +1694,11 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	// device row (no history) so the phone/dashboard can show "online · no relay
 	// path" instead of a bare "online" that 502s when off-LAN. Decoupled from
 	// the relay's own presenceUpdate, which is opt-in and only fires on connect.
-	payload["relayConnected"] = anyRelayTunnelLive()
+	// …and only while that tunnel can still CARRY a request. A tunnel that stays
+	// registered but has stopped forwarding (relayDataPathUsable) used to keep
+	// publishing relayConnected=true, so the phone kept choosing a relay path
+	// that could only ever time out.
+	payload["relayConnected"] = relayDataPathUsable()
 	// Coerce nil slices to empty arrays so JSON encodes them as `[]` not
 	// `null`. The Convex http wrapper treats Array-valued localIps as
 	// "deliberate clear", but `null` short-circuits to `undefined` and

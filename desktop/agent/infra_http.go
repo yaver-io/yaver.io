@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"sort"
 	"strings"
@@ -222,8 +224,33 @@ func infraCapabilities() InfraCapabilities {
 		DevServices:    true,
 		SystemServices: true,
 		AgentShutdown:  true,
-		HostReboot:     runtime.GOOS == "darwin" || runtime.GOOS == "linux",
+		HostReboot:     canRebootHost(),
 	}
+}
+
+// canRebootHost reports whether this agent could ACTUALLY reboot the machine —
+// not merely whether the OS has a reboot command.
+//
+// The capability used to be `GOOS == darwin || linux`, which is a statement
+// about the operating system, not about us. Every reboot path needs root
+// (`sudo -n shutdown -r now`, `sudo -n systemctl reboot`), and an agent running
+// as an ordinary user under launchd/systemd usually does not have passwordless
+// sudo. So the phone and the dashboard rendered an ENABLED "Reboot host" button
+// that could only fail when tapped — an offer we could not honour.
+//
+// Verify it instead: we can reboot if we are root, or if `sudo -n true`
+// succeeds (proving passwordless sudo is configured for this user). `sudo -n`
+// never prompts, so this cannot hang a headless box.
+func canRebootHost() bool {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return false
+	}
+	if os.Geteuid() == 0 {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "sudo", "-n", "true").Run() == nil
 }
 
 func (s *HTTPServer) handleInfraSummary(w http.ResponseWriter, r *http.Request) {
@@ -455,5 +482,27 @@ func infraHostReboot() (string, error) {
 		}
 		errs = append(errs, fmt.Sprintf("%s: %s", cand.name, msg))
 	}
+	// Every candidate needs root. When they all fail on an otherwise-supported
+	// OS, the cause is almost always "this agent is not root and has no
+	// passwordless sudo" — so say what to do about it rather than dumping raw
+	// command errors the user cannot act on.
+	if os.Geteuid() != 0 {
+		return "", fmt.Errorf(
+			"reboot needs root: the Yaver agent runs as %s and passwordless sudo is not configured on this machine. "+
+				"Grant it with a sudoers rule (e.g. `%s ALL=(root) NOPASSWD: /sbin/shutdown, /bin/systemctl`), "+
+				"or run the agent as root. Underlying: %s",
+			currentUsername(), currentUsername(), strings.Join(errs, "; "))
+	}
 	return "", fmt.Errorf("reboot failed: %s", strings.Join(errs, "; "))
+}
+
+// currentUsername is a best-effort login name for user-facing hints.
+func currentUsername() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	if n := os.Getenv("USER"); n != "" {
+		return n
+	}
+	return "the agent user"
 }

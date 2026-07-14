@@ -379,6 +379,10 @@ func main() {
 		runClearLogs()
 	case "restart":
 		runRestart(os.Args[2:])
+	case "reboot":
+		// Reboot the HOST (not just the agent — that's `restart`). Local by
+		// default, or any machine you own with --machine=<alias>.
+		runReboot(os.Args[2:])
 	case "shutdown":
 		runShutdown()
 	case "ping":
@@ -10207,6 +10211,12 @@ type RelayHealthStatus struct {
 	SplitBrainStreak int       `json:"splitBrainStreak,omitempty"`
 	VPNInterfaces    []string  `json:"vpnInterfaces,omitempty"`
 	HealedAt         time.Time `json:"healedAt,omitempty"`
+
+	// Inbound liveness: did the relay manage to reach us back through our OWN
+	// tunnel? Every field above measures the outbound direction and stays green
+	// while a zombie tunnel silently strands every phone that depends on it.
+	TunnelRoundTripOK    bool   `json:"tunnelRoundTripOk"`
+	TunnelRoundTripError string `json:"tunnelRoundTripError,omitempty"`
 }
 
 // relayHealthFile returns the path to the relay health cache file.
@@ -10228,6 +10238,17 @@ func relayHealthFile() string {
 var relayTunnelsLive int32
 
 func anyRelayTunnelLive() bool { return atomic.LoadInt32(&relayTunnelsLive) > 0 }
+
+// relayDataPathUsable is what heartbeat should publish as `relayConnected`:
+// a tunnel is only worth advertising if it can actually CARRY a request.
+//
+// "Registered" was the old bar, and it let the control plane promise a path
+// that could not deliver: the phone read relayConnected=true, dialed the relay,
+// and timed out — every time, for as long as the zombie tunnel stayed
+// registered. A claim of reachability we cannot honour is worse than admitting
+// we have none, because it hides the direct/LAN alternatives behind a path that
+// will never work.
+func relayDataPathUsable() bool { return anyRelayTunnelLive() && !anyRelayTunnelZombie() }
 
 type relayManager struct {
 	parentCtx         context.Context
@@ -10600,11 +10621,85 @@ func (rm *relayManager) checkRelayHealth(client *http.Client) {
 			}
 		}
 
+		// INBOUND liveness. Everything above only proves we can reach the relay.
+		// It says nothing about whether the relay can reach US — and that is the
+		// direction a phone depends on, since it has no LAN or VPN path to this
+		// box. A tunnel that has gone zombie (registered, never forwarding) sails
+		// through every check above, so we ask the relay to call us back down our
+		// own tunnel and confirm we answer ourselves.
+		if status.OK && anyRelayTunnelLive() {
+			rtErr := rm.probeTunnelRoundTrip(rs)
+			status.TunnelRoundTripOK = rtErr == nil
+			if rtErr != nil {
+				status.TunnelRoundTripError = rtErr.Error()
+			}
+			streak := noteRoundTripOutcome(rs.HttpURL, rtErr == nil)
+			if rtErr != nil && streak >= roundTripHealThreshold && rs.QuicAddr != "" {
+				if rm.ForceReconnect(rs.QuicAddr) {
+					log.Printf("[RELAY] auto-heal: tunnel registered but not forwarding on %s (streak=%d: %v) — forcing redial of %s",
+						rs.HttpURL, streak, rtErr, rs.QuicAddr)
+					status.HealedAt = time.Now()
+					resetRoundTripStreak(rs.HttpURL)
+				} else {
+					log.Printf("[RELAY] auto-heal: tunnel not forwarding on %s (streak=%d) but no in-flight attempt to cancel for %s",
+						rs.HttpURL, streak, rs.QuicAddr)
+				}
+			}
+		}
+
 		rm.healthStatus[rs.HttpURL] = status
 	}
 
 	// Persist to file for `yaver status`
 	rm.saveHealth()
+}
+
+// probeTunnelRoundTrip asks the relay to proxy a request back to THIS agent
+// through this agent's own tunnel — the same `/d/<deviceId>/health` path a
+// phone uses — and reports whether we answered ourselves.
+//
+// This is the only check that can fail while the relay is perfectly healthy and
+// our outbound path to it is perfectly healthy, which is precisely the state a
+// zombie tunnel produces. A timeout here means: registered, but nothing we
+// serve can reach a client.
+func (rm *relayManager) probeTunnelRoundTrip(rs RelayServerConfig) error {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || cfg.DeviceID == "" || strings.TrimSpace(rs.HttpURL) == "" {
+		return nil // nothing to probe with — don't manufacture a failure
+	}
+	token, password := currentRelayCredentials(rs.QuicAddr)
+	if token == "" {
+		token = cfg.AuthToken
+	}
+	if password == "" {
+		password = runtimeRelayPassword(cfg)
+	}
+	url := strings.TrimRight(rs.HttpURL, "/") + "/d/" + cfg.DeviceID + "/health"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if password != "" {
+		req.Header.Set("X-Relay-Password", password)
+	}
+	// Generous enough for a loaded box, short enough that two consecutive
+	// failures still heal the tunnel inside a couple of minutes.
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("relay could not reach us through our own tunnel: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	// 5xx from the relay means it holds the tunnel but could not deliver on it.
+	// A 401/403 is an auth problem, not a dead tunnel — don't redial for that.
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("relay holds our tunnel but could not deliver: HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (rm *relayManager) saveHealth() {

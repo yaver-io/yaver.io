@@ -137,12 +137,12 @@ func probeRelayPath(httpURL string, tcpTimeout time.Duration) RelayPathProbe {
 // only produce informational warnings, while a false negative would
 // silently miss the macOS-Tailscale failure that motivated this file.
 var vpnInterfacePrefixes = []string{
-	"utun", // macOS userspace tunnels (Tailscale, OpenVPN, WireGuard, Cloudflare WARP)
-	"tun",  // Linux generic tunnel
-	"tap",  // Linux/Windows TAP devices (OpenVPN bridged mode)
-	"ppp",  // Point-to-point (PPTP/L2TP)
+	"utun",  // macOS userspace tunnels (Tailscale, OpenVPN, WireGuard, Cloudflare WARP)
+	"tun",   // Linux generic tunnel
+	"tap",   // Linux/Windows TAP devices (OpenVPN bridged mode)
+	"ppp",   // Point-to-point (PPTP/L2TP)
 	"ipsec", // IPsec virtual interfaces
-	"wg",   // WireGuard kernel module
+	"wg",    // WireGuard kernel module
 }
 
 // detectVPNInterference returns the names of UP, non-loopback,
@@ -228,4 +228,79 @@ func resetSplitBrainStreak(httpURL string) {
 	splitBrainStreaksMu.Lock()
 	defer splitBrainStreaksMu.Unlock()
 	splitBrainStreaks[httpURL] = 0
+}
+
+// ─── Inbound (tunnel round-trip) liveness ──────────────────────────────
+//
+// Everything above probes the OUTBOUND path: can this agent reach the relay?
+// That is the wrong direction for the failure that actually strands a box.
+//
+// A relay tunnel can go ZOMBIE: it stays registered on the relay (the relay's
+// "up 1h4m" is just now−connectedAt, not liveness) and the agent stays parked
+// in AcceptStream on a QUIC connection that never errors — while nothing the
+// relay sends down it ever arrives. The agent's own /health probe keeps
+// succeeding the whole time, because reaching the relay still works perfectly.
+// So auto-heal never fires, and a phone — which has no LAN and no Tailscale,
+// and therefore no path except the relay — cannot reach that machine again
+// until someone restarts the agent by hand. Observed 2026-07-14 on an always-on
+// Mac mini: registered for over an hour, every relay request timing out, both
+// sides reporting a healthy tunnel.
+//
+// The only honest test of an inbound path is to USE it: ask the relay to call
+// us back down our own tunnel and see if we answer ourselves. That is exactly
+// the request a phone makes, so it cannot pass while the phone's path is broken.
+
+// relayRoundTripStreaks counts consecutive failed self-probes per relay.
+var (
+	relayRoundTripMu      sync.Mutex
+	relayRoundTripStreaks = make(map[string]int)
+	// relayTunnelZombie is set once a tunnel has failed the round-trip enough
+	// times to be considered dead-but-registered. Heartbeat reads it so we stop
+	// publishing relayConnected=true for a tunnel that cannot carry a request —
+	// claiming reachability we can't deliver is what sent the phone down a path
+	// that could only ever time out.
+	relayTunnelZombie sync.Map // relayHTTPURL -> bool
+)
+
+// roundTripHealThreshold: consecutive failed self-probes before forcing a
+// redial. Two, for the same reason as splitBrainHealThreshold — one miss is a
+// flake, two in a row (~2 min at the 60s cadence) is a dead tunnel.
+const roundTripHealThreshold = 2
+
+// noteRoundTripOutcome updates the per-relay streak and returns its length.
+func noteRoundTripOutcome(httpURL string, ok bool) int {
+	relayRoundTripMu.Lock()
+	defer relayRoundTripMu.Unlock()
+	if ok {
+		relayRoundTripStreaks[httpURL] = 0
+		relayTunnelZombie.Delete(httpURL)
+		return 0
+	}
+	relayRoundTripStreaks[httpURL]++
+	n := relayRoundTripStreaks[httpURL]
+	if n >= roundTripHealThreshold {
+		relayTunnelZombie.Store(httpURL, true)
+	}
+	return n
+}
+
+func resetRoundTripStreak(httpURL string) {
+	relayRoundTripMu.Lock()
+	defer relayRoundTripMu.Unlock()
+	relayRoundTripStreaks[httpURL] = 0
+	relayTunnelZombie.Delete(httpURL)
+}
+
+// anyRelayTunnelZombie reports whether any relay tunnel is registered but has
+// been proven unable to carry an inbound request.
+func anyRelayTunnelZombie() bool {
+	zombie := false
+	relayTunnelZombie.Range(func(_, v any) bool {
+		if b, _ := v.(bool); b {
+			zombie = true
+			return false
+		}
+		return true
+	})
+	return zombie
 }
