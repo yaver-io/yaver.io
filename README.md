@@ -3,9 +3,9 @@
 [![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](docs/planning/LICENSING.md)
 
-**Yaver is an open-source, self-hostable MCP server: your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then you hot-reload it on your phone and keep iterating from inside the running app.**
+**Yaver is an open-source, self-hostable MCP server: your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then you hot-reload it across iOS, Android, watch, TV, car, and AR/VR surfaces and keep iterating from inside the running app.**
 
-Your code stays on your machine. The `yaver` agent runs on your Mac, Linux box, WSL machine, Pi, or VPS; the mobile app is the remote control. The CLI, agent, relay, and backend are all self-hostable — the mobile app connects through a thin hosted coordination plane today (identity + device discovery only; your code stays P2P), and full mobile self-host is on the way.
+Your code stays on your machine. The `yaver` agent runs on your Mac, Linux box, WSL machine, Pi, or VPS; the client surfaces are the remote controls and preview targets. iOS and Android are the deepest path today, and the repo also carries watch, TV, car, and AR/VR work. The CLI, agent, relay, and backend are all self-hostable — client apps connect through a thin hosted coordination plane today (identity + device discovery only; your code stays P2P), and full client self-host is on the way.
 
 <p align="center">
   <a href="https://github.com/kivanccakmak/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4">
@@ -21,6 +21,7 @@ Your code stays on your machine. The `yaver` agent runs on your Mac, Linux box, 
 
 - Run Claude Code, Codex, OpenCode, Aider, Goose, or another terminal agent from the Yaver agent.
 - Push React Native / Expo bundles to a paired phone through the native Hermes path.
+- Use Yaver surfaces for iOS, Android, watch, TV, car, and AR/VR workflows.
 - Capture dev-build feedback with screenshots, logs, and replay context.
 - Stream task, build, and reload progress back to mobile or the web dashboard.
 - Keep peer discovery, relay, and vault flows local-first and self-hostable.
@@ -49,7 +50,7 @@ curl -s https://yaver.io/llms.txt
 
 ## Use from Claude Code, Codex, or opencode (MCP)
 
-Yaver ships an MCP server, so a coding agent can drive your machine directly. You do **not** need a global install first — `npx` pulls the server on first run. Register it once, then ask the agent to call `yaver_lazy_setup`; it surfaces the sign-in link for you to tap and pairs your phone from inside the chat.
+Yaver ships an MCP server, so a coding agent can drive your machine directly. You do **not** need a global install first — `npx` pulls the server on first run. Register it once, then ask the agent to call `yaver_lazy_setup`; it surfaces the sign-in link for you to tap and pairs your device from inside the chat.
 
 ```bash
 # Claude Code
@@ -69,8 +70,8 @@ Already installed Yaver globally? `yaver mcp setup claude-code` (or `codex` / `o
 ## Core Loop
 
 1. Start `yaver serve` on your own machine.
-2. Pair the mobile app or web dashboard with that agent.
-3. Send a task to your coding agent from the phone.
+2. Pair the mobile app, web dashboard, or another Yaver surface with that agent.
+3. Send a task to your coding agent from the nearest surface.
 4. Watch terminal/build/reload progress live.
 5. Push the fix to a real device or deploy from your own machine when ready.
 
@@ -80,6 +81,7 @@ Already installed Yaver globally? `yaver mcp setup claude-code` (or `codex` / `o
 |---|---|
 | `desktop/agent/` | Go agent, CLI surfaces, local API, relay/P2P/runtime integrations |
 | `mobile/` | React Native mobile app and native preview container |
+| `watch/`, `wear/`, `tvos/` | Apple Watch, Wear OS, and Apple TV client surfaces |
 | `web/` | Next.js marketing site and dashboard |
 | `backend/convex/` | Hosted identity, session, and device-discovery metadata |
 | `relay/` | QUIC relay service |

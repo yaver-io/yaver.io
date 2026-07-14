@@ -1,7 +1,7 @@
 {
   "name": "Yaver",
   "short_name": "Yaver",
-  "description": "Use any AI coding agent from your phone. P2P encrypted connections to your dev machines.",
+  "description": "Use any AI coding agent from phone, web, watch, TV, car, and AR/VR surfaces. P2P encrypted connections to your dev machines.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",

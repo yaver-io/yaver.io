@@ -15,13 +15,17 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Yaver \u2014 Your Machine Is Your Cloud",
   description:
-    "Create full-stack projects, run Convex and Supabase locally, test on real devices, deploy anywhere \u2014 all from your phone. Free, open source, P2P encrypted.",
+    "Create full-stack projects, run local backends, test on iOS, Android, watch, TV, car, and AR/VR surfaces, and deploy from your own machine. Free, open source, P2P encrypted.",
   keywords: [
     "developer control plane",
     "local development platform",
     "Convex local dashboard",
     "Supabase local",
     "deploy from phone",
+    "AR VR developer tools",
+    "watch app developer tools",
+    "TV app developer tools",
+    "car app developer tools",
     "vibe coding",
     "your machine is your cloud",
     "Claude Code",
@@ -39,7 +43,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Yaver \u2014 Your Machine Is Your Cloud",
     description:
-      "Control your dev machines from your phone. Create projects, run local backends, test on real devices, deploy. Free forever.",
+      "Control your dev machines from phone, web, watch, TV, car, and AR/VR surfaces. Create projects, run local backends, test on real devices, deploy. Free forever.",
     url: "https://yaver.io",
     siteName: "Yaver",
     type: "website",
@@ -49,7 +53,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Yaver \u2014 Your Machine Is Your Cloud",
     description:
-      "Control your dev machines from your phone. Create projects, run local backends, test on real devices, deploy. Free forever.",
+      "Control your dev machines from phone, web, watch, TV, car, and AR/VR surfaces. Create projects, run local backends, test on real devices, deploy. Free forever.",
     images: ["/og-image.png"],
   },
   metadataBase: new URL("https://yaver.io"),

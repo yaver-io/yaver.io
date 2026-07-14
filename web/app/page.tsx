@@ -12,7 +12,9 @@ import { HIDE_PAID_UI } from "@/lib/launchFlags";
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "AI writes code in seconds; the loop around it still takes hours. Register Yaver as an MCP server and your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then hot-reloads it on your phone so you keep iterating from inside the running app. Open source, self-hostable, works with your existing subscription — your code never leaves your machine.";
+  "AI writes code in seconds; the loop around it still takes hours. Register Yaver as an MCP server and your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then hot-reloads it across iOS, Android, watch, TV, car, and AR/VR surfaces so you keep iterating from inside the running app. Open source, self-hostable, works with your existing subscription — your code never leaves your machine.";
+
+const SUPPORTED_SURFACES = ["iOS", "Android", "Watch", "TV", "Car", "AR/VR"];
 
 // HN-LAUNCH-HIDE-PAID: paid/managed-cloud/pricing surfaces are hidden via the
 // shared HIDE_PAID_UI flag (imported from @/lib/launchFlags).
@@ -28,11 +30,11 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   // ── What is it ──────────────────────────────────────────────────────
   {
     q: "What is Yaver?",
-    a: "An open-source, mobile-first developer toolkit centered on your own workstation. Drive your coding agent, trigger Hermes reloads on your own phone, capture feedback from your dev build, and keep everything running on your own machine — no hosted middleman. Works with any terminal agent: Claude Code, Codex, Aider, Goose, OpenCode, or a local model runner of your choice.",
+    a: "An open-source, multi-surface developer toolkit centered on your own workstation. Drive your coding agent, trigger reloads across iOS, Android, watch, TV, car, and AR/VR surfaces, capture feedback from your dev build, and keep everything running on your own machine — no hosted middleman. Works with any terminal agent: Claude Code, Codex, Aider, Goose, OpenCode, or a local model runner of your choice.",
   },
   {
     q: "Who is Yaver for?",
-    a: "An individual developer running Yaver on their own hardware — laptop, Mac mini, Linux box, or VPS — using their own phone as a remote control. Kick off agents, watch runs, reload bundles, iterate on a dev build from the couch. Sharing with trusted teammates (see below) is supported as a secondary capability.",
+    a: "An individual developer running Yaver on their own hardware — laptop, Mac mini, Linux box, or VPS — using phone, web, watch, TV, car, or AR/VR surfaces as control and preview surfaces. Kick off agents, watch runs, reload bundles, and iterate on dev builds without giving up local ownership. Sharing with trusted teammates (see below) is supported as a secondary capability.",
   },
   {
     q: "How is this different from AWS or Vercel?",
@@ -40,7 +42,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Can I use this for web apps, not just mobile?",
-    a: "Yes. The current deepest workflow is mobile-first, especially React-based apps, but Yaver also has SDKs and integrations for web, Flutter, and Unity paths. The landing story starts with mobile because that is where user-context capture and reproduction pain are sharpest.",
+    a: "Yes. The current deepest workflow is mobile-first, especially React-based apps, but Yaver also has SDKs and integrations for web, Flutter, Unity, watch, TV, car, and AR/VR paths. The landing story starts with mobile because that is where user-context capture and reproduction pain are sharpest.",
   },
 
   // ── Push to Device (Section 6) ──────────────────────────────────────
@@ -153,8 +155,8 @@ const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: str
     url: "https://yaver.io/download",
   },
   {
-    name: "Install the Yaver mobile app",
-    text: "Download the Yaver mobile app from the App Store or Google Play and sign in with Apple, Google, or Microsoft SSO.",
+    name: "Install a Yaver surface app",
+    text: "Download Yaver for iOS or Android first, then add watch, TV, car, or AR/VR surfaces when that is where you want to preview or control the workflow.",
     url: "https://yaver.io/download",
   },
   {
@@ -762,7 +764,7 @@ const DEMO_TABS = [
     id: "full-loop",
     label: "Full Loop",
     icon: "\uD83D\uDD04",
-    desc: "Create a project, browse your database, vibe code a feature \u2014 all from your phone.",
+    desc: "Create a project, browse your database, vibe code a feature \u2014 from phone, web, or another Yaver surface.",
     header: "Yaver scaffolds Bento + Bento running live on iPhone 16 Pro sim",
     video: `${VIDEO_CDN}/bento-demo-v1/bento-demo.mp4`,
   },
@@ -875,7 +877,7 @@ function CloudInfraSection() {
       unit: "starter credit",
       badge: "Included model",
       tone: "border-emerald-500/35 bg-emerald-500/5",
-      text: "Managed coding workspace with an included agent model. Connect GitHub, ask for changes from your phone, preview, and let Yaver stop the machine when idle.",
+      text: "Managed coding workspace with an included agent model. Connect GitHub, ask for changes from phone, web, or another Yaver surface, preview, and let Yaver stop the machine when idle.",
       items: [
         "Saved cloud workspace",
         "Managed coding agent",
@@ -1178,9 +1180,9 @@ export default function HomePage() {
   const howToLd = {
     "@context": "https://schema.org",
     "@type": "HowTo",
-    name: "Install and pair Yaver from your phone",
+    name: "Install and pair Yaver from a client surface",
     description:
-      "Run AI coding agents on your own machine and control them from your phone.",
+      "Run AI coding agents on your own machine and control them from phone, web, watch, TV, car, or AR/VR surfaces.",
     totalTime: "PT5M",
     supply: [{ "@type": "HowToSupply", name: "A Mac, Linux, or Windows machine" }],
     tool: [
@@ -1234,7 +1236,7 @@ export default function HomePage() {
           </p>
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Open source · Self-hostable · Mobile-first
+            Open source · Self-hostable · Multi-surface
           </div>
 
           <h1 className="mb-5 text-4xl font-bold leading-[1.02] tracking-tight text-surface-50 sm:text-5xl md:text-6xl">
@@ -1252,10 +1254,21 @@ export default function HomePage() {
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
             Register Yaver as an MCP server and your coding agent &mdash; Claude
             Code, Codex, or OpenCode &mdash; builds a full-stack app on your own
-            machine. Then hot-reload it on your phone and keep iterating from
-            inside the running app. Open source, self-hostable &mdash; your code
-            never leaves your machine.
+            machine. Then hot-reload it across iOS, Android, watch, TV, car,
+            and AR/VR surfaces and keep iterating from inside the running app.
+            Open source, self-hostable &mdash; your code never leaves your machine.
           </p>
+
+          <div className="mx-auto mt-6 flex max-w-2xl flex-wrap items-center justify-center gap-2">
+            {SUPPORTED_SURFACES.map((surface) => (
+              <span
+                key={surface}
+                className="rounded-full border border-surface-800 bg-surface-900/70 px-3 py-1 text-xs font-medium text-surface-300"
+              >
+                {surface}
+              </span>
+            ))}
+          </div>
 
           <div className="mt-7 flex flex-col items-center justify-center gap-2">
             {/* MCP-first hero: register Yaver in your coding agent — no global
@@ -1398,7 +1411,7 @@ export default function HomePage() {
             <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">2</span>
-                <span className="text-sm font-semibold text-surface-100">Use the mobile app</span>
+                <span className="text-sm font-semibold text-surface-100">Install a Yaver surface app</span>
               </div>
               <div className="mt-1 flex flex-col gap-2">
                 <a href="https://apps.apple.com/us/app/yaver-io/id6760467669" target="_blank" rel="noopener noreferrer"
@@ -1416,7 +1429,7 @@ export default function HomePage() {
                 Sign in with the same OAuth account you used for <code>yaver auth</code>. The app auto-pairs with your dev machine over LAN, or via relay on cellular &mdash; no QR code, no IP to type.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">
-                Once paired, it&apos;s the control surface for incidents, deploy targets, and the remote agent. For React Native, the normal flow is Hermes bundle reload into Yaver on the phone, not a native Xcode install.
+                iOS and Android are the first install surfaces. Watch, TV, car, and AR/VR builds extend the same operator model for glanceable approvals, room-scale dashboards, in-car voice summaries, and spatial previews. For React Native, the normal flow is Hermes bundle reload into Yaver on the phone, not a native Xcode install.
               </p>
             </div>
 
@@ -1453,7 +1466,7 @@ export default function HomePage() {
             </p>
             <p className="text-xs leading-relaxed text-surface-400">
               Yaver has broader features in the repo, but the near-term product story stays focused on one flow:
-              feedback from the app, triage from the phone, fix on your machine.
+              feedback from the app, triage from the nearest surface, fix on your machine.
             </p>
           </div>
         </div>
@@ -1479,7 +1492,7 @@ export default function HomePage() {
               {[
                 { n: 1, t: "Phone sandbox first", d: "Create a phone project with schema, auth personas, seed data, CRUD, and local persistence." },
                 { n: 2, t: "Run the same project on your hardware", d: "Push it to `yaver serve` on macOS, Linux, WSL, a Pi, or a VPS without changing the backend shape." },
-                { n: 3, t: "Use a remote coding box", d: "Treat that machine as the web UI + backend box, run Claude Code / Codex / similar agents there, and watch runs or tests from the phone." },
+                { n: 3, t: "Use a remote coding box", d: "Treat that machine as the web UI + backend box, run Claude Code / Codex / similar agents there, and watch runs or tests from phone, web, watch, TV, car, or AR/VR surfaces." },
                 { n: 4, t: "Promote without rewrites", d: "Use the same portable project bundle and the same agent binary when you move from phone to your own hardware." },
                 { n: 5, t: "Wire in third-party apps", d: "Mint per-project tokens and let a React Native, web, or Node app call the Yaver runtime API while the project stays local-first." },
                 { n: 6, t: "Keep exports as escape hatches", d: "Supabase, Convex, and other systems remain optional exits, not the default destination." },
@@ -1521,7 +1534,7 @@ export default function HomePage() {
           <div className="mt-12 grid gap-4 md:grid-cols-3">
             {[
               { t: "Browse Tables", d: "Convex documents, Supabase rows, Postgres tables. Edit inline. Filter, sort, export CSV." },
-              { t: "Run Queries", d: "Execute Convex functions or SQL queries from your phone. See results instantly. Debug data issues on the go." },
+              { t: "Run Queries", d: "Execute Convex functions or SQL queries from phone, web, or another Yaver surface. See results instantly. Debug data issues on the go." },
               { t: "Live Logs", d: "Watch function calls, mutations, and errors stream in real-time. Like tail -f, but from the bus." },
             ].map((c) => (
               <div key={c.t} className="rounded-xl border border-surface-800 bg-surface-900/50 p-5">
@@ -1770,7 +1783,7 @@ return (
           <div className="rounded-xl border-l-2 border-emerald-500/60 bg-surface-900/50 p-5 text-left text-sm leading-relaxed text-surface-300">
             Run Llama, Qwen, DeepSeek, Mistral, or CodeGemma on your own hardware.
             Zero API keys. Zero cloud. Fully air-gapped if you want.
-            Full remote control from your phone or any terminal.
+            Full remote control from phone, web, watch, TV, car, AR/VR, or any terminal.
           </div>
         </div>
       </section>
@@ -1782,7 +1795,7 @@ return (
             Start local. Keep the footprint small.
           </h2>
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            The default path is still the simplest one: phone sandbox first, then your own machine. Public docs stay centered on that route.
+            The default path is still the simplest one: phone sandbox first, then your own machine. From there the same runtime can reach web, watch, TV, car, and AR/VR surfaces.
           </p>
 
           <div className="overflow-hidden rounded-xl border border-surface-800">
@@ -1797,7 +1810,7 @@ return (
               <tbody className="divide-y divide-surface-800/60">
                 {[
                   ["Yaver CLI + Agent", "Your dev machine", "$0"],
-                  ["Yaver Mobile App", "Your phone", "$0"],
+                  ["Yaver Surface Apps", "iOS / Android / watch / TV / car / AR/VR", "$0"],
                   ["Web UI (yaver.io)", "Browser", "$0"],
                   ["Local phone sandbox backend", "Inside the mobile app", "$0"],
                   ["Promoted backend on your own machine", "Your Mac / Linux / WSL / VPS", "$0 + your hardware"],
@@ -1817,8 +1830,8 @@ return (
 
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
             <p><strong className="text-surface-100">A solo developer can run the open-source stack at $0.</strong></p>
-            <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi.</p>
-            <p>Self-host the CLI, agent, relay, and backend for free. The mobile app connects through Yaver&apos;s thin coordination plane today &mdash; identity and device discovery only, your code stays P2P &mdash; and full mobile self-host is on the way.</p>
+            <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi, with control surfaces expanding across mobile, watch, TV, car, and AR/VR.</p>
+            <p>Self-host the CLI, agent, relay, and backend for free. Client surfaces connect through Yaver&apos;s thin coordination plane today &mdash; identity and device discovery only, your code stays P2P &mdash; and full client self-host is on the way.</p>
             <p className="mt-4 text-surface-500">
               The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}
               <strong className="text-surface-300">FSL-1.1</strong> (auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}
@@ -1924,7 +1937,7 @@ function DashboardComparison() {
           <div>Supabase Studio &nbsp;&rarr; <span className="text-emerald-400">yaver.io/db/mobile-app</span></div>
         </div>
         <ul className="space-y-1.5 text-xs text-surface-300">
-          <li>{"\uD83D\uDCF1  Accessible from your phone"}</li>
+          <li>{"\uD83D\uDCF1  Accessible from your surfaces"}</li>
           <li>{"\uD83C\uDF10  Accessible from any browser"}</li>
           <li>{"\uD83D\uDD12  P2P encrypted through relay"}</li>
           <li className="text-emerald-400">{"\u2713  Works everywhere"}</li>

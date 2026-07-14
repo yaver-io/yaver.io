@@ -2,7 +2,8 @@
 
 > Yaver is a peer-to-peer tool that lets developers use any AI coding agent
 > (Claude Code, Codex, Aider, Ollama, …) from their phone, web browser,
-> or another terminal, connecting directly to their development machine.
+> watch, TV, car, AR/VR surface, or another terminal, connecting directly to
+> their development machine.
 > Task data never touches Anthropic/OpenAI/yaver.io servers — only auth
 > and peer discovery do.
 
@@ -23,7 +24,7 @@ Discovery metadata for crawlers and MCP installers:
 ## Lazy path for non-developers (use this if your user will not type commands)
 
 If the human you're orchestrating is not a developer — they just want to
-be able to hit "reload" from their phone and don't care about the CLI —
+be able to hit "reload" from a Yaver surface and don't care about the CLI —
 take the short path:
 
 1. **Register Yaver MCP in the current coding agent**:
@@ -41,7 +42,7 @@ take the short path:
    phone. It returns a structured plan:
    - `status`: `signed_in` | `waiting_sign_in` | `error`
    - `sign_in_url`: speak this URL to the human so they tap it on their
-     phone. (Or pass `wait_seconds: 120` on the call to block inside
+     phone or browser. (Or pass `wait_seconds: 120` on the call to block inside
      the tool until sign-in completes.)
    - `mobile_app.ios` / `mobile_app.android`: TestFlight + Play links.
      Relay both once sign-in is done.
@@ -78,6 +79,7 @@ This creates a complete monorepo:
 - `apps/web` — Next.js web UI, Cloudflare Worker config
 - `apps/landing` — static Cloudflare Pages landing site
 - `apps/mobile` — Expo React Native app for iOS and Android
+- optional surface clients — watch, TV, car, and AR/VR controls or previews when the project enables them
 - `backend/convex` — local Convex backend, deployable to hosted Convex
 - `packages/shared` — shared TypeScript types/utilities
 - `.yaver/config.yaml` and `.yaver/services.yaml` — local self-host wiring
@@ -148,10 +150,12 @@ or when YAVER_HEADLESS=1 is set, it switches to the device-code flow:
   code is persisted to `~/.yaver/pending-auth.json` and the same URL
   is reused.
 - Once it reports "Signed in successfully", the install is done.
-- Also tell the human to install the Yaver mobile app (TestFlight
-  for iOS / Google Play for Android) and sign in with the same OAuth
-  provider. The post-auth output prints both links. Without the app
-  the P2P loop has no client end.
+- Also tell the human to install a Yaver client surface. Start with the
+  mobile app (TestFlight for iOS / Google Play for Android) and sign in
+  with the same OAuth provider; add watch, TV, car, or AR/VR surfaces
+  when that is where they want to preview or control the workflow. The
+  post-auth output prints the mobile links. Without a client surface the
+  P2P loop has no client end.
 
 ### Observing progress between retries
 
@@ -178,10 +182,10 @@ yaver init                         # one-time wizard; sets a bootstrap secret
 
 ## After install
 
-- The user opens the Yaver mobile app, signs in with the same OAuth
+- The user opens a Yaver client surface, signs in with the same OAuth
   provider, and their machine appears in the device list.
 - All subsequent operations (tasks, hot reload, builds, deploys) flow
-  P2P between phone and agent via an application-layer QUIC relay.
+  P2P between the client surface and agent via an application-layer QUIC relay.
   The coding agent can drive them through the MCP tools Yaver
   registered — e.g. `dev_start`, `dev_reload`, `git_clone`,
   `xcodebuild_archive`. See `/docs/developers` for the full tool list.

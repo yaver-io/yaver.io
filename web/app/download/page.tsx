@@ -68,6 +68,10 @@ export default function DownloadPage() {
               downloads the matching, signed and notarized agent binary into <code>~/.yaver/bin/</code>.
             </p>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
+              The agent is one install path; the client side is multi-surface. Start with iOS or Android,
+              then add watch, TV, car, or AR/VR surfaces when those are the right preview or control targets.
+            </p>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
               Why one path: a single <code>yaver</code> command, owned by the user who runs it (no
               system-user split, no <code>/root/.yaver</code> vs <code>/home/yaver/.yaver</code> drift),
               auto-updates with <code>npm install -g yaver-cli@latest</code>, and avoids multiple
@@ -194,7 +198,7 @@ export default function DownloadPage() {
             </div>
             <p className="mt-3 text-sm leading-6 text-surface-400">
               Scan the QR from your phone or tap through to download the latest signed APK. No Node,
-              no CLI &mdash; the mobile app is the native container that runs your projects and drives
+              no CLI &mdash; the Android app is one native surface that runs your projects and drives
               your agents. Also on Google Play.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
@@ -229,6 +233,21 @@ export default function DownloadPage() {
               </DownloadButton>
             </div>
           </div>
+        </section>
+
+        <section className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-surface-500">
+            Additional surfaces
+          </p>
+          <h2 className="mt-2 text-lg font-semibold text-surface-50">
+            Watch, TV, car, and AR/VR
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-surface-400">
+            Yaver is not limited to the phone. Mobile is the first pairing and deepest debug surface,
+            while watch, TV, car, and AR/VR clients extend the same agent loop for approvals,
+            dashboards, voice summaries, and spatial previews. Availability depends on the target
+            platform and release channel.
+          </p>
         </section>
 
         <section className="mt-10 rounded-2xl border border-surface-800 bg-surface-900 p-6">
