@@ -1196,6 +1196,7 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux.HandleFunc("/presence", s.handlePresence)
 	mux.HandleFunc("/admin/set-password", s.handleSetPassword)
 	mux.HandleFunc("/admin/status", s.handleAdminStatus)
+	mux.HandleFunc("/admin/selftest", s.handleAdminSelftest)
 	mux.HandleFunc("/authmix", s.handleAuthMix)
 	mux.HandleFunc("/admin/bandwidth", s.handleBandwidthStats)
 	// P2P bus — per-user fanout (see relay/bus.go). Not a broker;
