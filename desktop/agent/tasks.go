@@ -1004,15 +1004,15 @@ type Task struct {
 
 	PendingFollowUps []PendingFollowUp `json:"pendingFollowUps,omitempty"`
 
-	runner   RunnerConfig // the runner config used for this task (not persisted)
+	runner RunnerConfig // the runner config used for this task (not persisted)
 	// codexLastMsgPath: for embedded chat mode we run codex with
 	// --output-last-message <file> and read ONLY the final assistant message
 	// from it as ResultText — no reasoning, tool-log, or banner pollution.
 	codexLastMsgPath string
-	cmd      *exec.Cmd
-	cancel   context.CancelFunc
-	stdin    io.WriteCloser
-	outputCh chan string
+	cmd              *exec.Cmd
+	cancel           context.CancelFunc
+	stdin            io.WriteCloser
+	outputCh         chan string
 	// eventCh carries structured (non-text) events for this task —
 	// agent_question, agent_answered, agent_question_cancelled, …
 	// The SSE writer in handleTaskByID/streamOutput selects on this
@@ -2699,7 +2699,13 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		}
 	} // end else (direct execution)
 
-	// Watchdog: if no output after 30s, emit a warning to the mobile user.
+	// Watchdog: warn at 30s of no output, then FAIL at a hard no-output deadline.
+	// A runner that emits NOTHING for minutes is hung — blocked on an OAuth stdin
+	// prompt, an AI provider that isn't returning ("cloud not returning"), or a
+	// wedged cold start — and would otherwise sit `running` forever, leaving the
+	// mobile app on a perpetual typing indicator with no idea what's wrong. This
+	// makes the agent aware of a stuck runner from its (absent) stdout and hands
+	// the phone an actionable failure instead of an infinite hang.
 	go func() {
 		time.Sleep(30 * time.Second)
 		tm.mu.RLock()
@@ -2713,6 +2719,35 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			output.WriteString(task.Output)
 			tm.mu.RUnlock()
 			tm.emit(task, &output, "⏳ Waiting for response from AI agent... this may take longer if another session is active.\n")
+		}
+
+		// Hard no-output deadline. A legit task streams *something* within a few
+		// minutes; zero bytes past this means genuinely stuck.
+		const noOutputDeadline = 4 * time.Minute
+		time.Sleep(noOutputDeadline - 30*time.Second)
+		tm.mu.Lock()
+		stuck := len(task.Output) == 0 && task.Status == TaskStatusRunning
+		var reason string
+		if stuck {
+			reason = fmt.Sprintf(
+				"%s produced no output for %s — it's likely waiting for sign-in, rate-limited, or the AI provider isn't responding. Sign the runner in again (or check its provider/API key) and retry.",
+				task.runner.Name, noOutputDeadline,
+			)
+			task.Status = TaskStatusFailed
+			task.Output = reason
+			task.ResultText = reason
+			nowT := time.Now()
+			task.FinishedAt = &nowT
+			tm.persist()
+		}
+		tm.mu.Unlock()
+		if stuck {
+			log.Printf("[task %s] FAILED: no output after %s — runner stuck (no-output deadline)", task.ID, noOutputDeadline)
+			// Kill the wedged process. The exit handler only acts while status is
+			// Running, so it no-ops here and just closes doneCh (fires SSE done).
+			if task.cmd != nil && task.cmd.Process != nil {
+				_ = task.cmd.Process.Kill()
+			}
 		}
 	}()
 
