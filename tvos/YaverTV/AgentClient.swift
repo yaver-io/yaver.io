@@ -159,6 +159,28 @@ actor AgentClient {
         return (try JSONDecoder().decode(TaskList.self, from: data)).tasks
     }
 
+    /// A live redroid / Android screen frame (GET /droid/frame → PNG). Throws a
+    /// readable message on 503 ("no android device attached") so the viewer can
+    /// say so instead of showing nothing.
+    func droidFrame(device: String? = nil) async throws -> Data {
+        var comps = URLComponents(string: "http://\(box.host):\(box.port)/droid/frame")!
+        if let device, !device.isEmpty { comps.queryItems = [URLQueryItem(name: "device", value: device)] }
+        guard let url = comps.url else { throw AgentError(message: "bad box host") }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "no Android screen (\(http.statusCode))")
+        }
+        return data
+    }
+
     /// Feedback reports the box has collected (GET /feedback → a bare array).
     func listFeedback() async throws -> [FeedbackReport] {
         guard let url = URL(string: "http://\(box.host):\(box.port)/feedback") else {

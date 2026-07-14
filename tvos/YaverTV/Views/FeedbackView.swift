@@ -7,6 +7,7 @@
 // touch UI fits; the TV is the "what came in" glance.
 
 import SwiftUI
+import AVKit
 
 struct FeedbackView: View {
     @EnvironmentObject var store: YaverStore
@@ -14,6 +15,7 @@ struct FeedbackView: View {
     @State private var reports: [FeedbackReport] = []
     @State private var loading = true
     @State private var error: String?
+    @State private var playing: FeedbackReport?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -53,6 +55,10 @@ struct FeedbackView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
         .task { await load() }
+        .fullScreenCover(item: $playing) { report in
+            FeedbackVideoPlayer(report: report, host: store.selectedBox?.host ?? "",
+                                port: store.selectedBox?.port ?? 18080, token: store.token)
+        }
     }
 
     private func row(_ r: FeedbackReport) -> some View {
@@ -66,6 +72,13 @@ struct FeedbackView: View {
                 Text(r.safeTranscript).font(.system(size: 18)).foregroundStyle(.secondary).lineLimit(3)
             }
             HStack(spacing: 18) {
+                if r.hasVideo {
+                    Button { playing = r } label: {
+                        Label("Play", systemImage: "play.circle.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                 if r.shotCount > 0 { pill("\(r.shotCount) shots", "photo", .blue) }
                 if r.errorCount > 0 { pill("\(r.errorCount) errors", "exclamationmark.triangle", .red) }
                 if let t = r.createdAt { Text(t).font(.system(size: 14)).foregroundStyle(.secondary) }
@@ -94,5 +107,40 @@ struct FeedbackView: View {
             self.error = error.localizedDescription
         }
         loading = false
+    }
+}
+
+/// Plays a feedback report's MP4 on the TV. AVPlayer plays MP4 natively (unlike
+/// the agent's MJPEG streams), and the box's /feedback/{id}/video is bearer-
+/// authed — so the asset carries the Authorization + surface headers. Watching a
+/// bug report on the big screen is exactly what a TV is good for.
+private struct FeedbackVideoPlayer: View {
+    let report: FeedbackReport
+    let host: String
+    let port: Int
+    let token: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VideoPlayer(player: makePlayer())
+            .ignoresSafeArea()
+            .overlay(alignment: .topLeading) {
+                Button("Done") { dismiss() }.padding(32)
+            }
+    }
+
+    private func makePlayer() -> AVPlayer {
+        guard let url = URL(string: "http://\(host):\(port)/feedback/\(report.id)/video") else {
+            return AVPlayer()
+        }
+        let asset = AVURLAsset(url: url, options: [
+            "AVURLAssetHTTPHeaderFieldsKey": [
+                "Authorization": "Bearer \(token)",
+                "X-Yaver-Surface": "tv",
+            ],
+        ])
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        player.play()
+        return player
     }
 }

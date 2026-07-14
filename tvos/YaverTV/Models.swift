@@ -124,6 +124,7 @@ struct FeedbackReport: Decodable, Identifiable {
     let source: String?
     let transcript: String?
     let screenshots: [String]?
+    let videoPath: String?
     let appVersion: String?
     let buildId: String?
     let createdAt: String?
@@ -131,6 +132,7 @@ struct FeedbackReport: Decodable, Identifiable {
 
     var shotCount: Int { screenshots?.count ?? 0 }
     var errorCount: Int { errors?.count ?? 0 }
+    var hasVideo: Bool { videoPath?.isEmpty == false }
     var safeTranscript: String { redactHomePaths(transcript ?? "") }
 }
 

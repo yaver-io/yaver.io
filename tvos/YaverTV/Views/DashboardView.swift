@@ -46,6 +46,9 @@ struct DashboardView: View {
                             NavigationLink(destination: FeedbackView()) {
                                 Tile(icon: "bubble.left.and.text.bubble.right", title: "Feedback", detail: "Reports from test devices")
                             }
+                            NavigationLink(destination: DroidStreamView()) {
+                                Tile(icon: "iphone.gen3", title: "Android", detail: "Watch the redroid screen live")
+                            }
                             Button { showPicker = true } label: {
                                 Tile(icon: "server.rack", title: store.selectedBox?.name ?? "Box", detail: "Switch machine")
                             }
