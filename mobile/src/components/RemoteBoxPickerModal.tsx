@@ -11,9 +11,12 @@ import {
 } from "react-native";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useColors } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import { AppScreenHeader } from "./AppScreenHeader";
+import EmptyState from "./EmptyState";
+import RunnerAuthModal from "./RunnerAuthModal";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
 import { connectionManager } from "../lib/connectionManager";
@@ -199,6 +202,7 @@ function SleepingMachineRow({
 
 export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: Props) {
   const c = useColors();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const tabletContent = useTabletContentStyle("regular");
   const deviceCtx = useDevice();
@@ -270,6 +274,13 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   const [codingStatusByDevice, setCodingStatusByDevice] = React.useState<
     Record<string, CodingStatus | null>
   >({});
+  // Remote runner sign-in, launched straight from the row that reports the
+  // problem. `target` routes the OAuth via /peer/<id>, so this works for a box
+  // the phone is not currently attached to — which is the normal case when you
+  // are standing in the picker deciding where to send work.
+  const [authTarget, setAuthTarget] = React.useState<
+    { deviceId: string; deviceName: string; runner: string } | null
+  >(null);
   // Per-device "Fix this machine" remediation state. Drives the
   // /install/mobile flow (Node LTS + hermesc) on the box the user
   // tapped, streaming live progress so a stalled apt/npm is never an
@@ -697,21 +708,41 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
             style={{ flex: 1 }}
             contentContainerStyle={[{ padding: 16, paddingBottom: 32 }, tabletContent]}
           >
-            <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "700", marginBottom: 4 }}>
-              Choose remote box
-            </Text>
-            <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 20 }}>
-              Select the machine Yaver should use for app builds, live reload, and project tools. Confirm at the bottom when you're ready.
-            </Text>
+            {/* Title + subtitle only make sense when there IS a list to choose
+                from. With an empty roster they framed a void: a heading that
+                promised a choice, a subtitle pointing at a Confirm bar that
+                could never confirm. Empty → the EmptyState below carries its
+                own title and the ONE action that unblocks the user. */}
+            {eligibleDevices.length > 0 ? (
+              <>
+                <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "700", marginBottom: 4 }}>
+                  Choose remote box
+                </Text>
+                <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 20 }}>
+                  Select the machine Yaver should use for app builds, live reload, and project tools. Confirm at the bottom when you're ready.
+                </Text>
+              </>
+            ) : null}
             {eligibleDevices.length === 0 ? (
-              <View style={{ padding: 16, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard }}>
-                <Text style={{ color: c.textPrimary, fontWeight: "600", marginBottom: 6 }}>
-                  No remote boxes ready
-                </Text>
-                <Text style={{ color: c.textMuted, fontSize: 12 }}>
-                  Devices still handles pairing, auth recovery, and deep diagnostics. Come back here once a machine shows as live.
-                </Text>
-              </View>
+              // NOTE: deliberately bare EmptyState, NOT NoMachineEmpty —
+              // NoMachineEmpty renders this very modal, so using it here
+              // would recurse.
+              <EmptyState
+                icon="desktop-outline"
+                title="No remote boxes ready"
+                body={
+                  sleepingMachines.length > 0
+                    ? "Wake one of the sleeping machines below, or pair a new one on the Devices tab."
+                    : "Devices handles pairing, auth recovery, and deep diagnostics. Come back once a machine shows as live."
+                }
+                action={{
+                  label: "Open Devices",
+                  onPress: () => {
+                    onClose();
+                    router.push("/(tabs)/devices" as any);
+                  },
+                }}
+              />
             ) : (
               eligibleDevices.map((device) => {
                 const ping = pingByDevice[device.id];
@@ -948,13 +979,61 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             {codingStatus?.path ? ` · ${codingStatus.path}` : ""}
                           </Text>
                         ) : codingRunners.length > 0 ? (
-                          <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>
-                            {codingRunners.map((r) => {
-                              if (!r.installed) return `${runnerDisplayName(r.id)} not installed`;
-                              if (!r.authConfigured) return `${runnerDisplayName(r.id)} auth needed`;
-                              return `${runnerDisplayName(r.id)} not ready`;
-                            }).join(" · ")}
-                          </Text>
+                          // "Claude Code auth needed" used to be dead text: it named
+                          // the blocker and then abandoned you. The remote-OAuth flow
+                          // already existed (RunnerAuthModal) but was buried in the
+                          // device-details sheet, which nobody opens while picking a
+                          // machine. Put the fix where the problem is stated.
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+                            <Text style={{ color: c.warn, fontSize: 11, fontWeight: "600", flexShrink: 1 }} numberOfLines={1}>
+                              {codingRunners.map((r) => {
+                                if (!r.installed) return `${runnerDisplayName(r.id)} not installed`;
+                                if (!r.authConfigured) return `${runnerDisplayName(r.id)} auth needed`;
+                                return `${runnerDisplayName(r.id)} not ready`;
+                              }).join(" · ")}
+                            </Text>
+                            {(() => {
+                              // Browser OAuth only covers claude/codex; opencode and
+                              // glm authenticate with a provider API key, and offering
+                              // them a "Sign in" button that opens an OAuth page they
+                              // cannot complete is worse than offering nothing.
+                              const signInTarget = codingRunners.find(
+                                (r) =>
+                                  r.installed &&
+                                  !r.authConfigured &&
+                                  ["claude", "claude-code", "codex"].includes(r.id),
+                              );
+                              if (!signInTarget) return null;
+                              return (
+                                <Pressable
+                                  onPress={(e: any) => {
+                                    // Don't let the tap fall through to the row, which
+                                    // would select the box and close the picker out
+                                    // from under the auth sheet.
+                                    e?.stopPropagation?.();
+                                    setAuthTarget({
+                                      deviceId: device.id,
+                                      deviceName: device.name || device.id,
+                                      runner: signInTarget.id,
+                                    });
+                                  }}
+                                  hitSlop={6}
+                                  style={{
+                                    paddingHorizontal: 8,
+                                    paddingVertical: 3,
+                                    borderRadius: 6,
+                                    backgroundColor: "#f59e0b22",
+                                    borderWidth: 1,
+                                    borderColor: "#f59e0b66",
+                                  }}
+                                >
+                                  <Text style={{ color: "#f59e0b", fontSize: 11, fontWeight: "700" }}>
+                                    Sign in →
+                                  </Text>
+                                </Pressable>
+                              );
+                            })()}
+                          </View>
                         ) : (
                           <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>
                             {codingStatus?.error || "No coding agents ready"}
@@ -1004,31 +1083,60 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               </View>
             ) : null}
 
-            <View style={{ height: 16 }} />
-            <Pressable
-              onPress={() => { void handleContinue(); }}
-              disabled={!pickedDevice}
-              style={({ pressed }) => ({
-                backgroundColor: !pickedDevice ? c.border : c.accent,
-                paddingVertical: 14,
-                borderRadius: 10,
-                alignItems: "center",
-                opacity: pressed ? 0.85 : 1,
-              })}
-            >
-              <Text style={{ color: !pickedDevice ? c.textMuted : "#000", fontWeight: "700" }}>
-                {!pickedDevice
-                  ? "Pick a machine to continue"
-                  : pickedDeviceIsCurrent && pickedDeviceIsConnected
-                    ? "Keep using this machine"
-                    : pickedDeviceIsCurrent
-                      ? "Reconnect to this machine"
-                      : "Use selected machine"}
-              </Text>
-            </Pressable>
+            {/* No eligible boxes → no Confirm bar. A dead "Pick a machine to
+                continue" button under an empty list is an action that cannot
+                work in this state. */}
+            {eligibleDevices.length > 0 ? (
+              <>
+                <View style={{ height: 16 }} />
+                <Pressable
+                  onPress={() => { void handleContinue(); }}
+                  disabled={!pickedDevice}
+                  style={({ pressed }) => ({
+                    backgroundColor: !pickedDevice ? c.border : c.accent,
+                    paddingVertical: 14,
+                    borderRadius: 10,
+                    alignItems: "center",
+                    opacity: pressed ? 0.85 : 1,
+                  })}
+                >
+                  <Text style={{ color: !pickedDevice ? c.textMuted : "#000", fontWeight: "700" }}>
+                    {!pickedDevice
+                      ? "Pick a machine to continue"
+                      : pickedDeviceIsCurrent && pickedDeviceIsConnected
+                        ? "Keep using this machine"
+                        : pickedDeviceIsCurrent
+                          ? "Reconnect to this machine"
+                          : "Use selected machine"}
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
           </ScrollView>
         )}
       </View>
+
+      {/* Remote runner sign-in, driven from the row that reported the problem.
+          On success, drop this device's cached coding status so the row re-probes
+          and flips from "auth needed" to "ready" without the user re-opening the
+          picker — the fix should be visible where the complaint was. */}
+      <RunnerAuthModal
+        visible={!!authTarget}
+        runner={authTarget?.runner || ""}
+        deviceName={authTarget?.deviceName || ""}
+        target={authTarget?.deviceId}
+        onClose={() => setAuthTarget(null)}
+        onCompleted={() => {
+          const id = authTarget?.deviceId;
+          setAuthTarget(null);
+          if (!id) return;
+          setCodingStatusByDevice((prev) => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+        }}
+      />
     </Modal>
   );
 }

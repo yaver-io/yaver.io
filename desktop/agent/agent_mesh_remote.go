@@ -706,14 +706,46 @@ func doRemoteAgentRequest(ctx context.Context, candidates []RemoteAgentCandidate
 	}
 	client := remoteHTTPClient(timeout)
 	orderRemoteAgentCandidates(candidates)
+
+	// Budget each leg SEPARATELY. Every attempt used to inherit the caller's
+	// context directly, so one black-holed transport could swallow the entire
+	// deadline and every candidate after it failed instantly with "context
+	// deadline exceeded" — never actually dialled. The result was a wall of six
+	// identical errors that looked like six findings but were one, and which
+	// hid whichever leg would have worked. A diagnosis you cannot trust is
+	// worse than no diagnosis.
+	//
+	// Divide the budget across the candidates (floor 2s, so a leg always gets a
+	// real chance to answer) and give each attempt its own deadline.
+	perAttempt := timeout
+	if n := len(candidates); n > 1 {
+		perAttempt = timeout / time.Duration(n)
+		if perAttempt < 2*time.Second {
+			perAttempt = 2 * time.Second
+		}
+		if perAttempt > timeout {
+			perAttempt = timeout
+		}
+	}
+
 	var errs []string
 	for _, candidate := range candidates {
+		if ctx.Err() != nil {
+			errs = append(errs, fmt.Sprintf("%s: not attempted (caller cancelled)", candidate.BaseURL))
+			break
+		}
 		var reader io.Reader
 		if len(bodyJSON) > 0 {
 			reader = bytes.NewReader(bodyJSON)
 		}
 		url := strings.TrimRight(candidate.BaseURL, "/") + path
-		req, err := http.NewRequestWithContext(ctx, method, url, reader)
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, perAttempt)
+		// Deferred (not cancelled inline) because the loop body has many
+		// early-continue paths; the candidate list is short and the function
+		// returns promptly, so holding a few cancels costs nothing and
+		// guarantees none leak.
+		defer cancelAttempt()
+		req, err := http.NewRequestWithContext(attemptCtx, method, url, reader)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", candidate.BaseURL, err))
 			continue
@@ -961,3 +993,4 @@ func persistFreshRelayPassword(cfg *Config, relayURL, password string) {
 	update(cfg.RelayServers)
 	update(cfg.CachedRelayServers)
 }
+
