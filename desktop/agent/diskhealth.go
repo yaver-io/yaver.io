@@ -438,6 +438,10 @@ func runDiskHealthScan() {
 			nm("disk-health", hostname, msg, 0)
 		}
 	}
+	// Push space alerts to the user's phones. On a headless box this is the
+	// ONLY surface that will tell them before a build dies on ENOSPC —
+	// stderr and the local notifier reach nobody there.
+	notifyDiskPressure(newAlerts)
 }
 
 func formatGB(g float64) string {

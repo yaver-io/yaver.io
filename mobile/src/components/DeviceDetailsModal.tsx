@@ -15,6 +15,8 @@ import RunnerAuthModal from "./RunnerAuthModal";
 import { OpenCodeConfigModal } from "./OpenCodeConfigModal";
 import { ScreenlogSection } from "./ScreenlogSection";
 import { NetCaptureSection } from "./NetCaptureSection";
+import { StorageSection } from "./StorageSection";
+import { ProcessMonitorSection } from "./ProcessMonitorSection";
 
 const CODING_AGENTS: ReadonlyArray<{ id: "claude" | "codex" | "opencode"; label: string }> = [
   { id: "claude", label: "Claude Code" },
@@ -1734,6 +1736,8 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
           <ScreenlogSection device={device} />
           <NetCaptureSection device={device} />
           <HardwareCapabilitiesSection device={device} />
+          <StorageSection device={device} />
+          <ProcessMonitorSection device={device} />
           <WirelessPhonesSection device={device} />
 
           {/* Active task runners — only shown if there are any. */}

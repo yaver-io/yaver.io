@@ -543,6 +543,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/support/redeem", s.rateLimit(s.handleSupportRedeem))
 	mux.HandleFunc("/auth/browser-session", s.auth(s.handleBrowserSession))
 	mux.HandleFunc("/machine/health", s.auth(s.handleMachineHealth))
+	// Storage reclaim + live process table — the "box is full / what's
+	// eating the CPU" surfaces. Owner-only: both can delete or kill.
+	mux.HandleFunc("/storage/scan", s.auth(s.handleStorageScan))
+	mux.HandleFunc("/storage/reclaim", s.auth(s.handleStorageReclaim))
+	mux.HandleFunc("/console/processes", s.auth(s.handleConsoleProcesses))
+	mux.HandleFunc("/console/processes/kill", s.auth(s.handleConsoleProcessKill))
 	mux.HandleFunc("/machine/peers", s.auth(s.handlePeerHealth))
 	mux.HandleFunc("/machine/peers/recover", s.auth(s.handlePeerRecover))
 	mux.HandleFunc("/tunnel/forward/", s.auth(s.handleTunnelForward))

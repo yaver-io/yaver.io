@@ -3,6 +3,18 @@
 import { useEffect, useState, useCallback } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 
+/** DeviceStorage is the live disk gauge the agent sends on every heartbeat. */
+export interface DeviceStorage {
+  totalGb?: number;
+  usedGb?: number;
+  freeGb?: number;
+  usedPct?: number;
+  /** Aggregate reclaimable bytes, present only when the box has a warm scan.
+   *  It's what turns "92% full" from alarming into actionable. */
+  reclaimableGb?: number;
+  updatedAt?: number;
+}
+
 export interface Device {
   id: string;
   name: string;
@@ -34,9 +46,16 @@ export interface Device {
      *  host). Replaces the old IP-shape heuristic that false-
      *  positived on Linux boxes with Docker bridges. */
     isWsl?: boolean;
+    /** Total capacity of the volume holding $HOME. A static spec like RAM, so
+     *  it rides the 24h-gated hardware profile; live free/used is in `storage`. */
+    diskTotalGb?: number;
     iosSimulators?: string[];
     androidEmulators?: string[];
   };
+  /** Live disk gauge, refreshed on every heartbeat. Numbers only — the agent
+   *  knows which project's caches are fat, but paths and project names stay on
+   *  the device (they'd leak the home-dir username into Convex). */
+  storage?: DeviceStorage;
   localIps?: string[];
   deviceClass?: "desktop" | "edge-mobile" | "server";
   edgeProfile?: {

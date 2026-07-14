@@ -42,6 +42,33 @@ const hardwareProfile = v.object({
   arch: v.optional(v.string()),
   iosSimulators: v.optional(v.array(v.string())),
   androidEmulators: v.optional(v.array(v.string())),
+  // isWsl was in the mutation's arg validator and patched through verbatim,
+  // but missing here — so a heartbeat from a WSL box (the only case where the
+  // agent sends it, since Go tags it omitempty) failed table validation on
+  // write. Adding it closes that.
+  isWsl: v.optional(v.boolean()),
+  // Total disk capacity. Belongs with the other static specs: it changes only
+  // when the hardware does, so it rides the same 24h-gated profile. Live
+  // free/used lives in `storage` below, which every heartbeat refreshes.
+  diskTotalGb: v.optional(v.number()),
+});
+
+// storageSnapshot is the live disk gauge, refreshed on every heartbeat.
+//
+// Numbers ONLY. The agent knows exactly which project's DerivedData is eating
+// 12 GB, but that detail — paths, project names — stays P2P and never lands
+// here: absolute paths leak the user's home-dir username, and the privacy
+// contract forbids them in Convex. What Convex needs is enough to render a
+// gauge and decide "this box is nearly full", which is a handful of floats.
+const storageSnapshot = v.object({
+  totalGb: v.optional(v.number()),
+  usedGb: v.optional(v.number()),
+  freeGb: v.optional(v.number()),
+  usedPct: v.optional(v.number()),
+  // reclaimableGb is the aggregate the scanner found — the number that makes
+  // "92% full" actionable rather than merely alarming.
+  reclaimableGb: v.optional(v.number()),
+  updatedAt: v.optional(v.number()),
 });
 
 export default defineSchema({
@@ -387,6 +414,9 @@ export default defineSchema({
     // device by hardwareId to confirm they own it.
     hardwareId: v.optional(v.string()),
     hardwareProfile: v.optional(hardwareProfile),
+    // Live disk gauge, refreshed every heartbeat. Lets any surface show
+    // "this box is 92% full" without first connecting to the agent.
+    storage: v.optional(storageSnapshot),
     recoveryPosture: v.optional(recoveryPosture),
     // First-class connection policy/state for this machine. This is a
     // privacy-safe control-plane summary: transport kind + active/preferred,
@@ -880,13 +910,16 @@ export default defineSchema({
     .index("by_runnerId", ["runnerId"])
     .index("by_modelId", ["modelId", "runnerId"]),
 
-  // Per-minute CPU/RAM metrics from desktop agents (last 1 hour kept)
+  // Per-minute CPU/RAM/disk metrics from desktop agents (last 1 hour kept)
   deviceMetrics: defineTable({
     deviceId: v.string(),       // matches devices.deviceId
     timestamp: v.number(),      // epoch ms
     cpuPercent: v.number(),     // 0-100
     memoryUsedMb: v.number(),
     memoryTotalMb: v.number(),
+    // Optional: older agents don't send it, so it must not be required or
+    // every pre-upgrade heartbeat fails validation.
+    diskPercent: v.optional(v.number()), // 0-100, root/home volume
   })
     .index("by_deviceId", ["deviceId", "timestamp"]),
 

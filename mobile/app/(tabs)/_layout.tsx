@@ -244,6 +244,37 @@ export default function TabLayout() {
         return;
       }
 
+      // A box crossed 85% / 95% full. On a headless machine this alert has
+      // nowhere else to land — stderr reaches nobody. Surface it here with the
+      // reclaimable figure attached, so it's an offer to act rather than just
+      // bad news: tapping through opens the box's Storage panel.
+      if (command === "storage_pressure") {
+        const alerts: string[] = Array.isArray(data.alerts) ? data.alerts : [];
+        if (!alerts.length) return;
+        const reclaimable =
+          typeof data.reclaimable === "string" && data.reclaimable !== "0 B"
+            ? `\n\n${data.reclaimable} of build caches can be reclaimed.`
+            : "";
+        Alert.alert(
+          `${data.hostname || "A box"} is running out of space`,
+          `${alerts.join("\n")}${reclaimable}`,
+          [
+            { text: "Later", style: "cancel" },
+            {
+              text: "Review",
+              onPress: () => {
+                try {
+                  router.push("/(tabs)/devices");
+                } catch {
+                  // older expo-router/no-navigator fallback — ignore.
+                }
+              },
+            },
+          ]
+        );
+        return;
+      }
+
       if (command === "capture_screenshot") {
         await quicClient.pushBlackBoxEvents(resolved.id, [{
           type: "state",

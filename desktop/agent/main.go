@@ -3355,6 +3355,9 @@ func runServe(args []string) {
 		// broker suspend (captcha / push / code) notifies the user's own phone
 		// via the existing device_broadcast_command path (gateway_gate.go).
 		bindGatewayGateNotifier(bbMgr)
+		// Same path for disk-pressure alerts: on a headless box, the phone is
+		// the only place an 85%/95%-full warning can actually land.
+		bindDiskPressureNotifier(bbMgr)
 		// Register so runner.go's pump can fire <<yaver-action:...>>
 		// sentinels (e.g. "reload sfmg") at the paired phone without
 		// threading the manager through every Task struct.
@@ -10049,7 +10052,30 @@ func sampleDeviceMetrics() *DeviceMetricsSample {
 		CPUPercent:    cpuPct,
 		MemoryUsedMB:  float64(memUsed),
 		MemoryTotalMB: float64(memTotal),
+		// Disk sits alongside CPU/RAM in the history so the phone's gauge can
+		// show a filling disk as a TREND, not just a number that was already
+		// too high by the time anyone looked. Reads the cached diskhealth
+		// snapshot — no statfs on the sampler path.
+		DiskPercent: cachedDiskUsedPct(),
 	}
+}
+
+// cachedDiskUsedPct reads the home volume's used-% from the diskhealth loop's
+// snapshot. Returns 0 before the first scan lands, which Convex treats as
+// "not reported" (the field is optional).
+func cachedDiskUsedPct() float64 {
+	machineHealthMu.RLock()
+	defer machineHealthMu.RUnlock()
+
+	home, _ := os.UserHomeDir()
+	best := 0.0
+	bestLen := -1
+	for _, fs := range machineHealth.Filesystems {
+		if home != "" && strings.HasPrefix(home, fs.Mount) && len(fs.Mount) > bestLen {
+			best, bestLen = fs.UsedPct, len(fs.Mount)
+		}
+	}
+	return best
 }
 
 // Buffer of CPU/RAM samples taken since the last heartbeat, appended off the

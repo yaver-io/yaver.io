@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
+import { type Device, type DeviceStorage, hideDevice, unhideAll } from "@/lib/use-devices";
 import { NetCaptureModal } from "./NetCaptureModal";
+import { DeviceStorageFold } from "./DeviceStorageFold";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
@@ -845,6 +846,33 @@ function formatMemoryMb(value: number | undefined): string | null {
   if (typeof value !== "number" || value <= 0) return null;
   if (value >= 1024) return `${(value / 1024).toFixed(value >= 10 * 1024 ? 0 : 1)} GB`;
   return `${Math.round(value)} MB`;
+}
+
+// formatDiskUsage renders the live disk gauge as "312 / 460 GB (68%)", colouring
+// the percentage once the box is genuinely under pressure. Falls back to bare
+// capacity when the agent has reported specs but no live gauge yet (a box that
+// heartbeats but hasn't completed its first disk scan).
+function formatDiskUsage(
+  storage: DeviceStorage | undefined,
+  totalGbFallback: number | undefined,
+): React.ReactNode | null {
+  const total = storage?.totalGb ?? totalGbFallback;
+  if (typeof total !== "number" || total <= 0) return null;
+
+  const usedGb = storage?.usedGb;
+  const usedPct = storage?.usedPct;
+  if (typeof usedGb !== "number" || typeof usedPct !== "number") {
+    return `${total.toFixed(0)} GB`;
+  }
+
+  const tone =
+    usedPct >= 95 ? "text-rose-400" : usedPct >= 85 ? "text-amber-400" : "text-surface-200";
+  return (
+    <span>
+      {usedGb.toFixed(0)} / {total.toFixed(0)} GB{" "}
+      <span className={tone}>({usedPct.toFixed(0)}%)</span>
+    </span>
+  );
 }
 
 function formatCapabilityList(items: string[] | undefined): string | null {
@@ -4297,6 +4325,9 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           {row("OS", hardwareOS || null)}
           {row("CPU", hardware?.cpu ? <span className="font-mono text-[11px]">{hardware.cpu}</span> : null)}
           {row("RAM", formatMemoryMb(hardware?.ramMb))}
+          {/* Disk: capacity from the (static) hardware profile, live free/used
+              from the storage gauge the agent refreshes every heartbeat. */}
+          {row("Disk", formatDiskUsage(device.storage, hardware?.diskTotalGb))}
           {row("GPU", hardware?.gpu ? <span className="font-mono text-[11px]">{hardware.gpu}</span> : null)}
           {row("VRAM", formatMemoryMb(hardware?.vramMb))}
           {row("Cores", typeof hardware?.numCores === "number" && hardware.numCores > 0 ? String(hardware.numCores) : null)}
@@ -4373,6 +4404,9 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           {row("Auto-start", effectiveInfo?.autoStart)}
         </div>
       </div>
+      {/* Collapsed by default and lazy — the scan shells out to `du` across the
+          box's home dir, so it only runs when someone actually opens the fold. */}
+      <DeviceStorageFold device={device} token={token} />
       {(allRunners.length || allSharedRunners.length) ? (
         <div className="mt-3">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">

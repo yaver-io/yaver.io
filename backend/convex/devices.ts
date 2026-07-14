@@ -61,6 +61,21 @@ const hardwareProfileValidator = v.object({
   // heartbeat AND registerDevice from a WSL box hard-fails with
   // ArgumentValidationError — the device can never come online at all.
   isWsl: v.optional(v.boolean()),
+  // Total disk capacity — a static spec, so it rides the 24h-gated profile
+  // alongside RAM. Live free/used arrives every heartbeat in `storage`.
+  diskTotalGb: v.optional(v.number()),
+});
+
+// storageValidator is the live disk gauge the agent sends on every heartbeat.
+// Numbers only — paths and project names stay on the device (privacy contract:
+// absolute paths leak the home-dir username).
+const storageValidator = v.object({
+  totalGb: v.optional(v.number()),
+  usedGb: v.optional(v.number()),
+  freeGb: v.optional(v.number()),
+  usedPct: v.optional(v.number()),
+  reclaimableGb: v.optional(v.number()),
+  updatedAt: v.optional(v.number()),
 });
 
 // HEARTBEAT_STALE_MS: how long after the last heartbeat we still
@@ -911,9 +926,15 @@ export const heartbeat = mutation({
           memoryUsedMb: v.number(),
           memoryTotalMb: v.number(),
           timestampMs: v.number(),
+          // Optional: agents older than the disk-gauge release omit it.
+          diskPercent: v.optional(v.number()),
         })
       )
     ),
+    // Live disk gauge. Sent every heartbeat (unlike hardwareProfile, which is
+    // 24h-gated) because free space is the thing that changes — and the thing
+    // that stops a build at 3am.
+    storage: v.optional(storageValidator),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -982,6 +1003,9 @@ export const heartbeat = mutation({
     }
     if (args.hardwareProfile) {
       patch.hardwareProfile = args.hardwareProfile;
+    }
+    if (args.storage) {
+      patch.storage = { ...args.storage, updatedAt: Date.now() };
     }
     if (args.deviceClass) {
       patch.deviceClass = args.deviceClass;
@@ -1090,6 +1114,7 @@ export const heartbeat = mutation({
           cpuPercent: m.cpuPercent,
           memoryUsedMb: m.memoryUsedMb,
           memoryTotalMb: m.memoryTotalMb,
+          diskPercent: m.diskPercent,
         });
       }
       const cutoff = Date.now() - 60 * 60 * 1000; // keep last 1h, same as before

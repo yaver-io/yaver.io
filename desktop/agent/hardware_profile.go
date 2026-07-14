@@ -36,6 +36,10 @@ type DeviceHardwareProfile struct {
 	// false-positives on any Linux box with a Docker bridge as the
 	// reported host (Hetzner, Pi, plain VPS, …).
 	IsWSL bool `json:"isWsl,omitempty"`
+	// DiskTotalGB is total capacity of the volume holding $HOME. A static
+	// spec like RAM, so it lives here on the 24h-gated profile rather than
+	// on the every-beat `storage` gauge, which carries free/used.
+	DiskTotalGB float64 `json:"diskTotalGb,omitempty"`
 }
 
 func (p *DeviceHardwareProfile) isEmpty() bool {
@@ -128,6 +132,7 @@ func detectHardwareProfile() *DeviceHardwareProfile {
 	if ramMB, err := getSystemMemoryMB(); err == nil && ramMB > 0 {
 		profile.RAMMB = ramMB
 	}
+	profile.DiskTotalGB = homeVolumeTotalGB()
 
 	switch runtime.GOOS {
 	case "darwin":

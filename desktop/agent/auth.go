@@ -1627,6 +1627,10 @@ type DeviceMetricsSample struct {
 	CPUPercent    float64 `json:"cpuPercent"`
 	MemoryUsedMB  float64 `json:"memoryUsedMb"`
 	MemoryTotalMB float64 `json:"memoryTotalMb"`
+	// DiskPercent is the home volume's used-%. omitempty so agents that
+	// haven't completed a disk scan yet simply don't report it, rather than
+	// writing a misleading 0% into the history.
+	DiskPercent float64 `json:"diskPercent,omitempty"`
 	// Capture time (Unix ms). The heartbeat batches every ~60s sample taken
 	// since the last beat, so the backend records each at its real time
 	// instead of collapsing them to one point — 60s sparkline resolution at
@@ -1669,6 +1673,12 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	}
 	if profile := hardwareProfileForHeartbeat(); profile != nil {
 		payload["hardwareProfile"] = profile
+	}
+	// Live disk gauge. Unlike hardwareProfile (24h-gated, static specs), free
+	// space is exactly the thing that changes — so it rides every beat. Reads
+	// the diskhealth loop's cached snapshot; never scans on this path.
+	if storage := storageSnapshotForHeartbeat(); storage != nil {
+		payload["storage"] = storage
 	}
 	// Always include quicHost + localIps + publicEndpoints in the
 	// heartbeat payload — even if empty — so a previously-set
