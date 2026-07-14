@@ -727,7 +727,7 @@ function DeviceCard({
                 : lifecycleState === "yaver-auth-expired"
                   ? "Machine is up, but the agent session expired."
                   : lifecycleState === "ready-to-connect"
-                    ? "Machine is reachable or has a recent live signal."
+                    ? "Recent heartbeat — reachability not verified yet."
                     : lifecycleState === "offline"
                       ? "No recent heartbeat. Power on and run yaver serve."
                       : "This is the phone you're using."}

@@ -4044,7 +4044,7 @@ export default function TasksScreen() {
                             </Text>
                           ) : lifecycleState === "ready-to-connect" ? (
                             <Text style={[s.devicePickerMeta, { color: chipPalette("blue", isDark).text, marginTop: 2 }]}>
-                              Machine is reachable or has a recent live signal. Tap to connect.
+                              Recent heartbeat — reachability not verified yet. Tap to connect.
                             </Text>
                           ) : null}
                           {lifecycleState === "offline" && (
@@ -4349,7 +4349,7 @@ export default function TasksScreen() {
                             </Text>
                           ) : lifecycleState === "ready-to-connect" ? (
                             <Text style={[s.devicePickerMeta, { color: chipPalette("blue", isDark).text, marginTop: 2 }]}>
-                              Machine is reachable or has a recent live signal. Tap to connect.
+                              Recent heartbeat — reachability not verified yet. Tap to connect.
                             </Text>
                           ) : null}
                           {lifecycleState === "offline" && (

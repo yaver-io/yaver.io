@@ -56,7 +56,7 @@ interface BannerPalette {
 
 export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: RemoteBoxBannerProps) {
   const c = useColors();
-  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError, everHadDevices, refreshDevices } = useDevice();
+  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError, everHadDevices, isLoadingDevices, refreshDevices } = useDevice();
   const { token } = useAuth();
 
   // Live reachability of the focused device (transport truth). Computed up
@@ -83,7 +83,16 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // Only "never added a device" for a genuine first-run user. If they've ever
   // had devices, a transient empty (VPN/network) must NOT read as "No remote
   // device added" — it's the "No device selected / reconnecting" case instead.
-  const noDevicesYet = devices.length === 0 && !activeDevice && !everHadDevices;
+  //
+  // …and NOT while the list is still loading. everHadDevices is false right
+  // after a fresh sign-in (no history yet), so the first render of a user with
+  // ten machines announced "No remote device added" while the spinner beneath
+  // it still said "Looking for devices…". Two contradictory claims on screen at
+  // once, and the alarming one was the lie. An empty list mid-load is UNKNOWN,
+  // never a definitive negative — don't state a fact you haven't finished
+  // checking.
+  const noDevicesYet =
+    devices.length === 0 && !activeDevice && !everHadDevices && !isLoadingDevices;
   const [pickerVisible, setPickerVisible] = useState(false);
 
   // Honest status: connectionStatus can be optimistically "connected"
@@ -113,7 +122,16 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // (cold start, after explicit disconnect, after deletion) the
   // banner reads "No device selected" and the Switch chip changes
   // to "Pick" so the action verb matches the empty state.
-  const deviceLabel = activeDevice?.name?.trim() || (noDevicesYet ? "No remote device added" : "No device selected");
+  // While the list is still loading, say so. "No device selected" is a verdict;
+  // mid-load the honest word is "Looking".
+  const stillLooking = isLoadingDevices && devices.length === 0 && !activeDevice;
+  const deviceLabel =
+    activeDevice?.name?.trim() ||
+    (stillLooking
+      ? "Looking for devices…"
+      : noDevicesYet
+        ? "No remote device added"
+        : "No device selected");
   const ctaLabel = activeDevice ? "Switch" : noDevicesYet ? "Add" : "Pick";
   // "Pool is warm but you haven't chosen which box runs your tasks" is its own
   // state — painting it green "Connected" (because some pooled client is live)
@@ -157,12 +175,22 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
                   <Text style={[styles.roleText, { color: c.textSecondary }]}>{roleLabel}</Text>
                 </View>
               ) : null}
-              <Text
-                style={[styles.deviceText, { color: needsPick ? c.textMuted : c.textPrimary }]}
-                numberOfLines={1}
-              >
-                {noDevicesYet && deviceListError ? deviceListError : needsPick ? "Tap to choose where tasks run" : deviceLabel}
-              </Text>
+              {/* When nothing is picked, the status label already says "No
+                  machine selected" and the chip already says "Pick ›". The old
+                  third copy ("Tap to choose where tasks run") only ever
+                  rendered as "Tap to choose wh…" — a truncated restatement
+                  squeezed between the two lines that already said it.
+                  Exception: mid-load this slot carries "Looking for devices…",
+                  which is NOT a restatement — it's the one line distinguishing
+                  "still checking" from "nothing there". Keep it. */}
+              {needsPick && !stillLooking ? null : (
+                <Text
+                  style={[styles.deviceText, { color: stillLooking ? c.textMuted : c.textPrimary }]}
+                  numberOfLines={1}
+                >
+                  {noDevicesYet && deviceListError ? deviceListError : deviceLabel}
+                </Text>
+              )}
             </View>
             {running ? null : asleep ? (
               // Wake takes priority over Switch when the focused box is
