@@ -10,6 +10,7 @@ struct SignInView: View {
     @State private var start: DeviceCodeStart?
     @State private var error: String?
     @State private var expired = false
+    @State private var approving = false      // approval seen; token arriving
     @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
@@ -18,9 +19,9 @@ struct SignInView: View {
                 Text("Sign in to Yaver")
                     .font(.system(size: 44, weight: .heavy))
                     .padding(.bottom, 12)
-                stepText("1. Open the Yaver app on your phone")
-                stepText("2. Scan this code (or visit yaver.io/auth/device)")
-                stepText("3. Tap Approve — this Apple TV signs in instantly")
+                stepText("1. Scan the code with your phone, or visit yaver.io/auth/device in any browser")
+                stepText("2. Sign in if asked, then tap Approve")
+                stepText("3. This Apple TV signs in automatically")
 
                 if let code = start?.userCode {
                     VStack(alignment: .leading, spacing: 6) {
@@ -34,7 +35,27 @@ struct SignInView: View {
                     .padding(.top, 24)
                 }
 
-                if let error { Text(error).foregroundStyle(.orange).padding(.top, 16) }
+                if approving {
+                    Label("Approved — signing in…", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.green).padding(.top, 20)
+                } else if start != nil {
+                    // A quiet live indicator so the screen never looks frozen while
+                    // it waits — the Netflix "waiting for you to enter the code" feel.
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Waiting for approval…").foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 18)).padding(.top, 20)
+                }
+
+                if let error {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(error).foregroundStyle(.orange)
+                        Button("Try again") { Task { await begin() } }   // was: hang forever with no way out
+                    }
+                    .padding(.top, 16)
+                }
                 if expired { Text("Code expired — generating a new one…").foregroundStyle(.secondary).padding(.top, 8) }
             }
             .frame(maxWidth: 560, alignment: .leading)
@@ -83,6 +104,7 @@ struct SignInView: View {
                 let r = await DeviceCodeAuth.poll(deviceCode: s.deviceCode)
                 switch r.status {
                 case .authorized:
+                    approving = true
                     if let token = r.token { store.signIn(token: token) }
                     return
                 case .expired:
