@@ -60,7 +60,7 @@ xcodebuild -workspace Yaver.xcworkspace -scheme Yaver -configuration Release \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
   -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" \
-  -derivedDataPath /tmp/YaverBuild 2>&1 | tail -3
+  -derivedDataPath /tmp/YaverBuild 2>&1 | tee /tmp/arch_full.log | tail -3
 
 # Verify archive was created
 if [ ! -d /tmp/Yaver.xcarchive ]; then

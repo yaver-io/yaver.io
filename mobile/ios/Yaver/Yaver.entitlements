@@ -2,6 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
+    <!-- CarPlay (Case-ID 20875817, VOICE) is a MANAGED capability: the entitlement
+         only signs while the capability is switched ON in the portal. It got
+         turned off / dropped from the auto-provisioned profile after build 426,
+         so signing failed with "Entitlement … carplay-voice-based-conversation
+         not found and could not be included in profile" and broke every archive.
+         Removed to unblock releases. To restore CarPlay voice: re-enable the
+         capability on the io.yaver.mobile App ID in the Developer portal, then
+         re-add the key below. Pairs with CPTemplateApplicationScene in
+         Info.plist + YaverCarPlaySceneDelegate.swift. -->
     <key>aps-environment</key>
     <string>development</string>
     <key>com.apple.developer.applesignin</key>
