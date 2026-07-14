@@ -93,6 +93,12 @@ var watchRiskPatterns = []struct {
 	{"delete", regexp.MustCompile(`\b(delete|remove|destroy|drop|wipe|rm)\b|\brm -rf\b`)},
 	{"reset", regexp.MustCompile(`\b(reset|revert|rollback|roll back|hard reset)\b`)},
 	{"prod", regexp.MustCompile(`\b(prod|production|live|mainnet)\b`)},
+	// storage_reclaim deletes files off the box. The "delete" pattern above
+	// misses every natural phrasing ("clean up my disk", "free up space"), so
+	// match the reclaim verbs directly, plus soft verbs aimed at a storage noun.
+	{"storage", regexp.MustCompile(`\b(reclaim|purge|prune)\b|\b(clean|clear|free|empty)\b[^.!?]{0,24}\b(disk|storage|space|cache|caches|trash|junk|build artifacts?)\b`)},
+	// proc_kill terminates a live process. "kill" is in no pattern above.
+	{"kill", regexp.MustCompile(`\b(kill|terminate|force[ -]?quit|sigkill|pkill)\b`)},
 }
 
 // watchRiskKinds returns the matched risk categories for a transcript, in
@@ -125,10 +131,15 @@ func watchConfirmPrompt(transcript string) string {
 	human := map[string]string{
 		"deploy": "deploy", "push": "push", "delete": "delete",
 		"force": "force-push", "reset": "reset", "prod": "production",
+		"storage": "disk-cleanup", "kill": "process-kill",
 	}
 	labels := make([]string, 0, len(kinds))
 	for _, k := range kinds {
-		labels = append(labels, human[k])
+		label, ok := human[k]
+		if !ok {
+			label = k
+		}
+		labels = append(labels, label)
 	}
 	var label string
 	if len(labels) == 1 {

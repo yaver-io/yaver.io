@@ -43,6 +43,39 @@ test("does NOT gate routine coding commands", () => {
   }
 });
 
+// ── storage_reclaim / proc_kill (destructive ops verbs) ───────────────
+// These map to verbs that delete files and terminate processes on the box.
+// The generic 'delete' pattern matches none of the natural phrasings.
+
+test("gates disk reclaim and process kill", () => {
+  for (const cmd of [
+    "clean up my disk",
+    "free up some space on the mac mini",
+    "reclaim the build artifacts",
+    "purge the caches",
+    "prune docker",
+    "clear out the storage",
+    "empty the trash",
+    "kill that process",
+    "terminate pid 4123",
+    "force quit chrome",
+  ]) {
+    assert.equal(needsConfirm(cmd), true, `expected risky: ${cmd}`);
+  }
+});
+
+test("read-only monitoring stays ungated", () => {
+  // Looking is free; only destruction stops and asks.
+  for (const cmd of [
+    "how much disk is left",
+    "show me the top processes",
+    "what's using all the memory",
+    "clean up the naming in that function",
+  ]) {
+    assert.equal(needsConfirm(cmd), false, `expected safe: ${cmd}`);
+  }
+});
+
 test("does not false-positive on lookalike words", () => {
   // 'deltas' must not trip 'delete'; 'redemption' must not trip 'reset'.
   assert.equal(needsConfirm("compute the deltas between runs"), false);

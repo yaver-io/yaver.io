@@ -28,7 +28,9 @@ export type RiskKind =
   | "delete"
   | "force"
   | "reset"
-  | "prod";
+  | "prod"
+  | "storage"
+  | "kill";
 
 export interface RiskAssessment {
   /** True when the command must be explicitly confirmed before dispatch. */
@@ -50,6 +52,19 @@ const RISK_PATTERNS: { kind: RiskKind; re: RegExp }[] = [
   { kind: "delete", re: /\b(delete|remove|destroy|drop|wipe|rm)\b|\brm -rf\b/ },
   { kind: "reset", re: /\b(reset|revert|rollback|roll back|hard reset)\b/ },
   { kind: "prod", re: /\b(prod|production|live|mainnet)\b/ },
+  // storage_reclaim deletes files off the box. The plain "delete" pattern
+  // above misses every natural way a driver phrases it ("clean up my disk",
+  // "free up some space"), so match the reclaim verbs directly, plus the
+  // soft verbs when they're aimed at a storage noun.
+  {
+    kind: "storage",
+    re: /\b(reclaim|purge|prune)\b|\b(clean|clear|free|empty)\b[^.!?]{0,24}\b(disk|storage|space|cache|caches|trash|junk|build artifacts?)\b/,
+  },
+  // proc_kill terminates a live process. "kill" is not in any pattern above.
+  {
+    kind: "kill",
+    re: /\b(kill|terminate|force[ -]?quit|sigkill|pkill)\b/,
+  },
 ];
 
 /**
@@ -90,6 +105,8 @@ function describeKinds(kinds: RiskKind[]): string {
     force: "force-push",
     reset: "reset",
     prod: "production",
+    storage: "disk-cleanup",
+    kill: "process-kill",
   };
   const labels = kinds.map((k) => human[k]);
   if (labels.length === 1) return labels[0];

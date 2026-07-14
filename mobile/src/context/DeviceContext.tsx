@@ -272,6 +272,13 @@ export interface Device {
    * `yaver ssh <alias>` and shown as "@alias" next to the name.
    */
   alias?: string;
+  /**
+   * Spoken names for this machine — "my mac mini", "the box at maltepe".
+   * Many, natural-language, never typed (contrast `alias`, which is one short
+   * shell token). Fed to carMachineSwitch.ts so the driver can say "switch to
+   * my mac mini" on CarPlay, where no device picker may be drawn on screen.
+   */
+  voiceHints?: string[];
   host: string;
   port: number;
   online: boolean;
@@ -801,6 +808,17 @@ export interface DeviceState {
     device: Device,
     alias: string,
   ) => Promise<{ ok: true; alias: string | null } | { ok: false; error: string }>;
+  /**
+   * Set the SPOKEN names for a device — "my mac mini", "the box at maltepe".
+   * Unlike alias (one short typed token) these are many and natural-language:
+   * they're what a driver SAYS. Load-bearing on CarPlay, where Apple forbids
+   * drawing a device picker, so the spoken name is the only handle on a machine.
+   * Replaces the whole list; pass [] to clear. Server caps at 12.
+   */
+  setDeviceVoiceHints: (
+    device: Device,
+    hints: string[],
+  ) => Promise<{ ok: true; voiceHints: string[] } | { ok: false; error: string }>;
   /** Device IDs the phone has failed to reach this session. Cleared on successful connect. */
   unreachableDeviceIds: string[];
   /** Flag a device as not reachable (e.g. after user hit Stop on a reconnect loop). */
@@ -1150,6 +1168,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             id: deviceId,
             name: d.isGuest ? `${d.name} (${d.hostName || "guest"})` : d.name,
             alias: typeof d.alias === "string" && d.alias.trim() !== "" ? d.alias : undefined,
+            voiceHints:
+              Array.isArray(d.voiceHints) && d.voiceHints.length > 0
+                ? d.voiceHints.filter((h: unknown): h is string => typeof h === "string")
+                : undefined,
             host: d.quicHost || d.host,
             port: d.quicPort || d.port,
             online: isActivelyConnected || (() => {
@@ -1632,6 +1654,41 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           prev.map((d) => (d.id === device.id ? { ...d, alias: next ?? undefined } : d)),
         );
         return { ok: true, alias: next };
+      } catch (e: any) {
+        return { ok: false, error: e?.message || String(e) };
+      }
+    },
+    [token],
+  );
+
+  const handleSetDeviceVoiceHints = useCallback(
+    async (
+      device: Device,
+      hints: string[],
+    ): Promise<{ ok: true; voiceHints: string[] } | { ok: false; error: string }> => {
+      if (!token) return { ok: false, error: "Not signed in" };
+      try {
+        const res = await fetch(`${getConvexSiteUrl()}/devices/voice-hints`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deviceId: device.id, hints }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { ok: false, error: body?.error || `HTTP ${res.status}` };
+        }
+        const next: string[] = Array.isArray(body?.voiceHints) ? body.voiceHints : [];
+        // Optimistic local update so the car matcher can use the new name
+        // immediately, without waiting for the next /devices/list poll.
+        setDevices((prev) =>
+          prev.map((d) =>
+            d.id === device.id ? { ...d, voiceHints: next.length ? next : undefined } : d,
+          ),
+        );
+        return { ok: true, voiceHints: next };
       } catch (e: any) {
         return { ok: false, error: e?.message || String(e) };
       }
@@ -3382,6 +3439,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       detachDevice: handleDetachDevice,
       removeDevice: handleRemoveDevice,
       setDeviceAlias: handleSetDeviceAlias,
+      setDeviceVoiceHints: handleSetDeviceVoiceHints,
       unreachableDeviceIds: Array.from(unreachableSet),
       markDeviceUnreachable,
       manualAuthRequiredDeviceIds: Array.from(manualAuthRequiredSet),

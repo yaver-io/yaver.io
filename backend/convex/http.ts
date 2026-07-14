@@ -3057,6 +3057,48 @@ http.route({
   }),
 });
 
+/** POST /devices/voice-hints — the SPOKEN names for a device (authed).
+ *  Body: { deviceId, hints?: string[] } to replace, or { deviceId, add?, remove? }
+ *  to mutate. These are what a driver says out loud — "my mac mini", "the box
+ *  at maltepe" — as opposed to `alias`, which is one short token typed at a
+ *  shell. They exist because CarPlay's voice category forbids drawing a device
+ *  picker on the car screen, so speaking the name is the only way to retarget a
+ *  turn while driving. Consumed by carMachineSwitch.ts on the phone. */
+http.route({
+  path: "/devices/voice-hints",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string" || !body.deviceId.trim()) {
+      return errorResponse("deviceId required", 400);
+    }
+    const strArray = (v: unknown): string[] | undefined =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
+
+    try {
+      const result = await ctx.runMutation(api.devices.setDeviceVoiceHints, {
+        tokenHash,
+        deviceId: body.deviceId,
+        hints: strArray(body.hints),
+        add: strArray(body.add),
+        remove: strArray(body.remove),
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      const msg = e?.message || "voice-hints update failed";
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse(msg, 401);
+      if (errorMessageIncludes(e, "Device not found")) return errorResponse(msg, 404);
+      return errorResponse(msg, 400);
+    }
+  }),
+});
+
 // Fleet tags — set/add/remove labels on a device for selector-based ops.
 http.route({
   path: "/devices/tags",

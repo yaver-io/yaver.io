@@ -2959,6 +2959,35 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name": "device_voice_hints_set",
+			"description": "Set the SPOKEN names for a device — the names a user says out loud, e.g. \"my mac mini\", \"the box at maltepe\", \"work laptop\". Distinct from alias (one short token typed at a shell): hints are many and natural-language. They are what lets a driver say \"switch to my mac mini\" on CarPlay, where no device picker may be shown on screen. Pass hints[] to replace the whole list, or add[]/remove[] to mutate it. Max 12 per device.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"required": []string{"deviceId"},
+				"properties": map[string]interface{}{
+					"deviceId": map[string]interface{}{
+						"type":        "string",
+						"description": "Full deviceId of the machine to name.",
+					},
+					"hints": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Replace the whole list. Pass [] to clear.",
+					},
+					"add": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Add these spoken names, keeping existing ones.",
+					},
+					"remove": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Remove these spoken names.",
+					},
+				},
+			},
+		},
+		{
 			"name":        "device_primary_set",
 			"description": "Mark a device as the primary (auto-connect) target. Accepts a deviceId or unique prefix. Pass clear:true instead to unset the preference.",
 			"inputSchema": map[string]interface{}{

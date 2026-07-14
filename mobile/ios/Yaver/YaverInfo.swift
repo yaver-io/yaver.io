@@ -185,6 +185,22 @@ final class YaverInfo: NSObject {
     }
   }
 
+  // Drive the CarPlay voice template from JS. car-voice-coding.tsx calls this
+  // on every status change with one of: "ready" | "listening" | "working" |
+  // "speaking" (the identifiers YaverCarPlaySceneDelegate registered). We post
+  // rather than hold a reference to the scene, because the CarPlay scene may
+  // not exist at all — un-entitled builds, or simply no car connected — and JS
+  // must not have to know or care. When nothing is listening, this is a no-op.
+  @objc func setCarPlayVoiceState(_ state: String) {
+    let trimmed = state.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    NotificationCenter.default.post(
+      name: Notification.Name("YaverCarPlayVoiceState"),
+      object: nil,
+      userInfo: ["state": trimmed]
+    )
+  }
+
   @objc func clearInheritedAuth() {
     let defaults = UserDefaults.standard
     defaults.removeObject(forKey: "yaverInheritedAuthToken")

@@ -182,6 +182,15 @@ type ListedDevice = {
    * short name.
    */
   alias?: string;
+  /**
+   * Spoken names — "my mac mini", "the box at maltepe". Many and
+   * natural-language, unlike `alias` (one short token you type at a shell).
+   * Set via setDeviceVoiceHints / POST /devices/voice-hints / the
+   * device_voice_hints_set MCP verb. The phone matches them fuzzily
+   * (carMachineSwitch.ts) so a driver can retarget a turn by voice on CarPlay,
+   * where Apple forbids drawing a device picker on the car screen.
+   */
+  voiceHints?: string[];
   platform: string;
   publicKey?: string;
   hardwareId?: string;
@@ -1437,6 +1446,9 @@ export const listMyDevices = query({
       deviceId: d.deviceId,
       name: d.name,
       alias: d.alias,
+      // Spoken names — the phone feeds these to carMachineSwitch.ts so a driver
+      // can say "switch to my mac mini" on CarPlay, where no picker is allowed.
+      voiceHints: d.voiceHints,
       platform: d.platform,
       publishCapabilities: d.publishCapabilities,
       publicKey: d.publicKey,
@@ -1969,6 +1981,68 @@ export const setDeviceAlias = mutation({
 
     await ctx.db.patch(device._id, { alias: raw });
     return { ok: true, alias: raw };
+  },
+});
+
+/**
+ * Set / add / remove the SPOKEN names for a device. Owner-scoped (token-hash).
+ *
+ * These are what a driver actually says: "my mac mini", "the box at maltepe",
+ * "work laptop". They are not `alias` — alias is one short typed token for
+ * `yaver ssh`; these are many, natural-language, and never typed. They exist
+ * because CarPlay's voice category forbids drawing a device picker on the car
+ * screen, so speaking the machine's name is the ONLY way to retarget a turn
+ * while driving (carMachineSwitch.ts does the fuzzy matching on-device).
+ *
+ * Three modes, checked in order — mirrors setDeviceTags:
+ *   - `hints` present  → replace the whole list.
+ *   - `add` / `remove` → mutate the existing list.
+ *
+ * Normalized to lower-case, trimmed, deduped, ≤64 chars, max 12 per device.
+ * Invalid entries are dropped rather than failing the call: a bad hint should
+ * never block a good one. Display-only data, same privacy class as `name`.
+ */
+export const setDeviceVoiceHints = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    hints: v.optional(v.array(v.string())),
+    add: v.optional(v.array(v.string())),
+    remove: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const clean = (list: string[] | undefined): string[] =>
+      (list ?? [])
+        .map((h) => h.trim().toLowerCase().replace(/\s+/g, " "))
+        .filter((h) => h.length > 0 && h.length <= 64);
+
+    let next: string[];
+    if (args.hints !== undefined) {
+      next = clean(args.hints);
+    } else {
+      const current = device.voiceHints ?? [];
+      const removing = new Set(clean(args.remove));
+      next = [...current.filter((h) => !removing.has(h)), ...clean(args.add)];
+    }
+
+    // Dedupe, then cap. A device with 50 spoken names makes fuzzy matching
+    // ambiguous, which is worse than having none.
+    next = Array.from(new Set(next)).slice(0, 12);
+
+    await ctx.db.patch(device._id, {
+      voiceHints: next.length > 0 ? next : undefined,
+    });
+    return { ok: true, voiceHints: next };
   },
 });
 

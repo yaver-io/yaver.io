@@ -287,6 +287,14 @@ export default defineSchema({
     // setDeviceAlias mutation. Lower-cased and trimmed before storage
     // so lookups don't have to re-normalize.
     alias: v.optional(v.string()),
+    // Free-form spoken names for this machine — "my mac mini", "the box at
+    // maltepe", "work laptop". Unlike `alias` (one, short, unique, typed at a
+    // shell) these are MANY, natural, and never typed: they exist so a driver
+    // can say "switch to my mac mini" on CarPlay, where no device picker is
+    // allowed on screen. Matched fuzzily on-device (carMachineSwitch.ts), so
+    // STT mangling is tolerated. Display/label data only — same privacy class
+    // as `alias` and `name`; never a path, IP, or secret.
+    voiceHints: v.optional(v.array(v.string())),
     // Fleet labels for selector-based ops ("run on all gpu/arm64/edge
     // machines"). Auto-seeded at first registration from platform +
     // hardware (os, arch, gpu, docker, edge); thereafter user-owned via

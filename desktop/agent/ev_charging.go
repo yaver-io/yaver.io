@@ -73,7 +73,17 @@ type EVStation struct {
 	MaxPowerKW float64       `json:"max_power_kw,omitempty"`
 	StatusHint string        `json:"status_hint,omitempty"`
 	DeepLink   string        `json:"deep_link,omitempty"` // Google Maps directions URL
-	Source     string        `json:"source,omitempty"`    // "openchargemap"
+	Source     string        `json:"source,omitempty"`    // primary provider, e.g. "openchargemap"
+
+	// Sources lists EVERY provider that reported this station (see ev_rank.go).
+	// More than one = independent corroboration, which the ranker rewards.
+	Sources []string `json:"sources,omitempty"`
+	// Score is the weighted rank (ev_rank.go). Higher is better. Only set when
+	// the caller asked for ranking; a bare distance query leaves it zero.
+	Score float64 `json:"score,omitempty"`
+	// Why is the short, speakable justification for the score — "fast DC, your
+	// network, connector fits". This is what gets read aloud in the car.
+	Why string `json:"why,omitempty"`
 }
 
 // mcpEVCharging finds EV charging stations near (lat, lon) via OpenChargeMap.

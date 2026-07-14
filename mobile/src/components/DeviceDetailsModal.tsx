@@ -157,6 +157,138 @@ function sshCommandForDevice(device: Pick<Device, "alias" | "id">): string {
 
 // Inline alias editor — shown only on owned devices. Tap the chip
 // to edit, Save to commit, Clear to remove. Surfaces server-side
+/**
+ * VoiceHintsRow — the names you SAY for this machine.
+ *
+ * Deliberately separate from AliasRow: an alias is one short token you type at
+ * a shell (`yaver ssh pokayoke`); these are many, natural, and never typed —
+ * "my mac mini", "the box at maltepe". They matter most in the car, where
+ * Apple's CarPlay voice category forbids drawing a device picker, so the spoken
+ * name is the ONLY handle a driver has on a machine. Comma-separated because a
+ * chip editor is more taps than a driver-adjacent feature deserves.
+ */
+function VoiceHintsRow({ device }: { device: Device }) {
+  const c = useColors();
+  const { setDeviceVoiceHints } = useDevice();
+  const [editing, setEditing] = useState(false);
+  const current = device.voiceHints ?? [];
+  const [draft, setDraft] = useState(current.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft((device.voiceHints ?? []).join(", "));
+      setError(null);
+    }
+  }, [device.voiceHints, editing]);
+
+  const commit = async () => {
+    const hints = draft
+      .split(",")
+      .map((h) => h.trim())
+      .filter(Boolean);
+    setSaving(true);
+    setError(null);
+    const res = await setDeviceVoiceHints(device, hints);
+    setSaving(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <Pressable
+        onPress={() => setEditing(true)}
+        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
+      >
+        <Text style={{ color: c.textMuted, fontSize: 12, width: 110 }}>Say it as</Text>
+        <View style={{ flex: 1, flexDirection: "row", alignItems: "center" }}>
+          <Text
+            style={{
+              color: current.length ? "#c4b5fd" : c.textMuted,
+              fontSize: 13,
+              flex: 1,
+            }}
+            numberOfLines={1}
+          >
+            {current.length ? current.join(" · ") : "tap to add spoken names"}
+          </Text>
+          <Text style={{ color: c.accent, fontSize: 11, marginLeft: 8, fontWeight: "600" }}>
+            EDIT
+          </Text>
+        </View>
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={{ paddingVertical: 6 }}>
+      <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 2 }}>Say it as</Text>
+      <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 6 }}>
+        Comma-separated. Used by car voice: “switch to my mac mini”.
+      </Text>
+      <TextInput
+        value={draft}
+        onChangeText={setDraft}
+        autoFocus
+        autoCapitalize="none"
+        editable={!saving}
+        placeholder="my mac mini, the box at maltepe"
+        placeholderTextColor={c.textMuted}
+        style={{
+          color: c.textPrimary,
+          backgroundColor: c.bgCard,
+          borderWidth: 1,
+          borderColor: c.border,
+          borderRadius: 6,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          fontSize: 13,
+        }}
+      />
+      <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+        <Pressable
+          onPress={() => void commit()}
+          disabled={saving}
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 6,
+            backgroundColor: "rgba(139,92,246,0.15)",
+            borderWidth: 1,
+            borderColor: "rgba(139,92,246,0.45)",
+            opacity: saving ? 0.5 : 1,
+          }}
+        >
+          <Text style={{ color: "#c4b5fd", fontSize: 12, fontWeight: "700" }}>
+            {saving ? "..." : "Save"}
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setEditing(false)}
+          disabled={saving}
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 6,
+            borderWidth: 1,
+            borderColor: c.border,
+          }}
+        >
+          <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600" }}>Cancel</Text>
+        </Pressable>
+      </View>
+      {error ? (
+        <Text style={{ color: "#fda4af", fontSize: 11, marginTop: 6 }}>{error}</Text>
+      ) : null}
+    </View>
+  );
+}
+
 // uniqueness errors verbatim so the user knows which alias is taken.
 function AliasRow({ device }: { device: Device }) {
   const c = useColors();
@@ -1633,6 +1765,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
             </Text>
             <Row label="Device ID" value={device.id} mono />
             {!device.isGuest ? <AliasRow device={device} /> : device.alias ? <Row label="Alias" value={`@${device.alias}`} mono /> : null}
+            {!device.isGuest ? <VoiceHintsRow device={device} /> : null}
             {device.hwid ? <Row label="Hardware ID" value={device.hwid.slice(0, 16) + "…"} mono /> : null}
             {device.publicKey ? <Row label="Primary key" value={device.publicKey.slice(0, 16) + "…"} mono /> : null}
             {device.accessScope ? <Row label="Access scope" value={device.accessScope} /> : null}

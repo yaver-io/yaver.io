@@ -17,5 +17,6 @@ RCT_EXTERN_METHOD(setInheritedGuestProject:(NSString *)name
                   path:(NSString *)path)
 RCT_EXTERN_METHOD(setInheritedPrimaryRunner:(NSString *)runner
                   model:(NSString *)model)
+RCT_EXTERN_METHOD(setCarPlayVoiceState:(NSString *)state)
 RCT_EXTERN_METHOD(clearInheritedAuth)
 @end

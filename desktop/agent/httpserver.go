@@ -13058,6 +13058,36 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(fmt.Sprintf("Primary device: %s (deviceId=%s)", name, current))
 
+	case "device_voice_hints_set":
+		var args struct {
+			DeviceID string   `json:"deviceId"`
+			Hints    []string `json:"hints"`
+			Add      []string `json:"add"`
+			Remove   []string `json:"remove"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.DeviceID) == "" {
+			return mcpToolError("deviceId is required")
+		}
+		if args.Hints == nil && len(args.Add) == 0 && len(args.Remove) == 0 {
+			return mcpToolError("pass hints[] to replace, or add[]/remove[] to mutate")
+		}
+		res, err := setDeviceVoiceHints(
+			context.Background(),
+			s.token, s.convexURL, args.DeviceID,
+			args.Hints, args.Add, args.Remove,
+		)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if len(res.VoiceHints) == 0 {
+			return mcpToolResult("Voice hints cleared. This machine can no longer be picked by spoken name.")
+		}
+		return mcpToolResult(fmt.Sprintf(
+			"Voice hints for %s: %s\nSay any of these to switch to it from the car.",
+			args.DeviceID, strings.Join(res.VoiceHints, ", "),
+		))
+
 	case "device_primary_set":
 		var args struct {
 			DeviceID string `json:"deviceId"`

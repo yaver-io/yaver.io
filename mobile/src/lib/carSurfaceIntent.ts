@@ -17,7 +17,22 @@ export type CarSurfaceIntentKind =
   | "git_connect"
   | "git_ci_status"
   | "media_open"
-  | "maps_open";
+  | "maps_open"
+  | "storage_scan"
+  | "storage_reclaim"
+  | "proc_top"
+  | "ev_charging";
+
+/**
+ * Ambient context the SCREEN supplies — the driver can't speak their own
+ * coordinates. Optional so every existing call site keeps working.
+ */
+export interface CarSurfaceContext {
+  lat?: number;
+  lon?: number;
+  /** Vehicle preset id from ev_connector_types (e.g. "togg_t10x"). */
+  vehicle?: string;
+}
 
 export interface CarSurfaceIntent {
   kind: CarSurfaceIntentKind;
@@ -157,6 +172,78 @@ export function classifyCarSurfaceIntent(
     };
   }
 
+  // ── EV charging ─────────────────────────────────────────────────────
+  // The one CarPlay category Yaver can honestly claim, and useful on voice
+  // today with no entitlement at all. Filters default to the driver's car
+  // (Togg T10X → CCS2) rather than making them recite connector types.
+  const chargeish =
+    /\b(charge|charging|charger|chargers|şarj|sarj|plug|supercharger)\b/.test(t) ||
+    (/\b(ev|battery)\b/.test(t) && /\b(low|empty|range|top up)\b/.test(t));
+  if (
+    chargeish &&
+    // English + Turkish triggers — the driver is in Turkey and will code-switch.
+    (/\b(where|find|nearest|closest|near|nearby|any|show|need|can i|should i|look for)\b/.test(
+      t,
+    ) ||
+      /(nerede|nerde|en yakın|en yakin|bul|var mı|var mi|lazım|lazim|gerek)/.test(
+        t,
+      ))
+  ) {
+    const fast = /\b(fast|rapid|dc|quick)\b/.test(t) || /(hızlı|hizli)/.test(t);
+    return {
+      kind: "ev_charging",
+      payload: {
+        // lat/lon are filled in from CarSurfaceContext at execute time.
+        radius: 40,
+        country: "TR",
+        connector_type: "ccs2",
+        min_power_kw: fast ? 120 : 50,
+        network: networkFromText(t),
+        surface: "car",
+      },
+    };
+  }
+
+  // ── Remote machine health: disk + processes ────────────────────────
+  // storage_scan / proc_top are read-only and answer in one sentence, so
+  // they're ideal for a driver. storage_reclaim DELETES, so it never fires
+  // straight from a transcript — executeCarSurfaceIntent turns it into a
+  // scan + dry-run and hands back a plan to be confirmed.
+  const storageish = /\b(disk|storage|space|cache|caches|derived ?data)\b/.test(t);
+  const reclaimish =
+    /\b(reclaim|purge|prune)\b/.test(t) ||
+    (/\b(clean|clear|free|empty|delete)\b/.test(t) && storageish);
+  if (reclaimish) {
+    return {
+      kind: "storage_reclaim",
+      payload: { surface: "car" },
+      confirmRequired: true,
+    };
+  }
+  if (
+    storageish &&
+    /\b(how much|check|status|left|full|usage|used|remaining|what)\b/.test(t)
+  ) {
+    return { kind: "storage_scan", payload: { surface: "car" } };
+  }
+
+  const procish = /\b(process|processes|cpu|memory|ram|load)\b/.test(t);
+  if (
+    procish &&
+    /\b(top|what'?s using|using|hogging|eating|highest|most|check|show|busy)\b/.test(
+      t,
+    )
+  ) {
+    return {
+      kind: "proc_top",
+      payload: {
+        sort: /\b(memory|ram|mem)\b/.test(t) ? "mem" : "cpu",
+        limit: 5,
+        surface: "car",
+      },
+    };
+  }
+
   const gitish =
     /\b(github|gitlab|git|pull request|pull requests|pr|prs|merge request|merge requests|mr|mrs|issue|issues|ci|pipeline|pipelines|actions|workflow|workflows|oauth|authorize|authenticate)\b/.test(
       t,
@@ -212,9 +299,22 @@ export function classifyCarSurfaceIntent(
 export async function executeCarSurfaceIntent(
   text: string,
   ops: CarSurfaceOps,
+  ctx: CarSurfaceContext = {},
 ): Promise<CarSurfaceResult> {
   const intent = classifyCarSurfaceIntent(text);
   if (!intent) return { handled: false, spoken: "" };
+
+  // The driver cannot speak coordinates — the screen supplies them.
+  if (intent.kind === "ev_charging") {
+    if (typeof ctx.lat !== "number" || typeof ctx.lon !== "number") {
+      return {
+        handled: true,
+        spoken: "I need location access to find chargers near you.",
+        intent,
+      };
+    }
+    intent.payload = { ...intent.payload, lat: ctx.lat, lon: ctx.lon };
+  }
 
   if (
     intent.confirmRequired &&
@@ -228,6 +328,35 @@ export async function executeCarSurfaceIntent(
     };
   }
 
+  // storage_reclaim is destructive and needs target ids the driver cannot
+  // possibly speak. Never dispatch it from a raw transcript: scan, then ask
+  // the agent for a DRY RUN (no confirm → it returns the plan, not an error),
+  // and hand the plan back for confirmation. Deleting happens only in
+  // confirmStorageReclaim(), after an explicit yes.
+  if (intent.kind === "storage_reclaim") {
+    const scan = unwrapOpsLike(await ops("storage_scan", {})) as any;
+    const ids = reclaimIdsFromScan(scan);
+    if (!ids.length) {
+      return {
+        handled: true,
+        spoken: "Nothing worth reclaiming — the caches are already clean.",
+        intent,
+        raw: scan,
+      };
+    }
+    const plan = await ops("storage_reclaim", { ids });
+    const planData = unwrapOpsLike(plan) as any;
+    const freed = planData?.freed || formatBytesForSpeech(scan?.totalReclaimableBytes);
+    return {
+      handled: true,
+      spoken: `I can free about ${freed} on ${
+        scan?.hostname || "the box"
+      }. Say confirm to reclaim it.`,
+      intent: { ...intent, payload: { ...intent.payload, ids }, confirmRequired: true },
+      raw: plan,
+    };
+  }
+
   const verb = intent.kind;
   const raw = await ops(verb, intent.payload);
   return {
@@ -236,6 +365,45 @@ export async function executeCarSurfaceIntent(
     intent,
     raw,
   };
+}
+
+/**
+ * Execute an approved reclaim. Called ONLY after the driver has explicitly
+ * confirmed the plan returned by executeCarSurfaceIntent (carVoiceConfirm's
+ * `storage` risk kind gates the transcript that got here).
+ */
+export async function confirmStorageReclaim(
+  ids: string[],
+  ops: CarSurfaceOps,
+): Promise<string> {
+  if (!ids.length) return "Nothing to reclaim.";
+  const raw = await ops("storage_reclaim", { ids, confirm: true });
+  const data = unwrapOpsLike(raw) as any;
+  const freed = data?.freed || formatBytesForSpeech(data?.freedBytes);
+  const after = data?.rootFreeGbAfter;
+  return typeof after === "number"
+    ? `Freed ${freed}. ${Math.round(after)} gigabytes free now.`
+    : `Freed ${freed}.`;
+}
+
+/** Flatten a StorageScan's groups into the target ids storage_reclaim wants. */
+function reclaimIdsFromScan(scan: any): string[] {
+  const groups = Array.isArray(scan?.groups) ? scan.groups : [];
+  const ids: string[] = [];
+  for (const g of groups) {
+    for (const target of g?.targets || []) {
+      if (target?.id) ids.push(String(target.id));
+    }
+  }
+  return ids;
+}
+
+function formatBytesForSpeech(bytes: unknown): string {
+  const n = Number(bytes || 0);
+  if (!n) return "nothing";
+  const gb = n / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(1)} gigabytes`;
+  return `${Math.max(1, Math.round(n / 1024 ** 2))} megabytes`;
 }
 
 export function spokenForCarIntent(
@@ -315,6 +483,58 @@ export function spokenForCarIntent(
       if (data?.opened && data?.provider) return `Opening ${data.provider}.`;
       return "Opening on the runtime.";
     }
+    case "storage_scan": {
+      const root = (data?.filesystems || [])[0];
+      const freeGb = Number(root?.freeGb ?? root?.freeGB ?? 0);
+      const reclaimable = formatBytesForSpeech(data?.totalReclaimableBytes);
+      const host = data?.hostname ? ` on ${data.hostname}` : "";
+      const partial = data?.partial ? " That's a floor — the scan timed out." : "";
+      if (freeGb) {
+        return `${Math.round(
+          freeGb,
+        )} gigabytes free${host}, and about ${reclaimable} is reclaimable.${partial}`;
+      }
+      return `About ${reclaimable} is reclaimable${host}.${partial}`;
+    }
+    case "storage_reclaim": {
+      // Reached only on the confirmed path; the dry-run sentence is built in
+      // executeCarSurfaceIntent, which has the scan in hand.
+      const freed = data?.freed || formatBytesForSpeech(data?.freedBytes);
+      if (data?.dryRun) return `That would free ${freed}. Say confirm to do it.`;
+      return `Freed ${freed}.`;
+    }
+    case "ev_charging": {
+      // The collection layer reports a third-party block as a finding rather
+      // than routing around it (CLAUDE.md do-no-harm). Say so plainly.
+      if (data?.blocked) {
+        return "Charger data is blocked right now — the provider needs an API key.";
+      }
+      const stations = Array.isArray(data?.stations)
+        ? data.stations
+        : Array.isArray(data)
+          ? data
+          : [];
+      if (!stations.length) return "No matching chargers nearby.";
+      const s = stations[0];
+      const name = s?.name || s?.title || "a charger";
+      const km = Number(s?.distance_km ?? s?.distanceKm ?? 0);
+      const kw = Number(s?.max_power_kw ?? s?.maxPowerKw ?? 0);
+      const dist = km ? ` ${km.toFixed(0)} kilometers away` : "";
+      const power = kw ? `, ${Math.round(kw)} kilowatt` : "";
+      const more =
+        stations.length > 1 ? ` ${stations.length - 1} more nearby.` : "";
+      return `Nearest is ${name}${dist}${power}.${more}`;
+    }
+    case "proc_top": {
+      const procs = Array.isArray(data?.processes) ? data.processes : [];
+      if (!procs.length) return "No processes returned.";
+      const top = procs[0];
+      const byMem = intent.payload?.sort === "mem";
+      const metric = byMem
+        ? `${Math.round(Number(top.rssMb || 0))} megabytes`
+        : `${Number(top.cpuPct || 0).toFixed(0)} percent CPU`;
+      return `Top is ${top.name} at ${metric}.`;
+    }
     default:
       return "Done.";
   }
@@ -365,6 +585,17 @@ function shortHostForSpeech(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** Charging-network filter, spoken naturally ("any Trugo chargers near me"). */
+function networkFromText(t: string): string {
+  if (/\btrugo|togg\b/.test(t)) return "trugo";
+  if (/\bzes\b/.test(t)) return "zes";
+  if (/\be[şs]arj\b/.test(t)) return "esarj";
+  if (/\bsharz\b/.test(t)) return "sharz";
+  if (/\bvoltrun\b/.test(t)) return "voltrun";
+  if (/\btesla\b/.test(t)) return "tesla";
+  return "";
 }
 
 function mediaProviderFromText(t: string): string {

@@ -24,6 +24,8 @@ import {
   Alert,
   Linking,
   Modal,
+  NativeModules,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -50,6 +52,11 @@ import {
 import { assessRisk, interpretConfirmReply } from "../src/lib/carVoiceConfirm";
 import { carVoiceEntryBus, shouldAutostart } from "../src/lib/carVoiceEntry";
 import { executeCarSurfaceIntent } from "../src/lib/carSurfaceIntent";
+import {
+  classifyMachineSwitch,
+  matchMachine,
+  spokenForMachineSwitch,
+} from "../src/lib/carMachineSwitch";
 import {
   CarReplyGate,
   SessionChoiceGate,
@@ -251,9 +258,14 @@ export default function CarVoiceCodingScreen() {
         return;
       }
     }
+    // staysActiveInBackground is what keeps the loop alive once the phone
+    // locks or backgrounds in a cradle — without it the session is torn down
+    // mid-turn and the driver gets silence. Paired with UIBackgroundModes
+    // "audio" in Info.plist / app.json; the plist key alone does nothing.
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
       playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
     });
     try {
       const { recording } = await Audio.Recording.createAsync(
@@ -266,6 +278,62 @@ export default function CarVoiceCodingScreen() {
       setStatus("error");
     }
   }, []);
+
+  /**
+   * Release the audio session the moment a turn is over.
+   *
+   * This is a HARD requirement of Apple's CarPlay voice-based-conversation
+   * category, not a nicety — criterion 2, verbatim: "Only hold an audio session
+   * open when voice features are actively being used." We acquire the session
+   * (staysActiveInBackground) when a turn starts so the loop survives the phone
+   * locking in a cradle, and we hand it straight back when the turn ends.
+   * Holding it while idle would both drain the battery and fail review.
+   */
+  const releaseAudioSession = useCallback(async () => {
+    try {
+      // expo-av is required lazily here, same as the recording path above.
+      const { Audio } = require("expo-av");
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+      });
+    } catch {
+      // Never let session teardown surface as a driving-time error.
+    }
+  }, []);
+
+  // One place, every exit path: the turn is done → give the session back.
+  useEffect(() => {
+    if (status === "idle" || status === "error") {
+      void releaseAudioSession();
+    }
+  }, [status, releaseAudioSession]);
+
+  /**
+   * Mirror this screen's status onto the CarPlay voice template.
+   *
+   * The CarPlay scene (YaverCarPlaySceneDelegate) renders a CPVoiceControlTemplate
+   * with exactly four states, and these strings ARE the contract with it. It's a
+   * no-op when there's no CarPlay scene — un-entitled build, or simply no car
+   * connected — so this screen never has to know whether it's driving a dashboard.
+   */
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    const carPlayState =
+      status === "recording"
+        ? "listening"
+        : status === "thinking"
+          ? "working"
+          : status === "speaking"
+            ? "speaking"
+            : "ready"; // idle + error both return the driver to a resting template
+    try {
+      NativeModules.YaverInfo?.setCarPlayVoiceState?.(carPlayState);
+    } catch {
+      // A missing native module must never break the voice loop.
+    }
+  }, [status]);
 
   const stopRecordingToUri = useCallback(async (): Promise<string | null> => {
     const rec = recordingRef.current;
@@ -317,6 +385,42 @@ export default function CarVoiceCodingScreen() {
         patchTurn(turnId, { stage: "error", spoken });
         await safeSpeak(deps, spoken);
         await publishCarConversation("voice command", spoken);
+        setStatus("idle");
+        return;
+      }
+
+      // 1.5) MACHINE SWITCH — "switch to pokayoke". Must run BEFORE the safety
+      // gate and before dispatch: it retargets the turn rather than executing
+      // anything, so it is never risky and must never reach a box. This is the
+      // ONLY way to change machines on CarPlay — Apple's voice category forbids
+      // showing a picker on the car screen, so the phone's device list is
+      // unreachable while driving. We always speak the machine back, so a
+      // misheard name is caught by ear instead of running a build on the wrong box.
+      const switchReq = classifyMachineSwitch(transcript);
+      if (switchReq) {
+        const machine = matchMachine(
+          switchReq.spokenName,
+          devices.map((d: any) => ({
+            id: d.id || d.deviceId,
+            name: d.nickname || d.name || d.hostname || d.deviceId,
+            // voiceHints are the names the user actually SAYS ("my mac mini",
+            // "the box at maltepe") — set via /devices/voice-hints. They matter
+            // most here: on CarPlay there's no picker, so the spoken name is
+            // the only handle the driver has on a machine.
+            aliases: [
+              ...(Array.isArray(d.voiceHints) ? d.voiceHints : []),
+              d.alias,
+              d.hostname,
+              d.name,
+            ].filter(Boolean),
+          })),
+        );
+        const spoken = spokenForMachineSwitch(machine, switchReq.spokenName);
+        if (machine) setDeviceId(machine.id);
+        patchTurn(turnId, { stage: "spoken", spoken });
+        setStatus("speaking");
+        await safeSpeak(deps, spoken);
+        await publishCarConversation(transcript, spoken);
         setStatus("idle");
         return;
       }
