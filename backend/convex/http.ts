@@ -5406,9 +5406,12 @@ http.route({
             .filter((machine) => {
               const s = String(machine.status || "");
               if (s === "removed" || s === "stopped") return false;
-              if (s === "paused" || s === "suspended") {
-                // Un-wakeable parked row (no snapshot/volume pointer) — hide it
-                // rather than offer a Wake that can't succeed.
+              // paused/suspended (wakeable) AND error (snapshot/park failed) are
+              // only worth showing if they still have a recovery pointer to wake
+              // from. A zombie — errored park with its server already deleted and
+              // no snapshot — just offers a "Try wake again" that can never
+              // succeed, so hide it (e.g. the mn71me24 leftover).
+              if (s === "paused" || s === "suspended" || s === "error") {
                 return !!(machine.lastSnapshotId || (machine.volumeId && machine.baseImageId));
               }
               return true;

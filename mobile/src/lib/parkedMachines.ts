@@ -223,7 +223,14 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
   const machines = (data?.machines ?? [])
     .filter((m) => {
       const s = String((m as any).status || "");
-      return s !== "removed" && s !== "stopped";
+      if (s === "removed" || s === "stopped") return false;
+      // A paused/errored row is only real if it still has something to wake from
+      // — otherwise it's a zombie (server gone, snapshot failed) offering a
+      // "Try wake again" that can't succeed.
+      if (s === "paused" || s === "suspended" || s === "error") {
+        return !!((m as any).lastSnapshotId || ((m as any).volumeId && (m as any).baseImageId));
+      }
+      return true;
     })
     .filter((m, i, arr) => {
       const dev = (m as any).deviceId;

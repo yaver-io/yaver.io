@@ -10219,6 +10219,11 @@ type relayManager struct {
 	// would tear the tunnel down for good rather than restart it).
 	attemptCancelsMu sync.Mutex
 	attemptCancels   map[string]context.CancelFunc // keyed by QuicAddr
+
+	// noTunnelSince is when the watchdog first observed zero live relay tunnels
+	// despite relays being configured. Only touched from healthCheckLoop's
+	// single goroutine, so it needs no lock.
+	noTunnelSince time.Time
 }
 
 func newRelayManager(ctx context.Context, deviceID, authToken, agentAddr, globalPassword, convexSiteURL string) *relayManager {
@@ -10444,8 +10449,54 @@ func (rm *relayManager) healthCheckLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			rm.checkRelayHealth(client)
+			rm.watchdogRelayTunnel()
 		}
 	}
+}
+
+// watchdogRelayTunnel self-heals a silently-dead relay tunnel. The free relay is
+// the UNIVERSAL fallback: an off-LAN client with no Tailscale (e.g. a phone on
+// cellular / a foreign Wi-Fi) can ONLY reach this box through the relay. A
+// tunnel can silently drop (macOS sleep/wake, network change, or the relay's
+// refuse-on-collision window) and, if the redial gets wedged, stay down while
+// heartbeats keep flowing — so the box looks "online" but is unreachable. If
+// relays are configured and we're authed but NO tunnel has been live for >90s,
+// force an immediate redial (bypassing the reconnect backoff), or respawn the
+// tunnel goroutines if they're gone.
+func (rm *relayManager) watchdogRelayTunnel() {
+	if rm == nil {
+		return
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || len(cfg.RelayServers) == 0 || strings.TrimSpace(cfg.AuthToken) == "" {
+		rm.noTunnelSince = time.Time{}
+		return
+	}
+	if anyRelayTunnelLive() {
+		rm.noTunnelSince = time.Time{}
+		return
+	}
+	if rm.noTunnelSince.IsZero() {
+		rm.noTunnelSince = time.Now()
+		return
+	}
+	if time.Since(rm.noTunnelSince) < 90*time.Second {
+		return
+	}
+	log.Printf("[relay] watchdog: no live tunnel for %s despite %d configured relay(s) — forcing redial so off-LAN / non-Tailscale clients keep a path",
+		time.Since(rm.noTunnelSince).Round(time.Second), len(cfg.RelayServers))
+	rm.attemptCancelsMu.Lock()
+	forced := 0
+	for _, cancel := range rm.attemptCancels {
+		cancel() // relayConnectAndServe returns ctx.Err() → runRelayTunnel redials NOW
+		forced++
+	}
+	rm.attemptCancelsMu.Unlock()
+	if forced == 0 {
+		// No in-flight attempts means the tunnel goroutines exited — respawn them.
+		rm.reloadNow()
+	}
+	rm.noTunnelSince = time.Now() // reset the clock so we re-evaluate, not hammer
 }
 
 func (rm *relayManager) checkRelayHealth(client *http.Client) {
