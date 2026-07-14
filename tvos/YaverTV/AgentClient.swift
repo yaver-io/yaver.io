@@ -141,6 +141,22 @@ actor AgentClient {
         try await ops("mobile_platform_matrix", [:], as: PlatformMatrixEnvelope.self)
     }
 
+    /// The task queue on the box (GET /tasks). REST, not an ops verb — a glance
+    /// list for the TV; the full task lifecycle stays on phone/web.
+    func listTasks() async throws -> [TaskSummary] {
+        guard let url = URL(string: "http://\(box.host):\(box.port)/tasks") else {
+            throw AgentError(message: "bad box host")
+        }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AgentError(message: "couldn't load tasks (\(http.statusCode))")
+        }
+        return (try JSONDecoder().decode(TaskList.self, from: data)).tasks
+    }
+
     func startRunnerAuth(_ runner: String) async throws -> RunnerAuthStartResult {
         try await ops("runner_auth", ["op": "browser_start", "runner": runner], as: RunnerAuthStartResult.self)
     }

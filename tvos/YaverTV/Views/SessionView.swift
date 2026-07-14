@@ -55,6 +55,14 @@ struct SessionView: View {
     @State private var selected: String?
     @State private var sessionsLoaded = false
 
+    /// When opened from the Tasks list, the tmux session to drive directly —
+    /// skips the picker even if several runners are live.
+    private let preselect: String?
+    init(preselect: String? = nil) {
+        self.preselect = preselect
+        _selected = State(initialValue: (preselect?.isEmpty == false) ? preselect : nil)
+    }
+
     private var client: SessionClient? {
         guard let box = store.selectedBox else { return nil }
         return SessionClient(token: store.token, box: box)

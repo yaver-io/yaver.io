@@ -23,6 +23,9 @@ struct DashboardView: View {
                             NavigationLink(destination: SessionView()) {
                                 Tile(icon: "terminal.fill", title: "Session", detail: "Drive a live coding session")
                             }
+                            NavigationLink(destination: TasksView()) {
+                                Tile(icon: "checklist", title: "Tasks", detail: "What's running & in review")
+                            }
                             // "Yaver Catalog" used to sit here. It navigated to
                             // RuntimeDashboardView — the same destination as the
                             // Runtime tile below it — under the subtitle

@@ -100,6 +100,39 @@ struct RunnerSessions: Decodable {
     var sessions: [RunnerSession]?
 }
 
+/// A task as it appears in the glanceable list (GET /tasks). Only the fields a
+/// lean-back list needs; the full model (turns, cost, output) lives on mobile.
+struct TaskSummary: Decodable, Identifiable {
+    let id: String
+    let title: String?
+    let status: String?          // queued | running | review | completed | failed | stopped
+    let runner: String?
+    let tmuxSession: String?     // present → the task has a live session to drive
+
+    /// The title is a raw prompt — it carries absolute paths. Redact for a TV.
+    var safeTitle: String { redactHomePaths(title ?? "Untitled task") }
+}
+
+struct TaskList: Decodable { let tasks: [TaskSummary] }
+
+/// Strip absolute home paths (/Users/<name>, /home/<name> → ~) from any string
+/// shown on a television or spoken aloud. Shared by the Session pane and the
+/// task list; the path carries the user's login name and filesystem layout, and
+/// these screens get filmed and screen-shared. Mirrors the Convex privacy rule
+/// that keeps absolute paths off the wire.
+func redactHomePaths(_ text: String) -> String {
+    var out = text
+    for root in ["/Users/", "/home/"] {
+        while let r = out.range(of: root) {
+            let rest = out[r.upperBound...]
+            let name = rest.prefix { !$0.isWhitespace && $0 != "/" }
+            guard !name.isEmpty else { break }
+            out.replaceSubrange(r.lowerBound..<name.endIndex, with: "~")
+        }
+    }
+    return out
+}
+
 struct RunnerSession: Decodable, Identifiable {
     /// The tmux session name ("yaver-codex", or "0" for a hand-rolled one).
     /// This is exactly what `/runner/session/turn` wants in its `session` field.
