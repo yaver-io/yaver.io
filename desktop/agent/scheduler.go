@@ -58,13 +58,19 @@ type ScheduledTask struct {
 	ResumeSession bool `json:"resumeSession,omitempty"`
 
 	// State
-	Status     string `json:"status"` // "scheduled", "running", "completed", "failed", "paused"
-	LastRunAt  string `json:"lastRunAt,omitempty"`
-	LastTaskID string `json:"lastTaskId,omitempty"`
-	NextRunAt  string `json:"nextRunAt,omitempty"`
-	RunCount   int    `json:"runCount"`
-	MaxRuns    int    `json:"maxRuns,omitempty"` // 0 = unlimited
-	CreatedAt  string `json:"createdAt"`
+	Status string `json:"status"` // "scheduled", "running", "completed", "failed", "paused"
+	// ConsecutiveFailures drives the circuit breaker (see maxConsecutiveFailures).
+	// Reset to 0 by any successful run. PausedReason records WHY the breaker
+	// tripped, so an auto-paused schedule explains itself in list_schedules
+	// instead of just going quiet.
+	ConsecutiveFailures int    `json:"consecutiveFailures,omitempty"`
+	PausedReason        string `json:"pausedReason,omitempty"`
+	LastRunAt           string `json:"lastRunAt,omitempty"`
+	LastTaskID          string `json:"lastTaskId,omitempty"`
+	NextRunAt           string `json:"nextRunAt,omitempty"`
+	RunCount            int    `json:"runCount"`
+	MaxRuns             int    `json:"maxRuns,omitempty"` // 0 = unlimited
+	CreatedAt           string `json:"createdAt"`
 
 	// Results
 	History []ScheduleRun `json:"history,omitempty"`
@@ -247,7 +253,14 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 	}
 	task, err := s.taskMgr.CreateTaskWithOptions(st.Title, desc, st.Model, "scheduler", st.Runner, st.CustomCommand, nil, opts)
 	if err != nil {
+		// A schedule that cannot even CREATE its task is failing just as hard as
+		// one whose task fails — and this path used to return without recording
+		// anything, so it could never trip the breaker and would retry forever.
 		log.Printf("[scheduler] Failed to create task for schedule %s: %v", st.ID, err)
+		s.mu.Lock()
+		s.noteRunOutcomeLocked(st, TaskStatusFailed)
+		s.mu.Unlock()
+		s.save()
 		return
 	}
 
@@ -317,12 +330,59 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 						st.Status = "completed"
 					}
 				}
+				s.noteRunOutcomeLocked(st, status)
 				s.mu.Unlock()
 				s.save()
 				break
 			}
 		}
 	}()
+}
+
+// maxConsecutiveFailures is how many times in a row a schedule may fail before
+// the scheduler stops firing it.
+//
+// Why this exists: a Mac mini was found with 6,023 failed tasks out of 6,035 —
+// 99.5% of everything it had ever done. Five schedules pointed at loops that no
+// longer existed (their working directory lived in /tmp, which macOS purges), so
+// every fire failed instantly, crashed the runner process, and was retried
+// ~60 seconds later. For two months. The box looked broken over the relay, and
+// the relay took the blame; the relay was fine.
+//
+// A schedule that has failed this many times in a row is not going to start
+// working on the next tick. Retrying it forever is not resilience — it is a
+// crash loop that hides the real fault and drowns the task list.
+const maxConsecutiveFailures = 10
+
+// noteRunOutcomeLocked records whether a run succeeded and trips a circuit
+// breaker after maxConsecutiveFailures back-to-back failures. Caller holds s.mu.
+//
+// Pausing (not deleting) is deliberate: the schedule stays visible in
+// list_schedules with the reason attached, so the user can fix the underlying
+// cause and resume it. A silently deleted schedule is a mystery; a paused one
+// with "10 consecutive failures: ..." is a diagnosis.
+func (s *Scheduler) noteRunOutcomeLocked(st *ScheduledTask, status TaskStatus) {
+	if status == TaskStatusFinished {
+		st.ConsecutiveFailures = 0
+		st.PausedReason = ""
+		return
+	}
+	if status != TaskStatusFailed {
+		return // stopped/cancelled is a human decision, not a fault
+	}
+
+	st.ConsecutiveFailures++
+	if st.ConsecutiveFailures < maxConsecutiveFailures {
+		return
+	}
+
+	st.Status = "paused"
+	st.NextRunAt = ""
+	st.PausedReason = fmt.Sprintf(
+		"auto-paused after %d consecutive failures — fix the cause, then resume. Last task: %s",
+		st.ConsecutiveFailures, st.LastTaskID)
+	log.Printf("[scheduler] AUTO-PAUSED %s (%q) after %d consecutive failures — it was failing every run and would have retried forever",
+		st.ID, st.Title, st.ConsecutiveFailures)
 }
 
 // executeRoutine fires a Verb-mode schedule. Synchronous from the
@@ -395,6 +455,14 @@ func (s *Scheduler) executeRoutine(st *ScheduledTask) {
 	} else {
 		st.NextRunAt = ""
 		st.Status = "completed"
+	}
+	// Verb-mode routines fire against the ops registry and get the same circuit
+	// breaker as TaskManager schedules — a routine pointed at a verb that always
+	// errors is exactly as much of a crash loop as a loop with a missing workdir.
+	if result.OK {
+		s.noteRunOutcomeLocked(st, TaskStatusFinished)
+	} else {
+		s.noteRunOutcomeLocked(st, TaskStatusFailed)
 	}
 	s.mu.Unlock()
 	s.save()
