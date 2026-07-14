@@ -245,11 +245,20 @@ func TestDirectAgentBaseCandidatesNoDuplicateWhenDefaultPort(t *testing.T) {
 
 func TestDoRemoteAgentRequestFallsBackToSecondCandidate(t *testing.T) {
 	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// doRemoteAgentRequest now races a GET /health across candidates to find a
+		// live leg before sending the real request (a dead LAN leg used to starve
+		// the working relay leg out of the budget). A real agent serves /health, so
+		// this fake must too — the assertions that matter are below: the REAL
+		// request still goes to /info, exactly once, on the second candidate.
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if got := r.Header.Get("Authorization"); got != "Bearer token-123" {
-			t.Fatalf("Authorization header = %q", got)
+			t.Errorf("Authorization header = %q", got)
 		}
 		if got := r.URL.Path; got != "/info" {
-			t.Fatalf("request path = %q", got)
+			t.Errorf("request path = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))

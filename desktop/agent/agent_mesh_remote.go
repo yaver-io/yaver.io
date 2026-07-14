@@ -385,8 +385,6 @@ func buildRemoteAgentCandidates(cfg *Config, target *DeviceInfo) ([]RemoteAgentC
 	}
 
 	orderRemoteAgentCandidates(candidates)
-	maybeRefreshRemoteAgentProbes(candidates)
-	orderRemoteAgentCandidates(candidates)
 
 	return candidates, nil
 }
@@ -697,6 +695,88 @@ func remoteHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+// livenessProbeBudget caps how long the parallel probe may take. It is small on
+// purpose: the probe exists to ORDER the candidates, not to be the request. A
+// live leg answers /health in tens of milliseconds; if none answers inside this
+// window we simply keep the static order and let the normal walk report why.
+const livenessProbeBudget = 1500 * time.Millisecond
+
+// orderRemoteAgentCandidatesByLiveness probes every candidate concurrently with
+// an unauthenticated GET /health and moves the first one that answers to the
+// front, so the sequential walk that follows hits a working transport first.
+//
+// It never removes a candidate and never fails the call: a probe that finds
+// nothing leaves the order untouched. The probe is strictly an optimisation of
+// ORDER — correctness still rests on the walk below.
+func orderRemoteAgentCandidatesByLiveness(ctx context.Context, client *http.Client, candidates []RemoteAgentCandidate, token string, timeout time.Duration) {
+	budget := livenessProbeBudget
+	if timeout < budget {
+		budget = timeout
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	type result struct {
+		idx int
+		rtt time.Duration
+	}
+	winner := make(chan result, len(candidates))
+
+	var wg sync.WaitGroup
+	for i, c := range candidates {
+		wg.Add(1)
+		go func(i int, c RemoteAgentCandidate) {
+			defer wg.Done()
+			start := time.Now()
+			url := strings.TrimRight(c.BaseURL, "/") + "/health"
+			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url, nil)
+			if err != nil {
+				return
+			}
+			if strings.TrimSpace(token) != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			for k, v := range c.Headers {
+				if strings.TrimSpace(v) != "" {
+					req.Header.Set(k, v)
+				}
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				return
+			}
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			// Any non-5xx answer proves the leg carries traffic to an agent. A 401
+			// still proves reachability, which is all this probe decides.
+			if resp.StatusCode >= 500 {
+				return
+			}
+			select {
+			case winner <- result{idx: i, rtt: time.Since(start)}:
+			default:
+			}
+		}(i, c)
+	}
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	select {
+	case w := <-winner:
+		cancel() // stop the losers; they are only informing order
+		if w.idx > 0 {
+			live := candidates[w.idx]
+			copy(candidates[1:w.idx+1], candidates[0:w.idx])
+			candidates[0] = live
+		}
+	case <-done:
+		// Nobody answered. Leave the order alone; the walk below will attempt each
+		// leg and report the real per-leg errors, which is the honest outcome.
+	case <-probeCtx.Done():
+	}
+}
+
 func doRemoteAgentRequest(ctx context.Context, candidates []RemoteAgentCandidate, token, method, path string, bodyJSON []byte, timeout time.Duration) (RemoteAgentCandidate, int, []byte, error) {
 	if len(candidates) == 0 {
 		return RemoteAgentCandidate{}, 0, nil, fmt.Errorf("no remote transport candidates")
@@ -706,6 +786,31 @@ func doRemoteAgentRequest(ctx context.Context, candidates []RemoteAgentCandidate
 	}
 	client := remoteHTTPClient(timeout)
 	orderRemoteAgentCandidates(candidates)
+
+	// Race a cheap probe across every candidate IN PARALLEL and put the winner
+	// first, so a dead leg cannot starve a live one.
+	//
+	// The sequential walk below divides the budget across candidates with a 2s
+	// floor. That is fine when the dead legs fail fast — and a disaster when they
+	// don't. A Mac mini advertising a LAN IP on an unreachable subnet, plus a
+	// Tailscale address with Tailscale stopped, burned the 2s floor on each dead
+	// leg in turn; the RELAY — the one transport that actually worked — was tried
+	// last and got cut off by the deadline. `yaver devices` printed "unreachable"
+	// and `yaver primary status` said "every transport candidate failed", for a
+	// box that `yaver ping` reached fine and that answered /info over the relay in
+	// 0.4s. It flapped run-to-run, because it was a race against the clock.
+	//
+	// Someone already met this and raised the budget 3s -> 7s (see
+	// fetchRunnerAuthStatusRowsRemoteWithTimeout). Raising the budget does not fix
+	// a serial walk — it moves the cliff. Probing in parallel does.
+	//
+	// We probe rather than racing the REAL request because every candidate reaches
+	// the SAME agent: racing a POST would deliver it twice and create two tasks.
+	// The probe is GET /health — idempotent, unauthenticated, and answered by any
+	// live leg — so exactly one real request goes out, on a transport known to work.
+	if len(candidates) > 1 {
+		orderRemoteAgentCandidatesByLiveness(ctx, client, candidates, token, timeout)
+	}
 
 	// Budget each leg SEPARATELY. Every attempt used to inherit the caller's
 	// context directly, so one black-holed transport could swallow the entire
@@ -993,4 +1098,3 @@ func persistFreshRelayPassword(cfg *Config, relayURL, password string) {
 	update(cfg.RelayServers)
 	update(cfg.CachedRelayServers)
 }
-
