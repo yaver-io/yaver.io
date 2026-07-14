@@ -324,9 +324,19 @@ func TestClaudeCredentialFileHasOAuth(t *testing.T) {
 		"empty object":               {`{}`, false},
 		"not json":                   {`nope`, false},
 		"blank access token":         {`{"claudeAiOauth":{"accessToken":""}}`, false},
-		"live access token":          {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
-		"expired but refreshable":    {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":%d}}`, past), true},
-		"expired without refresh":    {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, past), false},
+		"live access token": {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
+		// An expired token is NOT signed in, refresh token or not. This case
+		// used to expect true on the theory that Claude would refresh itself.
+		// A real Mac mini disproved it: expiresAt was 2026-05-11, a refresh
+		// token was present, the refresh never fired, and this function called
+		// it signed in for two months — so every picker showed "Claude Code
+		// ready" in green and every task sent there died on a 30s timeout.
+		// A maybe must not be reported as a yes; if Claude CAN still refresh,
+		// probeClaudeAuthStatus() asks the binary directly and overrides this.
+		"expired even with refresh token": {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":%d}}`, past), false},
+		"expired without refresh":         {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, past), false},
+		"live token with refresh":         {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":%d}}`, future), true},
+		"no expiry recorded":              {`{"claudeAiOauth":{"accessToken":"a"}}`, true},
 		"mcp tokens plus real oauth": {fmt.Sprintf(`{"mcpOAuth":{"v":{"accessToken":"t"}},"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
 	}
 	for name, tc := range cases {

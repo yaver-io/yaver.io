@@ -43,7 +43,7 @@ type runnerBrowserAuthSession struct {
 	OpenURL        string `json:"openUrl,omitempty"`
 	Code           string `json:"code,omitempty"`
 	Detail         string `json:"detail,omitempty"`
-	AuthConfigured bool   `json:"authConfigured,omitempty"`
+	AuthConfigured bool   `json:"authConfigured"`
 	AuthSource     string `json:"authSource,omitempty"`
 	Error          string `json:"error,omitempty"`
 	StartedAt      int64  `json:"startedAt"`

@@ -205,7 +205,7 @@ type runnerAuthStatusRow struct {
 	// "a credentials file exists". Absent on agents older than 1.99.278,
 	// which is why remote callers must treat a missing value as "unknown"
 	// rather than "unverified but fine". See RunnerRuntimeStatus.AuthVerified.
-	AuthVerified bool   `json:"authVerified,omitempty"`
+	AuthVerified bool   `json:"authVerified"`
 	AuthSource   string `json:"authSource,omitempty"`
 	Warning      string `json:"warning,omitempty"`
 	Error        string `json:"error,omitempty"`

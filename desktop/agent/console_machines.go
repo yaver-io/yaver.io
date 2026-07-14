@@ -51,7 +51,7 @@ type MachineRunnerCapability struct {
 	Name           string `json:"name"`
 	Installed      bool   `json:"installed"`
 	Ready          bool   `json:"ready"`
-	AuthConfigured bool   `json:"authConfigured,omitempty"`
+	AuthConfigured bool   `json:"authConfigured"`
 	AuthSource     string `json:"authSource,omitempty"`
 	Warning        string `json:"warning,omitempty"`
 	Error          string `json:"error,omitempty"`

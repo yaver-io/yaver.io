@@ -3422,7 +3422,7 @@ type runnerInfoRow struct {
 	Command                string            `json:"command"`
 	Installed              bool              `json:"installed"`
 	Ready                  bool              `json:"ready"`
-	AuthConfigured         bool              `json:"authConfigured,omitempty"`
+	AuthConfigured         bool              `json:"authConfigured"`
 	AuthSource             string            `json:"authSource,omitempty"`
 	Warning                string            `json:"warning,omitempty"`
 	Error                  string            `json:"error,omitempty"`
@@ -7184,6 +7184,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "yaver_ping":
 		hostname, _ := os.Hostname()
 		return mcpToolResult(fmt.Sprintf("Pong! Agent is alive.\nHostname: %s\nVersion: %s\nWork Dir: %s", hostname, version, s.taskMgr.workDir))
+
+	case "machine_doctor":
+		return mcpToolJSON(machineDoctorHandler(OpsContext{
+			Ctx:    context.Background(),
+			Server: s,
+			Caller: "owner",
+		}, call.Arguments))
 
 	case "agent_shutdown":
 		var args struct {

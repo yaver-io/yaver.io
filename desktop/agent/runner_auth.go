@@ -17,8 +17,15 @@ import (
 // RunnerRuntimeStatus describes whether a runner is usable on this machine,
 // including runner-specific auth/config checks that plain LookPath misses.
 type RunnerRuntimeStatus struct {
-	Ready          bool `json:"ready"`
-	AuthConfigured bool `json:"authConfigured,omitempty"`
+	Ready bool `json:"ready"`
+	// NO omitempty on the auth booleans, deliberately. Go drops a false bool
+	// under omitempty, so "authConfigured: false" vanished from the JSON
+	// entirely — and every client that wrote `row.authConfigured !== false`
+	// (the obvious, correct-looking guard) then read the ABSENCE as "true".
+	// A Claude whose OAuth expired in May rendered as "Claude Code ready" in
+	// green for two months because of exactly this. A negative answer must
+	// travel over the wire; silence must never be mistaken for consent.
+	AuthConfigured bool `json:"authConfigured"`
 	// AuthVerified is set only when AuthConfigured was established by asking
 	// the runner itself (`claude auth status`, `codex login status`) or by
 	// finding an explicit API key — never by merely spotting a credentials
@@ -32,7 +39,7 @@ type RunnerRuntimeStatus struct {
 	// browser login screen it had no browser to satisfy. Callers that are
 	// about to open a TUI (or skip a headless sign-in) must gate on this
 	// field, not on AuthConfigured.
-	AuthVerified bool   `json:"authVerified,omitempty"`
+	AuthVerified bool   `json:"authVerified"`
 	AuthSource   string `json:"authSource,omitempty"`
 	Warning      string `json:"warning,omitempty"`
 	Error        string `json:"error,omitempty"`
@@ -150,6 +157,23 @@ func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntim
 		status.AuthSource = ""
 		if strings.TrimSpace(status.Warning) == "" {
 			status.Warning = "Token rejected by API on the last task — sign in again to refresh."
+		}
+	}
+
+	// A runner that cannot authenticate is NOT ready, whatever else is true of
+	// it. Every detect*Status above starts from Ready:true and only ever sets
+	// AuthConfigured=false on a signed-out runner — so Ready stayed true, the
+	// pickers filter on Ready, and a Claude whose OAuth expired two months ago
+	// was advertised to the user in green as "Claude Code ready". The task then
+	// died with a bare timeout that pointed at the network instead of the
+	// sign-in it actually needed.
+	//
+	// "Ready" must mean "I can run your task right now". Anything weaker is a
+	// promise the next task will break.
+	if !status.AuthConfigured {
+		status.Ready = false
+		if strings.TrimSpace(status.Warning) == "" && strings.TrimSpace(status.Error) == "" {
+			status.Warning = "Not signed in — run `yaver runner auth` on this machine."
 		}
 	}
 	return status
@@ -402,6 +426,19 @@ func detectClaudeStatus() RunnerRuntimeStatus {
 	if path, ok := claudeCredentialsPath(); ok && claudeCredentialFileHasOAuth(path) {
 		status.AuthConfigured = true
 		status.AuthSource = path
+	} else if path, ok := claudeCredentialsPath(); ok && !claudeCredentialExpiry(path).IsZero() &&
+		claudeCredentialExpiry(path).Before(time.Now()) {
+		// Credentials exist but the token is stale. Say WHEN — "signed out" is
+		// baffling when you signed in months ago; "expired 64 days ago" tells
+		// the user exactly what happened and that re-auth is the fix.
+		exp := claudeCredentialExpiry(path)
+		days := int(time.Since(exp).Hours() / 24)
+		status.AuthConfigured = false
+		status.AuthVerified = true
+		status.Warning = fmt.Sprintf(
+			"Claude Code's token expired %d days ago (%s) and did not refresh — sign in again on this machine.",
+			days, exp.Format("2006-01-02"),
+		)
 	} else if runtime.GOOS == "darwin" && claudeMacKeychainHasCreds() {
 		// macOS subscription users may have no env var and no usable
 		// ~/.claude/.credentials.json — Claude Code stores the OAuth token in
@@ -556,10 +593,43 @@ func claudeCredentialFileHasOAuth(path string) bool {
 	if strings.TrimSpace(oauth.AccessToken) == "" {
 		return false
 	}
-	if strings.TrimSpace(oauth.RefreshToken) != "" {
-		return true
+	// The expiry is authoritative, and it is checked BEFORE the refresh token.
+	//
+	// This used to `return true` the moment a refreshToken existed, which made
+	// the expiry check on the next line unreachable. The reasoning ("a refresh
+	// token means Claude will refresh itself") is wrong in the one case that
+	// matters: a refresh that has been silently failing. A real Mac mini sat
+	// with an access token that expired 2026-05-11 and a refresh token that
+	// never fired — and this function called it signed in for two months, so
+	// every picker showed "Claude Code ready" and every task died on a timeout.
+	//
+	// An expired token with a refresh token is a MAYBE, and a maybe must not be
+	// reported as a yes. If Claude can still refresh, probeClaudeAuthStatus()
+	// (which asks the binary directly, above) says so and overrides this — this
+	// heuristic only runs when the binary could not answer, and in that state
+	// the honest answer to "is it signed in?" is no.
+	if oauth.ExpiresAt > 0 && int64(oauth.ExpiresAt) <= time.Now().UnixMilli() {
+		return false
 	}
-	return oauth.ExpiresAt <= 0 || int64(oauth.ExpiresAt) > time.Now().UnixMilli()
+	return true
+}
+
+// claudeCredentialExpiry returns when the on-disk Claude OAuth token expires, so
+// callers can say "expired 64 days ago" instead of a shrug. Zero time = unknown.
+func claudeCredentialExpiry(path string) time.Time {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}
+	}
+	var probe struct {
+		ClaudeAiOauth struct {
+			ExpiresAt float64 `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(data, &probe) != nil || probe.ClaudeAiOauth.ExpiresAt <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(int64(probe.ClaudeAiOauth.ExpiresAt))
 }
 
 // applyLiveRunnerAuthProbe re-answers a runner's auth question from scratch,
