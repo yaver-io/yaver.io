@@ -1,8 +1,9 @@
 # Yaver in the car — CarPlay and Android Auto
 
 Handoff brief. Everything marked VERIFIED was checked against the App Store
-Connect API, Apple's SDKs, or the sources and build output in this repo on
-2026-07-10. Anything uncertain is labelled UNVERIFIED.
+Connect API, Apple's SDKs, Apple Developer Relations email, or the sources and
+build output in this repo on 2026-07-14. Anything uncertain is labelled
+UNVERIFIED.
 
 Companion docs: `docs/yaver-tvos-surface.md`, `docs/yaver-watch-surface.md`.
 
@@ -15,22 +16,31 @@ Android Auto is real, compiled, and shipping in the APK today. It posts genuine
 MessagingStyle / CarExtender notifications, drains head-unit voice replies back
 into JS, and Auto replies now drive `/runner/session/turn` so the user can keep
 talking to the live Codex/Claude session from the car. The phone car voice loop
-also publishes spoken status back into the same conversation. CarPlay is still
-**blocked by Apple entitlement / provisioning**, but the compiled Swift scene is
-now the voice-control template rather than a disabled placeholder. Neither
-platform lets you display a terminal, and neither should. Both are voice pipes.
+also publishes spoken status back into the same conversation. Apple has granted
+the **CarPlay Voice Based Conversation** managed capability to the developer
+account (Case-ID 20875817), but it still must be configured on the
+`io.yaver.mobile` App ID and the provisioning profile must be regenerated before
+the entitlement can be restored in source. Neither platform lets you display a
+terminal, and neither should. Both are voice pipes.
 
 ---
 
-## 1. The hard blocker: CarPlay is not entitled (VERIFIED)
+## 1. The hard blocker: App ID/profile configuration (VERIFIED)
 
-Queried live from the App Store Connect API:
+Apple Developer Relations replied on 2026-07-14:
 
 ```
-io.yaver.mobile: 4 capabilities; CarPlay -> NONE
+The entitlement for CarPlay Voice Based Conversation has been assigned to your
+account, and you can now configure this capability for eligible apps.
 ```
 
-And the entitlements file itself carries no CarPlay key:
+Important correction: `bundleIdCapabilities` is not ground truth for this
+managed CarPlay capability. The API has no CarPlay `capabilityType`, so it can
+never report whether `com.apple.developer.carplay-voice-based-conversation` is
+configured. The App ID/profile state must be checked in the Apple Developer
+portal and then by decoding the generated provisioning profile.
+
+The entitlements file currently carries no CarPlay key:
 
 ```
 $ plutil -p mobile/ios/Yaver/Yaver.entitlements
@@ -42,15 +52,17 @@ $ plutil -p mobile/ios/Yaver/Yaver.entitlements
 
 1. Without `com.apple.developer.carplay-voice-based-conversation`, the CarPlay
    scene will not load on a real head unit. Nothing you write changes this.
-2. **Do not add the entitlement key speculatively.** Declaring an entitlement your
-   provisioning profile does not carry makes the archive fail to sign — it will
-   break the working iPhone build. `scripts/deploy-carplay.sh` already knows: it
-   warns and hard-fails `--upload`.
-3. Getting it is an **application to Apple** (`developer.apple.com/contact/carplay`),
-   under the audio/communication category. There is a queue. File it independently
-   of any code work; nothing shortens it.
+2. **Do not restore the entitlement key until the App ID is configured and a
+   regenerated profile carries it.** Declaring an entitlement your provisioning
+   profile does not carry makes the archive fail to sign — it will break the
+   working iPhone build. `scripts/deploy-carplay.sh` already knows: it warns and
+   hard-fails `--upload`.
+3. The account-level Apple request is done. The remaining external step is Apple
+   Developer portal configuration for `io.yaver.mobile`, not another App Store
+   Connect API call.
 
-Until it is granted, CarPlay work is speculative and untestable on hardware.
+Until the profile carries the managed entitlement, CarPlay work is untestable on
+hardware.
 
 ---
 
@@ -74,8 +86,9 @@ mobile/native-carplay/ios/YaverCarPlaySceneDelegate.swift:39   CPVoiceControlTem
 ```
 
 Four voice states is the right template shape. It still cannot be tested on real
-hardware until §1 clears, and it does not yet bridge a native CarPlay action into
-the JS car voice loop.
+hardware until §1 clears. The compiled delegate already opens the
+`yaver://car-voice-coding?autostart=1` JS car voice entry point when the CarPlay
+scene connects.
 
 ### 2.2 What CarPlay allows at all
 
@@ -216,7 +229,7 @@ The whole surface is a conversation thread. The phone push-to-talk screen can
 still create/poll a Yaver task; Android Auto replies prefer the live-session
 branch so "keep developing this" continues the already-running pane.
 
-**CarPlay** (after the entitlement lands):
+**CarPlay** (after the App ID/profile carries the entitlement):
 
 ```
 CPVoiceControlTemplate: ready → listening → working → speaking
@@ -225,8 +238,8 @@ CPVoiceControlTemplate: ready → listening → working → speaking
 ```
 
 `mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift` already has the four states.
-When Apple grants the entitlement, add the matching entitlement/profile and then
-bridge the native scene into the JS car voice entry point.
+When the portal/profile step is complete, restore the matching entitlement key
+and run the CarPlay upload path.
 
 ---
 
@@ -243,16 +256,18 @@ bridge the native scene into the JS car voice entry point.
 - **CarPlay compiles `CPVoiceControlTemplate`.** The compiled delegate in
   `mobile/ios/Yaver/YaverCarPlaySceneDelegate.swift` now uses the four-state
   voice template (ready/listening/working/speaking), not the disabled label.
-  Still untestable on hardware until the entitlement lands (§1).
+  Still untestable on hardware until the profile carries the entitlement (§1).
 - **Android Auto replies survive a dead JS bridge.**
   `YaverCarMessagingModule.consumePendingReplies` drains head-unit replies
   captured while the car voice screen wasn't mounted. No more dropped spoken
   commands.
 
 **Still does not exist:**
-- **CarPlay entitlement.** §1. Everything else on that platform is downstream.
-- **CarPlay native-to-JS bridge.** The Swift voice template exists, but there is
-  no entitled hardware path yet and no native action wired to `carVoiceEntryBus`.
+- **CarPlay-enabled provisioning profile.** §1. Everything else on that platform
+  is downstream.
+- **Entitled hardware verification.** The Swift voice template exists and opens
+  the JS car voice entry point, but there is no signed build on a real head unit
+  yet.
 - **No `androidx.car.app`.** Deliberate. A real Car App (maps/EV/IoT templates)
   is a much heavier surface and unnecessary for a voice pipe.
 
@@ -260,8 +275,9 @@ bridge the native scene into the JS car voice entry point.
 
 ## 7. Build order
 
-1. **File the CarPlay entitlement request today.** It is the only item with an
-   external clock, and it blocks nothing else.
+1. **Configure the granted CarPlay managed capability on `io.yaver.mobile`.**
+   This is a Developer portal UI step, not an App Store Connect API toggle. Then
+   regenerate signing so the provisioning profile carries the entitlement.
 2. **Verify Android Auto with DHU.** The notification, `RemoteInput`, receiver,
    native pending queue, JS dispatch, and `/runner/session/turn` transport all
    exist and are compiled. Confirm the Desktop Head Unit reads the Yaver message
@@ -271,8 +287,8 @@ bridge the native scene into the JS car voice entry point.
    if multiple runner sessions are active.
 4. **Handle `awaitingChoice` as a spoken question** in both platforms. Map "yes",
    "the first one", "one" → `choice: "1"`. Never infer.
-5. **CarPlay**, when entitled: add the entitlement key at the *same time* as the
-   profile refresh, then wire the native template to the JS car voice entry.
+5. **CarPlay**, when the profile is entitled: restore the entitlement key at the
+   same time as the profile refresh, then run `scripts/deploy-carplay.sh --upload`.
 
 ---
 

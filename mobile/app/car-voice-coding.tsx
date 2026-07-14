@@ -66,6 +66,12 @@ import {
   presentCarConversation,
   subscribeCarReplies,
 } from "../src/lib/carMessagingNotification";
+import {
+  startLiveActivity,
+  updateLiveActivity,
+  endLiveActivity,
+  type LiveActivityState,
+} from "../src/lib/liveActivity";
 import { runtimeSurfaceClient } from "../src/lib/runtimeSurfaceClient";
 import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 
@@ -119,6 +125,8 @@ export default function CarVoiceCodingScreen() {
 
   const recordingRef = useRef<any>(null); // expo-av Audio.Recording
   const liveRef = useRef(true);
+  // Whether a Live Activity card is currently on the dashboard/lock screen.
+  const activityRef = useRef(false);
   const carReplyGateRef = useRef(new CarReplyGate());
   const sessionChoiceGateRef = useRef(new SessionChoiceGate());
   useEffect(
@@ -334,6 +342,60 @@ export default function CarVoiceCodingScreen() {
       // A missing native module must never break the voice loop.
     }
   }, [status]);
+
+  /**
+   * Mirror the same status onto a Live Activity.
+   *
+   * This is the ONLY way a non-entitled app draws on the CarPlay Dashboard, and
+   * unlike the template above it needs no entitlement at all — so it renders in
+   * the car even on a build Apple hasn't blessed. The same card is reused by the
+   * Lock Screen, the Dynamic Island and the Watch Smart Stack, which is why the
+   * strings stay one-liners.
+   *
+   * Everything we pass is already a pre-summarized label, never task output —
+   * see the driving-safety contract at the top of liveActivity.ts.
+   */
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    const machine =
+      pickedDevice?.name || pickedDevice?.alias || deviceId || "runtime";
+
+    if (status === "idle" || status === "error") {
+      if (!activityRef.current) return; // nothing showing — don't summon a card to kill it
+      activityRef.current = false;
+      void endLiveActivity(
+        status === "error"
+          ? { status: "failed", headline: "Turn failed", detail: machine }
+          : { status: "done", headline: "Done", detail: machine },
+      );
+      return;
+    }
+
+    const state: LiveActivityState =
+      status === "recording"
+        ? { status: "listening", headline: "Listening", detail: machine }
+        : status === "thinking"
+          ? { status: "working", headline: `Working on ${machine}`, detail: machine }
+          : { status: "speaking", headline: "Replying", detail: machine };
+
+    if (activityRef.current) {
+      void updateLiveActivity(state);
+    } else {
+      activityRef.current = true;
+      void startLiveActivity(machine, `car-${deviceId || "runtime"}`, state);
+    }
+  }, [status, pickedDevice, deviceId]);
+
+  // Leaving the screen mid-turn must not strand a card on the driver's dashboard.
+  useEffect(
+    () => () => {
+      if (activityRef.current) {
+        activityRef.current = false;
+        void endLiveActivity({ status: "done", headline: "Ended", detail: "" }, 0);
+      }
+    },
+    [],
+  );
 
   const stopRecordingToUri = useCallback(async (): Promise<string | null> => {
     const rec = recordingRef.current;

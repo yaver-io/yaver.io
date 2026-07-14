@@ -152,8 +152,8 @@ func mobilePlatformMatrix(root string) mobilePlatformMatrixReport {
 				StoreTarget: "testflight", DeployTarget: "carplay", Script: "scripts/deploy-carplay.sh", QueueTargets: []string{"carplay"},
 				Validation:    []string{"autotest-cdp", "autotest-selenium", "ios-simulator", "ios-device-webdriveragent"},
 				Notes:         []string{"CarPlay ships inside the shared iOS/TestFlight artifact after preflight confirms the entitlement, scene manifest, and native scene delegate are wired."},
-				Limitations:   []string{"Upload still requires Apple's granted CarPlay entitlement in the provisioning profile; the script fails fast before upload if local project wiring is missing."},
-				PortalActions: []string{"Confirm Apple granted com.apple.developer.carplay-voice-based-conversation, then regenerate the iOS App Store provisioning profile with that entitlement."},
+				Limitations:   []string{"Apple granted the account-level CarPlay Voice Based Conversation capability, but upload still requires the io.yaver.mobile App ID and provisioning profile to carry com.apple.developer.carplay-voice-based-conversation; the script fails fast before upload if local project wiring is missing."},
+				PortalActions: []string{"In the Apple Developer portal, configure the granted CarPlay Voice Based Conversation managed capability for the io.yaver.mobile App ID, then regenerate the iOS App Store provisioning profile with that entitlement."},
 				NextSteps:     []string{"Run mobile_platform_deploy target=carplay upload=false for unsigned simulator build/preflight, then upload=true to submit the shared iOS artifact."},
 			}),
 			surface(mobilePlatformSurface{

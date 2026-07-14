@@ -257,8 +257,10 @@ apply.
   `expo-notifications` can't express are documented as the activation gap.
 - **[not built — heavier follow-up] IoT / EV `CarAppService`** — a real
   Kotlin `androidx.car.app` surface. Out of scope; see §3.
-- **[submitted — entitlement-gated] Tier 2 CarPlay** voice-based conversational
-  scene. Keep the native CarPlay scene disabled until Apple grants the entitlement.
+- **[account granted — profile-gated] Tier 2 CarPlay** voice-based conversational
+  scene. Apple granted the account-level capability on 2026-07-14; keep the
+  entitlement key out of the build until the `io.yaver.mobile` App ID is
+  configured and the regenerated provisioning profile carries it.
 - **[not built — wiring] UI entry point** — a hidden/dev screen or Settings
   toggle + Siri Shortcut / Android shortcut to start the Tier-0 loop. The lib
   is importable now; wiring is a follow-up.
@@ -281,8 +283,9 @@ apply.
    car connection signal (Android Auto connected / CarPlay scene active). Tier
    0 from the phone can't know for sure, so it relies on the user invoking the
    PTT/Shortcut deliberately and on the one-sentence-readback guard regardless.
-4. **CarPlay (Tier 2) is entitlement-gated** — Apple must grant the voice-based
-   conversational entitlement before the native scene can ship.
+4. **CarPlay (Tier 2) is profile-gated** — Apple granted the account-level
+   voice-based conversational capability, but the App ID/profile must carry it
+   before the native scene can ship.
 5. **Latency.** A remote coding task can take minutes. The loop must speak an
    immediate "On it" acknowledgement and deliver the result asynchronously
    (Tier 0: a later spoken status; Tier 1: an incoming MessagingStyle message)

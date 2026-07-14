@@ -14,8 +14,8 @@ Usage: scripts/deploy-carplay.sh [--upload]
 
 Preflight the native CarPlay voice-runtime surface, then build or upload the
 shared iOS/TestFlight artifact. CarPlay is not a separate App Store binary;
-it ships inside the iPhone app after Apple grants the CarPlay entitlement and
-the provisioning profile includes it.
+it ships inside the iPhone app after the granted managed capability is enabled
+on the App ID and the provisioning profile includes it.
 
 Options:
   --upload   Run scripts/deploy-testflight.sh after CarPlay preflight passes.
@@ -50,7 +50,7 @@ if ! /usr/libexec/PlistBuddy -c "Print :UIApplicationSceneManifest:UISceneConfig
 fi
 if ! /usr/libexec/PlistBuddy -c "Print :com.apple.developer.carplay-voice-based-conversation" "$ENTITLEMENTS" >/dev/null 2>&1; then
   if [ "$UPLOAD" = "1" ]; then
-    echo "ERROR: CarPlay upload requires Apple to grant com.apple.developer.carplay-voice-based-conversation and a regenerated provisioning profile." >&2
+    echo "ERROR: CarPlay upload requires com.apple.developer.carplay-voice-based-conversation in Yaver.entitlements and in a regenerated provisioning profile." >&2
     exit 1
   fi
   echo "WARN: CarPlay entitlement is not enabled in Yaver.entitlements; simulator build can run, but CarPlay upload remains Apple-entitlement gated."
@@ -74,7 +74,7 @@ if [ "$UPLOAD" != "1" ]; then
     -derivedDataPath /tmp/YaverCarPlayBuild \
     CODE_SIGNING_ALLOWED=NO \
     build
-  echo "CarPlay preflight/build passed. Upload with scripts/deploy-carplay.sh --upload after the provisioning profile carries the CarPlay entitlement."
+  echo "CarPlay preflight/build passed. Upload with scripts/deploy-carplay.sh --upload after the App ID/profile carries the CarPlay entitlement."
   exit 0
 fi
 

@@ -8,6 +8,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # real paired watch app install alongside the iPhone app.
 node "$ROOT/scripts/add-watch-ios-target.js"
 
+# Same deal for the Live Activity widget extension: it is what puts Yaver on the
+# CarPlay Dashboard (and the Lock Screen / Dynamic Island / Watch Smart Stack).
+# Idempotent — a no-op when the target is already in the committed pbxproj.
+node "$ROOT/scripts/add-liveactivity-ios-target.js"
+
 cd "$ROOT/mobile/ios"
 
 # Load secrets from the Yaver vault (project="mobile" + globals). Vault
