@@ -252,8 +252,31 @@ start_agent() {
     mkdir -p "$work_dir"
     local config_dir="$work_dir/.yaver-config"
     mkdir -p "$config_dir/.yaver"
+
+    # `serve` has no --relay-server flag (that one belongs to ping/connect) — it
+    # reads its relays from config. TEST_RELAY_QUIC/TEST_RELAY_HTTP/
+    # TEST_RELAY_PASSWORD let a test point the agent at a relay it started itself,
+    # which is what the closed-loop tunnel test needs.
+    local relay_block=""
+    if [ -n "${TEST_RELAY_QUIC:-}" ]; then
+        relay_block=$(cat << EOF
+  "relay_password": "${TEST_RELAY_PASSWORD:-}",
+  "relay_servers": [
+    {
+      "id": "test-relay",
+      "quic_addr": "${TEST_RELAY_QUIC}",
+      "http_url": "${TEST_RELAY_HTTP:-}",
+      "password": "${TEST_RELAY_PASSWORD:-}",
+      "priority": 1
+    }
+  ],
+EOF
+)
+    fi
+
     cat > "$config_dir/.yaver/config.json" << EOF
 {
+${relay_block}
   "auth_token": "${token}",
   "device_id": "${device_id}",
   "convex_site_url": "${CONVEX_SITE_URL}"
@@ -273,7 +296,11 @@ EOF
     local pid=$!
     PIDS_TO_KILL+=("$pid")
 
-    for i in $(seq 1 20); do
+    # 30s, was 10s. A cold agent does vault init (which can hit the macOS
+    # keychain), token validation, and gh/glab probes before it binds /health —
+    # measured ~12s on a warm Mac. The old 10s ceiling failed the agent for being
+    # slow to boot, not for being broken, which reads as a product bug and isn't.
+    for i in $(seq 1 60); do
         if curl -sf "http://127.0.0.1:${http_port}/health" > /dev/null 2>&1; then
             echo "$pid"
             return 0
@@ -285,7 +312,7 @@ EOF
         fi
         sleep 0.5
     done
-    echo "Agent not ready after 10s." >&2
+    echo "Agent not ready after 30s." >&2
     tail -20 "$work_dir/agent.log" >&2
     return 1
 }
@@ -772,6 +799,112 @@ run_relay_test() {
     fi
 
     kill "$relay_pid" 2>/dev/null || true
+}
+
+# ── Relay CLOSED LOOP — real agent, real QUIC tunnel, real proxied request ──
+#
+# run_relay_test above only proves the relay BUILDS, answers /health, and 401s a
+# bad password. It never registers an agent and never proxies a request through a
+# tunnel — so it cannot see the failure that actually strands a box.
+#
+# On 2026-07-14 an always-on Mac mini was reachable 33% of the time. The agent's
+# auto-heal declared a working QUIC tunnel dead and fell back to a WebSocket
+# tunnel — whose server half does not exist: relay handleProxy resolves devices
+# out of s.tunnels (the QUIC map) and never consults the websocket tunnel. The
+# agent didn't degrade to a slower path, it VANISHED: every request answered
+# "502 device not connected to relay". Then the self-probe read that 502 as proof
+# the tunnel was dead and switched to the fallback again. Forever.
+#
+# Every unit test passed the whole time. What was missing was this: stand the
+# thing up and push a request through it.
+#
+# Asserts, against a REAL relay + REAL agent:
+#   1. the agent registers a tunnel
+#   2. a request proxied through the relay reaches the AGENT (not the relay)
+#   3. it KEEPS working — sampled over time, so a tunnel that registers and then
+#      stops forwarding is a failure, not a pass
+run_relay_tunnel_test() {
+    header "Relay — Closed loop (agent → tunnel → proxy → agent)"
+
+    local relay_bin="$TEST_DIR/yaver-relay"
+    local agent_bin="$TEST_DIR/yaver-agent"
+    [ -f "$relay_bin" ] || build_relay "$relay_bin" > /dev/null 2>&1 || { fail "Cannot build relay"; return; }
+    [ -f "$agent_bin" ] || build_agent "$agent_bin" > /dev/null 2>&1 || { fail "Cannot build agent"; return; }
+
+    local relay_http relay_quic agent_http agent_quic
+    relay_http=$(get_free_port); relay_quic=$(get_free_port)
+    agent_http=$(get_free_port); agent_quic=$(get_free_port)
+
+    local password="closed-loop-$$"
+    local token="tok-closed-loop-$$"
+    local device_id="11111111-2222-3333-4444-555555555555"
+    local work_dir="$TEST_DIR/closedloop"
+
+    info "Starting relay (HTTP=$relay_http QUIC=$relay_quic)..."
+    local relay_pid
+    relay_pid=$(start_relay "$relay_bin" "$relay_quic" "$relay_http" "$password" "$TEST_DIR/relay-loop.log") || {
+        fail "Relay failed to start"; return
+    }
+
+    info "Starting agent, pointed at that relay..."
+    local agent_pid
+    agent_pid=$(TEST_RELAY_QUIC="127.0.0.1:${relay_quic}" \
+        TEST_RELAY_HTTP="http://127.0.0.1:${relay_http}" \
+        TEST_RELAY_PASSWORD="$password" \
+        start_agent "$agent_bin" "$agent_http" "$agent_quic" "$token" "$device_id" "$work_dir") || {
+        fail "Agent failed to start"; cat "$TEST_DIR/relay-loop.log" >&2; return
+    }
+
+    # 1. The tunnel must actually register.
+    local registered=false
+    for _ in $(seq 1 30); do
+        if grep -q "Registered with relay" "$work_dir/agent.log" 2>/dev/null; then
+            registered=true; break
+        fi
+        sleep 1
+    done
+    if $registered; then
+        pass "Agent registered a relay tunnel"
+    else
+        fail "Agent never registered a tunnel"
+        tail -20 "$work_dir/agent.log" >&2 2>/dev/null || true
+        kill "$agent_pid" "$relay_pid" 2>/dev/null || true
+        return
+    fi
+
+    # 2. A request through the relay must reach the AGENT. The agent's /health
+    #    carries a hostname; the relay's does not — so this cannot pass by
+    #    accidentally hitting the relay's own /health.
+    local proxied
+    proxied=$(curl -s -m 15 \
+        -H "X-Relay-Password: ${password}" -H "Authorization: Bearer ${token}" \
+        "http://127.0.0.1:${relay_http}/d/${device_id}/health" 2>/dev/null)
+    if echo "$proxied" | grep -q '"hostname"'; then
+        pass "Request proxied through the relay reached the agent"
+    else
+        fail "Proxy did not reach the agent (got: ${proxied:-<empty>})"
+    fi
+
+    # 3. It must KEEP working. A tunnel that registers and then silently stops
+    #    forwarding is exactly the bug — and it only shows up over time.
+    local ok=0 total=0 i
+    for i in $(seq 1 12); do
+        total=$((total + 1))
+        local code
+        code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 \
+            -H "X-Relay-Password: ${password}" -H "Authorization: Bearer ${token}" \
+            "http://127.0.0.1:${relay_http}/d/${device_id}/health" 2>/dev/null)
+        [ "$code" = "200" ] && ok=$((ok + 1))
+        sleep 5
+    done
+    if [ "$ok" -eq "$total" ]; then
+        pass "Tunnel stayed reachable ($ok/$total probes over 60s)"
+    else
+        fail "Tunnel FLAPPED — only $ok/$total probes reachable over 60s (a registered tunnel that stops forwarding)"
+        grep -iE "auto-heal|fallback|websocket|not forwarding" "$work_dir/agent.log" 2>/dev/null | tail -8 >&2 || true
+    fi
+
+    kill "$agent_pid" "$relay_pid" 2>/dev/null || true
 }
 
 # ── Remote Relay Test — Docker Deploy to Hetzner ──────────────────
@@ -3195,6 +3328,7 @@ HELP
 
     if $run_all || $run_relay; then
         run_relay_test
+        run_relay_tunnel_test
     fi
 
     if $run_all || $run_relay_docker; then
