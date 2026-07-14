@@ -5300,6 +5300,7 @@ export default function TasksScreen() {
         <OpenCodeConfigModal
           visible={showOpenCodeConfig}
           startInAddProvider={openCodeConfigStartInAdd}
+          target={activeDevice?.id}
           onClose={() => {
             setShowOpenCodeConfig(false);
             setOpenCodeConfigStartInAdd(false);

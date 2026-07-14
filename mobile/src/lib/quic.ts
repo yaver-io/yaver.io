@@ -1710,10 +1710,13 @@ export class QuicClient {
       models?: Record<string, unknown>;
       delete?: boolean;
     }>;
-  }): Promise<{ ok: boolean; config?: OpenCodeConfigSummary; error?: string }> {
+  }, target?: string): Promise<{ ok: boolean; config?: OpenCodeConfigSummary; error?: string }> {
     if (!this.isConnected && !this.hasConnectionInfo) return { ok: false, error: "not connected" };
     try {
-      const res = await fetch(`${this.baseUrl}/runner/opencode/config`, {
+      // Peer-route to the box being configured — without target this wrote to
+      // whichever agent is CONNECTED, not the device the user is viewing (the
+      // "set glm-4.7 on magara from my phone and it didn't persist" bug).
+      const res = await fetch(this.peerEndpoint(target, "/runner/opencode/config"), {
         method: "POST",
         headers: { ...this.authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify(patch),

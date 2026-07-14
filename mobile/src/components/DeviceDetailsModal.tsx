@@ -1249,6 +1249,7 @@ export function CodingAgentsSection({ device }: { device: Device }) {
       <OpenCodeConfigModal
         visible={showOpenCodeConfig}
         startInAddProvider
+        target={target}
         onClose={() => {
           setShowOpenCodeConfig(false);
           void refresh();

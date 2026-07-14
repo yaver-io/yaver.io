@@ -31,6 +31,10 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   startInAddProvider?: boolean;
+  /** Device to configure. Omit for the actively-connected box; pass a peer's
+   *  deviceId to configure a box you're viewing but not connected to (so the
+   *  provider/key/model land on the RIGHT box, not the connected one). */
+  target?: string;
 }
 
 // Pre-fills for the most common providers. Same set the web
@@ -56,8 +60,11 @@ const PRESETS: Array<{ label: string; id: string; name: string; baseUrl?: string
   { label: "DeepSeek", id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", hint: "DeepSeek-Coder/V3. Key from platform.deepseek.com." },
 ];
 
-export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = false }: Props) {
+export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = false, target }: Props) {
   const c = useColors();
+  // All writes go to `target` (the box being configured), not the connected one.
+  const saveConfig = (patch: Parameters<typeof quicClient.saveOpenCodeConfig>[0]) =>
+    quicClient.saveOpenCodeConfig(patch, target);
   // Sync the device's primary runner choice to Convex once the user
   // configures a working provider+key. Without this the user has to ALSO
   // tap the runner picker in DeviceDetailsModal to flip the device's
@@ -89,7 +96,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const cfg = await quicClient.getOpenCodeConfig();
+      const cfg = await quicClient.getOpenCodeConfig(target);
       setConfig(cfg);
       if (cfg) {
         setDefaultAgent(cfg.defaultAgent || "");
@@ -124,7 +131,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
 
   const saveTopLevel = useCallback(async () => {
     setBusy(true);
-    const res = await quicClient.saveOpenCodeConfig({
+    const res = await saveConfig({
       defaultAgent: defaultAgent.trim() || undefined,
       model: model.trim() || undefined,
       smallModel: smallModel.trim() || undefined,
@@ -160,7 +167,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
     if (!editingProvider) return;
     const apiKeyTrimmed = editApiKey.trim();
     setBusy(true);
-    const res = await quicClient.saveOpenCodeConfig({
+    const res = await saveConfig({
       providers: [
         {
           id: editingProvider.id,
@@ -197,7 +204,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
     const apiKeyTrimmed = addApiKey.trim();
     const modelTrimmed = addModel.trim();
     setBusy(true);
-    const res = await quicClient.saveOpenCodeConfig({
+    const res = await saveConfig({
       defaultAgent: modelTrimmed ? "build" : undefined,
       model: modelTrimmed || undefined,
       providers: [
@@ -247,7 +254,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
             style: "destructive",
             onPress: async () => {
               setBusy(true);
-              const res = await quicClient.saveOpenCodeConfig({
+              const res = await saveConfig({
                 providers: [{ id: provider.id, delete: true }],
               });
               setBusy(false);
