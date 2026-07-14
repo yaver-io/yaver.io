@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11064,11 +11063,31 @@ func refreshRelayPasswordFromConvex(ctx context.Context) string {
 	return pw
 }
 
-func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) error {
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"yaver-relay"},
+// currentRelayPin returns the SPKI pin configured for a relay (by QUIC addr),
+// mirroring currentRelayCredentials so the dial path stays free of extra
+// parameters threaded through runRelayTunnel. Empty when unpinned.
+func currentRelayPin(relayAddr string) string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return ""
 	}
+	for _, rs := range cfg.RelayServers {
+		if rs.QuicAddr == relayAddr && strings.TrimSpace(rs.SpkiPin) != "" {
+			return strings.TrimSpace(rs.SpkiPin)
+		}
+	}
+	for _, rs := range cfg.CachedRelayServers {
+		if rs.QuicAddr == relayAddr && strings.TrimSpace(rs.SpkiPin) != "" {
+			return strings.TrimSpace(rs.SpkiPin)
+		}
+	}
+	return ""
+}
+
+func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) error {
+	// Encrypted always (QUIC = TLS 1.3); relay identity verified when a pin is
+	// published for this relay. See relay_pinning.go for the rollout contract.
+	tlsCfg := relayTLSConfig(relayAddr, currentRelayPin(relayAddr))
 
 	conn, err := quic.DialAddr(ctx, relayAddr, tlsCfg, &quic.Config{
 		MaxIdleTimeout:  120 * time.Second,

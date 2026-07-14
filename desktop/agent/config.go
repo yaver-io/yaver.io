@@ -391,6 +391,12 @@ type RelayServerConfig struct {
 	Region   string `json:"region,omitempty"`
 	Priority int    `json:"priority,omitempty"`
 	Label    string `json:"label,omitempty"`
+	// SpkiPin, when set, is the base64 SHA-256 of the relay's SubjectPublicKeyInfo.
+	// The agent verifies the relay's self-signed cert against it, closing the
+	// active-MITM gap on the QUIC leg (see relay_pinning.go). Empty = unpinned
+	// (encrypted but unverified). Delivered from Convex platformConfig over
+	// authenticated TLS, so it is a trusted pin, not trust-on-first-use.
+	SpkiPin string `json:"spki_pin,omitempty"`
 }
 
 type ConnectionPreference struct {

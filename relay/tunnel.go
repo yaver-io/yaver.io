@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -83,9 +87,34 @@ func (t *TunnelClient) Run(ctx context.Context) error {
 }
 
 func (t *TunnelClient) connectAndServe(ctx context.Context) error {
+	// Encrypted always (QUIC = TLS 1.3). Relay identity is verified when a pin
+	// is supplied via YAVER_RELAY_SPKI_PIN (base64 SHA-256 of the relay's
+	// SubjectPublicKeyInfo) — without it, an active MITM on the path could
+	// impersonate the relay and read the plaintext. Env-sourced here because
+	// this is the standalone `yaver-relay` CLI tunnel; the desktop agent gets
+	// its pin from platformConfig instead (see desktop/agent/relay_pinning.go).
 	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true, // relay uses self-signed cert
+		InsecureSkipVerify: true, // self-signed relay cert; identity checked below
 		NextProtos:         []string{"yaver-relay"},
+	}
+	if pin := strings.TrimSpace(os.Getenv("YAVER_RELAY_SPKI_PIN")); pin != "" {
+		pin = strings.TrimPrefix(strings.TrimPrefix(pin, "sha256/"), "sha256:")
+		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("relay %s presented no certificate", t.relayAddr)
+			}
+			leaf, err := x509.ParseCertificate(rawCerts[0])
+			if err != nil {
+				return fmt.Errorf("relay %s: parse cert: %w", t.relayAddr, err)
+			}
+			sum := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+			if got := base64.StdEncoding.EncodeToString(sum[:]); got != pin {
+				return fmt.Errorf("relay %s SPKI pin mismatch (possible MITM): want %s got %s", t.relayAddr, pin, got)
+			}
+			return nil
+		}
+	} else {
+		log.Printf("[TUNNEL] %s: no YAVER_RELAY_SPKI_PIN — encrypted but relay identity UNVERIFIED", t.relayAddr)
 	}
 
 	conn, err := quic.DialAddr(ctx, t.relayAddr, tlsCfg, &quic.Config{
