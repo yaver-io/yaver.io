@@ -115,6 +115,35 @@ struct TaskSummary: Decodable, Identifiable {
 
 struct TaskList: Decodable { let tasks: [TaskSummary] }
 
+/// A project the box knows about (GET /projects). The TV lists these to pick one
+/// to preview. `framework` decides how it renders on the TV: an RN/Android app
+/// runs in redroid and streams via /droid/frame; a web app (next/vite) is
+/// captured headless and streamed as frames (tvOS has no WebKit, so it's always
+/// pixels, never a real webview).
+struct ProjectSummary: Decodable, Identifiable {
+    let name: String
+    let path: String?
+    let framework: String?
+    let branch: String?
+
+    var id: String { name }
+
+    /// How this project should be previewed on the TV.
+    enum Kind { case android, web, flutter, unknown }
+    var kind: Kind {
+        switch (framework ?? "").lowercased() {
+        case "expo", "react-native", "reactnative", "rn": return .android
+        case "nextjs", "next", "vite", "react", "web", "remix", "astro", "svelte": return .web
+        case "flutter": return .flutter
+        default: return .unknown
+        }
+    }
+
+    var frameworkLabel: String { framework?.isEmpty == false ? framework! : "unknown" }
+}
+
+struct ProjectList: Decodable { let projects: [ProjectSummary] }
+
 /// A feedback report the box has collected (GET /feedback). The TV shows them
 /// to review from the couch — the SDK captures video/voice/screenshots on the
 /// device under test; here we list source, transcript, version, and how many

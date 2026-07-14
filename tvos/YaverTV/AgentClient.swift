@@ -159,6 +159,97 @@ actor AgentClient {
         return (try JSONDecoder().decode(TaskList.self, from: data)).tasks
     }
 
+    /// Projects the box knows about (GET /projects → {projects:[…]} or a bare
+    /// array). For the TV to browse and pick one to preview.
+    func listProjects() async throws -> [ProjectSummary] {
+        guard let url = URL(string: "http://\(box.host):\(box.port)/projects") else {
+            throw AgentError(message: "bad box host")
+        }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AgentError(message: "couldn't load projects (\(http.statusCode))")
+        }
+        if let wrapped = try? JSONDecoder().decode(ProjectList.self, from: data) { return wrapped.projects }
+        return (try? JSONDecoder().decode([ProjectSummary].self, from: data)) ?? []
+    }
+
+    // ---- Web preview streaming (headless capture → frames) ----------------
+    //
+    // tvOS has no WebKit, so a web project can't be rendered in-process — it's
+    // captured headless on the box at a chosen viewport and streamed as frames.
+    // Flow: /dev/web-preview/start (boot a static server) → /vibing/preview/start
+    // (headless Chrome captures it) → poll /vibing/preview/snapshot for the newest
+    // frame hash → GET /vibing/preview/frames/{hash} for the bytes.
+
+    struct WebPreviewStart: Decodable { let ok: Bool?; let port: Int?; let webUrl: String? }
+
+    /// Start capturing a project's web preview at the given viewport. Returns
+    /// when the vibe session is up (first frame may lag a beat).
+    func startWebPreview(project: String, targetUrl: String, width: Int, height: Int) async throws {
+        _ = try await postJSON("/vibing/preview/start", [
+            "project": project, "targetUrl": targetUrl,
+            "mode": "live", "width": width, "height": height,
+        ])
+    }
+
+    /// Boot the box's static web-preview server; returns its URL to capture.
+    func startWebServer() async throws -> WebPreviewStart {
+        let data = try await postJSON("/dev/web-preview/start", [:])
+        return (try? JSONDecoder().decode(WebPreviewStart.self, from: data)) ?? WebPreviewStart(ok: true, port: nil, webUrl: nil)
+    }
+
+    struct SnapshotMeta: Decodable { let hash: String?; let seq: Int?; let size: Int? }
+
+    /// The newest captured frame's hash (POST /vibing/preview/snapshot).
+    func previewSnapshot(project: String) async throws -> SnapshotMeta {
+        let data = try await postJSON("/vibing/preview/snapshot", ["project": project])
+        return try JSONDecoder().decode(SnapshotMeta.self, from: data)
+    }
+
+    /// Fetch a captured frame's bytes by hash.
+    func previewFrame(hash: String) async throws -> Data {
+        guard let url = URL(string: "http://\(box.host):\(box.port)/vibing/preview/frames/\(hash)") else {
+            throw AgentError(message: "bad box host")
+        }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw AgentError(message: "frame unavailable")
+        }
+        return data
+    }
+
+    func stopWebPreview(project: String) async {
+        _ = try? await postJSON("/vibing/preview/stop", ["project": project])
+    }
+
+    /// Small POST helper for the JSON endpoints above.
+    private func postJSON(_ path: String, _ body: [String: Any]) async throws -> Data {
+        guard let url = URL(string: "http://\(box.host):\(box.port)\(path)") else {
+            throw AgentError(message: "bad box host")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String { throw AgentError(message: err) }
+            throw AgentError(message: "\(path) failed (\(http.statusCode))")
+        }
+        return data
+    }
+
     /// A live redroid / Android screen frame (GET /droid/frame → PNG). Throws a
     /// readable message on 503 ("no android device attached") so the viewer can
     /// say so instead of showing nothing.

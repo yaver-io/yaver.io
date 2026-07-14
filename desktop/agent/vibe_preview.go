@@ -292,6 +292,12 @@ type VibePreviewStartOpts struct {
 	Mode      VibePreviewMode `json:"mode"`
 	Profile   string          `json:"profile"` // explicit profile name
 	NetMode   string          `json:"netMode"` // "direct" | "relay-wifi" | "relay-cell"
+	// Width/Height override the profile's capture viewport when > 0, so a caller
+	// can request a phone (390×844) or tablet (820×1180) render instead of the
+	// profile's default. The TV surface uses this to preview a web app at a
+	// chosen form factor. Zero means "use the profile".
+	Width  int `json:"width,omitempty"`
+	Height int `json:"height,omitempty"`
 }
 
 // Start boots a new preview session: opens a headless Chrome, navigates to
@@ -318,6 +324,15 @@ func (m *VibePreviewManager) Start(opts VibePreviewStartOpts) (*VibePreviewSessi
 	}
 
 	profile := ProfileFor(opts.Profile, opts.NetMode)
+	// Caller-requested viewport wins over the profile's default (e.g. a TV asking
+	// for a phone/tablet render). Bounded to sane pixels so a bad value can't ask
+	// Chrome for a 100k-wide canvas.
+	if opts.Width >= 200 && opts.Width <= 3840 {
+		profile.Width = opts.Width
+	}
+	if opts.Height >= 200 && opts.Height <= 2160 {
+		profile.Height = opts.Height
+	}
 
 	// One session per project — caller must Stop before re-Starting.
 	m.mu.Lock()
