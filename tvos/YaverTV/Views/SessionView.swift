@@ -47,6 +47,14 @@ struct SessionView: View {
     @State private var boxUnreachable = false
     @StateObject private var lifecycle = BoxLifecycle()
 
+    /// The runner PTYs live on the box right now, and which one we drive.
+    /// Loaded before the first turn: a surface that cannot name its target has
+    /// to let the agent guess, and the agent only guesses safely when exactly
+    /// one session exists (see SessionClient.sendText).
+    @State private var sessions: [RunnerSession] = []
+    @State private var selected: String?
+    @State private var sessionsLoaded = false
+
     private var client: SessionClient? {
         guard let box = store.selectedBox else { return nil }
         return SessionClient(token: store.token, box: box)
@@ -56,13 +64,21 @@ struct SessionView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().background(.gray.opacity(0.3))
-            paneView
-            Divider().background(.gray.opacity(0.3))
-            if awaitingChoice {
-                optionsView
+
+            if sessionsLoaded && sessions.isEmpty {
+                noRunnerView
+            } else if selected == nil && sessions.count > 1 {
+                pickerView
             } else {
-                promptBar
+                paneView
+                Divider().background(.gray.opacity(0.3))
+                if awaitingChoice {
+                    optionsView
+                } else {
+                    promptBar
+                }
             }
+
             if boxUnreachable {
                 wakeBar
             } else if let error {
@@ -74,10 +90,84 @@ struct SessionView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
+        .task(id: store.selectedBox?.id) { await loadSessions() }
         .onChange(of: lifecycle.phase) { _, phase in
             // Box came back — clear the asleep state so the prompt bar returns.
-            if phase == .ready { boxUnreachable = false }
+            if phase == .ready {
+                boxUnreachable = false
+                Task { await loadSessions() }
+            }
         }
+    }
+
+    // MARK: - No runner on the box
+
+    /// The honest empty state. Previously the pane just said "Send a prompt to
+    /// start the session." on a box with no runner — so the first prompt came
+    /// back "no live runner sessions on this machine" and the screen looked
+    /// broken. Say what is missing and exactly how to fix it, before they type.
+    private var noRunnerView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("No coding session on \(store.selectedBox?.name ?? "this box")",
+                  systemImage: "moon.zzz")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(.orange)
+            Text("Start one on that machine, then come back:")
+                .font(.system(size: 20))
+                .foregroundStyle(.secondary)
+            Text("yaver wrap codex")
+                .font(.system(size: 24, design: .monospaced))
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .background(.gray.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+            Button {
+                Task { await loadSessions() }
+            } label: {
+                Label("Check again", systemImage: "arrow.clockwise")
+                    .font(.system(size: 20, weight: .semibold))
+                    .padding(.horizontal, 26).padding(.vertical, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(48)
+    }
+
+    // MARK: - Picker (several runners live)
+
+    /// A D-pad is good at exactly one thing: picking from a short list.
+    private var pickerView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Which session?")
+                .font(.system(size: 26, weight: .semibold))
+            Text("Several coding sessions are live on \(store.selectedBox?.name ?? "this box").")
+                .font(.system(size: 18))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(sessions) { s in
+                        Button {
+                            selected = s.name
+                            sessionName = s.name
+                            runnerName = s.runner ?? ""
+                        } label: {
+                            HStack {
+                                Image(systemName: "terminal")
+                                Text(s.label).font(.system(size: 22, design: .monospaced))
+                                Spacer()
+                                if s.attached == true {
+                                    Text("attached").font(.system(size: 16)).foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 24).padding(.vertical, 16)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(48)
     }
 
     // MARK: - Wake bar (box asleep)
@@ -141,6 +231,20 @@ struct SessionView: View {
             if loading {
                 ProgressView().scaleEffect(1.3)
             }
+            // Only offered when there is actually another session to switch to —
+            // a "Change" button on a box with one runner is a dead control.
+            if sessions.count > 1, selected != nil {
+                Button {
+                    selected = nil
+                    pane = ""
+                    awaitingChoice = false
+                    options = []
+                } label: {
+                    Label("Change", systemImage: "rectangle.2.swap")
+                        .font(.system(size: 18))
+                }
+                .buttonStyle(.bordered)
+            }
         }
         .padding(.horizontal, 48).padding(.vertical, 20)
     }
@@ -191,7 +295,7 @@ struct SessionView: View {
                 HStack(spacing: 16) {
                     ForEach(Array(options.enumerated()), id: \.offset) { idx, opt in
                         Button {
-                            Task { await sendChoice(String(idx + 1)) }
+                            Task { await sendChoice(Self.optionNumber(opt, fallbackIndex: idx)) }
                         } label: {
                             Text(opt)
                                 .font(.system(size: 20))
@@ -208,6 +312,79 @@ struct SessionView: View {
 
     // MARK: - Actions
 
+    /// The number to SEND for a menu line — read out of the line itself.
+    ///
+    /// Never the array index. The agent scans only the last 12 pane lines
+    /// (`tmuxChoiceScanLines`), so when a menu has scrolled, `options[0]` can
+    /// already be the line "2. No, exit" — and sending `1` for it answers a
+    /// different item than the one the user focused. `runner_session_turn.go`
+    /// records where that ends: claude renumbers its next modal so that `1`
+    /// means "No, exit", and the session quit. The digit is right there in the
+    /// text; use it, and fall back to the index only for an unnumbered line.
+    static func optionNumber(_ line: String, fallbackIndex: Int) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let digits = trimmed.prefix { $0.isNumber }
+        if !digits.isEmpty, digits.count <= 2 { return String(digits) }
+        return String(fallbackIndex + 1)
+    }
+
+    /// Strip absolute home paths out of anything we put on a television.
+    ///
+    /// The pane is raw tmux output: it carries `/Users/<name>/Workspace/…`, i.e.
+    /// the user's login name and filesystem layout. This screen is designed to be
+    /// looked at from a sofa — and, right now, filmed for an App Store review. The
+    /// same redaction runs before TTS, because `Speech.speakSummary` will happily
+    /// read a path out loud. Matches the repo's Convex privacy rule, which already
+    /// forbids absolute paths from ever leaving the machine.
+    static func redact(_ text: String) -> String {
+        var out = text
+        for root in ["/Users/", "/home/"] {
+            while let r = out.range(of: root) {
+                let rest = out[r.upperBound...]
+                let name = rest.prefix { !$0.isWhitespace && $0 != "/" }
+                guard !name.isEmpty else { break }
+                out.replaceSubrange(r.lowerBound..<(name.endIndex), with: "~")
+            }
+        }
+        return out
+    }
+
+    /// Ask the box which runner PTYs are live, BEFORE the first prompt.
+    ///
+    /// One session → drive it. Several → make the user pick (the agent refuses to
+    /// guess, and it is right to). None → say so, with the command that fixes it.
+    private func loadSessions() async {
+        guard let box = store.selectedBox, let agent = store.client() else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let live = try await agent.runnerSessions().sessions ?? []
+            sessions = live
+            sessionsLoaded = true
+            error = nil
+            boxUnreachable = false
+
+            if let selected, live.contains(where: { $0.name == selected }) {
+                return                      // keep the user's choice across refreshes
+            }
+            if live.count == 1 {
+                selected = live[0].name
+                sessionName = live[0].name
+                runnerName = live[0].runner ?? ""
+            } else {
+                selected = nil              // none, or several — no silent guess
+            }
+        } catch {
+            sessionsLoaded = true
+            if error is URLError {
+                boxUnreachable = true
+                lifecycle.markUnreachable(box)
+            } else {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
     private func sendPrompt() async {
         let text = prompt.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
@@ -216,7 +393,7 @@ struct SessionView: View {
         error = nil
         do {
             guard let client else { throw AgentError(message: "No box selected") }
-            let result = try await client.sendText(text)
+            let result = try await client.sendText(text, session: selected)
             applyResult(result)
         } catch {
             handleTurnError(error)
@@ -229,7 +406,7 @@ struct SessionView: View {
         error = nil
         do {
             guard let client else { throw AgentError(message: "No box selected") }
-            let result = try await client.sendChoice(choice)
+            let result = try await client.sendChoice(choice, session: selected)
             applyResult(result)
         } catch {
             handleTurnError(error)
@@ -253,9 +430,11 @@ struct SessionView: View {
     private func applyResult(_ result: SessionTurnResult) {
         sessionName = result.session ?? sessionName
         runnerName = result.runner ?? runnerName
-        pane = result.pane ?? pane
+        // Redact BEFORE it reaches @State: `pane` is what the TV renders and what
+        // Speech reads aloud, so anything unredacted here is already on screen.
+        pane = result.pane.map(Self.redact) ?? pane
         awaitingChoice = result.awaitingChoice ?? false
-        options = result.options ?? []
+        options = (result.options ?? []).map(Self.redact)
 
         if let err = result.error, !err.isEmpty {
             error = err

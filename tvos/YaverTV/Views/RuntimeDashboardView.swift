@@ -57,12 +57,17 @@ struct RuntimeDashboardView: View {
                         if let sessions = runners?.sessions, !sessions.isEmpty {
                             ForEach(sessions.prefix(3)) { session in
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(session.title?.isEmpty == false ? session.title! : session.agent ?? "Agent session")
+                                    Text(session.name)
                                         .font(.system(size: 22, weight: .semibold))
-                                    Text([session.agent, session.status, session.workDir].compactMap { value in
-                                        guard let value, !value.isEmpty else { return nil }
-                                        return value
-                                    }.joined(separator: " · "))
+                                    // Runner + attachment only. The old row also
+                                    // printed `workDir` — an absolute path, i.e.
+                                    // the user's home directory and username, on
+                                    // a screen that gets filmed and screen-shared.
+                                    Text([session.runner, session.attached == true ? "attached" : nil]
+                                        .compactMap { value in
+                                            guard let value, !value.isEmpty else { return nil }
+                                            return value
+                                        }.joined(separator: " · "))
                                     .font(.system(size: 16))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -256,21 +261,40 @@ struct RuntimeDashboardView: View {
             notice = "No runtime machine selected"
             return
         }
+        // Each verb catches on its own. A single do/catch around five chained
+        // `try await`s meant one failure (e.g. a runner-list decode error) blanked
+        // every card after it in the chain — the platform matrix and voice cards
+        // would go empty because the sessions fetch threw, not because they
+        // failed. Fetch concurrently, then apply each result independently; the
+        // core info/status verbs decide the one shared notice.
+        async let nextInfo = client.info()
+        async let nextStatus = client.status()
+        async let nextVoice = client.voiceStatus()
+        async let nextRunners = client.runnerSessions()
+        async let nextPlatformMatrix = client.platformMatrix()
+
+        var coreError: String?
         do {
-            async let nextInfo = client.info()
-            async let nextStatus = client.status()
-            async let nextVoice = client.voiceStatus()
-            async let nextRunners = client.runnerSessions()
-            async let nextPlatformMatrix = client.platformMatrix()
             info = try await nextInfo
             status = try await nextStatus
-            voice = try await nextVoice
-            runners = try await nextRunners
-            platformMatrix = try await nextPlatformMatrix.matrix
-            notice = nil
+            // A rotated/expired token reads as 401/403 → sign out, don't sit on a
+            // stale dashboard that can never refresh.
+            if status?.authExpired == true { store.signOut(); return }
         } catch {
-            notice = error.localizedDescription
+            coreError = error.localizedDescription
+            if isAuthFailure(error) { store.signOut(); return }
         }
+        voice = (try? await nextVoice) ?? voice
+        runners = (try? await nextRunners) ?? runners
+        platformMatrix = (try? await nextPlatformMatrix)?.matrix ?? platformMatrix
+        notice = coreError
+    }
+
+    /// A 401/403 from the agent means the stored token no longer authorizes this
+    /// box — the only recovery is to sign in again.
+    private func isAuthFailure(_ error: Error) -> Bool {
+        let m = error.localizedDescription.lowercased()
+        return m.contains("invalid token") || m.contains("missing or invalid authorization")
     }
 
     private func startRunnerAuth(_ runner: String) async {
@@ -379,9 +403,11 @@ struct RuntimeDashboardView: View {
         defer { reloading = false }
         do {
             let result = try await client.reload(mode: mode)
-            let target = result.deliveredTo.map { "\($0) device(s)" } ?? result.framework ?? "runtime"
-            notice = mode == "bundle" ? "Hermes push requested for \(target)." : "Hot reload requested for \(target)."
+            // Refresh FIRST — it sets notice=nil on success and would otherwise
+            // erase the confirmation the instant it lands. Then say what happened.
             await refresh()
+            let target = result.deliveredTo.map { "\($0) device(s)" } ?? result.framework ?? "the runtime"
+            notice = mode == "bundle" ? "Hermes bundle pushed to \(target)." : "Hot reload sent to \(target)."
         } catch {
             notice = error.localizedDescription
         }

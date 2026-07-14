@@ -23,9 +23,14 @@ struct DashboardView: View {
                             NavigationLink(destination: SessionView()) {
                                 Tile(icon: "terminal.fill", title: "Session", detail: "Drive a live coding session")
                             }
-                            NavigationLink(destination: RuntimeDashboardView()) {
-                                Tile(icon: "gamecontroller", title: "Yaver Catalog", detail: YaverNativeCatalog.tvSummary)
-                            }
+                            // "Yaver Catalog" used to sit here. It navigated to
+                            // RuntimeDashboardView — the same destination as the
+                            // Runtime tile below it — under the subtitle
+                            // "SFMG · Carrotbet · Personal Runtime": three of the
+                            // author's own projects, hardcoded, shipped to every
+                            // install. There is no catalog. A tile that lies about
+                            // where it goes and advertises a stranger's side
+                            // projects is worse than no tile.
                             NavigationLink(destination: RuntimeDashboardView()) {
                                 Tile(icon: "terminal", title: "Runtime", detail: "Claude · Codex · reload")
                             }

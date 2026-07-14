@@ -40,23 +40,33 @@ actor SessionClient {
         self.session = URLSession(configuration: cfg)
     }
 
-    /// Send a prompt to the live session.
-    func sendText(_ text: String, waitMs: Int = 6000) async throws -> SessionTurnResult {
-        try await turn(text: text, choice: nil, waitMs: waitMs)
+    /// Send a prompt to a named session.
+    ///
+    /// `session` is not optional-by-accident: omitting it makes the agent guess,
+    /// and `resolveRunnerSession` (`runner_session_turn.go:81`) only guesses when
+    /// EXACTLY one runner PTY is live. On a box with none it errors; on a box with
+    /// two it errors with "several runner sessions are live — name the one you
+    /// mean" — and a caller that cannot name one is simply stuck. Worse, when the
+    /// single live session happened to be the user's own hand-rolled tmux window,
+    /// the guess drove THAT: a prompt typed into a personal Claude Code session,
+    /// its private scrollback rendered back onto a television. Name the session.
+    func sendText(_ text: String, session: String?, waitMs: Int = 6000) async throws -> SessionTurnResult {
+        try await turn(text: text, choice: nil, session: session, waitMs: waitMs)
     }
 
     /// Answer a menu the pane is showing.
-    func sendChoice(_ choice: String, waitMs: Int = 6000) async throws -> SessionTurnResult {
-        try await turn(text: nil, choice: choice, waitMs: waitMs)
+    func sendChoice(_ choice: String, session: String?, waitMs: Int = 6000) async throws -> SessionTurnResult {
+        try await turn(text: nil, choice: choice, session: session, waitMs: waitMs)
     }
 
-    private func turn(text: String?, choice: String?, waitMs: Int) async throws -> SessionTurnResult {
+    private func turn(text: String?, choice: String?, session: String?, waitMs: Int) async throws -> SessionTurnResult {
         guard let url = URL(string: "http://\(box.host):\(box.port)/runner/session/turn") else {
             throw AgentError(message: "bad box host")
         }
         var body: [String: Any] = ["waitMs": waitMs]
         if let text { body["text"] = text }
         if let choice { body["choice"] = choice }
+        if let session, !session.isEmpty { body["session"] = session }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -64,7 +74,7 @@ actor SessionClient {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, resp) = try await session.data(for: req)
+        let (data, resp) = try await self.session.data(for: req)
         guard let http = resp as? HTTPURLResponse else {
             throw AgentError(message: "no response")
         }

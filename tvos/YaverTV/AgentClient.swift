@@ -29,21 +29,35 @@ actor AgentClient {
     func ops<T: Decodable>(_ verb: String, _ payload: [String: Any] = [:], as type: T.Type) async throws -> T {
         let data = try await rawOps(verb, payload)
         // Unwrap { initial: ... } if present (streaming verbs), else decode whole.
-        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let initial = obj["initial"] {
-            let inner = try JSONSerialization.data(withJSONObject: initial)
-            return try JSONDecoder().decode(T.self, from: inner)
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let ok = obj["ok"] as? Bool, !ok {
+                throw AgentError(message: obj["error"] as? String ?? "\(verb) failed")
+            }
+            if let initial = obj["initial"] {
+                let inner = try JSONSerialization.data(withJSONObject: initial)
+                return try JSONDecoder().decode(T.self, from: inner)
+            }
         }
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     /// Fire-and-check verbs that only report ok/error.
+    ///
+    /// A refused verb comes back as HTTP 200 with `{"ok":false,"error":"…"}` —
+    /// not a 4xx — so rawOps lets it through. Returning that `false` to a caller
+    /// that writes `_ = try await client.call("reload")` threw the reason away
+    /// and left the button looking dead: the agent said "no dev server is
+    /// currently running", and the headset said nothing at all. `ok == false` is
+    /// a failure; raise it so the surface can show why.
     @discardableResult
     func call(_ verb: String, _ payload: [String: Any] = [:]) async throws -> Bool {
         let data = try await rawOps(verb, payload)
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let ok = obj["ok"] as? Bool { return ok }
+            if let ok = obj["ok"] as? Bool, !ok {
+                throw AgentError(message: obj["error"] as? String ?? "\(verb) failed")
+            }
             if let err = obj["error"] as? String { throw AgentError(message: err) }
+            if let ok = obj["ok"] as? Bool { return ok }
         }
         return true
     }
@@ -115,8 +129,12 @@ actor AgentClient {
         try await ops("voice", ["op": "status"], as: VoiceRuntimeStatus.self)
     }
 
+    /// The live runner PTYs on the box — the same set `/runner/session/turn`
+    /// drives, so a picker built from this can always name a session the turn
+    /// endpoint will accept. NOT `runner`/`agents_list`: that lists agent-graph
+    /// tasks and answers 0 on a box with a runner running.
     func runnerSessions() async throws -> RunnerSessions {
-        try await ops("runner", ["op": "agents_list"], as: RunnerSessions.self)
+        try await ops("runner_sessions", [:], as: RunnerSessions.self)
     }
 
     func platformMatrix() async throws -> PlatformMatrixEnvelope {
@@ -154,11 +172,26 @@ actor AgentClient {
         URL(string: "http://\(box.host):\(box.port)/capture/frame.jpg")
     }
 
+    /// A capture frame, or a real error — never a JSON error body dressed as JPEG.
+    ///
+    /// This discarded the HTTP response and returned whatever bytes arrived. When
+    /// capture isn't running the agent answers `503` with a 43-byte JSON body
+    /// (`{"error":"capture not running"}`); those bytes went straight to
+    /// `UIImage(data:)`, which returns nil — so the tile showed no frame and no
+    /// reason, forever. Check the status and carry the message out.
     func frameData() async throws -> Data {
         guard let url = captureFrameURL() else { throw AgentError(message: "bad host") }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, _) = try await session.data(for: req)
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "capture frame unavailable (\(http.statusCode))")
+        }
         return data
     }
 }

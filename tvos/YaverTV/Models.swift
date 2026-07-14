@@ -83,25 +83,36 @@ struct VoiceRuntimeStatus: Decodable {
     }
 }
 
+/// The live coding sessions on a box — the tmux PTYs a runner wrap owns.
+///
+/// This mirrors the `runner_sessions` verb (`ops_runner_turn.go:148`), which is
+/// the SAME set `/runner/session/turn` drives. The previous shape mirrored
+/// `runner`/`agents_list` — a different concept (agent-graph tasks) that returns
+/// `{"count":0,"sessions":[]}` on a box with a live runner. So every dashboard
+/// reported "no active runner sessions" while the Session screen was busy
+/// driving one. Wrong verb AND wrong shape: `agents_list` sends `id`/`agent`,
+/// `runner_sessions` sends `name`/`runner`/`attached`, so decoding failed too.
+///
+/// Deliberately no `workDir`: it is an absolute path (`/Users/<name>/…`), and
+/// these screens get pointed at by cameras and screen-shared into demo videos.
 struct RunnerSessions: Decodable {
     var count: Int?
     var sessions: [RunnerSession]?
 }
 
 struct RunnerSession: Decodable, Identifiable {
-    var id: String
-    var agent: String?
-    var title: String?
-    var status: String?
-    var workDir: String?
-    var updatedAt: String?
-    var createdAt: String?
+    /// The tmux session name ("yaver-codex", or "0" for a hand-rolled one).
+    /// This is exactly what `/runner/session/turn` wants in its `session` field.
+    var name: String
+    var runner: String?
+    var attached: Bool?
 
-    enum CodingKeys: String, CodingKey {
-        case id, agent, title, status
-        case workDir = "workDir"
-        case updatedAt = "updatedAt"
-        case createdAt = "createdAt"
+    var id: String { name }
+
+    /// "yaver-codex · codex" — what a lean-back surface should show.
+    var label: String {
+        guard let runner, !runner.isEmpty, runner != name else { return name }
+        return "\(name) · \(runner)"
     }
 }
 

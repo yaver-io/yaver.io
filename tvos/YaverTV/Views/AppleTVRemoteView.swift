@@ -129,13 +129,48 @@ struct AppleTVRemoteView: View {
         }
     }
 
+    /// Poll now-playing + capture, and SAY when either is broken.
+    ///
+    /// Every call here used to be `try?`. With `ops()` now throwing on
+    /// `{"ok":false}`, that swallowed the actual reason — on this box,
+    /// `appletv_now_playing` answers "wrong passphrase or corrupted vault" — and
+    /// left a grey placeholder reading "Nothing playing" that never changed. A
+    /// screen that cannot work must explain itself; blank is the one thing it
+    /// must not be. Errors also CLEAR on success, so a transient failure doesn't
+    /// stick to the view for the rest of its life.
     private func refresh(_ client: AgentClient) async {
-        if let n = try? await client.nowPlaying() { np = n }
-        if let c = try? await client.captureStatus() {
-            capture = c
-            if c.running || captureFirst, let data = try? await client.frameData(), let img = UIImage(data: data) {
-                frame = img
-            }
+        var failures: [String] = []
+
+        do {
+            np = try await client.nowPlaying()
+        } catch {
+            failures.append("Now playing: \(error.localizedDescription)")
         }
+
+        do {
+            let c = try await client.captureStatus()
+            capture = c
+            if c.running || captureFirst {
+                do {
+                    let data = try await client.frameData()
+                    if let img = UIImage(data: data) {
+                        frame = img
+                    } else {
+                        failures.append("Capture returned a frame that isn't an image.")
+                    }
+                } catch {
+                    frame = nil          // don't leave a stale frame on screen
+                    failures.append("Capture: \(error.localizedDescription)")
+                }
+            } else {
+                frame = nil              // capture stopped — drop the last frame
+            }
+        } catch {
+            capture = nil
+            frame = nil
+            failures.append("Capture: \(error.localizedDescription)")
+        }
+
+        status = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 }
