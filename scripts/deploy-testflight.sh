@@ -55,6 +55,7 @@ echo "Archiving..."
 xcodebuild -workspace Yaver.xcworkspace -scheme Yaver -configuration Release \
   -archivePath /tmp/Yaver.xcarchive archive \
   DEVELOPMENT_TEAM="${APPLE_TEAM_ID:?Set APPLE_TEAM_ID}" CODE_SIGN_STYLE=Automatic \
+  CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION=YES \
   ENABLE_USER_SCRIPT_SANDBOXING=NO -allowProvisioningUpdates \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
