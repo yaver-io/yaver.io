@@ -1019,8 +1019,16 @@ export function CodingAgentsSection({ device }: { device: Device }) {
         } else if (inst?.kind === "fail") {
           subtitle = inst.error ? `install failed — ${inst.error}` : "install failed";
           tone = "#ef4444";
-        } else if (!installed) {
+        // Installed + "signed in" is not the same as usable: OpenCode can hold a
+        // key yet have its default model point at a provider with no key. The
+        // agent reports that via ready=false/error — surface it instead of a
+        // misleading "✓ signed in", and keep the fix CTA available.
+        const notReady = installed && authed && (row?.ready === false || !!(row?.error || "").trim());
+        if (!installed) {
           subtitle = "not installed on agent";
+          tone = "#f59e0b";
+        } else if (notReady) {
+          subtitle = (row?.error || "installed but needs configuration").trim();
           tone = "#f59e0b";
         } else if (authed) {
           subtitle = `${versionPrefix}✓ signed in`;
@@ -1029,11 +1037,9 @@ export function CodingAgentsSection({ device }: { device: Device }) {
           subtitle = `${versionPrefix}not signed in`;
           tone = "#f59e0b";
         }
-        // Sign-in button only makes sense when the runner is actually on
-        // the host. If it's missing, "Sign in →" is misleading — the user
-        // needs to install the CLI first; the Install button (below)
-        // takes that spot when the runner is missing.
-        const showSignIn = installed && !authed;
+        // Show the fix CTA when not-authed OR authed-but-not-ready (config gap).
+        // Missing runner → the Install button takes this spot instead.
+        const showSignIn = installed && (!authed || notReady);
         const showInstall = !installed && !loading && inst?.kind !== "installing";
         return (
           <View
