@@ -9111,6 +9111,11 @@ type DeviceInfo struct {
 	GeoRegion                 string   `json:"geoRegion,omitempty"`
 	QuicPort                  int      `json:"quicPort"`
 	IsOnline                  bool     `json:"isOnline"`
+	NeedsAuth                 bool     `json:"needsAuth,omitempty"`
+	RelayConnected            bool     `json:"relayConnected,omitempty"`
+	LastHeartbeat             int64    `json:"lastHeartbeat,omitempty"`
+	LastTunnelEvent           int64    `json:"lastTunnelEvent,omitempty"`
+	AgentVersion              string   `json:"agentVersion,omitempty"`
 	IsGuest                   bool     `json:"isGuest,omitempty"`
 	HostName                  string   `json:"hostName,omitempty"`
 	HostEmail                 string   `json:"hostEmail,omitempty"`
