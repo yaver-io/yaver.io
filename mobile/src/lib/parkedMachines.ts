@@ -222,15 +222,15 @@ export function useParkedMachines(token: string | null | undefined): UseParkedMa
   // "tons of devices to wake".
   const machines = (data?.machines ?? [])
     .filter((m) => {
+      // Only status is safe to key off here: the /subscription payload does NOT
+      // carry lastSnapshotId/volumeId/baseImageId, so an un-wakeable check on
+      // those would evaluate every parked row to `undefined → hide` and empty
+      // the whole Sleeping list (the "no wakeable device" bug). The BACKEND
+      // already drops removed/stopped/un-wakeable-paused/zombie rows in
+      // /subscription, so the client only needs to belt-and-suspenders the
+      // terminal statuses (which ARE in the payload) and dedupe by deviceId.
       const s = String((m as any).status || "");
-      if (s === "removed" || s === "stopped") return false;
-      // A paused/errored row is only real if it still has something to wake from
-      // — otherwise it's a zombie (server gone, snapshot failed) offering a
-      // "Try wake again" that can't succeed.
-      if (s === "paused" || s === "suspended" || s === "error") {
-        return !!((m as any).lastSnapshotId || ((m as any).volumeId && (m as any).baseImageId));
-      }
-      return true;
+      return s !== "removed" && s !== "stopped";
     })
     .filter((m, i, arr) => {
       const dev = (m as any).deviceId;
