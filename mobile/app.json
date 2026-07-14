@@ -11,7 +11,9 @@
       "assets/**"
     ],
     "splash": {
-      "backgroundColor": "#0a0a0a"
+      "backgroundColor": "#050506",
+      "image": "./assets/splash-logo.png",
+      "imageWidth": 200
     },
     "ios": {
       "supportsTablet": true,
@@ -37,7 +39,7 @@
             "UIApplicationShortcutItemIconType": "UIApplicationShortcutIconTypeAudio"
           }
         ],
-        "NSMicrophoneUsageDescription": "Yaver uses your microphone for voice input — send tasks by speaking instead of typing.",
+        "NSMicrophoneUsageDescription": "Yaver uses your microphone for voice input \u2014 send tasks by speaking instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Yaver uses speech recognition to transcribe your voice into task descriptions.",
         "NSCameraUsageDescription": "Yaver uses your camera for photos and running apps that need camera access.",
         "NSPhotoLibraryUsageDescription": "Yaver uses your photo library to attach screenshots and images to coding tasks.",
@@ -97,8 +99,8 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0a0a0a",
-          "image": "./assets/icon.png",
+          "backgroundColor": "#050506",
+          "image": "./assets/splash-logo.png",
           "imageWidth": 200
         }
       ],

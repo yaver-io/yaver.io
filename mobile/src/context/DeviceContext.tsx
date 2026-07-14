@@ -214,9 +214,13 @@ function autoConnectRank(
 ): number {
   if (!probe?.reachable) return -1;
   const priority = priorityIds.findIndex((id) => !!id && id === device.id);
-  const priorityScore = priority >= 0 ? 100 - priority * 10 : 10;
+  // An EXPLICIT choice — the user's sticky pick, then the primary, then the
+  // secondary — always wins when it's reachable, regardless of whether some
+  // other box happens to look more "coding-ready". "Auto-connect to my primary"
+  // must actually land on the primary, not the flashiest neighbour.
+  if (priority >= 0) return 100_000 - priority * 1_000;
   const codingScore = probe.codingReady || deviceRunnerReadyFromHeartbeat(device) ? 1_000 : 0;
-  return codingScore + priorityScore;
+  return codingScore + 10;
 }
 
 const APP_VERSION = Constants.expoConfig?.version ?? "unknown";
