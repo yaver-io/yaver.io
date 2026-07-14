@@ -37,6 +37,7 @@ import (
 	"github.com/yaver-io/agent/ghost"
 	"github.com/yaver-io/agent/machine"
 	"golang.org/x/mod/semver"
+	"golang.org/x/net/websocket"
 	"golang.org/x/term"
 )
 
@@ -128,6 +129,57 @@ func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[s
 		}
 	}
 	return relayServers, passwords
+}
+
+func appendRelayConfigs(dst []RelayServerConfig, src []RelayServerConfig) []RelayServerConfig {
+	seen := make(map[string]struct{}, len(dst)+len(src))
+	for _, rs := range dst {
+		key := strings.TrimSpace(rs.QuicAddr)
+		if key == "" {
+			key = strings.TrimSpace(rs.HttpURL)
+		}
+		if key == "" {
+			key = strings.TrimSpace(rs.ID)
+		}
+		if key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	for _, rs := range src {
+		key := strings.TrimSpace(rs.QuicAddr)
+		if key == "" {
+			key = strings.TrimSpace(rs.HttpURL)
+		}
+		if key == "" {
+			key = strings.TrimSpace(rs.ID)
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		dst = append(dst, rs)
+	}
+	return dst
+}
+
+func runtimeRelayConfigs(cfg *Config) []RelayServerConfig {
+	if cfg == nil {
+		return nil
+	}
+	return appendRelayConfigs(append([]RelayServerConfig{}, cfg.RelayServers...), cfg.CachedRelayServers)
+}
+
+func runtimeRelayPassword(cfg *Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if strings.TrimSpace(cfg.RelayPassword) != "" {
+		return cfg.RelayPassword
+	}
+	return cfg.CachedRelayPassword
 }
 
 func relayConfigMatches(a, b []RelayServerConfig) bool {
@@ -2697,22 +2749,23 @@ func runServe(args []string) {
 		}
 	}
 
-	if !*noRelay && len(cfg.RelayServers) > 0 {
-		// Use relay servers from config.json (highest priority)
-		log.Printf("Using %d relay server(s) from config.json:", len(cfg.RelayServers))
-		relayServers, relayPasswords = relayInfosFromConfig(cfg.RelayServers)
+	if !*noRelay && (len(cfg.RelayServers) > 0 || len(cfg.CachedRelayServers) > 0) {
+		// Use configured relays first, then cached/platform relays as a lower
+		// priority fallback. The free relay is the universal off-LAN fallback;
+		// ignoring it just because a private relay is configured leaves devices
+		// "online" but unreachable when the private QUIC path is down.
+		relayCfg := runtimeRelayConfigs(cfg)
+		if len(cfg.RelayServers) > 0 {
+			log.Printf("Using %d configured relay server(s) plus %d cached fallback relay server(s):", len(cfg.RelayServers), len(relayCfg)-len(cfg.RelayServers))
+		} else {
+			log.Printf("Using %d cached relay server(s):", len(relayCfg))
+		}
+		relayServers, relayPasswords = relayInfosFromConfig(relayCfg)
 		for _, rs := range relayServers {
 			log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
 		}
-	} else if !*noRelay && len(cfg.CachedRelayServers) > 0 {
-		relayServers, relayPasswords = relayInfosFromConfig(cfg.CachedRelayServers)
 		if len(relayServers) == 0 {
-			log.Printf("Ignoring %d cached relay server(s) without QUIC addresses", len(cfg.CachedRelayServers))
-		} else {
-			log.Printf("Using %d cached relay server(s):", len(relayServers))
-			for _, rs := range relayServers {
-				log.Printf("  [%s] %s (%s)", rs.ID, rs.QuicAddr, rs.Region)
-			}
+			log.Printf("Ignoring %d relay server(s) without QUIC addresses", len(relayCfg))
 		}
 	}
 
@@ -3195,11 +3248,15 @@ func runServe(args []string) {
 	// dedupes cross-relay deliveries, so multiple subscriptions are
 	// safe and let peer presence survive a single-relay flap.
 	// Non-fatal if individual relays are unreachable.
-	for _, relay := range cfg.RelayServers {
+	for _, relay := range runtimeRelayConfigs(cfg) {
 		if relay.HttpURL == "" {
 			continue
 		}
-		rt := NewRelayBusTransport(relay.HttpURL, relay.Password, cfg.AuthToken, b)
+		password := relay.Password
+		if password == "" {
+			password = runtimeRelayPassword(cfg)
+		}
+		rt := NewRelayBusTransport(relay.HttpURL, password, cfg.AuthToken, b)
 		rt.Start(ctx)
 		b.RegisterTransport(rt)
 	}
@@ -10191,6 +10248,16 @@ type relayTunnelResponse struct {
 	Body       []byte            `json:"body"`
 }
 
+type relayWSTunnelFrame struct {
+	Type     string               `json:"type"`
+	ID       string               `json:"id,omitempty"`
+	Register *relayRegisterMsg    `json:"register,omitempty"`
+	OK       bool                 `json:"ok,omitempty"`
+	Message  string               `json:"message,omitempty"`
+	Request  *relayTunnelRequest  `json:"request,omitempty"`
+	Response *relayTunnelResponse `json:"response,omitempty"`
+}
+
 // RelayHealthStatus holds the latest health check result for a relay server.
 type RelayHealthStatus struct {
 	URL         string    `json:"url"`
@@ -10520,7 +10587,8 @@ func (rm *relayManager) watchdogRelayTunnel() {
 		return
 	}
 	cfg, err := LoadConfig()
-	if err != nil || cfg == nil || len(cfg.RelayServers) == 0 || strings.TrimSpace(cfg.AuthToken) == "" {
+	relayCfg := runtimeRelayConfigs(cfg)
+	if err != nil || cfg == nil || len(relayCfg) == 0 || strings.TrimSpace(cfg.AuthToken) == "" {
 		rm.noTunnelSince = time.Time{}
 		return
 	}
@@ -10536,7 +10604,7 @@ func (rm *relayManager) watchdogRelayTunnel() {
 		return
 	}
 	log.Printf("[relay] watchdog: no live tunnel for %s despite %d configured relay(s) — forcing redial so off-LAN / non-Tailscale clients keep a path",
-		time.Since(rm.noTunnelSince).Round(time.Second), len(cfg.RelayServers))
+		time.Since(rm.noTunnelSince).Round(time.Second), len(relayCfg))
 	rm.attemptCancelsMu.Lock()
 	forced := 0
 	for _, cancel := range rm.attemptCancels {
@@ -10553,11 +10621,12 @@ func (rm *relayManager) watchdogRelayTunnel() {
 
 func (rm *relayManager) checkRelayHealth(client *http.Client) {
 	cfg, err := LoadConfig()
-	if err != nil || len(cfg.RelayServers) == 0 {
+	relayCfg := runtimeRelayConfigs(cfg)
+	if err != nil || len(relayCfg) == 0 {
 		return
 	}
 
-	for _, rs := range cfg.RelayServers {
+	for _, rs := range relayCfg {
 		status := &RelayHealthStatus{
 			URL:         rs.HttpURL,
 			LastChecked: time.Now(),
@@ -10773,10 +10842,54 @@ func currentRelayCredentials(relayAddr string) (token, password string) {
 			return token, strings.TrimSpace(rs.Password)
 		}
 	}
-	if pw := strings.TrimSpace(cfg.RelayPassword); pw != "" {
-		return token, pw
+	for _, rs := range cfg.CachedRelayServers {
+		if rs.QuicAddr == relayAddr && strings.TrimSpace(rs.Password) != "" {
+			return token, strings.TrimSpace(rs.Password)
+		}
 	}
-	return token, strings.TrimSpace(cfg.CachedRelayPassword)
+	return token, strings.TrimSpace(runtimeRelayPassword(cfg))
+}
+
+func relayWebSocketURLForQuicAddr(relayAddr string) string {
+	cfg, err := LoadConfig()
+	if err == nil && cfg != nil {
+		for _, list := range [][]RelayServerConfig{cfg.RelayServers, cfg.CachedRelayServers} {
+			for _, rs := range list {
+				if strings.TrimSpace(rs.QuicAddr) == relayAddr && strings.TrimSpace(rs.HttpURL) != "" {
+					return relayWebSocketURLFromHTTP(rs.HttpURL)
+				}
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(relayAddr)
+	if err != nil || strings.TrimSpace(host) == "" {
+		host = strings.TrimSpace(relayAddr)
+	}
+	if host == "" {
+		return ""
+	}
+	return "wss://" + host + "/agent/tunnel/ws"
+}
+
+func relayWebSocketURLFromHTTP(raw string) string {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	switch u.Scheme {
+	case "http":
+		u.Scheme = "ws"
+	default:
+		u.Scheme = "wss"
+	}
+	u.Path = "/agent/tunnel/ws"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager, rm *relayManager) {
@@ -10831,6 +10944,21 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 					password = fresh
 					backoff = time.Second // reset; we have new creds
 					continue
+				}
+			}
+		}
+
+		if ctx.Err() == nil {
+			if wsURL := relayWebSocketURLForQuicAddr(relayAddr); wsURL != "" {
+				log.Printf("[RELAY %s] Trying Cloudflare/WebSocket fallback at %s", relayAddr, wsURL)
+				wsStartedAt := time.Now()
+				wsErr := relayConnectAndServeWebSocket(ctx, wsURL, agentAddr, deviceID, token, password)
+				if wsErr != nil && ctx.Err() == nil {
+					log.Printf("[RELAY %s] WebSocket fallback ended after %s: %v", relayAddr, time.Since(wsStartedAt).Round(time.Second), wsErr)
+				}
+				if time.Since(wsStartedAt) >= 30*time.Second {
+					backoff = time.Second
+					unhealthySince = time.Time{}
 				}
 			}
 		}
@@ -11025,6 +11153,141 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 		}
 		go relayHandleProxiedRequest(stream, agentAddr, localClient)
 	}
+}
+
+func relayConnectAndServeWebSocket(ctx context.Context, wsURL, agentAddr, deviceID, token, password string) error {
+	origin := "https://yaver.io"
+	if u, err := url.Parse(wsURL); err == nil && u.Host != "" {
+		origin = "https://" + u.Host
+		if u.Scheme == "ws" {
+			origin = "http://" + u.Host
+		}
+	}
+	ws, err := websocket.Dial(wsURL, "", origin)
+	if err != nil {
+		return fmt.Errorf("dial websocket relay: %w", err)
+	}
+	defer ws.Close()
+
+	reg := &relayRegisterMsg{Type: "register", DeviceID: deviceID, Token: token, Password: password}
+	if err := websocket.JSON.Send(ws, relayWSTunnelFrame{Type: "register", Register: reg}); err != nil {
+		return fmt.Errorf("write websocket registration: %w", err)
+	}
+	var regResp relayWSTunnelFrame
+	if err := websocket.JSON.Receive(ws, &regResp); err != nil {
+		return fmt.Errorf("read websocket registration response: %w", err)
+	}
+	if !regResp.OK {
+		return fmt.Errorf("websocket registration rejected: %s", regResp.Message)
+	}
+	log.Printf("[RELAY] Registered websocket fallback as device %s", deviceID[:min(8, len(deviceID))])
+
+	atomic.AddInt32(&relayTunnelsLive, 1)
+	defer atomic.AddInt32(&relayTunnelsLive, -1)
+
+	done := make(chan error, 1)
+	go func() {
+		localClient := &http.Client{Timeout: 15 * time.Minute}
+		for {
+			var frame relayWSTunnelFrame
+			if err := websocket.JSON.Receive(ws, &frame); err != nil {
+				done <- err
+				return
+			}
+			switch frame.Type {
+			case "request":
+				if frame.Request == nil {
+					_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "error", ID: frame.ID, Message: "missing request"})
+					continue
+				}
+				go relayHandleWSProxiedRequest(ws, agentAddr, localClient, frame.ID, *frame.Request)
+			case "ping":
+				_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "pong", ID: frame.ID})
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-done:
+		return fmt.Errorf("websocket relay closed: %w", err)
+	}
+}
+
+var relayWSWriteMu sync.Mutex
+
+func relaySendWSFrame(ws *websocket.Conn, frame relayWSTunnelFrame) error {
+	relayWSWriteMu.Lock()
+	defer relayWSWriteMu.Unlock()
+	return websocket.JSON.Send(ws, frame)
+}
+
+func relayHandleWSProxiedRequest(ws *websocket.Conn, agentAddr string, client *http.Client, frameID string, req relayTunnelRequest) {
+	target := agentAddr
+	if req.TargetPort > 0 {
+		target = fmt.Sprintf("127.0.0.1:%d", req.TargetPort)
+	}
+	url := fmt.Sprintf("http://%s%s", target, req.Path)
+	if req.Query != "" {
+		url += "?" + req.Query
+	}
+	httpReq, err := http.NewRequest(req.Method, url, bytes.NewReader(req.Body))
+	if err != nil {
+		_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "error", ID: frameID, Message: "failed to build request"})
+		return
+	}
+	for k, v := range req.Headers {
+		httpReq.Header.Set(k, v)
+	}
+	httpReq.Header.Set("X-Yaver-Via-Relay", "1")
+
+	isWebSocket := strings.EqualFold(req.Headers["Upgrade"], "websocket")
+	isSSE := req.Method == "GET" &&
+		(strings.Contains(req.Headers["Accept"], "text/event-stream") ||
+			strings.Contains(req.Path, "/output") ||
+			strings.HasSuffix(req.Path, "/dev/events") ||
+			strings.HasSuffix(req.Path, "/subscribe") ||
+			strings.HasSuffix(req.Path, "/blackbox/command-stream") ||
+			strings.HasSuffix(req.Path, "/blackbox/stream") ||
+			strings.HasSuffix(req.Path, "/feedback/stream") ||
+			strings.Contains(req.Path, "/streams/"))
+	if isWebSocket || isSSE {
+		_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "error", ID: frameID, Message: "streaming endpoint requires QUIC relay"})
+		return
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		_ = relaySendWSFrame(ws, relayWSTunnelFrame{Type: "error", ID: frameID, Message: "agent error: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	maxRespSize := int64(10 << 20)
+	if strings.HasPrefix(req.Path, "/dev/") {
+		maxRespSize = 200 << 20
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespSize))
+	headers := make(map[string]string)
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+	if strings.HasPrefix(req.Path, "/dev/") {
+		stripFrameBlockingHeaders(headers)
+	}
+	_ = relaySendWSFrame(ws, relayWSTunnelFrame{
+		Type: "response",
+		ID:   frameID,
+		Response: &relayTunnelResponse{
+			ID:         req.ID,
+			StatusCode: resp.StatusCode,
+			Headers:    headers,
+			Body:       respBody,
+		},
+	})
 }
 
 func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *http.Client) {
