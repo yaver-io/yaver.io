@@ -128,34 +128,6 @@ private struct Tile: View {
     }
 }
 
-struct AddBoxView: View {
-    @EnvironmentObject var store: YaverStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var host = ""
-    @State private var machineId = ""
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Text("Add a box").font(.system(size: 34, weight: .bold))
-            TextField("Name (e.g. magara)", text: $name)
-            TextField("LAN host or IP (e.g. 192.168.1.20)", text: $host)
-            TextField("Machine ID (managed cloud box — optional, enables Wake)", text: $machineId)
-            Button("Save") {
-                let trimmed = host.trimmingCharacters(in: .whitespaces)
-                guard !trimmed.isEmpty else { return }
-                let mid = machineId.trimmingCharacters(in: .whitespaces)
-                let box = BoxTarget(id: trimmed, name: name.isEmpty ? trimmed : name, host: trimmed,
-                                    managed: mid.isEmpty ? nil : true,
-                                    machineId: mid.isEmpty ? nil : mid)
-                store.addBox(box)
-                store.select(box)
-                dismiss()
-            }
-            .disabled(host.trimmingCharacters(in: .whitespaces).isEmpty)
-            Button("Cancel", role: .cancel) { dismiss() }
-        }
-        .padding(64)
-        .frame(maxWidth: 900)
-    }
-}
+// AddBoxView moved to ../AddBoxView.swift — the shared client layer — so the
+// visionOS target can present it too. It was the only caller of store.addBox()
+// in the repo, and living here made it unreachable from the headset.

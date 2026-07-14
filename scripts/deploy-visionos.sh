@@ -120,6 +120,13 @@ VERSION_ARGS=()
 [ -n "${VISIONOS_MARKETING_VERSION:-}" ] && VERSION_ARGS+=("MARKETING_VERSION=$VISIONOS_MARKETING_VERSION")
 [ -n "${VISIONOS_BUILD_NUMBER:-}" ] && VERSION_ARGS+=("CURRENT_PROJECT_VERSION=$VISIONOS_BUILD_NUMBER")
 
+# macOS ships bash 3.2, where expanding an EMPTY array under `set -u` is an
+# "unbound variable" error rather than nothing. Both xcodebuild calls below
+# splat VERSION_ARGS, which is empty unless VISIONOS_MARKETING_VERSION /
+# VISIONOS_BUILD_NUMBER is set — so the default invocation (no version
+# override) died at the build/archive step on every Mac. The `[@]+` guard
+# expands to zero words when the array is empty. Same idiom at both sites.
+
 # The .xcodeproj is generated from project.yml and gitignored — regenerate so the
 # spec stays the single source of truth (same contract as tvos/).
 if command -v xcodegen >/dev/null 2>&1 && [ -f "$VISION_DIR/project.yml" ]; then
@@ -136,7 +143,7 @@ if [ "$UPLOAD" != "1" ]; then
     -destination "generic/platform=visionOS" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
     CODE_SIGNING_ALLOWED=NO \
-    "${VERSION_ARGS[@]}" \
+    ${VERSION_ARGS[@]+"${VERSION_ARGS[@]}"} \
     build
 
   echo "visionOS build analysis passed."
@@ -166,7 +173,7 @@ xcodebuild "${PROJECT_ARGS[@]}" \
   -authenticationKeyID "$APP_STORE_KEY_ID" \
   -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
-  "${VERSION_ARGS[@]}"
+  ${VERSION_ARGS[@]+"${VERSION_ARGS[@]}"}
 
 [ -d "$ARCHIVE_PATH" ] || { echo "ERROR: archive failed — no .xcarchive produced" >&2; exit 1; }
 

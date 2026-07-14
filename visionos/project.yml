@@ -32,6 +32,11 @@ targets:
       - path: ../tvos/YaverTV/YaverStore.swift
       - path: ../tvos/YaverTV/SessionClient.swift
       - path: ../tvos/YaverTV/YaverNativeCatalog.swift
+      # The only caller of store.addBox() in the repo. Without it the headset's
+      # "No machine selected" screen was the terminal state of the app — no
+      # picker, no sheet, and no phone-sync to rescue it (boxes are device-local
+      # UserDefaults). Shared, not copied, for the reason above.
+      - path: ../tvos/YaverTV/AddBoxView.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.yaver.mobile   # universal w/ iPhone + TV (Universal Purchase)

@@ -19,6 +19,7 @@ struct VisionDashboardView: View {
     @State private var runners: RunnerSessions?
     @State private var error: String?
     @State private var loading = false
+    @State private var showAddBox = false
 
     var body: some View {
         NavigationStack {
@@ -33,19 +34,25 @@ struct VisionDashboardView: View {
             .toolbar {
                 ToolbarItem(placement: .bottomOrnament) {
                     HStack(spacing: 16) {
-                        Button {
-                            Task { await refresh() }
-                        } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
-                        .disabled(loading || store.selectedBox == nil)
+                        // Refresh and Hot reload act ON the selected box. With none
+                        // selected they were rendered-but-disabled: two dead controls
+                        // floating under a screen the user couldn't leave. Drop them
+                        // entirely in that state and leave the one control that still
+                        // means something. (Sign out always does.)
+                        if store.selectedBox != nil {
+                            Button {
+                                Task { await refresh() }
+                            } label: {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                            }
+                            .disabled(loading)
 
-                        Button {
-                            Task { await reload() }
-                        } label: {
-                            Label("Hot reload", systemImage: "bolt.fill")
+                            Button {
+                                Task { await reload() }
+                            } label: {
+                                Label("Hot reload", systemImage: "bolt.fill")
+                            }
                         }
-                        .disabled(store.selectedBox == nil)
 
                         Button(role: .destructive) {
                             store.signOut()
@@ -55,8 +62,12 @@ struct VisionDashboardView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showAddBox) { AddBoxView() }
         }
-        .task { await refresh() }
+        // Re-run when the box changes: adding the first machine auto-selects it
+        // (YaverStore.select), and without this the freshly-added box would show
+        // an empty dashboard until the user manually hit Refresh.
+        .task(id: store.selectedBox?.id) { await refresh() }
     }
 
     // MARK: - Panels
@@ -82,7 +93,9 @@ struct VisionDashboardView: View {
     private var machinePanel: some View {
         panel("Machine", systemImage: "desktopcomputer") {
             row("Name", store.selectedBox?.name ?? "—")
-            row("Host", "\(store.selectedBox?.host ?? "—"):\(store.selectedBox?.port ?? 0)")
+            // Interpolating the two placeholders separately rendered the literal
+            // string "—:0". A missing host has no port; say nothing, not zero.
+            row("Host", store.selectedBox.map { "\($0.host):\($0.port)" } ?? "—")
             row("Platform", [info?.platform, info?.arch].compactMap { $0 }.joined(separator: " · "))
             row("Agent", info?.agentVersion ?? status?.agentVersion ?? "—")
             if let cpu = info?.cpuPercent {
@@ -125,15 +138,28 @@ struct VisionDashboardView: View {
         }
     }
 
+    // The terminal state of the app, until now: it said "Pick a box in the Yaver
+    // phone app — it syncs here", and nothing syncs. Boxes live in
+    // @AppStorage("yaver.tv.boxes") — per-app-container UserDefaults, on a
+    // different physical device — and the only writer is AddBoxView, which this
+    // target didn't compile. So a fresh install read an instruction that could
+    // not work, on a screen with no button, and never reached the dashboard.
+    //
+    // An empty state must offer the move that unblocks it. Same shape as tvOS's:
+    // say what to add, then let them add it right here.
     private var noBoxView: some View {
         VStack(spacing: 16) {
-            Image(systemName: "desktopcomputer.trianglebadge.exclamationmark")
+            Image(systemName: "desktopcomputer")
                 .font(.system(size: 64))
                 .foregroundStyle(.secondary)
-            Text("No machine selected")
+            Text("Add your machine")
                 .font(.title)
-            Text("Pick a box in the Yaver phone app — it syncs here.")
+            Text("Enter the address of a machine running `yaver serve`. The headset must be on the same network.")
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 460)
+            Button("Add machine") { showAddBox = true }
+                .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

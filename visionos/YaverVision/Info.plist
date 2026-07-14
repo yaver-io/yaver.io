@@ -20,6 +20,18 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- App Store validation REJECTS a visionOS upload without this, even though
+	     the icon asset exists and ASSETCATALOG_COMPILER_APPICON_NAME is set in
+	     project.yml. Xcode normally synthesizes it, but this target sets
+	     GENERATE_INFOPLIST_FILE=NO and hand-writes the plist — so it has to be
+	     declared. The value is the asset-catalog icon name, NOT a filename.
+	     Failure mode is invisible until `xcodebuild -exportArchive`: the build
+	     and the archive both succeed, and Apple only rejects it at upload. -->
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<string>$(ASSETCATALOG_COMPILER_APPICON_NAME)</string>
+	</dict>
 	<key>LSRequiresIPhoneOS</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>

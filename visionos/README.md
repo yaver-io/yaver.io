@@ -82,3 +82,11 @@ INVALID**, on every platform. Automatic signing regenerates instead of dying.
 
 Bundle ID is `io.yaver.mobile`, shared with the iPhone and TV apps for Universal
 Purchase.
+
+## Submitting
+
+See **`docs/yaver-visionos-submission.md`**. Short version: the iOS TestFlight
+lane does *not* ship visionOS (separate archive, separate script), and the
+upload is gated on the `VISION_OS` platform existing on the App Store Connect
+app record — a Console-only click, with no API for it. Add the *platform* in
+App Store Connect; do **not** touch the identifier in the Developer portal.
