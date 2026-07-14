@@ -1,0 +1,94 @@
+# Deterministic spec (testkit) — guards the Tasks-screen FREEZE.
+#
+# WHAT THIS CATCHES, AND WHY THE OTHER ORACLES DON'T:
+#   buildTaskPreviewText / buildChatMessages used to re-derive a task's ENTIRE
+#   output buffer (up to 8000 lines, 12 chained regexes + a per-line ANSI pass)
+#   on every render of every card. With output streaming, the list re-renders
+#   per chunk and the JS thread saturates. React Native negotiates touch
+#   responders in JS — so taps and scrolls are silently dropped while the screen
+#   keeps rendering its last good frame.
+#
+#   Critically: in RN the JS thread is NOT the Android UI thread. A pegged JS
+#   thread produces NO ANR, NO crash, NO blank screen — so the crash / ANR /
+#   blank-screen oracles in the flow bank all pass while the app is, to the
+#   user, completely dead. The only oracle that catches it is the one below:
+#   WHILE OUTPUT IS STREAMING, TAP A CONTROL AND ASSERT THE UI ACTUALLY CHANGED.
+#
+#   The deterministic guard for the CAUSE is the unit test
+#   (mobile/src/lib/taskPreview.test.mts — asserts the derivation stays bounded).
+#   This spec is the end-to-end guard for the SYMPTOM.
+#
+# PRECONDITION (read before trusting a pass):
+#   The container must be signed in AND connected to an agent that has a RUNNING
+#   task streaming output — that is the load which triggers the freeze. Seed it
+#   with YAVER_QA_STREAM_TASK (a task the agent starts on connect, e.g. a build
+#   or a `yes`-style emitter). WITHOUT that load this spec still runs, but it
+#   only proves the Tasks tab is interactive AT IDLE — which was never broken.
+#   It will not catch a regression. Treat a pass with no streaming task as
+#   inconclusive, not green.
+
+name: tasks screen stays interactive while a task streams
+target: android-redroid
+url: io.yaver.mobile
+timeout_ms: 120000
+requires_env:
+  - YAVER_REDROID_SSH_HOST
+  - YAVER_REDROID_HOST_WORKDIR
+  # The streaming load. Without it this spec cannot fail for the right reason.
+  - YAVER_QA_STREAM_TASK
+redroid:
+  container: ${YAVER_REDROID_CONTAINER}
+  host_workdir: ${YAVER_REDROID_HOST_WORKDIR}
+  ssh_host: ${YAVER_REDROID_SSH_HOST}
+  keep: true
+  package: io.yaver.mobile
+  activity: .MainActivity
+
+artifacts:
+  on: always
+  screenshot: true
+
+steps:
+  - goto: /
+  - sleep_ms: 6000
+
+  # Land on Tasks.
+  - click: text=Tasks
+  - sleep_ms: 1500
+  - assert.text: Tasks
+
+  # Confirm the load is actually present. If this fails, the container has no
+  # streaming task and the run below would be a false green — fail loudly here
+  # rather than report a meaningless pass.
+  - assert.text: Running
+  - screenshot: true
+
+  # Let output accumulate. The old code degraded as the buffer grew: the freeze
+  # needs a few thousand lines, not a few dozen.
+  - sleep_ms: 20000
+
+  # ── THE GUARD ────────────────────────────────────────────────────────────
+  # Tap a control while output streams, then assert the UI genuinely responded.
+  # Under the freeze the tap is dropped: no sheet opens, and this assert fails
+  # while a screenshot shows a perfectly-rendered — and completely dead — screen.
+  - click: text=Logs
+  - sleep_ms: 2500
+  - assert.text: Connection Logs
+  - screenshot: true
+
+  # Close it and prove interactivity is not a one-off (a single tap can land in
+  # a gap between renders; two in a row under sustained load cannot).
+  - click: text=Close
+  - sleep_ms: 1500
+
+  # Filter chips are the exact controls that were dead in the bug report.
+  - click: text=Completed
+  - sleep_ms: 2000
+  - screenshot: true
+
+  # Back to the live filter — the list must still be driveable after the streak
+  # of taps, with output still arriving.
+  - click: text=Active
+  - sleep_ms: 2000
+  - assert.text: Running
+  - screenshot: true

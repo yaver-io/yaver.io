@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { memo, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { capStreamText } from "@/lib/streamBuffer";
 import { agentClient, type AgentGraphRun, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
@@ -70,6 +71,16 @@ export const ASSISTANT_MARKDOWN_COMPONENTS = {
 // append-only, so once a turn is finalized its content never changes
 // and React skips it.
 type ChatTurn = { role: string; content: string; timestamp?: number | string };
+// Live agent output. Memoized on the raw text so it re-strips + re-parses ONLY
+// when the text actually changes — not on every unrelated re-render of the
+// parent (which re-renders constantly while a task streams). Pairs with the
+// capStreamText() bound at the write site: without the cap this parse is over
+// the whole session transcript, which is what freezes the tab.
+export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
+  const cleaned = useMemo(() => stripAnsi(text), [text]);
+  return <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>{cleaned}</ReactMarkdown>;
+});
+
 const ChatBubble = memo(function ChatBubble({ turn }: { turn: ChatTurn }) {
   // User input stays as a verbatim block — preserves whitespace,
   // never re-parses markdown the user didn't intend (a literal
@@ -562,9 +573,13 @@ export default function VibeCodingView({
       setStreamedOutput("");
       return;
     }
-    setStreamedOutput(activeTask.output.join("\n"));
+    setStreamedOutput(capStreamText(activeTask.output.join("\n")));
     const stop = agentClient.streamTaskOutput(activeTask.id, (chunk) => {
-      setStreamedOutput((prev) => prev + extractOutputText(chunk));
+      // Cap HERE, at the write. The useMemo below only bounded the fallback
+      // branch, so while streaming — the one case that matters — the buffer
+      // grew without limit and every chunk re-stripped + re-parsed the whole
+      // transcript.
+      setStreamedOutput((prev) => capStreamText(prev + extractOutputText(chunk)));
     });
     return stop;
   }, [activeTask?.id]);
@@ -604,7 +619,7 @@ export default function VibeCodingView({
     }
     setGraphNodeOutput("");
     const stop = agentClient.streamTaskOutput(runningGraphNode.taskId, (chunk) => {
-      setGraphNodeOutput((prev) => prev + extractOutputText(chunk));
+      setGraphNodeOutput((prev) => capStreamText(prev + extractOutputText(chunk)));
     });
     return stop;
   }, [runningGraphNode?.taskId]);
@@ -1939,7 +1954,7 @@ export default function VibeCodingView({
                         {activeTask?.status === "running" ? "Live output" : "Agent output"}
                       </div>
                       <div className="text-[13px] leading-6 break-words [&_pre]:whitespace-pre-wrap">
-                        <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>{stripAnsi(liveOutput)}</ReactMarkdown>
+                        <AssistantMarkdown text={liveOutput} />
                       </div>
                     </div>
                   ) : null}
@@ -2313,7 +2328,10 @@ function DeepAskGraphPanel({ run, liveOutput }: { run: AgentGraphRun | null; liv
       {run.nodes.map((node) => {
         const v = GRAPH_NODE_VISUAL[node.status] ?? GRAPH_NODE_VISUAL.pending;
         const isRunning = node.status === "running";
-        const body = isRunning ? stripAnsi(liveOutput) : (node.summary?.trim() || node.error?.trim() || "");
+        // Running node: hand the raw text to the memoized renderer below
+        // instead of stripping it inline on every render of every node.
+        const summary = node.summary?.trim() || node.error?.trim() || "";
+        const body = isRunning ? liveOutput : summary;
         return (
           <div key={node.spec.id} className="rounded-2xl border border-surface-800 bg-surface-950/60 px-4 py-3">
             <div className="flex items-center gap-2">
@@ -2323,7 +2341,7 @@ function DeepAskGraphPanel({ run, liveOutput }: { run: AgentGraphRun | null; liv
             </div>
             {body ? (
               <div className="mt-2 text-[13px] leading-6 text-surface-200 break-words [&_pre]:whitespace-pre-wrap">
-                <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>{body}</ReactMarkdown>
+                <AssistantMarkdown text={body} />
               </div>
             ) : node.status === "pending" || node.status === "blocked" ? (
               <div className="mt-1 text-[11px] text-surface-600">waiting…</div>

@@ -30,6 +30,18 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
+// Pure output-buffer derivations live in a plain module so they can be
+// unit-tested in Node (see taskPreview.test.mts — it enforces that these
+// stay BOUNDED; unbounded versions froze this screen while tasks streamed).
+import {
+  MAX_OUTPUT_LINES_PER_TASK,
+  OUTPUT_TRUNCATED_MARKER,
+  buildTaskPreviewText,
+  capOutput,
+  collapseAdjacentDuplicateLines,
+  stripAnsi,
+  stripMarkdownForPreview,
+} from "../../src/lib/taskPreview";
 import EmptyState from "../../src/components/EmptyState";
 import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 import TaskTargetWizard, { type TaskTarget } from "../../src/components/TaskTargetWizard";
@@ -108,15 +120,6 @@ import {
 // When we drop, prepend a marker so the user knows scrollback was
 // truncated. The agent retains the full transcript on disk; the mobile
 // is a window onto recent activity, not the source of truth.
-const MAX_OUTPUT_LINES_PER_TASK = 8000;
-const OUTPUT_TRUNCATED_MARKER = "[… earlier output truncated to keep memory bounded — agent has full log …]";
-
-function capOutput(lines: string[]): string[] {
-  if (lines.length <= MAX_OUTPUT_LINES_PER_TASK) return lines;
-  const tail = lines.slice(-(MAX_OUTPUT_LINES_PER_TASK - 1));
-  return [OUTPUT_TRUNCATED_MARKER, ...tail];
-}
-
 // ── Constants ────────────────────────────────────────────────────────
 
 // Status palette. RUNNING is statusInfo (blue) rather than indigo —
@@ -195,50 +198,6 @@ function TypingIndicator({ color }: { color: string }) {
 // (see desktop/agent/runner_auth_browser_http.go) and mobile's shell
 // renderer (see mobile/app/shell.tsx) — kept here as a copy because
 // the chat view doesn't import either.
-const ANSI_PATTERN =
-  // eslint-disable-next-line no-control-regex
-  /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][0AB]|\x1b[=>NOM78cDEHM]|\x07/g;
-
-function stripAnsi(s: string): string {
-  if (!s) return s;
-  // Some agents emit the terminal-detection CSI without the leading ESC
-  // (raw `[1m...[0m` after the agent's own pre-processing strips ESC
-  // from JSON-escaped strings). Catch those bare CSI runs too — only
-  // when they look exactly like an SGR (digits + 'm') so we don't eat
-  // legitimate `[1ms ago]` style brackets.
-  return s
-    .replace(ANSI_PATTERN, "")
-    .replace(/\[\d+(?:;\d+)*m/g, "");
-}
-
-function stripMarkdownForPreview(text: string): string {
-  return stripAnsi(text)
-    .replace(/```[\s\S]*?```/g, " code block ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*>\s?/gm, "")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/_/g, "")
-    .replace(/\r/g, "")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function collapseAdjacentDuplicateLines(text: string): string {
-  const out: string[] = [];
-  let lastNonEmpty = "";
-  for (const line of String(text || "").replace(/\r/g, "").split("\n")) {
-    const normalized = stripAnsi(line).trim();
-    if (normalized && normalized === lastNonEmpty) continue;
-    out.push(line);
-    if (normalized) lastNonEmpty = normalized;
-  }
-  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
 function normalizePreviewLine(line: string): string {
   return stripMarkdownForPreview(line)
     .replace(/^\s*[-*]\s+/, "")
@@ -547,29 +506,6 @@ function buildLiveAssistantMarkdown(content: string): string {
 // re-renders continuously and that pegged the JS thread: taps and scroll
 // gestures need JS to negotiate the touch responder, so the whole Tasks
 // screen went dead while tasks were running. Scan the tail only.
-const PREVIEW_SCAN_LINES = 200;
-const PREVIEW_SCAN_CHARS = 4000;
-
-function buildTaskPreviewText(task: Task): string | null {
-  if (task.resultText) {
-    // Head slice: we want the FIRST 120 chars, and adjacent-duplicate
-    // collapsing only ever looks at neighbouring lines.
-    return collapseAdjacentDuplicateLines(
-      stripMarkdownForPreview(task.resultText.slice(0, PREVIEW_SCAN_CHARS)),
-    ).slice(0, 120);
-  }
-  if (task.status === "running" || task.status === "queued") {
-    const tail = task.output.length > PREVIEW_SCAN_LINES
-      ? task.output.slice(-PREVIEW_SCAN_LINES)
-      : task.output;
-    const live = collapseAdjacentDuplicateLines(stripMarkdownForPreview(tail.join("\n")))
-      .split("\n").map((line) => line.trim()).filter(Boolean);
-    if (live.length > 0) return live[live.length - 1].slice(0, 120);
-    return "Working...";
-  }
-  return null;
-}
-
 function normalizeTaskTitle(title: string): string {
   const trimmed = title.trim();
   if (!trimmed) return "Task";

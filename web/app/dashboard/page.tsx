@@ -47,8 +47,8 @@ import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
 import CompanyAIOptionsView from "@/components/dashboard/CompanyAIOptionsView";
 import CompanionView from "@/components/dashboard/CompanionView";
-import VibeCodingView, { ASSISTANT_MARKDOWN_COMPONENTS, stripAnsi } from "@/components/dashboard/VibeCodingView";
-import ReactMarkdown from "react-markdown";
+import VibeCodingView, { AssistantMarkdown } from "@/components/dashboard/VibeCodingView";
+import { capStreamText } from "@/lib/streamBuffer";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
 import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
@@ -1156,9 +1156,15 @@ export default function DashboardPage() {
         const next = prev.slice();
         const last = next[next.length - 1];
         if (last && last.role === "assistant") {
-          next[next.length - 1] = { role: "assistant", text: last.text ? last.text + chunk : chunk };
+          // Capped at the write: this entry absorbs every chunk of the task,
+          // so uncapped it grows to the whole session transcript — and the
+          // bubble re-strips + re-parses it on every chunk.
+          next[next.length - 1] = {
+            role: "assistant",
+            text: capStreamText(last.text ? last.text + chunk : chunk),
+          };
         } else {
-          next.push({ role: "assistant", text: chunk });
+          next.push({ role: "assistant", text: capStreamText(chunk) });
         }
         return next;
       });
@@ -2954,9 +2960,10 @@ export default function DashboardPage() {
                                       // and web/components/dashboard/
                                       // VibeCodingView.tsx's ChatBubble).
                                       <div className="prose-invert break-words [&_pre]:whitespace-pre-wrap">
-                                        <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>
-                                          {stripAnsi(m.text)}
-                                        </ReactMarkdown>
+                                        {/* Memoized: this list has no memo'd bubble, so
+                                            stripAnsi + a full markdown re-parse of EVERY
+                                            message ran on every stream chunk. */}
+                                        <AssistantMarkdown text={m.text} />
                                         {activeTask.status === "running" && i === chatMsgs.length - 1 ? (
                                           <span className="ml-0.5 inline-block h-3 w-1.5 translate-y-[2px] animate-pulse bg-surface-300" aria-hidden />
                                         ) : null}

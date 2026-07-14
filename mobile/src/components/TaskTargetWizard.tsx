@@ -34,6 +34,7 @@ import { quicClient, type RunnerAuthStatusRow, type OpenCodeConfigSummary } from
 import { connectionManager } from "../lib/connectionManager";
 import { eligibleRemoteBoxDevices, versionPatchDistance } from "../lib/devicePicker";
 import RunnerAuthModal from "./RunnerAuthModal";
+import { OpenCodeConfigModal } from "./OpenCodeConfigModal";
 
 export interface TaskTarget {
   deviceId: string;
@@ -52,6 +53,10 @@ interface Props {
   visible: boolean;
   onCancel: () => void;
   onConfirmed: (target: TaskTarget) => void;
+  /** Fires once the sheet is actually off screen (iOS). The caller uses
+   *  it to open a follow-up Modal — presenting one while this sheet is
+   *  still up makes it mount invisibly behind. */
+  onDismiss?: () => void;
 }
 
 // Maps the tasks-API runner id (used by sendTask + selectedRunner state
@@ -136,7 +141,7 @@ function defaultModelForRunner(runner: TaskTarget["runner"]): string | null {
   return list[0].id;
 }
 
-export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Props) {
+export default function TaskTargetWizard({ visible, onCancel, onConfirmed, onDismiss }: Props) {
   const c = useColors();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("regular");
@@ -193,6 +198,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     deviceName: string;
     runner: "claude" | "codex" | "opencode";
   } | null>(null);
+  const [openCodeConfigFor, setOpenCodeConfigFor] = React.useState<Device | null>(null);
   const [runnerSetupBusyKey, setRunnerSetupBusyKey] = React.useState<string | null>(null);
   const [runnerActionErrorByKey, setRunnerActionErrorByKey] = React.useState<Record<string, string>>({});
   const [switchError, setSwitchError] = React.useState<string | null>(null);
@@ -211,6 +217,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     setPickedModel(null);
     setRecoveryConfirm(null);
     setRunnerAuthFor(null);
+    setOpenCodeConfigFor(null);
     setRunnerSetupBusyKey(null);
     setRunnerActionErrorByKey({});
     setSwitchError(null);
@@ -347,10 +354,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     if (!row || !row.installed) return;
     if (!row.authConfigured) {
       if (auditId === "opencode") {
-        Alert.alert(
-          "OpenCode needs provider setup",
-          "OpenCode is installed on this machine, but it still needs provider credentials or config on the remote box before it can run tasks.",
-        );
+        setOpenCodeConfigFor(pickedDevice);
         return;
       }
       setRunnerAuthFor({ deviceId: pickedDevice.id, deviceName: pickedDevice.name, runner: auditId });
@@ -866,6 +870,8 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
           const cfg = opencodeByDevice[d.id];
           const loading = opencodeLoadingId === d.id || cfg === undefined;
           const agents = (cfg?.agents || []).filter((a) => !!a?.name);
+          const hasProviderKey = (cfg?.providers || []).some((p) => !!p?.hasApiKey);
+          const needsOpenCodeConfig = !loading && (!cfg || !hasProviderKey || (cfg.diagnostics?.length || 0) > 0);
           const fallback = ["build", "plan"];
           const showFallback = !loading && agents.length === 0;
           return (
@@ -885,6 +891,21 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
                   <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 8 }}>
                     Couldn't read opencode.json — using defaults.
                   </Text>
+                  <Pressable
+                    onPress={() => setOpenCodeConfigFor(d)}
+                    style={({ pressed }) => ({
+                      marginBottom: 8,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: c.accent,
+                      backgroundColor: c.bg,
+                      opacity: pressed ? 0.85 : 1,
+                    })}
+                  >
+                    <Text style={{ color: c.accent, fontSize: 13, fontWeight: "700" }}>OpenCode settings</Text>
+                  </Pressable>
                   {fallback.map((mode) => {
                     const sel = pickedOpencodeMode === mode;
                     return (
@@ -941,6 +962,23 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
                   );
                 })
               )}
+              {needsOpenCodeConfig && !showFallback ? (
+                <Pressable
+                  onPress={() => setOpenCodeConfigFor(d)}
+                  style={({ pressed }) => ({
+                    marginTop: 2,
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: c.accent,
+                    backgroundColor: c.bg,
+                    opacity: pressed ? 0.85 : 1,
+                  })}
+                >
+                  <Text style={{ color: c.accent, fontSize: 13, fontWeight: "700" }}>OpenCode settings</Text>
+                </Pressable>
+              ) : null}
             </View>
           );
         })()
@@ -984,7 +1022,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
 
   return (
     <>
-      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onCancel}>
+      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onDismiss={onDismiss} onRequestClose={onCancel}>
         <View style={{ flex: 1, backgroundColor: c.bg }}>
           <View
             style={{
@@ -1075,6 +1113,21 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
             setRunnerAuthFor(null);
             const dev = devices.find((d) => d.id === did);
             if (dev) void runAudit(dev);
+          }}
+        />
+      ) : null}
+      {openCodeConfigFor ? (
+        <OpenCodeConfigModal
+          visible={!!openCodeConfigFor}
+          startInAddProvider
+          target={openCodeConfigFor.id}
+          onClose={() => {
+            const dev = openCodeConfigFor;
+            setOpenCodeConfigFor(null);
+            if (dev) {
+              void runAudit(dev);
+              void fetchOpencode(dev);
+            }
           }}
         />
       ) : null}
