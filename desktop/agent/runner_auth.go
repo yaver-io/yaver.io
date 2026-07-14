@@ -22,9 +22,9 @@ type RunnerRuntimeStatus struct {
 	// under omitempty, so "authConfigured: false" vanished from the JSON
 	// entirely — and every client that wrote `row.authConfigured !== false`
 	// (the obvious, correct-looking guard) then read the ABSENCE as "true".
-	// A Claude whose OAuth expired in May rendered as "Claude Code ready" in
-	// green for two months because of exactly this. A negative answer must
-	// travel over the wire; silence must never be mistaken for consent.
+	// A signed-out runner therefore renders as signed IN on every surface that
+	// asks politely. A negative answer must travel over the wire; silence must
+	// never be mistaken for consent.
 	AuthConfigured bool `json:"authConfigured"`
 	// AuthVerified is set only when AuthConfigured was established by asking
 	// the runner itself (`claude auth status`, `codex login status`) or by
@@ -162,11 +162,9 @@ func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntim
 
 	// A runner that cannot authenticate is NOT ready, whatever else is true of
 	// it. Every detect*Status above starts from Ready:true and only ever sets
-	// AuthConfigured=false on a signed-out runner — so Ready stayed true, the
-	// pickers filter on Ready, and a Claude whose OAuth expired two months ago
-	// was advertised to the user in green as "Claude Code ready". The task then
-	// died with a bare timeout that pointed at the network instead of the
-	// sign-in it actually needed.
+	// AuthConfigured=false on a signed-out runner — so Ready stayed true while
+	// the pickers, which filter on Ready, went on advertising it. A signed-out
+	// runner would be offered to the user in green, accept the task, and fail.
 	//
 	// "Ready" must mean "I can run your task right now". Anything weaker is a
 	// promise the next task will break.
@@ -426,19 +424,6 @@ func detectClaudeStatus() RunnerRuntimeStatus {
 	if path, ok := claudeCredentialsPath(); ok && claudeCredentialFileHasOAuth(path) {
 		status.AuthConfigured = true
 		status.AuthSource = path
-	} else if path, ok := claudeCredentialsPath(); ok && !claudeCredentialExpiry(path).IsZero() &&
-		claudeCredentialExpiry(path).Before(time.Now()) {
-		// Credentials exist but the token is stale. Say WHEN — "signed out" is
-		// baffling when you signed in months ago; "expired 64 days ago" tells
-		// the user exactly what happened and that re-auth is the fix.
-		exp := claudeCredentialExpiry(path)
-		days := int(time.Since(exp).Hours() / 24)
-		status.AuthConfigured = false
-		status.AuthVerified = true
-		status.Warning = fmt.Sprintf(
-			"Claude Code's token expired %d days ago (%s) and did not refresh — sign in again on this machine.",
-			days, exp.Format("2006-01-02"),
-		)
 	} else if runtime.GOOS == "darwin" && claudeMacKeychainHasCreds() {
 		// macOS subscription users may have no env var and no usable
 		// ~/.claude/.credentials.json — Claude Code stores the OAuth token in
@@ -593,87 +578,26 @@ func claudeCredentialFileHasOAuth(path string) bool {
 	if strings.TrimSpace(oauth.AccessToken) == "" {
 		return false
 	}
-	// The expiry is authoritative, and it is checked BEFORE the refresh token.
+	// A refresh token means Claude can mint a new access token, so an expired
+	// accessToken is NOT signed-out. Keep this ahead of the expiry check.
 	//
-	// This used to `return true` the moment a refreshToken existed, which made
-	// the expiry check on the next line unreachable. The reasoning ("a refresh
-	// token means Claude will refresh itself") is wrong in the one case that
-	// matters: a refresh that has been silently failing. A real Mac mini sat
-	// with an access token that expired 2026-05-11 and a refresh token that
-	// never fired — and this function called it signed in for two months, so
-	// every picker showed "Claude Code ready" and every task died on a timeout.
+	// I briefly "fixed" this the other way — expired ⇒ signed out, refresh token
+	// or not — after finding a Mac mini whose accessToken expired 2026-05-11.
+	// That was WRONG, and the machine itself proved it: `claude auth status`
+	// reported loggedIn:true and the agent was streaming a live Claude task at
+	// the same moment. On macOS the credentials FILE is not the store at all —
+	// Claude keeps the live token in the Keychain, so a months-stale file sits
+	// on disk next to a perfectly valid session. Treating the file as
+	// authoritative would report a working machine as signed out.
 	//
-	// An expired token with a refresh token is a MAYBE, and a maybe must not be
-	// reported as a yes. If Claude can still refresh, probeClaudeAuthStatus()
-	// (which asks the binary directly, above) says so and overrides this — this
-	// heuristic only runs when the binary could not answer, and in that state
-	// the honest answer to "is it signed in?" is no.
-	if oauth.ExpiresAt > 0 && int64(oauth.ExpiresAt) <= time.Now().UnixMilli() {
-		return false
+	// The file is a weak, POSITIVE-only hint. It may say "there is probably a
+	// session here"; it may never say "there is definitely not". Only
+	// probeClaudeAuthStatus() (which asks the binary, which reads the real
+	// store) can answer negatively — and it already does, above.
+	if strings.TrimSpace(oauth.RefreshToken) != "" {
+		return true
 	}
-	return true
-}
-
-// claudeCredentialExpiry returns when the on-disk Claude OAuth token expires, so
-// callers can say "expired 64 days ago" instead of a shrug. Zero time = unknown.
-func claudeCredentialExpiry(path string) time.Time {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return time.Time{}
-	}
-	var probe struct {
-		ClaudeAiOauth struct {
-			ExpiresAt float64 `json:"expiresAt"`
-		} `json:"claudeAiOauth"`
-	}
-	if json.Unmarshal(data, &probe) != nil || probe.ClaudeAiOauth.ExpiresAt <= 0 {
-		return time.Time{}
-	}
-	return time.UnixMilli(int64(probe.ClaudeAiOauth.ExpiresAt))
-}
-
-// applyLiveRunnerAuthProbe re-answers a runner's auth question from scratch,
-// bypassing every cache. `/runner-auth/status?live=1` uses it before a caller
-// commits to an expensive, hard-to-undo action (opening a remote TUI) where a
-// 60-second-stale "signed in" would strand the user on a login screen.
-//
-// It costs a `claude auth status` fork and zero API tokens. It deliberately
-// does NOT send a probe prompt through the model: `claude --print` is headless
-// mode, which this project does not run.
-func applyLiveRunnerAuthProbe(rows []runnerAuthStatusRow, runner string) []runnerAuthStatusRow {
-	if normalizeRunnerID(runner) == "" {
-		runner = "claude"
-	}
-	if normalizeRunnerID(runner) != "claude" {
-		return rows // only Claude Code exposes a free, authoritative auth probe
-	}
-	invalidateClaudeAuthStatusCache()
-	for i := range rows {
-		if normalizeRunnerID(rows[i].ID) != "claude" || !rows[i].Installed {
-			continue
-		}
-		// detectClaudeStatus directly, NOT DetectRunnerRuntimeStatus: the
-		// latter overlays lastRunnerAuthFailure, and a live answer from the
-		// CLI is strictly better evidence than a task that 401'd 20 minutes
-		// ago. Here the live result *decides* the override rather than
-		// inheriting it.
-		fresh := detectClaudeStatus()
-		rows[i].Ready = fresh.Ready
-		rows[i].AuthConfigured = fresh.AuthConfigured
-		rows[i].AuthVerified = fresh.AuthVerified
-		rows[i].AuthSource = fresh.AuthSource
-		rows[i].Warning = fresh.Warning
-		rows[i].Error = fresh.Error
-		if detail := firstNonEmptyBrowserAuth(fresh.Error, fresh.Warning); detail != "" {
-			rows[i].Detail = detail
-		}
-		if fresh.AuthConfigured {
-			ClearRunnerAuthInvalid("claude")
-		} else if fresh.AuthVerified {
-			MarkRunnerAuthInvalid("claude")
-		}
-	}
-	return rows
+	return oauth.ExpiresAt <= 0 || int64(oauth.ExpiresAt) > time.Now().UnixMilli()
 }
 
 // detectGLMStatus reports auth readiness for the GLM (z.ai) runner. GLM runs
@@ -1270,4 +1194,48 @@ func uniqStrings(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// applyLiveRunnerAuthProbe re-answers a runner's auth question from scratch,
+// bypassing every cache. `/runner-auth/status?live=1` uses it before a caller
+// commits to an expensive, hard-to-undo action (opening a remote TUI) where a
+// 60-second-stale "signed in" would strand the user on a login screen.
+//
+// It costs a `claude auth status` fork and zero API tokens. It deliberately
+// does NOT send a probe prompt through the model: `claude --print` is headless
+// mode, which this project does not run.
+func applyLiveRunnerAuthProbe(rows []runnerAuthStatusRow, runner string) []runnerAuthStatusRow {
+	if normalizeRunnerID(runner) == "" {
+		runner = "claude"
+	}
+	if normalizeRunnerID(runner) != "claude" {
+		return rows // only Claude Code exposes a free, authoritative auth probe
+	}
+	invalidateClaudeAuthStatusCache()
+	for i := range rows {
+		if normalizeRunnerID(rows[i].ID) != "claude" || !rows[i].Installed {
+			continue
+		}
+		// detectClaudeStatus directly, NOT DetectRunnerRuntimeStatus: the
+		// latter overlays lastRunnerAuthFailure, and a live answer from the
+		// CLI is strictly better evidence than a task that 401'd 20 minutes
+		// ago. Here the live result *decides* the override rather than
+		// inheriting it.
+		fresh := detectClaudeStatus()
+		rows[i].Ready = fresh.Ready
+		rows[i].AuthConfigured = fresh.AuthConfigured
+		rows[i].AuthVerified = fresh.AuthVerified
+		rows[i].AuthSource = fresh.AuthSource
+		rows[i].Warning = fresh.Warning
+		rows[i].Error = fresh.Error
+		if detail := firstNonEmptyBrowserAuth(fresh.Error, fresh.Warning); detail != "" {
+			rows[i].Detail = detail
+		}
+		if fresh.AuthConfigured {
+			ClearRunnerAuthInvalid("claude")
+		} else if fresh.AuthVerified {
+			MarkRunnerAuthInvalid("claude")
+		}
+	}
+	return rows
 }

@@ -118,12 +118,10 @@ function normalizeRunner(row: any): CodingRunnerProbe | null {
   const installed = row?.installed === true;
   const error = typeof row?.error === "string" ? row.error : undefined;
 
-  // FAIL CLOSED. This used to be `row?.authConfigured !== false`, which reads
-  // an ABSENT field as authenticated — and the agent used to drop the field
-  // entirely when it was false (Go omits a false bool under `omitempty`). The
-  // two bugs multiplied: a Claude whose OAuth expired in May was advertised as
-  // "Claude Code ready", in green, for two months. Tasks sent to it died with a
-  // bare 30s timeout that looked like a network fault.
+  // FAIL CLOSED. This used to be `row?.authConfigured !== false`, which reads an
+  // ABSENT field as authenticated — and the agent dropped the field entirely
+  // when it was false (Go omits a false bool under `omitempty`). The two bugs
+  // multiplied: a signed-out runner arrived as `{}` and rendered green.
   //
   // Only an explicit `true` counts as signed in. Old agents (< 1.99.300) that
   // genuinely omit the field now read as NOT ready, which is the safe direction
