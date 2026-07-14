@@ -280,8 +280,57 @@ function ensureSources(targetUuid, sources, groupUuidOrName) {
 
   for (const src of sources) {
     if (referencedIn.has(src)) continue;
+    // addSourceFile() silently REFUSES a path that already exists anywhere in
+    // the project (it guards on hasFile(), not on membership of THIS target).
+    // The shared attributes file is added to the extension first, so the app
+    // target's add was being dropped on the floor — and YaverLiveActivity.swift
+    // then failed to compile with "cannot find type 'YaverActivityAttributes'".
+    // When the file ref already exists, attach it to this target by hand.
+    if (attachExistingFile(src, targetUuid)) continue;
     proj.addSourceFile(src, { target: targetUuid }, groupUuid);
   }
+}
+
+/**
+ * Add an already-referenced file to `targetUuid`'s Sources phase by minting a
+ * second PBXBuildFile against the existing PBXFileReference. Xcode requires one
+ * build-file entry PER target; a single one cannot be shared by two targets.
+ * Returns false when the path isn't in the project yet (caller falls back to
+ * addSourceFile, which handles creating the file reference).
+ */
+function attachExistingFile(srcPath, targetUuid) {
+  const fileRefs = proj.pbxFileReferenceSection();
+  let refUuid = null;
+  for (const k of Object.keys(fileRefs)) {
+    if (k.endsWith("_comment")) continue;
+    const r = fileRefs[k];
+    if (r && typeof r.path === "string" && stripQuotes(r.path) === srcPath) {
+      refUuid = k;
+      break;
+    }
+  }
+  if (!refUuid) return false;
+
+  const basename = srcPath.split("/").pop();
+  const buildFiles = proj.pbxBuildFileSection();
+  const bfUuid = proj.generateUuid();
+  buildFiles[bfUuid] = {
+    isa: "PBXBuildFile",
+    fileRef: refUuid,
+    fileRef_comment: basename,
+  };
+  buildFiles[`${bfUuid}_comment`] = `${basename} in Sources`;
+
+  const nt = proj.pbxNativeTargetSection()[targetUuid];
+  const sourcePhases = proj.hash.project.objects.PBXSourcesBuildPhase || {};
+  for (const ph of nt?.buildPhases || []) {
+    const phase = sourcePhases[ph.value];
+    if (!phase || phase.isa !== "PBXSourcesBuildPhase") continue;
+    phase.files = phase.files || [];
+    phase.files.push({ value: bfUuid, comment: `${basename} in Sources` });
+    return true;
+  }
+  return false;
 }
 
 function ensureTargetDependency(mainUuid, depUuid) {

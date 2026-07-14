@@ -64,6 +64,7 @@
 		F6AB5F18E2DF44C0A9EC510D /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 9B0B75DBE913487E82749716 /* Info.plist */; };
 		D21643E74FD7470B8975CF39 /* YaverLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A180F91D4364C6F82AFB2D8 /* YaverLiveActivity.swift */; };
 		A2F5DA27D039407FB594F1BC /* YaverLiveActivity.m in Sources */ = {isa = PBXBuildFile; fileRef = D203874E4A01483A90757AEF /* YaverLiveActivity.m */; };
+		C663E379084C45F9BB9251D2 /* YaverActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B6D3B8CC79B4516BFB9D831 /* YaverActivityAttributes.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -716,6 +717,7 @@
 				E1A2B3C4D5E6F70100000002 /* YaverWatchBridge.m in Sources */,
 				D21643E74FD7470B8975CF39 /* YaverLiveActivity.swift in Sources */,
 				A2F5DA27D039407FB594F1BC /* YaverLiveActivity.m in Sources */,
+				C663E379084C45F9BB9251D2 /* YaverActivityAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
