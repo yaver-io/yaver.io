@@ -79,6 +79,15 @@ struct FeedbackView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+                // TTS: read the report aloud — the lean-back way to triage
+                // feedback without reading a wall of text across the room.
+                if !r.safeTranscript.isEmpty {
+                    Button { Speech.speak(r.safeTranscript) } label: {
+                        Label("Read", systemImage: "speaker.wave.2.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                }
                 if r.shotCount > 0 { pill("\(r.shotCount) shots", "photo", .blue) }
                 if r.errorCount > 0 { pill("\(r.errorCount) errors", "exclamationmark.triangle", .red) }
                 if let t = r.createdAt { Text(t).font(.system(size: 14)).foregroundStyle(.secondary) }
