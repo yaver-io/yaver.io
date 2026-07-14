@@ -115,6 +115,27 @@ struct TaskSummary: Decodable, Identifiable {
 
 struct TaskList: Decodable { let tasks: [TaskSummary] }
 
+/// A feedback report the box has collected (GET /feedback). The TV shows them
+/// to review from the couch — the SDK captures video/voice/screenshots on the
+/// device under test; here we list source, transcript, version, and how many
+/// shots/errors came with it.
+struct FeedbackReport: Decodable, Identifiable {
+    let id: String
+    let source: String?
+    let transcript: String?
+    let screenshots: [String]?
+    let appVersion: String?
+    let buildId: String?
+    let createdAt: String?
+    let errors: [FeedbackError]?
+
+    var shotCount: Int { screenshots?.count ?? 0 }
+    var errorCount: Int { errors?.count ?? 0 }
+    var safeTranscript: String { redactHomePaths(transcript ?? "") }
+}
+
+struct FeedbackError: Decodable { let message: String? }
+
 /// Strip absolute home paths (/Users/<name>, /home/<name> → ~) from any string
 /// shown on a television or spoken aloud. Shared by the Session pane and the
 /// task list; the path carries the user's login name and filesystem layout, and

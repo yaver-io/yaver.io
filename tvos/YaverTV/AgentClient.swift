@@ -157,6 +157,21 @@ actor AgentClient {
         return (try JSONDecoder().decode(TaskList.self, from: data)).tasks
     }
 
+    /// Feedback reports the box has collected (GET /feedback → a bare array).
+    func listFeedback() async throws -> [FeedbackReport] {
+        guard let url = URL(string: "http://\(box.host):\(box.port)/feedback") else {
+            throw AgentError(message: "bad box host")
+        }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AgentError(message: "couldn't load feedback (\(http.statusCode))")
+        }
+        return (try? JSONDecoder().decode([FeedbackReport].self, from: data)) ?? []
+    }
+
     func startRunnerAuth(_ runner: String) async throws -> RunnerAuthStartResult {
         try await ops("runner_auth", ["op": "browser_start", "runner": runner], as: RunnerAuthStartResult.self)
     }

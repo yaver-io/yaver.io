@@ -43,6 +43,9 @@ struct DashboardView: View {
                             NavigationLink(destination: AppleTVRemoteView(captureFirst: true)) {
                                 Tile(icon: "video", title: "Capture", detail: "Capture card view")
                             }
+                            NavigationLink(destination: FeedbackView()) {
+                                Tile(icon: "bubble.left.and.text.bubble.right", title: "Feedback", detail: "Reports from test devices")
+                            }
                             Button { showPicker = true } label: {
                                 Tile(icon: "server.rack", title: store.selectedBox?.name ?? "Box", detail: "Switch machine")
                             }
