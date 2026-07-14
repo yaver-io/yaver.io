@@ -38,10 +38,50 @@ type ascCreds struct {
 	IssuerID string
 }
 
+// ascCredsFromEnv reads the four ASC values from the process env — the same
+// four `deploy-testflight.sh` sources from the gitignored ~/.appstoreconnect/
+// yaver.env. Returns nil unless all three required ones are present; never
+// invents a default.
+//
+// SECURITY: callers must apply this to the OWN/default project ONLY. Falling
+// back to env for a NAMED project would submit a third-party developer's app
+// with the operator's App Store key — a cross-tenant credential leak. A named
+// project's key comes from that project's vault scope or the call fails.
+func ascCredsFromEnv() *ascCreds {
+	keyPath := os.Getenv("APP_STORE_KEY_PATH")
+	keyID := os.Getenv("APP_STORE_KEY_ID")
+	issuer := os.Getenv("APP_STORE_KEY_ISSUER")
+	if keyPath == "" || keyID == "" || issuer == "" {
+		return nil
+	}
+	pem, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil
+	}
+	return &ascCreds{KeyPEM: string(pem), KeyID: keyID, IssuerID: issuer}
+}
+
 func resolveAppleASCCreds(project string) (*ascCreds, error) {
+	// The vault is the source of truth, but it is not always openable: an
+	// auth-token rotation or a lost ~/.yaver/master.key locks it ("wrong
+	// passphrase or corrupted vault"), and on a headless box that strands every
+	// store verb. The repo already has a documented escape hatch for exactly
+	// this — the four exports in ~/.appstoreconnect/yaver.env that
+	// deploy-testflight.sh sources when the vault is locked (CLAUDE.md, "iOS —
+	// TestFlight"). Honour the same fallback here, so a locked vault degrades
+	// instead of hard-failing.
+	//
+	// Own project only — see ascCredsFromEnv's SECURITY note.
+	ownProject := project == "" || project == "mobile"
+
 	vs, err := openVaultOptional()
 	if err != nil || vs == nil {
-		return nil, fmt.Errorf("vault unavailable (run `yaver auth`)")
+		if ownProject {
+			if c := ascCredsFromEnv(); c != nil {
+				return c, nil
+			}
+		}
+		return nil, fmt.Errorf("vault unavailable (%v) and no ASC creds in env — unlock the vault, or export APP_STORE_KEY_PATH/_ID/_ISSUER (see ~/.appstoreconnect/yaver.env)", err)
 	}
 	get := func(name string) string {
 		if e, err := vs.Get(project, name); err == nil {
@@ -56,7 +96,12 @@ func resolveAppleASCCreds(project string) (*ascCreds, error) {
 	keyID := get("APP_STORE_KEY_ID")
 	issuer := get("APP_STORE_KEY_ISSUER")
 	if keyPath == "" || keyID == "" || issuer == "" {
-		return nil, fmt.Errorf("missing ASC creds in vault (APP_STORE_KEY_PATH/_ID/_ISSUER) — see `yaver stores apple-asc-key`")
+		if ownProject {
+			if c := ascCredsFromEnv(); c != nil {
+				return c, nil
+			}
+		}
+		return nil, fmt.Errorf("missing ASC creds for project %q (APP_STORE_KEY_PATH/_ID/_ISSUER) — see `yaver stores apple-asc-key`", project)
 	}
 	pem, err := os.ReadFile(keyPath)
 	if err != nil {
