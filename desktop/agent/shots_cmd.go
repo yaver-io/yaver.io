@@ -8,12 +8,17 @@ package main
 // through /deploy/ship (via --ship); shots only adds the screenshot +
 // metadata + submit phases that ship deliberately omits — no third engine.
 //
-//	yaver shots                 # capture + upload screenshots for cwd's app
-//	yaver shots --submit        # + set metadata + attempt submit-for-review
-//	yaver shots --ship --submit # also build+upload a fresh binary first
+//	yaver shots                       # iPhone screenshots for the cwd's app
+//	yaver shots --target visionpro    # Apple Vision Pro (3840x2160)
+//	yaver shots --submit              # + set metadata + attempt submit-for-review
+//	yaver shots --ship --submit       # also build+upload a fresh binary first
 //
-// App Store Connect auth comes from the env (APP_STORE_KEY_ID / _ISSUER /
-// _PATH) — the same triple `yaver vault env --project mobile` exports.
+// Which simulator to boot, how to build for it, how to drive it, the exact
+// pixel size and the App Store Connect display type all come from ONE row in
+// shotsTargets (shots_capture.go) — the target is the only device knob.
+//
+// App Store Connect auth: the vault first, then the APP_STORE_KEY_ID / _ISSUER /
+// _PATH env triple that `yaver vault env --project mobile` exports.
 
 import (
 	"flag"
@@ -21,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ShotsPlan is a resolved shots run. Reused by the CLI and the publishJobs
@@ -31,7 +37,9 @@ type ShotsPlan struct {
 	Stack    string
 	BundleID string
 	Locale   string
-	Device   string // sim name; "" = auto-pick a Pro Max
+	Target   string // shotsTargets key: iphone (default) | visionpro
+	Device   string // sim name; "" = auto-pick for the target
+	Shots    int    // simctl driver: how many frames to capture (default 1)
 	Submit   bool
 	Ship     bool
 	Version  string // version string for submit when none is editable yet
@@ -46,7 +54,9 @@ func runShots(args []string) {
 	stack := fs.String("stack", "react-native-expo", "Project stack")
 	bundleID := fs.String("bundle-id", "", "iOS bundle identifier (default: from app.json expo.ios.bundleIdentifier)")
 	locale := fs.String("locale", "en-US", "App Store localization locale")
-	device := fs.String("device", "", "Simulator name (default: auto-pick a Pro Max)")
+	target := fs.String("target", "iphone", "Capture target: iphone | visionpro")
+	device := fs.String("device", "", "Simulator name (default: auto-pick for the target)")
+	shots := fs.Int("shots", 1, "simctl-driven targets (visionpro): how many frames to capture")
 	submit := fs.Bool("submit", false, "Set metadata + attempt submit-for-review after upload")
 	ship := fs.Bool("ship", false, "Also build + upload a fresh binary via /deploy/ship first")
 	version := fs.String("version", "", "Version string to create if no editable App Store version exists")
@@ -84,7 +94,9 @@ func runShots(args []string) {
 		Stack:    *stack,
 		BundleID: resolvedBundle,
 		Locale:   *locale,
+		Target:   *target,
 		Device:   *device,
+		Shots:    *shots,
 		Submit:   *submit,
 		Ship:     *ship,
 		Version:  *version,
@@ -108,7 +120,12 @@ func shotsFail(format string, a ...interface{}) int {
 
 // Run executes the full shots pipeline and returns a process exit code.
 func (p ShotsPlan) Run() int {
-	fmt.Fprintf(os.Stderr, "yaver shots — %s (%s)\n", p.App, p.BundleID)
+	target, err := resolveShotsTarget(p.Target)
+	if err != nil {
+		return shotsFail("%v", err)
+	}
+	fmt.Fprintf(os.Stderr, "yaver shots — %s (%s) → %s %dx%d\n",
+		p.App, p.BundleID, target.Label, target.Width, target.Height)
 
 	// 0. Optional: build + upload a fresh binary via the existing ship spine.
 	if p.Ship {
@@ -123,22 +140,14 @@ func (p ShotsPlan) Run() int {
 		shotsOK("binary uploaded")
 	}
 
-	// 1. Pick + boot a simulator.
+	// 1. Resolve + boot the simulator for this target.
 	device := p.Device
+	var udid string
 	if device == "" {
-		name, udid, err := pickHighResSim()
-		if err != nil {
-			return shotsFail("%v", err)
-		}
-		device = name
-		shotsStep("Booting simulator: %s", device)
-		if err := bootSimulator(udid); err != nil {
-			return shotsFail("%v", err)
-		}
-		return p.captureAndPublish(udid, device)
+		device, udid, err = pickSimForTarget(target)
+	} else {
+		_, udid, err = resolveSimUDIDByName(device)
 	}
-	// Explicit device name → resolve its udid via the list.
-	_, udid, err := resolveSimUDIDByName(device)
 	if err != nil {
 		return shotsFail("%v", err)
 	}
@@ -146,14 +155,14 @@ func (p ShotsPlan) Run() int {
 	if err := bootSimulator(udid); err != nil {
 		return shotsFail("%v", err)
 	}
-	return p.captureAndPublish(udid, device)
+	return p.captureAndPublish(udid, device, target)
 }
 
 // captureAndPublish runs the install→drive→capture→ASC phases on a booted udid.
-func (p ShotsPlan) captureAndPublish(udid, device string) int {
+func (p ShotsPlan) captureAndPublish(udid, device string, target shotsDeviceTarget) int {
 	// 2. Resolve / build the simulator .app and install it.
-	shotsStep("Resolving simulator build…")
-	appPath, err := resolveSimAppPath(p.Path, device)
+	shotsStep("Resolving %s simulator build…", target.Label)
+	appPath, err := resolveSimAppPath(p.Path, device, target)
 	if err != nil {
 		return shotsFail("%v", err)
 	}
@@ -163,41 +172,24 @@ func (p ShotsPlan) captureAndPublish(udid, device string) int {
 		return shotsFail("%v", err)
 	}
 
-	// 3. Resolve the Maestro flow — committed override wins, else generate.
-	flow := findShotsFlow(p.Path)
-	if flow == "" {
-		analysis, err := AnalyzeExpoRouter(p.Path)
-		if err != nil {
-			return shotsFail("analyze routes: %v", err)
-		}
-		flow, err = generateShotsFlow(p.Path, p.BundleID, analysis)
-		if err != nil {
-			return shotsFail("generate flow: %v", err)
-		}
-		shotsOK("generated draft flow (%d visible tabs): %s", analysis.VisibleTabs, flow)
-		fmt.Fprintf(os.Stderr, "    (edit + copy to .yaver/shots.flow.yaml for reliable captures)\n")
-	} else {
-		shotsOK("using committed flow: %s", flow)
-	}
-
-	// 4. Drive the app + capture.
 	raw, upload, root, err := shotsRunDir(p.App)
 	if err != nil {
 		return shotsFail("%v", err)
 	}
-	shotsStep("Driving app with Maestro + capturing…")
-	if err := runShotsFlow(udid, flow, raw); err != nil {
+
+	// 3. Drive the app + capture, with the target's driver.
+	if err := p.capture(udid, raw, target); err != nil {
 		return shotsFail("%v", err)
 	}
-	files, err := normalizeScreenshots(raw, upload)
+	files, err := normalizeScreenshots(raw, upload, target)
 	if err != nil {
 		return shotsFail("%v", err)
 	}
-	shotsOK("%d screenshots → %s", len(files), upload)
+	shotsOK("%d screenshots (%dx%d) → %s", len(files), target.Width, target.Height, upload)
 
-	// 5. Upload to App Store Connect.
-	shotsStep("Uploading screenshots to App Store Connect…")
-	if err := ascUploadScreenshots(p.BundleID, upload, p.Locale); err != nil {
+	// 4. Upload to App Store Connect, into this target's display type(s).
+	shotsStep("Uploading screenshots to App Store Connect (%s)…", strings.Join(target.DisplayTypes, ", "))
+	if err := ascUploadScreenshots(p.BundleID, upload, p.Locale, target.uploadPlan()); err != nil {
 		return shotsFail("%v", err)
 	}
 	shotsOK("screenshots uploaded")
@@ -208,9 +200,9 @@ func (p ShotsPlan) captureAndPublish(udid, device string) int {
 		return 0
 	}
 
-	// 6. Metadata + age rating + submit.
+	// 5. Metadata + age rating + submit.
 	shotsStep("Setting App Store metadata…")
-	if err := ascSetMetadata(p.BundleID, p.Path); err != nil {
+	if err := ascSetMetadata(p.BundleID, p.Path, target.Platform); err != nil {
 		// Metadata is best-effort — keep going to the submit attempt.
 		shotsFail("metadata: %v (continuing)", err)
 	} else {
@@ -218,7 +210,7 @@ func (p ShotsPlan) captureAndPublish(udid, device string) int {
 	}
 
 	shotsStep("Submitting for review…")
-	submitted, err := ascSubmitForReview(p.BundleID, p.Version)
+	submitted, err := ascSubmitForReview(p.BundleID, p.Version, target.Platform)
 	if err != nil {
 		return shotsFail("%v", err)
 	}
@@ -228,4 +220,42 @@ func (p ShotsPlan) captureAndPublish(udid, device string) int {
 		shotsOK("staged — finish the one gated item printed above and tap Submit")
 	}
 	return 0
+}
+
+// capture drives the app and collects raw PNGs, using the target's driver.
+func (p ShotsPlan) capture(udid, raw string, target shotsDeviceTarget) error {
+	switch target.Driver {
+	case shotsDriverSimctl:
+		// visionOS: Maestro cannot drive it, so launch the app and shoot the
+		// screen. The frames are natively the exact store size.
+		n := p.Shots
+		if n < 1 {
+			n = 1
+		}
+		shotsStep("Launching app + capturing %d frame(s) via simctl…", n)
+		return captureViaSimctl(udid, p.BundleID, raw, n, 3*time.Second)
+
+	case shotsDriverMaestro:
+		// Committed flow wins, else generate a draft from the app's routes.
+		flow := findShotsFlow(p.Path)
+		if flow == "" {
+			analysis, err := AnalyzeExpoRouter(p.Path)
+			if err != nil {
+				return fmt.Errorf("analyze routes: %w", err)
+			}
+			flow, err = generateShotsFlow(p.Path, p.BundleID, analysis)
+			if err != nil {
+				return fmt.Errorf("generate flow: %w", err)
+			}
+			shotsOK("generated draft flow (%d visible tabs): %s", analysis.VisibleTabs, flow)
+			fmt.Fprintf(os.Stderr, "    (edit + copy to .yaver/shots.flow.yaml for reliable captures)\n")
+		} else {
+			shotsOK("using committed flow: %s", flow)
+		}
+		shotsStep("Driving app with Maestro + capturing…")
+		return runShotsFlow(udid, flow, raw)
+
+	default:
+		return fmt.Errorf("target %q has no capture driver", target.Key)
+	}
 }

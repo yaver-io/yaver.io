@@ -111,8 +111,9 @@ func (s *HTTPServer) handleShotsUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ASC backend: upload screenshots, then optional metadata + submit.
-	if err := ascUploadScreenshots(bundleID, upload, req.Locale); err != nil {
+	// ASC backend (native Go — no python). Frames come from the phone's own
+	// screen, so they land in the iPhone display types on the iOS platform.
+	if err := ascUploadScreenshots(bundleID, upload, req.Locale, ascUploadPlan{}); err != nil {
 		jsonReply(w, http.StatusBadGateway, map[string]interface{}{
 			"ok": false, "uploaded": 0, "error": "screenshot upload: " + err.Error(), "runDir": root,
 		})
@@ -121,10 +122,10 @@ func (s *HTTPServer) handleShotsUpload(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{"ok": true, "uploaded": written, "runDir": root}
 	if req.Submit {
-		if err := ascSetMetadata(bundleID, ""); err != nil {
+		if err := ascSetMetadata(bundleID, "", ""); err != nil {
 			resp["metadataError"] = err.Error()
 		}
-		submitted, serr := ascSubmitForReview(bundleID, "")
+		submitted, serr := ascSubmitForReview(bundleID, "", "")
 		if serr != nil {
 			resp["submitError"] = serr.Error()
 		} else {

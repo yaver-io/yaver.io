@@ -9,13 +9,13 @@ import (
 )
 
 // studio_upload.go — push captured Studio screenshots to the stores. iOS reuses
-// the proven embedded ASC backend (shots_asc.go: ascUploadScreenshots / metadata
+// the proven NATIVE-GO ASC backend (shots_asc.go: ascUploadScreenshots / metadata
 // / submit) so the iOS/macOS path is first-class. Android uses a Play upload
 // script when present (service-account creds required), else returns a clear
 // error rather than pretending.
 
 // studioUploadScreenshots uploads the PNGs in dir to the store for platform.
-//   - ios:     App Store Connect (embedded python, APP_STORE_KEY_* auth)
+//   - ios:     App Store Connect (native Go, vault or APP_STORE_KEY_* auth)
 //   - android: Google Play (service-account script; best-effort)
 //
 // When submit is true (iOS), it also sets metadata + attempts submit-for-review.
@@ -36,15 +36,15 @@ func studioUploadScreenshots(platform, dir, bundleID, locale, version string, su
 		if strings.TrimSpace(bundleID) == "" {
 			return nil, fmt.Errorf("bundleId required for iOS (App Store Connect)")
 		}
-		if err := ascUploadScreenshots(bundleID, dir, locale); err != nil {
+		if err := ascUploadScreenshots(bundleID, dir, locale, ascUploadPlan{}); err != nil {
 			return nil, fmt.Errorf("asc upload: %w", err)
 		}
 		res := map[string]any{"platform": "ios", "uploaded": true, "bundleId": bundleID, "locale": locale}
 		if submit {
-			if err := ascSetMetadata(bundleID, ""); err != nil {
+			if err := ascSetMetadata(bundleID, "", ""); err != nil {
 				res["metadataError"] = err.Error()
 			}
-			submitted, err := ascSubmitForReview(bundleID, version)
+			submitted, err := ascSubmitForReview(bundleID, version, "")
 			res["submitted"] = submitted
 			if err != nil {
 				res["submitError"] = err.Error()
