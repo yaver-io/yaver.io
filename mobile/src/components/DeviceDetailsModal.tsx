@@ -1008,6 +1008,11 @@ export function CodingAgentsSection({ device }: { device: Device }) {
         const version = (row?.version || "").trim();
         const versionPrefix = version ? `${version} · ` : "";
         const inst = installState[id];
+        // Installed + "signed in" ≠ usable: OpenCode can hold a key yet have its
+        // default model point at a provider with no key. The agent reports that
+        // via ready=false/error — surface it instead of a misleading "✓ signed
+        // in", and keep the fix CTA available.
+        const notReady = installed && authed && (row?.ready === false || !!(row?.error || "").trim());
         let subtitle: string;
         let tone: string;
         if (loading && !row) {
@@ -1019,12 +1024,7 @@ export function CodingAgentsSection({ device }: { device: Device }) {
         } else if (inst?.kind === "fail") {
           subtitle = inst.error ? `install failed — ${inst.error}` : "install failed";
           tone = "#ef4444";
-        // Installed + "signed in" is not the same as usable: OpenCode can hold a
-        // key yet have its default model point at a provider with no key. The
-        // agent reports that via ready=false/error — surface it instead of a
-        // misleading "✓ signed in", and keep the fix CTA available.
-        const notReady = installed && authed && (row?.ready === false || !!(row?.error || "").trim());
-        if (!installed) {
+        } else if (!installed) {
           subtitle = "not installed on agent";
           tone = "#f59e0b";
         } else if (notReady) {
