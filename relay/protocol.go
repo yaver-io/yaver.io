@@ -30,7 +30,7 @@ type RegisterMsg struct {
 
 // RegisterResp is sent by the relay back to the agent.
 type RegisterResp struct {
-	Type    string `json:"type"`              // "registered" or "error"
+	Type    string `json:"type"` // "registered" or "error"
 	OK      bool   `json:"ok"`
 	Message string `json:"message,omitempty"`
 	// AssignedURL is the auto-provisioned <deviceId>.<exposeDomain>
@@ -60,6 +60,21 @@ type TunnelResponse struct {
 	Body       []byte            `json:"body"`       // response body
 }
 
+// WSTunnelFrame is the Cloudflare-friendly fallback tunnel framing used when
+// the agent cannot keep the primary QUIC/UDP tunnel up. It deliberately starts
+// with request/response HTTP proxying only; raw upgraded streams (WebSocket,
+// SSE, mesh/control streams) continue to require QUIC until the multiplexed
+// streaming frame protocol is extended to this transport.
+type WSTunnelFrame struct {
+	Type     string          `json:"type"` // "register"|"registered"|"request"|"response"|"error"|"ping"|"pong"
+	ID       string          `json:"id,omitempty"`
+	Register *RegisterMsg    `json:"register,omitempty"`
+	OK       bool            `json:"ok,omitempty"`
+	Message  string          `json:"message,omitempty"`
+	Request  *TunnelRequest  `json:"request,omitempty"`
+	Response *TunnelResponse `json:"response,omitempty"`
+}
+
 // PeerInfo is sent by relay to both peers for hole punch coordination.
 type PeerInfo struct {
 	Type       string `json:"type"`       // "peer_info"
@@ -70,7 +85,7 @@ type PeerInfo struct {
 
 // ExposeRegisterMsg is sent by the agent over a control stream to register a public subdomain.
 type ExposeRegisterMsg struct {
-	Type      string `json:"type"`      // "expose_register"
+	Type      string `json:"type"` // "expose_register"
 	DeviceID  string `json:"deviceId"`
 	Subdomain string `json:"subdomain"` // e.g. "myapp" → myapp.yaver.io
 	Port      int    `json:"port"`      // local port to forward to (e.g. 3000)
@@ -78,7 +93,7 @@ type ExposeRegisterMsg struct {
 
 // ExposeRegisterResp is the relay's reply.
 type ExposeRegisterResp struct {
-	Type      string `json:"type"`                // "expose_registered" or "error"
+	Type      string `json:"type"` // "expose_registered" or "error"
 	OK        bool   `json:"ok"`
 	PublicURL string `json:"publicUrl,omitempty"` // https://myapp.yaver.io
 	Message   string `json:"message,omitempty"`
@@ -86,7 +101,7 @@ type ExposeRegisterResp struct {
 
 // ExposeUnregisterMsg removes a subdomain binding.
 type ExposeUnregisterMsg struct {
-	Type      string `json:"type"`      // "expose_unregister"
+	Type      string `json:"type"` // "expose_unregister"
 	DeviceID  string `json:"deviceId"`
 	Subdomain string `json:"subdomain"`
 }

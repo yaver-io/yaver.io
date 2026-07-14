@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"golang.org/x/net/websocket"
 )
 
 // reservedSubdomains is consulted on every path that can claim a
@@ -119,6 +120,11 @@ type RelayServer struct {
 	// /authmix (admin-authed).
 	authViaSig atomic.Uint64
 	authViaPw  atomic.Uint64
+	// Attributable signature failures, by reason. authViaPw alone cannot tell
+	// "never migrated" from "migrated but silently failing" — both fall back to
+	// the password. Without this split the cutover is a guess. See sigFailReason.
+	sigFailMu sync.Mutex
+	sigFails  map[sigFailReason]uint64
 }
 
 type exposeRoute struct {
@@ -130,9 +136,92 @@ type exposeRoute struct {
 type agentTunnel struct {
 	deviceID string
 	conn     quic.Connection
+	ws       *wsAgentTunnel
 	peerAddr string // observed public address
 	connAt   time.Time
 	userID   string // owner resolved at registration; scopes mesh forwarding
+}
+
+type wsAgentTunnel struct {
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+
+	pendingMu sync.Mutex
+	pending   map[string]chan WSTunnelFrame
+
+	done chan struct{}
+}
+
+func newWSAgentTunnel(conn *websocket.Conn) *wsAgentTunnel {
+	return &wsAgentTunnel{
+		conn:    conn,
+		pending: make(map[string]chan WSTunnelFrame),
+		done:    make(chan struct{}),
+	}
+}
+
+func (wst *wsAgentTunnel) send(frame WSTunnelFrame) error {
+	wst.writeMu.Lock()
+	defer wst.writeMu.Unlock()
+	return websocket.JSON.Send(wst.conn, frame)
+}
+
+func (wst *wsAgentTunnel) request(ctx context.Context, req TunnelRequest) (*TunnelResponse, error) {
+	ch := make(chan WSTunnelFrame, 1)
+	wst.pendingMu.Lock()
+	wst.pending[req.ID] = ch
+	wst.pendingMu.Unlock()
+	defer func() {
+		wst.pendingMu.Lock()
+		delete(wst.pending, req.ID)
+		wst.pendingMu.Unlock()
+	}()
+
+	if err := wst.send(WSTunnelFrame{Type: "request", ID: req.ID, Request: &req}); err != nil {
+		return nil, err
+	}
+	select {
+	case frame := <-ch:
+		if frame.Type == "error" {
+			msg := strings.TrimSpace(frame.Message)
+			if msg == "" {
+				msg = "websocket tunnel error"
+			}
+			return nil, errors.New(msg)
+		}
+		if frame.Response == nil {
+			return nil, errors.New("websocket tunnel returned no response")
+		}
+		return frame.Response, nil
+	case <-wst.done:
+		return nil, errors.New("websocket tunnel closed")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (wst *wsAgentTunnel) readLoop() {
+	defer close(wst.done)
+	for {
+		var frame WSTunnelFrame
+		if err := websocket.JSON.Receive(wst.conn, &frame); err != nil {
+			return
+		}
+		switch frame.Type {
+		case "response", "error":
+			wst.pendingMu.Lock()
+			ch := wst.pending[frame.ID]
+			wst.pendingMu.Unlock()
+			if ch != nil {
+				select {
+				case ch <- frame:
+				default:
+				}
+			}
+		case "ping":
+			_ = wst.send(WSTunnelFrame{Type: "pong", ID: frame.ID})
+		}
+	}
 }
 
 func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain string) *RelayServer {
@@ -220,12 +309,21 @@ func (s *RelayServer) setPassword(pw string) {
 	// <-conn.Context().Done() path.
 	s.mu.Lock()
 	conns := make([]quic.Connection, 0, len(s.tunnels))
+	wsConns := make([]*websocket.Conn, 0, len(s.tunnels))
 	for _, t := range s.tunnels {
-		conns = append(conns, t.conn)
+		if t.conn != nil {
+			conns = append(conns, t.conn)
+		}
+		if t.ws != nil && t.ws.conn != nil {
+			wsConns = append(wsConns, t.ws.conn)
+		}
 	}
 	s.mu.Unlock()
 	for _, c := range conns {
 		c.CloseWithError(0, "password rotated")
+	}
+	for _, c := range wsConns {
+		_ = c.Close()
 	}
 }
 
@@ -288,13 +386,46 @@ func (s *RelayServer) handleAuthMix(w http.ResponseWriter, r *http.Request) {
 	if total > 0 {
 		sigPct = float64(sig) / float64(total) * 100
 	}
+
+	s.sigFailMu.Lock()
+	fails := make(map[string]uint64, len(s.sigFails))
+	var failTotal uint64
+	for reason, n := range s.sigFails {
+		fails[string(reason)] = n
+		failTotal += n
+	}
+	s.sigFailMu.Unlock()
+
+	// sigPercent alone is NOT a safe cutover signal. A client whose signature is
+	// broken falls back to the password and lands in authViaPassword, looking
+	// exactly like one that never migrated. So a fleet could read 100% "migrated"
+	// while a chunk of it is actually failing signature auth every request — and
+	// turning the password off would lock precisely those clients out.
+	//
+	// The honest gate is BOTH: essentially all auths via signature, AND
+	// essentially no signature failures. sigFailures is the number that has to go
+	// to zero; the breakdown says what to fix first.
+	safe := failTotal == 0 && pw == 0 && sig > 0
+	note := "SAFE TO CUT OVER: every auth used a signature and none failed"
+	switch {
+	case sig == 0:
+		note = "no signature auths seen yet — do not cut over"
+	case failTotal > 0:
+		note = "signature auths are FAILING and being masked by the password fallback — fix sigFailures before cutting over, or these clients get locked out"
+	case pw > 0:
+		note = "clients are still authenticating by password — not migrated yet"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"authViaSig":      sig,
 		"authViaPassword": pw,
 		"total":           total,
 		"sigPercent":      sigPct,
-		"note":            "flip password auth off only when sigPercent is ~100",
+		"sigFailures":     failTotal,
+		"sigFailByReason": fails,
+		"safeToCutOver":   safe,
+		"note":            note,
 	})
 }
 
@@ -494,21 +625,61 @@ func (s *RelayServer) resolveSigViaConvex(signerDeviceID, targetDeviceID string)
 	return result.UserID, result.SignerPublicKey, result.OK
 }
 
+// sigFailReason names WHY a device-signature auth attempt failed. Every one of
+// these used to collapse into a bare `false`, which is how the password cutover
+// metric came to lie: a client whose signature was BROKEN (skewed clock, stale
+// key, Convex blip, replayed nonce) fell through to the password path and was
+// counted as authViaPw — indistinguishable from a client that had simply never
+// migrated. /authmix said "not migrated yet"; the truth was "migrated, and
+// failing silently". Flip the password off on that reading and those clients are
+// locked out with no warning, because the fallback that was meant to protect
+// them is exactly what hid them.
+//
+// The fallback stays (a bad signature must never be fatal while the password is
+// still live) — but it is now attributable.
+type sigFailReason string
+
+const (
+	sigFailNoSigner       sigFailReason = "no_signer_device"
+	sigFailBodyRead       sigFailReason = "body_read"
+	sigFailUnresolved     sigFailReason = "unresolved_signer" // Convex down, unknown device, or signer≠owner of target
+	sigFailBadPubKey      sigFailReason = "bad_public_key"    // Convex returned a key we cannot decode
+	sigFailBadSignature   sigFailReason = "bad_signature"     // wrong key, skewed clock, tampered body, or replayed nonce
+	sigFailDeviceMismatch sigFailReason = "signer_mismatch"   // signature is valid but signed a different device id
+)
+
+// noteSigFail records an attributable signature failure. Unknown reasons are
+// dropped rather than allocating an unbounded map from attacker-controlled
+// input — the reason set is closed and defined above.
+func (s *RelayServer) noteSigFail(reason sigFailReason) {
+	s.sigFailMu.Lock()
+	if s.sigFails == nil {
+		s.sigFails = make(map[sigFailReason]uint64, 6)
+	}
+	s.sigFails[reason]++
+	s.sigFailMu.Unlock()
+}
+
 // authorizeProxyViaSig tries the asymmetric per-device signature path for a
 // /d/<targetDeviceID>/ proxy request. On success it returns the resolved userId
 // and true; on ANY failure it returns false so the caller falls back to the
 // password path — this can never lock out a client that hasn't migrated. It
 // buffers the request body (only when a signature is present) so it can hash it
 // for verification AND still forward it downstream.
+//
+// Every failure path is counted by reason (see sigFailReason) so the fallback
+// stays non-fatal WITHOUT being invisible.
 func (s *RelayServer) authorizeProxyViaSig(r *http.Request, targetDeviceID string) (string, bool) {
 	signerDeviceID := strings.TrimSpace(r.Header.Get("X-Yaver-Device"))
 	if signerDeviceID == "" {
+		s.noteSigFail(sigFailNoSigner)
 		return "", false
 	}
 	var body []byte
 	if r.Body != nil {
 		b, err := io.ReadAll(io.LimitReader(r.Body, s.abuseGuard.cfg.MaxRequestBodyBytes))
 		if err != nil {
+			s.noteSigFail(sigFailBodyRead)
 			return "", false
 		}
 		body = b
@@ -516,14 +687,21 @@ func (s *RelayServer) authorizeProxyViaSig(r *http.Request, targetDeviceID strin
 	}
 	userID, pubB64, ok := s.resolveSigViaConvex(signerDeviceID, targetDeviceID)
 	if !ok {
+		s.noteSigFail(sigFailUnresolved)
 		return "", false
 	}
 	pub := decodeSignPubKey(pubB64)
 	if pub == nil {
+		s.noteSigFail(sigFailBadPubKey)
 		return "", false
 	}
 	signed, ok := verifyDeviceSig(r, body, pub, s.sigNonces)
-	if !ok || !sigDeviceMatches(signed, signerDeviceID) {
+	if !ok {
+		s.noteSigFail(sigFailBadSignature)
+		return "", false
+	}
+	if !sigDeviceMatches(signed, signerDeviceID) {
+		s.noteSigFail(sigFailDeviceMismatch)
 		return "", false
 	}
 	return userID, true
@@ -868,6 +1046,147 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	log.Printf("[RELAY] Device %s disconnected (%s)", reg.DeviceID[:8], remoteAddr)
 }
 
+func (s *RelayServer) handleAgentWebSocket(ws *websocket.Conn) {
+	req := ws.Request()
+	remoteAddr := ""
+	if req != nil {
+		remoteAddr = req.RemoteAddr
+	}
+	if remoteAddr == "" {
+		remoteAddr = "websocket"
+	}
+	log.Printf("[RELAY] Agent websocket connected from %s", remoteAddr)
+
+	if !s.abuseGuard.allowQUICRegister(remoteAddr) {
+		_ = websocket.JSON.Send(ws, WSTunnelFrame{Type: "error", OK: false, Message: "registration rate limited"})
+		_ = ws.Close()
+		return
+	}
+
+	reject := func(message string) {
+		_ = websocket.JSON.Send(ws, WSTunnelFrame{Type: "error", OK: false, Message: message})
+		_ = ws.Close()
+	}
+
+	var frame WSTunnelFrame
+	if err := websocket.JSON.Receive(ws, &frame); err != nil {
+		reject("invalid registration")
+		return
+	}
+	reg := frame.Register
+	if frame.Type == "register" && reg == nil {
+		// Allow the frame itself to carry the register fields in future without
+		// changing the first deployed agent fallback. Today agents send
+		// {type:"register", register:{...}}.
+		reject("invalid registration")
+		return
+	}
+	if reg == nil || reg.Type != "register" {
+		reject("invalid registration")
+		return
+	}
+	if reg.DeviceID == "" || reg.Token == "" {
+		reject("deviceId and token required")
+		return
+	}
+	if !deviceIDShapePattern.MatchString(reg.DeviceID) {
+		reject("invalid deviceId shape")
+		return
+	}
+	if s.exposeDomain != "" && reservedSubdomains[strings.ToLower(reg.DeviceID)] {
+		reject("deviceId reserved")
+		return
+	}
+
+	regUserID, ok, authErr := s.validateRelayAccessE(reg.Password, "register", reg.DeviceID, reg.Token)
+	if !ok {
+		if authErr != nil {
+			log.Printf("[RELAY] websocket register %s: auth backend unavailable", reg.DeviceID[:min(8, len(reg.DeviceID))])
+			reject("relay auth backend unavailable — retry")
+			return
+		}
+		if strings.TrimSpace(reg.Password) == "" {
+			reject("relay password missing")
+			return
+		}
+		if !s.abuseGuard.allowInvalidAuth(remoteAddr) {
+			reject("too many invalid relay password attempts")
+			return
+		}
+		reject("invalid relay credentials (password or session token)")
+		return
+	}
+	s.abuseGuard.clearInvalidAuth(remoteAddr)
+
+	wst := newWSAgentTunnel(ws)
+
+	s.mu.Lock()
+	if existing, exists := s.tunnels[reg.DeviceID]; exists {
+		alive := false
+		if existing.conn != nil {
+			select {
+			case <-existing.conn.Context().Done():
+				delete(s.tunnels, reg.DeviceID)
+			default:
+				alive = true
+			}
+		} else if existing.ws != nil {
+			select {
+			case <-existing.ws.done:
+				delete(s.tunnels, reg.DeviceID)
+			default:
+				alive = true
+			}
+		}
+		if alive {
+			s.mu.Unlock()
+			log.Printf("[RELAY] Refusing duplicate websocket registration for device %s from %s", reg.DeviceID[:min(8, len(reg.DeviceID))], remoteAddr)
+			reject("deviceId already registered")
+			return
+		}
+	}
+
+	tunnel := &agentTunnel{
+		deviceID: reg.DeviceID,
+		ws:       wst,
+		peerAddr: remoteAddr,
+		connAt:   time.Now(),
+		userID:   regUserID,
+	}
+	s.tunnels[reg.DeviceID] = tunnel
+	s.mu.Unlock()
+
+	resp := WSTunnelFrame{Type: "registered", OK: true}
+	if err := wst.send(resp); err != nil {
+		_ = ws.Close()
+		return
+	}
+
+	log.Printf("[RELAY] Device %s registered from %s via websocket fallback", reg.DeviceID[:8], remoteAddr)
+	pushPresence(presencePayload{
+		DeviceID:    reg.DeviceID,
+		Online:      true,
+		PeerAddr:    remoteAddr,
+		ConnectedAt: tunnel.connAt.UnixMilli(),
+	})
+
+	wst.readLoop()
+
+	s.mu.Lock()
+	if cur, ok := s.tunnels[reg.DeviceID]; ok && cur.ws == wst {
+		delete(s.tunnels, reg.DeviceID)
+	}
+	s.mu.Unlock()
+	s.dropMeshStream(reg.DeviceID)
+	pushPresence(presencePayload{
+		DeviceID:    reg.DeviceID,
+		Online:      false,
+		ConnectedAt: tunnel.connAt.UnixMilli(),
+		DurationSec: int(time.Since(tunnel.connAt).Seconds()),
+	})
+	log.Printf("[RELAY] Device %s websocket fallback disconnected (%s)", reg.DeviceID[:8], remoteAddr)
+}
+
 // --- HTTP Proxy (mobile clients connect here) ---
 
 func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
@@ -884,6 +1203,7 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux.HandleFunc("/bus/publish", s.handleBusPublish)
 	mux.HandleFunc("/bus/subscribe", s.handleBusSubscribe)
 	mux.HandleFunc("/bus/status", s.handleBusStatus)
+	mux.Handle("/agent/tunnel/ws", websocket.Handler(s.handleAgentWebSocket))
 	mux.HandleFunc("/d/", s.handleProxy) // /d/{deviceId}/...
 
 	srv := &http.Server{
@@ -947,6 +1267,7 @@ func (s *RelayServer) handleListTunnels(w http.ResponseWriter, r *http.Request) 
 		list = append(list, map[string]interface{}{
 			"deviceId":    id,
 			"peerAddr":    t.peerAddr,
+			"transport":   map[bool]string{true: "websocket", false: "quic"}[t.conn == nil && t.ws != nil],
 			"connectedAt": t.connAt.Format(time.RFC3339),
 			"uptime":      time.Since(t.connAt).Round(time.Second).String(),
 		})
@@ -1371,6 +1692,52 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		Body:    body,
 	}
 
+	// Cloudflare-friendly fallback tunnel. It carries normal request/response
+	// HTTP traffic over WebSocket when QUIC/UDP is unavailable. Raw upgraded
+	// streams and SSE remain QUIC-only until the websocket frame protocol grows
+	// streaming multiplex support.
+	if tunnel.conn == nil && tunnel.ws != nil {
+		isWebSocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+		isSSE := r.Method == "GET" &&
+			(strings.Contains(r.Header.Get("Accept"), "text/event-stream") ||
+				strings.Contains(forwardPath, "/output") ||
+				strings.HasSuffix(forwardPath, "/dev/events") ||
+				strings.HasSuffix(forwardPath, "/subscribe") ||
+				strings.HasSuffix(forwardPath, "/blackbox/command-stream") ||
+				strings.HasSuffix(forwardPath, "/blackbox/stream") ||
+				strings.HasSuffix(forwardPath, "/feedback/stream") ||
+				strings.Contains(forwardPath, "/streams/"))
+		if isWebSocket || isSSE {
+			writeRelayError(w, http.StatusBadGateway, "device is connected through websocket fallback; streaming endpoints require QUIC relay")
+			return
+		}
+		reqCtx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+		defer cancel()
+		tunnelResp, err := tunnel.ws.request(reqCtx, tunnelReq)
+		if err != nil {
+			log.Printf("[RELAY] websocket fallback request to %s failed: %v", tunnel.deviceID[:8], err)
+			writeRelayError(w, http.StatusBadGateway, "agent websocket fallback tunnel broken")
+			return
+		}
+		for k, v := range tunnelResp.Headers {
+			w.Header().Set(k, v)
+		}
+		w.WriteHeader(tunnelResp.StatusCode)
+		_, _ = w.Write(tunnelResp.Body)
+
+		reqData, _ := json.Marshal(tunnelReq)
+		bytesIn := int64(len(reqData))
+		if r.ContentLength > 0 {
+			bytesIn += r.ContentLength
+		}
+		s.bandwidth.RecordBytes(deviceID, bytesIn, int64(len(tunnelResp.Body)), false)
+		return
+	}
+	if tunnel.conn == nil {
+		writeRelayError(w, http.StatusBadGateway, "agent tunnel has no usable transport")
+		return
+	}
+
 	// Open a QUIC stream to the agent
 	streamCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -1770,6 +2137,7 @@ func (s *RelayServer) tryExposeProxy(w http.ResponseWriter, r *http.Request) boo
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/d/"),
 		strings.HasPrefix(r.URL.Path, "/bus/"),
+		strings.HasPrefix(r.URL.Path, "/agent/"),
 		strings.HasPrefix(r.URL.Path, "/admin/"),
 		r.URL.Path == "/health",
 		r.URL.Path == "/presence",
@@ -1809,6 +2177,10 @@ func (s *RelayServer) tryExposeProxy(w http.ResponseWriter, r *http.Request) boo
 }
 
 func (s *RelayServer) proxyExposeRequest(w http.ResponseWriter, r *http.Request, tunnel *agentTunnel, route *exposeRoute) {
+	if tunnel.conn == nil {
+		writeRelayError(w, http.StatusBadGateway, "subdomain expose requires QUIC relay; device is on websocket fallback")
+		return
+	}
 	if !s.abuseGuard.tryEnterDevice(tunnel.deviceID) {
 		s.abuseGuard.logLimited("device-concurrency", tunnel.deviceID[:min(8, len(tunnel.deviceID))])
 		writeRelayError(w, http.StatusTooManyRequests, "too many concurrent requests for device")
