@@ -462,6 +462,29 @@ function mirrorRelayPasswordToNative(
   }
 }
 
+// The free relay is the UNIVERSAL fallback every device must be able to reach:
+// a box that registered only with the free relay (the default — most boxes have
+// `relay_servers: []` + the cached free relay) can ONLY be reached by a client
+// that also lists the free relay. Guarantee it's present as a lowest-priority
+// last resort, even when platform-config load failed and only a private relay is
+// configured — otherwise a phone on a private relay can't reach a free-relay box
+// (the exact mac-mini-unreachable case).
+const FREE_RELAY_HTTP = "https://public.yaver.io";
+function withFreeRelayFallback(list: RelayServer[], password?: string): RelayServer[] {
+  if (list.some((s) => normalizedURL(s.httpUrl) === normalizedURL(FREE_RELAY_HTTP))) return list;
+  return [
+    ...list,
+    {
+      id: "public-free",
+      quicAddr: "46.224.110.38:4433",
+      httpUrl: FREE_RELAY_HTTP,
+      region: "eu",
+      priority: 99, // last resort — tried only after configured relays 502/fail
+      password, // the per-user relay password authenticates the free relay too
+    },
+  ];
+}
+
 function resolveRelayServers(
   platformServers: RelayServer[],
   accountRelayUrl?: string,
@@ -469,11 +492,11 @@ function resolveRelayServers(
 ): RelayServer[] {
   const platform = dedupeRelayServers(platformServers || []);
   const relayUrl = normalizedURL(accountRelayUrl);
-  if (!relayUrl) return platform;
+  if (!relayUrl) return withFreeRelayFallback(platform, accountRelayPassword);
 
   const matched = platform.filter((server) => normalizedURL(server.httpUrl) === relayUrl);
   if (matched.length > 0) {
-    return dedupeRelayServers([
+    return withFreeRelayFallback(dedupeRelayServers([
       ...matched.map((server) => ({
         ...server,
         password: accountRelayPassword || server.password,
@@ -488,10 +511,10 @@ function resolveRelayServers(
             }
           : server
       ),
-    ]);
+    ]), accountRelayPassword);
   }
 
-  return dedupeRelayServers([
+  return withFreeRelayFallback(dedupeRelayServers([
     {
       id: "account",
       quicAddr: "",
@@ -501,7 +524,7 @@ function resolveRelayServers(
       password: accountRelayPassword,
     },
     ...platform,
-  ]);
+  ]), accountRelayPassword);
 }
 
 function parseStoredRelays(raw: string | null): RelayServer[] {
