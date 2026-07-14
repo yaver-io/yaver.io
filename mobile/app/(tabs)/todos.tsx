@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
+import EmptyState from "../../src/components/EmptyState";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
@@ -350,6 +351,8 @@ export default function TodosScreen() {
     </Pressable>
   );
 
+  // Nothing completed \u2192 no heading, and no "Clear" button hovering over a
+  // region with nothing to clear.
   const completedSection = done.length > 0 ? (
     <>
       <Pressable
@@ -369,11 +372,7 @@ export default function TodosScreen() {
         <View key={item.id}>{renderDoneItem({ item })}</View>
       ))}
     </>
-  ) : (
-    <View style={s.completedEmpty}>
-      <Text style={[s.emptySubtitle, { color: c.textMuted }]}>Completed tasks will appear here.</Text>
-    </View>
-  );
+  ) : null;
 
   const pendingList = (
     <FlatList
@@ -383,13 +382,16 @@ export default function TodosScreen() {
       contentContainerStyle={[s.listContent, !useSplitPane && tabletContent]}
       keyboardShouldPersistTaps="handled"
       ListEmptyComponent={
+        // Auto-Drive is deliberately NOT advertised here: handleAutopilot
+        // refuses with "No tasks — add some first", and its header button only
+        // renders once there IS a pending task. Adding one is the only move.
         !showInput ? (
-          <View style={s.empty}>
-            <Text style={[s.emptyTitle, { color: c.textPrimary }]}>No tasks yet</Text>
-            <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
-              Tap + to add tasks.{"\n"}Hit Auto-Drive and go to sleep.
-            </Text>
-          </View>
+          <EmptyState
+            icon="checkbox-outline"
+            title="No tasks yet"
+            body="Write down what you want the agent to do. Once there's a list, Auto-Drive can work through it while you sleep."
+            action={{ label: "Add a task", onPress: handleFAB }}
+          />
         ) : null
       }
       ListFooterComponent={useSplitPane ? null : completedSection}
@@ -560,9 +562,6 @@ const s = StyleSheet.create({
   completedPaneContent: {
     paddingBottom: 20,
   },
-  completedEmpty: {
-    padding: 18,
-  },
 
   // Row
   row: {
@@ -644,23 +643,6 @@ const s = StyleSheet.create({
   },
   clearText: {
     fontSize: 13,
-  },
-
-  // Empty state
-  empty: {
-    paddingTop: 80,
-    alignItems: "center",
-    paddingHorizontal: 32,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 20,
   },
 
   // FAB

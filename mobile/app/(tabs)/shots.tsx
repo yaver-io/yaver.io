@@ -22,6 +22,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import EmptyState from "../../src/components/EmptyState";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { CONVEX_SITE_URL } from "../../src/_core/constants";
@@ -52,6 +54,7 @@ const LOCALES = ["en-US", "en-GB", "tr", "de-DE", "es-ES", "fr-FR"];
 export default function ShotsScreen() {
   const { token } = useAuth();
   const c = useColors();
+  const router = useRouter();
   const [devices, setDevices] = useState<FarmDevice[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [app, setApp] = useState("");
@@ -209,12 +212,7 @@ export default function ShotsScreen() {
               close the app — it runs on the Mac.
             </Text>
 
-            {devices.length === 0 ? (
-              <Text style={styles.empty}>
-                No iOS-capable Mac yet. Run `yaver serve` on a Mac (signed in
-                as you) — it appears here automatically.
-              </Text>
-            ) : (
+            {devices.length === 0 ? null : (
               <>
                 <Text style={styles.label}>Machine</Text>
                 {devices.map((d) => {
@@ -319,7 +317,19 @@ export default function ShotsScreen() {
         ListEmptyComponent={
           devices.length > 0 ? (
             <Text style={styles.empty}>No screenshot runs yet.</Text>
-          ) : null
+          ) : (
+            // Zero iOS-capable nodes rendered a blank screen below the header.
+            // The simulator lives on a Mac; that's the one thing to fix.
+            <EmptyState
+              icon="phone-portrait-outline"
+              title="No Mac connected"
+              body="Screenshots are captured on an iOS simulator. Run Yaver on a Mac, signed in as you, and it shows up here."
+              action={{
+                label: "Set up a machine",
+                onPress: () => router.push("/(tabs)/devices" as any),
+              }}
+            />
+          )
         }
         contentContainerStyle={styles.content}
       />

@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, useTheme } from "../context/ThemeContext";
+import EmptyState from "./EmptyState";
 import { monoFamily } from "../theme/tokens";
 import {
   runDiscoveryDiagnostics,
@@ -128,8 +129,10 @@ export default function DiscoveryDiagnosticsPanel({
             </Pressable>
           </View>
 
-          {/* Overall banner */}
-          {report ? (
+          {/* Overall banner — only meaningful once there's something to check.
+              With no probe it used to claim "Running checks…" over a null
+              target: nothing was running and nothing could. */}
+          {!probe ? null : report ? (
             <View
               style={[
                 st.overall,
@@ -157,31 +160,46 @@ export default function DiscoveryDiagnosticsPanel({
 
           <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ paddingBottom: 8 }}>
             {!probe ? (
-              <Text style={[st.noProbe, { color: c.textSecondary }]}>
-                No live connection to a device yet. Pick a device on the Devices tab, then run diagnostics.
-              </Text>
+              // No device pinned → there is nothing to diagnose. Offer the one
+              // move that changes that, and nothing else.
+              <EmptyState
+                icon="desktop-outline"
+                title="Nothing to diagnose yet"
+                body="Diagnostics run against a live device. Pick one, then come back and run them."
+                action={{
+                  label: "Open Devices",
+                  onPress: () => {
+                    onClose();
+                    onOpenDevices();
+                  },
+                }}
+              />
             ) : (
               checks.map((check) => <CheckRow key={check.id} check={check} onAction={handleAction} />)
             )}
           </ScrollView>
 
-          {/* Footer */}
-          <View style={st.footer}>
-            <Pressable
-              onPress={() => void run()}
-              disabled={running || !probe}
-              style={[st.runBtn, { backgroundColor: c.accent, opacity: running || !probe ? 0.6 : 1 }]}
-            >
-              {running ? (
-                <View style={st.row}>
-                  <ActivityIndicator size="small" color={c.textInverse} />
-                  <Text style={[st.runBtnText, { color: c.textInverse }]}>Running…</Text>
-                </View>
-              ) : (
-                <Text style={[st.runBtnText, { color: c.textInverse }]}>Run again</Text>
-              )}
-            </Pressable>
-          </View>
+          {/* Footer — the Run button only exists when there IS a probe to run
+              against. Rendering it greyed-out under "nothing to diagnose" was
+              a button that could never work. */}
+          {probe ? (
+            <View style={st.footer}>
+              <Pressable
+                onPress={() => void run()}
+                disabled={running}
+                style={[st.runBtn, { backgroundColor: c.accent, opacity: running ? 0.6 : 1 }]}
+              >
+                {running ? (
+                  <View style={st.row}>
+                    <ActivityIndicator size="small" color={c.textInverse} />
+                    <Text style={[st.runBtnText, { color: c.textInverse }]}>Running…</Text>
+                  </View>
+                ) : (
+                  <Text style={[st.runBtnText, { color: c.textInverse }]}>Run again</Text>
+                )}
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -287,7 +305,6 @@ const st = StyleSheet.create({
     marginBottom: 12,
   },
   overallText: { fontSize: 12.5, flex: 1, lineHeight: 17, fontWeight: "600" },
-  noProbe: { fontSize: 13, lineHeight: 19, paddingVertical: 12 },
   checkRow: { borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 12 },
   checkHeader: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   statusIcon: { width: 22, marginTop: 1 },

@@ -19,6 +19,8 @@ import { useRouter } from "expo-router";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { AppBackButton } from "../../src/components/AppBackButton";
+import EmptyState from "../../src/components/EmptyState";
+import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 import { quicClient, type DevServerStatus } from "../../src/lib/quic";
 import type { BuildSummary, DownloadProgress } from "../../src/lib/builds";
 import {
@@ -386,11 +388,10 @@ export default function BuildsScreen() {
         <View style={styles.headerSpacer} />
       </View>
       {!isConnected ? (
-        <View style={styles.center}>
-          <Text style={[styles.emptyText, { color: c.textMuted }]}>
-            Connect to a device to view builds
-          </Text>
-        </View>
+        // "Connect to a device to view builds" named the move but shipped no
+        // way to make it. NoMachineEmpty picks the right one for the state:
+        // pair a computer if there are none, otherwise open the picker.
+        <NoMachineEmpty noun="builds" />
       ) : (
         <ScrollView contentContainerStyle={[styles.list, tabletContent]}>
           {/* ── Machine + Discover ── */}
@@ -484,12 +485,22 @@ export default function BuildsScreen() {
           })}
           </View>
 
+          {/* The old copy pointed at a "Discover" button that lives in the
+              machine card above — and vanishes entirely when activeDevice is
+              null. Carry the scan itself here instead of a pointer to it.
+              busy tracks `discovering` (the real scan flag handleDiscover
+              sets), not `loading` — this block only renders when !loading. */}
           {projects.length === 0 && !loading && (
-            <View style={{ padding: 40, alignItems: "center" }}>
-              <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center" }}>
-                No projects found.{"\n"}Tap "Discover" to scan your machine.
-              </Text>
-            </View>
+            <EmptyState
+              icon="folder-open-outline"
+              title="No projects found"
+              body="Scan your machine for repos Yaver can build, publish, and hot-reload."
+              action={{
+                label: discovering ? "Scanning…" : "Discover",
+                onPress: () => { void handleDiscover(); },
+                busy: discovering,
+              }}
+            />
           )}
 
           {projects.length > 0 && (
@@ -660,14 +671,6 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 40,
-  },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  emptyText: {
-    fontSize: 15,
   },
   list: {
     padding: 12,

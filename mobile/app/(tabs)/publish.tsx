@@ -22,6 +22,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import EmptyState from "../../src/components/EmptyState";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { CONVEX_SITE_URL } from "../../src/_core/constants";
@@ -155,6 +157,7 @@ const STORE_META: Record<
 export default function PublishScreen() {
   const { token } = useAuth();
   const c = useColors();
+  const router = useRouter();
   const [devices, setDevices] = useState<FarmDevice[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [store, setStore] = useState<StoreChoice>("both");
@@ -303,12 +306,7 @@ export default function PublishScreen() {
               Tap publish and close the app — it runs on the Mac.
             </Text>
 
-            {devices.length === 0 ? (
-              <Text style={styles.empty}>
-                No publish-capable machine yet. Run `yaver serve` on a Mac
-                (signed in as you) — it appears here automatically.
-              </Text>
-            ) : (
+            {devices.length === 0 ? null : (
               <>
                 <Text style={styles.label}>Machine</Text>
                 {devices.map((d) => {
@@ -411,7 +409,20 @@ export default function PublishScreen() {
         ListEmptyComponent={
           devices.length > 0 ? (
             <Text style={styles.empty}>No publishes yet.</Text>
-          ) : null
+          ) : (
+            // Zero farm nodes used to render nothing at all below the header —
+            // a blank screen. There IS exactly one move: get a build machine
+            // signed in, so say it and point at Devices.
+            <EmptyState
+              icon="hammer-outline"
+              title="No build machine yet"
+              body="Publishing runs on your own Mac. Run Yaver there, signed in as you, and it shows up here."
+              action={{
+                label: "Set up a machine",
+                onPress: () => router.push("/(tabs)/devices" as any),
+              }}
+            />
+          )
         }
         contentContainerStyle={styles.content}
       />

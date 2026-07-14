@@ -29,6 +29,8 @@ import { isBundleLoaded, isBundleLoaderAvailable, loadAppIfChanged, onBundleEven
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
+import EmptyState from "../../src/components/EmptyState";
+import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 import DiscoveryDiagnosticsPanel from "../../src/components/DiscoveryDiagnosticsPanel";
 import type { DiagnosticsProbe } from "../../src/lib/discoveryDiagnostics";
 import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
@@ -924,13 +926,19 @@ export default function HotReloadScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <RemoteBoxBanner
+        // Every chip below describes the selected machine. With none selected
+        // they described nothing — "Go agent unknown" was a pill announcing
+        // the absence of the very thing the banner above already reports.
         extra={
+          !activeDevice ? undefined : (
           <View style={s.bannerExtra}>
-            <View style={[s.bannerPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
-              <Text style={[s.bannerChipText, { color: c.textSecondary }]}>
-                Go agent {agentInfo?.version || activeDevice?.agentVersion || "unknown"}
-              </Text>
-            </View>
+            {agentInfo?.version || activeDevice?.agentVersion ? (
+              <View style={[s.bannerPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                <Text style={[s.bannerChipText, { color: c.textSecondary }]}>
+                  Go agent {agentInfo?.version || activeDevice?.agentVersion}
+                </Text>
+              </View>
+            ) : null}
             {remoteHermesReady ? (
               <View
                 style={[
@@ -963,6 +971,7 @@ export default function HotReloadScreen() {
               </Text>
             ) : null}
           </View>
+          )
         }
       />
       <View style={s.container}>
@@ -1311,10 +1320,14 @@ export default function HotReloadScreen() {
           </View>
         )}
 
-        {/* Available apps list */}
-        <Text style={[s.sectionTitle, { color: c.textMuted }]}>
-          {devStatus ? "Other Apps" : "Available Apps"}
-        </Text>
+        {/* Available apps list. The section label is suppressed when the list
+            is empty — a heading over an empty region labels nothing and just
+            adds a line of chrome above the empty state that follows it. */}
+        {devProjects.filter((p) => devStatus?.workDir !== p.path).length > 0 ? (
+          <Text style={[s.sectionTitle, { color: c.textMuted }]}>
+            {devStatus ? "Other Apps" : "Available Apps"}
+          </Text>
+        ) : null}
 
         <FlatList
           data={devProjects.filter((p) => devStatus?.workDir !== p.path)}
@@ -1384,74 +1397,57 @@ export default function HotReloadScreen() {
             );
           }}
           ListEmptyComponent={
-            <View style={s.emptyList}>
-              <View
-                style={[
-                  s.emptyStateCard,
-                  { backgroundColor: c.bgCardElevated, borderColor: c.borderSubtle },
-                  !isDark && { shadowColor: c.shadowSm },
-                ]}
-              >
-                <Ionicons name="folder-open-outline" size={32} color={c.textMuted} style={{ marginBottom: 12 }} />
-                <Text style={[s.emptyStateTitle, { color: c.textPrimary }]}>
-                  {projectsScanning ? "Discovering apps" : "No apps yet"}
-                </Text>
-                <Text style={[s.emptyStateBody, { color: c.textSecondary }]}>
-                  {projectsScanning
-                    ? `Discovering mobile projects on ${agentInfo?.hostname || activeDevice?.name || "remote box"}…`
-                    : projects.length > 0
-                    ? `No mobile projects found on ${agentInfo?.hostname || activeDevice?.name || "this box"}. Looking for Hermes apps and native Swift/Kotlin projects.`
-                    : `No projects discovered on ${agentInfo?.hostname || activeDevice?.name || "this box"}. The agent scans your home directory automatically.`}
-                </Text>
-              </View>
-              {projectsScanning && scanStalled ? (
-                <Pressable
-                  onPress={() => setShowDiagnostics(true)}
-                  style={[s.warnCallout, { backgroundColor: c.warnBg, borderColor: c.warnBorder }]}
-                  hitSlop={8}
-                >
-                  <Text style={{ color: c.warn, fontSize: 12, textAlign: "center", lineHeight: 18 }}>
-                    Taking longer than usual. Let's find out why — we'll check the
-                    connection, sign-in, and file access.{"\n"}
-                    <Text style={{ color: c.accent, fontWeight: "700" }}>Diagnose discovery ›</Text>
-                  </Text>
-                </Pressable>
-              ) : null}
-              <Pressable
-                style={[s.rediscoverBtn, { borderColor: c.accent, backgroundColor: c.accent }]}
-                onPress={async () => {
-                  try {
-                    setProjectsScanning(true);
-                    const baseUrl = (quicClient as any).baseUrl;
-                    const headers = (quicClient as any).authHeaders;
-                    await fetch(`${baseUrl}/projects/mobile`, { method: "POST", headers });
-                  } catch {}
-                }}
-              >
-                <Text style={[s.rediscoverBtnText, { color: c.textInverse }]}>
-                  {projectsScanning ? "Discovering..." : "Rediscover"}
-                </Text>
-              </Pressable>
-              {projectsScanning ? (
-                <Pressable
-                  style={[s.rediscoverBtn, { borderColor: c.errorBorder, backgroundColor: c.errorBg }]}
-                  onPress={() => { void handleStopDiscovery(); }}
-                  disabled={scanStopping}
-                >
-                  <Text style={[s.rediscoverBtnText, { color: c.error }]}>
-                    {scanStopping ? "Stopping..." : "Stop Discovery"}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {/* Always-available escape hatch: run the layered preflight
-                  (connection → sign-in → file access) and get numbered
-                  fix-it steps instead of guessing. */}
-              <Pressable onPress={() => setShowDiagnostics(true)} hitSlop={8} style={s.diagnoseLink}>
-                <Text style={{ color: c.accent, fontSize: 13, fontWeight: "700" }}>
-                  Diagnose discovery ›
-                </Text>
-              </Pressable>
-            </View>
+            // With no machine selected there is nothing to scan and nothing to
+            // diagnose — Rediscover POSTed into the void and the diagnostics
+            // panel had no target. Offer the one move that unblocks: pick a box.
+            !activeDevice ? (
+              <NoMachineEmpty noun="apps" />
+            ) : (
+              (() => {
+                const host = agentInfo?.hostname || activeDevice.name || "this machine";
+                return (
+                  <EmptyState
+                    icon="folder-open-outline"
+                    busy={projectsScanning}
+                    title={projectsScanning ? "Scanning…" : "No apps yet"}
+                    body={
+                      projectsScanning
+                        ? scanStalled
+                          ? `Still scanning ${host}. Longer than usual — worth a look.`
+                          : `Looking for mobile projects on ${host}.`
+                        : projects.length > 0
+                          ? `No mobile projects on ${host}. Yaver looks for Hermes apps and native Swift/Kotlin projects.`
+                          : `Yaver found nothing to build on ${host}.`
+                    }
+                    action={
+                      projectsScanning
+                        ? undefined
+                        : {
+                            label: "Scan again",
+                            onPress: async () => {
+                              try {
+                                setProjectsScanning(true);
+                                await quicClient.refreshMobileProjects();
+                              } catch {}
+                            },
+                          }
+                    }
+                    // While a scan runs, the useful escape is whichever the
+                    // user actually needs: bail out, or — once it's clearly
+                    // wedged — find out why. Never both at once.
+                    link={
+                      projectsScanning && !scanStalled
+                        ? {
+                            label: scanStopping ? "Stopping…" : "Stop scanning",
+                            onPress: () => { void handleStopDiscovery(); },
+                            busy: scanStopping,
+                          }
+                        : { label: "Diagnose discovery ›", onPress: () => setShowDiagnostics(true) }
+                    }
+                  />
+                );
+              })()
+            )
           }
         />
       </View>
@@ -1609,23 +1605,8 @@ const s = StyleSheet.create({
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   emptySubtitle: { fontSize: 13, textAlign: "center", lineHeight: 20 },
-  emptyList: { padding: 40, alignItems: "center" },
-  emptyStateCard: {
-    width: "100%",
-    maxWidth: 360,
-    paddingHorizontal: 24,
-    paddingVertical: 24,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  emptyStateTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
-  emptyStateBody: { fontSize: 13, lineHeight: 19, textAlign: "center" },
-  warnCallout: { marginTop: 8, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
-  rediscoverBtn: { marginTop: 14, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  rediscoverBtnText: { fontSize: 14, fontWeight: "600" },
-  diagnoseLink: { marginTop: 14, paddingVertical: 6, paddingHorizontal: 12 },
+  // The empty-list card + its two buttons + the warn callout all moved to the
+  // shared <EmptyState>, which is chromeless by design.
   stopBanner: {
     marginHorizontal: 16,
     marginTop: 12,

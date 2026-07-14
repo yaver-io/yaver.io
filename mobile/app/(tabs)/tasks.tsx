@@ -30,9 +30,10 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
+import EmptyState from "../../src/components/EmptyState";
+import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 import TaskTargetWizard, { type TaskTarget } from "../../src/components/TaskTargetWizard";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
-import { chipPalette, type ChipTone } from "../../src/lib/chipPalette";
 import { appTag } from "../../src/lib/appVersion";
 import * as ExpoClipboard from "expo-clipboard";
 import { getLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
@@ -86,12 +87,6 @@ import { openTaskBus } from "../../src/lib/runningTasksBus";
 import { ErrorMessage, detectSmartRetry } from "../../src/components/ErrorMessage";
 import { AgentContextPanel, type AgentContextRow } from "../../src/components/AgentContextPanel";
 import { TaskHeader } from "../../src/components/TaskHeader";
-import {
-  deriveMobileDeviceLifecycleState,
-  probeMobileDeviceStatus,
-  type MobileDeviceLifecycleState,
-  type MobileDeviceStatusProbe,
-} from "../../src/lib/deviceStatus";
 import {
   displayRunnerLabel,
   isModelCompatibleWithRunnerId,
@@ -230,6 +225,18 @@ function stripMarkdownForPreview(text: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function collapseAdjacentDuplicateLines(text: string): string {
+  const out: string[] = [];
+  let lastNonEmpty = "";
+  for (const line of String(text || "").replace(/\r/g, "").split("\n")) {
+    const normalized = stripAnsi(line).trim();
+    if (normalized && normalized === lastNonEmpty) continue;
+    out.push(line);
+    if (normalized) lastNonEmpty = normalized;
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function normalizePreviewLine(line: string): string {
@@ -532,13 +539,32 @@ function buildLiveAssistantMarkdown(content: string): string {
   return `${body}${activity}\n\n_Working through implementation details…_`.trim();
 }
 
+// The preview is one line, capped at 120 chars — so it must never touch
+// more than a bounded slice of the task. It used to run the whole output
+// buffer (MAX_OUTPUT_LINES_PER_TASK = 8000 lines) through 12 chained
+// regexes and then a per-line stripAnsi pass, on every render of every
+// card, just to read the LAST line. With output streaming in, the list
+// re-renders continuously and that pegged the JS thread: taps and scroll
+// gestures need JS to negotiate the touch responder, so the whole Tasks
+// screen went dead while tasks were running. Scan the tail only.
+const PREVIEW_SCAN_LINES = 200;
+const PREVIEW_SCAN_CHARS = 4000;
+
 function buildTaskPreviewText(task: Task): string | null {
   if (task.resultText) {
-    return stripMarkdownForPreview(task.resultText).slice(0, 120);
+    // Head slice: we want the FIRST 120 chars, and adjacent-duplicate
+    // collapsing only ever looks at neighbouring lines.
+    return collapseAdjacentDuplicateLines(
+      stripMarkdownForPreview(task.resultText.slice(0, PREVIEW_SCAN_CHARS)),
+    ).slice(0, 120);
   }
   if (task.status === "running" || task.status === "queued") {
-    const live = stripMarkdownForPreview(task.output.join("\n")).split("\n").map((line) => line.trim()).filter(Boolean);
-    if (live.length > 0) return live.slice(-1)[0].slice(0, 120);
+    const tail = task.output.length > PREVIEW_SCAN_LINES
+      ? task.output.slice(-PREVIEW_SCAN_LINES)
+      : task.output;
+    const live = collapseAdjacentDuplicateLines(stripMarkdownForPreview(tail.join("\n")))
+      .split("\n").map((line) => line.trim()).filter(Boolean);
+    if (live.length > 0) return live[live.length - 1].slice(0, 120);
     return "Working...";
   }
   return null;
@@ -1142,7 +1168,7 @@ function DebugSection({
 
 // ── Task card ────────────────────────────────────────────────────────
 
-function TaskCard({
+function TaskCardInner({
   item,
   onPress,
   onDelete,
@@ -1209,7 +1235,13 @@ function TaskCard({
     }
   };
 
-  const previewText = buildTaskPreviewText(item);
+  // Last line is part of the key because capOutput() pins output.length
+  // at the cap for long-running tasks — see chatMessages for the full
+  // reasoning. The preview reads the tail, so the last line is what moves.
+  const previewText = useMemo(
+    () => buildTaskPreviewText(item),
+    [item.id, item.status, item.resultText, item.output.length, item.output[item.output.length - 1]],
+  );
 
   return (
     <Animated.View
@@ -1298,6 +1330,22 @@ function TaskCard({
                 </Text>
               );
             })()}
+            <Pressable
+              hitSlop={12}
+              onPress={(event) => {
+                event.stopPropagation();
+                handleLongPress();
+              }}
+              style={({ pressed }) => [
+                s.taskActionButton,
+                { backgroundColor: c.bgInput, borderColor: c.borderSubtle },
+                pressed && { opacity: 0.7 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Task actions"
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={c.textMuted} />
+            </Pressable>
           </View>
         </View>
         <Text style={[s.taskTitle, { color: c.textPrimary }]} numberOfLines={2}>{normalizeTaskTitle(item.title)}</Text>
@@ -1322,6 +1370,15 @@ function TaskCard({
     </Animated.View>
   );
 }
+
+// Only re-render a card when its OWN task object changes. The streaming
+// updates rebuild just the task they touch (setTasks(prev.map(...))), so
+// every other card keeps its identity and is skipped entirely. Without
+// this, one running task re-rendered every card in the list on every
+// output chunk. The callbacks are intentionally excluded from the
+// comparison: renderItem rebuilds them on each parent render, and they
+// only close over the item (compared here) and stable state setters.
+const TaskCard = React.memo(TaskCardInner, (prev, next) => prev.item === next.item);
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1454,15 +1511,27 @@ function formatRelativeTime(ts: number): string {
 /** Build chat messages from task turns + live streaming output. */
 function buildChatMessages(task: Task): { role: string; content: string }[] {
   const messages: { role: string; content: string }[] = [];
+  const pushMessage = (role: string, content: string) => {
+    const normalizedContent = collapseAdjacentDuplicateLines(String(content || ""));
+    const last = messages[messages.length - 1];
+    if (
+      last &&
+      last.role === role &&
+      stripAnsi(last.content).trim() === stripAnsi(normalizedContent).trim()
+    ) {
+      return;
+    }
+    messages.push({ role, content: normalizedContent });
+  };
 
   if (task.turns && task.turns.length > 0) {
     for (const turn of task.turns) {
-      messages.push({ role: turn.role, content: turn.content });
+      pushMessage(turn.role, turn.content);
     }
   } else {
-    messages.push({ role: "user", content: normalizeTaskTitle(task.title) });
+    pushMessage("user", normalizeTaskTitle(task.title));
     if (task.resultText) {
-      messages.push({ role: "assistant", content: task.resultText });
+      pushMessage("assistant", task.resultText);
     }
   }
 
@@ -1479,7 +1548,7 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
       if (lastIdx >= 0 && messages[lastIdx].role === "assistant") {
         messages[lastIdx].content = streamText;
       } else {
-        messages.push({ role: "assistant", content: streamText });
+        pushMessage("assistant", streamText);
       }
     }
   }
@@ -1525,9 +1594,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, everHadDevices, refreshDevices, deviceListError, unreachableDeviceIds, stopReconnectAndBounce, retryConnection, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
-  const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
-  const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, everHadDevices, refreshDevices, deviceListError, stopReconnectAndBounce, retryConnection, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
   const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
@@ -1539,6 +1606,19 @@ export default function TasksScreen() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [statusFilter, setStatusFilter] = useState<"running" | "review" | "completed" | "failed" | "all">("running");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const deviceForTask = useCallback((task?: Task | null) => {
+    if (!task) return null;
+    if (task.deviceId) {
+      const byID = devices.find((d) => d.id === task.deviceId);
+      if (byID) return byID;
+    }
+    const taskName = (task.deviceName || "").trim().replace(/\.local$/, "");
+    if (!taskName) return null;
+    return devices.find((d) => {
+      const name = (d.name || "").trim().replace(/\.local$/, "");
+      return name === taskName;
+    }) || null;
+  }, [devices]);
   const [showNewTask, setShowNewTask] = useState(false);
   // Multi-target wizard state. Only used when DeviceContext.multiTargetMode
   // is true: the FAB opens the wizard first, the wizard sets pendingTarget
@@ -1588,9 +1668,7 @@ export default function TasksScreen() {
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([]);
   const [followUpImages, setFollowUpImages] = useState<ImageAttachment[]>([]);
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const [reconnectingDeviceId, setReconnectingDeviceId] = useState<string | null>(null);
   const [recoveringDeviceId, setRecoveringDeviceId] = useState<string | null>(null);
-  const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [quicState, setQuicState] = useState<ConnectionState>(quicClient.connectionState);
   const [connMode, setConnMode] = useState<ConnectionMode>(quicClient.connectionMode);
   const [reconnectAttempt, setReconnectAttempt] = useState<number>(quicClient.reconnectAttempt);
@@ -1647,6 +1725,7 @@ export default function TasksScreen() {
   // no key). startInAdd jumps straight to the add-provider+key sheet.
   const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
   const [openCodeConfigStartInAdd, setOpenCodeConfigStartInAdd] = useState(false);
+  const [openCodeConfigTarget, setOpenCodeConfigTarget] = useState<string | null>(null);
   const [showTmuxSessions, setShowTmuxSessions] = useState(false);
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
   const [isLoadingTmux, setIsLoadingTmux] = useState(false);
@@ -2078,7 +2157,8 @@ export default function TasksScreen() {
         const deviceName = focusedDeviceName && (!t.deviceName || isTransportDeviceLabel(t.deviceName))
           ? focusedDeviceName
           : t.deviceName;
-        return { ...t, output, deviceName };
+        const deviceId = t.deviceId || focusedDeviceId || undefined;
+        return { ...t, output, deviceId, deviceName };
       });
       setTasks(capped);
       // Keep selected task in sync with latest data
@@ -2192,7 +2272,15 @@ export default function TasksScreen() {
     // currently-selected task we also poll once so the sheet shows
     // immediately on tap-into-task without waiting for the next
     // server-buffered SSE flush.
+    // Cancellation guard: this promise outlives the effect. Without it,
+    // closing the task (or switching to another) before the fetch
+    // resolves still mounts the question sheet — over the task LIST,
+    // for a task that is no longer selected. Every path that clears
+    // agentQuestion is keyed on selectedTask?.id, so once that's null
+    // the sheet can never be cleared again: a permanently stuck sheet.
+    let cancelled = false;
     void quicClient.getPendingTaskQuestion(selectedTask.id).then((q) => {
+      if (cancelled) return;
       if (q && q.taskId === selectedTask.id) {
         setAgentQuestion(q);
         setAgentAnswerText("");
@@ -2201,8 +2289,20 @@ export default function TasksScreen() {
       }
     });
 
-    return () => abort();
+    return () => {
+      cancelled = true;
+      abort();
+    };
   }, [selectedTask?.id, selectedTask?.status]);
+
+  // Second half of the same guard: a question that arrived over SSE for
+  // a task you have since closed would otherwise linger with no owner
+  // to clear it. Deselecting the task drops the sheet with it.
+  useEffect(() => {
+    if (!agentQuestion) return;
+    if (selectedTask && agentQuestion.taskId === selectedTask.id) return;
+    setAgentQuestion(null);
+  }, [agentQuestion, selectedTask]);
 
   // Single submit path for the agent-question sheet — shared by the
   // per-choice tap, the multi-select "Send", the "Other…" free text,
@@ -2932,6 +3032,7 @@ export default function TasksScreen() {
       // activeDevice.name even though the work ran on a sibling box.
       const task: Task = {
         ...rawTask,
+        deviceId: pendingTarget?.deviceId || activeDevice?.id || rawTask.deviceId,
         deviceName: pendingTarget?.deviceName || activeDevice?.name || rawTask.deviceName,
         model: rawTask.model || (effectiveRunner !== "custom" ? effectiveModel : undefined),
       };
@@ -2969,12 +3070,32 @@ export default function TasksScreen() {
     }
   };
 
+  // Modal handoff. iOS cannot present a second native <Modal> while
+  // another one is still on screen — the newcomer mounts invisibly
+  // behind it and the flow dead-ends (the same constraint that
+  // openRunnerAuthModal works around with its 280ms delay). So every
+  // "close A, then open B" transition stages B here and runs it only
+  // once A is actually gone: onDismiss is the fast path, and the
+  // effect below is the backstop for Android (where onDismiss never
+  // fires) and for any sheet whose dismiss callback doesn't land.
+  const pendingAfterDismissRef = useRef<(() => void) | null>(null);
+  const flushAfterDismiss = useCallback(() => {
+    const next = pendingAfterDismissRef.current;
+    pendingAfterDismissRef.current = null;
+    next?.();
+  }, []);
+  const handoffModal = useCallback((close: () => void, open: () => void) => {
+    pendingAfterDismissRef.current = open;
+    close();
+  }, []);
+
   const handleNewTaskModalDismiss = () => {
     if (pendingOpenTaskRef.current) {
       const task = pendingOpenTaskRef.current;
       pendingOpenTaskRef.current = null;
       setSelectedTask(task);
     }
+    flushAfterDismiss();
   };
 
   // Android fallback: onDismiss is iOS-only, so use effect to detect modal close
@@ -2984,6 +3105,17 @@ export default function TasksScreen() {
       return () => clearTimeout(timer);
     }
   }, [showNewTask]);
+
+  // Backstop for the staged opens above: once every sheet that can own
+  // the screen is closed and something is still waiting to open, run
+  // it. A stranded staged-open is exactly what makes a button feel
+  // dead — you tap, the sheet closes, and nothing ever replaces it.
+  useEffect(() => {
+    if (showNewTask || showTargetWizard || showTmuxSessions) return;
+    if (!pendingAfterDismissRef.current) return;
+    const timer = setTimeout(flushAfterDismiss, 350);
+    return () => clearTimeout(timer);
+  }, [showNewTask, showTargetWizard, showTmuxSessions, flushAfterDismiss]);
 
   const handleStopTask = async (taskId: string) => {
     // Yaver-agent tasks live entirely on the phone — no server to call,
@@ -3030,9 +3162,7 @@ export default function TasksScreen() {
     if (!task || !retry) return;
     const retryRunner = resolveRunnerForSend(task.runnerId);
     const retryModel = resolveModelForSend(retryRunner, task.model);
-    const taskDevice = task.deviceName
-      ? devices.find((d) => d.name === task.deviceName || d.name.replace(/\.local$/, "") === task.deviceName?.replace(/\.local$/, ""))
-      : null;
+    const taskDevice = deviceForTask(task);
     const retryClient = taskDevice?.id && connectionManager.clientFor(taskDevice.id).isConnected
       ? connectionManager.clientFor(taskDevice.id)
       : quicClient;
@@ -3041,7 +3171,7 @@ export default function TasksScreen() {
       task.title, "", retryModel, retryRunner, undefined, undefined, undefined, projectDir || undefined,
     ).then((retried) => {
       const deviceName = taskDevice?.name || task.deviceName || activeDevice?.name || retried.deviceName;
-      const next = { ...retried, deviceName, model: retried.model || retryModel };
+      const next = { ...retried, deviceId: taskDevice?.id || task.deviceId, deviceName, model: retried.model || retryModel };
       setTasks((prev) => [next, ...prev]);
       setSelectedTask(next);
     }).catch((err) => {
@@ -3387,11 +3517,15 @@ export default function TasksScreen() {
       // Refresh both lists
       const [sessions] = await Promise.all([quicClient.listTmuxSessions(), fetchTasks()]);
       setTmuxSessions(sessions);
-      // Close modal and open the new task
-      setShowTmuxSessions(false);
+      // Resolve the task BEFORE closing, then hand the chat-detail
+      // Modal off to the tmux Modal's dismiss — opening it in the same
+      // tick makes it present invisibly behind the sheet on iOS.
       const updatedTasks = await quicClient.listTasks();
       const newTask = updatedTasks.find(t => t.id === result.taskId);
-      if (newTask) setSelectedTask(newTask);
+      handoffModal(
+        () => setShowTmuxSessions(false),
+        () => { if (newTask) setSelectedTask(newTask); },
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert("Adopt Failed", msg);
@@ -3409,56 +3543,6 @@ export default function TasksScreen() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       Alert.alert("Detach Failed", msg);
-    }
-  };
-
-  const handleReconnect = async (device: typeof devices[0]) => {
-    setIsReconnecting(true);
-    setReconnectingDeviceId(device.id);
-    setReconnectError(null);
-    try {
-      const probe = deviceProbeMap[device.id];
-      const lifecycleState = deriveMobileDeviceLifecycleState({
-        device,
-        probe,
-        unreachable: unreachableSet.has(device.id),
-      });
-      const shouldRecoverAuth =
-        !device.isGuest &&
-        (lifecycleState === "bootstrap" || lifecycleState === "yaver-auth-expired");
-
-      if (shouldRecoverAuth) {
-        setRecoveringDeviceId(device.id);
-        const recovery = await recoverDeviceAuth(device);
-        if (recovery && !recovery.ok && recovery.error) {
-          console.log(`[tasks] auth recovery before reconnect failed for ${device.name}: ${recovery.error}`);
-          setReconnectError(recovery.error);
-          return;
-        }
-      }
-      // selectDevice awaits quicClient.connect (which races direct + tunnel
-      // + relay candidates and resolves only when one succeeds or its own
-      // 20s timeout fires). It catches its own errors and flips
-      // connectionStatus to "disconnected" + sets lastError. So once this
-      // await returns, the connection is either established or has already
-      // failed — no extra wall-clock wait is needed. Devices tab uses the
-      // same selectDevice() call directly; Tasks must match so a device that
-      // only reaches us via relay (e.g. yaver test ephemeral) is given the
-      // same chance to come up.
-      await selectDevice(device);
-      if (quicClient.connectionState !== "connected") {
-        setReconnectError(`Could not reach ${device.name}. Make sure yaver is running.`);
-      }
-    } catch (e: any) {
-      // Friendly sentence first; raw reason only as trailing detail.
-      const detail = e instanceof Error ? e.message : "";
-      setReconnectError(
-        `Could not reach ${device.name}. Make sure yaver is running.${detail ? ` (${detail})` : ""}`,
-      );
-    } finally {
-      setRecoveringDeviceId((current) => (current === device.id ? null : current));
-      setReconnectingDeviceId((current) => (current === device.id ? null : current));
-      setIsReconnecting(false);
     }
   };
 
@@ -3491,42 +3575,6 @@ export default function TasksScreen() {
     connectionStatus;
   const isEffectivelyConnected = effectiveState === "connected";
 
-  useEffect(() => {
-    if (devices.length === 0) return;
-    let cancelled = false;
-    const targets = devices.filter((device) => !device.isGuest);
-    if (targets.length === 0) return;
-
-    const run = async () => {
-      const updates = await Promise.all(
-        targets.map(async (device) => ({
-          id: device.id,
-          result: await probeMobileDeviceStatus(device, token),
-        }))
-      );
-      if (cancelled) return;
-      setDeviceProbeMap((prev) => {
-        const next = { ...prev };
-        for (const update of updates) {
-          if (update.result) next[update.id] = update.result;
-        }
-        return next;
-      });
-    };
-
-    // Yaver-level reachability sweep: ping EVERY device once on open (and
-    // whenever the device set changes) so the banner/picker reflect which
-    // boxes are actually reachable rather than an optimistic "connected".
-    // Keep the 8s re-poll only while not effectively connected — once a
-    // focused device is genuinely live the churn isn't needed.
-    void run();
-    const iv = isEffectivelyConnected ? null : setInterval(run, 8000);
-    return () => {
-      cancelled = true;
-      if (iv) clearInterval(iv);
-    };
-  }, [devices, isEffectivelyConnected, token]);
-
   // Fetch agent info (project, todo stats) every 5s
   useEffect(() => {
     if (!isEffectivelyConnected) return;
@@ -3553,32 +3601,65 @@ export default function TasksScreen() {
     reconnectAttempt > 0 && !isEffectivelyConnected && !!activeDevice;
   const displayedAttempt = Math.min(reconnectAttempt, quicClient.maxReconnectAttempts);
 
-  // Disconnected-with-N-devices picker. Hoisted so we can both render the
-  // dedicated picker layout AND skip the task FlatList when this is on
-  // (otherwise both compete for vertical space inside the flex column,
-  // and the task FlatList's own ListEmptyComponent would render a
-  // duplicate "Not connected" frame).
-  // Picker is suppressed when ANY pool client is live — the multi-device
-  // manager keeps secondary connections warm, so even when this tab's
-  // own focused-device state has slipped to "disconnected" (e.g. the
-  // user just bounced focus to a different box), tasks routed by the
-  // wizard can still target a connected peer. Without this gate,
-  // landing on the Tasks tab right after a focus shift would briefly
-  // flash "Not connected · Pick one of your N devices" even though
-  // the Devices tab simultaneously shows green CONNECTED chips.
-  // anyPoolConnected is computed earlier next to effectiveState (kept
-  // there so the banner promotion can reuse it). Aliased locally for
-  // readability so the showDevicePicker gate reads as a flat list of
-  // suppression conditions.
+  // anyPoolConnected is computed earlier next to effectiveState (kept there so
+  // the banner promotion can reuse it). Aliased for readability: a live pooled
+  // client means the user HAS a box to send a task to, even when this tab's
+  // focused client has momentarily slipped to "disconnected".
   const hasAnyPooledConnection = anyPoolConnected;
-  const showDevicePicker =
-    !isEffectivelyConnected &&
-    !hasAnyPooledConnection &&
-    !isLoadingDevices &&
-    devices.length >= 1 &&
-    !(devices.length === 1 && connectionStatus === "connecting");
+  const canComposeTask = isEffectivelyConnected || hasAnyPooledConnection;
 
-  const chatMessages = selectedTask ? buildChatMessages(selectedTask) : [];
+  // The FAB's handler, hoisted so the "All Clear" empty state can offer the
+  // same action — the old copy pointed at a + button that scrolls off-screen
+  // on short viewports. Both call sites are gated on canComposeTask, so the
+  // action can never be rendered in a state where it wouldn't work.
+  const openCreateTask = useCallback(() => {
+    // Defensive reset — guarantees the modal opens cleanly even if a previous
+    // cancel/backdrop-dismiss left stale state around.
+    setNewTaskText("");
+    setAttachedImages([]);
+    setInputFromSpeech(false);
+    pendingOpenTaskRef.current = null;
+    // multiTargetMode without an active connection falls through to the wizard
+    // so the user can pick a target before they even see the composer.
+    setPendingTarget(null);
+    if (multiTargetMode && (!activeDevice || !isEffectivelyConnected)) {
+      setShowTargetWizard(true);
+    } else {
+      setShowNewTask(true);
+    }
+  }, [multiTargetMode, activeDevice, isEffectivelyConnected]);
+
+  // Transient zero-device state for a user who HAS had devices (VPN flap,
+  // network drop, token drift). Kept OUT of NoMachineEmpty: with an empty
+  // roster its "Choose machine" picker would open onto nothing, so the only
+  // honest action here is re-fetching the list.
+  const devicesDroppedOut = devices.length === 0 && everHadDevices && !isLoadingDevices;
+  // Zero devices AND never had any → NoMachineEmpty runs the pairing flow.
+  // Only then is "build on this phone" a meaningful escape hatch.
+  const hasZeroDevices = devices.length === 0 && !isLoadingDevices;
+
+  // Memoized for the same reason buildTaskPreviewText is bounded: this
+  // walks every turn AND runs the whole live output buffer through the
+  // markdown/ANSI pipeline. Unmemoized it re-ran on EVERY render of this
+  // screen — including the constant re-renders a streaming task causes —
+  // which pegs the JS thread and freezes the chat exactly like the list.
+  // Cap-safe key: output is append-only but capOutput() trims from the
+  // HEAD at MAX_OUTPUT_LINES_PER_TASK, so a long-running task pins
+  // output.length at the cap while still streaming. Length alone would
+  // freeze the chat exactly on the tasks that stream the most. First +
+  // last line are O(1) and catch both the append and the head-drop.
+  const chatMessages = useMemo(
+    () => (selectedTask ? buildChatMessages(selectedTask) : []),
+    [
+      selectedTask?.id,
+      selectedTask?.status,
+      selectedTask?.resultText,
+      selectedTask?.output.length,
+      selectedTask?.output[0],
+      selectedTask?.output[(selectedTask?.output.length ?? 1) - 1],
+      selectedTask?.turns?.length,
+    ],
+  );
   // Pre-compute the last-assistant index once per render (not per row) so
   // FlatList's renderItem can do an O(1) lookup. Token attribution is
   // "show on the LAST assistant bubble only" — recomputing inside
@@ -3783,6 +3864,7 @@ export default function TasksScreen() {
                     {runnerBannerState?.kind === "needsConfig" ? (
                       <Pressable
                         onPress={() => {
+                          setOpenCodeConfigTarget(activeDevice?.id || null);
                           setOpenCodeConfigStartInAdd(true);
                           setShowOpenCodeConfig(true);
                         }}
@@ -3927,162 +4009,11 @@ export default function TasksScreen() {
           </View>
         )}
 
-        {/* Disconnected device picker. Pulled OUT of ListEmptyComponent so
-            the "Not connected · Pick one of your N devices" header stays
-            visible regardless of device count — with 5 devices the old
-            inline empty state pushed the title off-screen and the user
-            had to scroll up to see what they were picking. Now: fixed
-            header at top, cards scroll independently below. The task
-            FlatList below is suppressed when this picker is showing
-            (showDevicePicker gate) so they don't fight for vertical
-            space inside the container's flex column. */}
-        {showDevicePicker && (
-          <View style={{ flex: 1 }}>
-            <View style={[s.emptyPickerHeader, { borderBottomColor: c.border }]}>
-              <Text style={[s.emptyTitle, { color: c.textPrimary, textAlign: "center" }]}>Not connected</Text>
-              <Text style={[s.emptySubtitle, { color: c.textSecondary, textAlign: "center", marginTop: 4 }]}>
-                {devices.length === 1
-                  ? "Tap the device below to connect."
-                  : `Pick one of your ${devices.length} devices.`}
-              </Text>
-              {/* Surface WHY the last attempt didn't land. reconnectError is the
-                  explicit "tap to reconnect" failure (set in handleReconnect);
-                  lastError is the raw connect-failure reason DeviceContext
-                  records (e.g. "Could not connect in 20s"). Friendly framing
-                  with the raw reason as secondary detail — previously both were
-                  set but never rendered, so a failed tap just stopped spinning
-                  with no explanation. */}
-              {(reconnectError || lastError) ? (
-                <View style={[s.reconnectErrorBox, { borderColor: "#ef444455", backgroundColor: "#ef44441a" }]}>
-                  <Text style={[s.reconnectError, { color: "#fca5a5", marginTop: 0 }]}>
-                    Couldn't connect.
-                    {reconnectError ? ` ${reconnectError}` : lastError ? ` ${lastError}` : ""}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-            <FlatList
-              data={devices}
-              keyExtractor={(d) => d.id}
-              contentContainerStyle={{ padding: 16, gap: 12 }}
-              initialNumToRender={8}
-              windowSize={5}
-              renderItem={({ item: d }) => {
-                  const unreachable = unreachableSet.has(d.id);
-                  const probe = deviceProbeMap[d.id];
-                  // Pool-aware override: when the connection manager
-                  // already has a live QuicClient for this device, the
-                  // card MUST render "connected" regardless of what the
-                  // heartbeat-based lifecycle derivation says — otherwise
-                  // both Devices-tab CONNECTED chips and Tasks-tab READY
-                  // chips for the same row would coexist, which the
-                  // user just spotted as "in devices ui 2 boxes
-                  // connected, in tasks ui none".
-                  const pooled = connectedDeviceIds.includes(d.id);
-                  const baseLifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
-                    device: d,
-                    probe,
-                    unreachable,
-                  });
-                  const lifecycleState: MobileDeviceLifecycleState = pooled
-                    ? "connected"
-                    : baseLifecycleState;
-                  const statusText =
-                    lifecycleState === "connected"
-                      ? "Connected"
-                      : lifecycleState === "bootstrap"
-                        ? "Bootstrap"
-                        : lifecycleState === "yaver-auth-expired"
-                          ? "Auth Expired"
-                          : lifecycleState === "ready-to-connect"
-                            ? "Ready"
-                            : "Offline";
-                  const statusTone: ChipTone =
-                    lifecycleState === "connected"
-                      ? "emerald"
-                      : lifecycleState === "bootstrap"
-                        ? "violet"
-                        : lifecycleState === "yaver-auth-expired"
-                          ? "amber"
-                          : lifecycleState === "ready-to-connect"
-                            ? "blue"
-                            : "slate";
-                  const statusChip = chipPalette(statusTone, isDark);
-                  const isRetrying = reconnectingDeviceId === d.id;
-                  const isRecovering = recoveringDeviceId === d.id;
-                  return (
-                    <Pressable
-                      style={[s.devicePickerCard, {
-                        backgroundColor: c.bgCard,
-                        borderColor: unreachable && d.online ? "#eab30866" : c.border,
-                        paddingVertical: 14,
-                      }]}
-                      onPress={() => !(isRetrying || isRecovering) && handleReconnect(d)}
-                      disabled={isRetrying || isRecovering}
-                    >
-                      <View style={s.devicePickerRow}>
-                        <View style={{ flex: 1 }}>
-                          <View style={s.devicePickerNameRow}>
-                            <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
-                            {primaryDeviceId === d.id ? (
-                              <View style={[s.devicePickerPrimaryBadge, { borderColor: c.accent + "88", backgroundColor: c.accent + "22" }]}>
-                                <Text style={[s.devicePickerPrimaryText, { color: c.accent }]}>PRIMARY</Text>
-                              </View>
-                            ) : null}
-                          </View>
-                          <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>
-                            {d.os} · {d.host}
-                            {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
-                          </Text>
-                          {lifecycleState === "bootstrap" ? (
-                            <Text style={[s.devicePickerMeta, { color: chipPalette("violet", isDark).text, marginTop: 2 }]}>
-                              Machine is up in bootstrap mode. Tap to reclaim Yaver and connect.
-                            </Text>
-                          ) : lifecycleState === "yaver-auth-expired" ? (
-                            <Text style={[s.devicePickerMeta, { color: chipPalette("amber", isDark).text, marginTop: 2 }]}>
-                              Machine is up, but the agent session expired. Tap to re-auth and connect.
-                            </Text>
-                          ) : lifecycleState === "ready-to-connect" ? (
-                            <Text style={[s.devicePickerMeta, { color: chipPalette("blue", isDark).text, marginTop: 2 }]}>
-                              Recent heartbeat — reachability not verified yet. Tap to connect.
-                            </Text>
-                          ) : null}
-                          {lifecycleState === "offline" && (
-                            <Text style={[s.devicePickerMeta, { color: c.textMuted, marginTop: 2 }]}>
-                              No recent heartbeat. Power on and run yaver serve.
-                            </Text>
-                          )}
-                        </View>
-                        <View style={{ alignItems: "flex-end" }}>
-                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusChip.bg, borderWidth: 1, borderColor: statusChip.border }]}>
-                            <View style={[s.reconnectStatusDot, { backgroundColor: statusChip.dot }]} />
-                            <Text style={[s.reconnectStatusText, { color: statusChip.text }]}>{statusText}</Text>
-                          </View>
-                          {(isRetrying || isRecovering) ? (
-                            <ActivityIndicator size="small" color={isRecovering ? "#f59e0b" : c.accent} style={{ marginTop: 8 }} />
-                          ) : null}
-                        </View>
-                      </View>
-                    </Pressable>
-                  );
-                }}
-            />
-          </View>
-        )}
-
-        {/* Task list (only when the dedicated disconnected device picker
-            isn't taking over — otherwise both fight for vertical flex
-            space and the empty FlatList would render its own duplicate
-            "Not connected" frame underneath the new picker). */}
-        {!showDevicePicker && (
         <FlatList
           data={displayTasks}
           keyExtractor={(item) => item.id}
           // Always bounce so pull-to-refresh (RefreshControl below) works even
           // in the empty / no-machine state — pulling down re-scans for devices.
-          // Safe now that the empty body uses a flexGrow container (discoverEmpty)
-          // that lays out top-down instead of flex:1 centering, so it no longer
-          // overflows under the top banner.
           alwaysBounceVertical
           // Tablet portrait: 2-col grid for created tasks. Tablet
           // landscape: stays single column because the right pane
@@ -4098,57 +4029,46 @@ export default function TasksScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
           }
           ListEmptyComponent={
-            // Belt-and-suspenders: also consider raw pool state. If
-            // ANY pool client is live, the user has at least one
-            // connected box to send tasks to, so we should be in the
-            // "All Clear · No tasks yet" empty state — not the
-            // disconnected picker. Without this fallback, a stale
-            // effectiveState (e.g. mid-transition) would briefly
-            // surface "Pick a device" while Devices tab shows green
-            // CONNECTED chips.
-            (isEffectivelyConnected || anyPoolConnected) ? (
-              <View style={s.emptyList}>
-                <Ionicons name="file-tray-outline" size={56} color={withAlpha(c.textMuted, "99")} />
-                <Text style={[s.emptyTitle, { color: c.textPrimary }]}>All Clear</Text>
-                <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
-                  No tasks yet. Tap the + button to create your first task.
-                </Text>
-              </View>
-            ) : isLoadingDevices || (devices.length === 0 && everHadDevices) ? (
-              // Transient empty (VPN / network / token drift) for a user who HAS
-              // had devices: show a graceful "looking" state + retry, NEVER regress
-              // to the first-run "pair your computer" onboarding below.
-              <View style={s.emptyList}>
-                <ActivityIndicator size="large" color={c.accent} />
-                <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 16 }]}>
-                  {isLoadingDevices ? "Looking for devices..." : "Reconnecting to your devices..."}
-                </Text>
-                {!isLoadingDevices ? (
-                  <Pressable
-                    style={[s.discoverSecondaryBtn, { borderColor: c.border, marginTop: 14 }]}
-                    onPress={() => { void refreshDevices(); }}
-                  >
-                    <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Refresh</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ) : devices.length === 0 ? (
-              <View style={s.discoverEmpty}>
-                <Text style={[s.discoverIcon, { color: c.textMuted }]}>{"\u2318"}</Text>
-                <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Start Coding</Text>
-                <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8, marginBottom: 20 }]}>
-                  Pair your computer to run your AI agent, or build from this phone.
-                </Text>
-
-                {/* If the device-list fetch actually FAILED (stale/rotated
-                    token → 401, or a network error), the generic "pair your
-                    computer" copy is misleading — the user may already have
-                    machines that just couldn't load. Surface the real error
-                    and offer a clean re-auth, which mints a fresh consistent
-                    token and is the universal fix when the stored token and
-                    the live session have drifted apart. */}
+            // Belt-and-suspenders: also consider raw pool state. If ANY pool
+            // client is live, the user has a connected box to send tasks to,
+            // so this is the "All Clear" empty state — not a no-machine one.
+            // Without it a stale effectiveState (mid-transition) would briefly
+            // surface "Pick a machine" while Devices shows green CONNECTED.
+            canComposeTask ? (
+              <EmptyState
+                icon="file-tray-outline"
+                title="All Clear"
+                body="No tasks yet. Start one and it runs on your machine."
+                action={{ label: "New task", onPress: openCreateTask }}
+              />
+            ) : devices.length === 1 && connectionStatus === "connecting" ? (
+              <EmptyState busy title="Connecting…" body={devices[0].name} />
+            ) : devicesDroppedOut ? (
+              <EmptyState
+                icon="cloud-offline-outline"
+                title="Reconnecting…"
+                body="Your machines aren't answering. This is usually a VPN or network blip."
+                action={{
+                  label: "Refresh",
+                  busy: isRefreshingDevices,
+                  onPress: async () => {
+                    if (isRefreshingDevices) return;
+                    setIsRefreshingDevices(true);
+                    try { await refreshDevices(); } finally { setIsRefreshingDevices(false); }
+                  },
+                }}
+                link={{ label: "Build on this phone", onPress: () => taskRouter.navigate("/phone-projects" as any) }}
+              />
+            ) : (
+              <View>
+                {/* An auth error is a real error, not an empty state, so it
+                    keeps its warn-tinted frame and sits ABOVE the empty state
+                    rather than competing with it for the primary action. The
+                    generic "connect a computer" copy below is misleading on its
+                    own here — the user may already have machines that simply
+                    failed to load behind a stale token. */}
                 {deviceListError ? (
-                  <View style={[s.discoverErrorCard, { borderColor: withAlpha("#E0A800", "55"), backgroundColor: withAlpha("#E0A800", "12") }]}>
+                  <View style={[s.discoverErrorCard, { borderColor: withAlpha(c.warn, "55"), backgroundColor: withAlpha(c.warn, "12") }]}>
                     <Text style={[s.discoverErrorText, { color: c.textPrimary }]}>
                       Couldn't load your devices. If you have machines paired, this is usually a stale sign-in on this phone.
                     </Text>
@@ -4164,215 +4084,40 @@ export default function TasksScreen() {
                   </View>
                 ) : null}
 
-                <Pressable
-                  style={[s.discoverPrimaryBtn, { backgroundColor: c.accent }]}
-                  onPress={() => taskRouter.navigate("/onboarding-pair" as any)}
-                >
-                  <Text style={s.discoverBtnText}>Pair your computer</Text>
-                </Pressable>
-                <Text style={[s.discoverHelper, { color: c.textMuted }]}>
-                  Run{" "}
-                  <Text style={{ color: c.textSecondary }}>npm install -g yaver-cli &amp;&amp; yaver auth</Text>
-                  {" "}on your machine — it'll show up here automatically.
-                </Text>
+                <NoMachineEmpty
+                  noun="tasks"
+                  onDeviceChange={() => { void fetchTasks(); }}
+                />
 
-                {/* A blank device list often means this sign-in is a
-                    brand-new account, separate from the one the user's
-                    machines are registered under (e.g. signed in with
-                    Apple here but the boxes are under Google). Surfacing
-                    the link flow turns that dead-end into a one-tap fix
-                    instead of leaving the user staring at zero devices. */}
-                <Pressable
-                  style={s.discoverRefreshLink}
-                  onPress={() => taskRouter.navigate("/(tabs)/settings?linkAccount=1" as any)}
-                >
-                  <Text style={[s.discoverRefreshText, { color: c.accent }]}>
-                    Already use Yaver with another sign-in? Link it
-                  </Text>
-                </Pressable>
-
-                <View style={[s.discoverDivider, { backgroundColor: c.border }]} />
-                <Text style={[s.discoverSectionLabel, { color: c.textMuted }]}>Or build on this phone</Text>
-
-                <Pressable
-                  style={[s.discoverSecondaryBtn, { borderColor: c.border }]}
-                  onPress={() => taskRouter.navigate("/phone-projects" as any)}
-                >
-                  <Text style={[s.discoverBtnText, { color: c.textPrimary }]}>Open Mobile Sandbox</Text>
-                </Pressable>
-                <Text style={[s.discoverHelper, { color: c.textMuted }]}>
-                  Local SQLite-backed project. No machine required.
-                </Text>
-
-                <Pressable
-                  style={[s.discoverRefreshLink, { opacity: isRefreshingDevices ? 0.6 : 1 }]}
-                  onPress={async () => {
-                    if (isRefreshingDevices) return;
-                    setIsRefreshingDevices(true);
-                    try { await refreshDevices(); } finally { setIsRefreshingDevices(false); }
-                  }}
-                  disabled={isRefreshingDevices}
-                >
-                  {isRefreshingDevices ? (
-                    <ActivityIndicator size="small" color={c.textMuted} />
-                  ) : (
-                    <Text style={[s.discoverRefreshText, { color: c.textMuted }]}>Refresh devices</Text>
-                  )}
-                </Pressable>
-              </View>
-            ) : devices.length === 1 && connectionStatus === "connecting" ? (
-              // Single-device fast path: show a calm spinner instead
-              // of the device picker we'd otherwise render. Still no
-              // "Failed" surface — if the connect dies we fall
-              // through to the unified Not-connected list below.
-              <View style={s.emptyList}>
-                <ActivityIndicator size="large" color={c.accent} />
-                <Text style={[s.emptyTitle, { color: c.textPrimary, marginTop: 16 }]}>Connecting...</Text>
-                <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
-                  {devices[0].name}
-                </Text>
-              </View>
-            ) : devices.length >= 1 ? (
-              // Unified "Not connected" view. Used in three cases:
-              //   (a) user disconnected explicitly (was: "Disconnected /
-              //       Your last session" card with the first device only)
-              //   (b) connect attempt failed (was: red "Connection
-              //       Failed" panel with raw error message)
-              //   (c) plain "no active device" with multiple options
-              // We never surface raw errors here — the user said the
-              // product reads as "failing/buggy" when we do. Instead
-              // every known device gets a row with an explicit status
-              // pill (online / stale / offline) and tap-to-retry.
-              <View style={s.emptyList}>
-                {/* YaverAgentTasksHint used to render here too, but it
-                    duplicated the picker below + competed with the
-                    showDevicePicker branch above for vertical space \u2014
-                    on small phones the chips bled through the
-                    "Disconnected" header. The hint is meaningful only
-                    in hasZeroDevices state (where there's no picker to
-                    fall back to); when devices exist, the empty state
-                    below is the canonical "Pick a machine" affordance. */}
-                <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\u23FB"}</Text>
-                <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
-                <Text style={[s.emptySubtitle, { color: c.textSecondary, marginBottom: 16 }]}>
-                  {devices.length === 1
-                    ? "Tap the device below to connect."
-                    : `Pick one of your ${devices.length} devices.`}
-                </Text>
-                {/* When a tap actually failed, say so (friendly framing, raw
-                    reason as trailing detail). This is the "connect attempt
-                    failed" case (b) above: reconnectError / lastError were set
-                    but never rendered, so the row just stopped spinning. */}
-                {(reconnectError || lastError) && connectionStatus !== "connecting" && connectionStatus !== "connected" ? (
-                  <View style={[s.reconnectErrorBox, { borderColor: "#ef444455", backgroundColor: "#ef44441a", marginTop: 0, marginBottom: 16 }]}>
-                    <Text style={[s.reconnectError, { color: "#fca5a5", marginTop: 0 }]}>
-                      Couldn't connect.
-                      {reconnectError ? ` ${reconnectError}` : lastError ? ` ${lastError}` : ""}
-                    </Text>
+                {/* Escape hatches NoMachineEmpty can't own. Only shown with a
+                    zero-device roster, where its action is the pairing flow:
+                    the phone sandbox needs no machine, and a blank roster often
+                    means the boxes live under a different sign-in. Both are
+                    quiet links, never a second primary. */}
+                {hasZeroDevices ? (
+                  <View style={s.emptyEscapeHatches}>
+                    <Pressable
+                      hitSlop={8}
+                      style={s.emptyEscapeLink}
+                      onPress={() => taskRouter.navigate("/phone-projects" as any)}
+                    >
+                      <Text style={[s.emptyEscapeText, { color: c.accent }]}>
+                        Or build on this phone
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      hitSlop={8}
+                      style={s.emptyEscapeLink}
+                      onPress={() => taskRouter.navigate("/(tabs)/settings?linkAccount=1" as any)}
+                    >
+                      <Text style={[s.emptyEscapeText, { color: c.textMuted }]}>
+                        Already use Yaver with another sign-in? Link it
+                      </Text>
+                    </Pressable>
                   </View>
                 ) : null}
-                {devices.map((d) => {
-                  const unreachable = unreachableSet.has(d.id);
-                  const probe = deviceProbeMap[d.id];
-                  // Same pool override as the showDevicePicker branch
-                  // — a pooled connection wins over the heartbeat
-                  // derivation so this list never lies about what's
-                  // actually live.
-                  const pooled = connectedDeviceIds.includes(d.id);
-                  const baseLifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
-                    device: d,
-                    probe,
-                    unreachable,
-                  });
-                  const lifecycleState: MobileDeviceLifecycleState = pooled
-                    ? "connected"
-                    : baseLifecycleState;
-                  const statusText =
-                    lifecycleState === "connected"
-                      ? "Connected"
-                      : lifecycleState === "bootstrap"
-                        ? "Bootstrap"
-                        : lifecycleState === "yaver-auth-expired"
-                          ? "Auth Expired"
-                          : lifecycleState === "ready-to-connect"
-                            ? "Ready"
-                            : "Offline";
-                  const statusTone: ChipTone =
-                    lifecycleState === "connected"
-                      ? "emerald"
-                      : lifecycleState === "bootstrap"
-                        ? "violet"
-                        : lifecycleState === "yaver-auth-expired"
-                          ? "amber"
-                          : lifecycleState === "ready-to-connect"
-                            ? "blue"
-                            : "slate";
-                  const statusChip = chipPalette(statusTone, isDark);
-                  const isRetrying = reconnectingDeviceId === d.id;
-                  const isRecovering = recoveringDeviceId === d.id;
-                  return (
-                    <Pressable
-                      key={d.id}
-                      style={[s.devicePickerCard, {
-                        backgroundColor: c.bgCard,
-                        borderColor: unreachable && d.online ? "#eab30866" : c.border,
-                        // Wider cards per user feedback on the
-                        // disconnected screen — the old single-line
-                        // "last session" card didn't give enough room
-                        // for status + meta + action affordance.
-                        paddingVertical: 14,
-                      }]}
-                      onPress={() => !(isRetrying || isRecovering) && handleReconnect(d)}
-                      disabled={isRetrying || isRecovering}
-                    >
-                      <View style={s.devicePickerRow}>
-                        <View style={{ flex: 1 }}>
-                          <View style={s.devicePickerNameRow}>
-                            <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
-                            {primaryDeviceId === d.id ? (
-                              <View style={[s.devicePickerPrimaryBadge, { borderColor: c.accent + "88", backgroundColor: c.accent + "22" }]}>
-                                <Text style={[s.devicePickerPrimaryText, { color: c.accent }]}>PRIMARY</Text>
-                              </View>
-                            ) : null}
-                          </View>
-                          <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>
-                            {d.os} · {d.host}
-                            {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
-                          </Text>
-                          {lifecycleState === "bootstrap" ? (
-                            <Text style={[s.devicePickerMeta, { color: chipPalette("violet", isDark).text, marginTop: 2 }]}>
-                              Machine is up in bootstrap mode. Tap to reclaim Yaver and connect.
-                            </Text>
-                          ) : lifecycleState === "yaver-auth-expired" ? (
-                            <Text style={[s.devicePickerMeta, { color: chipPalette("amber", isDark).text, marginTop: 2 }]}>
-                              Machine is up, but the agent session expired. Tap to re-auth and connect.
-                            </Text>
-                          ) : lifecycleState === "ready-to-connect" ? (
-                            <Text style={[s.devicePickerMeta, { color: chipPalette("blue", isDark).text, marginTop: 2 }]}>
-                              Recent heartbeat — reachability not verified yet. Tap to connect.
-                            </Text>
-                          ) : null}
-                          {lifecycleState === "offline" && (
-                            <Text style={[s.devicePickerMeta, { color: c.textMuted, marginTop: 2 }]}>
-                              No recent heartbeat. Power on and run yaver serve.
-                            </Text>
-                          )}
-                        </View>
-                        <View style={{ alignItems: "flex-end" }}>
-                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusChip.bg, borderWidth: 1, borderColor: statusChip.border }]}>
-                            <View style={[s.reconnectStatusDot, { backgroundColor: statusChip.dot }]} />
-                            <Text style={[s.reconnectStatusText, { color: statusChip.text }]}>{statusText}</Text>
-                          </View>
-                          {(isRetrying || isRecovering) ? (
-                            <ActivityIndicator size="small" color={isRecovering ? "#f59e0b" : c.accent} style={{ marginTop: 8 }} />
-                          ) : null}
-                        </View>
-                      </View>
-                    </Pressable>
-                  );
-                })}
               </View>
-            ) : null
+            )
           }
           renderItem={({ item }) => {
             const inGrid = !tabletDualPane && layout.layoutClass === "tablet-portrait";
@@ -4390,14 +4135,13 @@ export default function TasksScreen() {
             ) : card;
           }}
         />
-        )}
 
         {/* FAB. Rendered as a bare Pressable, not wrapped in a full-screen
             absoluteFillObject layer: that wrapper (even with
             pointerEvents="box-none") regressed the second-open path —
             after a Cancel/backdrop dismiss, taps on the + would silently
             fall through on Android. Keep this simple. */}
-        {(isEffectivelyConnected || hasAnyPooledConnection) && (
+        {canComposeTask && (
           <Pressable
             hitSlop={12}
             style={({ pressed }) => [
@@ -4409,30 +4153,11 @@ export default function TasksScreen() {
               },
               pressed && s.fabPressed,
             ]}
-            onPress={() => {
-              // Defensive reset — guarantees the modal opens cleanly even if
-              // a previous cancel/backdrop-dismiss left stale state around.
-              setNewTaskText("");
-              setAttachedImages([]);
-              setInputFromSpeech(false);
-              pendingOpenTaskRef.current = null;
-              // The Alert.alert chooser ("Use this / Choose another /
-              // Cancel") was friction the user explicitly asked to
-              // remove — opening compose directly is the fast path,
-              // and the agent pill INSIDE compose now launches the
-              // wizard for switching device + agent + model when the
-              // user wants to change the target. multiTargetMode
-              // without an active connection still falls through to
-              // the wizard so the user can pick a target before they
-              // even see the composer.
-              if (multiTargetMode && (!activeDevice || !isEffectivelyConnected)) {
-                setPendingTarget(null);
-                setShowTargetWizard(true);
-              } else {
-                setPendingTarget(null);
-                setShowNewTask(true);
-              }
-            }}
+            // The Alert.alert chooser ("Use this / Choose another / Cancel")
+            // was friction the user explicitly asked to remove — opening
+            // compose directly is the fast path, and the agent pill INSIDE
+            // compose launches the wizard for switching device + agent + model.
+            onPress={openCreateTask}
           >
             <Ionicons name="add" size={28} color="#ffffff" />
           </Pressable>
@@ -4724,11 +4449,11 @@ export default function TasksScreen() {
             below targets the correct baseUrl without further work. */}
         <TaskTargetWizard
           visible={showTargetWizard}
+          onDismiss={flushAfterDismiss}
           onCancel={() => setShowTargetWizard(false)}
           onConfirmed={(target) => {
             setPendingTarget(target);
-            setShowTargetWizard(false);
-            setShowNewTask(true);
+            handoffModal(() => setShowTargetWizard(false), () => setShowNewTask(true));
           }}
         />
 
@@ -4814,9 +4539,8 @@ export default function TasksScreen() {
                     // the compose modal re-opens with the new target
                     // bound to the next send.
                     onPress={() => {
-                      setShowNewTask(false);
                       setPendingTarget(null);
-                      setShowTargetWizard(true);
+                      handoffModal(() => setShowNewTask(false), () => setShowTargetWizard(true));
                     }}
                     accessibilityRole="button"
                     accessibilityLabel="Change device, coding agent, and model for this task"
@@ -5028,7 +4752,11 @@ export default function TasksScreen() {
 
         {/* ── Agent / Model Picker Modal ─────────────────────────────── */}
         <Modal visible={showAgentPicker} animationType="slide" transparent onRequestClose={() => closeAgentPicker(false)}>
-          <Pressable style={{ flex: 1 }} onPress={() => closeAgentPicker(false)} />
+          {/* Scrim, not a bare transparent Pressable: an invisible
+              full-screen touch target is indistinguishable from a frozen
+              screen if this sheet ever gets stuck open. Every other modal
+              here dims the same way. */}
+          <Pressable style={[s.modalOverlay, { justifyContent: "flex-start" }]} onPress={() => closeAgentPicker(false)} />
           <View style={[s.agentPickerSheet, { backgroundColor: c.bgCard }]}>
             <View style={[s.agentPickerHeader, { borderBottomColor: c.border }]}>
               <Text style={[s.agentPickerTitle, { color: c.textPrimary }]}>
@@ -5053,9 +4781,9 @@ export default function TasksScreen() {
               // this filtered by `r.installed`, which silently hid two
               // chips on a fresh box and made it look like Codex was the
               // only option.
-              const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode", "glm"]);
+              const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
               const byId = new Map(availableRunners.map((r) => [r.id, r]));
-              const installed = (["claude-code", "codex", "opencode", "glm"] as const).map((id) => {
+              const installed = (["claude-code", "codex", "opencode"] as const).map((id) => {
                 const existing = byId.get(id) ?? (id === "claude-code" ? byId.get("claude") : undefined);
                 if (existing) return { ...existing, id };
                 // Synthesize a stub row for runners the agent didn't
@@ -5063,11 +4791,11 @@ export default function TasksScreen() {
                 // surfaces via runnerAuthIssue / ready=false.
                 return {
                   id,
-                  name: id === "claude-code" ? "Claude Code" : id === "codex" ? "OpenAI Codex" : id === "glm" ? "GLM (z.ai)" : "OpenCode",
+                  name: id === "claude-code" ? "Claude Code" : id === "codex" ? "OpenAI Codex" : "OpenCode",
                   installed: false,
                   ready: false,
-                  // opencode + glm authenticate via a stored key, not browser OAuth.
-                  supportsBrowserAuth: id !== "opencode" && id !== "glm",
+                  // opencode authenticates via provider config, not browser OAuth.
+                  supportsBrowserAuth: id !== "opencode",
                 } as typeof availableRunners[number];
               });
               // Keep the currently-selected runner visible even if it's
@@ -5109,6 +4837,12 @@ export default function TasksScreen() {
                           if (activeDevice?.id) {
                             void setPrimaryRunnerForDevice(activeDevice.id, r.id, null).catch(() => {});
                           }
+                          if (r.id === "opencode" && runnerAuthIssue(r)) {
+                            setOpenCodeConfigTarget(activeDevice?.id || null);
+                            setOpenCodeConfigStartInAdd(true);
+                            setShowOpenCodeConfig(true);
+                            return;
+                          }
                           if (runnerAuthIssue(r) && r.supportsBrowserAuth) {
                             openRunnerAuthModal(r.id);
                           }
@@ -5119,30 +4853,7 @@ export default function TasksScreen() {
                         </Text>
                       </Pressable>
                     ))}
-                    <Pressable
-                      style={[
-                        s.modelChip,
-                        { borderColor: selectedRunner === "custom" ? "#f59e0b" : c.border },
-                        selectedRunner === "custom" && { backgroundColor: "#f59e0b20" },
-                      ]}
-                      onPress={() => setSelectedRunner("custom")}
-                    >
-                      <Text style={[s.modelChipText, { color: selectedRunner === "custom" ? "#f59e0b" : c.textMuted }]}>
-                        Custom
-                      </Text>
-                    </Pressable>
                   </View>
-                  {selectedRunner === "custom" && (
-                    <TextInput
-                      style={[s.input, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary, marginHorizontal: 16, marginBottom: 8, fontSize: 13, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
-                      placeholder="Command, e.g. my-tool --auto {prompt}"
-                      placeholderTextColor={c.textMuted}
-                      value={customCommand}
-                      onChangeText={setCustomCommand}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
-                  )}
                   {selectedRunnerRow?.ready === false && selectedRunner !== "custom" && (
                     <View
                       style={{
@@ -5167,7 +4878,29 @@ export default function TasksScreen() {
                           selectedRunnerRow.warning ||
                           `${selectedRunnerRow.name} is installed but not ready on this machine.`}
                       </Text>
-                      {selectedRunnerAuthIssue && selectedRunnerRow.supportsBrowserAuth ? (
+                      {selectedRunnerAuthIssue && selectedRunnerRow.id === "opencode" ? (
+                        <Pressable
+                          onPress={() => {
+                            setOpenCodeConfigTarget(activeDevice?.id || null);
+                            setOpenCodeConfigStartInAdd(true);
+                            setShowOpenCodeConfig(true);
+                          }}
+                          style={{
+                            alignSelf: "flex-start",
+                            marginTop: 10,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: "rgba(125,211,252,0.35)",
+                            backgroundColor: "rgba(125,211,252,0.12)",
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                          }}
+                        >
+                          <Text style={{ color: "#e0f2fe", fontSize: 12, fontWeight: "700" }}>
+                            OpenCode settings
+                          </Text>
+                        </Pressable>
+                      ) : selectedRunnerAuthIssue && selectedRunnerRow.supportsBrowserAuth ? (
                         <Pressable
                           onPress={() => openRunnerAuthModal(selectedRunnerRow.id)}
                           style={{
@@ -5282,7 +5015,7 @@ export default function TasksScreen() {
         <RunnerAuthModal
           visible={!!runnerAuthModalRunner}
           runner={runnerAuthModalRunner || "claude"}
-          deviceName={activeDevice?.name || "this machine"}
+          deviceName={devices.find((d) => d.id === (runnerAuthModalTarget || activeDevice?.id))?.name || activeDevice?.name || "this machine"}
           // Routes /runner-auth/browser/* via /peer/<id> when set, so
           // OAuth runs against the remote box where the runner actually
           // lives — not the device the phone happens to be focused on.
@@ -5300,10 +5033,11 @@ export default function TasksScreen() {
         <OpenCodeConfigModal
           visible={showOpenCodeConfig}
           startInAddProvider={openCodeConfigStartInAdd}
-          target={activeDevice?.id}
+          target={openCodeConfigTarget || activeDevice?.id}
           onClose={() => {
             setShowOpenCodeConfig(false);
             setOpenCodeConfigStartInAdd(false);
+            setOpenCodeConfigTarget(null);
             // A saved provider/key changes OpenCode readiness — re-poll so the
             // banner flips from "needs setup" to "ready" without a manual nudge.
             void refreshRunnerState();
@@ -5385,11 +5119,14 @@ export default function TasksScreen() {
                     );
                   }}
                   ListEmptyComponent={
-                    <View style={{ padding: 24, alignItems: "center" }}>
-                      <Text style={[s.emptySubtitle, { color: c.textMuted, textAlign: "center" }]}>
-                        No tasks yet. Tap + to start one.
-                      </Text>
-                    </View>
+                    <EmptyState
+                      icon="file-tray-outline"
+                      title="No tasks yet"
+                      // The FAB sits under the chat pane in this layout, so the
+                      // action is the only way to compose from here — and it's
+                      // only offered when there's a box that can run the task.
+                      action={canComposeTask ? { label: "New task", onPress: openCreateTask } : undefined}
+                    />
                   }
                 />
               </View>
@@ -5500,7 +5237,11 @@ export default function TasksScreen() {
                     // ErrorMessage card below.
                     const retryRunner = normalizeTaskRunnerId(selectedTask.runnerId) || resolveRunnerForSend();
                     const retryModel = resolveModelForSend(retryRunner, selectedTask.model);
-                    void quicClient.sendTask(
+                    const taskDevice = deviceForTask(selectedTask);
+                    const retryClient = taskDevice?.id && connectionManager.clientFor(taskDevice.id).isConnected
+                      ? connectionManager.clientFor(taskDevice.id)
+                      : quicClient;
+                    void retryClient.sendTask(
                       selectedTask.title,
                       "",
                       retryModel,
@@ -5510,7 +5251,12 @@ export default function TasksScreen() {
                       undefined,
                       projectDir || undefined,
                     ).then((retried) => {
-                      const next = { ...retried, deviceName: selectedTask.deviceName || activeDevice?.name || retried.deviceName, model: retried.model || retryModel };
+                      const next = {
+                        ...retried,
+                        deviceId: taskDevice?.id || selectedTask.deviceId,
+                        deviceName: taskDevice?.name || selectedTask.deviceName || activeDevice?.name || retried.deviceName,
+                        model: retried.model || retryModel,
+                      };
                       setTasks((prev) => [next, ...prev]);
                       setSelectedTask(next);
                     }).catch((err) => {
@@ -5528,22 +5274,43 @@ export default function TasksScreen() {
                     picker seeded to the task's runner and re-runs on close. */}
                 {selectedTask.status === "failed" ? (
                   <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
-                    <Pressable
-                      onPress={() => {
-                        setSelectedRunner(selectedTask.runnerId || "");
-                        userPickedModelRef.current = false;
-                        retryAfterPickRef.current = selectedTask;
-                        setShowAgentPicker(true);
-                      }}
-                      style={({ pressed }) => [
-                        { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 11, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCardElevated },
-                        pressed && { opacity: 0.6 },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Switch model or agent and retry this task"
-                    >
-                      <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>⚙  Switch model &amp; retry</Text>
-                    </Pressable>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <Pressable
+                        onPress={() => {
+                          setSelectedRunner(selectedTask.runnerId || "");
+                          userPickedModelRef.current = false;
+                          retryAfterPickRef.current = selectedTask;
+                          setShowAgentPicker(true);
+                        }}
+                        style={({ pressed }) => [
+                          { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 11, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCardElevated },
+                          pressed && { opacity: 0.6 },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Switch model or agent and retry this task"
+                      >
+                        <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>⚙  Switch model &amp; retry</Text>
+                      </Pressable>
+                      {normalizeTaskRunnerId(selectedTask.runnerId) === "opencode" ? (
+                        <Pressable
+                          onPress={() => {
+                            const target = deviceForTask(selectedTask)?.id || selectedTask.deviceId || activeDevice?.id || null;
+                            setOpenCodeConfigTarget(target);
+                            setOpenCodeConfigStartInAdd(true);
+                            setSelectedTask(null);
+                            setTimeout(() => setShowOpenCodeConfig(true), 280);
+                          }}
+                          style={({ pressed }) => [
+                            { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 11, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCardElevated },
+                            pressed && { opacity: 0.6 },
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Open OpenCode settings for this task's machine"
+                        >
+                          <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>OpenCode settings</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
                   </View>
                 ) : null}
 
@@ -5639,10 +5406,8 @@ export default function TasksScreen() {
                                   // routes through /peer/<deviceId>/
                                   // when target is set.
                                   const runnerId = (suggestion.payload || selectedTask.runnerId || "claude").toLowerCase();
-                                  // Task type doesn't carry deviceId — fall
-                                  // back to the active device (which is where
-                                  // the task ran when the user selected it).
-                                  const targetId = activeDevice?.id || null;
+                                  const taskDevice = deviceForTask(selectedTask);
+                                  const targetId = taskDevice?.id || selectedTask.deviceId || activeDevice?.id || null;
                                   // CRITICAL: dismiss the chat-detail Modal
                                   // before opening RunnerAuthModal. React
                                   // Native cannot stack two sibling Modals
@@ -5690,7 +5455,11 @@ export default function TasksScreen() {
                                     : selectedTask.title;
                                 const retryRunner = normalizeTaskRunnerId(selectedTask.runnerId) || resolveRunnerForSend();
                                 const retryModel = resolveModelForSend(retryRunner, selectedTask.model);
-                                void quicClient.sendTask(
+                                const taskDevice = deviceForTask(selectedTask);
+                                const retryClient = taskDevice?.id && connectionManager.clientFor(taskDevice.id).isConnected
+                                  ? connectionManager.clientFor(taskDevice.id)
+                                  : quicClient;
+                                void retryClient.sendTask(
                                   titleHint,
                                   "",
                                   retryModel,
@@ -5700,7 +5469,12 @@ export default function TasksScreen() {
                                   undefined,
                                   projectDir || undefined,
                                 ).then((retried) => {
-                                  const next = { ...retried, deviceName: selectedTask.deviceName || activeDevice?.name || retried.deviceName, model: retried.model || retryModel };
+                                  const next = {
+                                    ...retried,
+                                    deviceId: taskDevice?.id || selectedTask.deviceId,
+                                    deviceName: taskDevice?.name || selectedTask.deviceName || activeDevice?.name || retried.deviceName,
+                                    model: retried.model || retryModel,
+                                  };
                                   setTasks((prev) => [next, ...prev]);
                                   setSelectedTask(next);
                                 }).catch((err) => {
@@ -5996,7 +5770,7 @@ export default function TasksScreen() {
           </View>
         </Modal>
         {/* ── Tmux Sessions Modal ────────────────────────────────── */}
-        <Modal visible={showTmuxSessions} animationType="slide" transparent onRequestClose={() => setShowTmuxSessions(false)}>
+        <Modal visible={showTmuxSessions} animationType="slide" transparent onDismiss={flushAfterDismiss} onRequestClose={() => setShowTmuxSessions(false)}>
           <View style={s.logsModalOverlay}>
             <Pressable style={{ height: 80 }} onPress={() => setShowTmuxSessions(false)} />
             <View style={[s.logsModal, { backgroundColor: c.bg }]}>
@@ -6199,46 +5973,18 @@ const s = StyleSheet.create({
   // List
   listContent: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 120 },
   listContentEmpty: { flexGrow: 1 },
-  emptyList: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
-  // Discover/zero-device empty state: grow + scroll instead of flex:1 center,
-  // so the (tall) content never clips off the top under the connection banner.
-  discoverEmpty: { flexGrow: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 24, paddingVertical: 28 },
-  // Sticky header for the disconnected device picker. Doesn't scroll
-  // even when the user has 5+ devices, so "Not connected · Pick one of
-  // your N devices" is always visible without scrolling up.
-  emptyPickerHeader: { paddingHorizontal: 24, paddingTop: 32, paddingBottom: 16, borderBottomWidth: StyleSheet.hairlineWidth },
-  emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { ...typography.pageTitle, fontSize: 22, marginTop: 24, marginBottom: 8, textAlign: "center" },
-  emptySubtitle: { ...typography.body, textAlign: "center", lineHeight: 22, maxWidth: 280, alignSelf: "center" },
 
-  // Inline connect button (reconnect after user disconnect)
-  inlineConnectBtn: { marginTop: 20, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 10 },
-  inlineConnectText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
-
-  // Device picker cards (multi-device selection)
-  devicePickerCard: { width: "100%", borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 2 },
-  devicePickerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  devicePickerNameRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  devicePickerName: { fontSize: 16, fontWeight: "600" },
-  devicePickerPrimaryBadge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  devicePickerPrimaryText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.6 },
-  devicePickerMeta: { fontSize: 12, marginTop: 2 },
-  devicePickerDot: { width: 10, height: 10, borderRadius: 5 },
-
-  // Error actions row
-  errorActions: { flexDirection: "row", marginTop: 20 },
+  // Escape hatches under NoMachineEmpty (zero-device roster only). Quiet
+  // links, deliberately not buttons — EmptyState's own action is the primary.
+  emptyEscapeHatches: { alignItems: "center", paddingHorizontal: 32 },
+  emptyEscapeLink: { paddingVertical: 6 },
+  emptyEscapeText: { fontSize: 13, fontWeight: "600", textAlign: "center" },
 
   // Discover card (no devices)
-  discoverIcon: { fontSize: 40, marginBottom: 12 },
-  discoverPrimaryBtn: { width: "100%", paddingVertical: 14, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   discoverSecondaryBtn: { width: "100%", marginTop: 20, paddingVertical: 12, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center", minHeight: 44 },
-  discoverRefreshLink: { marginTop: 20, paddingVertical: 8, alignItems: "center" },
-  discoverRefreshText: { fontSize: 13, fontWeight: "500" },
   discoverHelper: { fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: "center", paddingHorizontal: 8 },
   discoverErrorCard: { width: "100%", marginBottom: 20, padding: 14, borderRadius: 12, borderWidth: 1 },
   discoverErrorText: { fontSize: 13, lineHeight: 19, fontWeight: "500", textAlign: "center" },
-  discoverDivider: { height: 1, width: "100%", marginTop: 28, marginBottom: 14, opacity: 0.5 },
-  discoverSectionLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 },
   discoverSteps: { width: "100%", marginTop: 12, gap: 14 },
   discoverStep: { flexDirection: "row", alignItems: "center", gap: 12 },
   discoverStepDot: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
@@ -6256,11 +6002,6 @@ const s = StyleSheet.create({
   reconnectDeviceInfo: { flex: 1 },
   reconnectDeviceName: { fontSize: 16, fontWeight: "600" },
   reconnectDeviceMeta: { fontSize: 12, marginTop: 2, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
-  reconnectDeviceStatus: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  reconnectStatusDot: { width: 8, height: 8, borderRadius: 4 },
-  reconnectStatusText: { fontSize: 11, fontWeight: "600", textTransform: "uppercase" },
-  reconnectError: { fontSize: 13, textAlign: "center", marginTop: 12, lineHeight: 18 },
-  reconnectErrorBox: { marginTop: 12, borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12 },
   reconnectBtn: { marginTop: 16, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 10 },
   reconnectBtnRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   reconnectBtnText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
@@ -6304,6 +6045,7 @@ const s = StyleSheet.create({
   ipPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1, maxWidth: 132 },
   ipPillText: { fontSize: 11, fontWeight: "500" },
   taskRunnerLabel: { fontSize: 11, maxWidth: 132, textAlign: "right" },
+  taskActionButton: { width: 32, height: 28, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   taskTitle: { fontSize: 16, fontWeight: "600", lineHeight: 22, letterSpacing: -0.2 },
   taskPhaseRow: { marginBottom: 8 },
   phaseChip: { alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1 },

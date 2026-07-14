@@ -10,6 +10,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInp
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
+import EmptyState from "../../src/components/EmptyState";
 import { useColors } from "../../src/context/ThemeContext";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { useAuth } from "../../src/context/AuthContext";
@@ -436,16 +437,17 @@ export default function MeshHomeScreen() {
         ) : null}
 
         {mesh.loading && machines.length === 0 ? (
-          <ActivityIndicator color={c.textMuted} />
+          <EmptyState busy title="Looking for your machines…" />
         ) : machines.length === 0 ? (
-          <View style={{ borderRadius: 14, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, padding: 16, gap: 6 }}>
-            <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>No machines yet</Text>
-            <Text style={{ color: c.textMuted, fontSize: 13, lineHeight: 18 }}>
-              Install Yaver on a dev box with <Text style={{ fontFamily: "Menlo" }}>npm i -g yaver-cli</Text> and sign in.
-              It shows up here — then tap <Text style={{ fontWeight: "700" }}>Enable mesh</Text> to give it a stable 100.96
-              overlay IP every other node can reach (a Tailscale alternative across your fleet).
-            </Text>
-          </View>
+          // No machines: the only real next move is putting Yaver on a box.
+          // "Enable mesh" is a per-row control — with an empty roster it does
+          // not exist, so we don't name it.
+          <EmptyState
+            icon="git-network-outline"
+            title="No machines yet"
+            body="Install Yaver on a dev box and sign in. It shows up here, and joins the mesh with a stable overlay IP every other node can reach."
+            action={{ label: "Connect a computer", onPress: () => router.push("/onboarding-pair" as any) }}
+          />
         ) : (
           <>
             {mine.length > 0 ? (
@@ -457,10 +459,14 @@ export default function MeshHomeScreen() {
           </>
         )}
 
-        <View style={{ gap: 8, marginTop: 4 }}>
-          <FooterLink label="Access rules" sub="Who can reach what — ACLs & device tags" onPress={() => router.navigate("/(tabs)/mesh-access" as any)} />
-          <FooterLink label="Sharing" sub="Support a friend · who can access your machines" onPress={() => router.navigate("/(tabs)/mesh-share" as any)} />
-        </View>
+        {/* ACLs and sharing describe machines. With none, both screens are empty
+            rooms — don't offer the door. */}
+        {machines.length > 0 ? (
+          <View style={{ gap: 8, marginTop: 4 }}>
+            <FooterLink label="Access rules" sub="Who can reach what — ACLs & device tags" onPress={() => router.navigate("/(tabs)/mesh-access" as any)} />
+            <FooterLink label="Sharing" sub="Support a friend · who can access your machines" onPress={() => router.navigate("/(tabs)/mesh-share" as any)} />
+          </View>
+        ) : null}
       </ScrollView>
 
       <MeshEnableProgress info={progressInfo} />

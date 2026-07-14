@@ -16,6 +16,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Markdown from "react-native-markdown-display";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
+import EmptyState from "../../src/components/EmptyState";
+import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
@@ -46,7 +48,7 @@ export default function FilesScreen() {
   const router = useRouter();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("regular");
-  const { connectionStatus } = useDevice();
+  const { activeDevice, connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
 
   const [roots, setRoots] = useState<FileRoot[]>([]);
@@ -198,7 +200,13 @@ export default function FilesScreen() {
         </View>
       ) : null}
 
-      {loading ? (
+      {!activeDevice ? (
+        // No machine selected → there is nothing to scan. The old copy ("the
+        // agent scans your home directory automatically") was a lie here: no
+        // agent is being talked to, loadRoots() returns early, and the pull-to-
+        // refresh pulled into the void.
+        <NoMachineEmpty noun="projects" />
+      ) : loading ? (
         <View style={styles.centered}>
           <ActivityIndicator color={c.accent} />
         </View>
@@ -251,12 +259,7 @@ export default function FilesScreen() {
               <Text style={[styles.chevron, { color: c.textMuted }]}>{"\u203A"}</Text>
             </Pressable>
           )}
-          ListEmptyComponent={
-            <View style={styles.centered}>
-              <Text style={{ fontSize: 42 }}>{"\u{1F4C2}"}</Text>
-              <Text style={[styles.emptyText, { color: c.textMuted, marginTop: 10 }]}>Empty folder</Text>
-            </View>
-          }
+          ListEmptyComponent={<EmptyState icon="folder-open-outline" title="Empty folder" />}
         />
       ) : (
         <FlatList
@@ -287,12 +290,13 @@ export default function FilesScreen() {
             </Pressable>
           )}
           ListEmptyComponent={
-            <View style={styles.centered}>
-              <Text style={{ fontSize: 42 }}>{"\u{1F50D}"}</Text>
-              <Text style={[styles.emptyText, { color: c.textMuted, marginTop: 10, textAlign: "center", paddingHorizontal: 40 }]}>
-                No projects discovered yet. The agent scans your home directory automatically.
-              </Text>
-            </View>
+            // Only truthful once a machine IS selected — the agent really is
+            // scanning that box's home dir, and the refresh really re-asks it.
+            <EmptyState
+              icon="folder-outline"
+              title="No projects yet"
+              body={`${activeDevice.name} is scanning its home directory. Pull to refresh once your repos are there.`}
+            />
           }
         />
       )}

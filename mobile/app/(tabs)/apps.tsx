@@ -23,6 +23,8 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import { useDevice } from "../../src/context/DeviceContext";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
+import EmptyState from "../../src/components/EmptyState";
+import NoMachineEmpty from "../../src/components/NoMachineEmpty";
 import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
@@ -1848,24 +1850,28 @@ export default function AppsScreen() {
           </View>
         )}
 
-        {/* Search + Projects list */}
-        <View style={[s.searchRow, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle, borderWidth: isDark ? 0 : 1 }]}>
-          <Ionicons name="search" size={16} color={c.textMuted} />
-          <TextInput
-            style={[s.searchInput, { color: c.textPrimary }]}
-            placeholder="Search projects..."
-            placeholderTextColor={c.textMuted}
-            value={search}
-            onChangeText={setSearch}
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
-          {search.length > 0 && (
-            <Pressable onPress={() => setSearch("")}>
-              <Ionicons name="close" size={16} color={c.textMuted} />
-            </Pressable>
-          )}
-        </View>
+        {/* Search + Projects list. A search field over an empty list is dead
+            chrome — it can only ever return nothing. Show it once there's
+            something to filter (or a query still in the box to clear). */}
+        {projects.length > 0 || search.length > 0 ? (
+          <View style={[s.searchRow, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle, borderWidth: isDark ? 0 : 1 }]}>
+            <Ionicons name="search" size={16} color={c.textMuted} />
+            <TextInput
+              style={[s.searchInput, { color: c.textPrimary }]}
+              placeholder="Search projects..."
+              placeholderTextColor={c.textMuted}
+              value={search}
+              onChangeText={setSearch}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            {search.length > 0 && (
+              <Pressable onPress={() => setSearch("")}>
+                <Ionicons name="close" size={16} color={c.textMuted} />
+              </Pressable>
+            )}
+          </View>
+        ) : null}
 
         {/* Category + framework filter chips */}
         {(() => {
@@ -2014,62 +2020,44 @@ export default function AppsScreen() {
             );
           }}
           ListEmptyComponent={
-            <View style={[s.emptyList, { paddingHorizontal: 24 }]}>
-              <View
-                style={{
-                  alignSelf: "center",
-                  width: "100%",
-                  maxWidth: 360,
-                  alignItems: "center",
-                  padding: 24,
-                  borderRadius: 14,
-                  backgroundColor: c.bgCardElevated,
-                  borderWidth: 1,
-                  borderColor: c.borderSubtle,
-                }}
-              >
-                <Ionicons
-                  name="folder-open-outline"
-                  size={32}
-                  color={c.textMuted}
-                  style={{ marginBottom: 12 }}
-                />
-                <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "600", marginBottom: 6 }}>
-                  {projectsDiscovering ? "Discovering projects…" : "No projects yet"}
-                </Text>
-                <Text
-                  style={{
-                    color: c.textSecondary,
-                    fontSize: 13,
-                    lineHeight: 19,
-                    textAlign: "center",
-                    marginBottom: 16,
-                  }}
-                >
-                  Yaver scans your home directory automatically. This usually takes a few seconds after connecting.
-                </Text>
-                <Pressable
-                  style={{
-                    paddingHorizontal: 18,
-                    paddingVertical: 10,
-                    borderRadius: 10,
-                    backgroundColor: projectsDiscovering ? c.bgInput : c.accent,
-                    minWidth: 160,
-                    alignItems: "center",
-                  }}
-                  onPress={async () => {
-                    try {
-                      setProjectsDiscovering(true);
-                      await quicClient.refreshMobileProjects();
-                    } catch {}
-                  }}
-                >
-                  <Text style={{ color: projectsDiscovering ? c.textSecondary : "#ffffff", fontSize: 14, fontWeight: "600" }}>
-                    {projectsDiscovering ? "Discovering…" : "Rediscover"}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
+            // Three genuinely different dead-ends, not one card with mutable
+            // text: no machine to scan / a search that matched nothing / a
+            // machine with no projects on it. Only the last one can honestly
+            // offer "Rediscover".
+            !activeDevice ? (
+              <NoMachineEmpty noun="projects" />
+            ) : search.trim() ? (
+              <EmptyState
+                icon="search-outline"
+                title="No matches"
+                body={`Nothing named “${search.trim()}” on ${activeDevice.name || "this machine"}.`}
+                action={{ label: "Clear search", onPress: () => setSearch("") }}
+              />
+            ) : (
+              <EmptyState
+                icon="folder-open-outline"
+                busy={projectsDiscovering}
+                title={projectsDiscovering ? "Scanning…" : "No projects yet"}
+                body={
+                  projectsDiscovering
+                    ? `Looking through the home directory on ${activeDevice.name || "your machine"}.`
+                    : `Yaver found nothing to build on ${activeDevice.name || "this machine"}.`
+                }
+                action={
+                  projectsDiscovering
+                    ? undefined
+                    : {
+                        label: "Scan again",
+                        onPress: async () => {
+                          try {
+                            setProjectsDiscovering(true);
+                            await quicClient.refreshMobileProjects();
+                          } catch {}
+                        },
+                      }
+                }
+              />
+            )
           }
         />
       </View>
@@ -2709,9 +2697,7 @@ const s = StyleSheet.create({
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   emptySubtitle: { fontSize: 13, textAlign: "center", lineHeight: 20 },
-  emptyList: { flexGrow: 1, padding: 40, alignItems: "center", justifyContent: "center" },
-  emptyCta: { marginTop: 14, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  emptyCtaText: { fontSize: 14, fontWeight: "600" },
+  // Empty-list card + CTA now live in the shared, chromeless <EmptyState>.
 
   // WebView header
   webViewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1 },

@@ -244,6 +244,8 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     machines: managedMachines,
     wakingId: managedWakingId,
     errors: managedWakeErrors,
+    lastFailure: managedLastFailure,
+    justWoke: managedJustWoke,
     wake: wakeManagedMachine,
   } = useParkedMachines(token);
   const sleepingMachines = React.useMemo(
@@ -1062,7 +1064,13 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               })
             )}
 
-            {sleepingMachines.length > 0 ? (
+            {/* The outcome blocks below are deliberately OUTSIDE the row list.
+                A wake ends by removing its row from this list — the box becomes
+                a device, or (on failure) can be filtered out — so anything
+                rendered only on the row disappears at exactly the moment it has
+                something to say. That is the bug the user filmed: tap Wake, the
+                row vanishes, nothing is ever explained. */}
+            {sleepingMachines.length > 0 || managedLastFailure || managedJustWoke ? (
               <View style={{ marginTop: 8 }}>
                 <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "700", marginBottom: 2 }}>
                   Sleeping machines
@@ -1070,6 +1078,45 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                 <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 12 }}>
                   Yaver-managed boxes parked to stop their meter. Wake one to use it as a remote box.
                 </Text>
+
+                {managedJustWoke ? (
+                  <View
+                    style={{
+                      marginBottom: 10,
+                      padding: 12,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: c.success,
+                      backgroundColor: c.success + "14",
+                    }}
+                  >
+                    <Text style={{ color: c.success, fontSize: 13, fontWeight: "700" }}>
+                      {managedMachineName(managedJustWoke)} is awake
+                    </Text>
+                    <Text style={{ color: c.textSecondary, fontSize: 11, marginTop: 4 }}>
+                      It moved out of Sleeping and is listed above as a machine you can pick.
+                    </Text>
+                  </View>
+                ) : null}
+
+                {managedLastFailure && !sleepingMachines.some((m) => m.id === managedLastFailure.machineId) ? (
+                  <View
+                    style={{
+                      marginBottom: 10,
+                      padding: 12,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: c.warn,
+                      backgroundColor: c.warn + "14",
+                    }}
+                  >
+                    <Text style={{ color: c.warn, fontSize: 13, fontWeight: "700" }}>Wake failed</Text>
+                    <Text style={{ color: c.textSecondary, fontSize: 11, marginTop: 4 }}>
+                      {managedLastFailure.message}
+                    </Text>
+                  </View>
+                ) : null}
+
                 {sleepingMachines.map((machine) => (
                   <SleepingMachineRow
                     key={machine.id}

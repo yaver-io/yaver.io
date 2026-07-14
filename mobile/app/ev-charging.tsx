@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
+import EmptyState from "../src/components/EmptyState";
 import { useDevice } from "../src/context/DeviceContext";
 import { useColors } from "../src/context/ThemeContext";
 import { addEVEvent, approveEV, makeEVIntent, setEVRoute, setEVState } from "../src/lib/evCharging/intent";
@@ -572,12 +573,14 @@ export default function EVChargingScreen() {
             </View>
           </>
         ) : (
-          <View style={[styles.empty, { borderColor: c.border }]}>
-            <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>No charger selected</Text>
-            <Text style={[styles.emptyText, { color: c.textMuted }]}>
-              Scan a ZES, Esarj, Trugo, En Yakıt, Voltrun, Sharz, Şarj@TR, or other charger QR. Unknown providers still get manual assist.
-            </Text>
-          </View>
+          // The old card told you to "Scan a … QR" without carrying a Scan
+          // control. It now does — the same handler the header button uses.
+          <EmptyState
+            icon="qr-code-outline"
+            title="No charger selected"
+            body="Scan a ZES, Esarj, Trugo, En Yakıt, Voltrun, Sharz, Şarj@TR, or other charger QR. Unknown providers still get manual assist."
+            action={{ label: "Scan QR", onPress: () => setScannerOpen(true) }}
+          />
         )}
       </ScrollView>
     </SafeAreaView>
@@ -634,9 +637,6 @@ const styles = StyleSheet.create({
   eventRow: { borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 8 },
   eventType: { fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
   eventText: { fontSize: 12, marginTop: 2 },
-  empty: { borderWidth: 1, borderStyle: "dashed", borderRadius: 8, padding: 24, alignItems: "center" },
-  emptyTitle: { fontSize: 16, fontWeight: "700" },
-  emptyText: { fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 6 },
   scanTitle: { fontSize: 22, fontWeight: "700", textAlign: "center", marginBottom: 10 },
   scanBody: { fontSize: 14, lineHeight: 20, textAlign: "center", marginBottom: 22 },
   scannerOverlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },

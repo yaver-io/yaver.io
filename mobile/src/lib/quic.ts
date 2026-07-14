@@ -324,6 +324,7 @@ export interface OpenCodeProviderSummary {
   id: string;
   name?: string;
   baseUrl?: string;
+  hasApiKey?: boolean;
   models?: Array<{ id: string; name?: string }>;
 }
 export interface OpenCodeAgentSummary {

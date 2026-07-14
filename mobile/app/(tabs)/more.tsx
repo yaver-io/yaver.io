@@ -16,6 +16,7 @@ import * as Clipboard from "expo-clipboard";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
+import EmptyState from "../../src/components/EmptyState";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -3204,13 +3205,21 @@ export default function MoreScreen() {
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
         </Pressable>
 
+        {/* Both routes named in the copy are now pressable: the pill opens the
+            same pairing sheet the "Pair Device" quick card does, the link goes
+            to the same Mobile Sandbox the hero card does. This used to be a
+            bordered card that named two moves and offered neither. */}
         {!connected ? (
-          <View style={[s.emptyStateCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-            <Text style={[s.emptyStateTitle, { color: c.textPrimary }]}>No remote machine connected</Text>
-            <Text style={[s.emptyStateText, { color: c.textMuted }]}>
-              Start on this phone now with Mobile Sandbox, or pair a Yaver machine when you want remote coding, builds, and infra tools.
-            </Text>
-          </View>
+          <EmptyState
+            icon="desktop-outline"
+            title="No remote machine connected"
+            body="Pair a Yaver machine for remote coding, builds, and infra tools — or start right here on this phone."
+            action={{ label: "Pair a machine", onPress: openPair }}
+            link={{
+              label: "Start in Mobile Sandbox",
+              onPress: () => router.navigate("/phone-projects" as any),
+            }}
+          />
         ) : null}
 
         {LEAN_MORE_SURFACE ? (
@@ -4129,20 +4138,6 @@ const s = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.8,
     textTransform: "uppercase",
-  },
-  emptyStateCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 6,
-  },
-  emptyStateTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  emptyStateText: {
-    fontSize: 13,
-    lineHeight: 18,
   },
   sectionHeader: {
     gap: 3,
