@@ -1767,7 +1767,59 @@ export class QuicClient {
     // GETs it triggers) can never be starved. This is a plain short-lived
     // fetchWithTimeout — it does NOT hold an SSE slot itself.
     this.freeStreamSlotForRequest();
-    const res = await this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
+    // A 30s abort here is a TIMEOUT, not a mysterious cancellation. Letting the
+    // raw AbortError bubble is what produces the useless "Task failed /
+    // Aborted" alert — the user is told nothing about what to do next, and it
+    // looks identical to a runner crash even though the request never left the
+    // phone's socket. Name the actual condition: the box didn't answer.
+    // (Seen for real when the box was pinned at 100% CPU by another build: the
+    // relay was up, the runner was authenticated and idle, and the POST still
+    // timed out.)
+    let res: Response;
+    try {
+      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode);
+    } catch (e) {
+      if (e instanceof Error && (e.name === "AbortError" || /abort/i.test(e.message))) {
+        throw new Error(
+          "Timed out after 30s — the machine accepted the connection but never answered. It's usually busy (a heavy build will do it) or the relay path went stale. Check it's responsive, then retry.",
+        );
+      }
+      throw e;
+    }
+    if (!res.ok) {
+      throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
+    }
+    const data = await res.json();
+    // Agent returns { ok, taskId, status, runnerId, model }
+    return {
+      id: data.taskId,
+      title,
+      description,
+      status: data.status,
+      runnerId: data.runnerId,
+      model: typeof data.model === "string" && data.model.trim() ? data.model.trim() : undefined,
+      output: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+  }
+
+  /** The bare POST /tasks. Split out of sendTask so the timeout/abort mapping
+   *  above stays readable — this is the wire call, nothing else. */
+  private async sendTaskRequest(
+    title: string,
+    description: string,
+    model: string | undefined,
+    runner: string | undefined,
+    customCommand: string | undefined,
+    sc: ReturnType<QuicClient["withTtsMode"]>,
+    images: ImageAttachment[] | undefined,
+    workDir: string | undefined,
+    mode: string | undefined,
+    video: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" } | undefined,
+    codeMode: boolean | undefined,
+  ): Promise<Response> {
+    return this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1787,22 +1839,6 @@ export class QuicClient {
         ...(video?.source ? { videoSource: video.source } : {}),
       }),
     }, 30000);
-    if (!res.ok) {
-      throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
-    }
-    const data = await res.json();
-    // Agent returns { ok, taskId, status, runnerId, model }
-    return {
-      id: data.taskId,
-      title,
-      description,
-      status: data.status,
-      runnerId: data.runnerId,
-      model: typeof data.model === "string" && data.model.trim() ? data.model.trim() : undefined,
-      output: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
   }
 
   /**
