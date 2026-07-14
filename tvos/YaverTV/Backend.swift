@@ -15,6 +15,11 @@ enum Backend {
     static let convexSiteURL = URL(string: "https://perceptive-minnow-557.eu-west-1.convex.site")!
     static let webBaseURL = URL(string: "https://yaver.io")!
     static let agentPort = 18080
+
+    /// This frontend's surface, sent as X-Yaver-Surface on every request so the
+    /// agent can adapt per surface (tv vs watch vs car vs vision). See the Go
+    /// agent's surface.go.
+    static let surface = "tv"
 }
 
 struct DeviceCodeStart: Decodable {
@@ -49,14 +54,24 @@ enum DeviceCodeError: Error, LocalizedError {
 }
 
 enum DeviceCodeAuth {
-    static func start(machineName: String = "Apple TV") async throws -> DeviceCodeStart {
+    /// `platform`/`environment` are what the device registers itself as. They
+    /// default to tvOS because this file was the TV's first, and visionOS imports
+    /// it — a headset that took the defaults registered in Convex as an Apple TV,
+    /// so the user's own device list lied about what they were wearing. The
+    /// backend takes these as free-form strings (deviceCode.ts: v.optional
+    /// (v.string())), so a surface just has to say what it actually is.
+    static func start(
+        machineName: String = "Apple TV",
+        platform: String = "tvos",
+        environment: String = "tv"
+    ) async throws -> DeviceCodeStart {
         var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent("auth/device-code"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "machineName": machineName,
-            "platform": "tvos",
-            "environment": "tv",
+            "platform": platform,
+            "environment": environment,
         ])
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

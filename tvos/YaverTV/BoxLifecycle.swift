@@ -220,6 +220,7 @@ final class BoxLifecycle: ObservableObject {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["machineId": machineId])
 
         let (data, resp) = try await URLSession.shared.data(for: req)

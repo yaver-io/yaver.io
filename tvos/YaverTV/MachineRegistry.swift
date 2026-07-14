@@ -86,6 +86,7 @@ enum MachineRegistry {
     static func fetch(token: String) async throws -> [RegisteredDevice] {
         var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent("devices/list"))
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         req.timeoutInterval = 12
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response from Yaver") }
@@ -107,6 +108,7 @@ enum MachineRegistry {
         for host in candidates {
             var req = URLRequest(url: URL(string: "http://\(host):\(port)/info")!)
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
             req.timeoutInterval = 2
             if let (_, resp) = try? await URLSession.shared.data(for: req),
                let http = resp as? HTTPURLResponse, (200..<500).contains(http.statusCode) {

@@ -72,6 +72,7 @@ actor SessionClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, resp) = try await self.session.data(for: req)

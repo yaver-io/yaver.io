@@ -62,6 +62,11 @@ func (s *HTTPServer) handleDroidFrame(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "no-store")
+	// Surface-aware: echo the caller's surface so a client can confirm the agent
+	// understood it (a TV wants full-res frames; a watch would take a downscale).
+	// The frame is served full-res for every surface today; the hook is here for
+	// per-surface sizing without a contract change.
+	w.Header().Set("X-Yaver-Surface-Seen", string(surfaceFromRequest(r)))
 	w.Write(buf)
 }
 

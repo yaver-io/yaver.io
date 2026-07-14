@@ -70,6 +70,7 @@ actor AgentClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "verb": verb,
             "payload": payload,
@@ -149,6 +150,7 @@ actor AgentClient {
         }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
         guard (200..<300).contains(http.statusCode) else {
@@ -164,6 +166,7 @@ actor AgentClient {
         }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
         guard (200..<300).contains(http.statusCode) else {
@@ -214,6 +217,7 @@ actor AgentClient {
         guard let url = captureFrameURL() else { throw AgentError(message: "bad host") }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
         guard (200..<300).contains(http.statusCode) else {

@@ -55,6 +55,10 @@ func opsInfoHandler(c OpsContext, _ json.RawMessage) OpsResult {
 		"agentVersion": version, // from main.go's const
 		"localIPs":    getLocalIPs(),
 		"queriedAt":   time.Now().UTC().Format(time.RFC3339),
+		// Echo back the surface the caller declared (tv/watch/car/…), so a
+		// client can confirm the agent is surface-aware and adapt. Unknown when
+		// the caller didn't send X-Yaver-Surface.
+		"surface": string(surfaceFromHeaders(c.RequestHeaders)),
 	}
 	if c.Server != nil {
 		if id := c.Server.deviceID; id != "" {
