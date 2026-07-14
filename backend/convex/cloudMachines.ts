@@ -2047,17 +2047,32 @@ export const healthCheck = internalAction({
   handler: async (ctx, { machineId, attempt }) => {
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
     if (!machine || machine.status !== "provisioning") return;
-    if (!machine.hostname) return;
+    const target = machine.hostname || machine.serverIp;
+    if (!target) return;
 
+    // Same contract as resumeHealthCheck: the agent answers {"ok":true} while
+    // signed out or unpaired, and in that state it serves only the pairing
+    // routes. Promoting such a box to "active" would put an unusable machine
+    // in the billing set and paint it "online" in the app.
     let healthy = false;
     for (const proto of ["https", "http"]) {
       try {
-        const resp = await fetch(`${proto}://${machine.hostname}:18080/health`, {
+        const resp = await fetch(`${proto}://${target}:18080/health`, {
           signal: AbortSignal.timeout(10_000),
         });
         if (resp.ok) {
-          const data = (await resp.json()) as { ok?: boolean };
-          if (data.ok) {
+          const data = (await resp.json()) as {
+            ok?: boolean;
+            needsAuth?: boolean;
+            authExpired?: boolean;
+            lifecycle?: { usable?: boolean };
+          };
+          if (
+            data.ok &&
+            data.lifecycle?.usable !== false &&
+            data.needsAuth !== true &&
+            data.authExpired !== true
+          ) {
             healthy = true;
             break;
           }
@@ -2116,43 +2131,76 @@ export const resumeHealthCheck = internalAction({
   },
   handler: async (ctx, { machineId, attempt }) => {
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
-    // Only meaningful while a resumed box is still finishing. If it was
-    // re-paused, errored, or already reached "ready", stop.
-    if (!machine || machine.status !== "active") return;
+    if (!machine) return;
+    // A wake sits in "resuming" until THIS check promotes it to "active" —
+    // "active" now means USABLE, not merely "the provider created a server".
+    // "active" is still accepted so a box resumed by an older deployment (or
+    // one already promoted) still gets its phase finished.
+    if (machine.status !== "resuming" && machine.status !== "active") return;
     if (machine.provisionPhase === "ready") return;
-    if (!machine.hostname) return;
 
-    let healthy = false;
+    // Probe the hostname when there is one, else the raw IP. A seeded/parked
+    // row can legitimately have no hostname (seedParkedMachine never assigns
+    // one), and bailing out on that was silent death: the row then sat at
+    // "registering"/85 forever with a live server billing behind it.
+    const target = machine.hostname || machine.serverIp;
+    if (!target) return;
+
+    // Reachable is NOT the same as usable. The agent answers /health with
+    // {"ok":true} even when it is signed out ("yaver-auth-expired") or has
+    // never been paired ("bootstrap") — in that state it serves nothing but
+    // the pairing routes, so a box that "passes" this check would still be an
+    // unusable box the user cannot send a single task to. Demand `usable`.
+    let reachable = false;
+    let usable = false;
+    let lifecycleState = "";
     for (const proto of ["https", "http"]) {
       try {
-        const resp = await fetch(`${proto}://${machine.hostname}:18080/health`, {
+        const resp = await fetch(`${proto}://${target}:18080/health`, {
           signal: AbortSignal.timeout(10_000),
         });
-        if (resp.ok) {
-          const data = (await resp.json()) as { ok?: boolean };
-          if (data.ok) {
-            healthy = true;
-            break;
-          }
-        }
+        if (!resp.ok) continue;
+        const data = (await resp.json()) as {
+          ok?: boolean;
+          needsAuth?: boolean;
+          authExpired?: boolean;
+          lifecycle?: { state?: string; usable?: boolean };
+        };
+        if (!data.ok) continue;
+        reachable = true;
+        lifecycleState = String(data.lifecycle?.state ?? "");
+        usable =
+          data.lifecycle?.usable !== false &&
+          data.needsAuth !== true &&
+          data.authExpired !== true;
+        break;
       } catch {
         /* try next protocol / retry */
       }
     }
 
-    if (healthy) {
+    if (reachable && usable) {
+      await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "active" });
       await ctx.runMutation(internal.cloudMachines.setPhase, {
         machineId,
         phase: machine.runnersAuthorized === false ? "authorizing-runners" : "ready",
         progress: machine.runnersAuthorized === false ? 90 : 100,
       });
-      console.log(`[cloudMachines.resumeHealthCheck] ready: ${machine.hostname}`);
+      console.log(`[cloudMachines.resumeHealthCheck] usable: ${target}`);
       return;
     }
-    if (attempt >= 10) {
-      // Give up quietly — the box may still be reachable P2P over the
-      // relay even if the hostname /health probe never succeeded.
-      console.log(`[cloudMachines.resumeHealthCheck] gave up after ${attempt}: ${machine.hostname}`);
+
+    // Answering but signed out is TERMINAL — no amount of waiting re-auths an
+    // agent. Fail fast instead of burning 10 attempts and then giving up
+    // quietly while the server keeps billing.
+    const signedOut =
+      reachable && (lifecycleState === "yaver-auth-expired" || lifecycleState === "bootstrap");
+    if (signedOut || attempt >= 10) {
+      const reason = signedOut
+        ? "The box came back up but its Yaver agent is signed out, so it could never register. Parked again to stop the meter — re-authorize it, then wake."
+        : "The box never became reachable after waking. Parked again to stop the meter — try waking it again.";
+      console.log(`[cloudMachines.resumeHealthCheck] abandoning ${target}: ${reason}`);
+      await ctx.scheduler.runAfter(0, internal.cloudLifecycle.abandonWake, { machineId, reason });
       return;
     }
     await ctx.scheduler.runAfter(15_000, internal.cloudMachines.resumeHealthCheck, {
@@ -2279,6 +2327,25 @@ export const clearResources = internalMutation({
       volumeId: undefined,
       volumeSizeGb: undefined,
       baseImageId: undefined,
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+/** Drop the pointers to a provider server that no longer exists, WITHOUT
+ *  touching the recovery snapshot (so the box stays wakeable). Deleting a
+ *  server while leaving hetznerServerId/serverIp behind is how a row gets
+ *  stuck: the next park tries to snapshot a server that is already gone, the
+ *  snapshot 404s, and — because a failed snapshot aborts the delete — the box
+ *  can never be parked again. */
+export const clearServerRef = internalMutation({
+  args: { machineId: v.id("cloudMachines") },
+  handler: async (ctx, { machineId }) => {
+    await ctx.db.patch(machineId, {
+      hetznerServerId: undefined,
+      cloudResourceId: undefined,
+      serverIp: undefined,
       updatedAt: Date.now(),
     });
     return { ok: true };

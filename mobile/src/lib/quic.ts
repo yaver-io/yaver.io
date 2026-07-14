@@ -368,6 +368,8 @@ export interface Task {
   turns?: ConversationTurn[];  // Full conversation history
   createdAt: number;
   updatedAt: number;
+  /** Device id this task is executing on. Used for target-aware retry/auth/config actions. */
+  deviceId?: string;
   /** Name of the device this task is executing on. */
   deviceName?: string;
   /** Tmux session name (only set for adopted sessions). */
@@ -1786,6 +1788,16 @@ export class QuicClient {
       }
       throw e;
     }
+    if (res.status === 404) {
+      // A signed-out agent still answers — it just serves a MINIMAL pairing mux
+      // (/health, /info, /auth/pair/*) and nothing else, so /tasks falls through
+      // to Go's default handler and returns a bare "404 page not found". The
+      // machine is REACHABLE but not USABLE, and relaying the raw 404 told the
+      // user nothing they could act on. Name the real condition.
+      throw new Error(
+        "This machine is reachable but not signed in — its Yaver agent is waiting to be paired, so it can't accept tasks yet. Sign in on that machine (`yaver auth`), or pair it from Devices, then try again.",
+      );
+    }
     if (!res.ok) {
       throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
     }
@@ -2092,6 +2104,7 @@ export class QuicClient {
           : t.startedAt
             ? new Date(t.startedAt).getTime()
             : t.createdAt ? new Date(t.createdAt).getTime() : Date.now(),
+        deviceId: this.deviceId ?? undefined,
         deviceName: this.host ?? undefined,
         resultText: t.resultText || undefined,
         costUsd: t.costUsd || undefined,

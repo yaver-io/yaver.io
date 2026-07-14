@@ -795,6 +795,12 @@ export const listMeterableMachines = internalQuery({
   ): Promise<Array<{ machineId: any; userId: any; machineType: string; status: "active" | "paused" }>> => {
     const rows = await ctx.db.query("cloudMachines").collect();
     return rows
+      // INVARIANT: "active" means the box is USABLE — its agent answered
+      // /health AND reported itself signed-in (see resumeHealthCheck). It does
+      // NOT mean "the provider accepted a create". A box that is merely
+      // booting sits in "resuming"/"provisioning" and is never billed, so we
+      // can never charge for a box the user cannot reach. Do not widen this
+      // filter to the in-flight statuses.
       .filter((m: any) => m.status === "active" || m.status === "paused")
       // Only meter MANAGED (Yaver-provisioned, platform-funded) boxes.
       // A self-hosted / BYO-Hetzner box (the user's own provider token,
@@ -1227,6 +1233,53 @@ export const purgeMachineResources = internalAction({
   },
 });
 
+/** A woken box that never became USABLE is worse than a parked one: it bills by
+ *  the hour while being invisible and unreachable to its owner (the wake in the
+ *  2026-07-14 report left a cx43 running for exactly this reason). Delete the
+ *  server, return the row to "paused", and leave the failure on the row so the
+ *  wake reads as a failure with a cause instead of a silent disappearance.
+ *
+ *  Nothing is lost: the box booted from lastSnapshotId and never reached a
+ *  state where anyone could write to it, so the snapshot still IS its disk. The
+ *  row stays wakeable, so the user can fix the cause (usually a signed-out
+ *  agent) and try again. */
+export const abandonWake = internalAction({
+  args: { machineId: v.id("cloudMachines"), reason: v.string() },
+  handler: async (ctx, { machineId, reason }): Promise<LifecycleResult> => {
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    if (!machine) return { ok: false, reason: "machine not found" };
+    const token = process.env.HCLOUD_TOKEN;
+    const serverId = machine.hetznerServerId ?? machine.cloudResourceId;
+    let deleted = false;
+    if (token && serverId) {
+      try {
+        await hetznerDelete(token, String(serverId));
+        deleted = true;
+      } catch (e) {
+        // Could not stop the meter. Say so loudly on the row rather than
+        // pretending the box is parked — an orphan server that nobody knows
+        // about is the one outcome we never accept.
+        const msg = e instanceof Error ? e.message : String(e);
+        await ctx.runMutation(internal.cloudMachines.setPhase, {
+          machineId, phase: "error", progress: 0,
+          error: `${reason} — and the server could not be deleted (${msg}). It is STILL RUNNING and billing: delete server ${serverId} manually.`,
+        });
+        return { ok: false, reason: "abandon failed: server still running" };
+      }
+    }
+    if (deleted) {
+      await ctx.runMutation(internal.cloudMachines.clearServerRef, { machineId });
+    }
+    await ctx.runMutation(internal.cloudMachines.setStatus, {
+      machineId, status: "paused", errorMessage: reason,
+    });
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId, phase: "error", progress: 0, error: reason,
+    });
+    return { ok: true, status: "paused", reason };
+  },
+});
+
 export const resumeMachine = internalAction({
   args: {
     machineId: v.id("cloudMachines"),
@@ -1333,19 +1386,23 @@ export const resumeMachine = internalAction({
       // <id>.cloud.yaver.io hostname keeps resolving (IP-direct works
       // regardless; this keeps the hostname/tunnel path alive).
       if (machine.hostname) await cloudflareUpsertA(machine.hostname, ip);
-      await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "active" });
-      // Server RECORD exists, but the OS is still booting + the agent
-      // hasn't re-registered on the relay yet. Do NOT claim "ready" — sit
-      // at "registering"/85 and let resumeHealthCheck flip to ready only
-      // once /health actually answers. This is the fix for the wake that
-      // used to jump to 100% while the box was still cold.
+      // Deliberately STAY "resuming" here. A Hetzner create returns as soon as
+      // the server RECORD exists — the OS is still booting and the agent has
+      // not re-registered. Flipping to "active" at this point was the bug that
+      // made a wake look like a failure: "active" reads as tone "online", so
+      // the row instantly left the mobile "Sleeping machines" list while the
+      // box was still cold, and it wasn't a device yet either — it vanished
+      // into a void with no error. "active" now means USABLE, and only
+      // resumeHealthCheck (which verifies the agent answers AND is not
+      // signed-out) is allowed to set it. It also gates the meter: we never
+      // bill for a box the user cannot reach.
       await ctx.runMutation(internal.cloudMachines.setPhase, {
         machineId, phase: "registering", progress: 85,
       });
       await ctx.scheduler.runAfter(20_000, internal.cloudMachines.resumeHealthCheck, {
         machineId, attempt: 1,
       });
-      return { ok: true, status: "active", serverId, ip, dryRun: false };
+      return { ok: true, status: "resuming", serverId, ip, dryRun: false };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // TRANSIENT: Hetzner is still finalizing the snapshot ("image not yet

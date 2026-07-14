@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useDevice } from "../context/DeviceContext";
 import { useAuth } from "../context/AuthContext";
@@ -6,6 +6,7 @@ import { useColors } from "../context/ThemeContext";
 import { typography } from "../theme/tokens";
 import RemoteBoxPickerModal from "./RemoteBoxPickerModal";
 import { deriveEffectiveConnectionState, type EffectiveConnectionState } from "../lib/connectionState";
+import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import { isDeviceAsleep, useMachineLifecycle } from "../lib/wakeMachine";
 import WakeProgress from "./WakeProgress";
 
@@ -63,6 +64,43 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // front so the wake/park lifecycle hook can tell "booting" from "online".
   const activeLive = !!activeDevice && connectedDeviceIds.includes(activeDevice.id);
 
+  // REACHABLE IS NOT USABLE. An agent that is signed out (or has never been
+  // paired) still completes a TCP connect, still answers /health with
+  // {"ok":true}, and still heartbeats a stale isOnline=true into its Convex row
+  // — but it serves ONLY the pairing routes, so every real request (POST /tasks,
+  // /agent/runners) falls through to a bare "404 page not found". That is how a
+  // machine came to sit here in green "Connected · Direct · 50ms" while every
+  // task sent to it failed and its runners showed nothing.
+  //
+  // The device row cannot be trusted for this (it said needsAuth=false while the
+  // agent said needsAuth=true), so ask the agent itself and believe the agent.
+  const [agentLifecycle, setAgentLifecycle] = useState<"bootstrap" | "yaver-auth-expired" | null>(null);
+  useEffect(() => {
+    if (!activeDevice) {
+      setAgentLifecycle(null);
+      return;
+    }
+    let cancelled = false;
+    const probe = async () => {
+      const p = await probeMobileDeviceStatus(activeDevice as any, token);
+      if (cancelled) return;
+      // Only a POSITIVE answer from the agent demotes it. An unreachable box is
+      // a transport problem (already covered by `activeLive`), not a sign-out.
+      setAgentLifecycle(
+        p.reachable ? (p.bootstrap ? "bootstrap" : p.authExpired ? "yaver-auth-expired" : null) : null,
+      );
+    };
+    void probe();
+    const iv = setInterval(() => void probe(), 20_000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [activeDevice?.id, token]);
+
+  const needsSignIn =
+    !!activeDevice && (agentLifecycle !== null || activeDevice.needsAuth === true);
+
   // A managed box that auto-off'd (self-park after idle) reports
   // machineStatus paused/stopped and has no live endpoint — that's why the
   // runner reads "Disconnected". Surface it as its own "Asleep" state with a
@@ -105,15 +143,28 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // connecting. With no device selected, fall back to the presence
   // derivation used by the cold-start / pool-only cases. (activeLive is
   // computed up top so the lifecycle hook can consume it.)
+  // …and a signed-out agent is never "connected", however good the transport
+  // looks. Demote it to `error` so the row is red + actionable instead of a
+  // green promise the box cannot keep.
   const effective = noDevicesYet
     ? "disconnected"
+    : needsSignIn
+    ? "error"
     : activeDevice
     ? (activeLive ? "connected" : connectionStatus === "error" ? "error" : "connecting")
     : deriveEffectiveConnectionState(connectionStatus, connectedDeviceIds);
   const palette: BannerPalette = {
     connected: { stripe: c.success, dot: c.success, text: c.textSecondary, label: "Connected" },
     connecting: { stripe: c.warn, dot: c.warn, text: c.textSecondary, label: activeLive ? "Reconnecting" : "Connecting" },
-    error: { stripe: c.error, dot: c.error, text: c.textPrimary, label: "Disconnected" },
+    // "Disconnected" would be its own small lie for a signed-out box — it IS
+    // connected, it just can't do anything. Name the actual blocker so the next
+    // action ("pair / sign this machine in") is obvious from the banner.
+    error: {
+      stripe: c.error,
+      dot: c.error,
+      text: c.textPrimary,
+      label: needsSignIn ? "Needs sign-in" : "Disconnected",
+    },
     disconnected: { stripe: c.textMuted, dot: c.textMuted, text: c.textSecondary, label: "Disconnected" },
   }[effective];
 
