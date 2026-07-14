@@ -114,20 +114,85 @@ else
   PROJECT_ARGS=(-project "$VISION_DIR/YaverVision.xcodeproj")
 fi
 
-if [ "$UPLOAD" = "1" ]; then
-  echo "ERROR: native visionOS upload is not wired yet. Add signing/export settings once the App Store Connect visionOS record is ready." >&2
-  exit 1
+ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/YaverVision.xcarchive}"
+EXPORT_PATH="${EXPORT_PATH:-/tmp/YaverVisionExport}"
+VERSION_ARGS=()
+[ -n "${VISIONOS_MARKETING_VERSION:-}" ] && VERSION_ARGS+=("MARKETING_VERSION=$VISIONOS_MARKETING_VERSION")
+[ -n "${VISIONOS_BUILD_NUMBER:-}" ] && VERSION_ARGS+=("CURRENT_PROJECT_VERSION=$VISIONOS_BUILD_NUMBER")
+
+# The .xcodeproj is generated from project.yml and gitignored — regenerate so the
+# spec stays the single source of truth (same contract as tvos/).
+if command -v xcodegen >/dev/null 2>&1 && [ -f "$VISION_DIR/project.yml" ]; then
+  ( cd "$VISION_DIR" && xcodegen generate >/dev/null )
 fi
 
-analyze_compatible_ios_for_visionos
+if [ "$UPLOAD" != "1" ]; then
+  analyze_compatible_ios_for_visionos
 
+  xcodebuild "${PROJECT_ARGS[@]}" \
+    -scheme "$SCHEME" \
+    -configuration "$CONFIGURATION" \
+    -sdk xros \
+    -destination "generic/platform=visionOS" \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
+    CODE_SIGNING_ALLOWED=NO \
+    "${VERSION_ARGS[@]}" \
+    build
+
+  echo "visionOS build analysis passed."
+  exit 0
+fi
+
+: "${APP_STORE_KEY_PATH:?Set APP_STORE_KEY_PATH}"
+: "${APP_STORE_KEY_ID:?Set APP_STORE_KEY_ID}"
+: "${APP_STORE_KEY_ISSUER:?Set APP_STORE_KEY_ISSUER}"
+: "${APPLE_TEAM_ID:?Set APPLE_TEAM_ID}"
+
+rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH"
+
+# AUTOMATIC signing on purpose. deploy-tvos.sh pins its profile BY NAME with
+# CODE_SIGN_STYLE=Manual, and that broke the moment CarPlay was enabled on the
+# App ID — turning on any capability marks every existing profile INVALID.
+# -allowProvisioningUpdates lets Xcode regenerate instead of dying.
+echo "Archiving visionOS…"
 xcodebuild "${PROJECT_ARGS[@]}" \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \
-  -sdk xros \
   -destination "generic/platform=visionOS" \
+  -archivePath "$ARCHIVE_PATH" archive \
+  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+  -allowProvisioningUpdates \
+  -authenticationKeyPath "$APP_STORE_KEY_PATH" \
+  -authenticationKeyID "$APP_STORE_KEY_ID" \
+  -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER" \
   -derivedDataPath "$DERIVED_DATA_PATH" \
-  CODE_SIGNING_ALLOWED=NO \
-  build
+  "${VERSION_ARGS[@]}"
 
-echo "visionOS build analysis passed."
+[ -d "$ARCHIVE_PATH" ] || { echo "ERROR: archive failed — no .xcarchive produced" >&2; exit 1; }
+
+cat > /tmp/VisionExportOptions.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>teamID</key>
+  <string>$APPLE_TEAM_ID</string>
+  <key>destination</key>
+  <string>upload</string>
+  <key>uploadSymbols</key>
+  <false/>
+</dict>
+</plist>
+EOF
+
+echo "Exporting & uploading visionOS…"
+xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" \
+  -exportOptionsPlist /tmp/VisionExportOptions.plist \
+  -exportPath "$EXPORT_PATH" -allowProvisioningUpdates \
+  -authenticationKeyPath "$APP_STORE_KEY_PATH" \
+  -authenticationKeyID "$APP_STORE_KEY_ID" \
+  -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER"
+
+echo "✓ visionOS build uploaded to App Store Connect"

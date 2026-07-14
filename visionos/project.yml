@@ -1,0 +1,43 @@
+# XcodeGen spec for the YaverVision visionOS app. Generate with:
+#   cd visionos && xcodegen generate
+# Keeps the .xcodeproj reproducible + out of git (see visionos/.gitignore) — edit
+# this spec, not the project. Mirrors tvos/project.yml. See visionos/README.md.
+name: YaverVision
+options:
+  deploymentTarget:
+    visionOS: "2.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.40.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"          # match tvOS; avoid Swift 6 concurrency churn
+    DEVELOPMENT_TEAM: "5SJZ4KA39A"
+    TARGETED_DEVICE_FAMILY: "7"   # visionOS
+targets:
+  YaverVision:
+    type: application
+    platform: visionOS
+    deploymentTarget: "2.0"
+    sources:
+      - path: YaverVision
+        excludes:
+          - "Info.plist"
+      # The client layer is SHARED with the tvOS app rather than copied: these
+      # files are pure Foundation/SwiftUI and carry the contract with the agent
+      # (device-code auth + the /ops verbs). Duplicating them is how the two
+      # surfaces would silently drift apart.
+      - path: ../tvos/YaverTV/Backend.swift
+      - path: ../tvos/YaverTV/Models.swift
+      - path: ../tvos/YaverTV/AgentClient.swift
+      - path: ../tvos/YaverTV/YaverStore.swift
+      - path: ../tvos/YaverTV/SessionClient.swift
+      - path: ../tvos/YaverTV/YaverNativeCatalog.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.mobile   # universal w/ iPhone + TV (Universal Purchase)
+        PRODUCT_NAME: Yaver
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: YaverVision/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
