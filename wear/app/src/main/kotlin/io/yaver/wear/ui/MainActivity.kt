@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import android.content.Intent
 import androidx.lifecycle.lifecycleScope
+import io.yaver.wear.Backend
 import io.yaver.wear.BoxLifecycle
 import io.yaver.wear.Dictation
 import io.yaver.wear.Haptics
@@ -61,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 boxBaseUrl = StandaloneStore.boxUrl(this),
                 bearerToken = StandaloneStore.token(this),
             )
+            refreshStandaloneSessionOnLaunch()
         }
 
         // Register the dictation result callback. On a good transcript we send a
@@ -91,6 +93,29 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val reachable = phoneBridge.isPhoneReachable()
             WatchState.setPhoneReachable(reachable)
+        }
+    }
+
+    /**
+     * Netflix contract for standalone watches: extend the 1-year session every
+     * launch so an opted-in wrist never re-prompts for OAuth. Extend-only — see
+     * Backend.refreshSession for the no-rotation rationale. On the off chance the
+     * server ever returns a rotated token, persist it back (keeping the existing
+     * box URL + machine id). Fire-and-forget; any failure is a silent no-op.
+     */
+    private fun refreshStandaloneSessionOnLaunch() {
+        val current = StandaloneStore.token(this)
+        if (current.isEmpty()) return
+        lifecycleScope.launch {
+            val rotated = Backend().refreshSession(current)
+            if (!rotated.isNullOrEmpty() && rotated != current) {
+                StandaloneStore.save(
+                    ctx = this@MainActivity,
+                    token = rotated,
+                    boxUrl = StandaloneStore.boxUrl(this@MainActivity),
+                    machineId = StandaloneStore.machineId(this@MainActivity),
+                )
+            }
         }
     }
 

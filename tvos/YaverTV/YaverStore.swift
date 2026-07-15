@@ -22,6 +22,27 @@ final class YaverStore: ObservableObject {
         token = storedToken
         boxes = (try? JSONDecoder().decode([BoxTarget].self, from: Data(storedBoxesJSON.utf8))) ?? []
         selectedBox = boxes.first(where: { $0.id == selectedBoxId }) ?? boxes.first
+        refreshSessionOnLaunch()
+    }
+
+    /// Netflix-on-AppleTV contract: extend the 1-year session every launch so a
+    /// signed-in TV never re-prompts for OAuth. No-op when signed out. See
+    /// Backend.refreshSession for the extend-only (no-rotation) rationale.
+    private func refreshSessionOnLaunch() {
+        let current = storedToken
+        guard !current.isEmpty else { return }
+        Task { [weak self] in
+            let rotated = await DeviceCodeAuth.refreshSession(token: current)
+            guard let rotated, !rotated.isEmpty else { return }
+            await MainActor.run {
+                guard let self else { return }
+                // Only adopt the rotated token if we're still on the same one —
+                // the user may have signed out/in while the refresh was in flight.
+                guard self.token == current else { return }
+                self.token = rotated
+                self.storedToken = rotated
+            }
+        }
     }
 
     func signIn(token: String) {

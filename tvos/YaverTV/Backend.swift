@@ -98,4 +98,31 @@ enum DeviceCodeAuth {
             return DevicePollResult(status: .pending, token: nil)
         }
     }
+
+    /// Extend the 1-year session on launch so a lean-back device opened at least
+    /// once a year NEVER re-prompts for OAuth — the Netflix-on-AppleTV contract.
+    /// Device-code auth mints a 1-year token but nothing extends it; without this
+    /// the token silently hard-expires and forces a fresh sign-in.
+    ///
+    /// Extend-only, NO rotation (no X-Yaver-Rotate-Token): a lean-back device
+    /// routinely loses the response (sleep / flaky Wi-Fi), and rotating would
+    /// strand it on a dead token → a false logout of a live session. Mirrors
+    /// mobile's deliberate no-rotate decision (mobile/src/lib/auth.ts,
+    /// root-caused 2026-07-15). Security: this does NOT widen the blast radius —
+    /// the token already lives a year and is held in the device's own store; we
+    /// only reset the existing clock. Returns a rotated token IF the server ever
+    /// returns one (it won't without opt-in), else nil. Any failure is a silent
+    /// no-op; the existing token stays valid.
+    static func refreshSession(token: String) async -> String? {
+        var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent("auth/refresh"))
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            return nil
+        }
+        struct Raw: Decodable { let token: String? }
+        return (try? JSONDecoder().decode(Raw.self, from: data))?.token
+    }
 }

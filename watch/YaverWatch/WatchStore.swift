@@ -67,6 +67,27 @@ final class WatchStore: ObservableObject {
         // Pick up phone→watch background pushes (task-completion wake) and fold
         // them into the same reduce path as a direct reply.
         // (RootView observes phone.lastPushedReply and calls absorb().)
+        refreshStandaloneSessionOnLaunch()
+    }
+
+    /// Netflix contract for standalone watches: extend the 1-year token every
+    /// launch so an opted-in wrist never re-prompts for OAuth. No-op in the
+    /// default phone-paired mode (no token held). Extend-only — see
+    /// Backend.refreshSession for the no-rotation rationale.
+    private func refreshStandaloneSessionOnLaunch() {
+        let current = storedToken
+        guard !current.isEmpty else { return }
+        Task { [weak self] in
+            let rotated = await DeviceCodeAuth.refreshSession(token: current)
+            guard let rotated, !rotated.isEmpty else { return }
+            await MainActor.run {
+                guard let self else { return }
+                // Only adopt if we're still on the same token (no sign-out/in raced us).
+                guard self.token == current else { return }
+                self.token = rotated
+                self.storedToken = rotated
+            }
+        }
     }
 
     func activate() { phone.activate() }

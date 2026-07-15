@@ -26,8 +26,16 @@ import java.util.concurrent.TimeUnit
  */
 class Backend(
     /** Convex deployment origin, e.g. "https://<deployment>.convex.site". */
-    private val convexOrigin: String,
+    private val convexOrigin: String = DEFAULT_CONVEX_ORIGIN,
 ) {
+
+    companion object {
+        /** Public Convex deployment origin. Mirrors the tvOS / watchOS
+         *  `Backend.convexSiteURL` and mobile CONVEX_SITE_URL — NOT a secret
+         *  (it's the public backend host). Bump here and in the Swift constants
+         *  together if the deployment ever moves. */
+        const val DEFAULT_CONVEX_ORIGIN = "https://perceptive-minnow-557.eu-west-1.convex.site"
+    }
 
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -110,5 +118,42 @@ class Backend(
             }
         }
         return null
+    }
+
+    /**
+     * Extend the standalone 1-year session on launch so an opted-in watch NEVER
+     * re-prompts for OAuth — the Netflix contract. Only relevant in standalone
+     * mode (phone-paired mode holds no token). Device-code mints a 1-year token
+     * but nothing extends it; without this it silently hard-expires and forces a
+     * fresh sign-in.
+     *
+     * Extend-only, NO rotation (no X-Yaver-Rotate-Token): a wrist on flaky Wi-Fi
+     * routinely loses the response, and rotating would strand it on a dead token
+     * → a false logout of a live session. Mirrors mobile's deliberate no-rotate
+     * decision (mobile/src/lib/auth.ts, root-caused 2026-07-15) and the tvOS /
+     * watchOS Backend.refreshSession. Security: no wider blast radius — the token
+     * already lives a year in the watch's own store; we only reset the clock.
+     *
+     * Returns the rotated token IF the server ever returns one (it won't without
+     * opt-in), else null. Any failure is a silent no-op — the existing token
+     * stays valid.
+     */
+    suspend fun refreshSession(token: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url(convexOrigin.trimEnd('/') + "/auth/refresh")
+                .header("Authorization", "Bearer $token")
+                .header("X-Yaver-Surface", "watch")
+                .post(FormBody.Builder().build())
+                .build()
+            http.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val text = resp.body?.string().orEmpty()
+                val rotated = JSONObject(text).optString("token")
+                if (rotated.isNotEmpty()) rotated else null
+            }
+        } catch (e: Throwable) {
+            null
+        }
     }
 }

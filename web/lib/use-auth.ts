@@ -107,6 +107,32 @@ export function useAuth(): AuthState {
           setUser(mapped);
           setToken(storedToken);
         }
+
+        // Netflix-on-AppleTV contract: a dashboard opened at least once a year
+        // must never re-prompt for OAuth. `/auth/validate` alone never extends
+        // the 1-year session, so a token that's simply been sitting hard-expires
+        // and forces a fresh sign-in. Fire an extend-only refresh so every visit
+        // resets the clock. Extend-only (NO X-Yaver-Rotate-Token): a browser tab
+        // can be closed mid-flight and lose the response — rotating would strand
+        // it on a dead token and log the user out of a live session. Mirrors
+        // mobile's deliberate no-rotate decision (mobile/src/lib/auth.ts,
+        // root-caused 2026-07-15). Fire-and-forget: failure is a silent no-op,
+        // the existing token stays valid.
+        void fetch(`${CONVEX_URL}/auth/refresh`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${storedToken}` },
+        })
+          .then(async (r) => {
+            if (!r.ok) return;
+            const body = await r.json().catch(() => null);
+            // Defensive only: honour a rotated token if the server ever returns
+            // one. We don't opt in, so this stays undefined in practice.
+            if (body?.token && typeof body.token === "string" && !cancelled) {
+              localStorage.setItem("yaver_auth_token", body.token);
+              setToken(body.token);
+            }
+          })
+          .catch(() => {});
       } catch {
         // Network error -- still set token so we can try offline
         if (!cancelled) {

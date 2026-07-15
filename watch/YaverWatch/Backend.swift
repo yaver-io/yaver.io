@@ -88,6 +88,29 @@ enum DeviceCodeAuth {
             return DevicePollResult(status: .pending, token: nil)
         }
     }
+
+    /// Extend the standalone 1-year session on launch so an opted-in watch never
+    /// re-prompts for OAuth — the Netflix contract. Only relevant in standalone
+    /// mode (phone-paired mode holds no token). Extend-only, NO rotation: a wrist
+    /// on flaky Wi-Fi routinely loses the response, and rotating would strand it
+    /// on a dead token → a false logout. Mirrors mobile's no-rotate decision
+    /// (mobile/src/lib/auth.ts, root-caused 2026-07-15) and tvOS's
+    /// Backend.refreshSession. Security: no wider blast radius — the token
+    /// already lives a year in the watch's own store; we only reset the clock.
+    /// Returns a rotated token if the server ever returns one (it won't without
+    /// opt-in), else nil. Any failure is a silent no-op.
+    static func refreshSession(token: String) async -> String? {
+        var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent("auth/refresh"))
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("watch", forHTTPHeaderField: "X-Yaver-Surface")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            return nil
+        }
+        struct Raw: Decodable { let token: String? }
+        return (try? JSONDecoder().decode(Raw.self, from: data))?.token
+    }
 }
 
 /// A box (device) the watch can drive in standalone mode. For the LAN MVP the
