@@ -80,7 +80,10 @@ export class UtteranceEndpointer {
   private bestNorm = "";
   /** When the (normalized) transcript last CHANGED. */
   private lastChangeMs = 0;
-  /** When we first heard any speech. 0 = nothing yet. */
+  /** Whether any speech has been heard yet (a flag, not a sentinel — the
+   *  clock can legitimately read 0 at the first partial). */
+  private heard = false;
+  /** When we first heard speech (valid only once `heard`). */
   private firstSpeechMs = 0;
   private decided = false;
 
@@ -94,7 +97,10 @@ export class UtteranceEndpointer {
     if (this.decided) return;
     const norm = normalize(text);
     if (!norm) return; // whisper emits "" for silent slices — not speech
-    if (this.firstSpeechMs === 0) this.firstSpeechMs = nowMs;
+    if (!this.heard) {
+      this.heard = true;
+      this.firstSpeechMs = nowMs;
+    }
     if (norm !== this.bestNorm) {
       this.bestNorm = norm;
       this.bestText = text.trim();
@@ -111,7 +117,7 @@ export class UtteranceEndpointer {
     if (this.decided) return { action: "wait" };
 
     // Nothing heard yet → only a timeout can fire.
-    if (this.firstSpeechMs === 0) {
+    if (!this.heard) {
       if (nowMs - this.startMs >= this.cfg.noSpeechTimeoutMs) {
         this.decided = true;
         return { action: "timeout" };
@@ -148,7 +154,7 @@ export class UtteranceEndpointer {
   }
 
   hasSpeech(): boolean {
-    return this.firstSpeechMs !== 0;
+    return this.heard;
   }
 
   /** Re-arm for the next utterance in the loop. */
@@ -157,6 +163,7 @@ export class UtteranceEndpointer {
     this.bestText = "";
     this.bestNorm = "";
     this.lastChangeMs = 0;
+    this.heard = false;
     this.firstSpeechMs = 0;
     this.decided = false;
   }
