@@ -13,7 +13,7 @@ import (
 //
 // What this gives the solo dev today:
 //
-//   - Boot a named simulator (or any "iPhone 15" if no UDID specified).
+//   - Boot a named simulator, otherwise the best available Apple simulator.
 //   - Install a built .app bundle into the simulator.
 //   - Launch the app by bundle identifier.
 //   - Capture a screenshot.
@@ -27,7 +27,7 @@ import (
 // IOSSimDriver is the lifecycle wrapper.
 type IOSSimDriver struct {
 	UDID       string // optional — defaults to first booted device
-	DeviceType string // e.g. "iPhone 15" — used when no UDID is set
+	DeviceType string // e.g. "iPhone 15" — optional substring when no UDID is set
 	BundleID   string // app bundle id, e.g. "io.yaver.mobile"
 	AppPath    string // path to .app bundle
 }
@@ -49,7 +49,7 @@ func (d *IOSSimDriver) Available() error {
 
 // Boot boots the device and returns its UDID. If d.UDID is set, that
 // device is booted; otherwise we look up the first available simulator
-// matching d.DeviceType (or pick any iPhone if neither is set).
+// matching d.DeviceType (or pick the best available Apple simulator if neither is set).
 func (d *IOSSimDriver) Boot(ctx context.Context) (string, error) {
 	if err := d.Available(); err != nil {
 		return "", err
@@ -107,18 +107,30 @@ func (d *IOSSimDriver) Shutdown(ctx context.Context, udid string) error {
 	return nil
 }
 
-// pickSimulator returns the UDID of the first available simulator
-// matching `deviceType` (substring), or any iPhone if deviceType == "".
-// Uses `simctl list devices available -j` and parses the JSON tree.
+// pickSimulator returns the UDID of the best available simulator matching
+// `deviceType` (substring). With no requested type it prefers already-booted
+// devices, then iPhone/iPad, then any available Apple simulator. That keeps
+// headless Mac builders usable even when only visionOS/watch/tv runtimes are
+// installed.
 func pickSimulator(ctx context.Context, deviceType string) (string, error) {
 	out, err := runCtx(ctx, "xcrun", "simctl", "list", "devices", "available")
 	if err != nil {
 		return "", fmt.Errorf("simctl list devices: %w", err)
 	}
-	// Parse the human-friendly output instead of pulling encoding/json
-	// for a one-shot lookup. Lines look like:
-	//   "    iPhone 15 (UDID-HERE) (Shutdown)"
-	want := strings.ToLower(deviceType)
+	udid, ok := pickSimulatorFromList(out, deviceType)
+	if !ok {
+		return "", fmt.Errorf("no available simulator matching %q", deviceType)
+	}
+	return udid, nil
+}
+
+func pickSimulatorFromList(out, deviceType string) (string, bool) {
+	type candidate struct {
+		udid  string
+		score int
+	}
+	want := strings.ToLower(strings.TrimSpace(deviceType))
+	best := candidate{score: -1}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -128,17 +140,43 @@ func pickSimulator(ctx context.Context, deviceType string) (string, error) {
 		if want != "" && !strings.Contains(lower, want) {
 			continue
 		}
-		if want == "" && !strings.Contains(lower, "iphone") {
-			continue
-		}
 		// Find the first "(<UUID>)" segment.
 		open := strings.Index(line, "(")
 		close := strings.Index(line, ")")
-		if open >= 0 && close > open {
-			return line[open+1 : close], nil
+		if open < 0 || close <= open {
+			continue
+		}
+		udid := strings.TrimSpace(line[open+1 : close])
+		if udid == "" || strings.Contains(udid, " ") {
+			continue
+		}
+		score := 10
+		switch {
+		case strings.Contains(lower, "iphone"):
+			score = 40
+		case strings.Contains(lower, "ipad"):
+			score = 35
+		case strings.Contains(lower, "apple vision"):
+			score = 30
+		case strings.Contains(lower, "apple tv"):
+			score = 20
+		case strings.Contains(lower, "apple watch"):
+			score = 15
+		}
+		if strings.Contains(lower, "(booted)") {
+			score += 100
+		}
+		if want != "" {
+			score += 1000
+		}
+		if score > best.score {
+			best = candidate{udid: udid, score: score}
 		}
 	}
-	return "", fmt.Errorf("no available simulator matching %q", deviceType)
+	if best.udid == "" {
+		return "", false
+	}
+	return best.udid, true
 }
 
 // runCtx is a tiny wrapper that returns combined output + error.

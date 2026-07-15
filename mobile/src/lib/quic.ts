@@ -1021,7 +1021,7 @@ export interface ExecOptions {
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 export type ConnectionMode = "direct" | "relay" | "tunnel" | null;
 /** How the connection was established — tracked for diagnostics and faster reconnection. */
-export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "lan-heartbeat" | "lan-tailscale" | "lan-cached" | "relay" | "cloudflare-tunnel" | null;
+export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "lan-heartbeat" | "lan-mesh" | "lan-tailscale" | "lan-cached" | "relay" | "cloudflare-tunnel" | null;
 export type ConnectionPreferenceKind = "direct-lan" | "tailscale" | "headscale" | "own-vpn" | "https-tunnel" | "free-relay" | "private-relay";
 export interface ConnectionPreference {
   kind: ConnectionPreferenceKind;
@@ -5937,18 +5937,26 @@ export class QuicClient {
   }
 
   /** Check if an IP address is direct-routable without the relay:
-   * RFC1918 private LAN/VPN ranges plus Tailscale/headscale CGNAT. */
+   * RFC1918 private LAN/VPN ranges plus Yaver Mesh/Tailscale/headscale CGNAT. */
   private isPrivateIP(host: string): boolean {
-    return /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || this.isTailscaleIP(host);
+    return /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || this.isMeshOverlayIP(host) || this.isTailscaleIP(host);
+  }
+
+  /** Yaver Mesh overlay range (100.96.0.0/12). It intentionally lives
+   *  inside the wider CGNAT block, so test it before Tailscale. */
+  private isMeshOverlayIP(host: string): boolean {
+    if (!/^100\./.test(host)) return false;
+    const second = parseInt(host.split(".")[1] ?? "0", 10);
+    return second >= 96 && second <= 111;
   }
 
   /** Tailscale CGNAT range (100.64.0.0/10). Only relevant when both ends are
    *  on the same tailnet — but the cost of probing it is bounded by the
-   *  parallel race budget, so we let it ride. */
+   *  parallel race budget, so we let it ride. Excludes Yaver Mesh addresses. */
   private isTailscaleIP(host: string): boolean {
     if (!/^100\./.test(host)) return false;
     const second = parseInt(host.split(".")[1] ?? "0", 10);
-    return second >= 64 && second <= 127;
+    return second >= 64 && second <= 127 && !this.isMeshOverlayIP(host);
   }
 
   private transportPolicy(): {
@@ -5993,7 +6001,7 @@ export class QuicClient {
    *  Cancels losers via AbortController so we never leak sockets.
    *
    *  Order of candidates is informational only — they all fire at once. We
-   *  surface the matched path label (lan-beacon / lan-tailscale / lan-convex-ip)
+   *  surface the matched path label (lan-beacon / lan-mesh / lan-tailscale / lan-convex-ip)
    *  in the connection log so the user sees how the session attached.
    */
   private async raceDirectCandidates(opts: { includeStoredHost?: boolean } = {}): Promise<{
@@ -6022,10 +6030,10 @@ export class QuicClient {
     // listening on (same port for every interface — single HTTP server).
     const port = this.port ?? 18080;
     for (const ip of this._lanIps) {
-      // Tag Tailscale IPs distinctly so the log shows which path actually won.
-      const path: ConnectionPath = this.isTailscaleIP(ip) ? "lan-tailscale" : "lan-heartbeat";
+      // Tag overlay IPs distinctly so the log shows which path actually won.
+      const path: ConnectionPath = this.isMeshOverlayIP(ip) ? "lan-mesh" : this.isTailscaleIP(ip) ? "lan-tailscale" : "lan-heartbeat";
       const isPriv = this.isPrivateIP(ip);
-      if (path === "lan-tailscale" && !policy.allowTailnet) continue;
+      if ((path === "lan-mesh" || path === "lan-tailscale") && !policy.allowTailnet) continue;
       // A private RFC1918 LAN IP is always cheap + safe to probe and is
       // bounded by DIRECT_PHASE_DEADLINE_MS below — so never let a
       // connection-preference silently strip the one candidate that would

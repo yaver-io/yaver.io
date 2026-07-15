@@ -1650,7 +1650,8 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
   const palette = transportToneRGB(t.tone, isDark);
 
   const lanIps = device.lanIps || [];
-  const tailscaleIp = lanIps.find((ip) => /^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./.test(ip));
+  const meshIp = lanIps.find((ip) => /^100\.(9[6-9]|10\d|11[0-1])\./.test(ip));
+  const tailscaleIp = lanIps.find((ip) => /^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./.test(ip) && ip !== meshIp);
   const wslIp = lanIps.find((ip) => /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip));
   const privateLanIps = lanIps.filter((ip) => /^(10\.|192\.168\.)/.test(ip) && ip !== tailscaleIp);
 
@@ -1748,6 +1749,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
               />
             ) : null}
             {device.tunnelUrl ? <Row label="Tunnel URL" value={device.tunnelUrl} mono /> : null}
+            {meshIp ? <Row label="Yaver Mesh IP" value={`${meshIp}:${device.port ?? 18080}`} mono /> : null}
             {tailscaleIp ? <Row label="Tailscale IP" value={`${tailscaleIp}:${device.port ?? 18080}`} mono /> : null}
             {wslIp ? <Row label="WSL2 NAT IP" value={`${wslIp}:${device.port ?? 18080}`} mono /> : null}
             {privateLanIps.length ? <Row label="LAN IPs" value={privateLanIps.join(", ")} mono /> : null}

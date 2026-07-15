@@ -11,6 +11,7 @@ export type TransportPrimary =
   | "yaver-public-relay"
   | "self-hosted-relay"
   | "cloudflare-tunnel"
+  | "yaver-mesh"
   | "tailscale"
   | "wsl-nat"
   | "private-lan"
@@ -46,10 +47,12 @@ export interface TransportInput {
 
 const RFC1918 = [/^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[0-1])\./];
 const TAILSCALE_CGNAT = /^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./;
+const YAVER_MESH = /^100\.(9[6-9]|10\d|11[0-1])\./;
 const WSL_NAT = /^172\.(1[6-9]|2\d|3[0-1])\./;
 
 function isRFC1918(ip: string): boolean { return RFC1918.some((re) => re.test(ip)); }
-function isTailscaleIP(ip: string): boolean { return TAILSCALE_CGNAT.test(ip); }
+function isYaverMeshIP(ip: string): boolean { return YAVER_MESH.test(ip); }
+function isTailscaleIP(ip: string): boolean { return TAILSCALE_CGNAT.test(ip) && !isYaverMeshIP(ip); }
 function isCloudflareTunnel(url: string): boolean {
   return /(^https?:\/\/)?[a-z0-9-]+\.(trycloudflare\.com|cfargotunnel\.com)\b/i.test(url);
 }
@@ -91,6 +94,15 @@ export function classifyTransport(d: TransportInput): TransportInfo {
       label: isCloudflareTunnel(tunnel) ? "Cloudflare tunnel" : "Tunnel",
       detail: `via ${cleanHostFromUrl(tunnel)}`,
       tone: "amber", url: tunnel,
+    };
+  }
+
+  const meshIp = ips.find(isYaverMeshIP);
+  if (meshIp) {
+    return {
+      primary: "yaver-mesh", label: "Yaver Mesh",
+      detail: `via ${meshIp}`,
+      tone: "emerald", url: `http://${meshIp}:${d.port ?? 18080}`,
     };
   }
 

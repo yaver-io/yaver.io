@@ -88,7 +88,7 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 type iosSimulatorTarget struct{}
 
 func (iosSimulatorTarget) Attach(ctx context.Context) (string, error) {
-	return (&testkit.IOSSimDriver{DeviceType: "iPhone"}).Boot(ctx)
+	return (&testkit.IOSSimDriver{}).Boot(ctx)
 }
 func (iosSimulatorTarget) Tap(ctx context.Context, deviceID string, x, y int) error {
 	if err := (&testkit.IOSSimDriver{}).Tap(ctx, deviceID, x, y); err == nil {
