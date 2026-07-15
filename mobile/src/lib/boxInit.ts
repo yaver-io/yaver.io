@@ -178,9 +178,9 @@ function glmCheck(input: BoxReadinessInput): BoxCheck {
     return { key: "glm", label: "GLM (z.ai)", status: "missing", detail: "not configured", action: "setup_glm" };
   }
   if (r.authConfigured && r.ready) {
-    return { key: "glm", label: "GLM (z.ai)", status: "ok", detail: r.version ? `ready · ${r.version}` : "API key configured", action: "none" };
+    return { key: "glm", label: "GLM (z.ai)", status: "ok", detail: r.version ? `ready · ${r.version}` : "provider configured", action: "none" };
   }
-  return { key: "glm", label: "GLM (z.ai)", status: "warn", detail: "API key not configured", action: "setup_glm" };
+  return { key: "glm", label: "GLM (z.ai)", status: "warn", detail: "provider not configured", action: "setup_glm" };
 }
 
 function codexCheck(input: BoxReadinessInput): BoxCheck {

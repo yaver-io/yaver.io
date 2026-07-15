@@ -142,11 +142,11 @@ function labelForBackend(id: CodingBackendId): string {
     case "local":
       return "On-device model";
     case "anthropic":
-      return "Claude (BYO key)";
+      return "Claude backend";
     case "openai":
-      return "OpenAI (BYO key)";
+      return "OpenAI-compatible backend";
     case "glm":
-      return "GLM (BYO key)";
+      return "GLM backend";
     case "remote":
       return "Remote runner (GLM)";
   }
@@ -160,7 +160,7 @@ function labelForBackend(id: CodingBackendId): string {
  *  SANDBOX (phone-local files):
  *    1. Android + on-device CLI ready → real CLI on the phone (richest, $0/plan).
  *    2. else → Hermes on the phone (model via codingBackend). null engine if the
- *       phone has no usable backend (UI prompts to mirror a plan / add a key /
+ *       phone has no usable backend (UI prompts to mirror a plan / configure /
  *       download a model).
  *
  *  PROJECT (real dev; prefer a box for the toolchain):
@@ -205,7 +205,7 @@ export function resolveCodingSession(
       label: b ? `${labelForBackend(b)} · sandbox` : "Sandbox — no backend",
       reason: b
         ? "Hermes agent loop editing the phone-local sandbox"
-        : "no on-device model, plan token, or API key — set one up to code the sandbox",
+        : "no on-device model or plan-backed backend — set one up to code the sandbox",
       boxAuthFree: true,
     };
   }
@@ -223,7 +223,7 @@ export function resolveCodingSession(
         target: box,
         label: `${labelForBackend(b)} → box`,
         reason:
-          "Hermes-only remote: the phone's token drives edits + build/test on the box, so the box needs no claude/codex auth",
+          "Hermes-only remote: the phone's plan-backed session drives edits + build/test on the box, so the box needs no Claude/Codex auth",
         boxAuthFree: true,
       };
     }
@@ -274,7 +274,7 @@ export function resolveCodingSession(
     label: b ? `${labelForBackend(b)} · this phone` : "No backend",
     reason: b
       ? "no box reachable; Hermes loop edits phone-local files and reaches for a machine to build"
-      : "no box, no on-device model, no token — set up a backend or pair a box",
+      : "no box, no on-device model, no plan-backed backend — set up a backend or pair a box",
     boxAuthFree: true,
   };
 }

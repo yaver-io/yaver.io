@@ -129,7 +129,7 @@ export function routeCoding(req: StartCodingRequest): CodingRoute {
       session,
       screen: "sandbox-ai",
       label: "Set up a coding backend",
-      reason: "no on-device model, no mirrored plan, no API key, and no box — add one to start coding",
+      reason: "no on-device model, no mirrored plan, and no box — add one to start coding",
     };
   }
 
@@ -144,7 +144,7 @@ export function routeCoding(req: StartCodingRequest): CodingRoute {
 }
 
 /** True when the phone can actually run SOMETHING locally: the Android proot CLI,
- *  an on-device model, a mirrored plan, or any BYO key. Mirrors the inputs
+ *  an on-device model, a mirrored plan, or a configured fallback backend. Mirrors the inputs
  *  codingSession uses, so the two never disagree. */
 function phoneHasUsableEngine(req: StartCodingRequest): boolean {
   const { env } = req;

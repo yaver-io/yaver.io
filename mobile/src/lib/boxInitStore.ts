@@ -71,11 +71,12 @@ export async function loadBoxReadiness(deviceId: string, opts: LoadReadinessOpts
   });
 }
 
-/** Tokens the git remediations need (the runner setups can use API keys too). */
+/** Tokens the git/provider remediations may need. Claude/Codex runner auth is plan OAuth, not API keys. */
 export interface BoxActionParams {
   githubToken?: string;
   gitlabToken?: string;
   gitlabHost?: string;
+  /** Legacy/provider fields retained for non-plan backends; not used for Claude/Codex plan OAuth. */
   anthropicApiKey?: string;
   openaiApiKey?: string;
   glmApiKey?: string;
@@ -121,7 +122,6 @@ export async function runBoxAction(
           installIfMissing: true,
           allowInstallOnly: true,
           setupMcp: true,
-          anthropicApiKey: params.anthropicApiKey,
         });
         return resultFromSetup(r);
       }
@@ -132,7 +132,6 @@ export async function runBoxAction(
           installIfMissing: true,
           allowInstallOnly: true,
           setupMcp: true,
-          openaiApiKey: params.openaiApiKey,
         });
         return resultFromSetup(r);
       }
@@ -218,7 +217,7 @@ export interface BoxInitProgress {
 export interface RunBoxInitOpts {
   deviceId: string;
   isLocalDevice?: boolean;
-  /** Tokens for git remediations; runner setups can take API keys too. */
+  /** Tokens for git/provider remediations; Claude/Codex runner setup uses plan OAuth. */
   params?: BoxActionParams;
   /** Skip git checks even if missing (they're non-blocking). Default false. */
   skipGit?: boolean;

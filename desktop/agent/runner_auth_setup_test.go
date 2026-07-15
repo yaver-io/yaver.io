@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestApplyRunnerAuthSetupLocalCodex(t *testing.T) {
+func TestApplyRunnerAuthSetupLocalCodexInstallOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell stub uses POSIX sh")
 	}
@@ -24,13 +24,13 @@ func TestApplyRunnerAuthSetupLocalCodex(t *testing.T) {
 		t.Fatalf("mkdir codex home: %v", err)
 	}
 
-	loginKeyPath := filepath.Join(home, "codex-login-key.txt")
 	mcpArgsPath := filepath.Join(home, "codex-mcp-args.txt")
 	script := "#!/bin/sh\n" +
 		"set -eu\n" +
 		"case \"$1 ${2-} ${3-}\" in\n" +
 		"  \"--version  \") echo \"codex test\" ;;\n" +
-		"  \"login --with-api-key \") cat > \"" + loginKeyPath + "\"; mkdir -p \"" + codexHome + "\"; printf '{\"token\":\"ok\"}' > \"" + filepath.Join(codexHome, "auth.json") + "\" ;;\n" +
+		"  \"login status \") echo not-logged-in >&2; exit 1 ;;\n" +
+		"  \"login --with-api-key \") echo unexpected-api-key-login >&2; exit 44 ;;\n" +
 		"  \"mcp get yaver\") exit 1 ;;\n" +
 		"  \"mcp add yaver\") printf '%s' \"$*\" > \"" + mcpArgsPath + "\" ;;\n" +
 		"  *) exit 0 ;;\n" +
@@ -48,48 +48,28 @@ func TestApplyRunnerAuthSetupLocalCodex(t *testing.T) {
 	setupMCP := true
 	installIfMissing := false
 	codexLogin := true
+	allowInstallOnly := true
 	result, err := applyRunnerAuthSetupLocal(context.Background(), runnerAuthSetupRequest{
 		Runner:           "codex",
-		OpenAIAPIKey:     "sk-test-codex",
 		InstallIfMissing: &installIfMissing,
 		CodexLogin:       &codexLogin,
 		SetupMCP:         &setupMCP,
+		AllowInstallOnly: &allowInstallOnly,
 	})
 	if err != nil {
 		t.Fatalf("applyRunnerAuthSetupLocal: %v", err)
 	}
-	if !result.OK || !result.Ready || !result.AuthConfigured {
+	if !result.OK || !result.Installed || result.Ready || result.AuthConfigured {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	if !result.LoginAttempt {
-		t.Fatalf("expected codex login to run")
+	if result.LoginAttempt {
+		t.Fatalf("expected no API-key login attempt")
 	}
 	if len(result.MCPConfigured) != 1 || result.MCPConfigured[0] != "codex" {
 		t.Fatalf("expected codex MCP config, got %+v", result.MCPConfigured)
 	}
-
-	loginKey, err := os.ReadFile(loginKeyPath)
-	if err != nil {
-		t.Fatalf("read login key: %v", err)
-	}
-	if strings.TrimSpace(string(loginKey)) != "sk-test-codex" {
-		t.Fatalf("unexpected login key: %q", string(loginKey))
-	}
-
-	if _, err := os.Stat(filepath.Join(codexHome, "auth.json")); err != nil {
-		t.Fatalf("expected auth.json to exist: %v", err)
-	}
-
-	vs, err := NewVaultStore("test-passphrase")
-	if err != nil {
-		t.Fatalf("NewVaultStore: %v", err)
-	}
-	entry, err := vs.Get("", "OPENAI_API_KEY")
-	if err != nil {
-		t.Fatalf("vault get: %v", err)
-	}
-	if strings.TrimSpace(entry.Value) != "sk-test-codex" {
-		t.Fatalf("unexpected vault value: %q", entry.Value)
+	if !strings.Contains(result.Detail, "ChatGPT Plus/Pro plan OAuth") {
+		t.Fatalf("expected plan OAuth detail, got %q", result.Detail)
 	}
 
 	mcpArgs, err := os.ReadFile(mcpArgsPath)

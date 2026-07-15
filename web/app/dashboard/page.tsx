@@ -3831,6 +3831,11 @@ function RunnerAuthModal({
                         setSubmitting(true);
                         setSubmitError(null);
                         try {
+                          setSession({
+                            ...session,
+                            status: "awaiting_browser",
+                            detail: "Code submitted. Waiting for the remote Claude Code process to confirm plan sign-in.",
+                          });
                           const next = await agentClient.submitRunnerBrowserAuthCode(session.id, pasteCode.trim(), target);
                           setSession(next);
                           setPasteCode("");
@@ -3849,7 +3854,12 @@ function RunnerAuthModal({
                       setSubmitting(true);
                       setSubmitError(null);
                       try {
-                        const next = await agentClient.submitRunnerBrowserAuthCode(session.id, pasteCode.trim());
+                        setSession({
+                          ...session,
+                          status: "awaiting_browser",
+                          detail: "Code submitted. Waiting for the remote Claude Code process to confirm plan sign-in.",
+                        });
+                        const next = await agentClient.submitRunnerBrowserAuthCode(session.id, pasteCode.trim(), target);
                         setSession(next);
                         setPasteCode("");
                       } catch (err) {

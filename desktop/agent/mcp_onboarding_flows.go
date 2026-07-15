@@ -52,7 +52,7 @@ func mcpYaverSelfHostOnboarding(args yaverSelfHostOnboardingArgs) map[string]int
 		},
 		"runner": map[string]interface{}{
 			"requested": firstNonEmpty(args.Runner, "codex|claude-code|opencode"),
-			"next":      "Use `runner_auth_setup` for API-key based setup, or `runner_auth_browser_start` for browser/OAuth runner setup. Keep Yaver registered as the runner MCP server.",
+			"next":      "Use `runner_auth_setup` to install/register the runner, then `runner_auth_browser_start` or `runner_auth_credentials_import` for Claude Code/Codex plan OAuth. Keep Yaver registered as the runner MCP server.",
 		},
 		"git": map[string]interface{}{
 			"providers": status.Providers,
@@ -64,7 +64,7 @@ func mcpYaverSelfHostOnboarding(args yaverSelfHostOnboardingArgs) map[string]int
 			{"tool": "machine_onboarding_status", "why": "inspect OpenAI/GitHub/GitLab readiness"},
 			{"tool": "code_repos", "why": "let the user pick an existing repo/project"},
 			{"tool": "code_repo_set", "why": "bind Yaver Code to the selected repo"},
-			{"tool": "runner_auth_setup", "why": "install/auth the selected AI runner and register Yaver MCP"},
+			{"tool": "runner_auth_setup", "why": "install the selected AI runner, report plan-OAuth readiness, and register Yaver MCP"},
 		},
 	}
 	if args.IncludeCloudCTA {
@@ -106,7 +106,7 @@ func mcpYaverManagedCloudOnboarding(args yaverManagedCloudOnboardingArgs) map[st
 		"post_purchase_onboarding": []map[string]interface{}{
 			{"step": "wait_for_machine", "tool": "yaver_managed_cloud_onboarding", "detail": "poll with confirm_checkout=false until a managed machine is listed"},
 			{"step": "sync_git", "tool": "git_push_creds", "detail": "push local GitHub/GitLab clone/deploy creds to the new managed box; tokens never go to Convex"},
-			{"step": "runner_auth", "tool": "runner_auth_setup", "detail": "configure Codex/Claude/opencode on the managed box"},
+			{"step": "runner_auth", "tool": "runner_auth_setup + runner_auth_browser_start", "detail": "install Codex/Claude/opencode on the managed box, then finish Claude/Codex plan OAuth or import existing subscription credentials"},
 			{"step": "select_repo", "tool": "code_repos + code_repo_set", "detail": "let the user choose which repo/app this box should own"},
 			{"step": "deploy", "tool": "code_deploy", "detail": "deploy the selected repo from the managed cloud target"},
 		},

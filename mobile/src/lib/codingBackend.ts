@@ -35,7 +35,7 @@ export interface CodingBackendMeta {
   kind: CodingBackendKind;
   /** One-line note for the picker. */
   note: string;
-  /** For cloud backends: which BYO key slot it needs (none for local). */
+  /** For cloud fallback backends: which local provider credential slot it needs (none for local). */
   requiresKey?: "openai" | "glm" | "anthropic";
 }
 
@@ -50,27 +50,27 @@ export const CODING_BACKENDS: readonly CodingBackendMeta[] = [
     id: "subscription",
     label: "Claude (your plan) — real CLI only",
     kind: "cloud",
-    note: "Your Max/Pro plan token. Allowed ONLY via the genuine Claude Code CLI (Android proot or a paired box), never the in-app agent — using a plan token from a re-implemented client breaks Anthropic's terms. For standalone in-app coding, use GLM/BYO.",
+    note: "Your Max/Pro plan token. Allowed ONLY via the genuine Claude Code CLI (Android proot or a paired box), never the in-app agent — using a plan token from a re-implemented client breaks Anthropic's terms. For standalone in-app coding, use a configured fallback backend.",
   },
   {
     id: "anthropic",
-    label: "Claude (BYO key)",
+    label: "Claude API (metered fallback)",
     kind: "cloud",
-    note: "Anthropic Claude via your own API key. Metered — bills per token on top of any plan.",
+    note: "Anthropic Claude via a local provider credential. Metered — separate from any Claude plan.",
     requiresKey: "anthropic",
   },
   {
     id: "openai",
-    label: "OpenAI (BYO key)",
+    label: "OpenAI API (metered fallback)",
     kind: "cloud",
-    note: "OpenAI GPT via your own API key.",
+    note: "OpenAI GPT via a local provider credential. Separate from ChatGPT Plus/Pro plan OAuth.",
     requiresKey: "openai",
   },
   {
     id: "glm",
-    label: "GLM (BYO key)",
+    label: "GLM API (metered fallback)",
     kind: "cloud",
-    note: "Zhipu GLM via your own API key. Cheap, capable.",
+    note: "Zhipu GLM via a local provider credential.",
     requiresKey: "glm",
   },
   {
@@ -93,7 +93,7 @@ export interface CodingBackendAvailability {
   localModelReady: boolean;
   /** A Claude subscription OAuth token (mirrored from desktop) is present. */
   claudeSubscription: boolean;
-  /** BYO keys present in the keychain. */
+  /** Local provider credentials present in the keychain. */
   anthropicKey: boolean;
   openaiKey: boolean;
   glmKey: boolean;
@@ -110,8 +110,8 @@ export interface CodingBackendAvailability {
 // Android proot `claude`/`codex`, or the real CLI on a paired box (Codex even
 // supports official "Sign in with ChatGPT" there). Those paths don't go through
 // codingBackend at all. So `subscription` is permanently NOT usable here; the
-// no-real-CLI case (iOS always, Android without proot) falls to BYO keys, GLM
-// first. See docs/phone-dev-environment-audit.md.
+// no-real-CLI case (iOS always, Android without proot) falls to configured
+// fallback backends instead. See docs/phone-dev-environment-audit.md.
 export function backendUsable(id: CodingBackendId, av: CodingBackendAvailability): boolean {
   switch (id) {
     case "local":

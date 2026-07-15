@@ -2730,7 +2730,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		var reason string
 		if stuck {
 			reason = fmt.Sprintf(
-				"%s produced no output for %s — it's likely waiting for sign-in, rate-limited, or the AI provider isn't responding. Sign the runner in again (or check its provider/API key) and retry.",
+				"%s produced no output for %s — it's likely waiting for sign-in, rate-limited, or the AI provider isn't responding. Sign the runner in again with plan OAuth, check the remote tmux session, and retry.",
 				task.runner.Name, noOutputDeadline,
 			)
 			task.Status = TaskStatusFailed

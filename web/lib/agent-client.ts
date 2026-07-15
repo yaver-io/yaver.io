@@ -2014,7 +2014,7 @@ export class AgentClient {
 
   /**
    * Kick off remote browser-style auth for a runner on the connected agent
-   * (codex `--device-auth`, claude `auth login --console`). Returns a session
+   * (codex `login --device-auth`, claude `auth login --claudeai`). Returns a session
    * id that callers poll via getRunnerBrowserAuthStatus to grab the URL +
    * code the user needs to complete in their browser.
    *
@@ -2068,10 +2068,10 @@ export class AgentClient {
 
   /**
    * Forward a user-pasted authentication code to the running CLI's
-   * stdin. Used by the Claude device-auth flow where the user signs
-   * in on platform.claude.com, copies the long token, and pastes it
+   * stdin. Used by the Claude plan-OAuth flow where the user signs
+   * in on claude.ai, copies the one-shot code/token, and pastes it
    * back here. The agent fire-and-forgets the code into the spawned
-   * `claude auth login --console` process; nothing is persisted.
+   * `claude auth login --claudeai` process; nothing is persisted.
    *
    * Privacy: the code is only ever held in memory on the host (the
    * machine running the spawned CLI), never on Convex, never on the

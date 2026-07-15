@@ -996,7 +996,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             </Text>
                             {(() => {
                               // Browser OAuth only covers claude/codex; opencode and
-                              // glm authenticate with a provider API key, and offering
+                              // glm authenticate through provider config, and offering
                               // them a "Sign in" button that opens an OAuth page they
                               // cannot complete is worse than offering nothing.
                               const signInTarget = codingRunners.find(

@@ -4567,8 +4567,8 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
 }
 
 /**
- * Remote "Sign in" modal. Kicks off `codex login --device-auth` (or
- * `claude auth login --console`) on the connected agent, pulls the
+ * Remote "Sign in" modal. Kicks off `codex login --device-auth` or
+ * `claude auth login --claudeai` on the connected agent, pulls the
  * URL + one-time code out of the CLI's stdout, and renders them so the
  * user can complete the flow in *their* browser on any device — no
  * SSH, no local env keys, no API key paste.
@@ -4594,7 +4594,7 @@ function RunnerAuthModal({
   // Claude's modern OAuth flow returns a long token the user must
   // paste back into the CLI on the remote machine. We pipe that paste
   // through the agent's /runner-auth/browser/submit-code endpoint
-  // straight into the spawned `claude auth login --console` stdin.
+  // straight into the spawned `claude auth login --claudeai` stdin.
   // Codex still uses the auto-completing device-auth flow and doesn't
   // need this field — it never renders for runner=codex.
   const [authCode, setAuthCode] = useState("");
@@ -4720,7 +4720,7 @@ function RunnerAuthModal({
         ) : (
           <div className="space-y-3">
             <p className="text-xs text-surface-400">
-              Complete sign-in from any browser — we triggered <code className="rounded bg-surface-800 px-1.5 py-0.5 font-mono text-surface-200">{runner} login --device-auth</code> on the remote machine.
+              Complete sign-in from any browser — we triggered <code className="rounded bg-surface-800 px-1.5 py-0.5 font-mono text-surface-200">{runner === "codex" ? "codex login --device-auth" : "claude auth login --claudeai"}</code> on the remote machine.
             </p>
             {session.openUrl ? (
               <a
@@ -4820,7 +4820,7 @@ function RunnerAuthModal({
             )}
 
             <p className="text-[10px] text-surface-600 leading-relaxed">
-              Device codes are a common phishing target. Never share this code. Once you finish in the browser, this dialog turns green automatically.
+              Auth codes are a common phishing target. Never share this code. Once the remote CLI confirms sign-in, this dialog turns green automatically.
             </p>
           </div>
         )}

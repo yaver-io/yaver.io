@@ -912,7 +912,7 @@ export function CodingAgentsSection({ device }: { device: Device }) {
   const [statusRows, setStatusRows] = useState<RunnerAuthStatusRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [authModalRunner, setAuthModalRunner] = useState<string | null>(null);
-  // OpenCode/GLM don't do browser OAuth — they need a provider/API-key. Route
+  // OpenCode/GLM don't use the Claude/Codex browser OAuth path. Route
   // their "Sign in" to the config sheet instead of the browser-auth modal,
   // which errors with "unsupported runner" for anything but claude/codex.
   const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
@@ -1199,7 +1199,7 @@ export function CodingAgentsSection({ device }: { device: Device }) {
               <Pressable
                 onPress={() => {
                   const nid = String(id).toLowerCase();
-                  // opencode/glm authenticate via a provider API key, not
+                  // opencode/glm authenticate through provider config, not
                   // browser OAuth — send them to the config sheet.
                   if (nid === "opencode" || nid === "glm") {
                     setShowOpenCodeConfig(true);

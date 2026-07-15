@@ -226,6 +226,7 @@ function RunnerAuthCTA({
   const [sess, setSess] = useState<{ id: string; uri: string; code: string; runner: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [authCode, setAuthCode] = useState("");
 
   if (!deviceId) {
     return (
@@ -250,7 +251,33 @@ function RunnerAuthCTA({
         return;
       }
       setSess({ id, uri, code: code || "", runner });
+      setAuthCode("");
       window.open(uri, "_blank", "noopener");
+    } catch (e: any) {
+      setMsg(`✗ ${e?.message || String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCode = async () => {
+    if (!sess || !authCode.trim()) return;
+    setBusy(true);
+    setMsg("verifying on the remote box...");
+    try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
+      const r = await agentClient.callOps("runner_auth", {
+        op: "submit_code",
+        sessionId: sess.id,
+        code: authCode.trim(),
+        deviceId,
+      });
+      if ((r as any)?.ok === false) {
+        setMsg(`✗ ${(r as any)?.error || "could not submit auth code"}`);
+        return;
+      }
+      setAuthCode("");
+      await check();
     } catch (e: any) {
       setMsg(`✗ ${e?.message || String(e)}`);
     } finally {
@@ -308,13 +335,50 @@ function RunnerAuthCTA({
           </button>
         </>
       ) : (
-        <button
-          disabled={busy}
-          onClick={() => void check()}
-          className="rounded border border-emerald-500/50 px-2 py-0.5 font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
-        >
-          ✓ I authorized {sess.runner} {sess.code ? `(${sess.code})` : ""}
-        </button>
+        <>
+          {sess.runner === "claude" ? (
+            <>
+              <input
+                value={authCode}
+                onChange={(e) => setAuthCode(e.target.value)}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData("text") || "";
+                  const cleaned = pasted.trim();
+                  if (cleaned !== pasted) {
+                    e.preventDefault();
+                    setAuthCode(cleaned);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && authCode.trim()) {
+                    e.preventDefault();
+                    void submitCode();
+                  }
+                }}
+                placeholder="Claude auth code"
+                spellCheck={false}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                className="w-40 rounded border border-slate-300 bg-white px-2 py-0.5 font-mono text-[11px] text-slate-900 dark:border-surface-700 dark:bg-surface-950 dark:text-surface-100"
+              />
+              <button
+                disabled={busy || !authCode.trim()}
+                onClick={() => void submitCode()}
+                className="rounded border border-emerald-500/50 px-2 py-0.5 font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+              >
+                Submit Claude code
+              </button>
+            </>
+          ) : null}
+          <button
+            disabled={busy}
+            onClick={() => void check()}
+            className="rounded border border-emerald-500/50 px-2 py-0.5 font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+          >
+            Check {sess.runner} {sess.code ? `(${sess.code})` : ""}
+          </button>
+        </>
       )}
       {msg ? (
         <span className={`text-[10px] ${msg.startsWith("✗") ? "text-rose-500" : "text-slate-500 dark:text-surface-400"}`}>

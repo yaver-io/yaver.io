@@ -723,7 +723,7 @@ func detectCodexStatus() RunnerRuntimeStatus {
 		}
 	}
 	status.Ready = false
-	status.Error = "Codex is installed but no credentials were found. Set `OPENAI_API_KEY` or run `codex login --device-auth` (and complete it in the browser). Checked: " + strings.Join(codexAuthCandidatePaths(), ", ") + "."
+	status.Error = "Codex is installed but no credentials were found. Run `codex login --device-auth` and complete ChatGPT Plus/Pro plan OAuth in the browser, or import credentials from an already-signed-in user-owned device. Checked: " + strings.Join(codexAuthCandidatePaths(), ", ") + "."
 	return status
 }
 

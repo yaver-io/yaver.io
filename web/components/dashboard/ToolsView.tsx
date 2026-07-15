@@ -23,7 +23,7 @@ type Props = {
 const TOOL_META: Record<string, { emoji: string; tagline: string }> = {
   "claude-code": { emoji: "🤖", tagline: "Anthropic's CLI agent — frontier-quality runner." },
   codex: { emoji: "🧠", tagline: "OpenAI Codex CLI — token-efficient daily driver." },
-  opencode: { emoji: "🪄", tagline: "Open-source coding agent — BYOK Anthropic / OpenAI / OpenRouter / GLM, or free local Ollama." },
+  opencode: { emoji: "🪄", tagline: "Open-source coding agent — use local Ollama or a preconfigured provider on the box." },
   ollama: { emoji: "🦙", tagline: "Local LLM runtime — install on the dev box, then point OpenCode at it for free local coding." },
   docker: { emoji: "🐳", tagline: "Containerise tasks — required for guest isolation + sandbox mode." },
   node: { emoji: "🟢", tagline: "Node.js — required for Expo / Vite / Next.js." },
@@ -62,13 +62,10 @@ export default function ToolsView({ devices = [] }: Props) {
   const [onboardingTargets, setOnboardingTargets] = useState<string[]>(["__local__"]);
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [installing, setInstalling] = useState<string | null>(null);
-  const [savingRunnerAuth, setSavingRunnerAuth] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [result, setResult] = useState<{ tool: string; status: string } | null>(null);
-  const [runnerAuthResult, setRunnerAuthResult] = useState<string | null>(null);
   const [onboardingResult, setOnboardingResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
   const [browserAuthError, setBrowserAuthError] = useState<string | null>(null);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [openCodeConfig, setOpenCodeConfig] = useState<OpenCodeConfigSummary | null>(null);
@@ -82,15 +79,6 @@ export default function ToolsView({ devices = [] }: Props) {
   const [savingOpenCodeConfig, setSavingOpenCodeConfig] = useState(false);
   const [openCodeConfigResult, setOpenCodeConfigResult] = useState<string | null>(null);
   const [openCodeConfigError, setOpenCodeConfigError] = useState<string | null>(null);
-  const [codexOpenAIKey, setCodexOpenAIKey] = useState("");
-  const [claudeAnthropicKey, setClaudeAnthropicKey] = useState("");
-  const [claudeAuthToken, setClaudeAuthToken] = useState("");
-  const [claudeOAuthToken, setClaudeOAuthToken] = useState("");
-  const [opencodeOpenAIKey, setOpencodeOpenAIKey] = useState("");
-  const [opencodeAnthropicKey, setOpencodeAnthropicKey] = useState("");
-  const [opencodeGLMKey, setOpencodeGLMKey] = useState("");
-  const [opencodeZAIKey, setOpencodeZAIKey] = useState("");
-  const [machineOpenAIKey, setMachineOpenAIKey] = useState("");
   const [machineGitHubToken, setMachineGitHubToken] = useState("");
   const [machineGitLabToken, setMachineGitLabToken] = useState("");
   const [machineGitLabHost, setMachineGitLabHost] = useState("gitlab.com");
@@ -101,6 +89,8 @@ export default function ToolsView({ devices = [] }: Props) {
   const [gitLinkError, setGitLinkError] = useState<string | null>(null);
   const [startingBrowserAuth, setStartingBrowserAuth] = useState<string | null>(null);
   const [browserAuthSession, setBrowserAuthSession] = useState<RunnerBrowserAuthSession | null>(null);
+  const [browserAuthCode, setBrowserAuthCode] = useState("");
+  const [browserAuthSubmitting, setBrowserAuthSubmitting] = useState(false);
   const cancelStreamRef = useRef<(() => void) | null>(null);
 
   const peers = useMemo(
@@ -289,36 +279,11 @@ export default function ToolsView({ devices = [] }: Props) {
     });
   }
 
-  async function saveRunnerAuth(runner: "claude" | "codex" | "opencode") {
-    if (savingRunnerAuth) return;
-    setSavingRunnerAuth(runner);
-    setAuthError(null);
-    setRunnerAuthResult(null);
-    const res = await agentClient.runnerAuthSet(
-      {
-        runner,
-        openaiApiKey: runner === "codex" ? codexOpenAIKey : opencodeOpenAIKey,
-        anthropicApiKey: runner === "claude" ? claudeAnthropicKey : opencodeAnthropicKey,
-        anthropicAuthToken: runner === "claude" ? claudeAuthToken : undefined,
-        claudeCodeOauthToken: runner === "claude" ? claudeOAuthToken : undefined,
-        glmApiKey: runner === "opencode" ? opencodeGLMKey : undefined,
-        zaiApiKey: runner === "opencode" ? opencodeZAIKey : undefined,
-      },
-      target,
-    );
-    setSavingRunnerAuth(null);
-    if (!res.ok) {
-      setAuthError(res.error || "Runner auth update failed");
-      return;
-    }
-    setRunnerAuthRows(res.runners);
-    setRunnerAuthResult(`${labelForRunner(runner)} auth saved`);
-  }
-
   async function startBrowserAuth(runner: "claude" | "codex") {
     if (startingBrowserAuth) return;
     setStartingBrowserAuth(runner);
     setBrowserAuthError(null);
+    setBrowserAuthCode("");
     const res = await agentClient.runnerBrowserAuthStart({ runner }, target);
     setStartingBrowserAuth(null);
     if (!res.ok || !res.session) {
@@ -336,6 +301,28 @@ export default function ToolsView({ devices = [] }: Props) {
     }
   }
 
+  async function submitBrowserAuthCode() {
+    if (!browserAuthSession || browserAuthSubmitting) return;
+    const code = browserAuthCode.trim();
+    if (code.length < 8) return;
+    setBrowserAuthSubmitting(true);
+    setBrowserAuthError(null);
+    setBrowserAuthSession({
+      ...browserAuthSession,
+      status: "awaiting_browser",
+      detail: "Code submitted. Waiting for the remote Claude Code process to confirm plan sign-in.",
+    });
+    try {
+      const next = await agentClient.submitRunnerBrowserAuthCode(browserAuthSession.id, code, target);
+      setBrowserAuthSession(next);
+      setBrowserAuthCode("");
+    } catch (err) {
+      setBrowserAuthError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBrowserAuthSubmitting(false);
+    }
+  }
+
   async function saveMachineOnboarding() {
     if (savingOnboarding) return;
     setSavingOnboarding(true);
@@ -348,7 +335,6 @@ export default function ToolsView({ devices = [] }: Props) {
     for (const targetId of selectedTargets) {
       const res = await agentClient.machineOnboardingApply(
         {
-          openaiApiKey: machineOpenAIKey,
           githubToken: machineGitHubToken,
           gitlabToken: machineGitLabToken,
           gitlabHost: machineGitLabHost,
@@ -622,7 +608,6 @@ export default function ToolsView({ devices = [] }: Props) {
             </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <SecretField label="OpenAI API key" value={machineOpenAIKey} onChange={setMachineOpenAIKey} placeholder="sk-..." />
             <SecretField label="GitHub token" value={machineGitHubToken} onChange={setMachineGitHubToken} placeholder="ghp_..." />
             <SecretField label="GitLab token" value={machineGitLabToken} onChange={setMachineGitLabToken} placeholder="glpat-..." />
             <SecretField label="GitLab host" value={machineGitLabHost} onChange={setMachineGitLabHost} placeholder="gitlab.com" secret={false} />
@@ -743,9 +728,9 @@ export default function ToolsView({ devices = [] }: Props) {
       <section>
         <div className="flex items-start justify-between gap-4 mb-3">
           <div>
-            <h3 className="text-sm font-semibold text-surface-300">Runner auth</h3>
+            <h3 className="text-sm font-semibold text-surface-300">Runner sign-in</h3>
             <p className="text-xs text-surface-500 mt-1">
-              Push API keys or auth tokens into the selected machine so Claude Code, Codex, and OpenCode are usable headlessly.
+              Claude Code and Codex use the user&apos;s existing Pro/Max/Plus plan OAuth on their own devices. No API keys are needed or shown here.
             </p>
           </div>
           <button
@@ -772,8 +757,6 @@ export default function ToolsView({ devices = [] }: Props) {
             title="Codex"
             status={runnerAuthRows.find((row) => row.id === "codex")}
             capability={runnerCapabilitySnapshot?.targets?.["runner-codex"]}
-            busy={savingRunnerAuth === "codex"}
-            onSave={() => void saveRunnerAuth("codex")}
             secondaryAction={
               <button
                 onClick={() => void startBrowserAuth("codex")}
@@ -790,9 +773,8 @@ export default function ToolsView({ devices = [] }: Props) {
           >
             <div className="space-y-3">
               <p className="text-xs text-surface-500">
-                Headless-friendly path: the remote box generates a device-auth link and one-time code, and you complete login from this browser.
+                Plan-backed path: the remote box generates a ChatGPT device-auth link and one-time code, and you complete login from this browser or your phone.
               </p>
-              <SecretInput label="OpenAI API key" value={codexOpenAIKey} onChange={setCodexOpenAIKey} placeholder="sk-..." />
             </div>
           </RunnerAuthCard>
 
@@ -800,8 +782,6 @@ export default function ToolsView({ devices = [] }: Props) {
             title="Claude Code"
             status={runnerAuthRows.find((row) => row.id === "claude")}
             capability={runnerCapabilitySnapshot?.targets?.["runner-claude"]}
-            busy={savingRunnerAuth === "claude"}
-            onSave={() => void saveRunnerAuth("claude")}
             secondaryAction={
               <button
                 onClick={() => void startBrowserAuth("claude")}
@@ -818,13 +798,8 @@ export default function ToolsView({ devices = [] }: Props) {
           >
             <div className="space-y-3">
               <p className="text-xs text-surface-500">
-                Uses Claude Code&apos;s native browser login flow on the remote box and surfaces the generated auth URL here.
+                Uses Claude Code&apos;s Claude.ai plan OAuth on the remote box and surfaces the generated auth URL here. The paste-back code stays host-local and never goes to Convex.
               </p>
-              <div className="grid gap-3 md:grid-cols-3">
-              <SecretInput label="Anthropic API key" value={claudeAnthropicKey} onChange={setClaudeAnthropicKey} placeholder="sk-ant-..." />
-              <SecretInput label="Anthropic auth token" value={claudeAuthToken} onChange={setClaudeAuthToken} placeholder="oauth/session token" />
-              <SecretInput label="Claude Code OAuth token" value={claudeOAuthToken} onChange={setClaudeOAuthToken} placeholder="oauth token" />
-              </div>
             </div>
           </RunnerAuthCard>
 
@@ -832,24 +807,15 @@ export default function ToolsView({ devices = [] }: Props) {
             title="OpenCode"
             status={runnerAuthRows.find((row) => row.id === "opencode")}
             capability={runnerCapabilitySnapshot?.targets?.["runner-opencode"]}
-            busy={savingRunnerAuth === "opencode"}
-            onSave={() => void saveRunnerAuth("opencode")}
           >
-            <div className="grid gap-3 md:grid-cols-2">
-              <SecretInput label="OpenAI API key" value={opencodeOpenAIKey} onChange={setOpencodeOpenAIKey} placeholder="sk-..." />
-              <SecretInput label="Anthropic API key" value={opencodeAnthropicKey} onChange={setOpencodeAnthropicKey} placeholder="sk-ant-..." />
-              <SecretInput label="GLM API key" value={opencodeGLMKey} onChange={setOpencodeGLMKey} placeholder="zai_... or glm_..." />
-              <SecretInput label="ZAI API key" value={opencodeZAIKey} onChange={setOpencodeZAIKey} placeholder="zai_..." />
-            </div>
+            <p className="text-xs text-surface-500">
+              OpenCode is shown for boxes that already have a local or preconfigured provider. Claude Code and Codex plan OAuth are the primary remote sign-in paths.
+            </p>
           </RunnerAuthCard>
         </div>
-        {(runnerAuthResult || authError || browserAuthError) && (
-          <div className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
-            authError || browserAuthError
-              ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-          }`}>
-            {authError || browserAuthError || runnerAuthResult}
+        {browserAuthError && (
+          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+            {browserAuthError}
           </div>
         )}
       </section>
@@ -1007,7 +973,10 @@ export default function ToolsView({ devices = [] }: Props) {
                 </p>
               </div>
               <button
-                onClick={() => setBrowserAuthSession(null)}
+                onClick={() => {
+                  setBrowserAuthSession(null);
+                  setBrowserAuthCode("");
+                }}
                 className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-300 hover:border-surface-600"
               >
                 Close
@@ -1076,6 +1045,55 @@ export default function ToolsView({ devices = [] }: Props) {
                   >
                     Copy code
                   </button>
+                </div>
+              ) : null}
+
+              {browserAuthSession.runner === "claude" && browserAuthSession.openUrl && browserAuthSession.status !== "completed" && browserAuthSession.status !== "failed" && browserAuthSession.status !== "cancelled" ? (
+                <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-4">
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-700 dark:text-indigo-300">
+                    Paste Claude auth code
+                  </div>
+                  <input
+                    type="text"
+                    value={browserAuthCode}
+                    onChange={(e) => {
+                      setBrowserAuthCode(e.target.value);
+                      setBrowserAuthError(null);
+                    }}
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData.getData("text") || "";
+                      const cleaned = pasted.trim();
+                      if (cleaned !== pasted) {
+                        e.preventDefault();
+                        setBrowserAuthCode(cleaned);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && browserAuthCode.trim().length >= 8) {
+                        e.preventDefault();
+                        void submitBrowserAuthCode();
+                      }
+                    }}
+                    placeholder="Paste the code copied from claude.ai"
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    className="w-full rounded-lg border border-surface-700 bg-surface-950 px-3 py-2 font-mono text-xs text-surface-100 placeholder-surface-600 outline-none focus:border-indigo-400/70"
+                  />
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-surface-500">
+                      Forwarded only to the remote CLI stdin. It is not saved in Convex or logs.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={browserAuthSubmitting || browserAuthCode.trim().length < 8}
+                      onClick={() => void submitBrowserAuthCode()}
+                      className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-50"
+                    >
+                      {browserAuthSubmitting ? "Submitting..." : "Submit code"}
+                    </button>
+                  </div>
                 </div>
               ) : null}
 
@@ -1360,12 +1378,6 @@ function SecretField({
   );
 }
 
-function labelForRunner(runner: "claude" | "codex" | "opencode") {
-  if (runner === "claude") return "Claude Code";
-  if (runner === "codex") return "Codex";
-  return "OpenCode";
-}
-
 function runnerStatusTone(status?: RunnerAuthStatusRow) {
   if (!status?.installed) return "bg-surface-800 text-surface-400";
   if (status.ready) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
@@ -1384,8 +1396,8 @@ function RunnerAuthCard({
   title: string;
   status?: RunnerAuthStatusRow;
   capability?: CapabilitySnapshot["targets"][string];
-  busy: boolean;
-  onSave: () => void;
+  busy?: boolean;
+  onSave?: () => void;
   secondaryAction?: ReactNode;
   children: ReactNode;
 }) {
@@ -1403,17 +1415,19 @@ function RunnerAuthCard({
             {capability?.reason || status?.detail || "No status yet."}
           </p>
         </div>
-        <button
-          onClick={onSave}
-          disabled={busy}
-          className={`rounded-lg px-3 py-2 text-xs font-semibold ${
-            busy
-              ? "cursor-wait bg-surface-800 text-surface-400"
-              : "bg-indigo-500 text-white hover:bg-indigo-400"
-          }`}
-        >
-          {busy ? "Saving…" : "Save auth"}
-        </button>
+        {onSave ? (
+          <button
+            onClick={onSave}
+            disabled={!!busy}
+            className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+              busy
+                ? "cursor-wait bg-surface-800 text-surface-400"
+                : "bg-indigo-500 text-white hover:bg-indigo-400"
+            }`}
+          >
+            {busy ? "Saving…" : "Save auth"}
+          </button>
+        ) : null}
         {secondaryAction}
       </div>
       <div className="mt-4">{children}</div>
