@@ -83,10 +83,10 @@ func TestRemoteRuntimeCapabilitiesForSwiftOnLinuxRequiresMacHost(t *testing.T) {
 
 func TestRemoteRuntimeCapabilitiesForKotlinUseAndroidHostClass(t *testing.T) {
 	caps := remoteRuntimeCapabilitiesForProject("/tmp/kotlin-app", "kotlin")
-	// android-emulator (default where the host can run it) +
-	// android-device (physical fallback, e.g. linux/arm64).
-	if len(caps.Targets) != 2 {
-		t.Fatalf("kotlin targets = %d, want 2 (android-emulator + android-device)", len(caps.Targets))
+	// android-emulator (default where the host can run it), android-redroid
+	// (Docker-backed container), and android-device (physical fallback).
+	if len(caps.Targets) != 3 {
+		t.Fatalf("kotlin targets = %d, want 3 (android-emulator + android-redroid + android-device)", len(caps.Targets))
 	}
 	target := caps.Targets[0]
 	if target.ID != "android-emulator" {
@@ -98,8 +98,11 @@ func TestRemoteRuntimeCapabilitiesForKotlinUseAndroidHostClass(t *testing.T) {
 	if target.RequiredCLI != "adb + emulator" {
 		t.Fatalf("kotlin required cli = %q", target.RequiredCLI)
 	}
-	if caps.Targets[1].ID != "android-device" {
-		t.Fatalf("kotlin target[1] id = %q, want android-device", caps.Targets[1].ID)
+	if caps.Targets[1].ID != "android-redroid" {
+		t.Fatalf("kotlin target[1] id = %q, want android-redroid", caps.Targets[1].ID)
+	}
+	if caps.Targets[2].ID != "android-device" {
+		t.Fatalf("kotlin target[2] id = %q, want android-device", caps.Targets[2].ID)
 	}
 }
 
@@ -108,11 +111,11 @@ func TestRemoteRuntimeCapabilitiesForFlutterExposesBothTargets(t *testing.T) {
 	if !caps.RemoteRuntimeEligible {
 		t.Fatal("flutter should be remote-runtime eligible")
 	}
-	if len(caps.Targets) != 4 {
-		t.Fatalf("flutter targets = %d, want 4 (android-emulator + android-device + ios-simulator + ios-device)", len(caps.Targets))
+	if len(caps.Targets) != 5 {
+		t.Fatalf("flutter targets = %d, want 5 (android-emulator + android-redroid + android-device + ios-simulator + ios-device)", len(caps.Targets))
 	}
 	ids := []string{}
-	wantIDs := map[string]bool{"android-emulator": true, "android-device": true, "ios-simulator": true, "ios-device": true}
+	wantIDs := map[string]bool{"android-emulator": true, "android-redroid": true, "android-device": true, "ios-simulator": true, "ios-device": true}
 	for _, tg := range caps.Targets {
 		ids = append(ids, tg.ID)
 		if !wantIDs[tg.ID] {

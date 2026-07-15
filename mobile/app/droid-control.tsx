@@ -86,14 +86,16 @@ function buildHtml(frameUrl: string, intervalMs: number): string {
         var r = img.getBoundingClientRect();
         var nx = (cx - r.left) / Math.max(1, r.width);
         var ny = (cy - r.top) / Math.max(1, r.height);
-        return { nx: Math.min(1, Math.max(0, nx)), ny: Math.min(1, Math.max(0, ny)) };
+        if (nx < 0 || ny < 0 || nx > 1 || ny > 1) return null;
+        return { nx: nx, ny: ny };
       }
 
       var sx=0, sy=0, snx=0, sny=0, moved=false;
       cap.addEventListener('touchstart', function(e){
         if (e.touches.length === 1){
           var t=e.touches[0]; sx=t.clientX; sy=t.clientY; moved=false;
-          var p = norm(sx, sy); snx=p.nx; sny=p.ny;
+          var p = norm(sx, sy); if (!p) return;
+          snx=p.nx; sny=p.ny;
         }
         e.preventDefault();
       }, {passive:false});
@@ -106,10 +108,12 @@ function buildHtml(frameUrl: string, intervalMs: number): string {
         var ct = e.changedTouches[0];
         if (!moved){
           var p = norm(ct.clientX, ct.clientY);
+          if (!p) return;
           post({k:'tap', nx:p.nx, ny:p.ny});
         } else {
           // Drag → swipe from start to end (both normalized).
           var p = norm(ct.clientX, ct.clientY);
+          if (!p) return;
           post({k:'swipe', nx1:snx, ny1:sny, nx2:p.nx, ny2:p.ny});
         }
         e.preventDefault();

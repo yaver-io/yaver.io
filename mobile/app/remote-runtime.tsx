@@ -6,7 +6,7 @@ import { WebView } from "react-native-webview";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import { quicClient, type RemoteRuntimeCapabilities, type RemoteRuntimeSession } from "../src/lib/quic";
-import { setActiveRemoteRuntimeSession } from "../src/lib/feedbackTrigger";
+import { setActiveRemoteRuntimeSession, triggerFeedbackLaunch } from "../src/lib/feedbackTrigger";
 
 export default function RemoteRuntimeScreen() {
   const c = useColors();
@@ -124,7 +124,7 @@ export default function RemoteRuntimeScreen() {
     }
   }, [path, framework, clearConnectionTimers, finishConnectionOverlay, pushConnectionLog]);
 
-  const sendControl = useCallback(async (body: { action: "tap" | "text" | "back" | "home"; text?: string }) => {
+  const sendControl = useCallback(async (body: { action: "tap" | "swipe" | "text" | "back" | "home" | "key"; x?: number; y?: number; x2?: number; y2?: number; durationMs?: number; text?: string; key?: string }) => {
     if (!session) return;
     try {
       const next = await quicClient.sendRemoteRuntimeControl(session.id, body);
@@ -140,6 +140,7 @@ export default function RemoteRuntimeScreen() {
     setSendingFeedback(true);
     try {
       const result = await quicClient.sendRemoteRuntimeCommand(session.id, "launch-feedback", "mobile");
+      triggerFeedbackLaunch("remote-runtime");
       setSession((prev) => prev ? {
         ...prev,
         status: "feedback-pending",
@@ -250,6 +251,7 @@ export default function RemoteRuntimeScreen() {
                         }
                         if (typeof payload?.note === "string") setViewerNote(payload.note);
                         if (typeof payload?.error === "string") setViewerNote(payload.error);
+                        if (payload?.type === "feedback-launch-request") triggerFeedbackLaunch("remote-runtime");
                       } catch {
                         setViewerNote(event.nativeEvent.data);
                       }
@@ -278,7 +280,7 @@ export default function RemoteRuntimeScreen() {
                     <Text style={styles.buttonText}>Type</Text>
                   </Pressable>
                 </View>
-                {session.targetId === "android-emulator" ? (
+                {session.platform === "android" ? (
                   <View style={styles.row}>
                     <Pressable onPress={() => void sendControl({ action: "back" })} style={[styles.inlineButton, { backgroundColor: c.border }]}>
                       <Text style={styles.buttonText}>Back</Text>
@@ -486,6 +488,7 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
     baseUrl,
     headers,
     sessionId: session.id,
+    deviceDims: session.deviceDims || null,
     transportMode: session.transportMode || "direct-webrtc",
   });
   return `<!doctype html>
@@ -527,6 +530,27 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Control failed");
         if (data.session) post({ type: "session", session: data.session, note: data.session.note || "" });
+      }
+      function contentPointFromClient(clientX, clientY) {
+        if (!frameEl.naturalWidth || !frameEl.naturalHeight) return null;
+        const rect = frameEl.getBoundingClientRect();
+        const scale = Math.min(rect.width / frameEl.naturalWidth, rect.height / frameEl.naturalHeight);
+        const drawW = frameEl.naturalWidth * scale;
+        const drawH = frameEl.naturalHeight * scale;
+        const left = rect.left + (rect.width - drawW) / 2;
+        const top = rect.top + (rect.height - drawH) / 2;
+        const nx = (clientX - left) / Math.max(1, drawW);
+        const ny = (clientY - top) / Math.max(1, drawH);
+        if (nx < 0 || ny < 0 || nx > 1 || ny > 1) return null;
+        const targetW = cfg.deviceDims && cfg.deviceDims.width ? cfg.deviceDims.width : frameEl.naturalWidth;
+        const targetH = cfg.deviceDims && cfg.deviceDims.height ? cfg.deviceDims.height : frameEl.naturalHeight;
+        return {
+          x: Math.round(nx * targetW),
+          y: Math.round(ny * targetH),
+        };
+      }
+      function contentPoint(event) {
+        return contentPointFromClient(event.clientX, event.clientY);
       }
       async function start() {
         if (cfg.transportMode === "relay-jpeg-poll") {
@@ -570,6 +594,13 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
               try {
                 const payload = JSON.parse(String(msg.data));
                 if (payload.session) post({ type: "session", session: payload.session });
+                if (payload.type === "dims" && payload.width && payload.height) {
+                  cfg.deviceDims = { width: payload.width, height: payload.height, scale: payload.scale, rotation: payload.rotation };
+                }
+                if (payload.type === "feedback-launch-request") {
+                  post({ type: "feedback-launch-request", source: payload.source || "remote-runtime" });
+                  setStatus("Feedback overlay requested.");
+                }
                 if (payload.error) setStatus(payload.error);
               } catch {}
             };
@@ -588,17 +619,52 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
         if (data.note) setStatus(data.note);
         await pc.setRemoteDescription({ type: data.answer.type || "answer", sdp: data.answer.sdp || "" });
       }
+      let suppressClickUntil = 0;
       frameEl.addEventListener("click", async (event) => {
-        if (!frameEl.naturalWidth || !frameEl.naturalHeight) return;
-        const rect = frameEl.getBoundingClientRect();
-        const x = Math.round(((event.clientX - rect.left) / rect.width) * frameEl.naturalWidth);
-        const y = Math.round(((event.clientY - rect.top) / rect.height) * frameEl.naturalHeight);
+        if (Date.now() < suppressClickUntil) return;
+        const point = contentPoint(event);
+        if (!point) return;
         try {
-          await sendControl({ action: "tap", x, y });
+          await sendControl({ action: "tap", x: point.x, y: point.y });
         } catch (error) {
           setStatus(error.message || String(error));
         }
       });
+      let startPoint = null;
+      let startClient = null;
+      let moved = false;
+      frameEl.addEventListener("touchstart", (event) => {
+        if (event.touches.length !== 1) return;
+        const t = event.touches[0];
+        startClient = { x: t.clientX, y: t.clientY };
+        startPoint = contentPointFromClient(t.clientX, t.clientY);
+        moved = false;
+        event.preventDefault();
+      }, { passive: false });
+      frameEl.addEventListener("touchmove", (event) => {
+        if (!startClient || event.touches.length !== 1) return;
+        const t = event.touches[0];
+        if (Math.abs(t.clientX - startClient.x) > 12 || Math.abs(t.clientY - startClient.y) > 12) moved = true;
+        event.preventDefault();
+      }, { passive: false });
+      frameEl.addEventListener("touchend", async (event) => {
+        if (!startPoint) return;
+        const t = event.changedTouches[0];
+        const endPoint = contentPointFromClient(t.clientX, t.clientY);
+        const beginPoint = startPoint;
+        const shouldSwipe = moved && endPoint;
+        startPoint = null;
+        startClient = null;
+        moved = false;
+        if (!shouldSwipe) return;
+        suppressClickUntil = Date.now() + 600;
+        try {
+          await sendControl({ action: "swipe", x: beginPoint.x, y: beginPoint.y, x2: endPoint.x, y2: endPoint.y, durationMs: 250 });
+        } catch (error) {
+          setStatus(error.message || String(error));
+        }
+        event.preventDefault();
+      }, { passive: false });
       start().catch((error) => setStatus(error.message || String(error)));
     </script>
   </body>

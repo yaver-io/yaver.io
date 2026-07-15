@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -66,6 +67,8 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 		return androidEmulatorTarget{}, nil
 	case "android-device":
 		return androidDeviceTarget{}, nil
+	case remoteRuntimeRedroidTargetID:
+		return redroidRuntimeTarget{}, nil
 	case "ios-device":
 		return iosDeviceTarget{}, nil
 	case "browser-window":
@@ -88,21 +91,46 @@ func (iosSimulatorTarget) Attach(ctx context.Context) (string, error) {
 	return (&testkit.IOSSimDriver{DeviceType: "iPhone"}).Boot(ctx)
 }
 func (iosSimulatorTarget) Tap(ctx context.Context, deviceID string, x, y int) error {
-	return (&testkit.IOSSimDriver{}).Tap(ctx, deviceID, x, y)
+	if err := (&testkit.IOSSimDriver{}).Tap(ctx, deviceID, x, y); err == nil {
+		return nil
+	}
+	if err := wdaClientFor(wdaBaseURL()).Tap(ctx, x, y); err != nil {
+		return fmt.Errorf("ios-simulator tap requires simctl tap or WebDriverAgent (`yaver install wda`): %w", err)
+	}
+	return nil
 }
-func (iosSimulatorTarget) Swipe(ctx context.Context, _ string, _, _, _, _, _ int) error {
-	return fmt.Errorf("swipe is not implemented for ios-simulator yet — drop in WDA or cliclick path in a follow-up phase")
+func (iosSimulatorTarget) Swipe(ctx context.Context, _ string, x1, y1, x2, y2, durationMs int) error {
+	if err := wdaClientFor(wdaBaseURL()).Swipe(ctx, x1, y1, x2, y2, durationMs); err != nil {
+		return fmt.Errorf("ios-simulator swipe requires WebDriverAgent (`yaver install wda`): %w", err)
+	}
+	return nil
 }
 func (iosSimulatorTarget) Text(ctx context.Context, deviceID, text string) error {
-	return (&testkit.IOSSimDriver{}).SendText(ctx, deviceID, text)
+	if err := (&testkit.IOSSimDriver{}).SendText(ctx, deviceID, text); err == nil {
+		return nil
+	}
+	return wdaClientFor(wdaBaseURL()).Text(ctx, text)
 }
-func (iosSimulatorTarget) Key(_ context.Context, _, key string) error {
-	return fmt.Errorf("%s is only supported for Android sessions right now", key)
+func (iosSimulatorTarget) Key(ctx context.Context, _ string, key string) error {
+	if err := wdaClientFor(wdaBaseURL()).PressButton(ctx, key); err != nil {
+		return fmt.Errorf("ios-simulator key %q requires WebDriverAgent (`yaver install wda`): %w", key, err)
+	}
+	return nil
 }
 func (iosSimulatorTarget) Screenshot(ctx context.Context, deviceID, pngPath string) error {
+	if png, err := wdaClientFor(wdaBaseURL()).Screenshot(ctx); err == nil {
+		return os.WriteFile(pngPath, png, 0o644)
+	}
 	return (&testkit.IOSSimDriver{}).Screenshot(ctx, deviceID, pngPath)
 }
 func (iosSimulatorTarget) Dims(ctx context.Context, deviceID string) DeviceDims {
+	if w, h, err := wdaClientFor(wdaBaseURL()).WindowSize(ctx); err == nil && w > 0 && h > 0 {
+		rot := "portrait"
+		if w > h {
+			rot = "landscape"
+		}
+		return DeviceDims{Width: w, Height: h, Scale: 3, Rotation: rot}
+	}
 	return probeIOSDims(ctx, deviceID)
 }
 func (iosSimulatorTarget) SpawnCapture(ctx context.Context, deviceID string) (*exec.Cmd, io.ReadCloser, error) {

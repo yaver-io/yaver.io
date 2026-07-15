@@ -208,6 +208,7 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			// never host-name-gated.
 			caps.Targets = []RemoteRuntimeTarget{
 				probeAndroidEmulatorTarget(),
+				probeRedroidTarget(),
 				probeAndroidDeviceTarget(),
 			}
 		case "flutter":
@@ -222,6 +223,7 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			// wherever the host supports them.
 			caps.Targets = []RemoteRuntimeTarget{
 				probeAndroidEmulatorTarget(),
+				probeRedroidTarget(),
 				probeAndroidDeviceTarget(),
 				probeIOSSimulatorTarget(),
 				probeIOSDeviceTarget(),
@@ -554,10 +556,19 @@ func (s *HTTPServer) handleRemoteRuntimeSessionCommand(w http.ResponseWriter, r 
 		if source == "" {
 			source = "unknown"
 		}
+		if live, ok := mgr.getLive(session.ID); ok {
+			live.sendEventJSON(map[string]any{
+				"type":      "feedback-launch-request",
+				"protocol":  "remote-runtime-feedback-v1",
+				"sessionId": session.ID,
+				"source":    source,
+				"ts":        time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
 		updated, _ := mgr.Update(session.ID, func(current *RemoteRuntimeSession) {
 			current.Status = "feedback-pending"
 			current.LastCommand = "launch-feedback"
-			current.Note = fmt.Sprintf("Feedback launch requested from %s. Wire this command to the active remote viewer once the media/control bridge lands.", source)
+			current.Note = fmt.Sprintf("Feedback launch requested from %s.", source)
 		})
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"ok":        true,

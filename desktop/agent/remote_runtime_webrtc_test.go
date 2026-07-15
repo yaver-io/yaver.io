@@ -542,19 +542,17 @@ func TestExecuteControl_RejectsUnknownAction(t *testing.T) {
 }
 
 func TestExecuteControl_BackKeyOniOSFails(t *testing.T) {
-	// Hardware back/home keys are an Android-only concept. iOS simulator
-	// has no equivalent. The handler explicitly errors rather than
-	// silently dropping. This documents the intended platform asymmetry
-	// — if someone later wires a Siri-style "back" gesture for iOS,
-	// they have to update both the handler AND this test, forcing the
-	// platform-divergence to be intentional.
+	// iOS simulator key/button control is a WDA feature. Without WDA
+	// running, the handler must say exactly what dependency is missing
+	// instead of silently dropping the command or pretending host clicks
+	// are simulator coordinates.
 	mgr, sessionID := newPrimedManager(t, "ios-simulator")
 	_, err := mgr.ExecuteControl(sessionID, remoteRuntimeControlRequest{Action: "back"})
 	if err == nil {
-		t.Fatal("expected error for back-on-iOS")
+		t.Fatal("expected error for back-on-iOS without WDA")
 	}
-	if !strings.Contains(err.Error(), "Android") {
-		t.Errorf("error should say Android-only: %v", err)
+	if !strings.Contains(err.Error(), "WebDriverAgent") {
+		t.Errorf("error should mention WDA: %v", err)
 	}
 }
 
@@ -590,19 +588,17 @@ func TestExecuteControl_SwipeRejectsNegativeCoords(t *testing.T) {
 }
 
 func TestExecuteControl_SwipeUnsupportedOnIOS(t *testing.T) {
-	// iOS Simulator has no built-in swipe primitive in xcrun. Until
-	// a WDA / cliclick path lands in a follow-up phase the handler
-	// must error so the viewer can either fall back to short taps or
-	// surface the limitation to the user.
+	// iOS Simulator swipe is supported through WDA. Without WDA
+	// running, the handler must return a dependency error.
 	mgr, sessionID := newPrimedManager(t, "ios-simulator")
 	_, err := mgr.ExecuteControl(sessionID, remoteRuntimeControlRequest{
 		Action: "swipe", X: 100, Y: 200, X2: 100, Y2: 600, DurationMs: 300,
 	})
 	if err == nil {
-		t.Fatal("expected swipe-on-iOS to error pending Phase 6+ support")
+		t.Fatal("expected swipe-on-iOS to error when WDA is unavailable")
 	}
-	if !strings.Contains(err.Error(), "ios-simulator") {
-		t.Errorf("error should call out the platform: %v", err)
+	if !strings.Contains(err.Error(), "WebDriverAgent") {
+		t.Errorf("error should mention WDA: %v", err)
 	}
 }
 

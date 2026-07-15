@@ -171,9 +171,7 @@ func (d *IOSSimDriver) Tap(ctx context.Context, udid string, x, y int) error {
 	if _, err := runCtx(ctx, "xcrun", "simctl", "io", udid, "tap", fmt.Sprintf("%d", x), fmt.Sprintf("%d", y)); err == nil {
 		return nil
 	}
-	// Fallback: cliclick if installed (`brew install cliclick`).
-	_, err := runCtx(ctx, "cliclick", fmt.Sprintf("c:%d,%d", x, y))
-	return err
+	return fmt.Errorf("simctl tap is unavailable on this Xcode; install a simulator control bridge (WDA/XCUITest) before using interactive iOS simulator taps")
 }
 
 // FullBootSequence is the convenience helper: boot → install → launch
