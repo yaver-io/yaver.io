@@ -217,10 +217,19 @@ export function refreshToken(token: string): Promise<RefreshResult> {
 }
 
 /**
- * Refresh the session token — extends expiry by 30 days. Opts in to
- * server-side token rotation (`X-Yaver-Rotate-Token: 1`); when the
- * backend rotates, we surface the new token so the caller can persist
- * it. Matches the Go agent's behavior (see `desktop/agent/auth.go`).
+ * Refresh the session token — extends expiry. We deliberately do NOT opt into
+ * server-side token rotation on mobile.
+ *
+ * Why: rotation (A→B with a short server grace) was built for the Go agent,
+ * which persists the new token atomically to config.json. On mobile the new
+ * token arrives in the refresh RESPONSE, and a phone loses that response
+ * routinely — cellular blips, the 5 s abort below, or iOS suspending the app
+ * before the fire-and-forget save runs. When that happens the client is
+ * stranded on the old token, the server rotates it away, the grace lapses, and
+ * the next device poll's 401 logs the user out of a session that never actually
+ * expired. So mobile only EXTENDS the token; it never rotates. (We still honour
+ * a `rotated` response defensively, in case the server rotates for its own
+ * reasons.) See docs — root-caused 2026-07-15.
  */
 async function doRefreshToken(token: string): Promise<RefreshResult> {
   try {
@@ -230,7 +239,6 @@ async function doRefreshToken(token: string): Promise<RefreshResult> {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        "X-Yaver-Rotate-Token": "1",
       },
       signal: controller.signal,
     });

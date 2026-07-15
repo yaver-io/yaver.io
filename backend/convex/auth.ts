@@ -1337,10 +1337,18 @@ export const refreshSession = mutation({
     if (session.expiresAt < Date.now() - gracePeriod) return null;
 
     const newExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
-    // ~2 min grace so the old token keeps validating while the rotated
-    // one propagates to every client/connection (mobile has several
-    // independent fire-and-forget refresh triggers).
-    const ROTATION_GRACE_MS = 2 * 60 * 1000;
+    // Grace window during which the JUST-ROTATED (old) token keeps validating.
+    // This was 2 min, which assumed near-instant persistence of the new token —
+    // true for the Go agent (atomic config.json write) but NOT for mobile, where
+    // the new token rides the refresh RESPONSE and a phone loses that response
+    // routinely (cellular blip / request abort / iOS suspend before the
+    // fire-and-forget save). A client stranded on the old token then got a 401
+    // on the next 30s device poll and was logged out of a session that never
+    // expired. 7 days means such a client keeps working until it foregrounds and
+    // re-learns the rotation on any successful refresh. Mobile itself no longer
+    // opts into rotation (see mobile auth.ts::doRefreshToken); this covers
+    // already-installed builds that still do. Root-caused 2026-07-15.
+    const ROTATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
     const patch: {
       expiresAt: number;
       tokenHash?: string;
