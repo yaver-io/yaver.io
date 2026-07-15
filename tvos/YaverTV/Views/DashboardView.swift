@@ -15,7 +15,11 @@ struct DashboardView: View {
                     header
 
                     if store.selectedBox == nil {
-                        emptyBoxPrompt
+                        if store.autoConnecting {
+                            autoConnectPanel
+                        } else {
+                            emptyBoxPrompt
+                        }
                     } else {
                         wakePanel
 
@@ -67,6 +71,9 @@ struct DashboardView: View {
             .task(id: store.selectedBox?.id) {
                 if let box = store.selectedBox { lifecycle.refreshReachability(box) }
             }
+            // Stream C: on launch, silently connect to a live machine + narrate,
+            // rather than dropping the user on the "Choose machine" wall.
+            .onAppear { store.autoConnectOnLaunch() }
         }
     }
 
@@ -120,6 +127,26 @@ struct DashboardView: View {
             Text("Choose one of the machines on your account, or type a LAN address. A machine appears here once it's running `yaver serve` signed in as you.")
                 .font(.system(size: 19)).foregroundStyle(.secondary).frame(maxWidth: 720, alignment: .leading)
             Button("Choose machine") { showPicker = true }.padding(.top, 8)
+        }
+    }
+
+    // Narrated auto-connect (Stream C): while the launch sweep is in flight, show
+    // WHICH machine we're reaching for + a way to bail, instead of the static
+    // "Choose machine" wall. Mirrors mobile's NoMachineEmpty auto-connect branch.
+    private var autoConnectPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 16) {
+                ProgressView().scaleEffect(1.3)
+                Text(AutoConnectStatus.sentence(store.autoConnectTarget))
+                    .font(.system(size: 26, weight: .semibold))
+            }
+            Text("Connecting automatically. This opens the moment your machine is ready.")
+                .font(.system(size: 19)).foregroundStyle(.secondary).frame(maxWidth: 720, alignment: .leading)
+            Button("Choose a machine myself") {
+                store.cancelAutoConnect()
+                showPicker = true
+            }
+            .padding(.top, 8)
         }
     }
 }
