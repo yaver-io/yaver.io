@@ -25,9 +25,11 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
+import { PENDING_DEVICE_CODE_KEY } from "../src/lib/auth";
 import DeviceCodeScanner from "../src/components/DeviceCodeScanner";
 import {
   approveDeviceCode,
@@ -51,6 +53,24 @@ export default function ApproveDeviceScreen() {
   );
 
   const [code, setCode] = useState(initialCode);
+
+  // Signed out but arrived with a code (scanned an Apple TV QR while logged
+  // out)? Don't sit here and fail — approveDeviceCode would run with an empty
+  // token and the TV would stay stuck "Waiting for approval". Stash the code and
+  // send them to sign in; login.tsx returns here with the code afterward and
+  // the approval completes. This is the fix for the stuck-TV bug.
+  useEffect(() => {
+    if (user) return;
+    const c9 = normalizeUserCode(code);
+    if (c9.length !== 9) return;
+    let cancelled = false;
+    (async () => {
+      await AsyncStorage.setItem(PENDING_DEVICE_CODE_KEY, c9);
+      if (!cancelled) router.replace("/login");
+    })();
+    return () => { cancelled = true; };
+  }, [user, code]);
+
   const [info, setInfo] = useState<DeviceCodeInfo | null>(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [approving, setApproving] = useState(false);

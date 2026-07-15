@@ -1,110 +1,87 @@
-# tvOS stuck-login — QR sign-in never completes
+# tvOS stuck-login — QR sign-in never completes (FIXED)
 
-Handoff for the next session. Everything below was checked against the code on
-2026-07-15, not recalled. The bug is real and reproducible; the fix is scoped
-but not yet built.
+Status: **fixed** in the mobile app on 2026-07-15. Kept as a record of the bug,
+the real architecture (my first pass mis-described it), and the fix.
 
-## Symptom (user repro, verbatim)
+## Symptom (user repro)
 
-> I downloaded Yaver to the TV and the phone, both signed out. Opened the TV, it
-> showed a QR. I scanned the QR with my phone camera, it opened the Yaver mobile
-> app, I did Apple sign-in there, the phone signed in — but the **Apple TV stayed
-> stuck** at the QR / "waiting for approval" stage.
+> TV + phone both signed out. Opened the TV → it showed a QR. Scanned it with my
+> phone camera → it opened the Yaver app → I signed in with Apple → the phone
+> signed in, but the **Apple TV stayed stuck** on "Waiting for approval".
 
-So: the phone ends up authenticated, the TV never does. The device code is
-never approved.
+The phone ends up authenticated; the TV never does. The device code is never
+approved.
 
-## The flow, and where it breaks
+## The real architecture (corrected)
 
-The TV shows a QR encoding `https://yaver.io/auth/device?code=XXXX-YYYY`
-(`tvos/YaverTV/Backend.swift` `DeviceCodeStart.verifyURL`). On iOS this is a
-universal link (`web/public/.well-known/apple-app-site-association` maps
-`/auth/device*` to `io.yaver.mobile`), so scanning opens the **mobile app**, not
-Safari.
+The TV QR encodes `https://yaver.io/auth/device?code=XXXX-YYYY`
+(`tvos/YaverTV/Backend.swift`). On iOS this is a universal link
+(`web/public/.well-known/apple-app-site-association` maps `/auth/device*` to the
+app).
 
-The mobile approver route exists: `mobile/app/auth/device.tsx` (added in
-`662edc3e8`, so it IS in TestFlight build 436). It reads `?code=`, GETs
-`/auth/device-code/info`, and on Approve POSTs `/auth/device-code/authorize`
-with the phone's bearer token. When the phone is **already signed in**, this
-works.
+The **canonical approver is `app/approve-device.tsx`** — scanner + biometric gate
++ machine info + type-the-code. It is reached via **`PairLinkHandler`**
+(mounted in `app/_layout.tsx`), which catches `/auth/device?code=` and routes to
+`/approve-device`. (My first pass wrongly added a second approver at
+`app/auth/device.tsx`; that's now a thin redirect to the canonical screen, kept
+only so a COLD-START universal link has a route to render instead of falling
+back to the Tasks tab.)
 
-**The break is the signed-OUT path.** When the QR opens `/auth/device?code=X`
-on a phone with no session:
+## Root cause
 
-1. `app/auth/device.tsx:109-113` calls `getToken()`, gets null, and just shows
-   *"You're not signed in on this phone. Sign in first, then scan the code
-   again."* — it does **not** stash the code.
-2. The user signs in with Apple. The OAuth flow hardcodes
-   **`returnTo: "/dashboard"`** (`mobile/src/lib/auth.ts:897`), so after auth the
-   app lands on the dashboard/Tasks tab.
-3. The `?code=` from the QR is now **gone**. The approver never runs again. The
-   TV's `/auth/device-code/poll` loop keeps returning `pending` forever.
+`approve-device.tsx` assumed the phone was **already signed in** — it called
+`approveDeviceCode(code, token ?? "")`. When the user scanned while signed out,
+the token was empty, so:
 
-There is **no pending-deep-link persistence** across sign-in anywhere in the app
-(grepped `pendingDeepLink|returnTo|postLoginRedirect|deferredLink` — only the
-hardcoded OAuth `returnTo` exists). So any deep link that requires auth is lost
-the moment the user has to sign in.
+- the auth flow sent them to `/login`, and
+- the `?code=` was **discarded** during sign-in (nothing stashed it), so the
+  approval never happened and the TV polled `pending` forever.
 
-## What must work (three cases)
+## The fix (implemented)
 
-1. **Signed-out phone, scan QR** → sign in → **resume approval automatically**
-   with the code carried across sign-in. (Today: stuck.)
-2. **Signed-in phone, scan QR with the camera** → approver opens → one-tap
-   approve → TV signs in. (Today: works, via `app/auth/device.tsx` — needs a
-   re-verify on a real device to be sure the universal link resolves the route
-   and not the Tasks fallback.)
-3. **Signed-in phone, scan QR from INSIDE the app** → the user wants an in-app
-   "Scan QR" affordance so they don't have to leave the app and use the camera
-   roll. (Today: does not exist — no scanner in the app.)
+1. **Stash the code across sign-in.** `app/approve-device.tsx`: when there's a
+   valid code but no `user`, write it to `PENDING_DEVICE_CODE_KEY`
+   (`src/lib/auth.ts`) and `router.replace("/login")` instead of failing.
+2. **Resume after login.** `app/login.tsx` now routes every successful sign-in
+   through `finishLogin()`, which reads the stashed code and returns to
+   `/approve-device?code=…` (else goes home). One tap (biometric) finishes it and
+   the TV signs in within ~5s.
+3. **Cold-start route.** `app/auth/device.tsx` is a thin `<Redirect>` to
+   `/approve-device`, so the universal link never dead-ends on Tasks.
+4. **In-app scanner entry** (case 3 below). Settings → **Sign in a device** opens
+   `approve-device`, which already had "Scan QR instead" (`DeviceCodeScanner`) +
+   type-the-code. An already-signed-in user can now scan a TV code from inside
+   the app without leaving it.
 
-## Fix plan
+## Three cases, all now covered
 
-### A. Carry the device code across sign-in (fixes case 1 — the actual stuck bug)
-
-- In `app/auth/device.tsx`, when `getToken()` is null: **stash the code**
-  (`AsyncStorage.setItem("pendingDeviceCode", code)`) and route to sign-in
-  instead of dead-ending on "scan again".
-- After a successful sign-in, check for `pendingDeviceCode`: if present, navigate
-  back to `/auth/device?code=<stashed>` (or call the approve directly) and clear
-  it. Best hook: the post-auth landing (`AuthContext` success path, or wherever
-  `returnTo` is honored).
-- Make the OAuth `returnTo` (`auth.ts:897`) carry the intended destination
-  instead of a hardcoded `/dashboard` when a pending device code exists — e.g.
-  `returnTo: "/auth/device?code=" + code`.
-- Result: signed-out scan → Apple sign-in → app returns to the approver → one
-  tap (or auto-approve) → TV signs in.
-
-### B. In-app QR scanner for the authenticated path (fixes case 3)
-
-- Add a "Scan a device code" entry (e.g. in the Remote Box picker header or
-  More tab). Use `expo-camera`'s barcode scanner (already an Expo app; confirm
-  `expo-camera` is a dep or add it) to read the QR.
-- Parse the scanned URL for `?code=` and route to `/auth/device?code=…` — reuses
-  the existing approver. No new backend.
-- Because the user is already authed here, it flows straight to Approve.
-
-### C. Re-verify the authenticated camera path (case 2) on device
-
-- On a real iPhone with the app signed in, scan the TV QR and confirm iOS
-  resolves the universal link to `app/auth/device.tsx` (not the Tasks tab). If it
-  lands on Tasks, the AASA/route matching needs a look — but the route file is
-  present and correct, so this is a verify step, not assumed-broken.
+1. Signed-out phone, scan QR → sign in → **approval auto-resumes**. (Was stuck.)
+2. Signed-in phone, scan QR with the camera → approver opens → one tap. (Worked;
+   unchanged.)
+3. Signed-in phone, scan from **inside** the app → Settings → Sign in a device →
+   scan. (New entry point; scanner already existed.)
 
 ## Files
 
 | Concern | File |
 |---|---|
-| Approver route (exists) | `mobile/app/auth/device.tsx` |
-| OAuth returnTo (hardcoded /dashboard — fix) | `mobile/src/lib/auth.ts:897` |
-| Token accessor | `mobile/src/lib/auth.ts` `getToken` |
-| Universal-link mapping | `web/public/.well-known/apple-app-site-association` (`/auth/device*`) |
-| TV QR source | `tvos/YaverTV/Backend.swift` `DeviceCodeStart.verifyURL`, `tvos/YaverTV/Views/SignInView.swift` |
-| Approve/info/poll endpoints | `backend/convex/http.ts` `/auth/device-code/{authorize,info,poll}`, `backend/convex/deviceCode.ts` |
+| Canonical approver (scanner, biometric, signed-out fix) | `mobile/app/approve-device.tsx` |
+| Deep-link router → approver | `mobile/src/lib/pairLinkHandler.tsx` (mounted in `app/_layout.tsx`) |
+| Cold-start redirect | `mobile/app/auth/device.tsx` |
+| Resume-after-login | `mobile/app/login.tsx` `finishLogin()` |
+| Shared stash key | `mobile/src/lib/auth.ts` `PENDING_DEVICE_CODE_KEY` |
+| In-app scanner entry | `mobile/app/(tabs)/settings.tsx` → "Sign in a device" |
+| QR scanner component (pre-existing) | `mobile/src/components/DeviceCodeScanner.tsx` |
+| Approve/info/poll endpoints | `backend/convex/http.ts` `/auth/device-code/*` |
 
-## Note on the TV side
+## The TV side is not the bug
 
-The tvOS `SignInView` is already correct: it polls every 5s, shows "Waiting for
-approval…", and signs in the moment the code is approved (verified — I approved a
-code by hand during the release and the TV picked it up in ~5s). The TV is not
-the bug; the phone-side approval never fires in the signed-out case. No tvOS
-change is needed for this fix — it's entirely mobile-app + the OAuth returnTo.
+`tvOS SignInView` polls every 5s and signs in the moment the code is approved
+(verified by approving codes by hand — the TV picked them up in ~5s each time).
+No tvOS change was needed; the fix is entirely in the mobile app.
+
+## Ships in
+
+The next **mobile** TestFlight build. Until then, a stuck code can be approved
+out-of-band by any signed-in surface hitting `POST /auth/device-code/authorize`
+with `{userCode}`.

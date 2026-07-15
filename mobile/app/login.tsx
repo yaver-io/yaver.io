@@ -42,7 +42,28 @@ import {
   passkeySignup,
 } from "../src/lib/passkey";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { PENDING_DEVICE_CODE_KEY } from "../src/lib/auth";
+
 WebBrowser.maybeCompleteAuthSession();
+
+// After a successful sign-in, resume a pending Apple TV / device-code approval
+// if the user scanned a QR while signed out (the code was stashed before the
+// login round-trip). Otherwise go home. This is what stops the TV getting stuck
+// "Waiting for approval" after sign-in.
+async function finishLogin() {
+  try {
+    const code = await AsyncStorage.getItem(PENDING_DEVICE_CODE_KEY);
+    if (code) {
+      await AsyncStorage.removeItem(PENDING_DEVICE_CODE_KEY);
+      router.replace({ pathname: "/approve-device", params: { code } });
+      return;
+    }
+  } catch {
+    // fall through to home on any storage error
+  }
+  router.replace("/");
+}
 
 const LEGACY_OAUTH_REDIRECT = "yaver:///oauth-callback";
 const YAVER_LOGIN_WORDMARK_DARK = require("../assets/branding/yaver-login-wordmark-dark.png");
@@ -123,7 +144,7 @@ export default function LoginScreen() {
       if (token) {
         try {
           await login(token);
-          router.replace("/");
+          void finishLogin();
         } catch {
           // Token validation failed
         }
@@ -172,7 +193,7 @@ export default function LoginScreen() {
         return;
       }
       await login(result.token);
-      router.replace("/");
+      void finishLogin();
     } catch (e: unknown) {
       if (e instanceof PasskeyCancelled) {
         // User dismissed the platform sheet — silent.
@@ -247,7 +268,7 @@ export default function LoginScreen() {
         return;
       }
       await login(outcome.result.token);
-      router.replace("/");
+      void finishLogin();
     } catch (e: unknown) {
       if (e instanceof PasskeyCancelled) {
         // Silent
@@ -284,7 +305,7 @@ export default function LoginScreen() {
       const token = parsed.queryParams?.token as string | undefined;
       if (!token) return;
       await login(token);
-      router.replace("/");
+      void finishLogin();
     } catch (e: unknown) {
       // Keep the raw reason for logs/debugging, but lead with friendly copy —
       // never surface a bare e.message as the primary line.
@@ -343,7 +364,7 @@ export default function LoginScreen() {
 
       const { token } = await res.json();
       await login(token);
-      router.replace("/");
+      void finishLogin();
     } catch (e: unknown) {
       if ((e as { code?: string }).code === "ERR_REQUEST_CANCELED") {
         // User cancelled — do nothing
@@ -386,7 +407,7 @@ export default function LoginScreen() {
       if (isSignUp) {
         const result = await signupWithEmail(fullName.trim(), email.trim(), password);
         await login(result.token);
-        router.replace("/");
+        void finishLogin();
         return;
       }
       const result = await loginWithEmail(email.trim(), password);
@@ -401,7 +422,7 @@ export default function LoginScreen() {
         return;
       }
       await login(result.token);
-      router.replace("/");
+      void finishLogin();
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Something went wrong";
       setEmailError(message);

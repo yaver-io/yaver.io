@@ -639,6 +639,12 @@ export interface UserSettings {
 const LOCAL_KEY_PREFIX = "yaver_key_";
 
 /** Known local key names */
+// A device code stashed while the phone signs in, so an Apple TV / device-code
+// approval survives the round-trip through the login screen. Set by the approve
+// screen when signed out; read + cleared by login.tsx after a successful sign-in
+// to resume the approval. Fixes the "TV stuck Waiting for approval" bug.
+export const PENDING_DEVICE_CODE_KEY = "pendingDeviceCode";
+
 export const LOCAL_KEYS = {
   speechApiKey: `${LOCAL_KEY_PREFIX}speech`,
   openAiApiKey: `${LOCAL_KEY_PREFIX}openai_api_key`,

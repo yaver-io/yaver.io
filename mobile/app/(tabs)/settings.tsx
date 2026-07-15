@@ -2183,6 +2183,25 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* Sign in another device (Apple TV / headless box) by scanning its QR */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Devices</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => router.push("/approve-device")}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Sign in a device</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Scan the QR on an Apple TV or a headless box (or type its code) to sign it into your account
+                </Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Scan ›</Text>
+            </Pressable>
+          </View>
+        </View>
+
         {/* People & shared projects */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Collaborate</Text>
