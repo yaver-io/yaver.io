@@ -12,7 +12,7 @@ import { HIDE_PAID_UI } from "@/lib/launchFlags";
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "AI writes code in seconds; the loop around it still takes hours. Register Yaver as an MCP server and your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then hot-reloads it across iOS, Android, watch, TV, car, and AR/VR surfaces so you keep iterating from inside the running app. Open source, self-hostable, works with your existing subscription — your code never leaves your machine.";
+  "AI writes code in seconds; the loop around it still takes hours. Yaver plugs your coding agent — Claude Code, Codex, or OpenCode — into your phone: it builds a full-stack app on your own machine, loads it live on iOS and Android, and you keep fixing it from inside the running app — shake to report, the agent patches it while it's still open. It runs on the AI subscription you already pay for, so there's no token markup and your code never leaves your machine. Open source and self-hostable, with the same live loop reaching watch, TV, car, and AR/VR.";
 
 const SUPPORTED_SURFACES = ["iOS", "Android", "Watch", "TV", "Car", "AR/VR"];
 
@@ -1252,11 +1252,14 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
-            Register Yaver as an MCP server and your coding agent &mdash; Claude
-            Code, Codex, or OpenCode &mdash; builds a full-stack app on your own
-            machine. Then hot-reload it across iOS, Android, watch, TV, car,
-            and AR/VR surfaces and keep iterating from inside the running app.
-            Open source, self-hostable &mdash; your code never leaves your machine.
+            Your coding agent &mdash; Claude Code, Codex, or OpenCode &mdash;
+            builds a full-stack app on your own machine and loads it live on
+            your iPhone and Android. Keep fixing it from inside the running
+            app: shake to report, the agent patches it while it&rsquo;s still
+            open. It runs on the AI subscription you already pay for &mdash; no
+            token markup, and your code never leaves your machine. Open source
+            and self-hostable, with the same live loop reaching watch, TV, car,
+            and AR/VR.
           </p>
 
           <div className="mx-auto mt-6 flex max-w-2xl flex-wrap items-center justify-center gap-2">
