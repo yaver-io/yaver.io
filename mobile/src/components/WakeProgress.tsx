@@ -5,6 +5,7 @@ import { typography } from "../theme/tokens";
 import {
   PARK_STEPS,
   PHASE_META,
+  PHASE_TYPICAL_MS,
   WAKE_STEPS,
   type LifecyclePhase,
   type MachineLifecycleState,
@@ -30,9 +31,25 @@ export interface WakeProgressProps {
 
 const NETWORK_PHASES: LifecyclePhase[] = ["registering", "online", "ready"];
 
+function clock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function etaLabel(phase: LifecyclePhase, elapsedMs: number): string | null {
+  const typical = PHASE_TYPICAL_MS[phase];
+  if (!typical) return null;
+  const remaining = Math.max(0, typical - elapsedMs);
+  if (remaining <= 15_000) return null;
+  const min = Math.max(1, Math.round(remaining / 60_000));
+  return `~${min} min`;
+}
+
 export default function WakeProgress({ state, compact }: WakeProgressProps) {
   const c = useColors();
-  const { phase, meta, percent, direction, error } = state;
+  const { phase, meta, percent, direction, error, elapsedInPhaseMs } = state;
 
   const fill = useRef(new Animated.Value(percent)).current;
   const pulse = useRef(new Animated.Value(0)).current;
@@ -82,6 +99,10 @@ export default function WakeProgress({ state, compact }: WakeProgressProps) {
         </Text>
         <Text style={[styles.pct, { color: c.textMuted }]}>{Math.round(percent)}%</Text>
       </View>
+      <Text style={[styles.clock, { color: c.textMuted }]}>
+        {isPark ? "Closing" : "Waking"} · {clock(elapsedInPhaseMs)}
+        {etaLabel(phase, elapsedInPhaseMs) ? ` · ${etaLabel(phase, elapsedInPhaseMs)} left in this step` : ""}
+      </Text>
 
       {/* Progress bar */}
       <View style={[styles.track, { backgroundColor: c.bgInput }]}>
@@ -157,6 +178,7 @@ const styles = StyleSheet.create({
   leadDot: { width: 8, height: 8, borderRadius: 4 },
   headText: { ...typography.caption, fontWeight: "600", flex: 1, minWidth: 0 },
   pct: { ...typography.caption, fontVariant: ["tabular-nums"], fontWeight: "700" },
+  clock: { ...typography.caption, fontVariant: ["tabular-nums"], marginTop: -4 },
   track: { height: 6, borderRadius: 3, overflow: "hidden" },
   fillBar: { height: 6, borderRadius: 3 },
   ladder: { flexDirection: "row", justifyContent: "space-between", marginTop: 2 },

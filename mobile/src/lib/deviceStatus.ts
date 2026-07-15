@@ -181,13 +181,19 @@ export async function probeMobileDeviceStatus(
   // 40ms direct win regardless of a hung relay.
   type Attempt = { base: string; headers: Record<string, string>; path: "relay" | "direct" };
   const attempts: Attempt[] = [];
+  let relayAttempts = 0;
+  let passwordedRelayAttempts = 0;
   if (token && device.id) {
     for (const relay of quicClient.getRelayServers()) {
+      relayAttempts += 1;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         "X-Client-Platform": Platform.OS,
       };
-      if (relay.password) headers["X-Relay-Password"] = relay.password;
+      if (relay.password) {
+        headers["X-Relay-Password"] = relay.password;
+        passwordedRelayAttempts += 1;
+      }
       attempts.push({ base: `${relay.httpUrl}/d/${device.id}`, headers, path: "relay" });
     }
   }
@@ -238,7 +244,12 @@ export async function probeMobileDeviceStatus(
     codingRunners: [],
     lifecycleState: null,
     checkedAt,
-    error: attempts.length ? "No reachable transport (tried relay + direct)" : "No transport configured",
+    error:
+      relayAttempts > 0 && passwordedRelayAttempts === 0
+        ? "No reachable transport. Sign in again to fetch relay credentials."
+        : attempts.length
+          ? "No reachable transport (tried relay + direct)"
+          : "No transport configured",
   };
 }
 

@@ -10,6 +10,9 @@ export interface ManagedCloudMachineSummary {
   errorMessage?: string;
   subscriptionId?: string | null;
   hetznerServerId?: string;
+  /** Device id the managed box registers as once its agent is running. Present
+   *  even during a signed-out wake, so mobile can re-authorize the live agent. */
+  deviceId?: string | null;
   // First-class onboarding parity with web
   // (project_managed_cloud_onboarding_gap).
   provisionPhase?: string | null;

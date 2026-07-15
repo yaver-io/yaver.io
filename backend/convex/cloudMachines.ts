@@ -1555,7 +1555,7 @@ export const touchActivityForUser = internalMutation({
 // percent only). project_managed_cloud_onboarding_gap.
 export const PROVISION_PHASES = [
   "creating", "booting", "installing-docker", "pulling-image",
-  "starting-agent", "registering", "authorizing-runners", "ready", "error",
+  "starting-agent", "registering", "awaiting-yaver-auth", "authorizing-runners", "ready", "error",
 ] as const;
 
 export const setPhase = internalMutation({
@@ -2198,14 +2198,37 @@ export const resumeHealthCheck = internalAction({
       return;
     }
 
-    // Answering but signed out is TERMINAL — no amount of waiting re-auths an
-    // agent. Fail fast instead of burning 10 attempts and then giving up
-    // quietly while the server keeps billing.
+    // Answering but signed out needs USER action, not another blind wake retry.
+    // Keep the server alive for a bounded recovery window so mobile can hit
+    // /auth/recover on the live agent. If the user does nothing, abandonWake
+    // parks it again to stop the meter.
     const signedOut =
       reachable && (lifecycleState === "yaver-auth-expired" || lifecycleState === "bootstrap");
+    if (signedOut && attempt < 40) {
+      const reason =
+        lifecycleState === "bootstrap"
+          ? "The box is awake but its Yaver agent is waiting to be claimed. Sign this machine in from your phone to finish wake."
+          : "The box is awake but its Yaver agent session expired. Sign this machine in from your phone to finish wake.";
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "awaiting-yaver-auth",
+        progress: 88,
+        error: reason,
+      });
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId,
+        status: "resuming",
+        errorMessage: reason,
+      });
+      await ctx.scheduler.runAfter(15_000, internal.cloudMachines.resumeHealthCheck, {
+        machineId,
+        attempt: attempt + 1,
+      });
+      return;
+    }
     if (signedOut || attempt >= 10) {
       const reason = signedOut
-        ? "The box came back up but its Yaver agent is signed out, so it could never register. Parked again to stop the meter — re-authorize it, then wake."
+        ? "The box stayed awake waiting for Yaver sign-in, but was not authorized in time. Parked again to stop the meter — sign it in, then wake."
         : "The box never became reachable after waking. Parked again to stop the meter — try waking it again.";
       console.log(`[cloudMachines.resumeHealthCheck] abandoning ${target}: ${reason}`);
       await ctx.scheduler.runAfter(0, internal.cloudLifecycle.abandonWake, { machineId, reason });

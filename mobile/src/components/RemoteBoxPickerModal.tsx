@@ -20,7 +20,6 @@ import RunnerAuthModal from "./RunnerAuthModal";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
 import { connectionManager } from "../lib/connectionManager";
-import { quicClient } from "../lib/quic";
 import { eligibleRemoteBoxDevices, versionPatchDistance } from "../lib/devicePicker";
 import {
   lastSeenLabel,
@@ -83,6 +82,18 @@ function managedMachineName(m: ManagedCloudMachineSummary): string {
   return raw || "Managed box";
 }
 
+function isYaverAuthWakeBlocker(message?: string | null): boolean {
+  const text = String(message || "").toLowerCase();
+  return (
+    text.includes("yaver agent is signed out") ||
+    text.includes("yaver agent session expired") ||
+    text.includes("waiting to be claimed") ||
+    text.includes("sign this machine in") ||
+    text.includes("could never register") ||
+    text.includes("re-authorize")
+  );
+}
+
 // A single parked/managed machine rendered inline in the picker list, styled to
 // match the device rows. Its primary action is Wake (a parked box is not a
 // selectable remote box until it's awake); once it wakes it self-registers as a
@@ -94,19 +105,64 @@ function SleepingMachineRow({
   machine,
   waking,
   error,
+  signingIn,
   onWake,
+  onSignIn,
 }: {
   c: any;
   machine: ManagedCloudMachineSummary;
   waking: boolean;
   error?: string;
+  signingIn?: boolean;
   onWake: () => void;
+  onSignIn?: () => void;
 }) {
   const view = deriveWakeView(machine, waking);
   const parked = view.tone === "parked";
   const failed = view.tone === "error";
+  const authBlocked = failed && isYaverAuthWakeBlocker(view.error || error || machine.errorMessage);
   const accent = failed ? c.warn : c.accent;
   const slept = timeAgo(machine.lastParkedAt);
+
+  // Live elapsed clock + gentle in-stage creep so a multi-minute wake reads as
+  // motion, not a frozen bar with no sense of time ("user just waits"). System A
+  // (WakeProgress) already does this; the picker's sleeping-row didn't. Elapsed
+  // starts when we first observe inFlight; creep resets each time the stage
+  // advances and asymptotes toward — but never reaches — the next stage floor.
+  const [wakeElapsedMs, setWakeElapsedMs] = React.useState(0);
+  const wakeStartRef = React.useRef<number | null>(null);
+  const stageStartRef = React.useRef<{ stage: number; at: number }>({ stage: -1, at: 0 });
+  React.useEffect(() => {
+    if (!view.inFlight) {
+      wakeStartRef.current = null;
+      setWakeElapsedMs(0);
+      return;
+    }
+    if (wakeStartRef.current == null) wakeStartRef.current = Date.now();
+    const tick = () => setWakeElapsedMs(Date.now() - (wakeStartRef.current ?? Date.now()));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [view.inFlight]);
+  if (stageStartRef.current.stage !== view.stageIndex) {
+    stageStartRef.current = { stage: view.stageIndex, at: Date.now() };
+  }
+  const NEXT_STAGE_FLOOR = [35, 60, 88, 100];
+  const nextFloor = NEXT_STAGE_FLOOR[view.stageIndex] ?? view.percent;
+  const stageElapsedMs = view.inFlight ? Date.now() - stageStartRef.current.at : 0;
+  const creepHeadroom = Math.max(0, nextFloor - 1 - view.percent);
+  const wakeCreep = creepHeadroom * (1 - Math.exp(-stageElapsedMs / 60000));
+  const shownPercent = Math.min(nextFloor - 1, view.percent + wakeCreep);
+  const wakeClock = (ms: number) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  // Rough ESTIMATED time remaining so the user sees how long is left, not just
+  // elapsed. The long pole is snapshot-restore + boot; a persistent-volume box
+  // wakes fast (~1-2 min), a first vanilla boot is slowest (~3-5 min).
+  const wakeTotalEstMs = machine.hasVolume ? 120_000 : machine.bootImageSource === "vanilla" ? 300_000 : 180_000;
+  const wakeRemainMs = Math.max(0, wakeTotalEstMs - wakeElapsedMs);
+  const wakeEta = wakeRemainMs > 0 ? `~${wakeClock(wakeRemainMs)} left` : "almost there…";
 
   return (
     <View
@@ -151,12 +207,12 @@ function SleepingMachineRow({
                 height: 6,
                 borderRadius: 3,
                 backgroundColor: c.accent,
-                width: `${Math.max(5, Math.min(100, view.percent))}%`,
+                width: `${Math.max(5, Math.min(100, shownPercent))}%`,
               }}
             />
           </View>
           <Text style={{ color: c.textMuted, fontSize: 11 }}>
-            {WAKE_STAGES[view.stageIndex]?.label ?? "Waking up"}…
+            {WAKE_STAGES[view.stageIndex]?.label ?? "Waking up"}… · {wakeClock(wakeElapsedMs)} · {wakeEta}
           </Text>
           {machine.hasVolume ? (
             <Text style={{ color: c.success, fontSize: 10 }}>⚡ Fast wake — data on a persistent volume (~1-2 min).</Text>
@@ -171,7 +227,47 @@ function SleepingMachineRow({
       ) : null}
       {error ? <Text style={{ color: c.warn, fontSize: 11, marginTop: 6 }}>{error}</Text> : null}
 
-      {parked || failed ? (
+      {authBlocked && onSignIn ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
+          <Pressable
+            onPress={onSignIn}
+            disabled={signingIn}
+            style={({ pressed }) => ({
+              paddingHorizontal: 16,
+              paddingVertical: 9,
+              borderRadius: 8,
+              backgroundColor: c.accent,
+              flexDirection: "row",
+              alignItems: "center",
+              opacity: signingIn ? 0.6 : pressed ? 0.85 : 1,
+            })}
+          >
+            {signingIn ? (
+              <ActivityIndicator size="small" color="#000" />
+            ) : (
+              <Text style={{ color: "#000", fontSize: 13, fontWeight: "700" }}>
+                Sign this machine in
+              </Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={onWake}
+            disabled={waking || signingIn}
+            style={({ pressed }) => ({
+              paddingHorizontal: 14,
+              paddingVertical: 9,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: c.warn + "66",
+              opacity: waking || signingIn ? 0.55 : pressed ? 0.75 : 1,
+            })}
+          >
+            <Text style={{ color: c.warn, fontSize: 13, fontWeight: "700" }}>
+              Retry wake
+            </Text>
+          </Pressable>
+        </View>
+      ) : parked || failed ? (
         <Pressable
           onPress={onWake}
           disabled={waking}
@@ -247,7 +343,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     lastFailure: managedLastFailure,
     justWoke: managedJustWoke,
     wake: wakeManagedMachine,
+    refresh: refreshManagedMachines,
   } = useParkedMachines(token);
+  const [recoveringMachineId, setRecoveringMachineId] = React.useState<string | null>(null);
   const sleepingMachines = React.useMemo(
     () =>
       managedMachines.filter(
@@ -270,9 +368,6 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   const [pingByDevice, setPingByDevice] = React.useState<
     Record<string, { rttMs: number; ok: boolean; at: number }>
   >({});
-  const [hermesReadyByDevice, setHermesReadyByDevice] = React.useState<
-    Record<string, { enabled: boolean; reason?: string; notes?: string[] } | null>
-  >({});
   const [codingStatusByDevice, setCodingStatusByDevice] = React.useState<
     Record<string, CodingStatus | null>
   >({});
@@ -283,27 +378,6 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   const [authTarget, setAuthTarget] = React.useState<
     { deviceId: string; deviceName: string; runner: string } | null
   >(null);
-  // Per-device "Fix this machine" remediation state. Drives the
-  // /install/mobile flow (Node LTS + hermesc) on the box the user
-  // tapped, streaming live progress so a stalled apt/npm is never an
-  // invisible spinner. Keyed by deviceId so fixing one box never
-  // blocks inspecting another.
-  const [fixByDevice, setFixByDevice] = React.useState<
-    Record<string, { running: boolean; lastLine?: string; error?: string; done?: boolean }>
-  >({});
-  const fixUnsubsRef = React.useRef<Record<string, () => void>>({});
-
-  React.useEffect(() => {
-    if (visible) return;
-    // Modal closed — tear down any in-flight log subscriptions so we
-    // don't leak SSE readers. The install itself keeps running on the
-    // agent; reopening re-subscribes from history.
-    for (const unsub of Object.values(fixUnsubsRef.current)) {
-      try { unsub(); } catch { /* ignore */ }
-    }
-    fixUnsubsRef.current = {};
-  }, [visible]);
-
   React.useEffect(() => {
     if (!visible) {
       setSwitching(false);
@@ -378,41 +452,6 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     if (!visible) return;
     let cancelled = false;
     for (const device of eligibleDevices) {
-      if (hermesReadyByDevice[device.id] !== undefined) continue;
-      const direct = connectionManager.clientFor(device.id);
-      const load = async () => {
-        try {
-          const snapshot = direct.isConnected
-            ? await direct.capabilitySnapshot()
-            : await quicClient.capabilitySnapshot(device.id);
-          if (cancelled) return;
-          const ready = snapshot?.targets?.["mobile-hermes"];
-          setHermesReadyByDevice((prev) => ({
-            ...prev,
-            [device.id]: ready
-              ? {
-                  enabled: !!ready.enabled,
-                  reason: ready.reason,
-                  notes: Array.isArray(ready.notes) ? ready.notes : undefined,
-                }
-              : null,
-          }));
-        } catch {
-          if (cancelled) return;
-          setHermesReadyByDevice((prev) => ({ ...prev, [device.id]: null }));
-        }
-      };
-      void load();
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [visible, eligibleDevices, hermesReadyByDevice]);
-
-  React.useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-    for (const device of eligibleDevices) {
       if (codingStatusByDevice[device.id] !== undefined) continue;
       const load = async () => {
         try {
@@ -474,6 +513,16 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
         4000,
       );
       if (probe.reachable) {
+        if (probe.authExpired) {
+          throw new Error(
+            `${target.name} is reachable, but its Yaver session expired. Open Devices and run Re-auth Yaver, or use the sign-in action when this is a waking managed box.`,
+          );
+        }
+        if (probe.bootstrap) {
+          throw new Error(
+            `${target.name} is reachable, but its Yaver agent is waiting to be claimed. Open Devices and reclaim/sign in this machine before using it.`,
+          );
+        }
         setProbeStage(`Reachable via ${probe.path === "relay" ? "relay" : "direct"} — connecting…`);
       } else {
         // Online-but-unreachable: name it and stop, don't fake a 20s attempt.
@@ -526,83 +575,53 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     }
   }, [pickedDevice, selectDevice, activeDevice?.id, lastError, onSelected, onClose]);
 
-  // "Fix this machine" — provision the Hermes reload stack (Node LTS +
-  // hermesc) on the tapped box via the agent's POST /install/mobile,
-  // streaming live progress over /streams/install:mobile. Streaming
-  // only works over a direct connection (streamLog hits ${baseUrl}
-  // without the /peer prefix), so we connect to the box first if it
-  // isn't already the focused client. On a terminal success we drop
-  // the cached hermes-readiness so the row re-checks and flips green.
-  const runFix = React.useCallback(async (device: Device) => {
-    const id = device.id;
-    if (fixByDevice[id]?.running) return;
-    setFixByDevice((prev) => ({ ...prev, [id]: { running: true, lastLine: "Connecting…" } }));
-    try {
-      // Bring the box up directly so its install log can stream back.
-      if (!connectionManager.clientFor(id).isConnected) {
-        await selectDevice(device);
-      }
-      const client = connectionManager.clientFor(id);
-      if (!client.isConnected) {
-        throw new Error((lastError || "").trim() || `Couldn't reach ${device.name}.`);
-      }
-      const started = await client.installTool("mobile");
-      if (!started.ok) {
-        throw new Error(started.error || "Couldn't start the fix on this machine.");
-      }
-      // Subscribe to live progress. The terminal frame is
-      // {type:"result", status:"ok"|"error"} (see install_http.go).
-      let settled = false;
-      const finish = (patch: { error?: string; done?: boolean }) => {
-        if (settled) return;
-        settled = true;
-        try { fixUnsubsRef.current[id]?.(); } catch { /* ignore */ }
-        delete fixUnsubsRef.current[id];
-        setFixByDevice((prev) => ({ ...prev, [id]: { running: false, ...patch } }));
-        if (patch.done && !patch.error) {
-          // Force a fresh capability re-check for this device — clearing
-          // the entry makes the loader effect re-run and flip the row.
-          setHermesReadyByDevice((prev) => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
-          });
-        }
-      };
-      const unsub = client.streamLog(
-        started.stream,
-        (ev: any) => {
-          if (ev?.type === "result") {
-            if (ev.status === "ok") finish({ done: true });
-            else finish({ error: ev.error || "Fix failed on this machine.", done: true });
-            return;
-          }
-          const line = typeof ev?.text === "string" ? ev.text : "";
-          if (line) {
-            setFixByDevice((prev) => ({
-              ...prev,
-              [id]: { ...(prev[id] || { running: true }), running: true, lastLine: line },
-            }));
-          }
-        },
-        () => {
-          // Stream ended without a terminal result frame — treat as
-          // done so the spinner doesn't hang forever; the row re-check
-          // is the source of truth for whether it actually worked.
-          finish({ done: true });
-        },
-      );
-      fixUnsubsRef.current[id] = unsub;
-    } catch (err: any) {
-      setFixByDevice((prev) => ({
-        ...prev,
-        [id]: { running: false, error: err?.message || "Fix failed." },
-      }));
-    }
-  }, [fixByDevice, selectDevice, lastError]);
-
   const pickedDeviceIsCurrent = !!pickedDevice && activeDevice?.id === pickedDevice.id;
   const pickedDeviceIsConnected = !!pickedDevice && connectedSet.has(pickedDevice.id);
+
+  const recoverManagedMachineAuth = React.useCallback(
+    async (machine: ManagedCloudMachineSummary) => {
+      const deviceId = String(machine.deviceId || "").trim();
+      const host = String(machine.hostname || machine.serverIp || "").trim();
+      if (!deviceId || !host) {
+        Alert.alert(
+          "Can't sign this box in yet",
+          "The cloud row does not include the device id and live hostname needed for remote sign-in. Wait a few seconds for the wake state to refresh, then try again.",
+        );
+        return;
+      }
+      const synthetic: Device = {
+        id: deviceId,
+        name: managedMachineName(machine),
+        host,
+        port: 18080,
+        online: true,
+        lastSeen: Date.now(),
+        os: "linux",
+        runners: [],
+        needsAuth: true,
+        hosting: "yaver-hosted",
+        managed: true,
+        machineId: machine.id,
+        machineStatus: machine.status,
+        lanIps: machine.serverIp ? [machine.serverIp] : undefined,
+      };
+      setRecoveringMachineId(machine.id);
+      try {
+        const result = await deviceCtx.recoverDeviceAuth(synthetic);
+        if (result?.ok || result?.alreadyHealthy) {
+          await refreshManagedMachines();
+          if (machine.status === "paused" || machine.status === "suspended") {
+            await wakeManagedMachine(machine.id);
+          }
+        } else {
+          Alert.alert("Sign-in did not finish", result?.error || "Yaver could not start remote sign-in for this box.");
+        }
+      } finally {
+        setRecoveringMachineId(null);
+      }
+    },
+    [deviceCtx, refreshManagedMachines, wakeManagedMachine],
+  );
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
@@ -748,11 +767,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
             ) : (
               eligibleDevices.map((device) => {
                 const ping = pingByDevice[device.id];
-                const hermesReady = hermesReadyByDevice[device.id];
                 const codingStatus = codingStatusByDevice[device.id];
                 const codingRunners = codingStatus ? sortedCodingRunners(codingStatus.runners) : [];
                 const readyCodingRunners = codingRunners.filter((r) => r.ready);
-                const fix = fixByDevice[device.id];
                 const selected = pickedDeviceId === device.id;
                 const agentVer = (device.agentVersion || "").trim();
                 const distance = agentVer && latestCliVersion
@@ -908,69 +925,6 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             {probe.line} — make sure it's powered on and running the agent
                           </Text>
                         ) : null}
-                        {hermesReady === undefined ? (
-                          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
-                            Checking Hermes reload prerequisites…
-                          </Text>
-                        ) : hermesReady?.enabled ? (
-                          <Text style={{ color: c.success, fontSize: 11, marginTop: 4, fontWeight: "600" }}>
-                            Hermes reload ready
-                          </Text>
-                        ) : (
-                          <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }}>
-                            {hermesReady?.reason || "Hermes reload prerequisites missing"}
-                          </Text>
-                        )}
-                        {hermesReady && !hermesReady.enabled && hermesReady.notes?.[0] && !hermesReady.notes[0].includes("://") ? (
-                          <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={2}>
-                            {hermesReady.notes[0]}
-                          </Text>
-                        ) : null}
-                        {hermesReady && !hermesReady.enabled ? (
-                          fix?.running ? (
-                            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}>
-                              <ActivityIndicator color={c.accent} size="small" />
-                              <Text
-                                style={{ color: c.textMuted, fontSize: 10, marginLeft: 8, flex: 1 }}
-                                numberOfLines={1}
-                              >
-                                {fix.lastLine || "Fixing…"}
-                              </Text>
-                            </View>
-                          ) : (
-                            <>
-                              <Pressable
-                                onPress={(e) => {
-                                  // Don't let the row's onPress (switch
-                                  // device) also fire — fixing is a
-                                  // distinct intent from switching to it.
-                                  (e as any)?.stopPropagation?.();
-                                  void runFix(device);
-                                }}
-                                style={({ pressed }) => ({
-                                  alignSelf: "flex-start",
-                                  marginTop: 8,
-                                  paddingHorizontal: 12,
-                                  paddingVertical: 7,
-                                  borderRadius: 8,
-                                  borderWidth: 1,
-                                  borderColor: c.accent,
-                                  backgroundColor: pressed ? c.accent + "22" : "transparent",
-                                  opacity: pressed ? 0.85 : 1,
-                                })}
-                              >
-                                <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>
-                                  {fix?.error ? "Retry fix" : "Fix this machine"}
-                                </Text>
-                              </Pressable>
-                              {fix?.error ? (
-                                <Text style={{ color: c.warn, fontSize: 10, marginTop: 4 }} numberOfLines={2}>
-                                  {fix.error}
-                                </Text>
-                              ) : null}
-                            </>
-                          )
-                        ) : null}
                         {codingStatus === undefined ? (
                           <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
                             Checking coding agents…
@@ -1124,7 +1078,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                     machine={machine}
                     waking={managedWakingId === machine.id}
                     error={managedWakeErrors[machine.id]}
+                    signingIn={recoveringMachineId === machine.id}
                     onWake={() => { void wakeManagedMachine(machine.id); }}
+                    onSignIn={() => { void recoverManagedMachineAuth(machine); }}
                   />
                 ))}
               </View>

@@ -53,9 +53,9 @@ export const PHASE_META: Record<LifecyclePhase, PhaseMeta> = {
   asleep: { label: "Asleep — parked to save cost", short: "Asleep", percent: 0, kind: "wake", tone: "rest" },
   requested: { label: "Waking your box…", short: "Waking", percent: 8, kind: "wake", tone: "progress" },
   resuming: { label: "Recreating from the latest snapshot…", short: "Restoring", percent: 22, kind: "wake", tone: "progress" },
-  booting: { label: "Booting the machine…", short: "Booting", percent: 52, kind: "wake", tone: "progress" },
-  registering: { label: "Connecting over the free relay…", short: "Connecting", percent: 80, kind: "wake", tone: "network" },
-  online: { label: "Network connected — finishing up…", short: "Online", percent: 94, kind: "wake", tone: "network" },
+  booting: { label: "Booting the machine…", short: "Booting", percent: 40, kind: "wake", tone: "progress" },
+  registering: { label: "Connecting over the free relay…", short: "Connecting", percent: 65, kind: "wake", tone: "network" },
+  online: { label: "Network connected — finishing up…", short: "Online", percent: 86, kind: "wake", tone: "network" },
   ready: { label: "Ready", short: "Ready", percent: 100, kind: "terminal", tone: "ok" },
   snapshotting: { label: "Saving a snapshot…", short: "Snapshotting", percent: 35, kind: "park", tone: "progress" },
   "powering-down": { label: "Powering down — snapshot kept…", short: "Powering down", percent: 78, kind: "park", tone: "progress" },
@@ -173,7 +173,25 @@ export function deriveServerPhase(
   }
 
   // Wake direction.
-  if (status === "resuming") return "resuming";
+  if (status === "resuming") {
+    if (deviceReachable) {
+      return machine?.runnersAuthorized === false ? "online" : "ready";
+    }
+    switch (provision) {
+      case "registering":
+      case "authorizing-runners":
+      case "awaiting-yaver-auth":
+      case "ready":
+        return "registering";
+      case "creating":
+      case "booting":
+      case "installing-docker":
+      case "pulling-image":
+      case "starting-agent":
+      default:
+        return "booting";
+    }
+  }
 
   if (status === "active" || status === "provisioning") {
     if (deviceReachable) {
@@ -185,6 +203,7 @@ export function deriveServerPhase(
       case "starting-agent":
       case "registering":
       case "authorizing-runners":
+      case "awaiting-yaver-auth":
         return "registering";
       case "ready":
         // Backend still says ready but the device isn't reachable yet —

@@ -779,6 +779,12 @@ export interface RemoteRuntimeSession {
   createdAt: string;
   updatedAt: string;
   note?: string;
+  deviceDims?: {
+    width: number;
+    height: number;
+    scale?: number;
+    rotation?: string;
+  };
 }
 
 export interface TmuxSession {
@@ -3021,7 +3027,7 @@ export class QuicClient {
     return await res.blob();
   }
 
-  async sendRemoteRuntimeControl(sessionId: string, body: { action: "tap" | "text" | "back" | "home"; x?: number; y?: number; text?: string; key?: string }): Promise<RemoteRuntimeSession> {
+  async sendRemoteRuntimeControl(sessionId: string, body: { action: "tap" | "swipe" | "text" | "back" | "home" | "key"; x?: number; y?: number; x2?: number; y2?: number; durationMs?: number; text?: string; key?: string }): Promise<RemoteRuntimeSession> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/control`, {
       method: "POST",

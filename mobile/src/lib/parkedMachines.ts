@@ -44,7 +44,7 @@ export const WAKE_STAGES: { key: string; label: string }[] = [
   { key: "creating", label: "Creating server" },
   { key: "restoring", label: "Restoring snapshot" },
   { key: "booting", label: "Booting" },
-  { key: "online", label: "Agent online" },
+  { key: "online", label: "Agent reachable" },
 ];
 
 export type WakeTone = "parked" | "waking" | "online" | "error";
@@ -76,9 +76,14 @@ function phaseToStageIndex(phase: string | null | undefined): number {
     case "booting":
     case "installing-docker":
     case "starting-agent":
-      return 2;
+    // "registering" / "authorizing-runners" are still coming-up phases — the box
+    // is NOT reachable yet, so they belong in the "Booting" stage, not the final
+    // "Agent reachable" stage. Mapping them to stage 3 made the bar leap to ~88%
+    // while the box was genuinely still booting (the "reachable ≠ usable" trap).
     case "registering":
     case "authorizing-runners":
+      return 2;
+    // Only a truly-ready agent is the final "Agent reachable" stage.
     case "ready":
       return 3;
     default:
@@ -94,10 +99,10 @@ export function deriveWakeView(
   optimisticWaking: boolean,
 ): WakeView {
   const status = m.status ?? "";
-  if (status === "error" || m.provisionPhase === "error") {
+  if (status === "error" || m.provisionPhase === "error" || m.provisionPhase === "awaiting-yaver-auth") {
     return {
       tone: "error",
-      title: "Wake failed",
+      title: m.provisionPhase === "awaiting-yaver-auth" ? "Sign-in needed" : "Wake failed",
       stageIndex: -1,
       percent: 0,
       inFlight: false,
@@ -106,13 +111,20 @@ export function deriveWakeView(
   }
 
   if (status === "active") {
-    // Runners still authorizing counts as "almost online" but the server is up.
+    // "active" means the AGENT PROCESS is up — NOT that the box is usable. The
+    // backend flips status→active the instant /health passes, while runner OAuth
+    // is still being pushed (runnersAuthorized stays false; see cloudMachines.ts
+    // ~2098 "NOT 'ready' yet"). Declaring 100% "Online" here is the "the bar's
+    // already full but it isn't actually" bug. Only a box with runners authorized
+    // is truly done; until then hold it at "Finishing up…" with the ladder +
+    // timer still running so it reads as forward motion, not a frozen 100%.
+    const ready = m.runnersAuthorized !== false;
     return {
-      tone: "online",
-      title: "Online",
+      tone: ready ? "online" : "waking",
+      title: ready ? "Online" : "Finishing up…",
       stageIndex: WAKE_STAGES.length - 1,
-      percent: 100,
-      inFlight: false,
+      percent: ready ? 100 : 92,
+      inFlight: !ready,
       error: null,
     };
   }
@@ -121,7 +133,9 @@ export function deriveWakeView(
     // Prefer the phase-derived stage; fall back to a status default so we never
     // sit at stage 0 with no motion.
     let stageIndex = phaseToStageIndex(m.provisionPhase);
-    if (stageIndex < 0) stageIndex = status === "provisioning" ? 2 : 0;
+    // Phase unknown: start LOW ("Restoring", ~35%) rather than mid-way ("Booting",
+    // ~60%) — a wake that just began must not read as already-two-thirds-done.
+    if (stageIndex < 0) stageIndex = status === "provisioning" ? 1 : 0;
     // Percent: use the box's reported progress when present, else a per-stage
     // floor so each stage shows a distinct, forward position.
     const stageFloor = [10, 35, 60, 88][stageIndex] ?? 10;

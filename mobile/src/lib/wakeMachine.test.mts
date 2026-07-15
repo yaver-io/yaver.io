@@ -22,7 +22,7 @@ function phase(
 test("deriveServerPhase keeps active-but-unreachable machines at registering, not ready", () => {
   assert.equal(phase("active", "ready", false), "registering");
   assert.equal(phase("active", "authorizing-runners", false, false), "registering");
-  assert.equal(PHASE_META.registering.percent, 80);
+  assert.equal(PHASE_META.registering.percent, 65);
 });
 
 test("deriveServerPhase only reports ready when the device is reachable and runners are authorized", () => {
@@ -31,7 +31,8 @@ test("deriveServerPhase only reports ready when the device is reachable and runn
 });
 
 test("deriveServerPhase maps resume and stop lifecycle signals to visible progress", () => {
-  assert.equal(phase("resuming", "ready", false), "resuming");
+  assert.equal(phase("resuming", "ready", false), "registering");
+  assert.equal(phase("resuming", "booting", false), "booting");
   assert.equal(phase("provisioning", "pulling-image", false), "booting");
   assert.equal(phase("stopping", "deleting", false), "powering-down");
   assert.equal(phase("stopped", "ready", false), "asleep");

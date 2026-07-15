@@ -12,6 +12,7 @@ export {
   isPhaseSettled,
   PARK_STEPS,
   PHASE_META,
+  PHASE_TYPICAL_MS,
   WAKE_STEPS,
   type LifecyclePhase,
   type LifecycleTone,
