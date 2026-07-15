@@ -796,7 +796,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                       ? "Connected (pool) · ping failed"
                       : "Connected · pinging…"
                   : staleOnline
-                    ? `Last seen ${lastSeenLabel(lastSeenTs)} · may be unreachable`
+                    ? `${lastSeenLabel(lastSeenTs).replace(/^last seen/, "Last seen")} · may be unreachable`
                     : noRelayPath
                       ? "Online · LAN-only (no relay path)"
                     : device.online

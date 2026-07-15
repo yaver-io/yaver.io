@@ -3275,7 +3275,7 @@ export default function MoreScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={[s.label, { color: c.textPrimary }]}>Yaver Mesh</Text>
                   <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
-                    WireGuard overlay \u00B7 exit nodes \u00B7 access
+                    WireGuard overlay · exit nodes · access
                   </Text>
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
