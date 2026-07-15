@@ -79,6 +79,9 @@ import {
 import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
 import XtermView, { type XtermHandle } from "../src/components/XtermView";
 import { resizeFrame, isTerminalMetaFrame } from "../src/lib/xtermBridge";
+import { useHandsFreeVoice } from "../src/lib/voice/useHandsFreeVoice";
+import type { CreateVoiceCoreOptions } from "../src/lib/voice/createVoiceCore";
+import type { VoiceCoreEvent } from "../src/lib/voice/types";
 
 type Mode = "agent" | "shell";
 
@@ -156,6 +159,9 @@ export default function GlassTerminalScreen() {
   const scrollRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
   const xtermRef = useRef<XtermHandle | null>(null);
+  // Mirror of the hands-free loop's running flag so the push-to-talk mic can
+  // refuse to fight it for the microphone (both use whisper.rn capture).
+  const handsFreeRunningRef = useRef(false);
 
   const historyRef = useRef<YaverAgentHistoryTurn[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -244,6 +250,10 @@ export default function GlassTerminalScreen() {
   // ── Voice: mic toggle (whisper.rn on-device STT) ───────────────────────
   const startRecording = useCallback(async () => {
     if (recording) return;
+    if (handsFreeRunningRef.current) {
+      appendLine("sys", "— stop hands-free (🎧) first to use push-to-talk —");
+      return;
+    }
     setRecording(true);
     appendLine("sys", "— 🎤 listening — tap mic again to send —");
     try {
@@ -299,6 +309,95 @@ export default function GlassTerminalScreen() {
       // TTS failure is non-fatal — user still sees the text on screen.
     });
   }, [autoTts]);
+
+  // ── Hands-free voice loop (shared VoiceConversationCore) ───────────────
+  // The 🎧 chip runs the ONE surface-agnostic loop (src/lib/voice): continuous
+  // listen → semantic endpoint → judge → dispatch to the LIVE runner session on
+  // the selected box → speak the reply → auto-resume. No tapping — the whole
+  // point on AR glasses. It drives quicClient.runnerSessionTurn (the same
+  // session the user already has up), not a fresh task or a cloud pipeline.
+  // Machine-switch is by voice ("switch to <box>"); deploy/push/delete are gated
+  // behind a spoken confirm. Coexists with the two text modes + push-to-talk.
+  const devicesRef = useRef(devices);
+  devicesRef.current = devices;
+  const deviceIdRef = useRef(primaryDeviceId);
+  deviceIdRef.current = primaryDeviceId;
+
+  const makeVoiceOptions = useCallback(
+    (): Omit<CreateVoiceCoreOptions, "listener"> => ({
+      surface: "glass",
+      sessionTurn: async (text, choice) => {
+        const r = await quicClient.runnerSessionTurn(
+          deviceIdRef.current || "",
+          text,
+          choice,
+        );
+        return {
+          ok: r.ok === true,
+          session: r.session || "",
+          runner: r.runner,
+          sent: r.sent,
+          awaitingChoice: r.awaitingChoice === true,
+          options: r.options,
+          pane: r.pane,
+          error: r.error,
+        };
+      },
+      // Voice-addressable boxes for "switch to <name>". Retarget flips the same
+      // quicClient base URL the shell/reload paths already follow.
+      machines: () =>
+        devicesRef.current.map((d) => ({
+          id: d.id,
+          name: d.alias || d.name,
+          aliases: [d.alias, d.name].filter((s): s is string => !!s),
+        })),
+      onSwitchMachine: (id) => {
+        const d = devicesRef.current.find((x) => x.id === id);
+        if (d) void selectDevice(d);
+      },
+      tts: speechCfgRef.current.tts ?? { provider: "device" },
+      locale: "en",
+    }),
+    [selectDevice],
+  );
+
+  const onVoiceEvent = useCallback(
+    (ev: VoiceCoreEvent) => {
+      // Stream the loop's transcript into the same scrollback the glasses show.
+      if (ev.state === "dispatching" && ev.text) {
+        appendLine("user", `🎧 ${ev.text}`);
+      } else if (ev.state === "confirming" && ev.text) {
+        appendLine("sys", `⚠ ${ev.text}`);
+      } else if (ev.turnComplete && ev.text) {
+        appendLine("model", ev.text);
+      }
+    },
+    [appendLine],
+  );
+
+  const handsFree = useHandsFreeVoice(makeVoiceOptions, onVoiceEvent);
+  handsFreeRunningRef.current = handsFree.running;
+
+  const toggleHandsFree = useCallback(() => {
+    if (!handsFree.running) {
+      if (!deviceIdRef.current) {
+        appendLine(
+          "err",
+          "pick a box first — long-press the title (shell mode) to choose one",
+        );
+        return;
+      }
+      // Never let the two mic paths run at once.
+      if (recorderRef.current) void stopRecording(false);
+      appendLine(
+        "sys",
+        "— 🎧 hands-free on — just talk · say 'switch to <box>' to retarget —",
+      );
+    } else {
+      appendLine("sys", "— 🎧 hands-free off —");
+    }
+    handsFree.toggle();
+  }, [handsFree, appendLine, stopRecording]);
 
   const persistSavedPrompts = useCallback((next: string[]) => {
     setSavedPrompts(next);
@@ -728,6 +827,31 @@ export default function GlassTerminalScreen() {
         >
           <Text style={[styles.modeChipText, { color: PAL.muted }]}>
             ▦
+          </Text>
+        </Pressable>
+        <Pressable
+          hitSlop={8}
+          onPress={toggleHandsFree}
+          style={[styles.modeChip, {
+            backgroundColor: handsFree.running ? "#1e1b4b" : PAL.chip,
+            borderColor: handsFree.running
+              ? (handsFree.state === "speaking" ? PAL.tool : PAL.accent)
+              : PAL.border,
+            marginRight: 6,
+          }]}
+        >
+          <Text style={[styles.modeChipText, {
+            color: handsFree.running
+              ? (handsFree.state === "speaking" ? PAL.tool : PAL.accent)
+              : PAL.muted,
+          }]}>
+            {handsFree.running
+              ? (handsFree.state === "listening"
+                  ? "🎧●"
+                  : handsFree.state === "speaking"
+                    ? "🎧♪"
+                    : "🎧…")
+              : "🎧"}
           </Text>
         </Pressable>
         <Pressable

@@ -610,6 +610,7 @@ matters.
 | Phone-first mini backend | `desktop/agent/phone_backend.go`, `phone_backend_http.go`; mobile `app/phone-projects*` |
 | Switch engine (target migrations) | `desktop/agent/switch_*.go` — 19 targets, snapshots, 7-day rollback |
 | Session transfer | `desktop/agent/session_*.go`, `transfer.go` |
+| Hands-free voice (all surfaces) | `mobile/src/lib/voice/` — one surface-agnostic `VoiceConversationCore` (streaming STT → semantic endpointing → runner dispatch → TTS → barge-in) + adapters; `useHandsFreeVoice` React seam; car wired in `app/car-voice-coding.tsx`. Semantic "when to submit" = timing trigger (`endpointer.ts`) → on-device judge (`completenessJudge.ts`, free llama.rn). Runner-only (no Flux). Doc `docs/architecture/VOICE_CONVERSATION.md`. tsx tests. |
 | Feedback SDK + black box | `sdk/feedback/{react-native,web,flutter}/`; `desktop/agent/blackbox*.go`, `feedback*.go` |
 | Support sessions (TeamViewer-style) | `desktop/agent/support*.go` |
 | SDK token security | `desktop/agent/auth.go::ValidateSdkToken*`, `sdk_token.go`, `tls.go` |

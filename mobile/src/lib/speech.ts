@@ -32,6 +32,8 @@ export interface TextToSpeechConfig {
   model?: string;
   /** TTS voice id. Defaults to "alloy" when omitted. */
   voice?: string;
+  /** BCP-47 language for device (expo-speech) synthesis. Defaults to "en". */
+  language?: string;
 }
 
 // ── Model / voice catalogues (settings UI reads these) ───────────────
@@ -125,8 +127,26 @@ export function isWhisperReady(): boolean {
  * Returns a controller to stop recording and subscribe to partial results.
  * This handles mic recording internally — no expo-av needed.
  */
+export interface RealtimeTranscribeOptions {
+  /** Whisper language code (e.g. "en", "tr"). Defaults to "en". */
+  language?: string;
+  /** Seconds per realtime slice. Smaller = faster endpointing. Default 5;
+   *  hands-free surfaces pass ~1 so silence is detected within a beat. */
+  sliceSec?: number;
+  /**
+   * iOS AVAudioSession to acquire on start. Hands-free surfaces on a car/BT
+   * route MUST pass a .playAndRecord + .voiceChat + Bluetooth-input config or
+   * the mic captures silence over CarPlay. Shape matches whisper.rn's
+   * AudioSessionIos. Left undefined, whisper.rn does not touch the session
+   * (the historical Tasks-screen behaviour).
+   */
+  audioSessionOnStartIos?: unknown;
+  audioSessionOnStopIos?: unknown;
+}
+
 export async function startRealtimeTranscribe(
   onPartialResult: (text: string) => void,
+  opts: RealtimeTranscribeOptions = {},
 ): Promise<{ stop: () => Promise<string> }> {
   if (!whisperContext) {
     await initWhisper();
@@ -138,13 +158,14 @@ export async function startRealtimeTranscribe(
   let finalText = "";
 
   const { stop, subscribe } = await whisperContext.transcribeRealtime({
-    language: "en",
+    language: opts.language || "en",
     realtimeAudioSec: 60,
-    realtimeAudioSliceSec: 5,
+    realtimeAudioSliceSec: opts.sliceSec ?? 5,
     realtimeAudioMinSec: 1,
-    // Audio session is pre-configured on Tasks mount — don't let whisper.rn touch it
-    audioSessionOnStartIos: undefined,
-    audioSessionOnStopIos: undefined,
+    // By default do NOT touch the session (Tasks screen pre-configures it).
+    // Hands-free car/glass surfaces pass an explicit voice-chat session.
+    audioSessionOnStartIos: opts.audioSessionOnStartIos,
+    audioSessionOnStopIos: opts.audioSessionOnStopIos,
   });
 
   subscribe((event: any) => {
@@ -485,12 +506,52 @@ async function speakWithOpenAICompat(
   const uri = `${FileSystem.cacheDirectory}yaver-openai-tts-${Date.now()}.mp3`;
   await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
   const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
-  sound.setOnPlaybackStatusUpdate((status: any) => {
-    if (status?.didJustFinish) {
+  activeSound = sound;
+  // Resolve when playback finishes OR when stopSpeaking() cuts it off (barge-in),
+  // so callers that await speakText() get an accurate turn boundary.
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      if (activeSound === sound) activeSound = null;
       sound.unloadAsync().catch(() => {});
       FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-    }
+      resolve();
+    };
+    sound.setOnPlaybackStatusUpdate((status: any) => {
+      if (status?.didJustFinish || status?.error || status?.isLoaded === false) done();
+    });
   });
+}
+
+// ── Barge-in support ─────────────────────────────────────────────────────
+// The active cloud-TTS Audio.Sound, retained so stopSpeaking() can cut it off.
+// (expo-speech has its own global Speech.stop(); no handle needed there.)
+let activeSound: any = null;
+
+/**
+ * Interrupt any in-flight spoken output immediately. This is what makes
+ * barge-in feel instant — the voice conversation core calls it when the user
+ * starts talking over a reply. Safe to call when nothing is speaking.
+ */
+export function stopSpeaking(): void {
+  try {
+    const Speech = require("expo-speech");
+    Speech.stop();
+  } catch {
+    /* expo-speech may be unavailable in some builds */
+  }
+  const s = activeSound;
+  activeSound = null;
+  if (s) {
+    try {
+      s.stopAsync?.().catch(() => {});
+      s.unloadAsync?.().catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export async function speakText(
@@ -519,5 +580,24 @@ export async function speakText(
     throw new Error("Cartesia TTS is handled by the agent voice loop; configure it in Settings > Voice > Agent voice loop.");
   }
   const Speech = require("expo-speech");
-  Speech.speak(plain, { language: "en" });
+  // Await completion (or barge-in stop) so callers get a real turn boundary —
+  // expo-speech is otherwise fire-and-forget.
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    try {
+      Speech.speak(plain, {
+        language: config.language || "en",
+        onDone: done,
+        onStopped: done,
+        onError: done,
+      });
+    } catch {
+      done();
+    }
+  });
 }

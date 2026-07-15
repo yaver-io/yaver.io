@@ -74,6 +74,9 @@ import {
 } from "../src/lib/liveActivity";
 import { runtimeSurfaceClient } from "../src/lib/runtimeSurfaceClient";
 import { yaverNativeSurfaceSummary } from "../src/lib/yaverNativeCatalog";
+import { useHandsFreeVoice } from "../src/lib/voice/useHandsFreeVoice";
+import type { CreateVoiceCoreOptions } from "../src/lib/voice/createVoiceCore";
+import type { VoiceCoreEvent } from "../src/lib/voice/types";
 
 // ── turn history model (UI only) ────────────────────────────────────
 interface Turn {
@@ -229,6 +232,98 @@ export default function CarVoiceCodingScreen() {
     },
     [deviceId],
   );
+
+  // ── shared hands-free voice engine (the Claude-app-style loop) ────
+  // The one VoiceConversationCore, reused by every surface. Everything mutable
+  // it needs is read through refs so the core's own machine-switch interceptor
+  // can retarget the box without rebuilding the loop.
+  const devicesRef = useRef(devices);
+  devicesRef.current = devices;
+  const deviceIdRef = useRef(deviceId);
+  deviceIdRef.current = deviceId;
+  const speechCfgRef = useRef<Awaited<ReturnType<typeof loadLocalSpeechConfig>>>({});
+  useEffect(() => {
+    void loadLocalSpeechConfig().then((cfg) => {
+      speechCfgRef.current = cfg;
+    });
+  }, []);
+
+  const makeVoiceOptions = useCallback(
+    (): Omit<CreateVoiceCoreOptions, "listener"> => ({
+      surface: glass ? "glass" : "car",
+      // Drive the LIVE runner session (claude/codex) the user already has up —
+      // not a fresh task, not a cloud voice pipeline.
+      sessionTurn: async (text, choice) => {
+        const r = await quicClient.runnerSessionTurn(
+          deviceIdRef.current,
+          text,
+          choice,
+        );
+        return {
+          ok: r.ok === true,
+          session: r.session || "",
+          runner: r.runner,
+          sent: r.sent,
+          awaitingChoice: r.awaitingChoice === true,
+          options: r.options,
+          pane: r.pane,
+          error: r.error,
+        };
+      },
+      machines: () =>
+        devicesRef.current.map((d: any) => ({
+          id: d.id || d.deviceId,
+          name: d.nickname || d.name || d.hostname || d.deviceId,
+          aliases: [
+            ...(Array.isArray(d.voiceHints) ? d.voiceHints : []),
+            d.alias,
+            d.hostname,
+            d.name,
+          ],
+        })),
+      onSwitchMachine: (id) => setDeviceId(id),
+      callOps: callCarOps,
+      tts: {
+        provider: (speechCfgRef.current.ttsProvider as any) || "device",
+        apiKey: speechCfgRef.current.apiKey,
+        voice: speechCfgRef.current.ttsVoice,
+      },
+      locale: "en",
+    }),
+    [glass, callCarOps],
+  );
+
+  const onVoiceEvent = useCallback((ev: VoiceCoreEvent) => {
+    if (!liveRef.current) return;
+    // Map the core's fine-grained state onto the screen's 5-state model, which
+    // already mirrors to the CarPlay template and the Live Activity.
+    setStatus(
+      ev.state === "listening"
+        ? "recording"
+        : ev.state === "speaking" || ev.state === "confirming"
+          ? "speaking"
+          : ev.state === "idle"
+            ? "idle"
+            : "thinking",
+    );
+    if (ev.turnComplete && ev.text) {
+      const spoken = ev.text;
+      setTurns((prev) =>
+        [
+          {
+            id: `hf-${Date.now()}`,
+            transcript: "",
+            spoken,
+            stage: "spoken" as const,
+            at: Date.now(),
+          },
+          ...prev,
+        ].slice(0, 50),
+      );
+    }
+  }, []);
+
+  const handsFree = useHandsFreeVoice(makeVoiceOptions, onVoiceEvent);
 
   const publishCarConversation = useCallback(
     async (transcript: string, reply: string) => {
@@ -570,7 +665,10 @@ export default function CarVoiceCodingScreen() {
     setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }
 
-  // ── push-to-talk gesture ──────────────────────────────────────────
+  // ── single control: start / stop / barge-in the hands-free loop ────
+  // No push-to-talk. Tapping only enters or leaves the loop (and interrupts a
+  // spoken reply); the driver never taps to submit a command — the semantic
+  // endpointer + judge decide that. This is the whole point of the redesign.
   const onPressTalk = useCallback(async () => {
     if (!deviceId) {
       Alert.alert(
@@ -579,16 +677,8 @@ export default function CarVoiceCodingScreen() {
       );
       return;
     }
-    if (status === "recording") {
-      const uri = await stopRecordingToUri();
-      if (uri) void runTurnFromUri(uri);
-      else setStatus("idle");
-      return;
-    }
-    if (status === "idle" || status === "error") {
-      void startRecording();
-    }
-  }, [deviceId, status, startRecording, stopRecordingToUri, runTurnFromUri]);
+    handsFree.toggle();
+  }, [deviceId, handsFree]);
 
   // ── confirmation actions ──────────────────────────────────────────
   const confirmTurn = useCallback(async () => {
@@ -663,14 +753,16 @@ export default function CarVoiceCodingScreen() {
   useEffect(() => {
     const unsub = carVoiceEntryBus.subscribe(() => {
       if (!deviceId) return; // need a box; the user picks once, then it's hands-free
-      if (status === "idle" || status === "error") void startRecording();
+      if (!handsFree.running) handsFree.start();
     });
     return unsub;
-  }, [deviceId, status, startRecording]);
+  }, [deviceId, handsFree]);
 
   useEffect(() => {
-    if (shouldAutostart(params.autostart) && deviceId && status === "idle") {
-      void startRecording();
+    // CarPlay connect deep-links here with ?autostart=1 → enter the hands-free
+    // loop immediately. No tap, no PTT: listen → judge → run → speak → repeat.
+    if (shouldAutostart(params.autostart) && deviceId && !handsFree.running) {
+      handsFree.start();
     }
     // run once per device selection / autostart param
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -763,14 +855,14 @@ export default function CarVoiceCodingScreen() {
           : c.accent;
   const talkLabel =
     status === "recording"
-      ? "Listening… tap to send"
+      ? "Listening…"
       : status === "thinking"
         ? "Working…"
         : status === "speaking"
-          ? "Reading back…"
+          ? "Speaking… tap to interrupt"
           : confirm
             ? "Confirm needed"
-            : "Hold the road — tap to speak";
+            : "Tap to start — then just talk";
 
   // ── device picker ─────────────────────────────────────────────────
   if (!deviceId) {
