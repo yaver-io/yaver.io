@@ -52,29 +52,23 @@ func printRunnerAuthUsage() {
 Usage:
   yaver runner-auth status [--target <deviceId>]
   yaver runner-auth <deviceId|name|alias> <claude|claude-code|codex>
-  yaver runner-auth set claude [--target <deviceId>] [--anthropic-api-key <key> | --anthropic-auth-token <token> | --claude-code-oauth-token <token>]
-  yaver runner-auth set codex [--target <deviceId>] --openai-api-key <key>
   yaver runner-auth set opencode [--target <deviceId>] [--openai-api-key <key>] [--anthropic-api-key <key>] [--glm-api-key <key>] [--zai-api-key <key>]
-  yaver runner-auth setup claude [--target <deviceId>] [--anthropic-api-key <key>] [--anthropic-auth-token <token>] [--claude-code-oauth-token <token>]
-  yaver runner-auth setup codex [--target <deviceId>] [--openai-api-key <key>] [--no-install] [--no-login] [--no-mcp]
+  yaver runner-auth set glm [--target <deviceId>] [--glm-api-key <key>] [--zai-api-key <key>]
+  yaver runner-auth setup claude [--target <deviceId>] [--no-install] [--no-login] [--no-mcp]
+  yaver runner-auth setup codex [--target <deviceId>] [--no-install] [--no-login] [--no-mcp]
 
 Examples:
   yaver runner-auth test codex
   yaver runner-auth test claude-code
   yaver runner-auth status --target cloud-12345678
 
-  # DEPRECATED — API-key flags below still parse for back-compat but
-  # double-bill against your subscription plan. Use Yaver mobile →
-  # Runner Auth (Max Pro / ChatGPT Plus OAuth) instead.
-  yaver runner-auth set codex --openai-api-key $OPENAI_API_KEY
-  yaver runner-auth setup codex --target cloud-12345678 --openai-api-key $OPENAI_API_KEY
   yaver runner-auth set opencode --glm-api-key $GLM_API_KEY --target cloud-12345678
 
 Notes:
   - <device> <runner> is the interactive remote auth shortcut: it checks local Yaver auth, checks the target machine's Yaver auth, runs remote 'yaver auth --headless' over 'yaver ssh' if needed, then starts the remote Claude/Codex browser auth flow and prints the link/code.
   - Subscription OAuth (Max Pro / ChatGPT Plus) is the canonical path. The first-class glass / phone helper lives in the Yaver mobile app under "Runner Auth" — it mirrors credentials from a signed-in Mac to any other box via owner-authenticated QUIC, no API keys involved.
-  - --*-api-key flags are KEPT for back-compat with existing scripts but emit a deprecation warning. They will be removed in a future release. Run 'yaver runner-auth browser-start <runner>' to switch to OAuth.
-  - Values are stored in the target machine's Yaver vault.
+  - Provider keys are only for OpenCode/GLM provider configuration. Claude Code and Codex use plan OAuth or credential import.
+  - Provider values are stored in the target machine's Yaver vault.
   - setup also installs the runner when missing and wires Yaver into the runner's MCP config when supported.
   - --target uses the existing Yaver remote-agent channel; it does not require SSH.
 `)
@@ -118,29 +112,22 @@ func buildRunnerAuthEntries(runner string, openAIKey string, anthropicKey string
 		return append(out, runnerAuthEntry{Name: name, Value: value, Provider: provider, Notes: entryNotes})
 	}
 
-	// Deprecation warning per feedback_no_api_keys_subscription_only:
-	// every API-key flag double-bills the user against their subscription
-	// plan. Print once so the user has a visible nudge toward OAuth.
-	// Parsing stays for back-compat with existing scripts; flags will be
-	// removed in a future release.
-	anyAPIKey := strings.TrimSpace(anthropicKey) != "" ||
-		strings.TrimSpace(openAIKey) != "" ||
-		strings.TrimSpace(glmKey) != "" ||
-		strings.TrimSpace(zaiKey) != ""
-	if anyAPIKey {
-		fmt.Fprintln(os.Stderr, "[runner-auth] DEPRECATED: --*-api-key flags bill on the per-call API tier, NOT your")
-		fmt.Fprintln(os.Stderr, "             Max Pro / ChatGPT Plus subscription. Use Yaver mobile → Runner Auth")
-		fmt.Fprintln(os.Stderr, "             (or `yaver runner-auth browser-start <runner>`) for subscription OAuth.")
-	}
-
 	var out []runnerAuthEntry
 	switch runner {
 	case "claude":
-		out = add(out, "ANTHROPIC_API_KEY", anthropicKey, "anthropic-api-key")
-		out = add(out, "ANTHROPIC_AUTH_TOKEN", anthropicAuthToken, "anthropic-auth-token")
-		out = add(out, "CLAUDE_CODE_OAUTH_TOKEN", claudeOAuthToken, "claude-code-oauth-token")
+		if strings.TrimSpace(anthropicKey) != "" ||
+			strings.TrimSpace(anthropicAuthToken) != "" ||
+			strings.TrimSpace(claudeOAuthToken) != "" ||
+			strings.TrimSpace(openAIKey) != "" {
+			return nil, fmt.Errorf("Claude Code uses Claude plan OAuth in Yaver; use runner-auth browser-start or credentials import")
+		}
 	case "codex":
-		out = add(out, "OPENAI_API_KEY", openAIKey, "openai-api-key")
+		if strings.TrimSpace(openAIKey) != "" ||
+			strings.TrimSpace(anthropicKey) != "" ||
+			strings.TrimSpace(anthropicAuthToken) != "" ||
+			strings.TrimSpace(claudeOAuthToken) != "" {
+			return nil, fmt.Errorf("Codex uses ChatGPT Plus/Pro plan OAuth in Yaver; use runner-auth browser-start or credentials import")
+		}
 	case "opencode":
 		out = add(out, "OPENAI_API_KEY", openAIKey, "openai-api-key")
 		out = add(out, "ANTHROPIC_API_KEY", anthropicKey, "anthropic-api-key")

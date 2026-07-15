@@ -321,14 +321,14 @@ func runnerCapabilityReason(runnerID string, status RunnerRuntimeStatus) (code, 
 	switch runnerID {
 	case "codex":
 		if strings.Contains(strings.ToLower(status.Error), "not authenticated") {
-			return ReasonRunnerCodexNotAuthenticated, "Codex is installed but not authenticated on this machine.", "Run the Codex login flow or provide `OPENAI_API_KEY` before using Codex remotely.", true
+			return ReasonRunnerCodexNotAuthenticated, "Codex is installed but not authenticated on this machine.", "Run the Codex browser login flow or import subscription credentials from an already-signed-in user-owned device.", true
 		}
 		if strings.Contains(strings.ToLower(status.Error), "blocking the sandbox") {
 			return ReasonRunnerCodexLinuxSandboxBlocked, "This Linux machine is blocking the sandbox Codex needs for execution.", "Fix the Linux sandbox prerequisites on the host before running Codex.", true
 		}
 	case "claude":
 		if !status.AuthConfigured {
-			return ReasonRunnerClaudeAuthRequired, "Claude Code is installed but no usable auth was detected yet.", "Run the Claude browser login flow or save an Anthropic credential on the host machine.", true
+			return ReasonRunnerClaudeAuthRequired, "Claude Code is installed but no usable auth was detected yet.", "Run the Claude browser login flow or import subscription credentials from an already-signed-in user-owned device.", true
 		}
 	case "glm":
 		if !status.AuthConfigured {
@@ -391,15 +391,6 @@ func normalizeRunnerID(id string) string {
 
 func detectClaudeStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
-	// An explicit key beats everything: it needs no OAuth and no probe.
-	for _, name := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
-		if value, source := hostSecretValue(name); value != "" {
-			status.AuthConfigured = true
-			status.AuthVerified = true
-			status.AuthSource = source
-			return status
-		}
-	}
 
 	// Ask Claude Code itself. `claude auth status --json` reads whichever
 	// store this platform actually uses (file on Linux, Keychain on macOS),
@@ -683,12 +674,6 @@ func detectCodexStatus() RunnerRuntimeStatus {
 			status.Error = err
 			return status
 		}
-	}
-	if value, source := hostSecretValue("OPENAI_API_KEY"); value != "" {
-		status.AuthConfigured = true
-		status.AuthVerified = true
-		status.AuthSource = source
-		return status
 	}
 	// Ask the codex CLI itself FIRST. `codex login status` exits 0 with
 	// account info when authenticated, non-zero with a "run codex login"

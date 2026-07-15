@@ -30,7 +30,7 @@ func TestApplyRunnerAuthSetupLocalCodexInstallOnly(t *testing.T) {
 		"case \"$1 ${2-} ${3-}\" in\n" +
 		"  \"--version  \") echo \"codex test\" ;;\n" +
 		"  \"login status \") echo not-logged-in >&2; exit 1 ;;\n" +
-		"  \"login --with-api-key \") echo unexpected-api-key-login >&2; exit 44 ;;\n" +
+		"  \"login \"*) echo unexpected-codex-login-command >&2; exit 44 ;;\n" +
 		"  \"mcp get yaver\") exit 1 ;;\n" +
 		"  \"mcp add yaver\") printf '%s' \"$*\" > \"" + mcpArgsPath + "\" ;;\n" +
 		"  *) exit 0 ;;\n" +
@@ -63,7 +63,7 @@ func TestApplyRunnerAuthSetupLocalCodexInstallOnly(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if result.LoginAttempt {
-		t.Fatalf("expected no API-key login attempt")
+		t.Fatalf("expected no Codex login command attempt")
 	}
 	if len(result.MCPConfigured) != 1 || result.MCPConfigured[0] != "codex" {
 		t.Fatalf("expected codex MCP config, got %+v", result.MCPConfigured)

@@ -10,14 +10,12 @@ import (
 )
 
 type runnerAuthSetRequest struct {
-	Runner               string `json:"runner"`
-	OpenAIAPIKey         string `json:"openai_api_key"`
-	AnthropicAPIKey      string `json:"anthropic_api_key"`
-	AnthropicAuthToken   string `json:"anthropic_auth_token"`
-	ClaudeCodeOAuthToken string `json:"claude_code_oauth_token"`
-	GLMAPIKey            string `json:"glm_api_key"`
-	ZAIAPIKey            string `json:"zai_api_key"`
-	Notes                string `json:"notes"`
+	Runner          string `json:"runner"`
+	OpenAIAPIKey    string `json:"openai_api_key"`
+	AnthropicAPIKey string `json:"anthropic_api_key"`
+	GLMAPIKey       string `json:"glm_api_key"`
+	ZAIAPIKey       string `json:"zai_api_key"`
+	Notes           string `json:"notes"`
 }
 
 func (s *HTTPServer) handleRunnerAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +74,7 @@ func (s *HTTPServer) syncRunnerAuthIncidents(rows []runnerAuthStatusRow, workDir
 				severity = IncidentSeverityError
 				title = "Codex is not authenticated"
 				message = "Codex is installed on the host but cannot run until authentication is configured."
-				action = "Run the Codex browser login flow or save `OPENAI_API_KEY` on the machine."
+				action = "Run the Codex browser login flow or import subscription credentials from an already-signed-in user-owned device."
 			} else if strings.Contains(strings.ToLower(row.Error), "blocking the sandbox") {
 				code = ReasonRunnerCodexLinuxSandboxBlocked
 				severity = IncidentSeverityError
@@ -89,7 +87,7 @@ func (s *HTTPServer) syncRunnerAuthIncidents(rows []runnerAuthStatusRow, workDir
 				code = ReasonRunnerClaudeAuthRequired
 				title = "Claude Code auth is missing"
 				message = "Claude Code is installed, but the host has no confirmed authentication yet."
-				action = "Run the Claude browser login flow or save an Anthropic credential on the machine."
+				action = "Run the Claude browser login flow or import subscription credentials from an already-signed-in user-owned device."
 			}
 		case "opencode":
 			if strings.TrimSpace(row.Error) != "" {
@@ -152,8 +150,8 @@ func (s *HTTPServer) handleRunnerAuthSet(w http.ResponseWriter, r *http.Request)
 		req.Runner,
 		req.OpenAIAPIKey,
 		req.AnthropicAPIKey,
-		req.AnthropicAuthToken,
-		req.ClaudeCodeOAuthToken,
+		"",
+		"",
 		req.GLMAPIKey,
 		req.ZAIAPIKey,
 		req.Notes,

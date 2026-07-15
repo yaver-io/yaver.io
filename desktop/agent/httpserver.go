@@ -10213,15 +10213,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mcpRunnerAuthStatus(a.DeviceID))
 	case "runner_auth_set":
 		var a struct {
-			DeviceID             string `json:"device_id"`
-			Runner               string `json:"runner"`
-			OpenAIAPIKey         string `json:"openai_api_key"`
-			AnthropicAPIKey      string `json:"anthropic_api_key"`
-			AnthropicAuthToken   string `json:"anthropic_auth_token"`
-			ClaudeCodeOAuthToken string `json:"claude_code_oauth_token"`
-			GLMAPIKey            string `json:"glm_api_key"`
-			ZAIAPIKey            string `json:"zai_api_key"`
-			Notes                string `json:"notes"`
+			DeviceID        string `json:"device_id"`
+			Runner          string `json:"runner"`
+			OpenAIAPIKey    string `json:"openai_api_key"`
+			AnthropicAPIKey string `json:"anthropic_api_key"`
+			GLMAPIKey       string `json:"glm_api_key"`
+			ZAIAPIKey       string `json:"zai_api_key"`
+			Notes           string `json:"notes"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpRunnerAuthSet(
@@ -10229,8 +10227,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			a.Runner,
 			a.OpenAIAPIKey,
 			a.AnthropicAPIKey,
-			a.AnthropicAuthToken,
-			a.ClaudeCodeOAuthToken,
+			"",
+			"",
 			a.GLMAPIKey,
 			a.ZAIAPIKey,
 			a.Notes,
@@ -10657,34 +10655,30 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "runner_auth_setup":
 		var a struct {
-			DeviceID             string `json:"device_id"`
-			Runner               string `json:"runner"`
-			OpenAIAPIKey         string `json:"openai_api_key"`
-			AnthropicAPIKey      string `json:"anthropic_api_key"`
-			AnthropicAuthToken   string `json:"anthropic_auth_token"`
-			ClaudeCodeOAuthToken string `json:"claude_code_oauth_token"`
-			GLMAPIKey            string `json:"glm_api_key"`
-			ZAIAPIKey            string `json:"zai_api_key"`
-			Notes                string `json:"notes"`
-			InstallIfMissing     *bool  `json:"install_if_missing"`
-			CodexLogin           *bool  `json:"codex_login"`
-			SetupMCP             *bool  `json:"setup_mcp"`
-			AllowInstallOnly     *bool  `json:"allow_install_only"`
+			DeviceID         string `json:"device_id"`
+			Runner           string `json:"runner"`
+			OpenAIAPIKey     string `json:"openai_api_key"`
+			AnthropicAPIKey  string `json:"anthropic_api_key"`
+			GLMAPIKey        string `json:"glm_api_key"`
+			ZAIAPIKey        string `json:"zai_api_key"`
+			Notes            string `json:"notes"`
+			InstallIfMissing *bool  `json:"install_if_missing"`
+			CodexLogin       *bool  `json:"codex_login"`
+			SetupMCP         *bool  `json:"setup_mcp"`
+			AllowInstallOnly *bool  `json:"allow_install_only"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpRunnerAuthSetup(a.DeviceID, runnerAuthSetupRequest{
-			Runner:               a.Runner,
-			OpenAIAPIKey:         a.OpenAIAPIKey,
-			AnthropicAPIKey:      a.AnthropicAPIKey,
-			AnthropicAuthToken:   a.AnthropicAuthToken,
-			ClaudeCodeOAuthToken: a.ClaudeCodeOAuthToken,
-			GLMAPIKey:            a.GLMAPIKey,
-			ZAIAPIKey:            a.ZAIAPIKey,
-			Notes:                a.Notes,
-			InstallIfMissing:     a.InstallIfMissing,
-			CodexLogin:           a.CodexLogin,
-			SetupMCP:             a.SetupMCP,
-			AllowInstallOnly:     a.AllowInstallOnly,
+			Runner:           a.Runner,
+			OpenAIAPIKey:     a.OpenAIAPIKey,
+			AnthropicAPIKey:  a.AnthropicAPIKey,
+			GLMAPIKey:        a.GLMAPIKey,
+			ZAIAPIKey:        a.ZAIAPIKey,
+			Notes:            a.Notes,
+			InstallIfMissing: a.InstallIfMissing,
+			CodexLogin:       a.CodexLogin,
+			SetupMCP:         a.SetupMCP,
+			AllowInstallOnly: a.AllowInstallOnly,
 		}))
 	case "runner_auth_browser_start":
 		var a struct {

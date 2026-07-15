@@ -15,18 +15,16 @@ import (
 )
 
 type runnerAuthSetupRequest struct {
-	Runner               string `json:"runner"`
-	OpenAIAPIKey         string `json:"openai_api_key,omitempty"`
-	AnthropicAPIKey      string `json:"anthropic_api_key,omitempty"`
-	AnthropicAuthToken   string `json:"anthropic_auth_token,omitempty"`
-	ClaudeCodeOAuthToken string `json:"claude_code_oauth_token,omitempty"`
-	GLMAPIKey            string `json:"glm_api_key,omitempty"`
-	ZAIAPIKey            string `json:"zai_api_key,omitempty"`
-	Notes                string `json:"notes,omitempty"`
-	InstallIfMissing     *bool  `json:"install_if_missing,omitempty"`
-	CodexLogin           *bool  `json:"codex_login,omitempty"`
-	SetupMCP             *bool  `json:"setup_mcp,omitempty"`
-	AllowInstallOnly     *bool  `json:"allow_install_only,omitempty"`
+	Runner           string `json:"runner"`
+	OpenAIAPIKey     string `json:"openai_api_key,omitempty"`
+	AnthropicAPIKey  string `json:"anthropic_api_key,omitempty"`
+	GLMAPIKey        string `json:"glm_api_key,omitempty"`
+	ZAIAPIKey        string `json:"zai_api_key,omitempty"`
+	Notes            string `json:"notes,omitempty"`
+	InstallIfMissing *bool  `json:"install_if_missing,omitempty"`
+	CodexLogin       *bool  `json:"codex_login,omitempty"`
+	SetupMCP         *bool  `json:"setup_mcp,omitempty"`
+	AllowInstallOnly *bool  `json:"allow_install_only,omitempty"`
 }
 
 type runnerAuthSetupResult struct {
@@ -54,10 +52,8 @@ func runRunnerAuthSetup(args []string) {
 	runner := normalizeRunnerAuthName(args[0])
 	fs := flag.NewFlagSet("runner-auth setup", flag.ExitOnError)
 	target := fs.String("target", "", "remote device ID to update")
-	openAIKey := fs.String("openai-api-key", "", "OpenAI API key")
-	anthropicKey := fs.String("anthropic-api-key", "", "Anthropic API key")
-	anthropicAuthToken := fs.String("anthropic-auth-token", "", "Anthropic auth token")
-	claudeOAuthToken := fs.String("claude-code-oauth-token", "", "Claude Code OAuth token")
+	openAIKey := fs.String("openai-api-key", "", "OpenCode provider credential")
+	anthropicKey := fs.String("anthropic-api-key", "", "OpenCode provider credential")
 	glmKey := fs.String("glm-api-key", "", "GLM API key")
 	zaiKey := fs.String("zai-api-key", "", "ZAI API key")
 	notes := fs.String("notes", "", "optional vault note")
@@ -70,17 +66,15 @@ func runRunnerAuthSetup(args []string) {
 	codexLogin := !*noLogin
 	setupMCP := !*noMCP
 	req := runnerAuthSetupRequest{
-		Runner:               runner,
-		OpenAIAPIKey:         *openAIKey,
-		AnthropicAPIKey:      *anthropicKey,
-		AnthropicAuthToken:   *anthropicAuthToken,
-		ClaudeCodeOAuthToken: *claudeOAuthToken,
-		GLMAPIKey:            *glmKey,
-		ZAIAPIKey:            *zaiKey,
-		Notes:                *notes,
-		InstallIfMissing:     &installIfMissing,
-		CodexLogin:           &codexLogin,
-		SetupMCP:             &setupMCP,
+		Runner:           runner,
+		OpenAIAPIKey:     *openAIKey,
+		AnthropicAPIKey:  *anthropicKey,
+		GLMAPIKey:        *glmKey,
+		ZAIAPIKey:        *zaiKey,
+		Notes:            *notes,
+		InstallIfMissing: &installIfMissing,
+		CodexLogin:       &codexLogin,
+		SetupMCP:         &setupMCP,
 	}
 
 	var (
@@ -123,11 +117,9 @@ func runRunnerAuthSetup(args []string) {
 func runnerAuthValueProvided(req runnerAuthSetupRequest) bool {
 	switch normalizeRunnerAuthName(req.Runner) {
 	case "claude":
-		return strings.TrimSpace(req.AnthropicAPIKey) != "" ||
-			strings.TrimSpace(req.AnthropicAuthToken) != "" ||
-			strings.TrimSpace(req.ClaudeCodeOAuthToken) != ""
+		return false
 	case "codex":
-		return strings.TrimSpace(req.OpenAIAPIKey) != ""
+		return false
 	case "opencode":
 		return strings.TrimSpace(req.OpenAIAPIKey) != "" ||
 			strings.TrimSpace(req.AnthropicAPIKey) != "" ||
@@ -211,15 +203,6 @@ func ensureRunnerInstalled(ctx context.Context, runner string) error {
 	}
 }
 
-// loginCodexWithAPIKey was removed 2026-05-27 per
-// feedback_no_api_keys_subscription_only — Yaver MUST use ChatGPT Plus
-// subscription OAuth via `codex login --device-auth`, never API keys.
-// The flow lives in runner_auth_browser_http.go; this stub exists only
-// so the build doesn't break if a stale code path still calls it.
-func loginCodexWithAPIKey(_ context.Context, _ string) error {
-	return fmt.Errorf("codex API-key login is no longer supported — use ChatGPT Plus OAuth via Yaver mobile or `codex login --device-auth`")
-}
-
 func setupRunnerMCP(runner string) ([]string, error) {
 	yaverPath := findYaverBinary()
 	switch normalizeRunnerAuthName(runner) {
@@ -273,8 +256,8 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 			req.Runner,
 			req.OpenAIAPIKey,
 			req.AnthropicAPIKey,
-			req.AnthropicAuthToken,
-			req.ClaudeCodeOAuthToken,
+			"",
+			"",
 			req.GLMAPIKey,
 			req.ZAIAPIKey,
 			req.Notes,
@@ -327,17 +310,17 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 			}
 			return result, nil
 		}
-		return result, fmt.Errorf("Claude Code is installed but no auth was configured. Provide --anthropic-api-key, --anthropic-auth-token, or --claude-code-oauth-token")
+		return result, fmt.Errorf("Claude Code is installed but no auth was configured. Finish Claude plan OAuth with the browser login flow or import subscription credentials from an already-signed-in user-owned device")
 	}
 	if req.Runner == "codex" && !row.AuthConfigured {
 		if boolOrDefault(req.AllowInstallOnly, false) && row.Installed {
 			result.Warning = "Codex was installed, but authentication is still required."
 			if strings.TrimSpace(result.Detail) == "" {
-				result.Detail = "Open the browser/device login flow or save OPENAI_API_KEY to finish Codex setup."
+				result.Detail = "Open the browser/device login flow to finish ChatGPT Plus/Pro plan OAuth for Codex."
 			}
 			return result, nil
 		}
-		return result, fmt.Errorf("Codex is installed but no auth was configured. Provide --openai-api-key or complete native Codex login first")
+		return result, fmt.Errorf("Codex is installed but no auth was configured. Finish ChatGPT Plus/Pro plan OAuth with the browser login flow or import subscription credentials from an already-signed-in user-owned device")
 	}
 	if req.Runner == "claude" {
 		result.Notes = append(result.Notes, "Yaver can use the saved Claude credentials from its vault. Direct `claude` shell sessions outside Yaver may still require exported env vars or Claude's own native login.")

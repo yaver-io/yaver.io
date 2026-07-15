@@ -209,19 +209,9 @@ func promptAuthAction(r *bufio.Reader, runner string, loc *runnerLocation) authC
 	return authChoiceSkip
 }
 
-// readRunnerCredentialRequest builds a runnerAuthSetupRequest from
-// what the user pastes. Each runner has a recommended credential:
-//
-//   - claude   → CLAUDE_CODE_OAUTH_TOKEN (free with Pro/Max plan).
-//                The setup helper already accepts ANTHROPIC_API_KEY
-//                / ANTHROPIC_AUTH_TOKEN as alternatives, but we lead
-//                with the OAuth token because that's what the
-//                majority of users have via their Anthropic plan.
-//   - codex    → OPENAI_API_KEY.
-//   - opencode → ANTHROPIC_API_KEY by default. OpenCode reads
-//                multiple providers' env vars; users who want a
-//                different backend can swap later via
-//                `yaver code set byok`.
+// readRunnerCredentialRequest returns setup guidance for a missing runner.
+// Claude/Codex are subscription-OAuth only in Yaver; OpenCode/GLM provider
+// credentials are configured through their dedicated provider flows.
 //
 // Always silenced via term.ReadPassword so the secret doesn't
 // echo and doesn't end up in the user's shell scrollback. Returns
@@ -233,23 +223,11 @@ func readRunnerCredentialRequest(r *bufio.Reader, runner string) (runnerAuthSetu
 
 	switch runner {
 	case "claude":
-		// Auto-detect which token kind was pasted: any string starting
-		// with "sk-ant-oat" is treated as a CLAUDE_CODE_OAUTH_TOKEN,
-		// "sk-ant-api" as ANTHROPIC_API_KEY, anything else routes to
-		// ANTHROPIC_AUTH_TOKEN. Saves the user from having to pick
-		// the right field name themselves.
-		token, ok := readSecret("Paste your Claude credential (oauth token or API key)")
-		if !ok {
-			return req, false
-		}
-		switch {
-		case strings.HasPrefix(token, "sk-ant-oat"):
-			req.ClaudeCodeOAuthToken = token
-		case strings.HasPrefix(token, "sk-ant-api"):
-			req.AnthropicAPIKey = token
-		default:
-			req.AnthropicAuthToken = token
-		}
+		fmt.Println("Claude Code requires Claude plan OAuth — never API keys.")
+		fmt.Println("Open Yaver mobile → Runner Auth → Claude Code, or run:")
+		fmt.Println("    yaver runner-auth browser-start claude")
+		fmt.Println("Then re-run `yaver monorepo start` once auth is in place.")
+		return req, false
 	case "codex":
 		// API-key prompt removed 2026-05-27 per
 		// feedback_no_api_keys_subscription_only. Direct the user to
