@@ -2140,9 +2140,9 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 				w.Header().Add(k, v)
 			}
 		}
-		w.WriteHeader(rec.Status())
-		w.Write(rec.Body())
 		if rec.Status() >= 400 {
+			w.WriteHeader(rec.Status())
+			w.Write(rec.Body())
 			// Build never produced a fresh bundle. DON'T broadcast
 			// reload_bundle — the SDK would fetch /dev/native-bundle,
 			// get a stale or missing file, and SIGABRT inside the
@@ -2169,14 +2169,28 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 				"assetsUrl": assetsURL,
 			},
 		}
+		// deliveredTo counts the listeners that actually received the fresh
+		// bundle, exactly as /dev/reload reports for a hot reload. A build can
+		// succeed with nothing on the other end — no phone paired, the preview
+		// worker down, the phone attached to a DIFFERENT agent — and the caller
+		// has no way to tell that apart from a real push unless we say so. The
+		// count used to be thrown away here, so every lean-back surface
+		// (headset, TV) reported "bundle pushed" into an empty room.
+		deliveredTo := 0
 		if sent := s.sendCommandToPreviewTarget(cmd); sent {
+			deliveredTo = 1
 			s.syncPreviewWorkerIncident(projectPath, target, true)
 			log.Printf("[dev] Reload-app (bundle mode): sent targeted reload_bundle to preview worker")
 		} else {
 			s.syncPreviewWorkerIncident(projectPath, target, strings.TrimSpace(target.DeviceID) == "")
-			s.blackboxMgr.BroadcastCommand(cmd)
-			log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to SDK devices")
+			deliveredTo = s.blackboxMgr.BroadcastCommand(cmd)
+			log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to %d SDK listener(s)", deliveredTo)
 		}
+		// Answer only now, so deliveredTo is a fact rather than a forecast. The
+		// body is still handleBuildNativeBundle's — deliveredTo is merged in
+		// alongside it, so existing SDK/CLI consumers keep every field they read.
+		w.WriteHeader(rec.Status())
+		w.Write(withDeliveredTo(rec.Body(), deliveredTo))
 		s.upsertDevOperation("reload_app", "completed", "push", "Fresh bundle sent. The phone is restarting the guest inside Yaver.", projectPath, target.DeviceID, 1, map[string]interface{}{"mode": "bundle"})
 		// Explicit terminal event on /dev/events so SSE consumers
 		// (feedback-overlay reload chip) can clear their progress
@@ -2190,7 +2204,6 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 			s.devServerMgr.EmitLog("Reload complete — bundle broadcast")
 			s.devServerMgr.EmitReloadDone(projectPath, target.DeviceID, bundleURL)
 		}
-		// Note: response already written by handleBuildNativeBundle
 
 	default:
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid mode, use 'dev' or 'bundle'"})
@@ -2424,6 +2437,26 @@ func (s *HTTPServer) handleDevServerProxy(w http.ResponseWriter, r *http.Request
 	}
 
 	proxy.ServeHTTP(w, r)
+}
+
+// withDeliveredTo merges a `deliveredTo` count into a JSON object body,
+// leaving every existing field intact. Used by handleReloadApp's bundle path
+// to attach the real listener count to the build response it forwards, so a
+// bundle push reports delivery the same way a hot reload already does.
+//
+// A body that isn't a JSON object is passed through untouched: this decorates
+// a response, it must never be the reason one fails to send.
+func withDeliveredTo(body []byte, deliveredTo int) []byte {
+	var obj map[string]interface{}
+	if err := json.Unmarshal(body, &obj); err != nil || obj == nil {
+		return body
+	}
+	obj["deliveredTo"] = deliveredTo
+	merged, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return merged
 }
 
 // extractErrorMessage pulls the `{"error": "..."}` field from a JSON

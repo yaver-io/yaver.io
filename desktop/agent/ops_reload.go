@@ -43,6 +43,45 @@ func init() {
 	})
 }
 
+// forwardGuestIdentity copies the server-stamped guest headers from the
+// authenticated /ops request onto a request we forge to call a dev handler
+// in-process.
+//
+// Both dev handlers below authorize guests by HEADER, not by argument:
+// requireGuestAccessToActiveDevServer checks the active project against the
+// guest's shared set, and (bundle mode) isolatedGuestDevMutationBlocked
+// refuses a guest configured to require isolation. Both read
+// X-Yaver-GuestUserID and read "" as "the owner is calling" — so a forged
+// request carrying no headers walks through both gates as an owner.
+//
+// This is defence in depth, not a plugged hole: today no guest reaches this
+// handler, because dispatchOps authorizes first (authorizeGuestOpsExecution
+// allows a deploy-scope guest only info/status/deploy, and no other guest
+// scope has /ops on its path allow-list at all). But `reload` is declared
+// AllowGuest:true — "guests with dev-server scope already hit /dev/reload" —
+// so the verb INTENDS to be guest-reachable, and the only thing standing in
+// the way is a separate allow-list in a different file. The day `reload` is
+// added there, the project gate must already hold. It holds now.
+//
+// These values are safe to carry inward because they are not caller-supplied:
+// the auth middleware strips every inbound X-Yaver-Guest* header and re-stamps
+// them from server-resolved state (stripGuestRequestHeaders, httpserver.go).
+func forwardGuestIdentity(dst *http.Request, src http.Header) {
+	if dst == nil || src == nil {
+		return
+	}
+	for _, name := range []string{
+		"X-Yaver-Guest",
+		"X-Yaver-GuestUserID",
+		"X-Yaver-GuestScope",
+		"X-Yaver-GuestAllowedProjects",
+	} {
+		if v := src.Get(name); v != "" {
+			dst.Header.Set(name, v)
+		}
+	}
+}
+
 func opsReloadHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	var p opsReloadPayload
 	if len(payload) > 0 {
@@ -60,29 +99,38 @@ func opsReloadHandler(c OpsContext, payload json.RawMessage) OpsResult {
 
 	switch mode {
 	case "dev":
-		status := c.Server.devServerMgr.Status()
-		if status == nil || !status.Running {
-			return OpsResult{OK: false, Code: "not_running", Error: "no dev server is currently running — start one with /dev/start or the devServer.start() mobile-headless call first"}
+		req, _ := http.NewRequest(http.MethodPost, "/dev/reload", nil)
+		forwardGuestIdentity(req, c.RequestHeaders)
+		rec := newCapturingResponseWriter()
+		c.Server.handleDevServerReload(rec, req)
+		if rec.Status() >= 300 {
+			return OpsResult{
+				OK:    false,
+				Code:  "reload_failed",
+				Error: fmt.Sprintf("reload returned HTTP %d: %s", rec.Status(), strings.TrimSpace(string(rec.Body()))),
+			}
 		}
-		if err := c.Server.devServerMgr.Reload(); err != nil {
-			return OpsResult{OK: false, Code: "reload_failed", Error: err.Error()}
+		var initial map[string]interface{}
+		if err := json.Unmarshal(rec.Body(), &initial); err != nil {
+			initial = map[string]interface{}{
+				"mode": "dev",
+				"raw":  strings.TrimSpace(string(rec.Body())),
+			}
 		}
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"mode":      "dev",
-			"framework": status.Framework,
-			"reloaded":  true,
-		}}
+		initial["mode"] = "dev"
+		return OpsResult{OK: true, Initial: initial}
 	case "bundle":
 		workDir := p.WorkDir
 		if workDir == "" {
 			workDir = workDirFromEnv()
 		}
 		body, _ := json.Marshal(map[string]string{
-			"mode":    "bundle",
-			"workDir": workDir,
+			"mode":        "bundle",
+			"projectPath": workDir,
 		})
 		req, _ := http.NewRequest(http.MethodPost, "/dev/reload-app", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		forwardGuestIdentity(req, c.RequestHeaders)
 		rec := newCapturingResponseWriter()
 		c.Server.handleReloadApp(rec, req)
 		if rec.Status() >= 300 {
