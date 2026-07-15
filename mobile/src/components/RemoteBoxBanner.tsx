@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useColors } from "../context/ThemeContext";
 import { typography } from "../theme/tokens";
 import RemoteBoxPickerModal from "./RemoteBoxPickerModal";
+import { autoConnectBannerStatus } from "../lib/autoConnectStatus";
 import { deriveEffectiveConnectionState, type EffectiveConnectionState } from "../lib/connectionState";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import { isDeviceAsleep, useMachineLifecycle } from "../lib/wakeMachine";
@@ -57,7 +58,7 @@ interface BannerPalette {
 
 export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: RemoteBoxBannerProps) {
   const c = useColors();
-  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError, everHadDevices, isLoadingDevices, refreshDevices } = useDevice();
+  const { activeDevice, devices, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId, deviceListError, everHadDevices, isLoadingDevices, refreshDevices, autoConnecting, autoConnectTarget, cancelAutoConnect } = useDevice();
   const { token } = useAuth();
 
   // Live reachability of the focused device (transport truth). Computed up
@@ -176,19 +177,25 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // While the list is still loading, say so. "No device selected" is a verdict;
   // mid-load the honest word is "Looking".
   const stillLooking = isLoadingDevices && devices.length === 0 && !activeDevice;
+  // While an auto-connect sweep is in flight, the banner narrates the box it's
+  // reaching for ("Primary · Mac mini") instead of the alarming "No machine
+  // selected" — the user is connecting, not stranded.
+  const autoStatus = autoConnecting ? autoConnectBannerStatus(autoConnectTarget) : null;
   const deviceLabel =
     activeDevice?.name?.trim() ||
-    (stillLooking
-      ? "Looking for devices…"
-      : noDevicesYet
-        ? "No remote device added"
-        : "No device selected");
+    (autoStatus
+      ? autoStatus.detail
+      : stillLooking
+        ? "Looking for devices…"
+        : noDevicesYet
+          ? "No remote device added"
+          : "No device selected");
   const ctaLabel = activeDevice ? "Switch" : noDevicesYet ? "Add" : "Pick";
   // "Pool is warm but you haven't chosen which box runs your tasks" is its own
   // state — painting it green "Connected" (because some pooled client is live)
   // while the row also says "No device selected" reads as a contradiction. Flag
   // it as an attention state with a prominent CTA so the next action is obvious.
-  const needsPick = !activeDevice && !noDevicesYet;
+  const needsPick = !activeDevice && !noDevicesYet && !autoConnecting;
   const roleLabel =
     activeDevice?.id === primaryDeviceId
       ? "Primary"
@@ -211,14 +218,14 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
           },
         ]}
       >
-        <View style={[styles.accent, { backgroundColor: running ? (lifecycle.phase === "error" ? c.error : c.accent) : needsPick ? c.warn : asleep ? c.accent : palette.stripe }]} />
+        <View style={[styles.accent, { backgroundColor: running ? (lifecycle.phase === "error" ? c.error : c.accent) : autoConnecting ? c.accent : needsPick ? c.warn : asleep ? c.accent : palette.stripe }]} />
         <View style={styles.stack}>
           <View style={styles.row}>
             <View style={styles.rowMain}>
               <View style={styles.statusLine}>
-                <View style={[styles.dot, { backgroundColor: running ? (lifecycle.phase === "error" ? c.error : c.accent) : needsPick ? c.warn : asleep ? c.accent : palette.dot }]} />
-                <Text style={[styles.label, { color: running ? (lifecycle.phase === "error" ? c.error : c.accent) : needsPick ? c.warn : asleep ? c.accent : palette.text }]} numberOfLines={1}>
-                  {noDevicesYet ? "Not set up" : needsPick ? "No machine selected" : running ? lifecycle.meta.short : asleep ? "Asleep" : palette.label}
+                <View style={[styles.dot, { backgroundColor: running ? (lifecycle.phase === "error" ? c.error : c.accent) : autoConnecting ? c.accent : needsPick ? c.warn : asleep ? c.accent : palette.dot }]} />
+                <Text style={[styles.label, { color: running ? (lifecycle.phase === "error" ? c.error : c.accent) : autoConnecting ? c.accent : needsPick ? c.warn : asleep ? c.accent : palette.text }]} numberOfLines={1}>
+                  {noDevicesYet ? "Not set up" : autoConnecting ? autoStatus!.label : needsPick ? "No machine selected" : running ? lifecycle.meta.short : asleep ? "Asleep" : palette.label}
                 </Text>
               </View>
               {roleLabel ? (
@@ -243,7 +250,23 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
                 </Text>
               )}
             </View>
-            {running ? null : asleep ? (
+            {running ? null : autoConnecting ? (
+              // Let the user bail out of the auto-connect and pick a box
+              // themselves. Shows even on disableTap surfaces — interrupting is
+              // always the user's call. cancelAutoConnect drops to the list
+              // without suppressing future auto-connects.
+              <Pressable
+                onPress={cancelAutoConnect}
+                hitSlop={6}
+                style={[
+                  styles.inlineChip,
+                  styles.ctaPill,
+                  { borderColor: c.borderSubtle, backgroundColor: c.bgInput },
+                ]}
+              >
+                <Text style={[styles.cta, { color: c.textSecondary }]}>Cancel</Text>
+              </Pressable>
+            ) : asleep ? (
               // Wake takes priority over Switch when the focused box is
               // asleep — one tap resumes it from its snapshot. Its own
               // Pressable so it fires Wake (not the row's picker tap), and

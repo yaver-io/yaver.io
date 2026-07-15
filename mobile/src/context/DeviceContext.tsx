@@ -857,6 +857,15 @@ export interface DeviceState {
   /** Persist the secondary device. Pass null to clear. Same sync
    *  semantics as setPrimaryDevice. */
   setSecondaryDevice: (deviceId: string | null) => Promise<void>;
+  /** True while an auto-connect sweep is in flight (probing/connecting to
+   *  primary, then secondary). Surfaces render "Primary (Mac mini) is online —
+   *  connecting…" instead of the alarming "No machine selected". */
+  autoConnecting: boolean;
+  /** The box the auto-connect is currently reaching for, with its role, so the
+   *  banner can name it. Null when idle or between attempts. */
+  autoConnectTarget: { id: string; name: string; role: "primary" | "secondary" | "sticky" } | null;
+  /** Interrupt the auto-connect so the user can pick a box themselves. */
+  cancelAutoConnect: () => void;
   /** Per-device primary coding agent. e.g. {"<deviceId>": "codex"}. The
    *  chat / task surfaces read this when opening a workspace and pre-
    *  select the runner so the user doesn't have to chase the pill on
@@ -1045,6 +1054,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const autoConnectInFlightRef = useRef(false);
   const autoConnectAttemptedNonceRef = useRef(-1);
   const [autoConnectNonce, setAutoConnectNonce] = useState(0);
+  // Observable auto-connect state so the banner/empty-state can say
+  // "Primary (Mac mini) is alive — connecting…" instead of the alarming
+  // "No machine selected" while a sweep is in flight. Cleared when the sweep
+  // resolves (connected, or gave up → show the list).
+  const [autoConnecting, setAutoConnecting] = useState(false);
+  const [autoConnectTarget, setAutoConnectTarget] = useState<{
+    id: string;
+    name: string;
+    role: "primary" | "secondary" | "sticky";
+  } | null>(null);
+  // Lets the user interrupt an in-flight auto-connect ("let me pick myself").
+  const autoConnectCancelRef = useRef(false);
 
   const setMultiTargetMode = useCallback(async (enabled: boolean) => {
     setMultiTargetModeState(enabled);
@@ -1069,6 +1090,17 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       next.delete(deviceId);
       return next;
     });
+  }, []);
+
+  // Interrupt an in-flight auto-connect so the user can pick a box themselves.
+  // Does NOT set userDisconnected (that would suppress future auto-connect on
+  // every tab) — it just stops this sweep and drops to the machine list.
+  const cancelAutoConnect = useCallback(() => {
+    autoConnectCancelRef.current = true;
+    autoConnectInFlightRef.current = false;
+    setAutoConnecting(false);
+    setAutoConnectTarget(null);
+    setConnectionStatus((s) => (s === "connecting" ? "disconnected" : s));
   }, []);
 
   // Auto-pair bookkeeping — shared across the 3 auto-pair effects so
@@ -3207,10 +3239,58 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     autoConnectAttemptedNonceRef.current = autoConnectNonce;
     autoConnectInFlightRef.current = true;
+    autoConnectCancelRef.current = false;
     let cancelled = false;
+    const isCancelled = () => cancelled || autoConnectCancelRef.current;
     (async () => {
       try {
+        setAutoConnecting(true);
         setConnectionStatus("connecting");
+
+        // The ONLY boxes we silently auto-connect to are the user's explicit
+        // sticky pick, then their primary, then their secondary — in that
+        // order. Product rule: "connect to primary if online, else secondary if
+        // it's online and primary isn't; otherwise show the list." We try them
+        // SEQUENTIALLY so the banner can narrate "Primary (Mac mini) is online —
+        // connecting…" and, on failure, "Trying secondary…".
+        const byId = new Map(candidates.map((d) => [d.id, d] as const));
+        const ordered: Array<{ device: Device; role: "sticky" | "primary" | "secondary" }> = [];
+        const pushPriority = (
+          id: string | null | undefined,
+          role: "sticky" | "primary" | "secondary",
+        ) => {
+          if (id && byId.has(id) && !ordered.some((o) => o.device.id === id)) {
+            ordered.push({ device: byId.get(id)!, role });
+          }
+        };
+        pushPriority(userSelectedDeviceIdRef.current, "sticky");
+        pushPriority(primaryDeviceId, "primary");
+        pushPriority(secondaryDeviceId, "secondary");
+
+        if (ordered.length > 0) {
+          for (const { device, role } of ordered) {
+            if (isCancelled()) return;
+            // Narrate the attempt BEFORE probing so the UI shows which box and
+            // role we're reaching for.
+            setAutoConnectTarget({ id: device.id, name: device.name, role });
+            const probe = await probeMobileDeviceStatus(device, token, 3000).catch(() => null);
+            if (isCancelled()) return;
+            if (!probe?.reachable) continue; // offline → fall through to the next priority
+            console.log(`[DeviceContext] Auto-connecting (${role}) to`, device.name);
+            sendTelemetry(token, "auto-connect", `${role}: ${device.name}`, "{}").catch(() => {});
+            await selectDevice(device);
+            return; // connected — done
+          }
+          // Neither primary nor secondary was reachable → show the machine list
+          // (NOT a scary error; the boxes may just be asleep).
+          setAutoConnectTarget(null);
+          setConnectionStatus((s) => (s === "connecting" ? "disconnected" : s));
+          return;
+        }
+
+        // No primary/secondary/sticky configured yet (single-device or first
+        // run): keep the best-reachable behaviour so a lone box still connects,
+        // and seed it as primary so next launch narrates it by role.
         const probes = new Map<string, MobileDeviceStatusProbe>();
         await Promise.all(
           candidates.map(async (d) => {
@@ -3218,56 +3298,31 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             if (probe) probes.set(d.id, probe);
           }),
         );
-        if (cancelled) return;
-        const priorityIds = [userSelectedDeviceIdRef.current, primaryDeviceId, secondaryDeviceId];
+        if (isCancelled()) return;
         const ranked = [...candidates]
-          .map((device) => ({
-            device,
-            probe: probes.get(device.id),
-            rank: autoConnectRank(device, probes.get(device.id), priorityIds),
-          }))
+          .map((device) => ({ device, rank: autoConnectRank(device, probes.get(device.id), []) }))
           .filter((row) => row.rank >= 0)
-          .sort((a, b) => {
-            if (b.rank !== a.rank) return b.rank - a.rank;
-            return a.device.name.localeCompare(b.device.name);
-          });
-        const pickId = ranked[0]?.device.id;
-
-        if (!pickId) {
+          .sort((a, b) => (b.rank !== a.rank ? b.rank - a.rank : a.device.name.localeCompare(b.device.name)));
+        const target = ranked[0]?.device;
+        if (!target) {
           setConnectionStatus("error");
           setLastError(
             "Can't connect — no device responded. Make sure one is running `yaver serve` and reachable on your network or relay.",
           );
           return;
         }
-        const target = devices.find((d) => d.id === pickId);
-        if (!target || cancelled) return;
-        const targetProbe = probes.get(pickId);
-        const reason =
-          pickId === userSelectedDeviceIdRef.current ? "sticky" :
-          pickId === primaryDeviceId ? "primary" :
-          pickId === secondaryDeviceId ? "secondary" :
-          targetProbe?.codingReady ? "coding-ready" :
-          deviceRunnerReadyFromHeartbeat(target) ? "runner-heartbeat" :
-          "reachable";
-        console.log(`[DeviceContext] Auto-connecting (${reason}) to`, target.name);
-        sendTelemetry(token, "auto-connect", `${reason}: ${target.name}`, JSON.stringify({
-          reason,
-          relayCount: quicClient.relayServerCount,
-          deviceId: target.id.slice(0, 8),
-          reachableCount: ranked.length,
-          codingReady: targetProbe?.codingReady === true,
-          runnerCount: targetProbe?.codingRunners?.length ?? 0,
-        }));
+        setAutoConnectTarget({ id: target.id, name: target.name, role: "primary" });
+        console.log("[DeviceContext] Auto-connecting (best-reachable) to", target.name);
         await selectDevice(target);
-        // Seed primaryDeviceId on a multi-device account's first auto-connect.
-        if (devices.length > 1 && primaryDeviceId === null) {
+        if (primaryDeviceId === null) {
           setPrimaryDevice(target.id).catch((e) => {
             appLog("warn", `[DeviceContext] Auto-set primaryDevice failed: ${e}`);
           });
         }
       } finally {
         autoConnectInFlightRef.current = false;
+        setAutoConnecting(false);
+        setAutoConnectTarget(null);
       }
     })();
     return () => {
@@ -3453,6 +3508,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setPrimaryDevice,
       secondaryDeviceId,
       setSecondaryDevice,
+      autoConnecting,
+      autoConnectTarget,
+      cancelAutoConnect,
       primaryRunnerByDevice,
       primaryModelByDevice,
       primaryModeByDevice,
@@ -3464,7 +3522,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;
