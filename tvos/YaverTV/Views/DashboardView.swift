@@ -69,7 +69,21 @@ struct DashboardView: View {
             }
             .sheet(isPresented: $showPicker) { MachinePickerView() }
             .task(id: store.selectedBox?.id) {
-                if let box = store.selectedBox { lifecycle.refreshReachability(box) }
+                guard let box = store.selectedBox else { return }
+                lifecycle.refreshReachability(box)
+                // Seamless connectivity self-heal (tvOS analog of mobile's relay
+                // self-heal): if the box isn't answering at its cached host and it
+                // isn't a parkable managed box (which has its own Wake path),
+                // re-resolve a fresh reachable address once and re-probe. The task
+                // id is the deviceId, which a host swap doesn't change, so this
+                // can't loop.
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if lifecycle.reachable == false, !(box.managed ?? false) {
+                    await store.healReachability()
+                    if let healed = store.selectedBox, healed.host != box.host {
+                        lifecycle.refreshReachability(healed)
+                    }
+                }
             }
             // Stream C: on launch, silently connect to a live machine + narrate,
             // rather than dropping the user on the "Choose machine" wall.

@@ -565,6 +565,34 @@ as `ubuntu-4gb-hel1-1`. Set per-user alias `test` and use `yaver ssh test`.
 - Tests: real HTTP servers on random ports, no mocks, no external deps. See
   `desktop/agent/*_test.go` for the pattern.
 
+## Cross-surface parity — every fix ships to EVERY UI surface
+
+**A fix is not done until it exists on all surfaces.** This holds for
+connectivity, auth/session, wake/park, and any user-facing behavior. The
+surfaces are: **mobile** (phone + tablet), **web**, **tvOS**, **watchOS +
+Wear OS**, **CarPlay (car)**, and **glass / AR-VR**.
+
+Two families with DIFFERENT propagation:
+
+1. **React-Native surfaces share code** — mobile, tablet, car
+   (`app/car-voice-coding.tsx`), and glass/AR-VR (`app/glass-*.tsx`) all consume
+   the same `DeviceContext` + `AuthContext`. A fix there (e.g. the relay
+   self-heal in `DeviceContext.tsx`, auth extend-only refresh in `lib/auth.ts`)
+   reaches all of them for free. Verify it isn't gated to one screen.
+2. **Native surfaces have their OWN code and must be ported explicitly** —
+   tvOS (`tvos/YaverTV/YaverStore.swift`, `AgentClient.swift`), watchOS
+   (`watch/YaverWatch/WatchStore.swift`, `SessionClient.swift`), Wear OS
+   (`wear/.../*.kt`), and web (`web/lib/use-auth.ts`, `web/app/dashboard/`).
+   They do NOT inherit RN fixes — port the same behavior and note it in the
+   commit. Examples already mirrored this way: Netflix-grade session persistence
+   (extend-only `/auth/refresh` on launch), Stream-C narrated auto-connect, and
+   relay self-heal (`POST /settings/repair-relay` → re-pull creds → retry, once
+   per failure streak, per-user only).
+
+When you fix connectivity/auth/lifecycle on one surface, grep the others for the
+same seam and either confirm shared-code coverage or land the native port in the
+same change. A per-surface parity table belongs in the handoff/commit.
+
 ## Tests
 
 ```bash

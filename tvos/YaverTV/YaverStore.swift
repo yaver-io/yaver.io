@@ -96,6 +96,28 @@ final class YaverStore: ObservableObject {
         selectedBoxId = box.id
     }
 
+    // MARK: - Connectivity self-heal (tvOS analog of mobile's relay self-heal)
+
+    /// tvOS connects DIRECT to a box's host — there's no platform relay or
+    /// per-user relay password here, so mobile's `/settings/repair-relay` heal
+    /// doesn't apply. The equivalent staleness on this surface is a CACHED host
+    /// that's no longer reachable (the box changed IP or moved networks). When a
+    /// call fails, re-resolve the selected box's best reachable address from the
+    /// registry and swap it in, so the next call succeeds without the user
+    /// re-picking a machine. Idempotent; no-op when signed out, no box selected,
+    /// the box is gone, or nothing better resolves.
+    func healReachability() async {
+        guard isAuthenticated, let box = selectedBox else { return }
+        let list = (try? await MachineRegistry.fetch(token: token)) ?? []
+        guard let dev = list.first(where: { $0.deviceId == box.id }) else { return }
+        let host = await MachineRegistry.firstReachable(dev.addressCandidates, port: dev.port, token: token)
+        guard let host, !host.isEmpty, host != box.host else { return }
+        let healed = BoxTarget(id: dev.deviceId, name: dev.displayName, host: host,
+                               port: dev.port, managed: dev.managed, machineId: dev.machineId)
+        addBox(healed)
+        select(healed)
+    }
+
     // MARK: - Narrated auto-connect (Stream C)
 
     /// Kick the launch auto-connect once. No-op if signed out, a box is already
