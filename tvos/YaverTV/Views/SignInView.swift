@@ -1,6 +1,18 @@
-// SignInView.swift — TV device-code sign-in. Shows steps + a QR + short code,
-// polls until an already-signed-in phone approves. Mirrors mobile/app/tv-signin.tsx.
+// SignInView.swift — TV sign-in.
+//
+// Two paths, and the fast one leads:
+//
+//   * Sign in with Apple, natively. The TV already holds an Apple ID, so this
+//     needs no second device and no transcription at all — one click, confirmed
+//     on the paired iPhone. Seconds.
+//   * Device code + QR, for everything Apple can't serve: a Google/Microsoft/
+//     GitHub/passkey account, or an account with 2FA. Unlike the headset, a QR
+//     genuinely works here — a TV is a real screen and a phone's camera can see
+//     it. (VisionSignInView drops the QR for exactly that reason.)
+//
+// Mirrors mobile/app/tv-signin.tsx.
 
+import AuthenticationServices
 import SwiftUI
 import UIKit
 import CoreImage.CIFilterBuiltins
@@ -11,6 +23,7 @@ struct SignInView: View {
     @State private var error: String?
     @State private var expired = false
     @State private var approving = false      // approval seen; token arriving
+    @State private var appleBusy = false
     @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
@@ -19,6 +32,22 @@ struct SignInView: View {
                 Text("Sign in to Yaver")
                     .font(.system(size: 44, weight: .heavy))
                     .padding(.bottom, 12)
+
+                // Fast path first: no phone, no code, no typing.
+                SignInWithAppleButton(.signIn) { request in
+                    request.requestedScopes = [.fullName, .email]
+                } onCompletion: { result in
+                    Task { await handleApple(result) }
+                }
+                .signInWithAppleButtonStyle(.white)
+                .frame(height: 60)
+                .disabled(appleBusy)
+                .padding(.bottom, 6)
+
+                Text("Or use any other account:")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
                 stepText("1. Scan the code with your phone, or visit yaver.io/auth/device in any browser")
                 stepText("2. Sign in if asked, then tap Approve")
                 stepText("3. This Apple TV signs in automatically")
@@ -81,6 +110,33 @@ struct SignInView: View {
 
     private func stepText(_ s: String) -> some View {
         Text(s).font(.system(size: 22)).foregroundStyle(.secondary)
+    }
+
+    /// Native Apple sign-in. Trades the Apple ID already on this TV for a Yaver
+    /// session — no code carried to a phone, nothing typed on a remote.
+    private func handleApple(_ result: Result<ASAuthorization, Error>) async {
+        error = nil
+        switch result {
+        case .failure(let err):
+            // Backing out of the Apple sheet is a choice, not a failure.
+            if (err as? ASAuthorizationError)?.code == .canceled { return }
+            error = err.localizedDescription
+
+        case .success(let authorization):
+            appleBusy = true
+            defer { appleBusy = false }
+            do {
+                let token = try await AppleNativeAuth.completeSignIn(with: authorization)
+                pollTask?.cancel()      // the device code is moot now
+                store.signIn(token: token)
+            } catch {
+                // Covers the two things Apple genuinely can't serve here: an
+                // account with 2FA, and an account that signs in with another
+                // provider (where Apple would fork a second, empty one). Both
+                // messages point at the QR below, which serves every provider.
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func begin() async {

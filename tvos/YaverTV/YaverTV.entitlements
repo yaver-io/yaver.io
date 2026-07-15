@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Native Sign in with Apple: the TV already holds an Apple ID, so this
+	     signs in with one click instead of carrying a code to a phone. The App ID
+	     (io.yaver.mobile) already carries the capability — the phone uses the same
+	     /auth/apple-native endpoint. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+</dict>
+</plist>

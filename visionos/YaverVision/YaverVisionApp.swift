@@ -16,7 +16,9 @@ struct YaverVisionApp: App {
             RootView()
                 .environmentObject(store)
         }
-        .defaultSize(width: 900, height: 620)
+        // Tall enough that sign-in shows all three paths — and the fallback code —
+        // without the user having to scroll to discover them.
+        .defaultSize(width: 940, height: 860)
     }
 }
 

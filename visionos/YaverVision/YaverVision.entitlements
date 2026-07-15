@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Native Sign in with Apple. The headset already holds an Apple ID, so this
+	     is the only sign-in path that finishes without a second device: look,
+	     pinch, Optic ID. The App ID (io.yaver.mobile) already carries this
+	     capability — the phone uses the same one via /auth/apple-native. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+</dict>
+</plist>

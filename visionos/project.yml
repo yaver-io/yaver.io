@@ -27,6 +27,13 @@ targets:
       # (device-code auth + the /ops verbs). Duplicating them is how the two
       # surfaces would silently drift apart.
       - path: ../tvos/YaverTV/Backend.swift
+      # Native Sign in with Apple. The headset already holds an Apple ID, so this
+      # is the one path that signs in without a second device — the device-code
+      # flow exists because a TV cannot type, not because it is good.
+      - path: ../tvos/YaverTV/AppleSignIn.swift
+      # In-app OAuth (Google/Microsoft/GitHub/GitLab) on the SAME endpoints the
+      # phone uses. tvOS compiles this to nothing — it has no browser.
+      - path: ../tvos/YaverTV/OAuthSignIn.swift
       - path: ../tvos/YaverTV/Models.swift
       - path: ../tvos/YaverTV/AgentClient.swift
       - path: ../tvos/YaverTV/YaverStore.swift
@@ -45,4 +52,47 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: YaverVision/Info.plist
+        CODE_SIGN_ENTITLEMENTS: YaverVision/YaverVision.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
+
+  # UI tests drive the real app in the visionOS simulator against a stub agent
+  # (see YaverVisionUITests/README). They exist because the reload/session work
+  # is all about what the HEADSET does when the backend says something awkward —
+  # "nothing was listening", "no dev server running" — and none of that is
+  # reachable from a Go test or a compile. GENERATE_INFOPLIST_FILE is re-enabled
+  # here: the app target turns it off because it ships a hand-written plist, and
+  # the test bundle has none.
+  YaverVisionUITests:
+    type: bundle.ui-testing
+    platform: visionOS
+    deploymentTarget: "2.0"
+    sources:
+      - path: YaverVisionUITests
+        excludes:
+          - "stubagent/**"   # the fake agent is a Go program, not app source
+          - "README.md"
+          - "Info.plist"     # generated from the `info:` block below
+    dependencies:
+      - target: YaverVision
+    # The test talks to the stub agent over plain HTTP on loopback to flip
+    # scenarios, so it needs the same local-networking exemption the app has.
+    info:
+      path: YaverVisionUITests/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.yaver.vision.uitests
+        GENERATE_INFOPLIST_FILE: "NO"
+        TEST_TARGET_NAME: YaverVision
+
+schemes:
+  YaverVision:
+    build:
+      targets:
+        YaverVision: all
+        YaverVisionUITests: [test]
+    test:
+      targets:
+        - YaverVisionUITests

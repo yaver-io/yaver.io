@@ -1,13 +1,8 @@
-// VisionDashboardView.swift — the spatial runtime control room.
+// VisionDashboardView.swift — spatial runtime control room.
 //
-// Scope mirrors tvOS deliberately (see tvos/README.md): this is a lean-back
-// control surface, NOT an editor. Machine status, dev-server state, runner
-// sessions, and a reload trigger. Dense code authoring and raw logs stay on the
-// machines where they belong — a headset is a terrible place to read a stack
-// trace, and pretending otherwise is how you ship a surface nobody opens twice.
-//
-// Every call goes through the SAME AgentClient/ops verbs the TV and phone use,
-// so there is no visionOS-specific backend to keep in sync.
+// This is not a code editor. It is the headset control surface for a Yaver
+// machine: machine health, active project, connected preview devices, runner
+// sessions, and deliberate reload controls with honest delivery feedback.
 
 import SwiftUI
 
@@ -17,9 +12,16 @@ struct VisionDashboardView: View {
     @State private var info: AgentInfo?
     @State private var status: AgentStatus?
     @State private var runners: RunnerSessions?
-    @State private var error: String?
+    @State private var platformMatrix: PlatformMatrixReport?
+    @State private var notice: VisionNotice?
     @State private var loading = false
+    @State private var reloadingMode: String?
     @State private var showAddBox = false
+    @State private var showSession = false
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 330, maximum: 520), spacing: 20, alignment: .top)
+    ]
 
     var body: some View {
         NavigationStack {
@@ -31,73 +33,74 @@ struct VisionDashboardView: View {
                 }
             }
             .navigationTitle("Yaver")
-            .toolbar {
-                ToolbarItem(placement: .bottomOrnament) {
-                    HStack(spacing: 16) {
-                        // Refresh and Hot reload act ON the selected box. With none
-                        // selected they were rendered-but-disabled: two dead controls
-                        // floating under a screen the user couldn't leave. Drop them
-                        // entirely in that state and leave the one control that still
-                        // means something. (Sign out always does.)
-                        if store.selectedBox != nil {
-                            Button {
-                                Task { await refresh() }
-                            } label: {
-                                Label("Refresh", systemImage: "arrow.clockwise")
-                            }
-                            .disabled(loading)
-
-                            Button {
-                                Task { await reload() }
-                            } label: {
-                                Label("Hot reload", systemImage: "bolt.fill")
-                            }
-                        }
-
-                        Button(role: .destructive) {
-                            store.signOut()
-                        } label: {
-                            Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                        }
-                    }
-                }
-            }
+            .toolbar { toolbar }
             .sheet(isPresented: $showAddBox) { AddBoxView() }
+            .sheet(isPresented: $showSession) { VisionSessionView() }
         }
-        // Re-run when the box changes: adding the first machine auto-selects it
-        // (YaverStore.select), and without this the freshly-added box would show
-        // an empty dashboard until the user manually hit Refresh.
         .task(id: store.selectedBox?.id) { await refresh() }
     }
 
-    // MARK: - Panels
+    // MARK: - Main
 
     private var dashboard: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .padding()
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            VStack(alignment: .leading, spacing: 22) {
+                hero
+
+                if let notice {
+                    NoticeView(notice: notice)
                 }
 
-                machinePanel
-                runtimePanel
-                runnersPanel
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                    machinePanel
+                    runtimePanel
+                    projectPanel
+                    reloadPanel
+                    runnersPanel
+                    surfacesPanel
+                }
             }
             .padding(32)
         }
+        .refreshable { await refresh() }
+    }
+
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 18) {
+            ZStack {
+                Circle().fill(.blue.opacity(0.18))
+                Image(systemName: "visionpro")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.blue)
+            }
+            .frame(width: 70, height: 70)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.selectedBox?.name ?? "Yaver")
+                    .font(.extraLargeTitle2)
+                    .lineLimit(1)
+                Text(store.selectedBox.map { "\($0.host):\($0.port)" } ?? "No machine selected")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if loading {
+                ProgressView()
+                    .controlSize(.large)
+            }
+        }
+        .padding(24)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28))
     }
 
     private var machinePanel: some View {
         panel("Machine", systemImage: "desktopcomputer") {
-            row("Name", store.selectedBox?.name ?? "—")
-            // Interpolating the two placeholders separately rendered the literal
-            // string "—:0". A missing host has no port; say nothing, not zero.
-            row("Host", store.selectedBox.map { "\($0.host):\($0.port)" } ?? "—")
-            row("Platform", [info?.platform, info?.arch].compactMap { $0 }.joined(separator: " · "))
-            row("Agent", info?.agentVersion ?? status?.agentVersion ?? "—")
+            row("Host", store.selectedBox.map { "\($0.host):\($0.port)" } ?? "-")
+            row("Platform", joined([info?.platform, info?.arch]))
+            row("Agent", info?.agentVersion ?? status?.agentVersion ?? "-")
+            row("Device", info?.deviceId ?? "-")
             if let cpu = info?.cpuPercent {
                 row("CPU", String(format: "%.0f%%", cpu))
             }
@@ -106,65 +109,167 @@ struct VisionDashboardView: View {
 
     private var runtimePanel: some View {
         panel("Runtime", systemImage: "bolt.horizontal.circle") {
-            // authExpired is the one that actually strands you: the box answers,
-            // but every verb 401s. Surface it as a failure, not a footnote.
             if status?.authExpired == true {
-                Label("Auth expired — re-run `yaver auth` on the box", systemImage: "xmark.seal.fill")
+                Label("Auth expired", systemImage: "xmark.seal.fill")
                     .foregroundStyle(.orange)
             } else {
                 Label("Signed in", systemImage: "checkmark.seal.fill")
                     .foregroundStyle(.green)
             }
-            if let t = status?.tasks?.total {
-                row("Tasks", "\(t)")
+            row("Tasks", taskLine)
+            row("Dev server", devServerLine)
+            row("Framework", status?.devServer?.framework ?? "-")
+        }
+    }
+
+    private var projectPanel: some View {
+        panel("Preview Target", systemImage: "iphone.gen3.radiowaves.left.and.right") {
+            row("Project", status?.devServer?.project ?? "-")
+            row("Work dir", status?.devServer?.workDir ?? "-")
+            Text("Hermes Push uses this work dir. If it is empty, start or select a mobile project on the machine before pushing.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var reloadPanel: some View {
+        panel("Reload", systemImage: "arrow.triangle.2.circlepath") {
+            Text("Hot Reload sends a live reload command. Hermes Push rebuilds bytecode and swaps the guest bundle.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                Button {
+                    Task { await reload(mode: "dev") }
+                } label: {
+                    Label("Hot Reload", systemImage: "bolt.fill")
+                }
+                .disabled(reloadingMode != nil || !hasDevServer)
+
+                Button {
+                    Task { await reload(mode: "bundle") }
+                } label: {
+                    Label("Hermes Push", systemImage: "shippingbox.fill")
+                }
+                .disabled(reloadingMode != nil || !hasWorkDir)
             }
-            if let dev = status?.devServer {
-                row("Dev server", dev.running == true ? "running" : "stopped")
+            .buttonStyle(.borderedProminent)
+
+            if let reloadingMode {
+                Label(reloadingMode == "bundle" ? "Building Hermes bundle..." : "Sending reload...", systemImage: "clock")
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
     private var runnersPanel: some View {
-        panel("Coding agents", systemImage: "cpu") {
+        panel("Coding Agents", systemImage: "terminal") {
             let sessions = runners?.sessions ?? []
             if sessions.isEmpty {
                 Text("No active runner sessions")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(sessions) { s in
-                    row(s.id, "active")
+                ForEach(Array(sessions.prefix(4))) { session in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.label)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(session.attached == true ? "attached" : "detached")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
+            Button {
+                showSession = true
+            } label: {
+                Label("Open Session", systemImage: "paperplane.fill")
+            }
+            .padding(.top, 6)
+        }
+    }
+
+    private var surfacesPanel: some View {
+        panel("Apple Surfaces", systemImage: "square.grid.2x2") {
+            let surfaces = platformMatrix?.surfaces?.filter { $0.family == "apple" } ?? []
+            if surfaces.isEmpty {
+                Text("Surface readiness appears after the machine reports its platform matrix.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(surfaces.prefix(6)) { surface in
+                    HStack {
+                        Text(surface.label ?? surface.id)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(surface.status ?? "unknown")
+                            .font(.caption.bold())
+                            .foregroundStyle(surface.status == "ready" ? .green : .secondary)
+                    }
                 }
             }
         }
     }
 
-    // The terminal state of the app, until now: it said "Pick a box in the Yaver
-    // phone app — it syncs here", and nothing syncs. Boxes live in
-    // @AppStorage("yaver.tv.boxes") — per-app-container UserDefaults, on a
-    // different physical device — and the only writer is AddBoxView, which this
-    // target didn't compile. So a fresh install read an instruction that could
-    // not work, on a screen with no button, and never reached the dashboard.
-    //
-    // An empty state must offer the move that unblocks it. Same shape as tvOS's:
-    // say what to add, then let them add it right here.
     private var noBoxView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "desktopcomputer")
-                .font(.system(size: 64))
+        VStack(spacing: 18) {
+            Image(systemName: "visionpro")
+                .font(.system(size: 72))
                 .foregroundStyle(.secondary)
-            Text("Add your machine")
-                .font(.title)
-            Text("Enter the address of a machine running `yaver serve`. The headset must be on the same network.")
+            Text("Add Your Machine")
+                .font(.extraLargeTitle2)
+            Text("Enter the LAN address of a machine running `yaver serve`. The headset must be on the same network for this native app.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 460)
-            Button("Add machine") { showAddBox = true }
-                .padding(.top, 8)
+                .frame(maxWidth: 560)
+            Button {
+                showAddBox = true
+            } label: {
+                Label("Add Machine", systemImage: "plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
+        .padding(48)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .glassBackgroundEffect()
     }
 
-    // MARK: - Building blocks
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .bottomOrnament) {
+            HStack(spacing: 14) {
+                if store.selectedBox != nil {
+                    Button {
+                        Task { await refresh() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(loading)
+
+                    Button {
+                        showAddBox = true
+                    } label: {
+                        Label("Machine", systemImage: "server.rack")
+                    }
+                }
+
+                Button(role: .destructive) {
+                    store.signOut()
+                } label: {
+                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            }
+        }
+    }
+
+    // MARK: - Building Blocks
 
     private func panel<C: View>(
         _ title: String,
@@ -173,46 +278,150 @@ struct VisionDashboardView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(title, systemImage: systemImage)
-                .font(.title2).bold()
+                .font(.title2.bold())
             content()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
+        .frame(maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .padding(22)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
     }
 
-    private func row(_ k: String, _ v: String) -> some View {
-        HStack {
-            Text(k).foregroundStyle(.secondary)
-            Spacer()
-            Text(v.isEmpty ? "—" : v).monospaced()
+    private func row(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(key)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 18)
+            Text(value.isEmpty ? "-" : value)
+                .monospaced()
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
+    }
+
+    private func joined(_ values: [String?]) -> String {
+        let parts = values.compactMap { value -> String? in
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return value
+        }
+        return parts.isEmpty ? "-" : parts.joined(separator: " / ")
+    }
+
+    // MARK: - Derived State
+
+    private var hasDevServer: Bool {
+        status?.devServer?.running == true
+    }
+
+    private var hasWorkDir: Bool {
+        !(status?.devServer?.workDir ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var taskLine: String {
+        let running = status?.tasks?.running ?? 0
+        let total = status?.tasks?.total ?? 0
+        return "\(running) running / \(total) total"
+    }
+
+    private var devServerLine: String {
+        guard let dev = status?.devServer else { return "unknown" }
+        return dev.running == true ? "running" : "stopped"
     }
 
     // MARK: - Actions
 
-    private func refresh() async {
+    /// Re-read the machine's state.
+    ///
+    /// `clearNotice` exists because a reload refreshes immediately afterwards to
+    /// pick up the new dev-server state, and a refresh that always cleared the
+    /// notice would wipe the very thing the reload just said. That is not
+    /// hypothetical: it swallowed every success AND the "nobody received this"
+    /// warning within milliseconds of them being set, so the only outcome a human
+    /// could ever actually read was a failure (which throws, and so never reached
+    /// the refresh). The button looked dead on the happy path for the opposite
+    /// reason it looked dead on the sad one.
+    ///
+    /// A user-initiated refresh (pull-to-refresh, the toolbar button, switching
+    /// machine) still clears — there the notice IS stale.
+    private func refresh(clearNotice: Bool = true) async {
         guard let client = store.client() else { return }
         loading = true
         defer { loading = false }
-        error = nil
         do {
-            info = try await client.info()
-            status = try await client.status()
-            runners = try? await client.runnerSessions()
+            async let nextInfo = client.info()
+            async let nextStatus = client.status()
+            async let nextRunners = client.runnerSessions()
+            async let nextMatrix = client.platformMatrix()
+            info = try await nextInfo
+            status = try await nextStatus
+            runners = try? await nextRunners
+            platformMatrix = try? await nextMatrix.matrix
+            if clearNotice {
+                notice = nil
+            }
         } catch {
-            // A headset that silently shows stale numbers is worse than one that
-            // admits it lost the box.
-            self.error = "Couldn't reach \(store.selectedBox?.name ?? "the machine"): \(error.localizedDescription)"
+            notice = .error("Couldn't reach \(store.selectedBox?.name ?? "the machine"): \(error.localizedDescription)")
         }
     }
 
-    private func reload() async {
+    private func reload(mode: String) async {
         guard let client = store.client() else { return }
+        reloadingMode = mode
+        defer { reloadingMode = nil }
         do {
-            _ = try await client.call("reload")
+            let workDir = status?.devServer?.workDir
+            let result = try await client.reload(mode: mode, workDir: mode == "bundle" ? workDir : nil)
+            if let delivered = result.deliveredTo, delivered == 0 {
+                notice = .warning("Reload accepted, but no connected phone, simulator, or preview worker received it. Open Yaver on the target device and select this machine.")
+            } else if mode == "bundle" {
+                notice = .success("Hermes bundle built and push command sent.")
+            } else {
+                notice = .success("Hot reload command sent.")
+            }
+            // Keep what we just told the user; only re-read the machine state.
+            await refresh(clearNotice: false)
         } catch {
-            self.error = error.localizedDescription
+            notice = .error(error.localizedDescription)
         }
+    }
+}
+
+private enum VisionNotice {
+    case success(String)
+    case warning(String)
+    case error(String)
+
+    var text: String {
+        switch self {
+        case .success(let text), .warning(let text), .error(let text): return text
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .success: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.octagon.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .success: return .green
+        case .warning: return .orange
+        case .error: return .red
+        }
+    }
+}
+
+private struct NoticeView: View {
+    let notice: VisionNotice
+
+    var body: some View {
+        Label(notice.text, systemImage: notice.icon)
+            .font(.headline)
+            .foregroundStyle(notice.color)
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
     }
 }
