@@ -866,6 +866,13 @@ export interface DeviceState {
   autoConnectTarget: { id: string; name: string; role: "primary" | "secondary" | "sticky" } | null;
   /** Interrupt the auto-connect so the user can pick a box themselves. */
   cancelAutoConnect: () => void;
+  /** Last-ditch connectivity recovery: re-sync this account's per-user relay
+   *  password with the platform value (POST /settings/repair-relay) and re-pull
+   *  the relay set, then reconnect. Fixes the "every box: no reachable transport"
+   *  case caused by a stale relay credential — WITHOUT a rebuild. Per-user only:
+   *  it never mints secrets and never touches other tenants on the shared free
+   *  relay. */
+  repairRelay: () => Promise<{ ok: boolean; relays: number; error?: string }>;
   /** Per-device primary coding agent. e.g. {"<deviceId>": "codex"}. The
    *  chat / task surfaces read this when opening a workspace and pre-
    *  select the runner so the user doesn't have to chase the pill on
@@ -2158,6 +2165,73 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
   fetchRelayServersRef.current = fetchRelayServers;
 
+  // Last-ditch connectivity recovery. When every box reads "no reachable
+  // transport", the usual cause is a stale per-user relay password (the phone's
+  // credential drifted from what the relay expects). /settings/repair-relay
+  // re-copies the platform-managed value onto this account — it "never generates
+  // new secrets, only re-copies what every synced user has" (backend
+  // userSettings.repairRelayPassword), so it's safe on the shared free relay and
+  // can't affect other tenants. After repair we re-pull the relay set so the
+  // reconnect uses the corrected password immediately — no rebuild required.
+  const repairRelay = useCallback(async (): Promise<{ ok: boolean; relays: number; error?: string }> => {
+    if (!token) return { ok: false, relays: 0, error: "Sign in first." };
+    try {
+      const res = await fetch(`${getConvexSiteUrl()}/settings/repair-relay`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const error =
+          res.status === 401
+            ? "Session expired — sign in again to repair the relay."
+            : body?.error || `Repair failed (HTTP ${res.status}).`;
+        return { ok: false, relays: 0, error };
+      }
+      // Drop any poisoned cached relay set so the re-pull can't reuse a stale
+      // password, then reload from the freshly-repaired /settings.
+      await AsyncStorage.removeItem(RELAY_CACHE_KEY).catch(() => {});
+      const relays = await fetchRelayServers();
+      return { ok: true, relays };
+    } catch (e) {
+      return { ok: false, relays: 0, error: e instanceof Error ? e.message : "Repair failed." };
+    }
+  }, [token, RELAY_CACHE_KEY, fetchRelayServers]);
+
+  // Seamless relay self-heal. When connections fail with a relay-auth-shaped
+  // error — the stale per-user-password symptom where every box reads "no
+  // reachable transport" — silently repair the credential ONCE per failure
+  // streak and retry, so the user never has to tap anything. Guarded by a ref so
+  // a genuine outage (dead box / relay down) can't spin a repair loop; the guard
+  // resets the moment we successfully connect. Per-user + idempotent, so it's
+  // safe on the shared free relay and never affects other tenants.
+  const relaySelfHealRef = useRef(false);
+  useEffect(() => {
+    if (connectionStatus === "connected") {
+      relaySelfHealRef.current = false; // arm a fresh streak for next time
+      return;
+    }
+    if (!token || relaySelfHealRef.current || connectionStatus !== "error") return;
+    const err = (lastError || "").toLowerCase();
+    const relayAuthShaped =
+      err.includes("relay password") ||
+      err.includes("invalid relay") ||
+      err.includes("no reachable transport") ||
+      err.includes("sign in again to reconnect");
+    if (!relayAuthShaped) return;
+    relaySelfHealRef.current = true;
+    (async () => {
+      appLog("info", "[relay] auto-heal: repairing stale relay credential…");
+      const r = await repairRelay();
+      if (r.ok && r.relays > 0) {
+        appLog("info", `[relay] auto-heal: repaired (${r.relays} relay(s)); retrying`);
+        void refreshDevices();
+      } else if (!r.ok) {
+        appLog("warn", `[relay] auto-heal failed: ${r.error ?? "unknown"}`);
+      }
+    })();
+  }, [token, connectionStatus, lastError, repairRelay, refreshDevices]);
+
   // Initial relay fetch on mount. If we end up with zero relays (likely a
   // transient `/config` fetch failure at boot — DNS not resolved yet,
   // airplane-mode toggle, cold tunnel), keep retrying in the background
@@ -3277,7 +3351,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             if (isCancelled()) return;
             if (!probe?.reachable) continue; // offline → fall through to the next priority
             console.log(`[DeviceContext] Auto-connecting (${role}) to`, device.name);
-            sendTelemetry(token, "auto-connect", `${role}: ${device.name}`, "{}").catch(() => {});
+            sendTelemetry(token, "auto-connect", `${role}: ${device.name}`, "{}");
             await selectDevice(device);
             return; // connected — done
           }
@@ -3511,6 +3585,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       autoConnecting,
       autoConnectTarget,
       cancelAutoConnect,
+      repairRelay,
       primaryRunnerByDevice,
       primaryModelByDevice,
       primaryModeByDevice,
@@ -3522,7 +3597,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;
