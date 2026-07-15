@@ -69,6 +69,28 @@ function fullServiceMap(svc: Record<string, boolean> | undefined): Record<string
   return out;
 }
 
+async function markGuestServiceConversion(ctx: any, userId: any, service: string, enabledServices: string[]) {
+  const now = Date.now();
+  const rows = await ctx.db
+    .query("guestConversions")
+    .withIndex("by_guest", (q: any) => q.eq("guestUserId", userId))
+    .collect();
+  for (const row of rows) {
+    const patch: Record<string, unknown> = {
+      enabledServices,
+      lastManagedServiceAt: now,
+      conversionState: row.conversionState === "paid-usage" ? "paid-usage" : "service-enabled",
+      updatedAt: now,
+    };
+    if (!row.firstManagedServiceAt) {
+      patch.firstManagedServiceAt = now;
+      patch.firstManagedService = service;
+      patch.convertedAt = now;
+    }
+    await ctx.db.patch(row._id, patch);
+  }
+}
+
 /**
  * Read the caller's à-la-carte service opt-in set. Returns every
  * capability key with its current boolean (default false = off) so the
@@ -122,6 +144,11 @@ export const setServiceForUser = internalMutation({
     } else {
       await ctx.db.insert("userSettings", { userId, managedServices: next });
     }
+
+    if (enabled) {
+      await markGuestServiceConversion(ctx, userId, service, Object.keys(merged).sort());
+    }
+
     return { ok: true, services: fullServiceMap(merged) };
   },
 });

@@ -135,6 +135,58 @@ export interface GuestUsageEntry {
   secondsUsed: number;
 }
 
+export interface GuestConversionSource {
+  hostUserId: string;
+  hostName: string;
+  hostEmail: string;
+  sourceScope: "full" | "feedback-only" | "sdk-project" | "support";
+  sourceProjects: string[];
+  firstAcceptedAt: number;
+  lastGuestActivityAt?: number;
+  guestActivityCount: number;
+  conversionState: "guest-active" | "service-enabled" | "paid-usage";
+  firstManagedService?: string;
+  enabledServices: string[];
+}
+
+export interface GuestRecommendedService {
+  service: string;
+  label: string;
+  reason: string;
+}
+
+export interface GuestConversionSurface {
+  sources: GuestConversionSource[];
+  hasGuestOrigin: boolean;
+  enabledServices: Record<string, boolean>;
+  recommendedServices: GuestRecommendedService[];
+}
+
+export interface HostGuestConversion {
+  guestUserId: string;
+  guestEmail: string;
+  guestName: string;
+  sourceScope: "full" | "feedback-only" | "sdk-project" | "support";
+  sourceProjects: string[];
+  firstAcceptedAt: number;
+  lastGuestActivityAt?: number;
+  guestActivityCount: number;
+  conversionState: "guest-active" | "service-enabled" | "paid-usage";
+  firstManagedServiceAt?: number;
+  firstManagedService?: string;
+  enabledServices: string[];
+  convertedAt?: number;
+}
+
+export interface HostConversionSummary {
+  guests: HostGuestConversion[];
+  totals: {
+    invited: number;
+    serviceEnabled: number;
+    paidUsage: number;
+  };
+}
+
 export interface GuestConfigUpdate {
   email: string;
   scope?: "full" | "feedback-only" | "sdk-project";
@@ -343,6 +395,35 @@ export async function listGuests(token: string): Promise<GuestInfo[]> {
   if (!res.ok) throw new Error("Failed to fetch guest list");
   const data = await res.json();
   return data.guests || [];
+}
+
+/**
+ * Guest-facing funnel state: which developer/shared runtime introduced
+ * this account, and which self-owned Yaver capability to offer next.
+ */
+export async function fetchGuestConversionSurface(token: string): Promise<GuestConversionSurface> {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/conversion?role=guest`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to fetch guest conversion state");
+  }
+  return res.json();
+}
+
+/**
+ * Host-facing referral/conversion summary for invited guests.
+ */
+export async function fetchHostConversionSummary(token: string): Promise<HostConversionSummary> {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/conversion?role=host`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to fetch host conversion summary");
+  }
+  return res.json();
 }
 
 // ── Guest Config API (via agent P2P) ────────────────────────────────

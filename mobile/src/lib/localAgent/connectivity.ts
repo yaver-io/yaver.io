@@ -89,7 +89,8 @@ export function diagnoseConnectivity(i: ConnDiagnosisInput): ConnDiagnosis {
     case "offline":
       return {
         code: "device-offline",
-        say: "That machine has no recent heartbeat. Power it on and run yaver serve, then say 'try again'.",
+        say: "That machine has no recent heartbeat. I can run a deeper transport check, then tell you whether it is powered off, only reachable by Tailscale, or missing its Yaver relay.",
+        action: "device.doctor",
         shellHint: "yaver serve",
       };
     case "ready-to-connect":
@@ -102,15 +103,16 @@ export function diagnoseConnectivity(i: ConnDiagnosisInput): ConnDiagnosis {
   if (i.manualAuthRequired) {
     return {
       code: "manual-auth",
-      say: "I couldn't auto-pair that box after several tries. Run yaver auth on the machine, then say 'try again'.",
+      say: "I couldn't auto-pair that box after several tries. I can run a transport doctor, or you can run yaver auth on the machine.",
+      action: "device.doctor",
       shellHint: "yaver auth",
     };
   }
   if (i.lastError) {
     return {
       code: "unknown-error",
-      say: `I hit a problem connecting: ${i.lastError}. I can retry, or you can check the machine is running yaver serve.`,
-      action: "device.recoverAuth",
+      say: `I hit a problem connecting: ${i.lastError}. I can run a deeper transport doctor before trying fixes.`,
+      action: "device.doctor",
     };
   }
   return {

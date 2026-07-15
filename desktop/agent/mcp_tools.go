@@ -1008,6 +1008,31 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "machine_doctor",
+			"description": "Deep remote-machine connectivity doctor. For a deviceId/name/alias, checks Convex heartbeat freshness, local+target Tailscale state, raw ICMP ping per candidate, Yaver HTTP /info reachability, relay/tunnel/LAN candidate verdicts, runner auth, and CPU/RAM/disk. Use this when a remote box is online in Convex but not reachable from PC/mobile, or when Tailscale hides a relay/free-relay failure.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Device ID, unique prefix, alias, or exact/partial device name. Omit or pass local for this machine.",
+					},
+					"deviceId": map[string]interface{}{
+						"type":        "string",
+						"description": "Camel-case alias for mobile callers.",
+					},
+					"device": map[string]interface{}{
+						"type":        "string",
+						"description": "Device selector alias.",
+					},
+					"timeout_ms": map[string]interface{}{
+						"type":        "integer",
+						"description": "Per-candidate probe timeout. Default 4000. Candidates run concurrently.",
+					},
+				},
+			},
+		},
+		{
 			"name":        "agent_shutdown",
 			"description": "Gracefully shut down the Yaver agent. All running tasks will be stopped.",
 			"inputSchema": map[string]interface{}{
@@ -2959,10 +2984,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
-			"name": "device_voice_hints_set",
+			"name":        "device_voice_hints_set",
 			"description": "Set the SPOKEN names for a device — the names a user says out loud, e.g. \"my mac mini\", \"the box at maltepe\", \"work laptop\". Distinct from alias (one short token typed at a shell): hints are many and natural-language. They are what lets a driver say \"switch to my mac mini\" on CarPlay, where no device picker may be shown on screen. Pass hints[] to replace the whole list, or add[]/remove[] to mutate it. Max 12 per device.",
 			"inputSchema": map[string]interface{}{
-				"type": "object",
+				"type":     "object",
 				"required": []string{"deviceId"},
 				"properties": map[string]interface{}{
 					"deviceId": map[string]interface{}{

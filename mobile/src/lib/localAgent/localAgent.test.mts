@@ -95,6 +95,7 @@ test("catalog: unknown action id", () => {
 test("catalog: recovery-provider calls are LLM-drivable (auto), via mcp", () => {
   // Start/recover actions auto-run; status/wait are read-only — all auto.
   for (const id of [
+    "device.doctor",
     "recovery.reauthStart", "recovery.reauthStatus", "recovery.reauthWait",
     "recovery.targetStart", "recovery.targetStatus", "recovery.targetWait",
     "recovery.transportStatus",

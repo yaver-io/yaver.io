@@ -3,7 +3,9 @@ const dgram = require('dgram');
 
 const YAVER_PORT = 8347;
 const BEACON_PORT = 19837;
-const DISCOVERY_TIMEOUT = 5000;
+const DISCOVERY_TIMEOUT = 1500;
+const HEALTH_TIMEOUT = 1200;
+const LAN_SCAN_TIMEOUT = 350;
 
 /**
  * Discover a yaver.io device on the network.
@@ -66,10 +68,10 @@ function listenForBeacon(timeout) {
 }
 
 /** Fetch /health from a device */
-function fetchHealth(device) {
+function fetchHealth(device, timeout = HEALTH_TIMEOUT) {
   return new Promise((resolve, reject) => {
     const url = `http://${device.ip}:${device.port || YAVER_PORT}/health`;
-    const req = http.get(url, { timeout: 5000 }, (res) => {
+    const req = http.get(url, { timeout }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -93,27 +95,44 @@ async function scanLAN() {
   const os = require('os');
   const interfaces = os.networkInterfaces();
   const found = [];
+  const seen = new Set();
 
   for (const [, addrs] of Object.entries(interfaces)) {
     for (const addr of addrs) {
       if (addr.family !== 'IPv4' || addr.internal) continue;
       // Try common IPs on this subnet
       const subnet = addr.address.split('.').slice(0, 3).join('.');
-      const promises = [];
+      const ips = [];
       for (let i = 1; i <= 254; i++) {
         const ip = `${subnet}.${i}`;
         if (ip === addr.address) continue;
-        promises.push(
-          fetchHealth({ ip, port: YAVER_PORT })
-            .then(h => found.push({ ip, port: YAVER_PORT, name: h.deviceName, platform: h.platform }))
-            .catch(() => {})
-        );
+        ips.push(ip);
       }
-      await Promise.all(promises);
+      await runLimited(ips, 48, async (ip) => {
+        try {
+          const h = await fetchHealth({ ip, port: YAVER_PORT }, LAN_SCAN_TIMEOUT);
+          const key = h.deviceId || `${ip}:${YAVER_PORT}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          found.push({ ip, port: YAVER_PORT, name: h.deviceName, platform: h.platform });
+        } catch {}
+      });
     }
   }
 
   return found;
+}
+
+async function runLimited(items, limit, fn) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const idx = next++;
+      if (idx >= items.length) return;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
 }
 
 module.exports = { discoverDevice, fetchHealth, scanLAN, YAVER_PORT };

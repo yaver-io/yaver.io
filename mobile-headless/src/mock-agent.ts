@@ -65,6 +65,23 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
   const repos = new Map<string, any>();
   const execs = new Map<string, any>();
   let execCounter = 0;
+  let openCodeConfig: any = {
+    path: "/mock/.config/opencode/opencode.json",
+    exists: true,
+    defaultAgent: "build",
+    model: "zai-coding-plan/glm-4.7",
+    providers: [
+      {
+        id: "zai-coding-plan",
+        name: "Z.ai Coding Plan",
+        hasApiKey: true,
+        models: [{ id: "zai-coding-plan/glm-4.7", name: "GLM 4.7 Coding Plan", provider: "zai-coding-plan" }],
+      },
+    ],
+    models: [{ id: "zai-coding-plan/glm-4.7", name: "GLM 4.7 Coding Plan", provider: "zai-coding-plan", isDefault: true }],
+    agents: [{ name: "build", isBuiltin: true }, { name: "plan", isBuiltin: true }],
+    diagnostics: [],
+  };
 
   const pushFrame = (streamName: string, frame: any) => {
     const subs = streamSubs.get(streamName) ?? new Set();
@@ -88,6 +105,50 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
 
     if (path === "/info") return json(200, { hostname: "mock", deviceId: "mock-device", mode: "owner" });
     if (path === "/agent/runners") return json(200, { runners: [{ id: "claude-code", name: "Claude Code", installed: true, active: true, models: [] }] });
+    if (path === "/runner/opencode/config" && req.method === "GET") {
+      return json(200, { ok: true, config: openCodeConfig });
+    }
+    if (path === "/runner/opencode/config" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      const next = { ...openCodeConfig };
+      for (const key of ["defaultAgent", "model", "smallModel", "buildModel", "planModel"]) {
+        if (Object.prototype.hasOwnProperty.call(body, key)) next[key] = body[key];
+      }
+      if (Array.isArray(body.providers)) {
+        const providers = Array.isArray(next.providers) ? [...next.providers] : [];
+        for (const patch of body.providers) {
+          const id = String(patch?.id || "").trim();
+          if (!id) continue;
+          const idx = providers.findIndex((p: any) => p?.id === id);
+          if (patch.delete) {
+            if (idx >= 0) providers.splice(idx, 1);
+            continue;
+          }
+          const current = idx >= 0 ? { ...providers[idx] } : { id };
+          if (patch.name !== undefined) current.name = patch.name;
+          if (patch.baseUrl !== undefined) current.baseUrl = patch.baseUrl;
+          if (patch.apiKey !== undefined && String(patch.apiKey || "").trim()) current.hasApiKey = true;
+          if (patch.models !== undefined) current.models = patch.models;
+          if (idx >= 0) providers[idx] = current;
+          else providers.push(current);
+        }
+        next.providers = providers;
+      }
+      if (next.model) {
+        next.models = [
+          {
+            id: next.model,
+            name: next.model,
+            provider: String(next.model).split("/")[0] || "",
+            isDefault: true,
+          },
+        ];
+      }
+      openCodeConfig = next;
+      return json(200, { ok: true, config: openCodeConfig });
+    }
     if (path === "/repos/list" && req.method === "GET") {
       return json(200, Array.from(repos.values()));
     }

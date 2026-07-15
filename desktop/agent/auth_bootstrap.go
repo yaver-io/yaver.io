@@ -344,14 +344,8 @@ func runBootstrapServe(httpPort int) {
 			}
 		}
 		agentAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
-		relayCfg := cfg.RelayServers
-		globalPw := cfg.RelayPassword
-		if len(relayCfg) == 0 && len(cfg.CachedRelayServers) > 0 {
-			relayCfg = cfg.CachedRelayServers
-			if globalPw == "" {
-				globalPw = cfg.CachedRelayPassword
-			}
-		}
+		relayCfg := runtimeRelayConfigs(cfg)
+		globalPw := runtimeRelayPassword(cfg)
 		started := 0
 		for _, rs := range relayCfg {
 			pw := rs.Password
@@ -798,14 +792,8 @@ func notifyConvexBootstrap(cfg *Config, httpPort int) {
 	// Pick the relay password the agent is actually using. Per-relay
 	// password wins over global; cached creds win over nothing.
 	pickRelayPassword := func() (string, string) {
-		relays := cfg.RelayServers
-		if len(relays) == 0 {
-			relays = cfg.CachedRelayServers
-		}
-		globalPw := cfg.RelayPassword
-		if globalPw == "" {
-			globalPw = cfg.CachedRelayPassword
-		}
+		relays := runtimeRelayConfigs(cfg)
+		globalPw := runtimeRelayPassword(cfg)
 		for _, r := range relays {
 			pw := r.Password
 			if pw == "" {

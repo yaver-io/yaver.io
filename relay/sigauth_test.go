@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -103,5 +104,30 @@ func TestDecodeSignPubKey(t *testing.T) {
 	}
 	if decodeSignPubKey(base64.StdEncoding.EncodeToString([]byte("short"))) != nil {
 		t.Fatal("wrong-length pubkey must decode to nil")
+	}
+}
+
+func TestAuthorizeProxyViaSig_OversizedChunkedBodyIsNotTruncatedIntoFallback(t *testing.T) {
+	s := NewRelayServer(0, 0, "pw", "", "")
+	cfg := defaultAbuseGuardConfig()
+	cfg.MaxRequestBodyBytes = 5
+	s.abuseGuard = newAbuseGuard(cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/d/device1234/ops", io.NopCloser(strings.NewReader("abcdef")))
+	req.ContentLength = -1 // chunked/unknown length: must detect by reading limit+1.
+	req.Header.Set("X-Yaver-Sig", "v1")
+	req.Header.Set("X-Yaver-Device", "device1234")
+
+	if _, ok := s.authorizeProxyViaSig(req, "device1234"); ok {
+		t.Fatal("oversized body must not authenticate via signature")
+	}
+
+	w := httptest.NewRecorder()
+	body, ok := readCappedBody(w, req, cfg.MaxRequestBodyBytes)
+	if ok {
+		t.Fatalf("fallback proxy body read must fail with 413, got ok body=%q", string(body))
+	}
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("fallback body read status = %d, want 413 body=%s", w.Code, w.Body.String())
 	}
 }

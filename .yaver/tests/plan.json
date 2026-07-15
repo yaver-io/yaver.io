@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-07-05T21:10:52.733519Z",
+  "scope": "screen:landing",
+  "viewport": "ipad11-landscape",
+  "driver": "cdp",
+  "specs": [
+    {
+      "name": "landing",
+      "path": "/Users/kivanccakmak/Workspace/yaver.io/yaver-tests/landing.test.yaml",
+      "target": "web",
+      "url": "http://127.0.0.1:3000"
+    }
+  ]
+}

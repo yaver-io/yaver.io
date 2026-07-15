@@ -1,0 +1,25 @@
+{
+  "runId": "00:10:52",
+  "workDir": "/Users/kivanccakmak/Workspace/yaver.io",
+  "scope": "screen:landing",
+  "viewport": "ipad11-landscape",
+  "driver": "cdp",
+  "startedAt": "2026-07-05T21:10:52.729968Z",
+  "finishedAt": "2026-07-05T21:10:54.345352Z",
+  "passed": false,
+  "bugsFound": 1,
+  "proposed": 0,
+  "nativeSkipped": 0,
+  "resultsDir": "/Users/kivanccakmak/Workspace/yaver.io/.yaver/results/runs/00:10:52",
+  "flows": [
+    {
+      "name": "landing",
+      "specPath": "/Users/kivanccakmak/Workspace/yaver.io/yaver-tests/landing.test.yaml",
+      "url": "http://127.0.0.1:3000/",
+      "passed": false,
+      "durationMs": 1603,
+      "error": "page load error net::ERR_CONNECTION_REFUSED",
+      "interactables": 0
+    }
+  ]
+}

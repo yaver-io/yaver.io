@@ -72,7 +72,8 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
   // ("Chat with Codex" vs "Chat with OpenCode") still read the old
   // userSettings.primaryRunnerByDevice value until then. The saved key
   // is the explicit "this is now my coding agent" signal — pin it.
-  const { activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice } = useDevice();
+  const { activeDevice, setPrimaryRunnerForDevice } = useDevice();
+  const primaryDeviceId = target || activeDevice?.id || "";
   const [config, setConfig] = useState<OpenCodeConfigSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [defaultAgent, setDefaultAgent] = useState("");
@@ -108,7 +109,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [target]);
 
   useEffect(() => {
     if (visible) void load();
@@ -144,7 +145,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       return;
     }
     if (res.config) setConfig(res.config);
-    if (activeDevice) {
+    if (primaryDeviceId) {
       // opencode model strings are "<provider>/<model>" (e.g.
       // "zai/glm-4.7"). Surface the provider half to Convex too —
       // without it, web's DevicesView can't infer which catalogue
@@ -153,7 +154,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       const slash = m.indexOf("/");
       const providerHint = slash > 0 ? m.slice(0, slash) : "";
       void setPrimaryRunnerForDevice(
-        activeDevice.id,
+        primaryDeviceId,
         "opencode",
         m || null,
         res.config?.defaultAgent || null,
@@ -161,7 +162,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       ).catch(() => {});
     }
     Alert.alert("Saved", "OpenCode config updated.");
-  }, [defaultAgent, model, smallModel, buildModel, planModel, activeDevice, setPrimaryRunnerForDevice]);
+  }, [defaultAgent, model, smallModel, buildModel, planModel, primaryDeviceId, setPrimaryRunnerForDevice]);
 
   const saveProviderEdit = useCallback(async () => {
     if (!editingProvider) return;
@@ -182,9 +183,9 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       return;
     }
     if (res.config) setConfig(res.config);
-    if (activeDevice) {
+    if (primaryDeviceId) {
       void setPrimaryRunnerForDevice(
-        activeDevice.id,
+        primaryDeviceId,
         "opencode",
         res.config?.model || null,
         res.config?.defaultAgent || null,
@@ -194,7 +195,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
     setEditingProvider(null);
     setEditBaseUrl("");
     setEditApiKey("");
-  }, [editingProvider, editBaseUrl, editApiKey, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
+  }, [editingProvider, editBaseUrl, editApiKey, primaryDeviceId, setPrimaryRunnerForDevice]);
 
   const addProvider = useCallback(async () => {
     if (!addId.trim()) {
@@ -223,9 +224,9 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
       return;
     }
     if (res.config) setConfig(res.config);
-    if (activeDevice) {
+    if (primaryDeviceId) {
       void setPrimaryRunnerForDevice(
-        activeDevice.id,
+        primaryDeviceId,
         "opencode",
         res.config?.model || modelTrimmed || null,
         res.config?.defaultAgent || null,
@@ -240,7 +241,7 @@ export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = fal
     setAddModel("");
     setAddModels(undefined);
     setPresetHint("");
-  }, [addId, addName, addBaseUrl, addApiKey, addModel, addModels, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
+  }, [addId, addName, addBaseUrl, addApiKey, addModel, addModels, primaryDeviceId, setPrimaryRunnerForDevice]);
 
   const deleteProvider = useCallback(
     (provider: OpenCodeProviderSummary) => {

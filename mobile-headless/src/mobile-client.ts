@@ -64,6 +64,36 @@ export type HeadlessDeviceStatusProbe = {
   codingRunners?: Array<{ id?: string; ready?: boolean }>;
 };
 
+export interface HeadlessOpenCodeConfig {
+  path?: string;
+  exists?: boolean;
+  defaultAgent?: string;
+  model?: string;
+  smallModel?: string;
+  buildModel?: string;
+  planModel?: string;
+  providers?: Array<{ id: string; name?: string; baseUrl?: string; hasApiKey?: boolean }>;
+  models?: Array<{ id: string; name?: string; provider?: string; isDefault?: boolean }>;
+  agents?: Array<{ name: string; model?: string; description?: string; isBuiltin?: boolean }>;
+  diagnostics?: string[];
+}
+
+export interface HeadlessOpenCodeConfigPatch {
+  defaultAgent?: string;
+  model?: string;
+  smallModel?: string;
+  buildModel?: string;
+  planModel?: string;
+  providers?: Array<{
+    id: string;
+    name?: string;
+    baseUrl?: string;
+    apiKey?: string;
+    models?: Record<string, unknown>;
+    delete?: boolean;
+  }>;
+}
+
 export type ExecStatus = "running" | "completed" | "failed" | "killed";
 
 export interface ExecSession {
@@ -485,6 +515,21 @@ export class MobileClient {
     return r.body?.runners ?? [];
   }
 
+  async getOpenCodeConfig(target?: string): Promise<HeadlessOpenCodeConfig | null> {
+    const r = await this.raw.get(this.peerPath(target, "/runner/opencode/config"));
+    if (r.status >= 400) return null;
+    return (r.body?.config ?? null) as HeadlessOpenCodeConfig | null;
+  }
+
+  async saveOpenCodeConfig(
+    patch: HeadlessOpenCodeConfigPatch,
+    target?: string,
+  ): Promise<{ ok: boolean; config?: HeadlessOpenCodeConfig; error?: string }> {
+    const r = await this.raw.post(this.peerPath(target, "/runner/opencode/config"), patch);
+    if (r.status >= 400) return { ok: false, error: r.body?.error ?? `HTTP ${r.status}` };
+    return { ok: true, config: r.body?.config as HeadlessOpenCodeConfig | undefined };
+  }
+
   // ── Installer catalogue ────────────────────────────────────────
   async listInstallables(target?: string): Promise<any[]> {
     const r = await this.raw.get(this.peerPath(target, "/install/list"));
@@ -642,7 +687,7 @@ export class MobileClient {
   }
 
   private deviceRunnerReadyFromHeartbeat(device: Device): boolean {
-    const runnerIds = new Set(["claude", "claude-code", "codex", "opencode", "glm"]);
+    const runnerIds = new Set(["claude", "claude-code", "codex", "opencode"]);
     for (const runner of device.runners || []) {
       const id = String(runner.runnerId || runner.id || "").trim().toLowerCase();
       const status = String(runner.status || "").trim().toLowerCase();

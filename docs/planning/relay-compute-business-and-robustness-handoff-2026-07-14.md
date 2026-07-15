@@ -410,11 +410,41 @@ Legal/commercial protection:
 
 These are intended for parallel sessions. Each workstream should grep and verify current code before editing.
 
-### W0: Multi-Relay Failover (HIGHEST ROBUSTNESS VALUE — currently unowned)
+### W0: Multi-Relay Failover — DEFERRED. Do not build this yet.
 
-**This was missing from the first draft, and it is the biggest robustness gap in
-the product.** Everything else on this list makes a single relay better. This one
-removes the reason a single relay can end your day.
+**Status 2026-07-14 (third pass): DEFERRED, deliberately. Do not stand up a
+second relay.** I recommended this an hour ago and I was wrong; the reasoning is
+worth keeping because it is the sort of mistake that is easy to repeat.
+
+Two reasons it is the wrong next move:
+
+1. **A second relay does not fix the failure we actually have.** The observed
+   outage was a ZOMBIE TUNNEL, not a dead box — `public.yaver.io` answered 401
+   (alive, reachable) throughout, while the mini's tunnel had stopped forwarding.
+   The agent tunnels to every configured relay, so with two relays it would have
+   held two QUIC/UDP tunnels **from the same host, over the same NAT, on the same
+   path**. Whatever killed tunnel A almost certainly kills tunnel B in the same
+   instant. Two copies of a failing transport is still a failing transport.
+2. **There is no traffic.** Redundancy and capacity work insure against load and
+   hardware failure. We have neither users nor an observed box-level outage. This
+   is an insurance premium on a car nobody drives — and it is not free: two boxes
+   means two to patch, monitor, version-match, and keep relay-password-synced.
+
+**The correct generalisation: we need TRANSPORT diversity, not BOX diversity.**
+One relay reachable two ways (QUIC/UDP **and** WSS/TCP-443) survives the failure
+we have actually seen. Two relays reachable one way do not. W1 is therefore the
+real redundancy work, and it is free.
+
+Revisit W0 only when one of these becomes true:
+
+- A relay box actually goes down (we have never observed this), or
+- We sell an SLA where a single reboot is unacceptable.
+
+When that day comes, the good news (verified in code, and locked by
+`relay_multihome_test.go`) is that **it is a config task, not a code task** — see
+below. Nothing needs to be built in advance.
+
+#### Why it will be cheap when we do want it
 
 Today: **one relay box. If it reboots, every phone loses every machine.** There
 is no LAN path and no VPN path from a phone on LTE — the relay is the only route.

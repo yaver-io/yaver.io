@@ -1407,7 +1407,7 @@ export const seedParkedMachine = internalMutation({
       return existing._id;
     }
     const now = Date.now();
-    return await ctx.db.insert("cloudMachines", {
+    const machineId = await ctx.db.insert("cloudMachines", {
       userId: args.userId,
       machineType: args.machineType ?? "cpu",
       serverType: args.serverType,
@@ -1427,6 +1427,14 @@ export const seedParkedMachine = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
+    // Give it the same canonical name a provisioned box gets. A nameless row
+    // silently disabled the DNS upsert AND the resume health check (both are
+    // guarded on hostname), which is how a seeded box could wake, run, bill,
+    // and never be verified — so name it up front rather than at first wake.
+    await ctx.db.patch(machineId, {
+      hostname: `${machineId.toString().substring(0, 8)}.cloud.yaver.io`,
+    });
+    return machineId;
   },
 });
 

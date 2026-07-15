@@ -485,7 +485,7 @@ func publicAgentBaseCandidates(target *DeviceInfo) []string {
 		}
 		// Already a fully-qualified URL — pass through.
 		if strings.HasPrefix(base, "http://") || strings.HasPrefix(base, "https://") {
-			add(base)
+			add(relayURLToPathStyle(base))
 			continue
 		}
 		// Bare host (e.g. "198.51.100.20" set via config.public_endpoints

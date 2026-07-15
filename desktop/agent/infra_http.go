@@ -49,16 +49,19 @@ type InfraCapabilities struct {
 }
 
 type InfraSummary struct {
-	Machine         MachineInfo             `json:"machine"`
-	Metrics         *HostMetrics            `json:"metrics,omitempty"`
-	DevServices     []ServiceStatus         `json:"devServices,omitempty"`
-	Network         []InfraNetworkInterface `json:"network,omitempty"`
-	Relays          []InfraRelaySummary     `json:"relays,omitempty"`
-	Sharing         InfraSharingSummary     `json:"sharing"`
-	Sandbox         ContainerSandboxSummary `json:"sandbox"`
-	Capabilities    InfraCapabilities       `json:"capabilities"`
-	PackageManagers []string                `json:"packageManagers,omitempty"`
-	Binaries        []DetectedBinary        `json:"binaries,omitempty"`
+	Machine      MachineInfo             `json:"machine"`
+	Metrics      *HostMetrics            `json:"metrics,omitempty"`
+	DevServices  []ServiceStatus         `json:"devServices,omitempty"`
+	Network      []InfraNetworkInterface `json:"network,omitempty"`
+	Relays       []InfraRelaySummary     `json:"relays,omitempty"`
+	Sharing      InfraSharingSummary     `json:"sharing"`
+	Sandbox      ContainerSandboxSummary `json:"sandbox"`
+	Capabilities InfraCapabilities       `json:"capabilities"`
+	// Why reboot is unavailable, and exactly what granting it would take. The UI
+	// renders "No permission — Enable" from this instead of a dead button.
+	RebootGrant     rebootGrantState `json:"rebootGrant"`
+	PackageManagers []string         `json:"packageManagers,omitempty"`
+	Binaries        []DetectedBinary `json:"binaries,omitempty"`
 }
 
 func (s *HTTPServer) infraSummary(ctx context.Context) InfraSummary {
@@ -81,6 +84,7 @@ func (s *HTTPServer) infraSummary(ctx context.Context) InfraSummary {
 		Sharing:         infraSharingSummary(),
 		Sandbox:         s.sandboxSummary(),
 		Capabilities:    infraCapabilities(),
+		RebootGrant:     currentRebootGrantState(),
 		PackageManagers: detectPackageManagers(),
 		Binaries:        DiscoverInstalledBinaries(),
 	}

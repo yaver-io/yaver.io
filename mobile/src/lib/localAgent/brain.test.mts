@@ -61,12 +61,14 @@ test("conn: auth expired → recoverAuth", () => {
 test("conn: offline device → power on + yaver serve", () => {
   const d = diagnoseConnectivity({ hasAnyDevice: true, hasConnectedDevice: false, lifecycle: "offline" });
   assert.equal(d.code, "device-offline");
+  assert.equal(d.action, "device.doctor");
   assert.match(d.shellHint ?? "", /yaver serve/);
 });
 
 test("conn: manual auth exhausted", () => {
   const d = diagnoseConnectivity({ hasAnyDevice: true, hasConnectedDevice: false, manualAuthRequired: true });
   assert.equal(d.code, "manual-auth");
+  assert.equal(d.action, "device.doctor");
 });
 
 test("conn: connected → ok", () => {

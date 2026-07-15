@@ -5,17 +5,19 @@ import "testing"
 func TestRelayURLToPathStyle(t *testing.T) {
 	cases := map[string]string{
 		// Canonical relay subdomain → rewrite to path-style
-		"https://229aeb03-b877-41aa-ba60-2daf785cd4a5.yaver.io":  "https://public.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5",
-		"https://2859819c-23cf-444f-ac7c-fc41b81c394e.yaver.io/": "https://public.yaver.io/d/2859819c-23cf-444f-ac7c-fc41b81c394e",
-		"http://abc.yaver.io":                                    "http://public.yaver.io/d/abc",
+		"https://229aeb03-b877-41aa-ba60-2daf785cd4a5.yaver.io":     "https://public.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5",
+		"https://2859819c-23cf-444f-ac7c-fc41b81c394e.yaver.io/":    "https://public.yaver.io/d/2859819c-23cf-444f-ac7c-fc41b81c394e",
+		"https://229aeb03-b877-41aa-ba60-2daf785cd4a5.dev.yaver.io": "https://public.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5",
+		"http://abc.yaver.io": "http://public.yaver.io/d/abc",
+		"https://public.dev.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5": "https://public.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5",
 		// Already path-style — leave unchanged
 		"https://public.yaver.io/d/229aeb03": "https://public.yaver.io/d/229aeb03",
 		// Non-yaver.io domain — user-configured tunnel/CNAME — leave alone
 		"https://mybox.example.com":         "https://mybox.example.com",
 		"https://yaver-via-tunnel.acme.org": "https://yaver-via-tunnel.acme.org",
 		// Garbage / empty
-		"":     "",
-		"  ":   "",
+		"":          "",
+		"  ":        "",
 		"not a url": "not a url",
 	}
 	for in, want := range cases {
@@ -33,5 +35,16 @@ func TestSetAssignedRelayURL_RewritesOnStore(t *testing.T) {
 	want := "https://public.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5"
 	if got != want {
 		t.Fatalf("after setAssignedRelayURL(subdomain), got %q, want %q", got, want)
+	}
+}
+
+func TestPublicAgentBaseCandidates_RewritesAssignedDevRelayURL(t *testing.T) {
+	got := publicAgentBaseCandidates(&DeviceInfo{
+		DeviceID:        "229aeb03-b877-41aa-ba60-2daf785cd4a5",
+		PublicEndpoints: []string{"https://public.dev.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5"},
+	})
+	want := "https://public.yaver.io/d/229aeb03-b877-41aa-ba60-2daf785cd4a5"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("publicAgentBaseCandidates() = %#v, want [%q]", got, want)
 	}
 }

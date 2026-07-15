@@ -206,6 +206,7 @@ type ListedDevice = {
   lastHeartbeat: number;
   lastTunnelEvent?: Doc<"devices">["lastTunnelEvent"];
   relayConnected?: boolean;
+  canReboot?: boolean;
   isGuest: boolean;
   hostUserId?: string;
   hostName?: string;
@@ -885,6 +886,7 @@ export const heartbeat = mutation({
     localIps: v.optional(v.array(v.string())),
     publicEndpoints: v.optional(v.array(v.string())),
     relayConnected: v.optional(v.boolean()),
+    canReboot: v.optional(v.boolean()),
     hardwareId: v.optional(v.string()),
     hardwareProfile: v.optional(hardwareProfileValidator),
     deviceClass: v.optional(
@@ -1003,6 +1005,12 @@ export const heartbeat = mutation({
       args.relayConnected !== device.relayConnected
     ) {
       patch.relayConnected = args.relayConnected;
+    }
+    if (
+      args.canReboot !== undefined &&
+      args.canReboot !== device.canReboot
+    ) {
+      patch.canReboot = args.canReboot;
     }
     // Capture hardwareId on heartbeats too — older agents that
     // were registered before the field existed will pick it up
@@ -1467,6 +1475,7 @@ export const listMyDevices = query({
       lastHeartbeat: d.lastHeartbeat,
       lastTunnelEvent: d.lastTunnelEvent,
       relayConnected: d.relayConnected ?? false,
+      canReboot: d.canReboot ?? false,
       agentVersion: d.agentVersion,
       agentVersionReportedAt: d.agentVersionReportedAt,
       isGuest: false as boolean,
@@ -1544,6 +1553,7 @@ export const listMyDevices = query({
           lastHeartbeat: d.lastHeartbeat,
           lastTunnelEvent: d.lastTunnelEvent,
           relayConnected: d.relayConnected ?? false,
+          canReboot: d.canReboot ?? false,
           isGuest: true,
           hostUserId: String(grant.hostUserId),
           hostName: host.fullName,
@@ -1611,6 +1621,7 @@ export const listMyDevices = query({
           lastHeartbeat: d.lastHeartbeat,
           lastTunnelEvent: d.lastTunnelEvent,
           relayConnected: d.relayConnected ?? false,
+          canReboot: d.canReboot ?? false,
           isGuest: true,
           hostUserId: String(access.hostUserId),
           hostName: host.fullName,

@@ -677,7 +677,7 @@ for (const path of [
   "/gateway/token/mint", "/gateway/token/revoke", "/gateway/token/rotate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
-  "/guests/allowed", "/guests/config", "/guests/usage",
+  "/guests/allowed", "/guests/config", "/guests/usage", "/guests/conversion",
   "/connections/request", "/connections/accept", "/connections/remove",
   "/connections/block", "/connections/unblock", "/connections/nickname",
   "/connections/list", "/connections/search", "/connections/suggested",
@@ -2178,6 +2178,8 @@ http.route({
           : undefined,
       relayConnected:
         typeof body.relayConnected === "boolean" ? body.relayConnected : undefined,
+      canReboot:
+        typeof body.canReboot === "boolean" ? body.canReboot : undefined,
       hardwareId: body.hardwareId || undefined,
       hardwareProfile: body.hardwareProfile || undefined,
       deviceClass: body.deviceClass || undefined,
@@ -6387,6 +6389,26 @@ http.route({
 
     const hosts = await ctx.runQuery(api.guests.listHosts, { tokenHash });
     return jsonResponse(hosts);
+  }),
+});
+
+/** GET /guests/conversion?role=guest|host — UI-surface funnel state. */
+http.route({
+  path: "/guests/conversion",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const role = new URL(request.url).searchParams.get("role") === "host" ? "host" : "guest";
+
+    const result = role === "host"
+      ? await ctx.runQuery((api as any).guests.getHostConversionSummary, { tokenHash })
+      : await ctx.runQuery((api as any).guests.getGuestConversionSurface, { tokenHash });
+    return jsonResponse(result);
   }),
 });
 

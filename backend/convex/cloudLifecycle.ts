@@ -354,6 +354,24 @@ export const getAllowance = internalQuery({
 
 // ── Metering ─────────────────────────────────────────────────────────
 
+async function markGuestComputePaidUsage(ctx: any, userId: any, now: number) {
+  const rows = await ctx.db
+    .query("guestConversions")
+    .withIndex("by_guest", (q: any) => q.eq("guestUserId", userId))
+    .collect();
+  for (const row of rows) {
+    const enabled = new Set<string>(Array.isArray(row.enabledServices) ? row.enabledServices : []);
+    enabled.add("compute");
+    await ctx.db.patch(row._id, {
+      enabledServices: Array.from(enabled).sort(),
+      ...(row.firstPaidUsageAt ? {} : { firstPaidUsageAt: now }),
+      ...(row.convertedAt ? {} : { convertedAt: now }),
+      conversionState: "paid-usage",
+      updatedAt: now,
+    });
+  }
+}
+
 // Record one billable tick for a machine and deduct from the wallet.
 // Append-only creditUsage row + balance decrement (clamped at 0).
 // Returns the new balance + whether it dropped below the safe floor
@@ -436,6 +454,10 @@ export const recordUsageAndDeduct = internalMutation({
       lastMeteredAt: now,
       updatedAt: now,
     });
+
+    if (!dryRun && chargedCents > 0) {
+      await markGuestComputePaidUsage(ctx, userId, now);
+    }
 
     // Auto-stop signal. A subscriber with included hours REMAINING never
     // suspends — the next tick is free. Once the grant is exhausted, the
@@ -1369,9 +1391,15 @@ export const resumeMachine = internalAction({
       // the ~10min → ~1-2min win. Without a volume we fall back to the old
       // full-disk snapshot.
       const bootImage = (machine.volumeId && machine.baseImageId) || machine.lastSnapshotId;
+      // A row seeded from a bare snapshot (seedParkedMachine) carries no
+      // hostname, and an empty hostname quietly disabled BOTH the DNS upsert
+      // and the resume health check — so such a box could wake, run, bill, and
+      // never be verified or addressable by name. Mint the canonical hostname
+      // the provision path uses instead of leaving the row nameless.
+      const hostname = machine.hostname || `${String(machineId).substring(0, 8)}.cloud.yaver.io`;
       const { serverId, ip } = await hetznerCreateFromImage(
         token!,
-        machine.hostname || `yaver-${machineId}`,
+        hostname,
         serverType,
         locationCandidates,
         bootImage,
@@ -1380,12 +1408,12 @@ export const resumeMachine = internalAction({
       );
       await ctx.runMutation(internal.cloudMachines.setProvisioned, {
         machineId, hetznerServerId: serverId, serverIp: ip,
-        hostname: machine.hostname || "", serverType,
+        hostname, serverType,
       });
       // Resumed box has a NEW IP — re-point its DNS A record so the
       // <id>.cloud.yaver.io hostname keeps resolving (IP-direct works
       // regardless; this keeps the hostname/tunnel path alive).
-      if (machine.hostname) await cloudflareUpsertA(machine.hostname, ip);
+      await cloudflareUpsertA(hostname, ip);
       // Deliberately STAY "resuming" here. A Hetzner create returns as soon as
       // the server RECORD exists — the OS is still booting and the agent has
       // not re-registered. Flipping to "active" at this point was the bug that

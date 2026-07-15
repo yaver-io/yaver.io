@@ -102,6 +102,24 @@ async function ensureWalletRow(ctx: any, userId: string) {
   return await ctx.db.get(id);
 }
 
+async function markGuestPaidUsage(ctx: any, userId: any, kind: string, now: number) {
+  const rows = await ctx.db
+    .query("guestConversions")
+    .withIndex("by_guest", (q: any) => q.eq("guestUserId", userId))
+    .collect();
+  for (const row of rows) {
+    const enabled = new Set<string>(Array.isArray(row.enabledServices) ? row.enabledServices : []);
+    enabled.add(kind);
+    await ctx.db.patch(row._id, {
+      enabledServices: Array.from(enabled).sort(),
+      ...(row.firstPaidUsageAt ? {} : { firstPaidUsageAt: now }),
+      ...(row.convertedAt ? {} : { convertedAt: now }),
+      conversionState: "paid-usage",
+      updatedAt: now,
+    });
+  }
+}
+
 // Append one usage row and debit the wallet. Callers pass raw upstream
 // COGS in cents (providerCostCents) plus the metered quantity/unit for
 // the audit trail; markup is applied here so the spread lives in one
@@ -169,6 +187,10 @@ async function applyManagedUsage(
     lastMeteredAt: now,
     updatedAt: now,
   });
+
+  if (!sim && chargedCents > 0) {
+    await markGuestPaidUsage(ctx, p.userId, p.kind, now);
+  }
 
   return { balanceCents: newBalance, suspend: newBalance <= 0, charged: chargedCents };
 }

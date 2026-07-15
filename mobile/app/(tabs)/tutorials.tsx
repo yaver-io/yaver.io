@@ -14,13 +14,13 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 
 const TUTORIALS = [
-  { label: "Always-on Setup", icon: "↗", desc: "Auto-boot, systemd, run forever", url: "https://yaver.io/manuals/auto-boot" },
-  { label: "Self-host Relay", icon: "⊕", desc: "Your own relay server with Docker", url: "https://yaver.io/manuals/relay-setup" },
-  { label: "Local LLM", icon: "◇", desc: "Ollama, Qwen, zero API keys", url: "https://yaver.io/manuals/local-llm" },
-  { label: "Voice AI", icon: "•", desc: "PersonaPlex, Whisper, speech-to-code", url: "https://yaver.io/manuals/voice-ai" },
-  { label: "Feedback SDK", icon: "○", desc: "Visual bug reports from your app", url: "https://yaver.io/manuals/feedback-loop" },
-  { label: "CLI Setup", icon: "⚙", desc: "Install, auth, configure agents", url: "https://yaver.io/manuals/cli-setup" },
-  { label: "Integrations", icon: "←", desc: "MCP, Claude Desktop, Cursor", url: "https://yaver.io/manuals/integrations" },
+  { label: "Always-on Setup", icon: "↗", desc: "Auto-boot, systemd, run forever", url: "https://yaver.io/manuals/auto-boot?embed=mobile" },
+  { label: "Self-host Relay", icon: "⊕", desc: "Your own relay server with Docker", url: "https://yaver.io/manuals/relay-setup?embed=mobile" },
+  { label: "Local LLM", icon: "◇", desc: "Ollama, Qwen, zero API keys", url: "https://yaver.io/manuals/local-llm?embed=mobile" },
+  { label: "Voice AI", icon: "•", desc: "PersonaPlex, Whisper, speech-to-code", url: "https://yaver.io/manuals/voice-ai?embed=mobile" },
+  { label: "Feedback SDK", icon: "○", desc: "Visual bug reports from your app", url: "https://yaver.io/manuals/feedback-loop?embed=mobile" },
+  { label: "CLI Setup", icon: "⚙", desc: "Install, auth, configure agents", url: "https://yaver.io/manuals/cli-setup?embed=mobile" },
+  { label: "Integrations", icon: "←", desc: "MCP, Claude Desktop, Cursor", url: "https://yaver.io/manuals/integrations?embed=mobile" },
 ];
 
 export default function TutorialsScreen() {

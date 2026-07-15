@@ -416,6 +416,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/infra/summary", s.auth(s.handleInfraSummary))
 	mux.HandleFunc("/infra/services/action", s.auth(s.handleInfraServiceAction))
 	mux.HandleFunc("/infra/power", s.auth(s.handleInfraPower))
+	// Opt-in reboot permission: the owner supplies their sudo password once and
+	// Yaver installs a minimal sudoers rule (reboot binaries only). Never
+	// automatic, never stored — see infra_grant_reboot.go.
+	mux.HandleFunc("/infra/reboot-grant", s.auth(s.handleInfraRebootGrant))
 	mux.HandleFunc("/agent/clean", s.auth(s.handleClean))
 	mux.HandleFunc("/agent/doctor", s.auth(s.handleDoctor))
 	mux.HandleFunc("/agent/tools", s.auth(s.handleTools))

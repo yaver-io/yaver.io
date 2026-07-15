@@ -60,6 +60,54 @@ async function deviceSummariesForHost(ctx: any, hostUserId: any) {
   }));
 }
 
+async function upsertGuestConversion(ctx: any, p: {
+  hostUserId: any;
+  guestUserId: any;
+  inviteId?: any;
+  accessId?: any;
+  sourceScope?: "full" | "feedback-only" | "sdk-project" | "support";
+  sourceProjects?: string[];
+  acceptedAt?: number;
+  activityAt?: number;
+}) {
+  const now = Date.now();
+  const existing = await ctx.db
+    .query("guestConversions")
+    .withIndex("by_host_guest", (q: any) => q.eq("hostUserId", p.hostUserId).eq("guestUserId", p.guestUserId))
+    .first();
+
+  const cleanProjects = (p.sourceProjects ?? []).map((s) => String(s).trim()).filter(Boolean);
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      ...(p.inviteId ? { inviteId: p.inviteId } : {}),
+      ...(p.accessId ? { accessId: p.accessId } : {}),
+      ...(p.sourceScope ? { sourceScope: p.sourceScope } : {}),
+      ...(cleanProjects.length > 0 ? { sourceProjects: cleanProjects } : {}),
+      ...(p.activityAt ? {
+        lastGuestActivityAt: p.activityAt,
+        guestActivityCount: (existing.guestActivityCount ?? 0) + 1,
+      } : {}),
+      updatedAt: now,
+    });
+    return;
+  }
+
+  const firstAcceptedAt = p.acceptedAt ?? p.activityAt ?? now;
+  await ctx.db.insert("guestConversions", {
+    hostUserId: p.hostUserId,
+    guestUserId: p.guestUserId,
+    ...(p.inviteId ? { inviteId: p.inviteId } : {}),
+    ...(p.accessId ? { accessId: p.accessId } : {}),
+    ...(p.sourceScope ? { sourceScope: p.sourceScope } : {}),
+    ...(cleanProjects.length > 0 ? { sourceProjects: cleanProjects } : {}),
+    firstAcceptedAt,
+    ...(p.activityAt ? { lastGuestActivityAt: p.activityAt, guestActivityCount: 1 } : {}),
+    conversionState: "guest-active",
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 // ─── Mutations ──────────────────────────────────────────────────
 
 /**
@@ -272,7 +320,7 @@ async function materializeInvitationAccept(
     acceptedAt: now,
   });
 
-  await ctx.db.insert("guestAccess", {
+  const accessId = await ctx.db.insert("guestAccess", {
     hostUserId: invitation.hostUserId,
     guestUserId: guestUserDocId,
     grantedAt: now,
@@ -284,6 +332,16 @@ async function materializeInvitationAccept(
       : {}),
     // Carry the tester's vibe opt-in from the invitation into the live grant.
     ...(invitation.canVibe === true ? { canVibe: true } : {}),
+  });
+
+  await upsertGuestConversion(ctx, {
+    hostUserId: invitation.hostUserId,
+    guestUserId: guestUserDocId,
+    inviteId: invitation._id,
+    accessId,
+    sourceScope: invitation.scope,
+    sourceProjects: Array.isArray(invitation.allowedProjects) ? invitation.allowedProjects : undefined,
+    acceptedAt: now,
   });
 
   // Normalize + clamp approved list against proposal (if any) and ownership.
@@ -1358,7 +1416,138 @@ export const recordGuestUsage = mutation({
       });
     }
 
+    await upsertGuestConversion(ctx, {
+      hostUserId,
+      guestUserId: guestUser._id,
+      activityAt: Date.now(),
+    });
+
     return { ok: true };
+  },
+});
+
+/**
+ * Guest-facing conversion state for all surfaces. Phone/web use this
+ * as the "you started from Alice's shared runtime; upgrade to your own
+ * preview/compute/publish when ready" shelf. Watch/car/TV can reduce it
+ * to one sentence because the object is already compact and statusful.
+ */
+export const getGuestConversionSurface = query({
+  args: {
+    tokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) return { sources: [], recommendedServices: [] };
+
+    const rows = await ctx.db
+      .query("guestConversions")
+      .withIndex("by_guest", (q) => q.eq("guestUserId", session.user._id))
+      .collect();
+
+    const settings = await ctx.db
+      .query("userSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .first();
+    const enabledServices = settings?.managedServices ?? {};
+
+    const sources = [];
+    for (const row of rows.sort((a, b) => b.updatedAt - a.updatedAt)) {
+      const host = await ctx.db.get(row.hostUserId);
+      if (!host) continue;
+      sources.push({
+        hostUserId: host.userId,
+        hostName: host.fullName,
+        hostEmail: host.email,
+        sourceScope: row.sourceScope ?? "full",
+        sourceProjects: row.sourceProjects ?? [],
+        firstAcceptedAt: row.firstAcceptedAt,
+        lastGuestActivityAt: row.lastGuestActivityAt,
+        guestActivityCount: row.guestActivityCount ?? 0,
+        conversionState: row.conversionState,
+        firstManagedService: row.firstManagedService,
+        enabledServices: row.enabledServices ?? [],
+      });
+    }
+
+    const hasReload = enabledServices.reload === true;
+    const hasAgentBox = enabledServices.agentBox === true;
+    const hasPublish = enabledServices.publish === true;
+    const recommendedServices = [
+      !hasReload ? {
+        service: "reload",
+        label: "Preview on my phone",
+        reason: "Turn the shared-app moment into your own app loop.",
+      } : null,
+      !hasAgentBox ? {
+        service: "agentBox",
+        label: "My own coding runtime",
+        reason: "Stop borrowing the developer's machine when you are ready to build independently.",
+      } : null,
+      !hasPublish ? {
+        service: "publish",
+        label: "Publish my app",
+        reason: "Convert a working phone preview into a store release.",
+      } : null,
+    ].filter(Boolean);
+
+    return {
+      sources,
+      hasGuestOrigin: sources.length > 0,
+      enabledServices,
+      recommendedServices,
+    };
+  },
+});
+
+/**
+ * Host-facing conversion summary. This is deliberately aggregate and
+ * non-financial: it tells a developer which invited normies activated
+ * their own Yaver capabilities, without exposing the guest's wallet,
+ * prompts, task output, project paths, or spend.
+ */
+export const getHostConversionSummary = query({
+  args: {
+    tokenHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) return { guests: [], totals: { invited: 0, serviceEnabled: 0, paidUsage: 0 } };
+
+    const rows = await ctx.db
+      .query("guestConversions")
+      .withIndex("by_host", (q) => q.eq("hostUserId", session.user._id))
+      .collect();
+
+    const guests = [];
+    for (const row of rows.sort((a, b) => b.updatedAt - a.updatedAt)) {
+      const guest = await ctx.db.get(row.guestUserId);
+      if (!guest) continue;
+      guests.push({
+        guestUserId: guest.userId,
+        guestEmail: guest.email,
+        guestName: guest.fullName,
+        sourceScope: row.sourceScope ?? "full",
+        sourceProjects: row.sourceProjects ?? [],
+        firstAcceptedAt: row.firstAcceptedAt,
+        lastGuestActivityAt: row.lastGuestActivityAt,
+        guestActivityCount: row.guestActivityCount ?? 0,
+        conversionState: row.conversionState,
+        firstManagedServiceAt: row.firstManagedServiceAt,
+        firstManagedService: row.firstManagedService,
+        enabledServices: row.enabledServices ?? [],
+        convertedAt: row.convertedAt,
+      });
+    }
+
+    return {
+      guests,
+      totals: {
+        invited: guests.length,
+        serviceEnabled: guests.filter((g) => g.conversionState === "service-enabled" || g.conversionState === "paid-usage").length,
+        paidUsage: guests.filter((g) => g.conversionState === "paid-usage").length,
+      },
+    };
   },
 });
 

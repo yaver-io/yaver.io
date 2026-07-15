@@ -465,7 +465,7 @@ func TestMCPInitializeAndToolsList(t *testing.T) {
 		tm, _ := tool.(map[string]interface{})
 		toolNames[tm["name"].(string)] = true
 	}
-	for _, expected := range []string{"create_task", "list_tasks", "get_task", "stop_task", "agent_machine_inventory", "agent_graph_start", "agent_graph_list", "agent_graph_show", "agent_graph_stop", "mobile_hermes_doctor"} {
+	for _, expected := range []string{"create_task", "list_tasks", "get_task", "stop_task", "machine_doctor", "agent_machine_inventory", "agent_graph_start", "agent_graph_list", "agent_graph_show", "agent_graph_stop", "mobile_hermes_doctor"} {
 		if !toolNames[expected] {
 			t.Fatalf("expected MCP tool %q not found", expected)
 		}

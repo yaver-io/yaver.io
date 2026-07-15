@@ -11145,7 +11145,60 @@ func currentRelayPin(relayAddr string) string {
 			return strings.TrimSpace(rs.SpkiPin)
 		}
 	}
+	// Built-in pin for a relay we operate, keyed by its PUBLIC HOSTNAME.
+	//
+	// An SPKI pin is the SHA-256 of a PUBLIC key. It is not a secret — anyone who
+	// connects to the relay can compute it — and shipping it is the entire point
+	// of pinning: an agent that must be TOLD who the relay is (via Convex
+	// platformConfig) is unverified on its very first dial, which is precisely
+	// when a hostile network would substitute its own relay. A pin in the binary
+	// means the fleet verifies by default, with no configuration.
+	//
+	// Keyed by hostname, deliberately NOT by IP: the repo is public and must not
+	// carry infra addresses (CLAUDE.md), and the relay's address can change
+	// without its key changing — the identity being pinned is the KEY, and the
+	// name we know it by is the host.
+	//
+	// Config still wins (the loops above), so a pin can be rotated or overridden
+	// without shipping a binary.
+	if host := relayPublicHost(relayAddr); host != "" {
+		if pin := builtinRelayPins[host]; pin != "" {
+			return pin
+		}
+	}
 	return ""
+}
+
+// relayPublicHost maps a relay's QUIC address back to the public hostname it was
+// configured under, so a built-in pin can be keyed by name rather than address.
+func relayPublicHost(relayAddr string) string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	for _, list := range [][]RelayServerConfig{cfg.RelayServers, cfg.CachedRelayServers} {
+		for _, rs := range list {
+			if rs.QuicAddr != relayAddr || strings.TrimSpace(rs.HttpURL) == "" {
+				continue
+			}
+			if u, err := url.Parse(strings.TrimSpace(rs.HttpURL)); err == nil {
+				return strings.ToLower(u.Hostname())
+			}
+		}
+	}
+	return ""
+}
+
+// builtinRelayPins maps a relay's public hostname to the base64 SHA-256 of its
+// SubjectPublicKeyInfo, so agents verify the relays we run without any config.
+//
+// ROTATION CONTRACT: an agent pinned to the old key REFUSES a relay presenting a
+// new one — that is the point, it is indistinguishable from an impersonation. So
+// a relay key rotation MUST publish the new pin (platformConfig/config, which
+// overrides this table) BEFORE the old key is retired, or the fleet locks itself
+// out. The relay logs its own pin at startup; keep this in step with it.
+var builtinRelayPins = map[string]string{
+	"public.yaver.io": "8zLwlbw+Nh5aTWr4lil/kBZVFS78XPPkDVEU6oXJRGA=",
 }
 
 func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) error {

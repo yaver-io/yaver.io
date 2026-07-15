@@ -1468,6 +1468,17 @@ func relayURLToPathStyle(raw string) string {
 	if err != nil || u.Host == "" {
 		return raw
 	}
+	scheme := u.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	if strings.EqualFold(u.Hostname(), "public.dev.yaver.io") && strings.HasPrefix(strings.ToLower(u.Path), "/d/") {
+		out := scheme + "://public.yaver.io" + u.EscapedPath()
+		if u.RawQuery != "" {
+			out += "?" + u.RawQuery
+		}
+		return out
+	}
 	// Only rewrite the relay's canonical subdomain form — the host
 	// must have exactly two leading labels (`<sub>.<apex>...`) where
 	// the apex looks like yaver.io. Manual / custom-domain endpoints
@@ -1487,11 +1498,11 @@ func relayURLToPathStyle(raw string) string {
 	if strings.HasPrefix(strings.ToLower(u.Path), "/d/") {
 		return raw
 	}
-	scheme := u.Scheme
-	if scheme == "" {
-		scheme = "https"
+	gatewayHost := "public." + apex
+	if strings.EqualFold(apex, "dev.yaver.io") {
+		gatewayHost = "public.yaver.io"
 	}
-	return scheme + "://public." + apex + "/d/" + sub
+	return scheme + "://" + gatewayHost + "/d/" + sub
 }
 
 // PlatformConfig holds all platform-level config fetched from Convex /config.

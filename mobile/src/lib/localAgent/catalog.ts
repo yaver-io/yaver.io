@@ -44,6 +44,7 @@ export const ACTION_CATALOG: ActionSpec[] = [
   // ── READ_ONLY ────────────────────────────────────────────────────
   { id: "device.list", description: "List all devices and their online/auth state.", tier: "READ_ONLY", needsDevice: false, via: "context" },
   { id: "device.audit", description: "Diagnose one device: lifecycle + runner auth + recommendations.", tier: "READ_ONLY", needsDevice: true, via: "context" },
+  { id: "device.doctor", description: "Deep connectivity doctor for one device: Convex heartbeat, raw ping/IP layer, Tailscale, Yaver HTTP, relay/tunnel/LAN, runner auth, and resources.", tier: "READ_ONLY", needsDevice: true, via: "mcp", mcpTool: "machine_doctor" },
   { id: "status", description: "Rollup of the agent's state on a device (tasks, dev server, tunnels).", tier: "READ_ONLY", needsDevice: true, via: "ops", opsVerb: "status" },
   { id: "info", description: "Hardware/OS snapshot of a device.", tier: "READ_ONLY", needsDevice: true, via: "ops", opsVerb: "info" },
   { id: "project.list", description: "List the projects/workspace apps available on a device.", tier: "READ_ONLY", needsDevice: true, via: "ops", opsVerb: "workspace" },

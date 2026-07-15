@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { MobileClient } from "../src/mobile-client";
+import { startMockAgent } from "../src/mock-agent";
 import {
   normalizeProjectChipName,
   preferredDefaultModelForRunner,
@@ -88,5 +89,25 @@ describe("remote box coding flow", () => {
     expect(normalizeProjectChipName("root")).toBe("");
     expect(normalizeProjectChipName("/root")).toBe("");
     expect(normalizeProjectChipName("workspace")).toBe("workspace");
+  });
+
+  it("dogfoods OpenCode config through the Go-agent endpoint", async () => {
+    const agent = await startMockAgent({ token: "mock-token" });
+    try {
+      const mobile = new MobileClient({ agentBaseUrl: agent.baseUrl, authToken: "mock-token" });
+      const saved = await mobile.saveOpenCodeConfig({
+        defaultAgent: "build",
+        model: "zai-coding-plan/glm-4.7",
+        providers: [{ id: "zai-coding-plan", apiKey: "test-key" }],
+      });
+
+      expect(saved.ok).toBe(true);
+
+      const cfg = await mobile.getOpenCodeConfig();
+      expect(cfg?.model).toBe("zai-coding-plan/glm-4.7");
+      expect(cfg?.providers?.some((p) => p.id === "zai-coding-plan" && p.hasApiKey)).toBe(true);
+    } finally {
+      await agent.close();
+    }
   });
 });

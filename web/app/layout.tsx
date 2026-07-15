@@ -106,6 +106,11 @@ export default function RootLayout({
               } catch (e) {
                 document.documentElement.classList.add('dark');
               }
+              try {
+                if (new URLSearchParams(window.location.search).get('embed') === 'mobile') {
+                  document.documentElement.classList.add('yaver-mobile-embed');
+                }
+              } catch (e) {}
             `,
           }}
         />

@@ -677,7 +677,7 @@ func (s *RelayServer) authorizeProxyViaSig(r *http.Request, targetDeviceID strin
 	}
 	var body []byte
 	if r.Body != nil {
-		b, err := io.ReadAll(io.LimitReader(r.Body, s.abuseGuard.cfg.MaxRequestBodyBytes))
+		b, err := readBodyForSignature(r, s.abuseGuard.cfg.MaxRequestBodyBytes)
 		if err != nil {
 			s.noteSigFail(sigFailBodyRead)
 			return "", false
@@ -705,6 +705,28 @@ func (s *RelayServer) authorizeProxyViaSig(r *http.Request, targetDeviceID strin
 		return "", false
 	}
 	return userID, true
+}
+
+func readBodyForSignature(r *http.Request, limit int64) ([]byte, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
+	if limit > 0 && r.ContentLength > limit {
+		return nil, fmt.Errorf("request body exceeds %d bytes", limit)
+	}
+	if limit <= 0 {
+		return io.ReadAll(r.Body)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("request body exceeds %d bytes", limit)
+	}
+	return body, nil
 }
 
 // resolveUserIDFromPassword is the cache-aware variant used by bus

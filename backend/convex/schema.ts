@@ -410,6 +410,12 @@ export default defineSchema({
     // relay path" instead of a bare "online" that 502s when the phone is
     // off-LAN. Stored in-place (last value only, no history).
     relayConnected: v.optional(v.boolean()),
+    // Can this agent actually reboot its host? Verified on the box (root, or
+    // passwordless sudo) — NOT inferred from the OS. Published so every surface
+    // can say "reboot unavailable — no permission on this machine" without
+    // probing the box, and offer the opt-in grant instead of a dead button.
+    // A boolean capability: no paths, no secrets (privacy contract).
+    canReboot: v.optional(v.boolean()),
     createdAt: v.number(),
     // Bootstrap state: true when agent is running without a valid token.
     // Clients show a "NEEDS AUTH" badge and can auto-pair via relay.
@@ -1512,6 +1518,45 @@ export default defineSchema({
     .index("by_hostUserId", ["hostUserId"])
     .index("by_guestUserId", ["guestUserId"])
     .index("by_host_guest", ["hostUserId", "guestUserId"]),
+
+  // Guest → owner conversion attribution. This is the UI-surface synergy
+  // spine for the "developer invited a normie; normie later buys their
+  // own runtime/capabilities" funnel.
+  //
+  // Privacy shape: IDs, scope labels, service labels, counters, timestamps
+  // only. No prompts, task output, paths, tokens, app contents, or spend
+  // amounts. Billing truth stays in prepaidCredits / creditUsage /
+  // managedUsage; this table only lets surfaces explain the journey:
+  // "you first used Yaver through Alice's shared app; turn on your own
+  // phone preview / compute / publish when ready."
+  guestConversions: defineTable({
+    hostUserId: v.id("users"),
+    guestUserId: v.id("users"),
+    inviteId: v.optional(v.id("guestInvitations")),
+    accessId: v.optional(v.id("guestAccess")),
+    sourceScope: v.optional(v.union(v.literal("full"), v.literal("feedback-only"), v.literal("sdk-project"), v.literal("support"))),
+    sourceProjects: v.optional(v.array(v.string())),
+    firstAcceptedAt: v.number(),
+    lastGuestActivityAt: v.optional(v.number()),
+    guestActivityCount: v.optional(v.number()),
+    firstManagedServiceAt: v.optional(v.number()),
+    firstManagedService: v.optional(v.string()),
+    lastManagedServiceAt: v.optional(v.number()),
+    enabledServices: v.optional(v.array(v.string())),
+    firstPaidUsageAt: v.optional(v.number()),
+    convertedAt: v.optional(v.number()),
+    conversionState: v.union(
+      v.literal("guest-active"),
+      v.literal("service-enabled"),
+      v.literal("paid-usage"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_guest", ["guestUserId", "updatedAt"])
+    .index("by_host", ["hostUserId", "updatedAt"])
+    .index("by_host_guest", ["hostUserId", "guestUserId"])
+    .index("by_state", ["conversionState", "updatedAt"]),
 
   // Explicit infra grants — hosts can share selected devices/machines with
   // another user without giving them blanket access to the whole account.

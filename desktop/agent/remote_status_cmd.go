@@ -128,6 +128,16 @@ func fetchRemoteAgentStatusByDeviceID(ctx context.Context, deviceID string) (*re
 	if target == nil {
 		return nil, fmt.Errorf("primary device %q is no longer in your registered devices — run 'yaver primary clear' to reset", deviceID)
 	}
+	return fetchRemoteAgentStatusForTarget(ctx, cfg, target)
+}
+
+func fetchRemoteAgentStatusForTarget(ctx context.Context, cfg *Config, target *DeviceInfo) (*remoteAgentStatusReport, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config required")
+	}
+	if target == nil {
+		return nil, fmt.Errorf("target device required")
+	}
 	if !target.IsOnline {
 		report := &remoteAgentStatusReport{
 			DeviceID: target.DeviceID,
@@ -602,25 +612,32 @@ func runRemoteAgentStatusByHint(deviceHint string, asJSON bool) {
 
 // runPrimaryStatus is the entry point for `yaver primary status`.
 func runPrimaryStatus(ctx context.Context, asJSON bool) {
-	token, convex, err := primaryLoadAuth()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		fmt.Fprintln(os.Stderr, "Error: not signed in — run 'yaver auth' first")
 		os.Exit(1)
 	}
-	current, err := primaryGetCurrent(ctx, token, convex)
+	if strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+		cfg.ConvexSiteURL = defaultConvexSiteURL
+	}
+	current, err := primaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read userSettings: %v\n", err)
+		os.Exit(1)
+	}
+	devices, listErr := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if listErr != nil {
+		if current == "" {
+			fmt.Fprintf(os.Stderr, "No primary device set and listing devices failed: %v\n", listErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "Listing devices failed: %v\n", listErr)
+		}
 		os.Exit(1)
 	}
 	current = strings.TrimSpace(current)
 	if current == "" {
 		// Single-device users have no primary set but the CLI should
 		// still answer — fall back to the only registered owner device.
-		devices, listErr := listDevices(convex, token)
-		if listErr != nil {
-			fmt.Fprintf(os.Stderr, "No primary device set and listing devices failed: %v\n", listErr)
-			os.Exit(1)
-		}
 		var owned []DeviceInfo
 		for _, d := range devices {
 			if !d.IsGuest {
@@ -639,7 +656,18 @@ func runPrimaryStatus(ctx context.Context, asJSON bool) {
 		}
 		current = owned[0].DeviceID
 	}
-	report, err := fetchRemoteAgentStatusByDeviceID(ctx, current)
+	var target *DeviceInfo
+	for i := range devices {
+		if devices[i].DeviceID == current {
+			target = &devices[i]
+			break
+		}
+	}
+	if target == nil {
+		fmt.Fprintf(os.Stderr, "Primary device %q is no longer in your registered devices — run 'yaver primary clear' to reset\n", current)
+		os.Exit(1)
+	}
+	report, err := fetchRemoteAgentStatusForTarget(ctx, cfg, target)
 	if err != nil {
 		renderRemoteAgentStatusError(ctx, current, err, asJSON)
 		os.Exit(1)
