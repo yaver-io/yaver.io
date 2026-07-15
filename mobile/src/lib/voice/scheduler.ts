@@ -115,7 +115,12 @@ export class FakeTime implements Clock, Scheduler {
   /** Let queued microtasks (awaited promises in the core) settle between
    *  time steps. Call `await ft.flush()` after advance() in async tests. */
   async flush(): Promise<void> {
-    // A handful of turns of the microtask queue covers the core's await depth.
-    for (let i = 0; i < 8; i++) await Promise.resolve();
+    // Drain to quiescence via real macrotask boundaries, not a fixed count of
+    // microtask turns — the core's await chain (stopSession → judge → dispatch
+    // → speak → beginListen) is deeper than any small constant, and a macrotask
+    // hop empties the whole microtask queue between hops. A few hops cover
+    // chains that re-queue microtasks as they unwind. FakeTime timers are driven
+    // by advance(), not these, so re-armed listen loops stay dormant here.
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
   }
 }
