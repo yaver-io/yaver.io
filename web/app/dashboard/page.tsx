@@ -1703,6 +1703,44 @@ export default function DashboardPage() {
 
   const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setSelectedModel(""); setConnectError(null); setPendingFollowUps([]); };
 
+  // Stream C — silent auto-connect on load (parity with mobile/tvOS). Rule:
+  // connect to the primary if it's online, else the secondary; if a preference
+  // is set but neither is reachable, fall to the machine list (don't silently
+  // grab a third box the user didn't designate). With NO primary/secondary
+  // configured, connect the best online machine so a lone box still comes up
+  // without a manual click. Runs once (autoConnectTriedRef) so a manual
+  // disconnect or pick is never overridden — the ref is already spent. Never
+  // fights an in-flight or established connection. The existing "Connecting
+  // to <name>…" panel narrates it (role-aware below).
+  const autoConnectTriedRef = useRef(false);
+  useEffect(() => {
+    if (autoConnectTriedRef.current) return;
+    if (!token || devices.length === 0) return;
+    if (connectedDevice || connState === "connecting" || connState === "connected") return;
+    const isOnline = (d: Device) => {
+      const probe = probeStates[d.id];
+      const peer = peerStates[d.id];
+      return probe?.ok === true || peer?.state === "online" || d.online === true;
+    };
+    const pick = (id: string | null) => {
+      if (!id) return undefined;
+      const d = devices.find((x) => x.id === id && !x.isGuest);
+      return d && isOnline(d) ? d : undefined;
+    };
+    const hasPref = Boolean(primaryDeviceId || secondaryDeviceId);
+    const target: Device | undefined = hasPref
+      ? pick(primaryDeviceId) ?? pick(secondaryDeviceId)
+      : devices
+          .filter((d) => !d.isGuest && isOnline(d))
+          .sort((a, b) => (a.name || "").localeCompare(b.name || ""))[0];
+    if (!target) return; // nothing reachable yet → list / empty-state handles it
+    autoConnectTriedRef.current = true;
+    void connectToDevice(target);
+    // connectToDevice intentionally omitted from deps — the ref guarantees a
+    // single attempt, and we want the latest closure when it fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, devices, probeStates, peerStates, primaryDeviceId, secondaryDeviceId, connState, connectedDevice]);
+
   const refreshConnectedRunners = async () => {
     if (!isConnected) return;
     try {
@@ -2441,7 +2479,13 @@ export default function DashboardPage() {
                 {connState === "connecting" ? (
                   <div className="flex flex-col items-center gap-3">
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-600 border-t-amber-400" />
-                    <p className="text-sm text-surface-400">Connecting to {connectedDevice?.name}...</p>
+                    <p className="text-sm text-surface-400">
+                      {connectedDevice?.id === primaryDeviceId
+                        ? `Primary (${connectedDevice?.name}) is online — connecting…`
+                        : connectedDevice?.id === secondaryDeviceId
+                        ? `Secondary (${connectedDevice?.name}) is online — connecting…`
+                        : `Connecting to ${connectedDevice?.name}…`}
+                    </p>
                     <p className="text-xs text-surface-600">Trying relay servers</p>
                   </div>
                 ) : connState === "error" ? (
