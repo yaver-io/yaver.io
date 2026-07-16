@@ -151,3 +151,27 @@ Per the gate rule, all Go changes were reverted. The unrelated existing
 `web/package-lock.json` modification remains untouched. The next safe run remains the
 lifecycle repair plus Codex assertion after the full Go baseline is green; only then add
 the durable queue. No queue implementation should build on the request-lifetime bug.
+
+## 2026-07-16T04:06:00Z
+
+This run re-read the design, handoff, recent history, and live implementation, then
+retried the smallest prerequisite MCP lifecycle repair and stale Codex safety assertion.
+
+- MCP-started sessions were temporarily changed to use
+  `context.WithCancel(context.WithoutCancel(requestContext))`, preserving request values
+  while making the session manager own cancellation. A deterministic regression test
+  proved the loop survived request cancellation and remained explicitly stoppable.
+- The stale Codex test was temporarily corrected to require
+  `--dangerously-bypass-approvals-and-sandbox`, matching the actual autorun adapter.
+- Both focused autorun regressions passed.
+- The mandatory `go build ./...` passed.
+- The mandatory `go test ./...` failed after 427.629 seconds. Observed out-of-scope
+  failures included `TestInfoEndpoint`, `TestAgentAuthConvexValidationPath`,
+  `TestWebReload_DevStartFallbackSurfaceGating`, `TestSessionExportImportRoundTrip`,
+  `TestTwoAgentSupportConnect`, and `TestOpenVaultE_FallsBackToPreviousAuthToken`.
+
+Per the hard gate, every Go edit was reverted and no feature commit was kept. The
+unrelated pre-existing `web/package-lock.json` modification remains untouched. The next
+safe increment is still the lifecycle repair plus Codex assertion after the full Go
+baseline is green; only then proceed to the durable autorun queue and enqueue/dequeue MCP
+verbs.
