@@ -107,3 +107,7 @@ security/pentest/
 /SECURITY_AUDIT_FINDINGS.md
 /docs/security-audit-2026-07-13.md
 /docs/security/security_audit.md
+
+# readme-beautify skill install (npx skills add) — tooling, not product
+.agents/skills/
+skills-lock.json

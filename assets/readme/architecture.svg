@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="400" viewBox="0 0 1200 400"
+     role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">Where your code lives</title>
+  <desc id="arch-desc">The yaver agent runs on your own machine and holds your repo, tasks, vault and builds. Your surfaces — iOS, Android, watch, TV, car, AR/VR and the web dashboard — connect to it directly over a LAN beacon and QUIC, falling back to a self-hostable QUIC relay that passes traffic through without storing it. A thin hosted coordination plane carries identity and device discovery only: no code, no task data, no secrets.</desc>
+
+  <rect x="0.75" y="0.75" width="1198.5" height="398.5" rx="26" fill="#090909" stroke="#1F1F1F" stroke-width="1.5"/>
+
+  <g id="machine">
+    <rect x="56" y="66" width="380" height="200" rx="14" fill="#101010" stroke="#262626"/>
+    <text x="80" y="96" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13" letter-spacing="1.2" fill="#8A8A8A">YOUR MACHINE — YOU HOST THIS</text>
+    <text x="80" y="132" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="16" fill="#F5F5F5">$ yaver serve</text>
+    <text x="80" y="164" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="15" fill="#A3A3A3">runners: claude code · codex · opencode</text>
+    <text x="80" y="190" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="15" fill="#A3A3A3">your repo · tasks · vault · builds</text>
+    <rect x="80" y="212" width="4" height="30" rx="2" fill="#34D399"/>
+    <text x="98" y="233" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="15" fill="#34D399">never leaves this machine</text>
+  </g>
+
+  <g id="transport">
+    <g id="lane-direct">
+      <text x="600" y="130" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13" letter-spacing="1" fill="#8A8A8A" text-anchor="middle">DIRECT · LAN BEACON → QUIC 4433</text>
+      <path d="M 456 152 L 744 152" fill="none" stroke="#9080FF" stroke-width="2"/>
+      <path d="M 744 152 L 733 146 L 733 158 Z" fill="#9080FF"/>
+      <path d="M 456 152 L 467 146 L 467 158 Z" fill="#9080FF"/>
+    </g>
+    <g id="lane-relay">
+      <text x="600" y="200" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13" letter-spacing="1" fill="#8A8A8A" text-anchor="middle">RELAY FALLBACK · SELF-HOSTABLE</text>
+      <path d="M 456 222 L 744 222" fill="none" stroke="#4A4A4A" stroke-width="2" stroke-dasharray="5 4"/>
+      <path d="M 744 222 L 733 216 L 733 228 Z" fill="#4A4A4A"/>
+      <path d="M 456 222 L 467 216 L 467 228 Z" fill="#4A4A4A"/>
+      <text x="600" y="246" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="13.5" fill="#8A8A8A" text-anchor="middle">pass-through — stores nothing</text>
+    </g>
+  </g>
+
+  <g id="surfaces">
+    <rect x="764" y="66" width="380" height="200" rx="14" fill="#101010" stroke="#262626"/>
+    <text x="788" y="96" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13" letter-spacing="1.2" fill="#8A8A8A">YOUR SURFACES</text>
+
+    <g id="surface-pills" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="14.5" fill="#F5F5F5">
+      <rect x="788" y="118" width="54" height="32" rx="8" fill="#161616" stroke="#2E2E2E"/>
+      <text x="815" y="139" text-anchor="middle">iOS</text>
+      <rect x="852" y="118" width="84" height="32" rx="8" fill="#161616" stroke="#2E2E2E"/>
+      <text x="894" y="139" text-anchor="middle">Android</text>
+      <rect x="946" y="118" width="70" height="32" rx="8" fill="#161616" stroke="#2E2E2E"/>
+      <text x="981" y="139" text-anchor="middle">Watch</text>
+      <rect x="1026" y="118" width="46" height="32" rx="8" fill="#161616" stroke="#2E2E2E"/>
+      <text x="1049" y="139" text-anchor="middle">TV</text>
+
+      <rect x="788" y="160" width="54" height="32" rx="8" fill="#161616" stroke="#2E2E2E"/>
+      <text x="815" y="181" text-anchor="middle">Car</text>
+      <rect x="852" y="160" width="72" height="32" rx="8" fill="#161616" stroke="#2E2E2E"/>
+      <text x="888" y="181" text-anchor="middle">AR/VR</text>
+      <rect x="934" y="160" width="134" height="32" rx="8" fill="#161616" stroke="#2E2E2E"/>
+      <text x="1001" y="181" text-anchor="middle">Web dashboard</text>
+    </g>
+
+    <text x="788" y="233" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="15" fill="#A3A3A3">remote control + hot-reload target</text>
+  </g>
+
+  <g id="hosted-plane">
+    <path d="M 246 266 L 246 300" fill="none" stroke="#2E2E2E" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <path d="M 954 266 L 954 300" fill="none" stroke="#2E2E2E" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <rect x="56.75" y="300.75" width="1086.5" height="66.5" rx="14" fill="#0D0D0D" stroke="#262626" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="80" y="328" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13" letter-spacing="1.2" fill="#8A8A8A">THIN HOSTED COORDINATION PLANE</text>
+    <text x="80" y="352" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif" font-size="15" fill="#A3A3A3">identity + device discovery only — no code, no task data, no secrets</text>
+  </g>
+</svg>

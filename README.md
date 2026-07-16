@@ -1,33 +1,34 @@
-# Yaver
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Yaver — an open-source, self-hostable MCP server. Your coding agent builds a full-stack app on your own machine, it hot-reloads on your real phone, and you keep fixing it from inside the running app.">
+</p>
 
-[![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
-[![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/License-FSL--1.1--Apache--2.0-blue.svg)](docs/planning/LICENSING.md)
-
-**Yaver is an open-source, self-hostable MCP server: your coding agent — Claude Code, Codex, or OpenCode — builds a full-stack app on your own machine, then you hot-reload it across iOS, Android, watch, TV, car, and AR/VR surfaces and keep iterating from inside the running app.**
-
-Your code stays on your machine. The `yaver` agent runs on your Mac, Linux box, WSL machine, Pi, or VPS; the client surfaces are the remote controls and preview targets. iOS and Android are the deepest path today, and the repo also carries watch, TV, car, and AR/VR work. The CLI, agent, relay, and backend are all self-hostable — client apps connect through a thin hosted coordination plane today (identity + device discovery only; your code stays P2P), and full client self-host is on the way.
+<p align="center">
+  <a href="https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml"><img src="https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg" alt="Tests"></a>
+  <a href="https://www.npmjs.com/package/yaver-cli"><img src="https://img.shields.io/npm/v/yaver-cli?color=34D399&labelColor=101010&label=yaver-cli" alt="yaver-cli on npm"></a>
+  <a href="docs/planning/LICENSING.md"><img src="https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-7C66FF?labelColor=101010" alt="License: FSL-1.1-Apache-2.0"></a>
+</p>
 
 <p align="center">
   <a href="https://github.com/kivanccakmak/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4">
-    <img src="demo-videos/yaver-hosting-demo.gif" alt="Yaver phone-to-agent demo animation" width="720">
+    <img src="demo-videos/yaver-hosting-demo.gif" alt="Demo: a task sent from a phone runs on the desktop agent and the app reloads live on the device" width="820">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/kivanccakmak/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4">Watch the landing demo</a>
+  <a href="https://github.com/kivanccakmak/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4"><sub>Watch the full demo →</sub></a>
 </p>
 
-## What Works Today
+## What Yaver is
 
-- Run Claude Code, Codex, OpenCode, Aider, Goose, or another terminal agent from the Yaver agent.
-- Push React Native / Expo bundles to a paired phone through the native Hermes path.
-- Use Yaver surfaces for iOS, Android, watch, TV, car, and AR/VR workflows.
-- Capture dev-build feedback with screenshots, logs, and replay context.
-- Stream task, build, and reload progress back to mobile or the web dashboard.
-- Keep peer discovery, relay, and vault flows local-first and self-hostable.
-- Use SDKs and examples for React Native, Flutter, web, Unity, Go, Python, and JS/TS.
+AI writes the code in seconds. The loop around it — build, install, reproduce, describe what's wrong, get back to the agent — still takes hours. Yaver closes that loop.
 
-## Quick Start
+The `yaver` agent runs on hardware you already own: a Mac, a Linux box, a WSL machine, a Pi, or a VPS. Your coding agent works there, against your real repo. Every other surface — phone, watch, TV, car, AR/VR, browser — is a remote control and a preview target for that one machine.
+
+**It runs on the AI subscription you already pay for — no token markup, and your code never leaves your machine.**
+
+iOS and Android are the deepest path today. Watch, TV, car, and AR/VR surfaces live in this repo and share the same core.
+
+## Quick start
 
 ```bash
 npm install -g yaver-cli
@@ -35,22 +36,22 @@ yaver auth
 yaver serve
 ```
 
-For headless machines:
+On a headless box (Pi, VPS, SSH-only), `yaver auth --headless` prints a short code and a URL you can open from any browser.
 
-```bash
-yaver auth --headless
-yaver serve
-```
+`npm` is the only supported install path, on macOS (Apple Silicon + Intel), Linux (x64 + arm64), and Windows via WSL2. It downloads a signed, notarized agent binary for your platform.
 
-If an AI coding agent is setting Yaver up for you, read the canonical machine guide first:
+Then grab the app and pair it with that machine:
 
-```bash
-curl -s https://yaver.io/llms.txt
-```
+<p align="center">
+  <a href="https://apps.apple.com/us/app/yaver-io/id6760467669"><img src="https://img.shields.io/badge/App_Store-iPhone_%26_iPad-F5F5F5?logo=apple&logoColor=F5F5F5&labelColor=101010" alt="Download Yaver on the App Store"></a>
+  <a href="https://play.google.com/store/apps/details?id=io.yaver.mobile"><img src="https://img.shields.io/badge/Google_Play-Android-F5F5F5?logo=googleplay&logoColor=F5F5F5&labelColor=101010" alt="Get Yaver on Google Play"></a>
+</p>
 
-## Use from Claude Code, Codex, or opencode (MCP)
+Open Yaver, pick a project from your dev box, preview it on your phone, shake to vibe-code — fix a bug, ship a small feature, or tweak a style — and a fresh bundle lands in seconds. One screen, real device, no extra hardware.
 
-Yaver ships an MCP server, so a coding agent can drive your machine directly. You do **not** need a global install first — `npx` pulls the server on first run. Register it once, then ask the agent to call `yaver_lazy_setup`; it surfaces the sign-in link for you to tap and pairs your device from inside the chat.
+## Use it from your coding agent
+
+Yaver ships an MCP server, so Claude Code, Codex, or opencode can drive your machine directly. You don't need a global install first — `npx` pulls the server on first run. Register it once, then ask the agent to call `yaver_lazy_setup`; it surfaces a sign-in link and pairs your device from inside the chat.
 
 ```bash
 # Claude Code
@@ -63,19 +64,51 @@ codex mcp add yaver -- npx -y yaver-cli yaver-mcp
 npm install -g yaver-cli && yaver mcp setup opencode
 ```
 
-Codex Desktop can also use the repo-local plugin in `plugins/yaver`, with its marketplace entry in `.agents/plugins/marketplace.json`. The plugin bundles the same `npx -y yaver-cli@latest yaver-mcp` server and a small setup skill.
+Already installed globally? `yaver mcp setup claude-code` (or `codex` / `opencode`) writes the same entry, and `yaver auth` auto-registers every installed runner on first sign-in. Yaver is published to the official MCP registry as `io.github.kivanccakmak/yaver`. Codex Desktop can also load the repo-local plugin in [`plugins/yaver`](plugins/yaver).
 
-Already installed Yaver globally? `yaver mcp setup claude-code` (or `codex` / `opencode`) writes the same entry, and `yaver auth` auto-registers every installed runner on first sign-in. Yaver is published to the official MCP registry as `io.github.kivanccakmak/yaver`. Full tool list and HTTP/remote setup: [MCP guide](https://yaver.io/docs/mcp).
+Full tool list and HTTP/remote setup: **[MCP guide](https://yaver.io/docs/mcp)**.
 
-## Core Loop
+## How it works
+
+<p align="center">
+  <img src="./assets/readme/architecture.svg" width="100%" alt="The yaver agent runs on your own machine and holds your repo, tasks, vault and builds. Surfaces connect directly over a LAN beacon and QUIC, falling back to a self-hostable QUIC relay that stores nothing. A thin hosted plane carries identity and device discovery only.">
+</p>
 
 1. Start `yaver serve` on your own machine.
-2. Pair the mobile app, web dashboard, or another Yaver surface with that agent.
-3. Send a task to your coding agent from the nearest surface.
-4. Watch terminal/build/reload progress live.
-5. Push the fix to a real device or deploy from your own machine when ready.
+2. Pair a surface — the mobile app, the web dashboard, or another Yaver client.
+3. Send a task to your coding agent from whichever surface is nearest.
+4. Watch terminal, build, and reload progress stream back live.
+5. Push the fix to a real device, or deploy from your own machine when it's ready.
 
-## Repository Map
+The CLI, agent, relay, and backend are all self-hostable. Client apps currently reach you through a thin hosted coordination plane for identity and device discovery; full client self-host is on the way.
+
+## What works today
+
+- Drive Claude Code, Codex, OpenCode, Aider, Goose, or another terminal agent from the Yaver agent.
+- Push React Native / Expo bundles to a paired phone through the native Hermes path.
+- Capture dev-build feedback with screenshots, logs, and replay context.
+- Stream task, build, and reload progress to mobile or the web dashboard.
+- Keep peer discovery, relay, and vault flows local-first.
+- Build against SDKs and examples for React Native, Flutter, web, Unity, Go, Python, and JS/TS.
+
+## What it costs
+
+**A solo developer can run the open-source stack at $0.**
+
+| Component | Runs on | Cost |
+|---|---|---|
+| Yaver CLI + agent | Your dev machine | $0 |
+| Yaver surface apps | iOS / Android / watch / TV / car / AR/VR | $0 |
+| Web dashboard | Browser | $0 |
+| Backend on your own machine | Your Mac / Linux / WSL / VPS | $0 + your hardware |
+| Relay server | Self-host on any VPS | $0 |
+| AI models (Ollama) | Your GPU or CPU | $0 |
+
+The whole open-source stack is free: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. That's everything you need to build and iterate. Your coding agent brings its own login or subscription — Yaver never resells tokens.
+
+An optional managed-cloud option, for people who don't want to run their own always-reachable box, is coming later. Self-hosting stays free.
+
+## Repository map
 
 | Path | Purpose |
 |---|---|
@@ -92,32 +125,30 @@ Already installed Yaver globally? `yaver mcp setup claude-code` (or `codex` / `o
 
 ## Documentation
 
-- [Docs index](docs/README.md)
-- [Setup](docs/setup/SETUP.md)
-- [Contributing](docs/setup/CONTRIBUTING.md)
-- [Runtime architecture](docs/architecture/AI_ARCH.md)
-- [Protocol](docs/yaver-protocol.md)
-- [Feedback SDK](docs/mobile/FEEDBACK_SDK.md)
-- [Security](docs/security/SECURITY.md)
-- [License](docs/planning/LICENSING.md)
+[Docs index](docs/README.md) · [Setup](docs/setup/SETUP.md) · [Contributing](docs/setup/CONTRIBUTING.md) · [Runtime architecture](docs/architecture/AI_ARCH.md) · [Protocol](docs/yaver-protocol.md) · [Feedback SDK](docs/mobile/FEEDBACK_SDK.md) · [Security](docs/security/SECURITY.md) · [License](docs/planning/LICENSING.md)
 
-Markdown in this repo is context, not source of truth. If a doc and the code disagree, trust the code and fix the doc in the same change.
+If an AI coding agent is setting Yaver up for you, point it at the canonical machine guide first:
+
+```bash
+curl -s https://yaver.io/llms.txt
+```
+
+> Markdown in this repo is context, not source of truth. If a doc and the code disagree, trust the code and fix the doc in the same change.
 
 ## Development
 
 ```bash
 # Web dashboard / landing
-cd web
-npm install
-npm run dev
+cd web && npm install && npm run dev
 
 # Go agent tests
-cd desktop/agent
-go test ./...
+cd desktop/agent && go test ./...
 ```
 
-Run the narrower package tests for the area you change; the full repo spans Go, Node, React Native, Swift, Kotlin, Flutter, Unity, and embedded C work.
+Run the narrower package tests for the area you change — the repo spans Go, Node, React Native, Swift, Kotlin, Flutter, Unity, and embedded C.
 
 ## License
 
-Core Yaver code is under FSL-1.1-Apache-2.0. SDK packages are Apache-2.0 where marked. See [docs/planning/LICENSING.md](docs/planning/LICENSING.md).
+The repo uses a split license: the core is **FSL-1.1**, which auto-converts to Apache-2.0 after two years, and the client SDKs are **Apache-2.0** so you can embed them in closed-source apps. See [docs/planning/LICENSING.md](docs/planning/LICENSING.md).
+
+If your legal team needs the core under different terms, a commercial license is available — email kivanc.cakmak@simkab.com.
