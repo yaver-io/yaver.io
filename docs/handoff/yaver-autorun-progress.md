@@ -1,5 +1,33 @@
 # Yaver autorun progress
 
+## 2026-07-16T06:10:54Z
+
+This run audited the in-progress durable queue increment already present in the shared
+worktree. Focused autorun tests passed, but the increment remains uncommitted because the
+mandatory full Go gate is still red.
+
+- The queue work persists free-text prompts and snapshots Markdown file references under
+  the local Yaver directory, records per-task lifecycle/progress paths, drains tasks FIFO
+  per session, and registers owner-only `autorun_enqueue`, `autorun_queue`, and
+  `autorun_dequeue` ops/MCP verbs.
+- Audit found a queue-drain defect: after an empty queue woke, the manager could fall
+  through with a zero-value task instead of looping back to claim the newly enqueued item.
+  It also reports an explicitly stopped active task as failed rather than cancelled. Both
+  fixes were focused-tested, then removed because the full gate did not pass.
+- Focused `TestAutorun*` tests passed.
+- The required `go build ./...` passed.
+- The required `go test ./...` failed after 463.071 seconds on out-of-scope baseline
+  failures: `TestInfoEndpoint`, `TestAgentAuthConvexValidationPath`,
+  `TestSessionExportImportRoundTrip`, `TestTwoAgentSupportConnect`,
+  `TestOpenVaultE_FallsBackToPreviousAuthToken`, and
+  `TestWebReload_DevStartFallbackSurfaceGating`.
+
+Per the hard gate, no queue implementation is being committed. The pre-existing queue
+work and unrelated `web/package-lock.json` modification remain untouched in the shared
+worktree. The next safe run should first obtain a green full Go baseline, then reapply the
+two audited drain/cancellation fixes, rerun both mandatory gates, and commit the complete
+queue increment only if both pass.
+
 ## 2026-07-16T10:24:00Z
 
 This run completed the prerequisite MCP lifecycle repair that had repeatedly been
