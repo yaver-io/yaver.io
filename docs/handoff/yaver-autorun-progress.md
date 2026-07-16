@@ -198,3 +198,26 @@ Per the gate rule, every Go edit was reverted. The unrelated pre-existing
 `web/package-lock.json` modification remains untouched. The next safe increment remains
 the lifecycle repair plus Codex assertion after the full Go baseline is green; only then
 proceed to the durable autorun queue and enqueue/dequeue MCP verbs.
+
+## 2026-07-16T04:52:55Z
+
+This run re-read the design, project guidance, recent history, handoff, and live autorun
+implementation, then retried the smallest prerequisite MCP lifecycle repair.
+
+- MCP-started sessions were temporarily detached from request cancellation with
+  `context.WithoutCancel`, preserving request values while retaining manager-owned stop
+  cancellation.
+- The stale Codex assertion was temporarily corrected to require the production
+  `--dangerously-bypass-approvals-and-sandbox` argument.
+- Both focused autorun regressions passed.
+- The mandatory `go build ./...` passed.
+- The mandatory `go test ./...` failed after 461.201 seconds on the same three
+  out-of-scope baseline failures: `TestInfoEndpoint` and
+  `TestAgentAuthConvexValidationPath` timed out awaiting `/info` headers, and
+  `TestWebReload_DevStartFallbackSurfaceGating` expected HTTP 400 but received the
+  existing HTTP 404 `workDir not found` response.
+
+Per the hard gate, every Go edit was reverted and no feature change was kept. The
+unrelated pre-existing `web/package-lock.json` modification remains untouched. The next
+safe increment remains the lifecycle repair plus Codex assertion after the full Go suite
+is green; only then proceed to the durable autorun queue and enqueue/dequeue MCP verbs.
