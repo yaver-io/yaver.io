@@ -127,3 +127,27 @@ the worktree. The unrelated `web/package-lock.json` modification remains untouch
 next safe run should repeat these two small repairs after `main` has a green full Go suite,
 then proceed to the durable task queue (`autorun_enqueue`, `autorun_queue`, and
 `autorun_dequeue`). Queue work must not be layered onto the known request-lifetime bug.
+
+## 2026-07-16T03:50:42Z
+
+This run re-read the design, project guide, handoff, recent history, and live autorun
+implementation, then retried the smallest prerequisite repair before queue work.
+
+- Changed MCP-started sessions to derive from `context.WithoutCancel(requestContext)` and
+  a manager-owned cancel function. The regression test proved request cancellation no
+  longer stopped the loop, request values remained available, and `autorun_stop` could
+  still cancel it explicitly.
+- Corrected the stale Codex permission assertion to require
+  `--dangerously-bypass-approvals-and-sandbox`.
+- Both focused autorun tests passed.
+- The required `go build ./...` passed.
+- The required `go test ./...` failed after 421.007 seconds on the same three
+  out-of-scope baseline failures: `TestInfoEndpoint` and
+  `TestAgentAuthConvexValidationPath` timed out awaiting `/info` headers, and
+  `TestWebReload_DevStartFallbackSurfaceGating` expected HTTP 400 but received the
+  existing HTTP 404 `workDir not found` response.
+
+Per the gate rule, all Go changes were reverted. The unrelated existing
+`web/package-lock.json` modification remains untouched. The next safe run remains the
+lifecycle repair plus Codex assertion after the full Go baseline is green; only then add
+the durable queue. No queue implementation should build on the request-lifetime bug.
