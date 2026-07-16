@@ -63,3 +63,59 @@ rides it. The phone or a new session attaches to observe/steer.
 `desktop/agent/` — a new `autorun*.go` (loop + runner adapters + gate + progress-MD writer),
 a CLI/ops verb, reusing the existing runner-auth + `yaver code --attach` remote path.
 Tonight's prototype (`~/run-video-runner.sh`, `~/yaver-video-task.md`) is the reference.
+
+## Completion "highlight reel" video — demonstrate what was achieved
+
+When an autorun session completes (or on `--summary-video`), produce a short highlight
+video — like a football-match highlights reel — that SHOWS/DEMONSTRATES what was achieved
+in the PRODUCT end-to-end, not just a text summary. This is how a sleeping developer wakes
+up and instantly sees "here's what got built and here it is working."
+
+How:
+- For each achieved change ("goal"), drive the actual product surface end-to-end and
+  screen-record it, using a dedicated **TEST ACCOUNT** (never the user's real creds).
+  Reuse yaver's existing capture stack — pick per surface:
+  - web: browser/selenium + `browser_screenshot`/screen record
+  - mobile: iOS simulator / redroid + `simulator_screenshot` / screen record
+  - agent/CLI: `screenlog`/`record` (the local screen black box) or `vibe_preview` clips
+  - TV: `appletv`/`capture`
+- Capture ONE short clip per achieved "goal", each showing the feature actually working.
+- Stitch with ffmpeg into a highlights reel: title card ("Autorun session · N commits ·
+  M features"), per-clip captions ("Built X · verified by <gate>"), an outro summary, and
+  (optional) a TTS voice-over narrating each highlight (reuse the voice/TTS stack).
+- Output `docs/handoff/<task>-highlights.mp4` (+ thumbnail), linked from the progress MD.
+  Compress (`ffmpeg -crf 32 -vf scale=720 -an`) or store the mp4 outside the repo and link
+  it, to respect the web/repo size guards.
+
+Test account + safety:
+- The demo runs under a config-provided demo/test account (env or vault), isolated and safe
+  to show. The reel must NEVER expose real user data, tokens, or secrets — respect the
+  Convex privacy contract; scrub anything sensitive from frames.
+
+Implementation sketch: `desktop/agent/autorun_summary.go` — (1) map each kept commit to a
+demonstrable product surface, (2) run a scripted demo of it under the test account with
+capture on, (3) assemble the reel via ffmpeg, (4) write the mp4 + update the progress MD.
+Gate it behind `--summary-video` (default on for `--machine`/overnight runs).
+
+## MCP exposure (drivable from the phone's Claude app / any MCP client)
+All of autorun is exposed as MCP tools via the yaver `ops` grand-tool + `mcp_tools.go`
+(follow the existing `ops`/first-class-tool patterns like circuit_plot, appletv_now_playing):
+- `autorun_start {task, runner=auto, interval, machine, gate, push, summaryVideo}` → start a loop
+- `autorun_status {machine}` → loop state + progress-MD tail + link/stream URL of latest highlights
+- `autorun_stop {machine}`
+- `autorun_summary_video {task, machine}` → (re)generate the highlight reel on demand
+The video is returned as a first-class artifact / stream URL (below), so an MCP client
+(phone Claude app, another agent) can kick a run, watch progress, and view the highlights.
+
+## Watch the highlights from the MOBILE APP — streamed from the remote device
+The developer must WATCH the highlights video IN the Yaver mobile app, streamed from
+whatever remote box ran the autorun (Mac mini / cloud), not just find an mp4 on disk.
+Reuse yaver's existing capture/stream + transport stack (the SAME layer as the iOS/redroid
+video feature — one streaming layer, reused):
+- The agent serves the highlights mp4 over its HTTP surface (range-request / HLS, e.g.
+  `/autorun/<id>/highlights.mp4`), reachable via relay/direct — the transport the app
+  already uses. `autorun_status` / the MCP tool returns that stream URL.
+- OR live-stream the demo run as it's produced via the existing MJPEG/WebRTC capture
+  (`/capture/stream`, `remote_runtime` WebRTC) so the app watches it being made.
+- Mobile: an "Autorun" surface lists sessions + plays the highlights inline (native video
+  player over the relay/direct URL) with the per-goal captions.
