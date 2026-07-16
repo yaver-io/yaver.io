@@ -80,3 +80,27 @@ timeouts/surface failures including `TestInfoEndpoint`,
 `TestWebReload_DevStartFallbackSurfaceGating`. The full suite ran for roughly 9.5 minutes.
 The next run must correct the autorun assertion within scope, then rerun both full gates;
 it must still withhold the autorun commit if any test remains red.
+
+## 2026-07-16T05:44:00Z
+
+This run retried the smallest safe Go increment: correcting
+`TestAutorunRunnerArgsAlwaysAutoApproves` to expect Codex autorun's actual
+`--dangerously-bypass-approvals-and-sandbox` argument instead of the replaced general
+runner `--full-auto` argument. The mandatory gate was run exactly as required with the
+Homebrew Go installation added to `PATH`.
+
+- `go build ./...` passed.
+- `go test ./...` failed after 555.773 seconds.
+- The corrected autorun test passed; it was not among the failures.
+- Remaining failures were outside autorun scope: `TestInfoEndpoint` and
+  `TestAgentAuthConvexValidationPath` timed out awaiting `/info` headers, and
+  `TestWebReload_DevStartFallbackSurfaceGating` expected HTTP 400 but received the
+  existing HTTP 404 `workDir not found` response.
+
+Per the task's gate rule, the autorun test correction was reverted and no Go change was
+kept. The unrelated existing `web/package-lock.json` modification remains untouched.
+The next run should retry the same minimal assertion correction only after the full Go
+suite's out-of-scope failures are fixed on `main`; then proceed with the MCP lifecycle
+increment. In particular, audit the current in-process session context lifetime before
+calling the MCP surface complete: an autorun loop must outlive the request context that
+started it while remaining explicitly stoppable.
