@@ -158,6 +158,23 @@ type autorunOptions struct {
 	// `-p`. Forced on for claude, whose `-p` path fails auth even when the TUI
 	// on the same box is signed in.
 	Tmux bool
+	// Goal is an optional completion condition handed to the runner's OWN
+	// `/goal` loop. claude re-enters itself after each turn until a judge model
+	// agrees the condition holds. Empty = rely on autorun's own termination
+	// signals (DONE / converged / --max-iters). claude-family only.
+	Goal string
+}
+
+// autorunRunsClaudeBinary reports whether the runner drives the `claude` binary.
+// Both "claude" and "glm" do — glm is the same binary pointed at z.ai's
+// Anthropic-compatible endpoint — so binary-level features like `/goal` apply to
+// both, and to neither codex nor opencode.
+func autorunRunsClaudeBinary(runner RunnerConfig) bool {
+	switch normalizeRunnerID(runner.RunnerID) {
+	case "claude", "glm":
+		return true
+	}
+	return false
 }
 
 // autorunUsesTmux reports whether this runner must be driven as a TUI. claude's
@@ -178,8 +195,18 @@ func autorunKick(ctx context.Context, opts autorunOptions, runner RunnerConfig, 
 		return autorunCommandResult{Err: fmt.Errorf("runner %s must be driven as a TUI but tmux is not installed", runner.RunnerID)}
 	}
 	session := autorunTmuxSessionName(opts.TaskPath)
-	if _, err := ensureAutorunTmuxSession(ctx, session, runner, opts.WorkDir); err != nil {
+	created, err := ensureAutorunTmuxSession(ctx, session, runner, opts.WorkDir)
+	if err != nil {
 		return autorunCommandResult{Err: err}
+	}
+	// A /goal belongs to the SESSION, not to a turn: claude keeps re-entering
+	// itself until the condition holds, so re-arming it every iteration would
+	// be noise. Send it only on the turn that created the TUI — which also
+	// covers the self-heal recreate above, since a fresh session has no goal.
+	if created {
+		if res := autorunTmuxSetGoal(ctx, session, opts.Goal, runner, opts.WorkDir); res.Err != nil {
+			return res
+		}
 	}
 	return autorunTmuxKick(ctx, session, prompt, opts.WorkDir, timeout)
 }

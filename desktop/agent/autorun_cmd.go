@@ -28,6 +28,7 @@ func runAutorun(args []string) {
 	gate := fs.String("gate", "", "required build/test command")
 	push := fs.Bool("push", false, "push gate-verified commits")
 	tmux := fs.Bool("tmux", false, "drive the runner as an interactive TUI in tmux (forced on for claude)")
+	goal := fs.String("goal", "", "completion condition for the runner's own /goal loop (claude/glm only)")
 	machine := fs.String("machine", "", "remote machine (not available in this increment)")
 	var scopes autorunScopes
 	fs.Var(&scopes, "scope", "allowed repository glob (repeatable)")
@@ -43,7 +44,7 @@ func runAutorun(args []string) {
 		fmt.Fprintln(os.Stderr, "autorun:", err)
 		return
 	}
-	opts := autorunOptions{TaskPath: *task, Runner: *runner, Interval: *interval, MaxIters: *maxIters, Gate: *gate, Push: *push, Scopes: scopes, WorkDir: workDir, Tmux: *tmux}
+	opts := autorunOptions{TaskPath: *task, Runner: *runner, Interval: *interval, MaxIters: *maxIters, Gate: *gate, Push: *push, Scopes: scopes, WorkDir: workDir, Tmux: *tmux, Goal: *goal}
 	summary, err := executeAutorun(context.Background(), opts)
 	if summary.FinishReason != "" {
 		fmt.Printf("autorun: %s after %d iteration(s), %d verified commit(s)\n", summary.FinishReason, summary.Iterations, summary.Commits)

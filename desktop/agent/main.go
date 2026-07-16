@@ -3826,10 +3826,19 @@ func runServe(args []string) {
 		go relayMgr.healthCheckLoop(ctx)
 	}
 
+	// Black box (flightrecorder.go). Deliberately recorded HERE rather than at
+	// the top of runServe: this function forks a bootstrap child, and a parent
+	// that recorded `boot` and then exited would leave a boot record with no
+	// matching shutdown — which the next boot would correctly, but uselessly,
+	// report as an unclean stop. By this line we are unambiguously the
+	// long-running daemon.
+	RecordFlightBoot(ctx)
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	// SIGHUP triggers config reload (relay servers); SIGINT/SIGTERM shut down
+	var stopSignal string
 	for {
 		sig := <-sigCh
 		if sig == syscall.SIGHUP {
@@ -3838,8 +3847,14 @@ func runServe(args []string) {
 			continue
 		}
 		log.Printf("Received signal %s, shutting down...", sig)
+		stopSignal = sig.String()
 		break
 	}
+	// The FIRST thing a graceful stop does. Everything below this line can hang
+	// or fail (tmux, containers, MarkOffline needs the network); if any of that
+	// stalled before we recorded the stop, a clean shutdown would be
+	// misdiagnosed as a power cut — the exact confusion this records away.
+	RecordFlightShutdown(stopSignal)
 	if taskMgr.TmuxMgr != nil {
 		taskMgr.TmuxMgr.Shutdown()
 	}

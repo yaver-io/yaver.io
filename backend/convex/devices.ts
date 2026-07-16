@@ -16,6 +16,12 @@ import {
   type LabelSignals,
 } from "./deviceLabels";
 
+// Hard bound on the device black box (deviceFlightEvents). Mirrors
+// flightRecorderMaxEvents in desktop/agent/flightrecorder.go — the agent caps
+// its local buffer and the server caps the table, independently, so neither
+// side can be trusted into unbounded growth. Keep the two in sync.
+const FLIGHT_EVENT_CAP = 50;
+
 const recoveryPostureValidator = v.object({
   status: v.string(),
   mobileApprovedTransports: v.array(v.string()),
@@ -930,6 +936,25 @@ export const heartbeat = mutation({
     // its own capture time so 60s sparkline resolution is preserved while the
     // whole batch is recorded + pruned inline in this one mutation (zero extra
     // function calls). Older agents omit this and use /devices/metrics.
+    // Black box piggyback (desktop/agent/flightrecorder.go). Lifecycle events
+    // the box buffered locally while it was down, shipped on the first
+    // heartbeat after it comes back. Rare by construction (a boot, a shutdown,
+    // an unclean-stop verdict), capped at FLIGHT_EVENT_CAP server-side, and
+    // carried here rather than on their own route so a returning box costs zero
+    // extra function calls — same reasoning as metricsSamples below.
+    //
+    // Audit summary only: kind + short cause + timestamp. Never a path, LAN IP,
+    // hostname, token, or command output.
+    flightEvents: v.optional(
+      v.array(
+        v.object({
+          session: v.string(),
+          kind: v.string(),
+          detail: v.optional(v.string()),
+          atMs: v.number(),
+        })
+      )
+    ),
     metricsSamples: v.optional(
       v.array(
         v.object({
@@ -1118,6 +1143,47 @@ export const heartbeat = mutation({
       }
     } catch {
       /* best-effort: seeding must never fail a heartbeat */
+    }
+
+    // Black box piggyback: persist the lifecycle events the box buffered while
+    // it was down (flightrecorder.go), then prune to the cap. This block only
+    // runs on a beat that actually carries events — normally just the first one
+    // after a boot — so a steady-state box pays nothing for it.
+    if (args.flightEvents && args.flightEvents.length > 0) {
+      const existing = await ctx.db
+        .query("deviceFlightEvents")
+        .withIndex("by_device", (q) => q.eq("deviceId", args.deviceId))
+        .collect();
+      // Dedup on the event's own identity rather than on arrival order: an
+      // agent that retries a heartbeat, or re-sends its buffer after a failed
+      // sync, must not double-record the same history.
+      const seen = new Set(existing.map((e) => `${e.session}|${e.kind}|${e.at}`));
+      for (const ev of args.flightEvents) {
+        const key = `${ev.session}|${ev.kind}|${ev.atMs}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        await ctx.db.insert("deviceFlightEvents", {
+          userId: device.userId,
+          deviceId: args.deviceId,
+          session: ev.session,
+          kind: ev.kind,
+          detail: ev.detail,
+          at: ev.atMs,
+          createdAt: Date.now(),
+        });
+      }
+      // The cap is enforced HERE and never trusted to the agent: a buggy or
+      // hostile client must not be able to turn this table into a log stream.
+      // by_device_at yields ascending `at`, so the oldest rows are the prefix.
+      const all = await ctx.db
+        .query("deviceFlightEvents")
+        .withIndex("by_device_at", (q) => q.eq("deviceId", args.deviceId))
+        .collect();
+      if (all.length > FLIGHT_EVENT_CAP) {
+        for (const row of all.slice(0, all.length - FLIGHT_EVENT_CAP)) {
+          await ctx.db.delete(row._id);
+        }
+      }
     }
 
     // Metrics piggyback: record each buffered sample at its own capture time

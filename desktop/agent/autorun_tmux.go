@@ -169,3 +169,66 @@ func autorunTmuxKick(ctx context.Context, session, prompt, workDir string, timeo
 		Err:    fmt.Errorf("runner TUI %s did not finish within %s", session, timeout),
 	}
 }
+
+// autorunTmuxGoalReadyTimeout bounds the wait for a freshly-created TUI to be
+// able to accept input. A slash command typed into a TUI that has not finished
+// booting is silently swallowed, and the goal would then never be armed — a
+// failure that is invisible until the run overshoots.
+const autorunTmuxGoalReadyTimeout = 60 * time.Second
+
+// autorunTmuxSetGoal arms the runner's own `/goal` loop on a freshly-created
+// TUI session.
+//
+// `/goal <condition>` (claude >= 2.1.139) makes the runner re-enter itself after
+// each turn until a judge model agrees the condition holds. It is a SLASH
+// COMMAND, so unlike the task prompt it cannot be staged to a file and read —
+// it has to be typed into the composer.
+//
+// Note how this composes with autorun's gate: autorun verifies and commits
+// between ITERATIONS, but /goal loops inside a single turn, so a long goal run
+// reaches the gate once and a gate failure stashes the whole run rather than the
+// last increment. Prefer a narrow condition over one sweeping goal.
+//
+// No-ops for codex and opencode, which have no /goal and would take it as
+// literal prompt text.
+func autorunTmuxSetGoal(ctx context.Context, session, goal string, runner RunnerConfig, workDir string) autorunCommandResult {
+	goal = strings.TrimSpace(goal)
+	if goal == "" || !autorunRunsClaudeBinary(runner) {
+		return autorunCommandResult{}
+	}
+	if !autorunTmuxWaitComposerReady(ctx, session, workDir) {
+		return autorunCommandResult{
+			Output: autorunTmuxCapture(ctx, session, workDir),
+			Err:    fmt.Errorf("runner TUI %s never became ready to accept /goal", session),
+		}
+	}
+	// -l sends literally; Enter must be a SEPARATE send-keys or the command sits
+	// unsubmitted in the composer (same reason as autorunTmuxKick).
+	if res := autorunExec(ctx, "tmux", []string{"send-keys", "-t", session, "-l", "/goal " + goal}, workDir); res.Err != nil {
+		return autorunCommandResult{Output: res.Output, Err: fmt.Errorf("send /goal to %s: %w", session, res.Err)}
+	}
+	if res := autorunExec(ctx, "tmux", []string{"send-keys", "-t", session, "Enter"}, workDir); res.Err != nil {
+		return autorunCommandResult{Output: res.Output, Err: fmt.Errorf("submit /goal to %s: %w", session, res.Err)}
+	}
+	return autorunCommandResult{}
+}
+
+// autorunTmuxWaitComposerReady waits until the TUI is showing its input
+// composer. We look for the composer's prompt glyph rather than for an absence
+// of the busy marker, because a TUI that is still booting shows neither.
+func autorunTmuxWaitComposerReady(ctx context.Context, session, workDir string) bool {
+	deadline := time.Now().Add(autorunTmuxGoalReadyTimeout)
+	for time.Now().Before(deadline) {
+		pane := autorunTmuxCapture(ctx, session, workDir)
+		// The composer is up once the TUI draws its input line and is not busy.
+		if strings.Contains(pane, ">") && !strings.Contains(pane, autorunTmuxBusyMarker) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(time.Second):
+		}
+	}
+	return false
+}

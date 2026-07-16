@@ -1763,6 +1763,15 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	if len(metrics) > 0 {
 		payload["metricsSamples"] = metrics
 	}
+	// Black box piggyback (flightrecorder.go): ship any lifecycle events the box
+	// buffered while it was down. Normally nil — these fire on a boot or a
+	// shutdown, not on a beat — so a steady-state heartbeat is unchanged. Read
+	// here, but confirmed only after the request succeeds, so a failed beat
+	// re-sends rather than silently losing the record of why the box died.
+	flightPayload, flightEvents := PendingFlightEvents()
+	if len(flightPayload) > 0 {
+		payload["flightEvents"] = flightPayload
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal heartbeat: %w", err)
@@ -1788,6 +1797,13 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	}
 	if _, ok := payload["hardwareProfile"]; ok {
 		markHardwareProfileSent()
+	}
+	// 200 means Convex durably has them, so the watermark can advance and this
+	// box stops re-sending its history on every beat. Same confirm-on-success
+	// contract as markHardwareProfileSent above; anything before this line is a
+	// failure path where re-sending is the correct behaviour.
+	if len(flightEvents) > 0 {
+		ConfirmFlightEventsSynced(flightEvents)
 	}
 	// Pointer bools so an absent field (old backend, no gating) is
 	// distinguishable from an explicit false (new backend, nothing queued).

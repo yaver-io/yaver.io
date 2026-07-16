@@ -769,6 +769,32 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_createdAt", ["createdAt"]),
 
+  // Device black box — the agent's flight recorder (desktop/agent/flightrecorder.go).
+  //
+  // Lifecycle events ONLY (boot / shutdown / unclean_stop / sleep / wake), so a
+  // box that went silent can say why once it is back. This is an activity audit
+  // summary — action + outcome + timestamp — which is exactly what the privacy
+  // contract permits in Convex. It MUST NEVER carry paths, LAN IPs, hostnames,
+  // tokens, or command output; `detail` is a short bounded cause string and
+  // convex_privacy_test.go fences the payload.
+  //
+  // Bounded by design: flightRecorder.recordEvents prunes each device to the
+  // last FLIGHT_EVENT_CAP rows on every write, so this table cannot grow into a
+  // log stream no matter how often a box reboots.
+  deviceFlightEvents: defineTable({
+    userId: v.id("users"),
+    deviceId: v.string(),
+    // Per-agent-process id. Lets a later boot attribute an orphaned record to
+    // the exact run that died.
+    session: v.string(),
+    kind: v.string(),
+    detail: v.optional(v.string()),
+    at: v.number(), // ms epoch — when the event happened on the box
+    createdAt: v.number(), // ms epoch — when it reached Convex (may be much later)
+  })
+    .index("by_device", ["deviceId"])
+    .index("by_device_at", ["deviceId", "at"]),
+
   userSettings: defineTable({
     userId: v.id("users"),
     forceRelay: v.optional(v.boolean()),
