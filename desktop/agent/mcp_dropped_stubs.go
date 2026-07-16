@@ -89,7 +89,6 @@ func mcpTimer(args ...interface{}) interface{} { return droppedMCPStub(args...) 
 func mcpTranslate(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpUptime(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpVolume(args ...interface{}) interface{} { return droppedMCPStub(args...) }
-func mcpWakeOnLAN(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpWeather(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpWhois(args ...interface{}) interface{} { return droppedMCPStub(args...) }
 func mcpWorldClock(args ...interface{}) interface{} { return droppedMCPStub(args...) }

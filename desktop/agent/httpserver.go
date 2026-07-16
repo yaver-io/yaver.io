@@ -1062,6 +1062,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/healthmon", s.auth(s.handleHealthMon))
 	mux.HandleFunc("/healthmon/", s.auth(s.handleHealthMonByID))
 
+	// Wake-on-LAN. A magic packet is link-local, so every remote surface
+	// (watch, car, headset, web) has to route its wake through an agent
+	// already awake on the sleeping box's LAN — this is that hop.
+	mux.HandleFunc("/wake", s.auth(s.handleWake))
+	mux.HandleFunc("/wake/macs", s.auth(s.handleWakeMACs))
+
 	// Git operations (read-only + safe writes)
 	mux.HandleFunc("/git/status", s.auth(s.handleGitStatus))
 	mux.HandleFunc("/git/log", s.auth(s.handleGitLog))
