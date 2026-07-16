@@ -188,6 +188,25 @@ export interface FeedbackConfig {
    * If omitted with convexUrl, connects to the first online device.
    */
   preferredDeviceId?: string;
+  /**
+   * Identity of the app this SDK instance reports for. Both fields are
+   * resolved automatically from expo-constants / native modules when
+   * omitted, so most apps never set them.
+   *
+   * Set them when the ambient answer would be wrong — above all when the
+   * app's JS is pushed into Yaver's container as a Hermes guest. There the
+   * runtime IS Yaver: `expo-constants` and `SettingsManager` describe the
+   * host (`Yaver` / `io.yaver.mobile`), not the guest, so auto-resolution
+   * would file every report against Yaver's own repo and the fix task would
+   * edit the SDK instead of the app. Declaring identity here is the only
+   * answer that holds in both a standalone build and a guest bundle.
+   *
+   * `bundleId` is the key that actually routes: the agent matches it against
+   * each project's pbxproj / build.gradle / app.json. `projectName` is a
+   * fallback for platforms with no bundle id.
+   */
+  projectName?: string;
+  bundleId?: string;
   /** How feedback collection is triggered */
   trigger?: 'shake' | 'floating-button' | 'manual';
   /**
