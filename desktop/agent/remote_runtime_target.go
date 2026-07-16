@@ -73,6 +73,14 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 		return iosSimulatorTarget{deviceType: "Apple Vision"}, nil
 	case "android-emulator":
 		return androidEmulatorTarget{}, nil
+	case "android-wear":
+		return androidSurfaceTarget{avdHint: "wear"}, nil
+	case "android-tv":
+		return androidSurfaceTarget{avdHint: "tv"}, nil
+	case "android-xr":
+		return androidSurfaceTarget{avdHint: "xr"}, nil
+	case "android-auto":
+		return androidSurfaceTarget{avdHint: "auto"}, nil
 	case "android-device":
 		return androidDeviceTarget{}, nil
 	case remoteRuntimeRedroidTargetID:

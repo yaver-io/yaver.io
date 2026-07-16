@@ -82,26 +82,25 @@ func TestRemoteRuntimeCapabilitiesForSwiftOnLinuxRequiresMacHost(t *testing.T) {
 
 func TestRemoteRuntimeCapabilitiesForKotlinUseAndroidHostClass(t *testing.T) {
 	caps := remoteRuntimeCapabilitiesForProject("/tmp/kotlin-app", "kotlin")
-	// android-emulator (default where the host can run it), android-redroid
-	// (Docker-backed container), and android-device (physical fallback).
-	if len(caps.Targets) != 3 {
-		t.Fatalf("kotlin targets = %d, want 3 (android-emulator + android-redroid + android-device)", len(caps.Targets))
+	// Post-P6: android-emulator + Wear/TV/XR/Auto surface variants +
+	// android-redroid (Docker) + android-device (physical fallback).
+	wantIDs := []string{"android-emulator", "android-wear", "android-tv", "android-xr", "android-auto", "android-redroid", "android-device"}
+	if len(caps.Targets) != len(wantIDs) {
+		t.Fatalf("kotlin targets = %d, want %d (%v)", len(caps.Targets), len(wantIDs), wantIDs)
 	}
-	target := caps.Targets[0]
-	if target.ID != "android-emulator" {
-		t.Fatalf("kotlin target[0] id = %q, want android-emulator", target.ID)
+	for i, want := range wantIDs {
+		tg := caps.Targets[i]
+		if tg.ID != want {
+			t.Fatalf("kotlin target[%d] id = %q, want %q", i, tg.ID, want)
+		}
+		// redroid legitimately reports its host class as `linux-redroid`
+		// (it's a Docker container, not the emulator suite).
+		if tg.ID != "android-redroid" && !strings.Contains(tg.RuntimeHostClass, "android") {
+			t.Fatalf("kotlin target[%d] runtime host class = %q, want android suffix", i, tg.RuntimeHostClass)
+		}
 	}
-	if !strings.Contains(target.RuntimeHostClass, "android") {
-		t.Fatalf("kotlin runtime host class = %q, want android suffix", target.RuntimeHostClass)
-	}
-	if target.RequiredCLI != "adb + emulator" {
-		t.Fatalf("kotlin required cli = %q", target.RequiredCLI)
-	}
-	if caps.Targets[1].ID != "android-redroid" {
-		t.Fatalf("kotlin target[1] id = %q, want android-redroid", caps.Targets[1].ID)
-	}
-	if caps.Targets[2].ID != "android-device" {
-		t.Fatalf("kotlin target[2] id = %q, want android-device", caps.Targets[2].ID)
+	if caps.Targets[0].RequiredCLI != "adb + emulator" {
+		t.Fatalf("kotlin required cli = %q", caps.Targets[0].RequiredCLI)
 	}
 }
 
@@ -110,12 +109,15 @@ func TestRemoteRuntimeCapabilitiesForFlutterExposesBothTargets(t *testing.T) {
 	if !caps.RemoteRuntimeEligible {
 		t.Fatal("flutter should be remote-runtime eligible")
 	}
-	// Android (emulator + redroid + device) + Apple sim fan-out
-	// (iPhone/iPad/watch/tv/vision) + ios-device = 9 targets.
+	// Post-P6: Android fan-out (emulator + wear + tv + xr + auto +
+	// redroid + device) + Apple sim fan-out (iPhone/iPad/watch/tv/
+	// vision) + ios-device = 13 targets.
 	wantIDs := map[string]bool{
-		"android-emulator": true, "android-redroid": true, "android-device": true,
-		"ios-simulator": true, "ipados-simulator": true, "watchos-simulator": true,
-		"tvos-simulator": true, "visionos-simulator": true, "ios-device": true,
+		"android-emulator": true, "android-wear": true, "android-tv": true,
+		"android-xr": true, "android-auto": true, "android-redroid": true,
+		"android-device": true, "ios-simulator": true, "ipados-simulator": true,
+		"watchos-simulator": true, "tvos-simulator": true, "visionos-simulator": true,
+		"ios-device": true,
 	}
 	if len(caps.Targets) != len(wantIDs) {
 		t.Fatalf("flutter targets = %d, want %d", len(caps.Targets), len(wantIDs))

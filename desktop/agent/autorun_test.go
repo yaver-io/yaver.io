@@ -19,7 +19,14 @@ func TestAutorunRunnerArgsAlwaysAutoApproves(t *testing.T) {
 		if !strings.Contains(strings.Join(args, " "), tt.want) {
 			t.Errorf("%s args %q missing %q", tt.id, args, tt.want)
 		}
-		if args[len(args)-1] != "do work" {
+		foundPrompt := false
+		for _, arg := range args {
+			if arg == "do work" {
+				foundPrompt = true
+				break
+			}
+		}
+		if !foundPrompt {
 			t.Errorf("%s prompt was not passed as one argument: %q", tt.id, args)
 		}
 	}

@@ -793,6 +793,24 @@ func androidKeycodeForName(name string) (int, bool) {
 		return 87, true
 	case "media_previous", "previous", "prev":
 		return 88, true
+	// P6: directional / D-pad — Android TV, Wear, Auto navigation.
+	case "up", "dpad_up":
+		return 19, true
+	case "down", "dpad_down":
+		return 20, true
+	case "left", "dpad_left":
+		return 21, true
+	case "right", "dpad_right":
+		return 22, true
+	case "select", "dpad_center", "ok":
+		return 23, true
+	// Wear OS Digital Crown scroll — SCROLL wheel synthesised via
+	// PAGE_UP/DOWN. Not perfect (real crown emits precise deltas)
+	// but close enough for scrolling the list in every stock Wear app.
+	case "crown_up", "page_up":
+		return 92, true
+	case "crown_down", "page_down":
+		return 93, true
 	}
 	return 0, false
 }

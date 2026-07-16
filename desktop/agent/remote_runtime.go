@@ -219,9 +219,14 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			// Emulator first (default where the host can run it),
 			// physical device second (the only path on a host with no
 			// emulator binary — e.g. linux/arm64). Capability-probed,
-			// never host-name-gated.
+			// never host-name-gated. P6 adds Wear/TV/XR/Auto surface
+			// variants (all adb-based, differ only in AVD).
 			caps.Targets = []RemoteRuntimeTarget{
 				probeAndroidEmulatorTarget(),
+				probeAndroidWearTarget(),
+				probeAndroidTVTarget(),
+				probeAndroidXRTarget(),
+				probeAndroidAutoTarget(),
 				probeRedroidTarget(),
 				probeAndroidDeviceTarget(),
 			}
@@ -237,6 +242,10 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			// wherever the host supports them.
 			caps.Targets = []RemoteRuntimeTarget{
 				probeAndroidEmulatorTarget(),
+				probeAndroidWearTarget(),
+				probeAndroidTVTarget(),
+				probeAndroidXRTarget(),
+				probeAndroidAutoTarget(),
 				probeRedroidTarget(),
 				probeAndroidDeviceTarget(),
 				probeIOSSimulatorTarget(appleFams),
@@ -548,7 +557,7 @@ func launchAppOnRuntimeTarget(ctx context.Context, session RemoteRuntimeSession,
 	switch session.TargetID {
 	case "ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator":
 		return (&testkit.IOSSimDriver{BundleID: bundleID}).Launch(ctx, session.DeviceID)
-	case "android-emulator", "android-device", remoteRuntimeRedroidTargetID:
+	case "android-emulator", "android-device", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
 		return (&testkit.AndroidEmuDriver{Package: bundleID}).Launch(ctx, session.DeviceID)
 	}
 	return fmt.Errorf("launch-app is not supported for target %q", session.TargetID)

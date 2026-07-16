@@ -165,15 +165,23 @@ func (c *wdaClient) Text(ctx context.Context, text string) error {
 	return err
 }
 
-// PressButton maps a friendly name to a WDA hardware button
-// ("home", "volumeUp", "volumeDown"). iOS has far fewer buttons than
-// Android keycodes — anything else is rejected with a clear error.
+// PressButton maps a friendly name to a WDA hardware button. iOS has
+// far fewer buttons than Android keycodes and Apple's WebDriverAgent
+// intentionally exposes only the small set that Home/Volume+/Volume-
+// covers. tvOS directional remote, watchOS Digital Crown, and visionOS
+// pinch need XCUIRemote / XCUITest primitives WDA doesn't proxy —
+// callers get an actionable error naming what to install instead of a
+// silent no-op. Names are normalised (case + separators) so the
+// protocol is forgiving.
 func (c *wdaClient) PressButton(ctx context.Context, name string) error {
 	if err := c.EnsureSession(ctx); err != nil {
 		return err
 	}
 	wda, ok := wdaButtonName(name)
 	if !ok {
+		if reason, surface := unsupportedIOSKeyReason(name); reason != "" {
+			return fmt.Errorf("key %q is a %s primitive — WebDriverAgent doesn't expose it; %s", name, surface, reason)
+		}
 		return fmt.Errorf("unsupported key %q for ios-device (WDA buttons: home, volumeup, volumedown)", name)
 	}
 	_, err := c.do(ctx, http.MethodPost, c.sessionPath("/wda/pressButton"),
@@ -182,15 +190,34 @@ func (c *wdaClient) PressButton(ctx context.Context, name string) error {
 }
 
 func wdaButtonName(name string) (string, bool) {
-	switch strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"), " ", "_")) {
+	switch normalisedIOSKey(name) {
 	case "home":
 		return "home", true
-	case "volume_up", "volumeup":
+	case "volume_up":
 		return "volumeUp", true
-	case "volume_down", "volumedown":
+	case "volume_down":
 		return "volumeDown", true
 	}
 	return "", false
+}
+
+// unsupportedIOSKeyReason returns a (reason, surface) pair when the
+// caller asked for a well-known tvOS/watchOS/visionOS control that
+// vanilla WDA cannot dispatch. Empty reason = plain "unknown key".
+func unsupportedIOSKeyReason(name string) (string, string) {
+	switch normalisedIOSKey(name) {
+	case "up", "down", "left", "right", "select", "menu", "play_pause":
+		return "install an XCUIRemote bridge on the target simulator to enable tvOS directional control", "tvOS remote"
+	case "crown_up", "crown_down":
+		return "watchOS Digital Crown needs an XCUITest tunnel — the JPEG stream is view-only until then", "watchOS Digital Crown"
+	case "pinch", "pinch_in", "pinch_out":
+		return "visionOS pinch/gaze needs an XCUITest-with-VisionKit bridge", "visionOS pinch"
+	}
+	return "", ""
+}
+
+func normalisedIOSKey(name string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"), " ", "_"))
 }
 
 // Screenshot returns a decoded PNG. WDA's /screenshot is

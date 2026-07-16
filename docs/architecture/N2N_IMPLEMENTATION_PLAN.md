@@ -17,7 +17,7 @@
 - **P3 — Voice everywhere + phone→TV bridge** — **DONE 2026-07-16** (agent-side pieces; native client bindings are handoff work per plan)
 - **P4 — Feedback SDK n2n** — **DONE 2026-07-16**
 - **P5 — Concurrency + shared registry + cast** — **PARTIAL 2026-07-16** (control lease shipped; shared reactive registry + JPEG/RTP unify + TURN are follow-ons)
-- **P6 — Control primitives + Android surfaces + transport quality** — _not started_
+- **P6 — Control primitives + Android surfaces + transport quality** — **PARTIAL 2026-07-16** (D-pad/crown key aliases + Wear/AndroidTV/XR/Auto surface targets shipped; iOS XCUIRemote bridge + RTP-for-Apple-sims file-tailer are follow-ons)
 - **P7 — Same-session runner continuation (no-fork)** — _not started_
 - **P8 — Install + self-healing hardening** — _not started_
 
@@ -160,6 +160,43 @@ in `ExecuteControl`, `ClientID/ClientLabel` on the request struct),
 `mcp_tools.go` (3 tool schemas), `httpserver.go` (3 dispatchers).
 
 Closed-loop verification: `go test -run 'TestControlLease|TestExecuteControl_LeaseGate' -count=1 .` → all pass. `TestExecuteControl_LeaseGate` drives the whole gate end-to-end (seed a lease held by phone-1, fire a real `ExecuteControl` as tv-1, assert the returned error names the holder).
+
+### P6 (D-pad / crown + Android surface targets slice) — 2026-07-16 (Europe/Istanbul)
+Two focused wins from P6:
+
+1. **Control fidelity for tv/watch/vision surfaces (agent-side key
+   alias table).** `androidKeycodeForName` now maps `up/down/left/
+   right/select/ok` to Android D-pad keycodes (Android TV navigation)
+   and `crown_up/crown_down` to `KEYCODE_PAGE_UP/DOWN` (a close-enough
+   Wear scroll surrogate — real crown needs XCUITest / Wear-crown-
+   emulator delta). `wdaButtonName` still resolves only the three
+   real WDA buttons but *rejects* tvOS/watchOS/visionOS keys with an
+   actionable error naming the bridge to install (XCUIRemote for
+   tvOS, XCUITest+VisionKit for visionOS) instead of a silent "unsupported"
+   error.
+
+2. **Wear / Android TV / Android XR / Android Auto emulator targets.**
+   Four new dedicated IDs (`android-wear`, `android-tv`, `android-xr`,
+   `android-auto`) badged with the right `Surface` so the picker
+   addresses each independently. All wrap `androidTarget` (same
+   tap/screenshot/dims) and only pass an AVD-name hint through
+   `AndroidEmuDriver.Boot`. `launchAppOnRuntimeTarget` accepts the
+   new IDs. Enumerated for both kotlin and flutter frameworks.
+
+Files touched: new `remote_runtime_android_surfaces.go` + new
+`remote_runtime_p6_test.go` (4 scoped tests), `remote_runtime.go`
+(target enumeration + launchApp switch), `remote_runtime_target.go`
+(runtimeTargetFor arms), `remote_runtime_webrtc.go` (D-pad + crown
+key aliases), `wda_client.go` (unsupportedIOSKeyReason for
+actionable errors), `remote_runtime_test.go` (updated existing
+target-count assertions).
+
+The RTP-for-Apple-sims file-fragment tailer and the iOS XCUIRemote
+bridge are follow-on slices; the two wins above land the biggest
+"can I address my watch/tv from the picker + can I send D-pad keys"
+gaps and stand alone.
+
+Closed-loop verification: `go test -run 'TestAndroidKeycode|TestRuntimeTargetFor_AndroidSurfaceIDs|TestProbeAndroidSurfaceTargets|TestWDAButtonName_TVRemoteReturnsActionableError|TestRemoteRuntimeCapabilitiesFor' -count=1 .` → all pass. The kotlin + flutter capability tests now round-trip the full 7-Android + 6-iOS target list.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:
