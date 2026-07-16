@@ -119,3 +119,19 @@ video feature — one streaming layer, reused):
   (`/capture/stream`, `remote_runtime` WebRTC) so the app watches it being made.
 - Mobile: an "Autorun" surface lists sessions + plays the highlights inline (native video
   player over the relay/direct URL) with the per-goal captions.
+
+## Task QUEUE + MCP signalling (feed a running autorun more tasks, hands-free)
+Autorun maintains a durable task QUEUE, not a single task. Via the yaver MCP you SIGNAL
+new, additive tasks into a running loop's queue — from the phone or any MCP client, while
+the developer is asleep or away, without touching a terminal:
+- `autorun_enqueue {machine, task}`  → append a task (md text or file ref) to the queue
+- `autorun_queue {machine}`          → list queued / active / done tasks (+ each one's
+                                        progress-MD tail and highlights-video stream URL)
+- `autorun_dequeue {machine, id}`    → cancel/remove a queued task
+The loop DRAINS the queue in order: after finishing (or converging on) the current task, it
+picks the next queued task and continues — a closed loop across a growing backlog. Each task
+keeps its own progress MD + completion highlights video. The MCP is the signalling channel,
+the queue is the durable intent, the remote loop is the executor. This is the core of
+"becoming a real yaver": remote autorun that a developer keeps feeding by intent (MCP
+signals), that runs + tests + demonstrates on its own on the remote box, and reports back
+(progress MD + highlight reel streamed to the mobile app) — independent of the dev's laptop.
