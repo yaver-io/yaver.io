@@ -36,6 +36,12 @@ targets:
       - path: ../tvos/YaverTV/OAuthSignIn.swift
       - path: ../tvos/YaverTV/Models.swift
       - path: ../tvos/YaverTV/AgentClient.swift
+      # Account machine list + reachable-address resolution. YaverStore's launch
+      # auto-connect + connectivity self-heal (re-resolve a stale host) call into
+      # MachineRegistry/RegisteredDevice, so the headset needs it too — without it
+      # YaverStore won't compile here. Shared, not copied, so the surfaces don't
+      # drift.
+      - path: ../tvos/YaverTV/MachineRegistry.swift
       - path: ../tvos/YaverTV/YaverStore.swift
       - path: ../tvos/YaverTV/SessionClient.swift
       - path: ../tvos/YaverTV/YaverNativeCatalog.swift
