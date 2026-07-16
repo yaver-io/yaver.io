@@ -104,3 +104,26 @@ suite's out-of-scope failures are fixed on `main`; then proceed with the MCP lif
 increment. In particular, audit the current in-process session context lifetime before
 calling the MCP surface complete: an autorun loop must outlive the request context that
 started it while remaining explicitly stoppable.
+
+## 2026-07-16T06:06:00Z
+
+This run implemented and focused-tested the smallest correct MCP lifecycle repair, then
+reverted every Go change because the mandatory full gate remained red.
+
+- `autorun_start` currently derives its asynchronous loop context directly from the MCP
+  request context. The attempted repair used `context.WithoutCancel` plus a manager-owned
+  cancel function, so the loop retained tracing values, outlived request completion, and
+  remained explicitly stoppable. Its regression test passed.
+- The stale Codex assertion was corrected to expect the actual, stronger
+  `--dangerously-bypass-approvals-and-sandbox` argument. Its focused test passed.
+- `go build ./...` passed.
+- `go test ./...` failed after 496.142 seconds on the same three out-of-scope baseline
+  failures: `TestInfoEndpoint` and `TestAgentAuthConvexValidationPath` timed out awaiting
+  `/info` headers; `TestWebReload_DevStartFallbackSurfaceGating` expected HTTP 400 but got
+  the existing HTTP 404 `workDir not found` response.
+
+Per the gate rule, neither the lifecycle repair nor the assertion correction remains in
+the worktree. The unrelated `web/package-lock.json` modification remains untouched. The
+next safe run should repeat these two small repairs after `main` has a green full Go suite,
+then proceed to the durable task queue (`autorun_enqueue`, `autorun_queue`, and
+`autorun_dequeue`). Queue work must not be layered onto the known request-lifetime bug.
