@@ -15,7 +15,7 @@
 - **P1 — MCP keystone (`runtime_*`)** — **DONE 2026-07-16**
 - **P2 — `develop_for` verb** — **DONE 2026-07-16**
 - **P3 — Voice everywhere + phone→TV bridge** — **DONE 2026-07-16** (agent-side pieces; native client bindings are handoff work per plan)
-- **P4 — Feedback SDK n2n** — _not started_
+- **P4 — Feedback SDK n2n** — **DONE 2026-07-16**
 - **P5 — Concurrency + shared registry + cast** — _not started_
 - **P6 — Control primitives + Android surfaces + transport quality** — _not started_
 - **P7 — Same-session runner continuation (no-fork)** — _not started_
@@ -107,6 +107,31 @@ Files touched: new `voice_mcp.go`, new `voice_mcp_test.go` (5 scoped
 tests), `mcp_tools.go` (schemas), `httpserver.go` (dispatcher).
 
 Closed-loop verification: `go test -run 'TestVoice' -count=1 .` → all pass. Tests use a live `BlackBoxManager`, subscribe a fake client, and assert the on-the-wire `BlackBoxCommand.Data` carries the runtime session id / provider hint / renderOn field intact — same shape the RN SDK / native listeners will parse.
+
+### P4 — 2026-07-16 (Europe/Istanbul)
+Two new verbs so the feedback loop works on keyboard-less surfaces
+and can be filed programmatically:
+
+  `feedback_create {surface, transcript?, screenshotSessionId?, ...}`
+      Mints a FeedbackReport via the real `FeedbackManager.ReceiveFeedback`
+      path so on-disk persistence, indexing, and privacy contract all
+      hold. When `screenshotSessionId` is set, the current `/frame`
+      JPEG from that runtime session auto-attaches — a runner can
+      `runtime_create` → observe → `feedback_create` in one turn.
+
+  `feedback_speak {id?, device?, maxItems?}`
+      Composes a spoken summary (last N reports or one specific id)
+      and hands it to `voice_speak` — reuses the P3 pipe, no new TTS
+      engine.
+
+Files touched: new `feedback_p4.go` (verbs + summariser + `ListReports`
+helper), new `feedback_p4_test.go` (5 scoped tests), `mcp_tools.go`
+(schemas), `httpserver.go` (dispatchers). Also fixed two pre-existing
+`go vet` warnings (`autorun.go` redundant newline, unreachable code in
+`monorepo_start_auth.go`) so scoped `go test` runs clean without
+`-vet=off`.
+
+Closed-loop verification: `go test -run 'TestFeedbackCreate|TestFeedbackSpeak' -count=1 .` → all pass. `TestFeedbackCreate_PersistsReport` writes through the real `~/.yaver/feedback` layer (redirected via HOME override) and asserts `ListFeedback` returns the freshly-minted report. `TestFeedbackSpeak_SummarizesQueueThroughVoicePipe` subscribes a fake TV client and confirms the composed summary reaches it via the same `voice_speak` BlackBox command shape a real client will parse.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

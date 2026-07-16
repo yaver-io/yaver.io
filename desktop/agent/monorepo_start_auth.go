@@ -245,13 +245,6 @@ func readRunnerCredentialRequest(r *bufio.Reader, runner string) (runnerAuthSetu
 	default:
 		return req, false
 	}
-
-	notes := fmt.Sprintf("Set by `yaver monorepo start` on %s", time.Now().Format(time.RFC3339))
-	req.Notes = notes
-	t := true
-	req.InstallIfMissing = &t
-	req.SetupMCP = &t
-	return req, true
 }
 
 // readSecret prints a label and reads a line from stdin without

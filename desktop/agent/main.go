@@ -553,6 +553,8 @@ func main() {
 		runRunner(os.Args[2:])
 	case "runner-auth":
 		runRunnerAuth(os.Args[2:])
+	case "autorun":
+		runAutorun(os.Args[2:])
 	case "launch":
 		runLaunch(os.Args[2:])
 	case "build":

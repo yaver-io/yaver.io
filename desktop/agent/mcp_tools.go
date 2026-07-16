@@ -3428,6 +3428,43 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, voiceTools...)
 
+	// --- Feedback n2n (P4) ---
+	feedbackP4Tools := []map[string]interface{}{
+		{
+			"name":        "feedback_create",
+			"description": "Mint a FeedbackReport programmatically. Optional screenshotSessionId auto-attaches a runtime_frame JPEG. surface must be one of phone/tablet/watch/tv/vision/car/web/feedback-sdk.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"surface"},
+				"properties": map[string]interface{}{
+					"surface":             map[string]interface{}{"type": "string"},
+					"transcript":          map[string]interface{}{"type": "string", "description": "What the reporter said or the runner captured."},
+					"source":              map[string]interface{}{"type": "string", "description": "yaver-app | in-app-sdk | mcp (default mcp)."},
+					"appName":             map[string]interface{}{"type": "string"},
+					"platform":            map[string]interface{}{"type": "string"},
+					"osVersion":           map[string]interface{}{"type": "string"},
+					"model":               map[string]interface{}{"type": "string"},
+					"appVersion":          map[string]interface{}{"type": "string"},
+					"buildId":             map[string]interface{}{"type": "string"},
+					"screenshotSessionId": map[string]interface{}{"type": "string", "description": "Optional runtime session — its current /frame becomes the report screenshot."},
+				},
+			},
+		},
+		{
+			"name":        "feedback_speak",
+			"description": "TTS-summarise the feedback queue via voice_speak. Empty id → summary of the last N reports; id set → read that one report. maxItems defaults to 3.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":       map[string]interface{}{"type": "string"},
+					"device":   map[string]interface{}{"type": "string", "description": "Optional target deviceId; empty broadcasts."},
+					"maxItems": map[string]interface{}{"type": "integer"},
+				},
+			},
+		},
+	}
+	tools = append(tools, feedbackP4Tools...)
+
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
 	// upload/list/delete/resolve. Agents that drive mobile releases
