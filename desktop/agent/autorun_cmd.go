@@ -43,112 +43,183 @@ func runAutorun(args []string) {
 		return
 	}
 	opts := autorunOptions{TaskPath: *task, Runner: *runner, Interval: *interval, MaxIters: *maxIters, Gate: *gate, Push: *push, Scopes: scopes, WorkDir: workDir}
-	if err := executeAutorun(context.Background(), opts); err != nil {
+	summary, err := executeAutorun(context.Background(), opts)
+	if summary.FinishReason != "" {
+		fmt.Printf("autorun: %s after %d iteration(s), %d verified commit(s)\n", summary.FinishReason, summary.Iterations, summary.Commits)
+	}
+	if summary.FinalCommit != "" {
+		fmt.Printf("autorun: %s %s\n", autorunFinalCommitMarker, summary.FinalCommit)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "autorun:", err)
 	}
 }
 
-func executeAutorun(ctx context.Context, opts autorunOptions) error {
+func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary, error) {
+	var summary autorunRunSummary
 	if strings.TrimSpace(opts.TaskPath) == "" || strings.TrimSpace(opts.Gate) == "" {
-		return fmt.Errorf("--task and --gate are required")
+		return summary, fmt.Errorf("--task and --gate are required")
 	}
 	if opts.Interval < 0 || opts.MaxIters < 0 {
-		return fmt.Errorf("--interval and --max-iters must not be negative")
+		return summary, fmt.Errorf("--interval and --max-iters must not be negative")
 	}
 	if err := validateAutorunShellCommand(opts.Gate); err != nil {
-		return fmt.Errorf("unsafe gate: %w", err)
+		return summary, fmt.Errorf("unsafe gate: %w", err)
 	}
 	taskPath, err := filepath.Abs(opts.TaskPath)
 	if err != nil {
-		return err
+		return summary, err
 	}
+	opts.TaskPath = taskPath
 	taskBytes, err := os.ReadFile(taskPath)
 	if err != nil {
-		return fmt.Errorf("read task: %w", err)
+		return summary, fmt.Errorf("read task: %w", err)
 	}
 	progressPath := autorunProgressPath(taskPath, opts.WorkDir)
 	initial, err := autorunGitChanges(ctx, opts.WorkDir)
 	if err != nil {
-		return err
+		return summary, err
 	}
 	if len(initial) > 0 {
-		return fmt.Errorf("worktree must be clean before autorun; found: %s", strings.Join(initial, ", "))
+		return summary, fmt.Errorf("worktree must be clean before autorun; found: %s", strings.Join(initial, ", "))
 	}
 	runner, err := selectAutorunRunner(opts.WorkDir, opts.Runner)
 	if err != nil {
-		return err
+		return summary, err
 	}
 	if pull := autorunExec(ctx, "git", []string{"pull", "--ff-only"}, opts.WorkDir); pull.Err != nil {
-		return fmt.Errorf("git pull --ff-only: %w: %s", pull.Err, strings.TrimSpace(pull.Output))
+		return summary, fmt.Errorf("git pull --ff-only: %w: %s", pull.Err, strings.TrimSpace(pull.Output))
 	}
+
+	reason, runErr := autorunLoop(ctx, opts, runner, string(taskBytes), progressPath, &summary)
+	summary.FinishReason = reason
+
+	// A run that found the task already DONE did no work; minting a commit for
+	// it would spam history on every re-kick.
+	if reason == autorunReasonDone && summary.Iterations == 0 {
+		return summary, runErr
+	}
+	if finalErr := finalizeAutorun(ctx, opts, runner.RunnerID, progressPath, &summary, runErr); finalErr != nil {
+		if runErr != nil {
+			return summary, fmt.Errorf("%w (recording the final autorun commit also failed: %v)", runErr, finalErr)
+		}
+		return summary, finalErr
+	}
+	return summary, runErr
+}
+
+// finalizeAutorun closes out a run by committing the terminal progress note as
+// the run's explicitly-marked final commit. The note is docs-only, so it is
+// committed even when the gate blocked the run's code — otherwise a blocked run
+// leaves the note uncommitted and the NEXT run refuses to start on a dirty
+// worktree, which is how this loop stranded itself before.
+func finalizeAutorun(ctx context.Context, opts autorunOptions, runnerID, progressPath string, summary *autorunRunSummary, runErr error) error {
+	// A stopped run's ctx is already cancelled, which would kill every git
+	// command below. The final commit is the whole point of stopping cleanly,
+	// so it gets a fresh deadline while keeping the request's values.
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+	}
+	subject := autorunFinalCommitSubject(opts.TaskPath, summary.FinishReason)
+	body := autorunFinalCommitBody(opts, runnerID, *summary, runErr)
+	if err := appendAutorunProgress(progressPath, subject+"\n\n"+body); err != nil {
+		return fmt.Errorf("write final progress note: %w", err)
+	}
+	rel := filepath.ToSlash(mustRel(opts.WorkDir, progressPath))
+	if add := autorunExec(ctx, "git", []string{"add", "--", rel}, opts.WorkDir); add.Err != nil {
+		return fmt.Errorf("git add final progress note: %w: %s", add.Err, strings.TrimSpace(add.Output))
+	}
+	if commit := autorunExec(ctx, "git", []string{"commit", "-S", "-m", subject, "-m", body}, opts.WorkDir); commit.Err != nil {
+		return fmt.Errorf("final signed commit: %w: %s", commit.Err, strings.TrimSpace(commit.Output))
+	}
+	summary.FinalSubject = subject
+	if head := autorunExec(ctx, "git", []string{"rev-parse", "HEAD"}, opts.WorkDir); head.Err == nil {
+		summary.FinalCommit = strings.TrimSpace(head.Output)
+	}
+	if opts.Push {
+		if pushResult := autorunExec(ctx, "git", []string{"push"}, opts.WorkDir); pushResult.Err != nil {
+			return fmt.Errorf("push final commit: %w: %s", pushResult.Err, strings.TrimSpace(pushResult.Output))
+		}
+	}
+	return nil
+}
+
+// autorunLoop runs the kick/gate/commit cycle and reports why it ended. Every
+// exit returns a reason so executeAutorun can mark exactly one final commit.
+func autorunLoop(ctx context.Context, opts autorunOptions, runner RunnerConfig, task, progressPath string, summary *autorunRunSummary) (string, error) {
+	taskPath := opts.TaskPath
 	noops := 0
 	for iteration := 1; opts.MaxIters == 0 || iteration <= opts.MaxIters; iteration++ {
 		logResult := autorunExec(ctx, "git", []string{"log", "--oneline", "-10"}, opts.WorkDir)
 		progressBytes, _ := os.ReadFile(progressPath)
 		if strings.Contains(string(progressBytes), "DONE") {
-			return nil
+			return autorunReasonDone, nil
 		}
-		prompt := autorunContext(string(taskBytes), string(progressBytes), logResult.Output, iteration)
+		summary.Iterations = iteration
+		prompt := autorunContext(task, string(progressBytes), logResult.Output, iteration)
 		result := autorunExec(ctx, resolveRunnerBinary(runner.Command), autorunRunnerArgs(runner, prompt), opts.WorkDir)
 		changes, statusErr := autorunGitChanges(ctx, opts.WorkDir)
 		if statusErr != nil {
-			return statusErr
+			return autorunReasonRunner, statusErr
 		}
 		if err := validateAutorunScope(changes, opts.Scopes, progressPath, opts.WorkDir); err != nil {
 			if rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
-				return fmt.Errorf("iteration %d violated scope (%v) and rollback failed: %w", iteration, err, rollbackErr)
+				return autorunReasonScope, fmt.Errorf("iteration %d violated scope (%v) and rollback failed: %w", iteration, err, rollbackErr)
 			}
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SCOPE FAILED. Runner changes were removed from the worktree and preserved in a diagnostic git stash.\n\n%s", iteration, err))
-			return fmt.Errorf("iteration %d violated scope; changes were preserved in a diagnostic git stash: %w", iteration, err)
+			return autorunReasonScope, fmt.Errorf("iteration %d violated scope; changes were preserved in a diagnostic git stash: %w", iteration, err)
 		}
 		if result.Err != nil {
 			if len(changes) > 0 {
 				if rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
-					return fmt.Errorf("runner %s failed in iteration %d and rollback failed: %w", runner.RunnerID, iteration, rollbackErr)
+					return autorunReasonRunner, fmt.Errorf("runner %s failed in iteration %d and rollback failed: %w", runner.RunnerID, iteration, rollbackErr)
 				}
 			}
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: runner `%s` failed. Any changes were removed from the worktree and preserved in a diagnostic git stash.\n\n```text\n%s\n```", iteration, runner.RunnerID, strings.TrimSpace(result.Output)))
-			return fmt.Errorf("runner %s failed in iteration %d: %w", runner.RunnerID, iteration, result.Err)
+			return autorunReasonRunner, fmt.Errorf("runner %s failed in iteration %d: %w", runner.RunnerID, iteration, result.Err)
 		}
 		if len(changes) == 0 {
 			noops++
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: runner `%s` made no changes (%d consecutive no-op).", iteration, runner.RunnerID, noops))
 			if noops >= 2 {
-				return nil
+				return autorunReasonConverged, nil
 			}
 		} else {
 			noops = 0
 			gateResult := autorunExec(ctx, "sh", []string{"-lc", opts.Gate}, opts.WorkDir)
 			if gateResult.Err != nil {
 				if rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
-					return fmt.Errorf("gate failed and rollback failed: %w", rollbackErr)
+					return autorunReasonGate, fmt.Errorf("gate failed and rollback failed: %w", rollbackErr)
 				}
 				_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: GATE FAILED (`%s`). Changes were removed from the worktree and preserved in a diagnostic git stash.\n\n```text\n%s\n```", iteration, opts.Gate, strings.TrimSpace(gateResult.Output)))
-				return fmt.Errorf("gate failed; changes were not committed and were preserved in a diagnostic git stash: %w", gateResult.Err)
+				return autorunReasonGate, fmt.Errorf("gate failed; changes were not committed and were preserved in a diagnostic git stash: %w", gateResult.Err)
 			}
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: gate passed (`%s`) with runner `%s`.\n\nChanged: `%s`", iteration, opts.Gate, runner.RunnerID, strings.Join(changes, "`, `")))
 			if add := autorunExec(ctx, "git", append([]string{"add", "--"}, append(changes, filepath.ToSlash(mustRel(opts.WorkDir, progressPath)))...), opts.WorkDir); add.Err != nil {
-				return fmt.Errorf("git add: %w: %s", add.Err, strings.TrimSpace(add.Output))
+				return autorunReasonGate, fmt.Errorf("git add: %w: %s", add.Err, strings.TrimSpace(add.Output))
 			}
-			message := fmt.Sprintf("autorun: verified iteration %d for %s", iteration, strings.TrimSuffix(filepath.Base(taskPath), filepath.Ext(taskPath)))
+			message := fmt.Sprintf("autorun: verified iteration %d for %s", iteration, autorunTaskName(taskPath))
 			if commit := autorunExec(ctx, "git", []string{"commit", "-S", "-m", message}, opts.WorkDir); commit.Err != nil {
-				return fmt.Errorf("signed commit: %w: %s", commit.Err, strings.TrimSpace(commit.Output))
+				return autorunReasonGate, fmt.Errorf("signed commit: %w: %s", commit.Err, strings.TrimSpace(commit.Output))
 			}
+			summary.Commits++
 			if opts.Push {
 				if pushResult := autorunExec(ctx, "git", []string{"push"}, opts.WorkDir); pushResult.Err != nil {
-					return fmt.Errorf("push: %w: %s", pushResult.Err, strings.TrimSpace(pushResult.Output))
+					return autorunReasonGate, fmt.Errorf("push: %w: %s", pushResult.Err, strings.TrimSpace(pushResult.Output))
 				}
 			}
 		}
 		if opts.Interval > 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return autorunReasonStopped, ctx.Err()
 			case <-time.After(opts.Interval):
 			}
 		}
 	}
-	return nil
+	return autorunReasonMaxIters, nil
 }
 
 func mustRel(base, path string) string {

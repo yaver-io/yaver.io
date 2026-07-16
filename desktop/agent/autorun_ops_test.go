@@ -25,8 +25,35 @@ func TestAutorunSessionContextOutlivesRequestAndStopsExplicitly(t *testing.T) {
 	}
 }
 
+func TestAutorunStopAllCancelsEveryRunningSessionOnly(t *testing.T) {
+	m := &autorunSessionManager{sessions: make(map[string]*autorunSession)}
+	running, stopRunning := context.WithCancel(context.Background())
+	defer stopRunning()
+	m.sessions["live"] = &autorunSession{ID: "live", Status: "running", cancel: stopRunning}
+	m.sessions["done"] = &autorunSession{ID: "done", Status: "completed"} // cancel==nil: already finished
+
+	previous := autorunSessions
+	autorunSessions = m
+	defer func() { autorunSessions = previous }()
+
+	res := opsAutorunStopAllHandler(OpsContext{}, json.RawMessage(`{}`))
+	if !res.OK {
+		t.Fatalf("stop_all failed: %#v", res)
+	}
+	initial, ok := res.Initial.(map[string]interface{})
+	if !ok || initial["count"] != 1 {
+		t.Fatalf("only the running session should be reported stopped: %#v", res.Initial)
+	}
+	if running.Err() == nil {
+		t.Fatal("running session was not cancelled")
+	}
+	if m.sessions["done"].Status != "completed" {
+		t.Fatalf("a finished session must not be re-marked: %q", m.sessions["done"].Status)
+	}
+}
+
 func TestAutorunOpsRegisteredOwnerOnly(t *testing.T) {
-	for _, name := range []string{"autorun_start", "autorun_status", "autorun_stop"} {
+	for _, name := range []string{"autorun_start", "autorun_status", "autorun_stop", "autorun_stop_all"} {
 		opsRegistryMu.RLock()
 		spec, ok := opsRegistry[name]
 		opsRegistryMu.RUnlock()

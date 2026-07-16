@@ -22,6 +22,7 @@ type autorunSession struct {
 	StartedAt    time.Time `json:"startedAt"`
 	FinishedAt   time.Time `json:"finishedAt,omitempty"`
 	Error        string    `json:"error,omitempty"`
+	Summary      autorunRunSummary
 	cancel       context.CancelFunc
 }
 
@@ -36,6 +37,13 @@ type autorunSessionView struct {
 	FinishedAt   time.Time `json:"finishedAt,omitempty"`
 	Error        string    `json:"error,omitempty"`
 	ProgressTail string    `json:"progressTail,omitempty"`
+	Iterations   int       `json:"iterations"`
+	Commits      int       `json:"commits"`
+	FinishReason string    `json:"finishReason,omitempty"`
+	// FinalCommit is the SHA of the run's explicitly-marked final commit.
+	// While it is empty the run has not ended, however quiet it looks.
+	FinalCommit        string `json:"finalCommit,omitempty"`
+	FinalCommitSubject string `json:"finalCommitSubject,omitempty"`
 }
 
 type autorunSessionManager struct {
@@ -74,12 +82,13 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 	m.sessions[id] = s
 	m.mu.Unlock()
 	go func() {
-		err := executeAutorun(ctx, opts)
+		summary, err := executeAutorun(ctx, opts)
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		s.FinishedAt = time.Now().UTC()
 		s.cancel = nil
 		s.Status = "completed"
+		s.Summary = summary
 		if err != nil {
 			s.Error = err.Error()
 			if ctx.Err() != nil {
@@ -93,7 +102,9 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 }
 
 func (m *autorunSessionManager) view(s *autorunSession) autorunSessionView {
-	v := autorunSessionView{ID: s.ID, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error}
+	v := autorunSessionView{ID: s.ID, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error,
+		Iterations: s.Summary.Iterations, Commits: s.Summary.Commits, FinishReason: s.Summary.FinishReason,
+		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject}
 	if b, err := os.ReadFile(s.ProgressPath); err == nil {
 		const maxTail = 16 * 1024
 		if len(b) > maxTail {
@@ -136,6 +147,25 @@ func (m *autorunSessionManager) stop(id string) (autorunSessionView, error) {
 	return m.view(s), nil
 }
 
+// stopAll cancels every session still running. Sessions that already finished
+// are skipped rather than reported as stopped, so the count is the number of
+// loops this call actually halted.
+func (m *autorunSessionManager) stopAll() []autorunSessionView {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	views := make([]autorunSessionView, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		if s.cancel == nil {
+			continue
+		}
+		s.cancel()
+		s.Status = "stopping"
+		views = append(views, m.view(s))
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i].StartedAt.After(views[j].StartedAt) })
+	return views
+}
+
 type autorunStartPayload struct {
 	Task     string   `json:"task"`
 	Runner   string   `json:"runner"`
@@ -149,8 +179,13 @@ type autorunStartPayload struct {
 
 func init() {
 	registerOpsVerb(opsVerbSpec{Name: "autorun_start", Description: "Start a gate-verified autorun loop and return its session ID immediately.", Schema: autorunStartSchema(), Handler: opsAutorunStartHandler})
-	registerOpsVerb(opsVerbSpec{Name: "autorun_status", Description: "List autorun sessions, or inspect one session and its progress tail.", Schema: autorunIDSchema(false), Handler: opsAutorunStatusHandler})
-	registerOpsVerb(opsVerbSpec{Name: "autorun_stop", Description: "Cancel one running autorun session.", Schema: autorunIDSchema(true), Handler: opsAutorunStopHandler})
+	registerOpsVerb(opsVerbSpec{Name: "autorun_status", Description: "List autorun sessions, or inspect one session: progress tail, iterations, finish reason, and the final autorun commit. An empty finalCommit means the run has not finished. Pass machine to inspect a remote device's autoruns.", Schema: autorunIDSchema(false), Handler: opsAutorunStatusHandler})
+	registerOpsVerb(opsVerbSpec{Name: "autorun_stop", Description: "Cancel one running autorun session. It still records its final autorun commit.", Schema: autorunIDSchema(true), Handler: opsAutorunStopHandler})
+	registerOpsVerb(opsVerbSpec{Name: "autorun_stop_all", Description: "Cancel every running autorun session on a machine. Pass machine:<deviceId|alias|primary> to stop a remote device's autoruns; each stopped loop still records its final autorun commit.", Schema: autorunStopAllSchema(), Handler: opsAutorunStopAllHandler})
+}
+
+func autorunStopAllSchema() map[string]interface{} {
+	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false}
 }
 
 func autorunStartSchema() map[string]interface{} {
@@ -231,4 +266,9 @@ func opsAutorunStopHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 		return OpsResult{OK: false, Code: "not_found", Error: err.Error()}
 	}
 	return OpsResult{OK: true, Initial: view}
+}
+
+func opsAutorunStopAllHandler(_ OpsContext, _ json.RawMessage) OpsResult {
+	stopped := autorunSessions.stopAll()
+	return OpsResult{OK: true, Initial: map[string]interface{}{"stopped": stopped, "count": len(stopped)}}
 }

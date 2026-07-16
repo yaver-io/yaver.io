@@ -15,6 +15,63 @@ import (
 
 const autorunPromptPreamble = `You are a senior engineer working in this repository. Do not ask questions and do not stop for input. Read the codebase first. When a decision arises, choose the most correct, thorough implementation and implement it fully; treat any explicitly recommended option as the answer. Work in small verified increments, respect the task scope and forbidden-command list, and do not commit or push: Yaver owns the build/test gate and only keeps verified commits.`
 
+// autorunFinalCommitMarker is the phrase the last commit of every autorun run
+// carries in BOTH its subject and its body. Autorun's per-iteration commits are
+// otherwise indistinguishable from a loop that simply stopped emitting them, so
+// this marker is what lets a reader — or autorun_status — tell a run that ended
+// from one that is merely quiet.
+const autorunFinalCommitMarker = "final autorun commit"
+
+// Why an autorun run ended. Recorded in the final commit, the progress handoff,
+// and the MCP session view, so a converged run is never mistaken for one the
+// gate blocked or the operator stopped.
+const (
+	autorunReasonDone      = "task marked DONE"
+	autorunReasonConverged = "converged: runner stopped making changes"
+	autorunReasonMaxIters  = "reached --max-iters"
+	autorunReasonGate      = "gate failed"
+	autorunReasonRunner    = "runner failed"
+	autorunReasonScope     = "scope violation"
+	autorunReasonStopped   = "stopped by operator"
+)
+
+// autorunRunSummary is what a finished run reports to its caller: the CLI prints
+// it, and the session manager surfaces it over MCP.
+type autorunRunSummary struct {
+	Iterations   int    `json:"iterations"`
+	Commits      int    `json:"commits"`
+	FinishReason string `json:"finishReason,omitempty"`
+	FinalCommit  string `json:"finalCommit,omitempty"`
+	FinalSubject string `json:"finalCommitSubject,omitempty"`
+}
+
+func autorunTaskName(taskPath string) string {
+	name := strings.TrimSuffix(filepath.Base(taskPath), filepath.Ext(taskPath))
+	if strings.TrimSpace(name) == "" {
+		return "autorun"
+	}
+	return name
+}
+
+func autorunFinalCommitSubject(taskPath, reason string) string {
+	return fmt.Sprintf("autorun: %s for %s (%s)", autorunFinalCommitMarker, autorunTaskName(taskPath), reason)
+}
+
+func autorunFinalCommitBody(opts autorunOptions, runnerID string, summary autorunRunSummary, runErr error) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "This is the %s for task %s. No further autorun commits will follow for this run.\n\n",
+		autorunFinalCommitMarker, autorunTaskName(opts.TaskPath))
+	fmt.Fprintf(&b, "Finish reason: %s\n", summary.FinishReason)
+	fmt.Fprintf(&b, "Iterations run: %d\n", summary.Iterations)
+	fmt.Fprintf(&b, "Verified commits kept: %d\n", summary.Commits)
+	fmt.Fprintf(&b, "Runner: %s\n", runnerID)
+	fmt.Fprintf(&b, "Gate: %s\n", opts.Gate)
+	if runErr != nil {
+		fmt.Fprintf(&b, "\nThe run ended on an error. Its code changes were not kept; they are preserved in a diagnostic git stash:\n%s\n", runErr)
+	}
+	return b.String()
+}
+
 type autorunOptions struct {
 	TaskPath string
 	Runner   string

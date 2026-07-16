@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -79,6 +82,118 @@ func TestValidateAutorunScope(t *testing.T) {
 	}
 	if err := validateAutorunScope([]string{"mobile/App.tsx"}, []string{"desktop/agent/**"}, progress, workDir); err == nil {
 		t.Fatal("out-of-scope path accepted")
+	}
+}
+
+func TestAutorunFinalCommitIsMarkedInSubjectAndBody(t *testing.T) {
+	opts := autorunOptions{TaskPath: "/repo/tasks/yaver-video-task.md", Gate: "go test ./...", WorkDir: "/repo"}
+	summary := autorunRunSummary{Iterations: 4, Commits: 2, FinishReason: autorunReasonConverged}
+
+	subject := autorunFinalCommitSubject(opts.TaskPath, summary.FinishReason)
+	if !strings.Contains(subject, autorunFinalCommitMarker) {
+		t.Fatalf("subject must name it the final commit: %q", subject)
+	}
+	if !strings.Contains(subject, "yaver-video-task") || !strings.Contains(subject, autorunReasonConverged) {
+		t.Fatalf("subject must carry task and reason: %q", subject)
+	}
+
+	body := autorunFinalCommitBody(opts, "codex", summary, nil)
+	if !strings.Contains(body, autorunFinalCommitMarker) {
+		t.Fatalf("body must name it the final commit: %q", body)
+	}
+	for _, want := range []string{autorunReasonConverged, "Iterations run: 4", "Verified commits kept: 2", "codex", "go test ./..."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q: %q", want, body)
+		}
+	}
+}
+
+func TestAutorunFinalCommitBodyExplainsFailure(t *testing.T) {
+	opts := autorunOptions{TaskPath: "/repo/task.md", Gate: "go test ./...", WorkDir: "/repo"}
+	summary := autorunRunSummary{Iterations: 1, FinishReason: autorunReasonGate}
+	body := autorunFinalCommitBody(opts, "codex", summary, errors.New("gate failed; changes preserved in a diagnostic git stash"))
+	if !strings.Contains(body, "diagnostic git stash") || !strings.Contains(body, autorunReasonGate) {
+		t.Fatalf("a blocked run's final commit must explain itself: %q", body)
+	}
+}
+
+func TestFinalizeAutorunCommitsMarkedFinalCommitAndReportsSHA(t *testing.T) {
+	original := autorunExec
+	defer func() { autorunExec = original }()
+	workDir := t.TempDir()
+	progressPath := filepath.Join(workDir, "docs", "handoff", "task-progress.md")
+
+	var commitArgs []string
+	var pushed bool
+	autorunExec = func(_ context.Context, name string, args []string, _ string) autorunCommandResult {
+		if name == "git" && len(args) > 0 {
+			switch args[0] {
+			case "commit":
+				commitArgs = append([]string(nil), args...)
+			case "rev-parse":
+				return autorunCommandResult{Output: "abc1234def\n"}
+			case "push":
+				pushed = true
+			}
+		}
+		return autorunCommandResult{}
+	}
+
+	opts := autorunOptions{TaskPath: filepath.Join(workDir, "task.md"), Gate: "go build ./...", WorkDir: workDir, Push: true}
+	summary := autorunRunSummary{Iterations: 3, Commits: 1, FinishReason: autorunReasonMaxIters}
+	if err := finalizeAutorun(context.Background(), opts, "codex", progressPath, &summary, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if summary.FinalCommit != "abc1234def" {
+		t.Fatalf("final commit SHA not reported: %q", summary.FinalCommit)
+	}
+	if !strings.Contains(summary.FinalSubject, autorunFinalCommitMarker) {
+		t.Fatalf("summary subject not marked final: %q", summary.FinalSubject)
+	}
+	joined := strings.Join(commitArgs, " ")
+	if !strings.Contains(joined, "-S") {
+		t.Fatalf("final commit must be signed: %q", commitArgs)
+	}
+	if strings.Count(joined, autorunFinalCommitMarker) < 2 {
+		t.Fatalf("marker must appear in BOTH subject and body: %q", commitArgs)
+	}
+	if !pushed {
+		t.Fatal("final commit was not pushed despite --push")
+	}
+	note, err := os.ReadFile(progressPath)
+	if err != nil || !strings.Contains(string(note), autorunFinalCommitMarker) {
+		t.Fatalf("progress handoff missing the final note: %v %q", err, note)
+	}
+}
+
+// A stopped run's context is already cancelled; the final commit is the whole
+// point of stopping cleanly, so it must still be recorded.
+func TestFinalizeAutorunRecordsFinalCommitAfterCancellation(t *testing.T) {
+	original := autorunExec
+	defer func() { autorunExec = original }()
+	workDir := t.TempDir()
+	var sawLiveContext bool
+	autorunExec = func(ctx context.Context, name string, args []string, _ string) autorunCommandResult {
+		if ctx.Err() != nil {
+			return autorunCommandResult{Err: ctx.Err()}
+		}
+		sawLiveContext = true
+		if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+			return autorunCommandResult{Output: "deadbeef\n"}
+		}
+		return autorunCommandResult{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	opts := autorunOptions{TaskPath: filepath.Join(workDir, "task.md"), Gate: "go build ./...", WorkDir: workDir}
+	summary := autorunRunSummary{Iterations: 2, FinishReason: autorunReasonStopped}
+	if err := finalizeAutorun(ctx, opts, "codex", filepath.Join(workDir, "p.md"), &summary, context.Canceled); err != nil {
+		t.Fatal(err)
+	}
+	if !sawLiveContext || summary.FinalCommit != "deadbeef" {
+		t.Fatalf("cancelled run failed to record its final commit: %q", summary.FinalCommit)
 	}
 }
 
