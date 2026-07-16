@@ -48,6 +48,7 @@ type autorunSessionView struct {
 	// failover heals a dead runner, so it is not always the one that was asked for.
 	ActiveRunner string             `json:"activeRunner,omitempty"`
 	Heals        []autorunHealEvent `json:"heals,omitempty"`
+	Resources    autorunResources   `json:"resources"`
 }
 
 type autorunSessionManager struct {
@@ -109,7 +110,7 @@ func (m *autorunSessionManager) view(s *autorunSession) autorunSessionView {
 	v := autorunSessionView{ID: s.ID, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error,
 		Iterations: s.Summary.Iterations, Commits: s.Summary.Commits, FinishReason: s.Summary.FinishReason,
 		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject,
-		ActiveRunner: s.Summary.Runner, Heals: s.Summary.Heals}
+		ActiveRunner: s.Summary.Runner, Heals: s.Summary.Heals, Resources: s.Summary.Resources}
 	if b, err := os.ReadFile(s.ProgressPath); err == nil {
 		const maxTail = 16 * 1024
 		if len(b) > maxTail {

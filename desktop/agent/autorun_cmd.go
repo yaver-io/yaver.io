@@ -27,6 +27,7 @@ func runAutorun(args []string) {
 	maxIters := fs.Int("max-iters", 0, "maximum kicks (0 = until DONE/converged)")
 	gate := fs.String("gate", "", "required build/test command")
 	push := fs.Bool("push", false, "push gate-verified commits")
+	tmux := fs.Bool("tmux", false, "drive the runner as an interactive TUI in tmux (forced on for claude)")
 	machine := fs.String("machine", "", "remote machine (not available in this increment)")
 	var scopes autorunScopes
 	fs.Var(&scopes, "scope", "allowed repository glob (repeatable)")
@@ -42,7 +43,7 @@ func runAutorun(args []string) {
 		fmt.Fprintln(os.Stderr, "autorun:", err)
 		return
 	}
-	opts := autorunOptions{TaskPath: *task, Runner: *runner, Interval: *interval, MaxIters: *maxIters, Gate: *gate, Push: *push, Scopes: scopes, WorkDir: workDir}
+	opts := autorunOptions{TaskPath: *task, Runner: *runner, Interval: *interval, MaxIters: *maxIters, Gate: *gate, Push: *push, Scopes: scopes, WorkDir: workDir, Tmux: *tmux}
 	summary, err := executeAutorun(context.Background(), opts)
 	if summary.FinishReason != "" {
 		fmt.Printf("autorun: %s after %d iteration(s), %d verified commit(s)\n", summary.FinishReason, summary.Iterations, summary.Commits)
@@ -161,38 +162,74 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner RunnerConfig, 
 		}
 		summary.Iterations = iteration
 
+		// Measure BEFORE spending. This loop is what exhausts the machine, so
+		// it checks disk, RAM and CPU load ahead of every kick rather than
+		// discovering exhaustion halfway through a runner turn.
+		res := probeAutorunResources(ctx, opts.WorkDir)
+		summary.Resources = res
+
+		if res.TotalRAMGB > 0 && res.TotalRAMGB < autorunMinRAMGB {
+			return autorunReasonResources, fmt.Errorf("machine has %.1f GB RAM (floor %.1f GB); build/test toolchains will be OOM-killed rather than fail cleanly", res.TotalRAMGB, autorunMinRAMGB)
+		}
+
 		// Self-heal: this loop generates the very cache that fills the disk.
-		// Reclaim BEFORE kicking a runner, so a long run doesn't strand its own
-		// machine (and never at zero, where nothing can even write output).
-		if free, ok := autorunFreeDiskGB(opts.WorkDir); ok && free < autorunDiskFloorGB {
+		// Reclaim what we generated before asking for more.
+		if res.FreeDiskGB < autorunDiskFloorGB {
 			note := reclaimAutorunDisk(ctx, opts.WorkDir)
 			summary.Heals = append(summary.Heals, autorunHealEvent{Iteration: iteration, Kind: autorunHealDiskReclaim, Detail: note})
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SELF-HEAL disk below %.1f GB — %s", iteration, autorunDiskFloorGB, note))
 			if after, ok := autorunFreeDiskGB(opts.WorkDir); ok && after < autorunDiskFloorGB {
-				return autorunReasonDisk, fmt.Errorf("only %.1f GB free after reclaiming caches (floor %.1f GB); refusing to kick a runner that cannot finish", after, autorunDiskFloorGB)
+				return autorunReasonResources, fmt.Errorf("only %.1f GB free after reclaiming caches (floor %.1f GB); refusing to kick a runner that cannot finish — %s", after, autorunDiskFloorGB, res.Summary())
+			}
+			res = probeAutorunResources(ctx, opts.WorkDir)
+			summary.Resources = res
+		}
+
+		// CPU saturation is advisory: something else compiling is a reason to
+		// wait, not to fail the run. Back off one interval and re-measure.
+		if res.Saturated() {
+			detail := fmt.Sprintf("load %.2f/core exceeds %.1f — waiting one interval before kicking (%s)", res.LoadPerCPU, autorunCPUBackoffPerCore, res.Summary())
+			summary.Heals = append(summary.Heals, autorunHealEvent{Iteration: iteration, Kind: autorunHealCPUBackoff, Detail: detail})
+			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SELF-HEAL %s", iteration, detail))
+			select {
+			case <-ctx.Done():
+				return autorunReasonStopped, ctx.Err()
+			case <-time.After(opts.Interval):
 			}
 		}
 
 		prompt := autorunContext(task, string(progressBytes), logResult.Output, iteration)
-		result := autorunExec(ctx, resolveRunnerBinary(runner.Command), autorunRunnerArgs(runner, prompt), opts.WorkDir)
+		result := autorunKick(ctx, opts, runner, prompt, autorunKickTimeout)
 		changes, statusErr := autorunGitChanges(ctx, opts.WorkDir)
 		if statusErr != nil {
 			return autorunReasonRunner, statusErr
 		}
 		if err := validateAutorunScope(changes, opts.Scopes, progressPath, opts.WorkDir); err != nil {
-			if rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
+			if _, rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
 				return autorunReasonScope, fmt.Errorf("iteration %d violated scope (%v) and rollback failed: %w", iteration, err, rollbackErr)
 			}
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SCOPE FAILED. Runner changes were removed from the worktree and preserved in a diagnostic git stash.\n\n%s", iteration, err))
 			return autorunReasonScope, fmt.Errorf("iteration %d violated scope; changes were preserved in a diagnostic git stash: %w", iteration, err)
 		}
 		if result.Err != nil {
+			stashRef := ""
 			if len(changes) > 0 {
-				if rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
+				parked, rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration)
+				if rollbackErr != nil {
 					return autorunReasonRunner, fmt.Errorf("runner %s failed in iteration %d and rollback failed: %w", runner.RunnerID, iteration, rollbackErr)
 				}
+				stashRef = parked
 			}
-			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: runner `%s` failed. Any changes were removed from the worktree and preserved in a diagnostic git stash.\n\n```text\n%s\n```", iteration, runner.RunnerID, strings.TrimSpace(result.Output)))
+			// Hand the dead runner's context to its successor rather than
+			// dropping it: the tail of what it said, and where its half-done
+			// work is parked. The next kick's prompt includes this handoff, so
+			// the new runner resumes the thread instead of restarting cold.
+			handoff := fmt.Sprintf("Iteration %d: runner `%s` failed. Its changes were removed from the worktree.", iteration, runner.RunnerID)
+			if stashRef != "" {
+				handoff += fmt.Sprintf("\n\nIts work is preserved and RECOVERABLE — to continue from where it stopped:\n```sh\ngit stash apply \"stash^{/%s}\"\n```", stashRef)
+			}
+			handoff += fmt.Sprintf("\n\nWhat it reported before failing:\n```text\n%s\n```", strings.TrimSpace(autorunTailLines(result.Output, 60)))
+			_ = appendAutorunProgress(progressPath, handoff)
 
 			// Self-heal: one runner's bad day must not end the run. A ready
 			// runner sat unused for six hours while this loop died on claude's
@@ -219,7 +256,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner RunnerConfig, 
 			noops = 0
 			gateResult := autorunExec(ctx, "sh", []string{"-lc", opts.Gate}, opts.WorkDir)
 			if gateResult.Err != nil {
-				if rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
+				if _, rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
 					return autorunReasonGate, fmt.Errorf("gate failed and rollback failed: %w", rollbackErr)
 				}
 				_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: GATE FAILED (`%s`). Changes were removed from the worktree and preserved in a diagnostic git stash.\n\n```text\n%s\n```", iteration, opts.Gate, strings.TrimSpace(gateResult.Output)))

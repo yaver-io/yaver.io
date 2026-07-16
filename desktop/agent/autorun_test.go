@@ -55,7 +55,7 @@ func TestRollbackAutorunChangesUsesDiagnosticStash(t *testing.T) {
 		gotArgs = append([]string(nil), args...)
 		return autorunCommandResult{}
 	}
-	if err := rollbackAutorunChanges(context.Background(), "/repo", 7); err != nil {
+	if _, err := rollbackAutorunChanges(context.Background(), "/repo", 7); err != nil {
 		t.Fatal(err)
 	}
 	if gotName != "git" || len(gotArgs) < 4 || gotArgs[0] != "stash" || gotArgs[1] != "push" || gotArgs[2] != "--include-untracked" {

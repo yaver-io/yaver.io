@@ -33,7 +33,7 @@ const (
 	autorunReasonRunner    = "runner failed"
 	autorunReasonScope     = "scope violation"
 	autorunReasonStopped   = "stopped by operator"
-	autorunReasonDisk      = "insufficient disk after reclaiming caches"
+	autorunReasonResources = "insufficient machine resources"
 )
 
 // Self-heal kinds. A long-running loop meets transient failures — a runner whose
@@ -42,6 +42,7 @@ const (
 const (
 	autorunHealRunnerFailover = "runner_failover"
 	autorunHealDiskReclaim    = "disk_reclaim"
+	autorunHealCPUBackoff     = "cpu_backoff"
 )
 
 // autorunHealEvent is one self-heal action, surfaced in the final commit, the
@@ -69,6 +70,7 @@ type autorunRunSummary struct {
 	FinalSubject string             `json:"finalCommitSubject,omitempty"`
 	Runner       string             `json:"runner,omitempty"`
 	Heals        []autorunHealEvent `json:"heals,omitempty"`
+	Resources    autorunResources   `json:"resources"`
 }
 
 // readyAutorunRunners lists every authenticated runner that is ready, skipping
@@ -130,6 +132,7 @@ func autorunFinalCommitBody(opts autorunOptions, runnerID string, summary autoru
 	fmt.Fprintf(&b, "Verified commits kept: %d\n", summary.Commits)
 	fmt.Fprintf(&b, "Runner: %s\n", runnerID)
 	fmt.Fprintf(&b, "Gate: %s\n", opts.Gate)
+	fmt.Fprintf(&b, "Machine at finish: %s\n", summary.Resources.Summary())
 	if len(summary.Heals) > 0 {
 		fmt.Fprintf(&b, "\nSelf-healed %d time(s) during this run:\n", len(summary.Heals))
 		for _, h := range summary.Heals {
@@ -151,6 +154,34 @@ type autorunOptions struct {
 	Push     bool
 	Scopes   []string
 	WorkDir  string
+	// Tmux drives the runner as an interactive TUI in tmux instead of headless
+	// `-p`. Forced on for claude, whose `-p` path fails auth even when the TUI
+	// on the same box is signed in.
+	Tmux bool
+}
+
+// autorunUsesTmux reports whether this runner must be driven as a TUI. claude's
+// headless `-p` reports "OAuth session expired" while its TUI works, so driving
+// it any other way cannot succeed.
+func autorunUsesTmux(opts autorunOptions, runner RunnerConfig) bool {
+	return opts.Tmux || normalizeRunnerID(runner.RunnerID) == "claude"
+}
+
+// autorunKick runs one iteration against a runner, via tmux PTY when that
+// runner needs it and headless otherwise. Either path runs subscription-only:
+// the metered API keys are stripped from the runner's environment first.
+func autorunKick(ctx context.Context, opts autorunOptions, runner RunnerConfig, prompt string, timeout time.Duration) autorunCommandResult {
+	if !autorunUsesTmux(opts, runner) {
+		return autorunExecRunner(ctx, runner, resolveRunnerBinary(runner.Command), autorunRunnerArgs(runner, prompt), opts.WorkDir)
+	}
+	if !autorunTmuxAvailable(ctx, opts.WorkDir) {
+		return autorunCommandResult{Err: fmt.Errorf("runner %s must be driven as a TUI but tmux is not installed", runner.RunnerID)}
+	}
+	session := autorunTmuxSessionName(opts.TaskPath)
+	if _, err := ensureAutorunTmuxSession(ctx, session, runner, opts.WorkDir); err != nil {
+		return autorunCommandResult{Err: err}
+	}
+	return autorunTmuxKick(ctx, session, prompt, opts.WorkDir, timeout)
 }
 
 type autorunCommandResult struct {
@@ -163,9 +194,13 @@ type autorunExecFunc func(context.Context, string, []string, string) autorunComm
 var autorunExec autorunExecFunc = runAutorunCommand
 
 func runAutorunCommand(ctx context.Context, name string, args []string, dir string) autorunCommandResult {
+	return runAutorunCommandEnv(ctx, name, args, dir, os.Environ())
+}
+
+func runAutorunCommandEnv(ctx context.Context, name string, args []string, dir string, env []string) autorunCommandResult {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = env
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -223,13 +258,13 @@ func autorunRunnerArgs(runner RunnerConfig, prompt string) []string {
 // rollbackAutorunChanges returns a failed kick to a clean worktree while
 // retaining its complete diff in a named stash for diagnosis. A stash is
 // deliberately used instead of deleting untracked files or a hard reset.
-func rollbackAutorunChanges(ctx context.Context, workDir string, iteration int) error {
+func rollbackAutorunChanges(ctx context.Context, workDir string, iteration int) (string, error) {
 	message := fmt.Sprintf("yaver-autorun-failed-iteration-%d-%d", iteration, time.Now().UTC().Unix())
 	result := autorunExec(ctx, "git", []string{"stash", "push", "--include-untracked", "--message", message}, workDir)
 	if result.Err != nil {
-		return fmt.Errorf("preserve failed changes in git stash: %w: %s", result.Err, strings.TrimSpace(result.Output))
+		return "", fmt.Errorf("preserve failed changes in git stash: %w: %s", result.Err, strings.TrimSpace(result.Output))
 	}
-	return nil
+	return message, nil
 }
 
 func validateAutorunShellCommand(command string) error {
@@ -333,4 +368,32 @@ func appendAutorunProgress(path, body string) error {
 
 func autorunContext(task, progress, log string, iteration int) string {
 	return fmt.Sprintf("%s\n\nTASK MARKDOWN:\n%s\n\nCURRENT STATE (iteration %d):\nRecent git log:\n%s\n\nProgress handoff:\n%s", autorunPromptPreamble, task, iteration, log, progress)
+}
+
+// autorunKickTimeout bounds one runner turn. A TUI turn can be long (a real fix
+// with tests), but it must not hang the loop forever.
+const autorunKickTimeout = 30 * time.Minute
+
+// autorunTailLines returns the last n lines of a runner's output. A failed
+// runner's full transcript can be megabytes; its successor needs the end — where
+// the error is — not the whole thing.
+func autorunTailLines(output string, n int) string {
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+// autorunExecRunner runs a runner with the metered API keys stripped from its
+// environment, so a subscription runner cannot silently fall back to per-token
+// billing in an unattended loop.
+func autorunExecRunner(ctx context.Context, runner RunnerConfig, name string, args []string, dir string) autorunCommandResult {
+	env, stripped := sanitizeRunnerEnv(os.Environ(), runner.RunnerID)
+	res := runAutorunCommandEnv(ctx, name, args, dir, env)
+	if len(stripped) > 0 {
+		res.Output = fmt.Sprintf("[yaver] subscription-only: stripped %s from %s's environment\n%s",
+			strings.Join(stripped, ", "), runner.RunnerID, res.Output)
+	}
+	return res
 }
