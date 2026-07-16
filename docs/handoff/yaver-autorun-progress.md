@@ -63,3 +63,20 @@ Next safe increment after the concurrent runner finishes and the worktree builds
    status. Add registration, safety-boundary, lifecycle, and unknown-session tests.
 4. Do not expose specialist MCP tool names unless their dispatch can be wired within the
    allowed files; a listed-but-undispatchable tool is worse than ops-only discovery.
+
+### Gate follow-up
+
+The concurrent P7/P8 runner finished while this handoff was being written and committed
+the attempted `autorun_ops.go` / test files along with its own work. Its duplicate
+`shortHash` compile error was resolved. The mandatory gate was then rerun with the explicit
+Homebrew Go PATH. `go build ./...` passed; `go test ./...` failed, so this ancestry was not
+pushed as gate-verified.
+
+Observed test failures included the known stale autorun assertion
+`TestAutorunRunnerArgsAlwaysAutoApproves` (expects `--full-auto`; actual Codex autorun args
+correctly use the stronger `--dangerously-bypass-approvals-and-sandbox`) plus unrelated
+timeouts/surface failures including `TestInfoEndpoint`,
+`TestAgentAuthConvexValidationPath`, and
+`TestWebReload_DevStartFallbackSurfaceGating`. The full suite ran for roughly 9.5 minutes.
+The next run must correct the autorun assertion within scope, then rerun both full gates;
+it must still withhold the autorun commit if any test remains red.
