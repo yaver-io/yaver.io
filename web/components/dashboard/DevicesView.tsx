@@ -2223,9 +2223,26 @@ const PROVISION_PHASE_LABEL: Record<string, string> = {
   "starting-agent": "Starting the Yaver agent…",
   registering: "Registering your device…",
   "authorizing-runners": "Almost there — finishing setup…",
+  // Not progress. The box is up, but its Yaver session expired and it cannot
+  // register on its own, so nothing here changes until the user acts. Without
+  // an entry this rendered the raw slug "awaiting-yaver-auth" under a moving
+  // progress bar promising the card would appear "automatically" — which it
+  // never would.
+  "awaiting-yaver-auth": "Waiting for you to sign this box in",
   ready: "Ready",
   error: "Setup failed",
 };
+
+/**
+ * A box that is awake but blocked on the user is neither "setting up" nor
+ * "failed" — it is waiting, and it will wait forever unless someone signs it
+ * in. Rendering it as either one is a lie: the progress branch promises it
+ * resolves itself, the failure branch tells the user to delete and re-buy a
+ * box that is perfectly fine.
+ */
+function isAwaitingYaverAuth(m: { provisionPhase?: string | null }): boolean {
+  return m.provisionPhase === "awaiting-yaver-auth";
+}
 
 export interface ManagedMachineSummary {
   id: string;
@@ -2238,6 +2255,16 @@ export interface ManagedMachineSummary {
   provisionPhase: string | null;
   provisionProgress: number | null;
   provisionError: string | null;
+  /**
+   * The control plane's own sentence about why this box is stuck — e.g. "The
+   * box is awake but its Yaver agent session expired. Sign this machine in
+   * from your phone to finish wake."
+   *
+   * /subscription has always sent it; web simply never modelled it, so the
+   * dashboard had nothing to show and fell back to a progress bar promising
+   * the box would connect "automatically". It could not.
+   */
+  errorMessage: string | null;
   runnersAuthorized: boolean;
 }
 
@@ -2521,11 +2548,10 @@ export default function DevicesView({
   // panel is open + the latest queued command for status feedback.
   const [rescueOpenDeviceId, setRescueOpenDeviceId] = useState<string | null>(null);
   // Browser-shell modal state. Lives at the DevicesView level so the
-  // Shell button next to Rescue/Details on each card opens the same
-  // modal as the home tab, including the reauth-required guidance
-  // when the agent's session has expired.
+  // Shell item in each card's "⋯" menu opens the same modal as the
+  // home tab, including the reauth-required guidance when the agent's
+  // session has expired.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
-  const [sshCopiedDeviceId, setSshCopiedDeviceId] = useState<string | null>(null);
   const [rescueStatus, setRescueStatus] = useState<Record<string, { msg: string; tone: "info" | "ok" | "err" } | undefined>>({});
   const [showDormantDevices, setShowDormantDevices] = useState(false);
   const actionableDevices = devices.filter((device) => !isDormantUnreachableDevice(device));
@@ -2558,6 +2584,7 @@ export default function DevicesView({
         <div className="mb-4 space-y-2">
           {pendingManagedBoxes.map((m) => {
             const failed = m.status === "error" || m.provisionPhase === "error";
+            const awaitingAuth = isAwaitingYaverAuth(m);
             const pct =
               typeof m.provisionProgress === "number"
                 ? m.provisionProgress
@@ -2588,9 +2615,19 @@ export default function DevicesView({
                     </span>
                   </div>
                   <span
-                    className={`text-xs font-medium ${failed ? "text-red-700 dark:text-red-300" : "text-sky-700 dark:text-sky-300"}`}
+                    className={`text-xs font-medium ${
+                      failed
+                        ? "text-red-700 dark:text-red-300"
+                        : awaitingAuth
+                          ? "text-amber-700 dark:text-amber-300"
+                          : "text-sky-700 dark:text-sky-300"
+                    }`}
                   >
-                    {failed ? "Setup failed" : "Setting up"}
+                    {failed
+                      ? "Setup failed"
+                      : awaitingAuth
+                        ? "Sign-in needed"
+                        : "Setting up"}
                   </span>
                 </div>
                 {failed ? (
@@ -2608,6 +2645,23 @@ export default function DevicesView({
                         docker logs yaver
                       </code>
                       .
+                    </p>
+                  </div>
+                ) : awaitingAuth ? (
+                  // No progress bar: nothing is happening and nothing will,
+                  // until this box is signed in. The control plane already
+                  // writes the exact sentence — show it rather than inventing
+                  // a vaguer one.
+                  <div className="mt-2">
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      {m.errorMessage ??
+                        "This box is awake, but its Yaver session expired so it can't finish connecting on its own."}
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-surface-500">
+                      Sign it in from the Yaver app on your phone — open the
+                      remote-box picker and use “Sign this machine in”. It will
+                      not connect by itself, and it parks again once the wake
+                      window closes.
                     </p>
                   </div>
                 ) : (
@@ -2757,28 +2811,43 @@ export default function DevicesView({
                           Resuming…
                         </span>
                       ) : null}
+                      {/* Primary / Secondary are now set from the "⋯"
+                          menu, so the card has to carry the state itself. */}
+                      {primaryDeviceId === device.id ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded border border-brand/40 bg-brand-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-brand-softFg"
+                          title="This is your primary device"
+                        >
+                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                            <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
+                          </svg>
+                          Primary
+                        </span>
+                      ) : secondaryDeviceId === device.id ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded border border-violet-400/50 bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/10 dark:text-violet-300"
+                          title="This is your fallback secondary device"
+                        >
+                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden>
+                            <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
+                          </svg>
+                          Secondary
+                        </span>
+                      ) : null}
                       <DeviceLifecycleBadge device={device} />
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1">
                       <TransportBadge device={device} />
-                      {device.hosting ? (
+                      {/* Only BYO gets its own chip. "yaver-hosted" and
+                          "self-hosted" already have a badge above, and
+                          rendering both printed SELF-HOSTED twice on the
+                          same card. */}
+                      {device.hosting === "byo" ? (
                         <span
-                          className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                            device.hosting === "yaver-hosted"
-                              ? "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
-                              : device.hosting === "byo"
-                                ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-                                : "border-slate-300 bg-slate-50 text-slate-600 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-300"
-                          }`}
-                          title={
-                            device.hosting === "yaver-hosted"
-                              ? "Managed by Yaver (paid via LemonSqueezy or owner-adopted)"
-                              : device.hosting === "byo"
-                                ? "Yaver-provisioned on your own cloud account — auto scale-to-zero to cut your provider bill"
-                                : "Your own self-hosted box"
-                          }
+                          className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+                          title="Yaver-provisioned on your own cloud account — auto scale-to-zero to cut your provider bill"
                         >
-                          {device.hosting === "yaver-hosted" ? "Yaver-hosted" : device.hosting === "byo" ? "BYO" : "Self-hosted"}
+                          BYO
                         </span>
                       ) : null}
                       {/* What the box IS (Asleep / Waking / Gone) before what you
@@ -2790,8 +2859,12 @@ export default function DevicesView({
                           nothing when neither action would succeed. */}
                       <ManagedPowerButton device={device} token={token} />
                     </div>
-                    <div className="mt-1 text-sm text-slate-600 dark:text-surface-400">
-                      <p>
+                    {/* Platform · signal · version · update all on ONE
+                        line — the update affordance used to sit on its own
+                        row under the identity line and pushed the card
+                        taller for a chip most devices never show. */}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600 dark:text-surface-400">
+                      <span>
                         {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
                         {device.agentVersion ? (
                           <>
@@ -2808,12 +2881,8 @@ export default function DevicesView({
                             })() : null}
                           </>
                         ) : null}
-                      </p>
-                      {(device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0) ||
-                      device.probeState === "ok" ||
-                      device.probeState === "auth-expired" ? (
-                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                          {device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0 ? (() => {
+                      </span>
+                      {device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0 ? (() => {
                             const lc = deriveDeviceLifecycleState(device);
                             const reachable = lc === "connected" || lc === "ready-to-connect";
                             const cur = String(device.agentVersion).replace(/^v/i, "");
@@ -2846,48 +2915,15 @@ export default function DevicesView({
                                 update → v{latestAgentVersion} (unreachable)
                               </span>
                             );
-                          })() : null}
-                          {device.probeState === "ok" && device.probePath ? (
-                            <span>· probed via {device.probePath}</span>
-                          ) : null}
-                          {device.probeState === "auth-expired" ? <span>· auth expired</span> : null}
-                        </div>
+                      })() : null}
+                      {device.probeState === "ok" && device.probePath ? (
+                        <span>· probed via {device.probePath}</span>
                       ) : null}
+                      {device.probeState === "auth-expired" ? <span>· auth expired</span> : null}
                     </div>
                   </div>
 
                   <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
-                    {!device.isGuest && token ? (
-                      <button
-                        onClick={async () => {
-                          try {
-                            await setPrimaryDevice(primaryDeviceId === device.id ? null : device.id);
-                          } catch (e: any) {
-                            alert(`Failed to update primary: ${e?.message ?? e}`);
-                          }
-                        }}
-                        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
-                          primaryDeviceId === device.id
-                            ? "border-brand/40 bg-brand-soft text-brand-softFg dark:border-brand/40 dark:bg-brand-soft dark:text-brand-softFg"
-                            : "border-slate-300 bg-white text-slate-700 hover:border-brand/40 hover:text-brand dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-brand/40 dark:hover:text-brand-softFg"
-                        }`}
-                        title={primaryDeviceId === device.id ? "This is your primary device" : "Mark this device as your primary machine"}
-                      >
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                          <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
-                        </svg>
-                        {primaryDeviceId === device.id ? "Primary" : "Set Primary"}
-                      </button>
-                    ) : null}
-                    {!device.isGuest && token ? (
-                      <button
-                        onClick={() => setRecycleFor({ id: device.id, name: device.alias || device.name || device.id })}
-                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-700 transition-colors hover:border-amber-500/50 hover:text-amber-600 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-amber-500/50 dark:hover:text-amber-400"
-                        title="Recycle this box: provision a fresh box, health-check, then snapshot+delete the old one (dry-run first)"
-                      >
-                        ♻ Recycle box
-                      </button>
-                    ) : null}
                     {!device.isGuest && token && managedMachine && managedMachine.status === "active" ? (
                       <button
                         disabled={boxBusy === managedMachine.id}
@@ -2934,67 +2970,34 @@ export default function DevicesView({
                         }}
                       />
                     ) : null}
-                    {!device.isGuest && token && primaryDeviceId !== device.id ? (
-                      <button
-                        onClick={async () => {
-                          try {
-                            await setSecondaryDevice(secondaryDeviceId === device.id ? null : device.id);
-                          } catch (e: any) {
-                            alert(`Failed to update secondary: ${e?.message ?? e}`);
-                          }
-                        }}
-                        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
-                          secondaryDeviceId === device.id
-                            ? "border-violet-400/50 bg-violet-100 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/10 dark:text-violet-300"
-                            : "border-slate-300 bg-white text-slate-700 hover:border-violet-400/40 hover:text-violet-600 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-violet-400/40 dark:hover:text-violet-300"
-                        }`}
-                        title={secondaryDeviceId === device.id ? "This is your secondary device" : "Mark this device as your fallback secondary machine"}
-                      >
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden>
-                          <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
-                        </svg>
-                        {secondaryDeviceId === device.id ? "Secondary" : "Set Secondary"}
-                      </button>
-                    ) : null}
-                    {!device.isGuest ? (
-                      <button
-                        onClick={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
-                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium leading-none text-amber-700 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:border-amber-500/60 dark:hover:bg-amber-500/20"
-                        title="Recover a wedged agent — works even when the relay tunnel is broken"
-                      >
-                        {/* svg matches PRIMARY/Details size so this button stays the same height as its siblings;
-                           previous emoji 🩹 rendered at native emoji line-height which made the row taller */}
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                          <path d="M9 12 3 6l3-3 6 6" />
-                          <path d="m12 9 3 3-6 6-3-3" />
-                          <path d="m14 6 4 4" />
-                          <path d="M21 12c-2 2-3.5 2-5 0" />
-                        </svg>
-                        Rescue
-                      </button>
-                    ) : null}
-                    <button
-                      onClick={() => setShellDevice(device)}
-                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium leading-none text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-200 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-50 transition-colors"
-                      title="Open a browser shell on this device (PTY over relay) — cloud-console style"
-                    >
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <path d="M4 17l6-6-6-6" />
-                        <path d="M12 19h8" />
-                      </svg>
-                      Shell
-                    </button>
-                    <button
-                      onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
-                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-100"
-                      aria-expanded={expandedId === device.id}
-                      title="Show runtime, hardware, network and sharing details"
-                    >
-                      <svg className={`h-3.5 w-3.5 transition-transform ${expandedId === device.id ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <path d="m9 6 6 6-6 6" />
-                      </svg>
-                      {expandedId === device.id ? "Hide" : "Details"}
-                    </button>
+                    <DeviceActionsMenu
+                      device={device}
+                      token={token}
+                      sshHref={sshHref}
+                      sshCommand={sshCommand}
+                      isPrimary={primaryDeviceId === device.id}
+                      isSecondary={secondaryDeviceId === device.id}
+                      detailsOpen={expandedId === device.id}
+                      rescueOpen={rescueOpenDeviceId === device.id}
+                      onSetPrimary={async () => {
+                        try {
+                          await setPrimaryDevice(primaryDeviceId === device.id ? null : device.id);
+                        } catch (e: any) {
+                          alert(`Failed to update primary: ${e?.message ?? e}`);
+                        }
+                      }}
+                      onSetSecondary={async () => {
+                        try {
+                          await setSecondaryDevice(secondaryDeviceId === device.id ? null : device.id);
+                        } catch (e: any) {
+                          alert(`Failed to update secondary: ${e?.message ?? e}`);
+                        }
+                      }}
+                      onRecycle={() => setRecycleFor({ id: device.id, name: device.alias || device.name || device.id })}
+                      onRescue={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
+                      onShell={() => setShellDevice(device)}
+                      onToggleDetails={() => setExpandedId(expandedId === device.id ? null : device.id)}
+                    />
                   </div>
                 </div>
                 {rescueOpenDeviceId === device.id ? (
@@ -3384,27 +3387,10 @@ export default function DevicesView({
                     </div>
                   );
                 })()}
+                {/* One CTA. Ping / SSH / Copy SSH moved into the card's
+                    "⋯" menu — they're diagnostics, not the thing you came
+                    to the card to do. */}
                 <div className="mt-5 flex flex-wrap items-center gap-2">
-                  <InlinePingButton device={device} token={token ?? null} />
-                  <InlineSSHButton sshHref={sshHref} />
-                  <CopySSHButton
-                    command={sshCommand}
-                    copied={sshCopiedDeviceId === device.id}
-                    onCopy={() => {
-                      void (async () => {
-                        try {
-                          await navigator.clipboard.writeText(sshCommand);
-                          setSshCopiedDeviceId(device.id);
-                          window.setTimeout(() => {
-                            setSshCopiedDeviceId((current) => (current === device.id ? null : current));
-                          }, 2000);
-                        } catch (e: any) {
-                          alert(`Copy failed: ${e?.message || e}`);
-                        }
-                      })();
-                    }}
-                    title={directSSHHost ? `Copy ${sshCommand} — direct fallback: ssh ${directSSHHost}` : `Copy ${sshCommand}`}
-                  />
                   {isActiveWorkspace && onCloseWorkspace ? (
                     <button
                       onClick={onCloseWorkspace}
@@ -3958,72 +3944,188 @@ function DeviceProjectsRail({
   );
 }
 
-function InlinePingButton({ device, token }: { device: Device; token: string | null | undefined }) {
-  const { pingState, ping } = useDevicePing(device, token);
-  const failure = pingState.ok === false ? classifyPingFailure(pingState) : null;
-  return (
-    <button
-      onClick={() => void ping()}
-      disabled={pingState.pinging}
-      className="inline-flex items-center gap-1.5 rounded-md border border-surface-700 bg-surface-900/60 px-3 py-1.5 text-xs font-semibold text-surface-200 shadow-sm hover:border-surface-600 hover:bg-surface-800 disabled:opacity-50"
-      title={failure ? failure.title : "Probe /health via relay first, then direct host"}
-    >
-      {pingState.pinging
-        ? "Pinging..."
-        : pingState.ok === true
-          ? `${pingState.rttMs}ms`
-          : failure
-            ? failure.label
-            : "Ping"}
-    </button>
-  );
-}
-
-function InlineSSHButton({
+// Every per-device action except the one CTA the card is for
+// (Open Workspace). They used to sit on the card as ~9 competing
+// buttons across two rows; the card is a status surface first, so
+// they live behind one "⋯" affordance now. Ping keeps its hook here
+// rather than in the panel so a result survives closing the menu.
+function DeviceActionsMenu({
+  device,
+  token,
   sshHref,
-  disabled,
+  sshCommand,
+  isPrimary,
+  isSecondary,
+  detailsOpen,
+  rescueOpen,
+  onSetPrimary,
+  onSetSecondary,
+  onRecycle,
+  onRescue,
+  onShell,
+  onToggleDetails,
 }: {
+  device: Device;
+  token: string | null | undefined;
   sshHref: string | null;
-  disabled?: boolean;
+  sshCommand: string;
+  isPrimary: boolean;
+  isSecondary: boolean;
+  detailsOpen: boolean;
+  rescueOpen: boolean;
+  onSetPrimary: () => void;
+  onSetSecondary: () => void;
+  onRecycle: () => void;
+  onRescue: () => void;
+  onShell: () => void;
+  onToggleDetails: () => void;
 }) {
-  return (
-    <a
-      href={disabled || !sshHref ? undefined : sshHref}
-      onClick={(e) => {
-        if (disabled || !sshHref) e.preventDefault();
-      }}
-      aria-disabled={disabled || !sshHref}
-      className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold shadow-sm ${
-        disabled || !sshHref
-          ? "cursor-not-allowed border-surface-800 bg-surface-900/40 text-surface-500"
-          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200 hover:border-emerald-500/50 hover:bg-emerald-500/15"
-      }`}
-      title={sshHref ? "Open your system SSH handler for this machine" : "No direct SSH host advertised by this device"}
-    >
-      SSH
-    </a>
-  );
-}
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const { pingState, ping } = useDevicePing(device, token);
+  const pingFailure = pingState.ok === false ? classifyPingFailure(pingState) : null;
+  const canManage = !device.isGuest && !!token;
 
-function CopySSHButton({
-  command,
-  copied,
-  onCopy,
-  title,
-}: {
-  command: string;
-  copied: boolean;
-  onCopy: () => void;
-  title: string;
-}) {
+  const itemClass =
+    "flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[12px] text-slate-700 hover:bg-slate-100 dark:text-surface-200 dark:hover:bg-surface-800";
+  const hintClass = "shrink-0 text-[10px] text-slate-400 dark:text-surface-500";
+
   return (
-    <button
-      onClick={onCopy}
-      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold leading-none text-emerald-700 hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-500/20"
-      title={title}
-    >
-      {copied ? "SSH Copied" : "Copy SSH"}
-    </button>
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Actions for ${device.name}`}
+        title="Actions — shell, ping, SSH, rescue, details"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)]"
+      >
+        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+          <circle cx="5" cy="12" r="1.6" />
+          <circle cx="12" cy="12" r="1.6" />
+          <circle cx="19" cy="12" r="1.6" />
+        </svg>
+      </button>
+      {open ? (
+        <>
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-30 cursor-default"
+          />
+          <div
+            role="menu"
+            className="absolute right-0 top-full z-40 mt-1 min-w-[228px] overflow-hidden rounded-md border border-slate-200 bg-white py-1 shadow-lg dark:border-surface-700 dark:bg-surface-900"
+          >
+            <button className={itemClass} onClick={() => { onToggleDetails(); setOpen(false); }}>
+              <span>{detailsOpen ? "Hide details" : "Details"}</span>
+              <span className={hintClass}>runtime · network</span>
+            </button>
+            <button className={itemClass} onClick={() => { onShell(); setOpen(false); }}>
+              <span>Shell</span>
+              <span className={hintClass}>PTY in browser</span>
+            </button>
+            <button
+              className={itemClass}
+              disabled={pingState.pinging}
+              onClick={() => void ping()}
+              title={pingFailure ? pingFailure.title : "Probe /health via relay first, then direct host"}
+            >
+              <span>Ping</span>
+              <span
+                className={
+                  pingState.ok === true
+                    ? "shrink-0 text-[10px] text-emerald-600 dark:text-emerald-400"
+                    : pingFailure
+                      ? "shrink-0 text-[10px] text-amber-600 dark:text-amber-400"
+                      : hintClass
+                }
+              >
+                {pingState.pinging
+                  ? "pinging…"
+                  : pingState.ok === true
+                    ? `${pingState.rttMs}ms`
+                    : pingFailure
+                      ? pingFailure.label
+                      : "reachability"}
+              </span>
+            </button>
+            <div className="my-1 border-t border-slate-200 dark:border-surface-800" />
+            <a
+              role="menuitem"
+              href={sshHref ?? undefined}
+              onClick={(e) => {
+                if (!sshHref) {
+                  e.preventDefault();
+                  return;
+                }
+                setOpen(false);
+              }}
+              aria-disabled={!sshHref}
+              className={
+                sshHref
+                  ? itemClass
+                  : `${itemClass} cursor-not-allowed opacity-50 hover:bg-transparent dark:hover:bg-transparent`
+              }
+              title={sshHref ? "Open your system SSH handler for this machine" : "No direct SSH host advertised by this device"}
+            >
+              <span>Open SSH</span>
+              <span className={hintClass}>{sshHref ? "system handler" : "no host"}</span>
+            </a>
+            <button
+              className={itemClass}
+              title={`Copy ${sshCommand}`}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await navigator.clipboard.writeText(sshCommand);
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 2000);
+                  } catch (e: any) {
+                    alert(`Copy failed: ${e?.message || e}`);
+                  }
+                })();
+              }}
+            >
+              <span>Copy SSH command</span>
+              <span className={copied ? "shrink-0 text-[10px] text-emerald-600 dark:text-emerald-400" : hintClass}>
+                {copied ? "copied" : "clipboard"}
+              </span>
+            </button>
+            {!device.isGuest ? (
+              <button className={itemClass} onClick={() => { onRescue(); setOpen(false); }}>
+                <span>{rescueOpen ? "Hide rescue" : "Rescue"}</span>
+                <span className={hintClass}>wedged agent</span>
+              </button>
+            ) : null}
+            {canManage ? (
+              <>
+                <div className="my-1 border-t border-slate-200 dark:border-surface-800" />
+                <button className={itemClass} onClick={() => { onSetPrimary(); setOpen(false); }}>
+                  <span>{isPrimary ? "Unset primary" : "Set primary"}</span>
+                  <span className={hintClass}>★</span>
+                </button>
+                {!isPrimary ? (
+                  <button className={itemClass} onClick={() => { onSetSecondary(); setOpen(false); }}>
+                    <span>{isSecondary ? "Unset secondary" : "Set secondary"}</span>
+                    <span className={hintClass}>fallback</span>
+                  </button>
+                ) : null}
+                <button
+                  className={`${itemClass} text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-500/10`}
+                  onClick={() => { onRecycle(); setOpen(false); }}
+                  title="Recycle this box: provision a fresh box, health-check, then snapshot+delete the old one (dry-run first)"
+                >
+                  <span>♻ Recycle box</span>
+                  <span className={hintClass}>dry-run first</span>
+                </button>
+              </>
+            ) : null}
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }
 
