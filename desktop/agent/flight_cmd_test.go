@@ -124,3 +124,46 @@ func TestFlightEventsVerbRejectsGarbagePayload(t *testing.T) {
 		t.Error("a non-integer limit must be rejected rather than silently ignored")
 	}
 }
+
+// An alias is what a user actually types (`yaver ssh mac-mini`), and the --device
+// help promises it. The first cut matched only name/deviceId, so `--device
+// mac-mini` fell through as a raw id and 404'd against a device that exists.
+func TestFlightDeviceAliasResolvesExactly(t *testing.T) {
+	devices := []DeviceInfo{
+		{DeviceID: "229aeb03-b877-41aa-ba60-2daf785cd4a5", Name: "Some-Mac-mini.local", Alias: "mac-mini"},
+		{DeviceID: "6e8db080-0000-0000-0000-000000000000", Name: "mac-mini", Alias: "laptop"},
+	}
+	// The alias must win over another device whose NAME collides with it —
+	// otherwise a coincidental name makes the alias ambiguous.
+	got, err := resolveFlightDeviceFrom(devices, "mac-mini")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != "229aeb03-b877-41aa-ba60-2daf785cd4a5" {
+		t.Errorf("alias must resolve to its own device, got %q", got)
+	}
+}
+
+func TestFlightDeviceIDResolvesExactly(t *testing.T) {
+	devices := []DeviceInfo{{DeviceID: "abc-123", Name: "box", Alias: "b"}}
+	got, err := resolveFlightDeviceFrom(devices, "abc-123")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != "abc-123" {
+		t.Errorf("exact deviceId must win, got %q", got)
+	}
+}
+
+func TestFlightUnknownDevicePassesThrough(t *testing.T) {
+	devices := []DeviceInfo{{DeviceID: "abc-123", Name: "box", Alias: "b"}}
+	// An unknown string may still be a raw id the list didn't show; let the
+	// backend decide rather than refusing locally.
+	got, err := resolveFlightDeviceFrom(devices, "zzz")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != "zzz" {
+		t.Errorf("unknown device must pass through to the backend, got %q", got)
+	}
+}

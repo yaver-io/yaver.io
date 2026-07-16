@@ -153,19 +153,34 @@ func flightVerdict(newestFirst []FlightEvent) string {
 }
 
 func resolveFlightDeviceID(cfg *Config, device string) (string, error) {
-	// An explicit deviceId should work even when the device row is gone or the
-	// list call fails — a box whose registration is broken is one you may most
-	// need the history for.
+	// A raw deviceId should work even when the list call fails — a box whose
+	// registration is broken is one you may most need the history for.
 	devices, err := listDevicesEnsuringAuth(cfg)
 	if err != nil {
 		return device, nil
 	}
+	return resolveFlightDeviceFrom(devices, device)
+}
+
+// resolveFlightDeviceFrom is the pure matcher, split out from the network call
+// so the precedence rules below are testable.
+func resolveFlightDeviceFrom(devices []DeviceInfo, device string) (string, error) {
 	lower := strings.ToLower(device)
 	var matches []string
 	for _, d := range devices {
+		// Exact deviceId wins outright — unambiguous by construction.
 		if strings.EqualFold(d.DeviceID, device) {
 			return d.DeviceID, nil
 		}
+		// An alias is what a user actually types (`yaver ssh mac-mini`) and what
+		// --device advertises, so it is exact-match-wins too: aliases are unique
+		// per user, and demoting one to a fuzzy candidate would let another
+		// device's coincidental NAME make the alias ambiguous.
+		if strings.EqualFold(d.Alias, device) {
+			return d.DeviceID, nil
+		}
+	}
+	for _, d := range devices {
 		if strings.ToLower(d.Name) == lower || strings.HasPrefix(strings.ToLower(d.DeviceID), lower) {
 			matches = append(matches, d.DeviceID)
 		}
@@ -173,7 +188,7 @@ func resolveFlightDeviceID(cfg *Config, device string) (string, error) {
 	sort.Strings(matches)
 	switch len(matches) {
 	case 0:
-		return device, nil // let the backend decide; it may still be a raw id
+		return device, nil // may still be a raw id the list didn't show; let the backend decide
 	case 1:
 		return matches[0], nil
 	default:
