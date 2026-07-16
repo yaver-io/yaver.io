@@ -14,7 +14,7 @@
 - **P0 — Apple-runtime fan-out** — **DONE 2026-07-16**
 - **P1 — MCP keystone (`runtime_*`)** — **DONE 2026-07-16**
 - **P2 — `develop_for` verb** — **DONE 2026-07-16**
-- **P3 — Voice everywhere + phone→TV bridge** — _not started_
+- **P3 — Voice everywhere + phone→TV bridge** — **DONE 2026-07-16** (agent-side pieces; native client bindings are handoff work per plan)
 - **P4 — Feedback SDK n2n** — _not started_
 - **P5 — Concurrency + shared registry + cast** — _not started_
 - **P6 — Control primitives + Android surfaces + transport quality** — _not started_
@@ -86,6 +86,27 @@ surface, missing framework), `mcp_tools.go` (verb schema),
 `httpserver.go` (dispatcher).
 
 Closed-loop verification: `go test -run 'TestResolveMechanism|TestRunDevelopFor' -count=1 .` → all pass. `TestRunDevelopFor_HappyPathReturnsSessionAndFrame` drives the whole verb end-to-end through the same seams a runner-facing MCP call would hit — stubbed only at the runner-auth gate + at the HTTP proxy boundary (so we don't need a live daemon on 127.0.0.1:18080), asserts session creation + launch-app + frame proxy were all called with the right paths + the response carries a base64 JPEG.
+
+### P3 — 2026-07-16 (Europe/Istanbul) — agent-side pieces
+Added two missing MCP verbs so a runner can start STT on a named
+surface and cast TTS to a named surface: `voice_listen_start
+{device, provider?, sessionId?}` and `voice_speak {device?, text,
+voice?, rate?, renderOn?}`. Both ride the existing BlackBoxCommand
+pipe `device_broadcast_command` uses so we introduce zero new
+transport — client SDK listeners react to `command == voice_*` and
+drive the local mic / TTS. `renderOn` carries Axis-3 sink hints so a
+runner on the car can voice_speak to the phone; full presence-based
+cast routing lands in P5.
+
+Client bindings (`AudioCaptureAdapter` + `TtsAdapter` on the five
+un-wired surfaces) and the phone-as-mic → TV-render bridge are
+follow-on handoff work per the plan — the agent-side seam is now in
+place and the RN core is ready to consume it.
+
+Files touched: new `voice_mcp.go`, new `voice_mcp_test.go` (5 scoped
+tests), `mcp_tools.go` (schemas), `httpserver.go` (dispatcher).
+
+Closed-loop verification: `go test -run 'TestVoice' -count=1 .` → all pass. Tests use a live `BlackBoxManager`, subscribe a fake client, and assert the on-the-wire `BlackBoxCommand.Data` carries the runtime session id / provider hint / renderOn field intact — same shape the RN SDK / native listeners will parse.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

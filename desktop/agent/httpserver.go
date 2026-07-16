@@ -13012,6 +13012,15 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		body, _ := json.MarshalIndent(res, "", "  ")
 		return mcpToolResult(string(body))
 
+	case "voice_listen_start":
+		var args voiceListenStartArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(s.mcpVoiceListenStart(args))
+	case "voice_speak":
+		var args voiceSpeakArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(s.mcpVoiceSpeak(args))
+
 	// --- Source maps (MCP) ---
 	case "sourcemaps_list":
 		store := GlobalSourceMapStore()

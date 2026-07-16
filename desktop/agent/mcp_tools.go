@@ -3392,6 +3392,42 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, developForTools...)
 
+	// --- Voice everywhere (P3) ---
+	// Runner-driven STT/TTS onto a *named* surface. Both verbs ride
+	// the same BlackBoxCommand pipe device_broadcast_command uses so
+	// clients only need a single SDK listener + adapters.
+	voiceTools := []map[string]interface{}{
+		{
+			"name":        "voice_listen_start",
+			"description": "Ask a specific device to start streaming STT (mic capture → transcription). Directed only — empty device errors. Client SDK must bind AudioCaptureAdapter (RN core is ready; native bridges pending).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"device"},
+				"properties": map[string]interface{}{
+					"device":    map[string]interface{}{"type": "string", "description": "Target deviceId."},
+					"provider":  map[string]interface{}{"type": "string", "description": "Optional STT backend hint (whisper, expo-speech-recognition, web-speech-api)."},
+					"sessionId": map[string]interface{}{"type": "string", "description": "Optional runtime session to tie the mic to — voice intents can then drive runtime_control on the same target."},
+				},
+			},
+		},
+		{
+			"name":        "voice_speak",
+			"description": "Cast TTS to a named device (or broadcast when device is empty). Accepts renderOn for Axis-3 routing (`speak on phone even though I'm on the car`). Client sinks decide how to render.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"text"},
+				"properties": map[string]interface{}{
+					"device":   map[string]interface{}{"type": "string", "description": "Optional deviceId; empty broadcasts to every subscribed SDK session."},
+					"text":     map[string]interface{}{"type": "string"},
+					"voice":    map[string]interface{}{"type": "string", "description": "Optional TTS voice hint."},
+					"rate":     map[string]interface{}{"type": "number", "description": "Optional speaking rate (engine default when 0)."},
+					"renderOn": map[string]interface{}{"type": "string", "description": "Axis-3 sink deviceId; the target client may forward the audio there."},
+				},
+			},
+		},
+	}
+	tools = append(tools, voiceTools...)
+
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
 	// upload/list/delete/resolve. Agents that drive mobile releases
