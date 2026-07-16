@@ -268,6 +268,10 @@ yaver code                           # local TUI on this machine
 yaver code --attach <device>         # remote machine via QUIC tunnel
 yaver insert <app>                   # tell the paired mobile to load <app> via Hermes push
 
+# Mac mini remote worker (Yaver/Talos via Yaver + Codex)
+scripts/setup-mac-mini-dev.sh        # on the mini: Xcode platforms, simulators, Codex gpt-5.5, Yaver MCP
+                                      # details: docs/mac-mini-remote-worker.md
+
 # cable
 yaver wire detect                    # USB-attached iPhone/iPad/Android
 yaver wire push [path]               # framework-aware build + install (Expo/RN/Flutter/Native)

@@ -44,10 +44,10 @@ Verified by reading the code:
 |---|---|---|
 | `yaver mcp` stdio subcommand | `main.go::runMCP` → `runMCPStdio` | **Exists** |
 | `yaver mcp` HTTP subcommand | same | **Exists** |
-| Idempotent registration into Claude Desktop / Claude Code / Cursor / Windsurf / Zed | `mcp-setup.go::autoSetupMCP`, `setupMCPEditor`, `setupClaudeCode`, `setupZed` | **Exists** |
+| Idempotent registration into Claude Code / Codex / opencode | `mcp-setup.go::autoSetupMCP`, `setupClaudeCode`, `setupCodex`, `setupOpenCode` | **Exists** |
 | Auto-register at end of `yaver auth` | `main.go` calls `autoSetupMCP()` at lines 602 / 639 / 735 / 1527 | **Exists** |
 | Auto-start daemon after auth | `main.go::startServeIfStopped` | **Exists** |
-| 48-tool MCP dispatcher | `mcp_tools.go` | **Exists** |
+| MCP dispatcher | `mcp_tools.go` | **Exists** |
 | Container sandbox runtime | `container_runner.go`, `Dockerfile.sandbox` | **Exists** |
 | Hermes bundle compile + push | `/dev/build-native`, `yaver-cli`'s bundled `hermesc` | **Exists** |
 | Dev server manager (Expo / Flutter / Vite / Next) | `devserver.go` | **Exists** |
@@ -55,53 +55,12 @@ Verified by reading the code:
 | Relay re-targeting by device id | `{relay}/d/{deviceId}/…` used by web + mobile today | **Exists** |
 | Cross-device auth (one token owns all user's agents) | `auth.go`, `httpserver.go::auth()` | **Exists** |
 | Guest token rejection prefixes | `httpserver.go::guestAllowedPrefixes` | **Exists** |
+| Cross-machine MCP/ops proxy | `mcp_remote_proxy.go::proxyToDevice`, `ops.go` | **Exists** |
+| Mac mini Apple-surface worker bootstrap | `scripts/setup-mac-mini-dev.sh`, `docs/mac-mini-remote-worker.md` | **Exists** |
 
 ## What's missing (the actual work)
 
-### A. Codex registration
-
-`autoSetupMCP()` covers Claude Desktop, Claude Code, Cursor, Windsurf, Zed but
-not Codex. Codex uses `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.yaver]
-command = "yaver"
-args = ["mcp"]
-```
-
-Add `setupCodex(yaverPath)` to `mcp-setup.go`, invoke it from `autoSetupMCP()`.
-Same idempotency rule as the JSON editors: detect, back up once to
-`<path>.yaver-backup`, merge-in, skip if already present.
-
-### B. `yaver mcp unregister`
-
-Paired with the `preuninstall` npm hook so `npm uninstall -g yaver-cli` cleans
-up every config file we touched. Reuse the same six code paths to *remove*
-the `yaver` key instead of adding it.
-
-### C. `proxyToDevice()` helper (~50 lines, one new file)
-
-`desktop/agent/mcp_remote_proxy.go`:
-
-```go
-func proxyToDevice(ctx context.Context, deviceID, path string, body []byte) ([]byte, error) {
-    if deviceID == "" || deviceID == localDeviceID() {
-        return nil, errLocal // caller runs the local handler
-    }
-    cfg, _ := LoadConfig()
-    url := fmt.Sprintf("%s/d/%s%s", cfg.RelayBaseURL(), deviceID, path)
-    req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-    req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
-    req.Header.Set("X-Yaver-Proxied-By", cfg.DeviceID)
-    resp, err := http.DefaultClient.Do(req)
-    // stream resp.Body back to caller, preserve status code
-}
-```
-
-Guest tokens rejected before this function is ever entered — the MCP stdio
-server is owner-auth only.
-
-### D. `device_id` on existing tools
+### A. `device_id` on existing tools
 
 Touch only `mcp_tools.go` (the tool schemas) and each tool's dispatcher
 branch. Every affected tool becomes:
@@ -139,7 +98,7 @@ Tool layers (ship in this order):
 **Escape hatch:**
 `exec`, `fs_read`, `fs_write`, `fs_list`, `tmux_send`, `tmux_capture`.
 
-### E. Layer 4 — local-only tools (reject `device_id`)
+### B. Layer 4 — local-only tools (reject `device_id`)
 
 Secrets must not cross machines via the MCP layer. These tools stay on the
 local daemon only; `proxyToDevice()` returns an error if any of them is
@@ -150,7 +109,7 @@ called with a non-empty `device_id`:
 - `env_import`, `env_inject`
 - `deploy_cred_set` (Apple / Play / npm / Cloudflare credentials)
 
-### F. New convenience tools
+### C. New convenience tools
 
 - `list_machines` — thin wrapper over `listAllMachines` + `MachineCapabilities`.
 - `run_project_in_sandbox(project_dir, device_id?, api_keys?)` — builds the

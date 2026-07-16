@@ -3,7 +3,10 @@
 ## Purpose
 
 This handoff is for implementing Talos-driven third-party app development and
-testing through Yaver, using a Hetzner machine as the remote execution box.
+testing through Yaver, using a selected Yaver machine as the remote execution
+box. For Apple-surface work, prefer the user-owned Mac mini profile in
+`docs/mac-mini-remote-worker.md` over a Linux/Hetzner box because it carries
+Xcode, simulator runtimes, and the Codex defaults expected by local development.
 
 The goal is not to make Talos learn every Yaver HTTP route. Talos should treat
 Yaver as the execution plane and call one stable control surface:
