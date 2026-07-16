@@ -1,5 +1,26 @@
 # Yaver autorun progress
 
+## 2026-07-16T10:24:00Z
+
+This run completed the prerequisite MCP lifecycle repair that had repeatedly been
+blocked by unrelated full-suite failures.
+
+- MCP-started autorun sessions now derive from `context.WithoutCancel` and a
+  manager-owned cancel function. They preserve request-scoped tracing values, survive
+  completion or cancellation of the request that created them, and remain explicitly
+  stoppable through `autorun_stop`.
+- Added a deterministic regression test covering request cancellation, value
+  preservation, and explicit session cancellation.
+- Corrected the Codex autorun safety assertion to require the production
+  `--dangerously-bypass-approvals-and-sandbox` flag.
+- Focused autorun tests passed.
+- The mandatory `go build ./...` and `go test ./...` gates both passed.
+
+The next increment is the durable task queue and owner-only `autorun_enqueue`,
+`autorun_queue`, and `autorun_dequeue` ops/MCP verbs. It must persist free-text prompts
+and file references, drain tasks in FIFO order without inheriting request lifetime, and
+retain per-task state/progress rather than presenting an in-memory queue as durable.
+
 ## 2026-07-16T01:29:00Z
 
 The first local autorun increment (CLI loop, runner auto-selection, scope enforcement,

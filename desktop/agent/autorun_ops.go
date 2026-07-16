@@ -45,6 +45,13 @@ type autorunSessionManager struct {
 
 var autorunSessions = &autorunSessionManager{sessions: make(map[string]*autorunSession)}
 
+func autorunSessionContext(requestContext context.Context) (context.Context, context.CancelFunc) {
+	// An autorun session is daemon-owned and must survive the MCP/ops request
+	// that created it. Preserve request-scoped values for tracing while making
+	// explicit autorun_stop cancellation the session's lifetime boundary.
+	return context.WithCancel(context.WithoutCancel(requestContext))
+}
+
 func (m *autorunSessionManager) start(parent context.Context, opts autorunOptions) (autorunSessionView, error) {
 	taskPath, err := filepath.Abs(opts.TaskPath)
 	if err != nil {
@@ -57,7 +64,7 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 		return autorunSessionView{}, fmt.Errorf("task: %w", err)
 	}
 	id := fmt.Sprintf("autorun-%d", time.Now().UTC().UnixNano())
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := autorunSessionContext(parent)
 	s := &autorunSession{
 		ID: id, Task: taskPath, Runner: opts.Runner, WorkDir: opts.WorkDir,
 		ProgressPath: autorunProgressPath(taskPath, opts.WorkDir), Status: "running",
@@ -225,4 +232,3 @@ func opsAutorunStopHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	}
 	return OpsResult{OK: true, Initial: view}
 }
-

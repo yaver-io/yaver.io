@@ -10,7 +10,7 @@ import (
 func TestAutorunRunnerArgsAlwaysAutoApproves(t *testing.T) {
 	tests := []struct{ id, want string }{
 		{"claude", "--dangerously-skip-permissions"},
-		{"codex", "--full-auto"},
+		{"codex", "--dangerously-bypass-approvals-and-sandbox"},
 		{"opencode", "--dangerously-skip-permissions"},
 		{"glm", "--dangerously-skip-permissions"},
 	}
