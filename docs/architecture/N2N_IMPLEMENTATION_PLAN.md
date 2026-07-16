@@ -18,7 +18,7 @@
 - **P4 — Feedback SDK n2n** — **DONE 2026-07-16**
 - **P5 — Concurrency + shared registry + cast** — **PARTIAL 2026-07-16** (control lease shipped; shared reactive registry + JPEG/RTP unify + TURN are follow-ons)
 - **P6 — Control primitives + Android surfaces + transport quality** — **PARTIAL 2026-07-16** (D-pad/crown key aliases + Wear/AndroidTV/XR/Auto surface targets shipped; iOS XCUIRemote bridge + RTP-for-Apple-sims file-tailer are follow-ons)
-- **P7 — Same-session runner continuation (no-fork)** — _not started_
+- **P7 — Same-session runner continuation (no-fork)** — **DONE 2026-07-16** (keeper + 7 MCP verbs + persistence + runner_status telemetry parser)
 - **P8 — Install + self-healing hardening** — _not started_
 
 ### P0 — 2026-07-16 (Europe/Istanbul)
@@ -197,6 +197,54 @@ bridge are follow-on slices; the two wins above land the biggest
 gaps and stand alone.
 
 Closed-loop verification: `go test -run 'TestAndroidKeycode|TestRuntimeTargetFor_AndroidSurfaceIDs|TestProbeAndroidSurfaceTargets|TestWDAButtonName_TVRemoteReturnsActionableError|TestRemoteRuntimeCapabilitiesFor' -count=1 .` → all pass. The kotlin + flutter capability tests now round-trip the full 7-Android + 6-iOS target list.
+
+### P7 — 2026-07-16 (Europe/Istanbul)
+Native runner-continuation supervisor + attach/detach/queue/status
+MCP surface. Runner-agnostic (claude / codex / opencode / glm),
+single-instance, sequential, own-machine + own-subscription — the
+keeper is a scheduler for the already-authorised interactive session,
+NEVER a runner replicator (no `-p` headless farming, no new process
+per prompt).
+
+`RunnerKeeper` — one goroutine-friendly supervisor per agent. Per
+session it tracks:
+  * pane content hash from `tmux capture-pane` (content-based
+    liveness; `pane_current_command` proved unreliable in the tonight
+    incident and is not used).
+  * mode (user-driven | auto | off).
+  * queue of pending prompts (persisted under `~/.yaver/runner/` at
+    0600 mode; queue and state survive keeper restarts).
+Every 15s (real runtime) it Ticks: if the pane hash hasn't moved for
+90s AND the queue is non-empty, dequeue the next prompt and
+`tmux send-keys` it into the same pane. Capped at 20 nudges/hour.
+
+Seven new MCP verbs — every autorun action a user can want, without
+touching a shell:
+  runner_attach       user is vibing → mode user-driven; keeper stops nudging
+  runner_detach       leave the pane, flip mode auto by default
+  runner_autorun      force on|off explicitly
+  runner_queue_add    enqueue a prompt (source phone|mcp|cli recorded)
+  runner_queue_list   list prompts (per session or global)
+  runner_queue_clear  drop prompts
+  runner_status       crisp status for a task: phases done/current/
+                      remaining, [auto-runner] commits with metadata
+                      (phase/machine+alias/work-window/mode), current
+                      mode, keeper health, last-activity, ETA, per-runner
+                      attribution (time + counts).
+
+`runner_status` also parses git log for [auto-runner] commits and
+attributes time-spent + runner-utilised counts by regexing the
+Work window: / Runner: metadata blocks the auto-runner emits in
+every commit body — same feature the phone will call to answer "what
+stage is the n2n task at?"
+
+Files touched: new `runner_keeper.go` + `runner_keeper_mcp.go` + new
+`runner_keeper_test.go` (11 scoped tests), `mcp_tools.go` (7 tool
+schemas), `httpserver.go` (7 dispatchers + `runnerKeeper` field +
+`ensureRunnerKeeper` seam), one rename (`shortHash` →
+`keeperShortHash` to avoid a duplicate with `tunnel_cf_wizard.go`).
+
+Closed-loop verification: `go test -run 'TestKeeper|TestKeeperMCP|TestParseAutoRunnerCommit' -count=1 .` → all pass. `TestKeeper_TickNudgesWhenIdleAndQueued` exercises the entire idle-detect → nudge flow via seams (no real tmux); `TestKeeper_ContentChangeResetsIdleClock` proves content-based liveness resets the debounce; `TestKeeper_PersistenceIsOwnerOnly` guards the compliance requirement that state/queue files stay `0600`; `TestParseAutoRunnerCommit_ExtractsWorkWindowAndRunner` proves the runner_status parser round-trips a full commit body.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

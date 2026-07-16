@@ -65,6 +65,7 @@ type HTTPServer struct {
 	feedbackMgr    *FeedbackManager
 	designRefMgr   *DesignReferenceManager
 	blackboxMgr    *BlackBoxManager
+	runnerKeeper   *RunnerKeeper // P7 same-session continuation supervisor
 	devServerMgr   *DevServerManager
 	todolistMgr    *TodoListManager
 	sessionAuditor *SessionAuditor
@@ -5588,6 +5589,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	}
 
 	switch call.Name {
+	case "autorun_start", "autorun_status", "autorun_stop":
+		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
+		out := dispatchOps(octx, OpsRequest{Machine: "local", Verb: call.Name, Payload: call.Arguments})
+		if !out.OK {
+			return mcpToolError(call.Name + ": " + out.Error)
+		}
+		return mcpToolJSON(out.Initial)
+
 	case "create_task":
 		var args struct {
 			Prompt    string `json:"prompt"`
@@ -13083,6 +13092,36 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		snap := live.ensureLease().Snapshot()
 		snap.SessionID = args.SessionID
 		return mcpToolJSON(snap)
+
+	// --- Runner keeper (P7) ---
+	case "runner_attach":
+		var args runnerAttachArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(runRunnerAttach(s.ensureRunnerKeeper(), args))
+	case "runner_detach":
+		var args runnerDetachArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(runRunnerDetach(s.ensureRunnerKeeper(), args))
+	case "runner_autorun":
+		var args runnerAutorunArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(runRunnerAutorun(s.ensureRunnerKeeper(), args))
+	case "runner_queue_add":
+		var args runnerQueueAddArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(runRunnerQueueAdd(s.ensureRunnerKeeper(), args))
+	case "runner_queue_list":
+		var args runnerQueueListArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(runRunnerQueueList(s.ensureRunnerKeeper(), args))
+	case "runner_queue_clear":
+		var args runnerQueueClearArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(runRunnerQueueClear(s.ensureRunnerKeeper(), args))
+	case "runner_status":
+		var args runnerStatusArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(runRunnerStatus(s.ensureRunnerKeeper(), args))
 
 	// --- Source maps (MCP) ---
 	case "sourcemaps_list":

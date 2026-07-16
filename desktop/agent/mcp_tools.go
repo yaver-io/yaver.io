@@ -3082,6 +3082,18 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// stay — ops is additive, not a replacement.
 	opsTools := []map[string]interface{}{
 		{
+			"name": "autorun_start", "description": "Start a runner-agnostic, scope-limited autorun loop. Returns immediately with a session ID; the gate must pass before Yaver commits changes.",
+			"inputSchema": autorunStartSchema(),
+		},
+		{
+			"name": "autorun_status", "description": "List autorun sessions or inspect one session, including its progress handoff tail.",
+			"inputSchema": autorunIDSchema(false),
+		},
+		{
+			"name": "autorun_stop", "description": "Stop one autorun session by ID.",
+			"inputSchema": autorunIDSchema(true),
+		},
+		{
 			"name":        "ops",
 			"description": "Run one verb on one machine. Single API for every Yaver capability (info, run, build, test, deploy, push, reload, logs, status, env, session, scale, provision, destroy, ...). Discover available verbs via `ops_verbs`.",
 			"inputSchema": map[string]interface{}{
@@ -3510,6 +3522,95 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 	}
 	tools = append(tools, leaseTools...)
+
+	// --- Runner keeper (P7) — same-session continuation supervisor ---
+	// Runner-agnostic (claude / codex / opencode / glm), single-instance,
+	// own-machine/own-subscription. NEVER forks a new runner process.
+	// See runner_keeper.go for the compliance block.
+	runnerKeeperTools := []map[string]interface{}{
+		{
+			"name":        "runner_attach",
+			"description": "Attach to a live runner tmux session — flip it into user-driven mode so the keeper does NOT nudge while you're vibing.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionName"},
+				"properties": map[string]interface{}{
+					"sessionName": map[string]interface{}{"type": "string"},
+					"machine":     map[string]interface{}{"type": "string", "description": "Reserved for future remote-attach routing (empty = local)."},
+				},
+			},
+		},
+		{
+			"name":        "runner_detach",
+			"description": "Detach the terminal AND flip the session into autorun mode (default). Pass autorun=false to leave the session dormant.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionName"},
+				"properties": map[string]interface{}{
+					"sessionName": map[string]interface{}{"type": "string"},
+					"autorun":     map[string]interface{}{"type": "boolean", "description": "Default true — after detach, the keeper drains the queue."},
+				},
+			},
+		},
+		{
+			"name":        "runner_autorun",
+			"description": "Force a session's keeper mode to on|off explicitly (bypasses attach/detach).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionName", "mode"},
+				"properties": map[string]interface{}{
+					"sessionName": map[string]interface{}{"type": "string"},
+					"mode":        map[string]interface{}{"type": "string", "description": "on|off"},
+				},
+			},
+		},
+		{
+			"name":        "runner_queue_add",
+			"description": "Enqueue a prompt for a named runner session. The keeper drains the queue one prompt at a time when the pane goes idle.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionName", "prompt"},
+				"properties": map[string]interface{}{
+					"sessionName": map[string]interface{}{"type": "string"},
+					"prompt":      map[string]interface{}{"type": "string"},
+					"source":      map[string]interface{}{"type": "string", "description": "phone / mcp / cli — recorded for audit."},
+				},
+			},
+		},
+		{
+			"name":        "runner_queue_list",
+			"description": "List queued prompts. sessionName filters; empty returns every session.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"sessionName": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "runner_queue_clear",
+			"description": "Drop queued prompts (one session or all). Destructive.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"sessionName": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "runner_status",
+			"description": "Human-readable status for a named autorun task: phases done/current/remaining, [auto-runner] commits with metadata (phase/machine/alias/work-window/mode), current mode, keeper health, last-activity, ETA, per-runner attribution (claude/codex/opencode/glm) with time + tokens where recorded.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"sessionName": map[string]interface{}{"type": "string"},
+					"task":        map[string]interface{}{"type": "string", "description": "e.g. n2n — used to parse the matching progress log."},
+					"machine":     map[string]interface{}{"type": "string", "description": "Reserved for remote status."},
+				},
+			},
+		},
+	}
+	tools = append(tools, runnerKeeperTools...)
 
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
