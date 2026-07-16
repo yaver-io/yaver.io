@@ -580,12 +580,18 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
 
   const recoverManagedMachineAuth = React.useCallback(
     async (machine: ManagedCloudMachineSummary) => {
-      const deviceId = String(machine.deviceId || "").trim();
       const host = String(machine.hostname || machine.serverIp || "").trim();
-      if (!deviceId || !host) {
+      // A box whose session expired never registers, so its cloud row has NO
+      // deviceId — and requiring one deadlocked the only escape: it can't
+      // register until it's signed in, and we refused to sign it in until it
+      // registered. "Wait a few seconds for the wake state to refresh" could
+      // never come true. The device id was only ever a label; recovery reaches
+      // the agent by host, and the machine id is a stable stand-in.
+      const deviceId = String(machine.deviceId || "").trim() || `managed:${machine.id}`;
+      if (!host) {
         Alert.alert(
           "Can't sign this box in yet",
-          "The cloud row does not include the device id and live hostname needed for remote sign-in. Wait a few seconds for the wake state to refresh, then try again.",
+          "This box hasn't reported an address yet, so there's nothing to sign in to. Give the wake a few seconds and try again.",
         );
         return;
       }

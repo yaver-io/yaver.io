@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildManagedCloudInit,
+  managedDeviceIdFor,
   buildManagedCloudInitContainer,
   planDeprovision,
   snapshotIsMandatory,
@@ -381,4 +382,33 @@ test("buildManagedCloudInitContainer: Phase 2 — bundled yaver-relay (in-image,
   const ufwEnableIdx = withRelay.indexOf("ufw --force enable");
   const ufw4433Idx = withRelay.indexOf("ufw allow 4433/udp");
   assert.ok(ufw4433Idx > 0 && ufw4433Idx < ufwEnableIdx, "4433 rule before ufw enable");
+});
+
+// Regression: a real managed box (mn777j15, 88.198.131.204) was awake with an
+// expired Yaver session and could not be signed in from the phone — the cloud
+// row's deviceId was null, so the app refused with "the cloud row does not
+// include the device id … wait a few seconds for the wake state to refresh".
+// That could never come true: the box can't register until it's signed in, and
+// it can't be signed in without an id. The id was derivable the whole time.
+test("managedDeviceIdFor derives the id the box registers as", () => {
+  // The real machine id + the id its sibling rows actually carry.
+  assert.equal(managedDeviceIdFor("mn777j15vc4wnt1gv4ceyad5858afzs4"), "cloud-mn777j15");
+  assert.equal(managedDeviceIdFor("mn71me24abcdefghijklmnopqrstuvwx"), "cloud-mn71me24");
+});
+
+test("managedDeviceIdFor agrees with the hostname built from the same slug", () => {
+  // provision derives BOTH from `_id.substring(0,8)`; if they ever drift, a box
+  // would register under an id nothing else can address.
+  const machineId = "mn777j15vc4wnt1gv4ceyad5858afzs4";
+  const shortId = machineId.substring(0, 8);
+  assert.equal(managedDeviceIdFor(machineId), `cloud-${shortId}`);
+  assert.equal(`${shortId}.cloud.yaver.io`, "mn777j15.cloud.yaver.io");
+});
+
+test("managedDeviceIdFor is stable across every park/wake", () => {
+  // Waking recreates the server from a snapshot — a brand new Hetzner box with
+  // a new IP. The identity must not move with it, or each sleep would orphan
+  // the row.
+  const machineId = "mn777j15vc4wnt1gv4ceyad5858afzs4";
+  assert.equal(managedDeviceIdFor(machineId), managedDeviceIdFor(machineId));
 });

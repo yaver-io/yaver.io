@@ -46,6 +46,24 @@ const MACHINE_SPECS = {
   },
 };
 
+/**
+ * The device id a managed box registers as. Derived, never invented: it is
+ * `cloud-<first 8 of the machine _id>`, the same slug that builds the box's
+ * hostname (`<shortId>.cloud.yaver.io`) and that provision bakes into the
+ * box's own config.json.
+ *
+ * Derivable is the point. The row's `deviceId` column is only written when a
+ * box successfully registers, and a box whose Yaver session expired never
+ * does — so the column stayed null on exactly the machines that most needed
+ * identifying, and the phone refused to sign them in for want of an id it
+ * could have computed all along. Waking from a snapshot never wrote it either
+ * (cloudLifecycle.ts recreates the server and doesn't touch deviceId), so a
+ * park/wake cycle could strand a box that had been fine.
+ */
+export function managedDeviceIdFor(machineId: string): string {
+  return `cloud-${machineId.toString().substring(0, 8)}`;
+}
+
 type ManagedCloudBootstrapSpec = {
   convexSite: string;
   machineId: string;
@@ -1514,9 +1532,17 @@ export const wake = internalMutation({
       return { ok: false, error: `not wakeable from status ${machine.status}` };
     }
     // Normalise stopped → paused (resumeMachine's gate) + stamp the wake time.
+    // Seed the device id here too. It is derived from the machine id, so it is
+    // the same value on every wake for the rest of this box's life — but the
+    // column is only written when a box registers, and resumeMachine recreates
+    // the server from a snapshot whose Yaver token may already have expired. A
+    // box in that state never registers, so the id never lands, and the phone
+    // then refuses to sign it in for want of an id we could always compute.
+    // Writing it before the wake starts closes that loop.
     await ctx.db.patch(args.machineId, {
       status: "paused",
       lastWokeAt: Date.now(),
+      deviceId: machine.deviceId ?? managedDeviceIdFor(args.machineId.toString()),
       updatedAt: Date.now(),
     });
     // Delegate to the real recreate-from-snapshot action (owns the wake ladder).
@@ -1802,7 +1828,7 @@ export const provision = internalAction({
     // so the explicit value still wins.
     const convexSite = process.env.CONVEX_SITE_URL || "https://perceptive-minnow-557.eu-west-1.convex.site";
     const machineIdStr = machine._id.toString();
-    const deviceId = `cloud-${shortId}`;
+    const deviceId = managedDeviceIdFor(machineIdStr);
     const brokeredAuth = await ctx.runMutation(internal.deviceCode.createAuthorizedDeviceCodeForUserInternal, {
       userId: machine.userId,
       machineName: serverName,

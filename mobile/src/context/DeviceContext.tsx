@@ -2907,7 +2907,14 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // re-pair from the box (or rely on the bootstrap-pending flow on a
     // truly fresh install) instead of silently hitting whatever row
     // happens to share a hostname.
-    if (isGhostDevice(device)) {
+    // A managed box is exempt: the ambiguity this guards against — matching
+    // against whatever row happens to share a hostname — cannot arise when we
+    // hold the provider-assigned address of exactly one server. Requiring
+    // hwid/publicKey here would refuse the one box that most needs recovering,
+    // since a machine whose session expired never registered and therefore has
+    // no identity to present. "Re-pair from the device" is also not advice a
+    // user can act on for a cloud box they have no other way into.
+    if (isGhostDevice(device) && !device.managed) {
       const msg = "Cannot recover: device row is missing identity (hwid/publicKey). Re-pair from the device.";
       appLog("warn", `${device.name}: ${msg}`);
       return { ok: false, error: msg };

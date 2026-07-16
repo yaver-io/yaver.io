@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { httpAction, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { sha256Hex, randomHex } from "./auth";
+import { managedDeviceIdFor } from "./cloudMachines";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
 import { decryptStoredOidcSecret } from "./admin";
@@ -5520,7 +5521,15 @@ http.route({
             provider: machine.provider ?? "hetzner",
             cloudResourceId: machine.cloudResourceId ?? machine.hetznerServerId ?? null,
             hetznerServerId: machine.hetznerServerId ?? null,
-            deviceId: machine.deviceId ?? null,
+            // Fall back to the derived id rather than null. The column is only
+            // written once a box registers, so a box whose session expired —
+            // precisely the one the user needs to sign in — reported no id at
+            // all, and the phone refused to recover it ("the cloud row does not
+            // include the device id … wait a few seconds"), which could never
+            // come true: it can't register until it's signed in, and we
+            // wouldn't sign it in until it registered. The id was computable
+            // from the machine id the whole time.
+            deviceId: machine.deviceId ?? managedDeviceIdFor(machine._id.toString()),
             // Auto-close state, so mobile/web can render the toggle truthfully.
             // undefined === ON (the default), so we normalise to a real boolean.
             autoParkEnabled: machine.autoParkEnabled !== false,
