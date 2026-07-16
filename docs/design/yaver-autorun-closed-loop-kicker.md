@@ -259,3 +259,6 @@ runner sits wasted. It maintains the plan/progress MD (units: todo/doing/done/bl
 reschedules on failover (a died runner's unit is reassigned), and stops when the plan's DONE
 markers + gate are met. The scheduler role is itself runner-agnostic (any authed runner can
 be the planner).
+
+## Deploy orchestration as an MCP capability (part of yaver autorun)
+Expose sequential, RESOURCE-AWARE deploy orchestration via MCP: `autorun_deploy {machine, targets, sequential:true, resource_aware:true}` — a runner or the phone triggers it AFTER features complete. Resource-aware = disk + RAM + CPU-load preflight before EACH step, one at a time, gate-verified, stop-on-first-failure, deploy-only-what-changed-and-has-creds, log to a progress MD. See docs/handoff/deploy-orchestration.md for the full runbook. Outward-facing steps (prod Convex / App Store / npm) prefer a human check.
