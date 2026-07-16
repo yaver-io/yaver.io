@@ -1391,6 +1391,54 @@ export const presenceUpdate = internalMutation({
  * List all devices belonging to the authenticated user,
  * plus devices from hosts who granted them guest access.
  */
+// Read back a device's black box (deviceFlightEvents, written by the heartbeat
+// piggyback above from desktop/agent/flightrecorder.go).
+//
+// This is the whole point of the recorder: when a box goes silent, its last
+// records say whether it stopped gracefully or died hard. Without this query the
+// data is write-only and you would have to open the Convex dashboard by hand.
+//
+// Ownership is enforced explicitly — a device's lifecycle history is its owner's
+// alone. A missing owner check here would be the same cross-tenant read class
+// already closed in mesh.ts / userSettings.ts, so it fails closed on any
+// mismatch rather than falling back to "no rows".
+export const flightEvents = query({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    // Newest-first cap. Bounded by FLIGHT_EVENT_CAP regardless of what a caller
+    // asks for, since the table itself never holds more than that per device.
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const rows = await ctx.db
+      .query("deviceFlightEvents")
+      .withIndex("by_device_at", (q) => q.eq("deviceId", args.deviceId))
+      .collect();
+
+    // by_device_at is ascending; the useful view is newest-first.
+    const ordered = rows.slice().reverse();
+    const limit = Math.min(args.limit ?? FLIGHT_EVENT_CAP, FLIGHT_EVENT_CAP);
+    return ordered.slice(0, limit).map((r) => ({
+      session: r.session,
+      kind: r.kind,
+      detail: r.detail,
+      at: r.at,
+      createdAt: r.createdAt,
+    }));
+  },
+});
+
 export const listMyDevices = query({
   args: {
     tokenHash: v.string(),

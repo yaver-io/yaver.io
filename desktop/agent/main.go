@@ -503,6 +503,8 @@ func main() {
 		runStatus()
 	case "devices":
 		runDevices(os.Args[2:])
+	case "flight":
+		runFlight(os.Args[2:])
 	case "alias":
 		runAlias(os.Args[2:])
 	case "ssh":
@@ -820,6 +822,7 @@ Usage:
   yaver acl         Agent Communication Layer — connect to other MCP servers
   yaver status      Show auth, relay, and connection status
   yaver devices [remove <device-id>]  List your registered devices or remove one
+  yaver flight [--device <alias|id>]  Read a machine's black box: did it stop gracefully, or die?
   yaver alias [set|rm|list] ...  Manage per-user device aliases (used by yaver ssh and the dashboard)
   yaver ssh <device|alias> [ssh args...]  Wrap OpenSSH; resolves device IP via Tailscale or Convex
   yaver exec        Execute a command on a remote device (like SSH)

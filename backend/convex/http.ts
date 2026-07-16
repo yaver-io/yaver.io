@@ -2662,6 +2662,42 @@ http.route({
   }),
 });
 
+/**
+ * GET /devices/flight?deviceId=<id>[&limit=<n>] — read a device's black box.
+ *
+ * The readback half of the flight recorder: when a box goes silent, its last
+ * records say whether it stopped gracefully (`shutdown`) or died hard
+ * (anything else). Written by the /devices/heartbeat piggyback.
+ */
+http.route({
+  path: "/devices/flight",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+
+    const url = new URL(request.url);
+    const deviceId = (url.searchParams.get("deviceId") ?? "").trim();
+    if (!deviceId) return errorResponse("deviceId is required", 400);
+    const rawLimit = url.searchParams.get("limit");
+    const limit = rawLimit ? Number(rawLimit) : undefined;
+    if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+      return errorResponse("limit must be a positive number", 400);
+    }
+
+    try {
+      const events = await ctx.runQuery(api.devices.flightEvents, { tokenHash, deviceId, limit });
+      return jsonResponse({ events });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("Unauthorized")) return errorResponse("Unauthorized", 401);
+      if (msg.includes("Device not found")) return errorResponse("Device not found", 404);
+      throw err;
+    }
+  }),
+});
+
 // --- Yaver Mesh console routes (web/mobile) — session-token-hash auth ---
 
 http.route({
