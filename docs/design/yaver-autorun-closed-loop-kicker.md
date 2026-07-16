@@ -135,3 +135,15 @@ the queue is the durable intent, the remote loop is the executor. This is the co
 "becoming a real yaver": remote autorun that a developer keeps feeding by intent (MCP
 signals), that runs + tests + demonstrates on its own on the remote box, and reports back
 (progress MD + highlight reel streamed to the mobile app) — independent of the dev's laptop.
+
+## Autonomy defaults (autorun / MCP) — ALWAYS skip-permissions
+- Runners in autorun AND via the MCP ALWAYS run with permissions auto-approved
+  (opencode/claude `--dangerously-skip-permissions`, codex full-auto). There is NO human
+  approver in the loop by design. Safety comes from the GATE (build/test before keep), the
+  scope allowlist, and the forbidden-command list — NOT from per-tool prompts.
+  (Tonight's no-op bug: opencode ran WITHOUT skip-permissions, so its tools were never
+  approved and it silently did nothing every kick.)
+- The MCP remote QUEUE accepts free-text developer prompts — exactly like the messages a
+  developer fires from the phone — via `autorun_enqueue {task}`. Each prompt becomes a task
+  the loop drains. The phone/MCP is the developer's signalling channel to the remote box;
+  the queue is durable intent; the loop executes with skip-permissions.
