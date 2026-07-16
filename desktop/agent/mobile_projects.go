@@ -935,15 +935,49 @@ func androidProjectHasBundleID(projectPath, bundleID string) bool {
 // BOTH ios.bundleIdentifier and android.package — checking both here
 // so an Android-only app.json still matches even when the iOS section
 // is absent, and vice versa.
+// expoConfigHasBundleID reports whether an Expo manifest declares bundleID
+// for either platform.
+//
+// The manifest is parsed rather than substring-matched. The previous
+// implementation looked for the literal `"bundleIdentifier": "<id>"`, which
+// silently depended on the file being pretty-printed with exactly one space
+// after the colon — reformat app.json (or emit it from a tool) and the match
+// evaporated. That matters more now that feedback→fix routing keys off the
+// bundle id: for an Expo app that hasn't run prebuild there is no ios/ or
+// android/ directory, so the manifest is the *only* surface identifying the
+// project, and a miss sends the fix task to the agent's own working
+// directory instead. Falls back to the substring check if the manifest isn't
+// valid JSON (e.g. hand-edited with a trailing comma) so a broken file
+// degrades to the old behaviour rather than to "no match".
 func expoConfigHasBundleID(projectPath, bundleID string) bool {
+	if bundleID == "" {
+		return false
+	}
 	for _, f := range []string{"app.json", "app.config.json"} {
 		data, err := os.ReadFile(filepath.Join(projectPath, f))
 		if err != nil {
 			continue
 		}
-		s := string(data)
-		if strings.Contains(s, `"bundleIdentifier": "`+bundleID+`"`) ||
-			strings.Contains(s, `"package": "`+bundleID+`"`) {
+		var manifest struct {
+			Expo struct {
+				IOS struct {
+					BundleIdentifier string `json:"bundleIdentifier"`
+				} `json:"ios"`
+				Android struct {
+					Package string `json:"package"`
+				} `json:"android"`
+			} `json:"expo"`
+		}
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			s := string(data)
+			if strings.Contains(s, `"bundleIdentifier": "`+bundleID+`"`) ||
+				strings.Contains(s, `"package": "`+bundleID+`"`) {
+				return true
+			}
+			continue
+		}
+		if manifest.Expo.IOS.BundleIdentifier == bundleID ||
+			manifest.Expo.Android.Package == bundleID {
 			return true
 		}
 	}

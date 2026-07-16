@@ -159,7 +159,7 @@ describe('P2PClient', () => {
       const bundle = {
         metadata: {
           timestamp: '2026-03-24T00:00:00Z',
-          device: {
+          deviceInfo: {
             platform: 'ios',
             osVersion: '18.0',
             model: 'iPhone 16',
@@ -191,7 +191,7 @@ describe('P2PClient', () => {
       const bundle = {
         metadata: {
           timestamp: '2026-03-24T00:00:00Z',
-          device: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
+          deviceInfo: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
           app: {},
         },
         screenshots: [],

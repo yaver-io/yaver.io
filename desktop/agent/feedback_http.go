@@ -267,6 +267,26 @@ func pathInsideFeedbackBaseDir(baseDir, candidate string) bool {
 }
 
 // handleFeedbackFix creates a task from feedback.
+// feedbackFixWorkDir picks the working directory a feedback→fix task should
+// run in for a resolved project, or "" if the project didn't resolve.
+//
+// The monorepo root wins over the app subdirectory when there is one. A
+// report is filed against the app the user was looking at, but the cause
+// frequently isn't in that app: on a monorepo the mobile screen is a view
+// over a backend that lives in a sibling directory, so a task confined to
+// mobile/ either can't reach the bug or "fixes" the symptom in the wrong
+// layer. Standalone repos have no MonorepoRoot and fall back to the project
+// path, which for them is already the repo root.
+func feedbackFixWorkDir(mp *MobileProject) string {
+	if mp == nil {
+		return ""
+	}
+	if mp.MonorepoRoot != "" {
+		return mp.MonorepoRoot
+	}
+	return mp.Path
+}
+
 func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, feedbackID string) {
 	if r.Method != http.MethodPost {
 		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -323,22 +343,33 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 		// report.Project.ProjectPath because the report itself is uploaded
 		// by the same untrusted party — accepting client-supplied paths would
 		// let a guest mount /Users/owner/.ssh as the AI agent's CWD. Instead
-		// we look up the project by name (DeviceInfo.AppName) against the
-		// host's mobile-projects registry. C-8 in security_audit.md.
+		// we look the project up against the host's own mobile-projects
+		// registry, keyed on identifiers the SDK reports. C-8 in
+		// security_audit.md.
+		//
+		// Bundle ID is tried first because it is the only unambiguous key.
+		// An app's display name ("Talos") does not match the name the
+		// scanner derives for it ("talos / mobile"), and one repo can hold
+		// several mobile projects that share a name prefix — name matching
+		// picks whichever lands first. Name stays as the fallback for SDKs
+		// and platforms that have no bundle id to report (e.g. web).
 		opts := TaskCreateOptions{}
 		report, _ := s.feedbackMgr.GetFeedback(feedbackID)
 		var resolvedProjectPath string
 		if report != nil {
-			projectName := report.DeviceInfo.AppName
-			if projectName == "" {
-				projectName = report.Project.ProjectName
+			if bundleID := report.Project.BundleID; bundleID != "" {
+				resolvedProjectPath = feedbackFixWorkDir(findMobileProjectByBundleID(bundleID))
 			}
-			if projectName == "" {
-				projectName = report.Project.AppName
-			}
-			if projectName != "" {
-				if mp := findMobileProjectByName(projectName); mp != nil && mp.Path != "" {
-					resolvedProjectPath = mp.Path
+			if resolvedProjectPath == "" {
+				projectName := report.DeviceInfo.AppName
+				if projectName == "" {
+					projectName = report.Project.ProjectName
+				}
+				if projectName == "" {
+					projectName = report.Project.AppName
+				}
+				if projectName != "" {
+					resolvedProjectPath = feedbackFixWorkDir(findMobileProjectByName(projectName))
 				}
 			}
 		}

@@ -25,6 +25,7 @@ import {
   // stopVideoRecording,
 } from './capture';
 import { uploadFeedback } from './upload';
+import { resolveReportIdentity } from './P2PClient';
 import {
   DeviceInfo,
   FeedbackBundle,
@@ -661,19 +662,22 @@ export const FeedbackModal: React.FC = () => {
     try {
       const { Dimensions } = require('react-native');
       const { width, height } = Dimensions.get('window');
+      const identity = resolveReportIdentity();
       const deviceInfo: DeviceInfo = {
         platform: Platform.OS,
         osVersion: String(Platform.Version),
         model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
         screenWidth: width,
         screenHeight: height,
+        appName: identity.appName,
       };
       const capturedErrors = YaverFeedback.getCapturedErrors();
       const bundle: FeedbackBundle = {
         metadata: {
           timestamp: new Date().toISOString(),
-          device: deviceInfo,
-          app: {},
+          deviceInfo,
+          app: identity.app,
+          project: identity.project,
           userNote: '[Screenshot + Fix]',
         },
         screenshots: [path],

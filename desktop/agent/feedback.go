@@ -72,9 +72,17 @@ type DeviceFBInfo struct {
 }
 
 type FeedbackProject struct {
-	AppName        string `json:"appName,omitempty"`
-	ProjectName    string `json:"projectName,omitempty"`
-	ProjectPath    string `json:"projectPath,omitempty"`
+	AppName     string `json:"appName,omitempty"`
+	ProjectName string `json:"projectName,omitempty"`
+	ProjectPath string `json:"projectPath,omitempty"`
+	// BundleID is the reporting app's bundle identifier / applicationId.
+	// Unlike AppName it is unambiguous: an app's display name ("Talos")
+	// does not match the registry name the scanner derives for it
+	// ("talos / mobile"), and a single repo can hold several mobile
+	// projects sharing a name prefix. Resolved via
+	// findMobileProjectByBundleID, which checks pbxproj, build.gradle,
+	// and app.json.
+	BundleID       string `json:"bundleId,omitempty"`
 	Surface        string `json:"surface,omitempty"`
 	ReleaseChannel string `json:"releaseChannel,omitempty"`
 }
@@ -185,8 +193,19 @@ func (fm *FeedbackManager) ReceiveFeedback(metadata json.RawMessage, files map[s
 	var raw struct {
 		Project   FeedbackProject           `json:"project"`
 		Candidate FeedbackCandidateMetadata `json:"candidate"`
+		// The React Native SDK sent the device block under `device` until
+		// 0.9.2, while this struct, the Flutter SDK, and the web SDK all use
+		// `deviceInfo`. The mismatch meant every RN report's device block was
+		// silently dropped. RN now sends `deviceInfo`; this alias keeps
+		// already-shipped builds (TestFlight/Play installs we can't update)
+		// reporting a usable platform + model.
+		Device DeviceFBInfo `json:"device"`
 	}
 	_ = json.Unmarshal(metadata, &raw)
+
+	if report.DeviceInfo == (DeviceFBInfo{}) {
+		report.DeviceInfo = raw.Device
+	}
 
 	// Always overwrite the report ID with a fresh UUID, ignoring whatever
 	// the upload sent. The ID is later joined to fm.baseDir to compute

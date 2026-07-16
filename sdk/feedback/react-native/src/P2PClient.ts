@@ -1,7 +1,9 @@
 import { Platform } from 'react-native';
 import {
+  AppInfo,
   CapabilitySnapshot,
   FeedbackBundle,
+  FeedbackProjectRef,
   IncidentEvent,
   OpenCodeConfigSummary,
   OperationState,
@@ -81,6 +83,62 @@ export function resolveAppIdentity(opts?: {
   if (bundleId) out.bundleId = bundleId;
   if (projectPath) out.projectPath = projectPath;
   return out;
+}
+
+/**
+ * Build the app-identity half of a feedback report's metadata.
+ *
+ * `resolveAppIdentity()` has always fed /vibing/execute and /dev/reload-app,
+ * so the agent could route a "vibe on THIS app" request to the right repo —
+ * but nothing fed /feedback. Reports arrived with no identity at all, so the
+ * agent's fix router fell through to its own working directory and edited
+ * whichever repo it happened to be sitting in. This closes that gap by
+ * reusing the same resolver for the feedback path.
+ *
+ * Every lookup is best-effort: a bare RN app with no expo-constants still
+ * produces a report, just one the agent resolves by its own means.
+ */
+export function resolveReportIdentity(): {
+  appName?: string;
+  app: AppInfo;
+  project?: FeedbackProjectRef;
+} {
+  const identity = resolveAppIdentity();
+
+  let version: string | undefined;
+  let buildNumber: string | undefined;
+  try {
+    const Constants = require('expo-constants').default ?? require('expo-constants');
+    const cfg = Constants?.expoConfig ?? Constants?.manifest ?? {};
+    version = Constants?.nativeAppVersion || cfg?.version;
+    buildNumber =
+      Constants?.nativeBuildVersion ||
+      cfg?.ios?.buildNumber ||
+      (cfg?.android?.versionCode != null ? String(cfg.android.versionCode) : undefined);
+  } catch {
+    // expo-constants not installed (bare RN). Version is cosmetic — the
+    // router keys off appName/bundleId, both of which survive without it.
+  }
+
+  const app: AppInfo = {};
+  if (identity.bundleId) app.bundleId = identity.bundleId;
+  if (version) app.version = version;
+  if (buildNumber) app.buildNumber = buildNumber;
+
+  if (!identity.projectName && !identity.bundleId) {
+    return { app };
+  }
+
+  const project: FeedbackProjectRef = { surface: 'mobile' };
+  if (identity.projectName) {
+    project.projectName = identity.projectName;
+    project.appName = identity.projectName;
+  }
+  // Note: projectPath is intentionally omitted — the agent ignores
+  // client-supplied paths on feedback reports and resolves them itself.
+  if (identity.bundleId) project.bundleId = identity.bundleId;
+
+  return { appName: identity.projectName, app, project };
 }
 
 /**

@@ -2,7 +2,7 @@ import { NativeModules } from 'react-native';
 import { FeedbackConfig, CapturedError } from './types';
 import { YaverDiscovery } from './Discovery';
 import { BlackBox } from './BlackBox';
-import { P2PClient } from './P2PClient';
+import { P2PClient, resolveReportIdentity } from './P2PClient';
 import { ShakeDetector } from './ShakeDetector';
 import {
   captureStoreScreenshots,
@@ -1039,18 +1039,21 @@ export class YaverFeedback {
       }
 
       const autoFix = opts?.autoFix ?? config.crashReporting.autoFix === true;
+      const identity = resolveReportIdentity();
       const bundle = {
         metadata: {
           timestamp: new Date().toISOString(),
           reportKind: 'crash',
-          device: {
+          deviceInfo: {
             platform: Platform.OS,
             osVersion: String(Platform.Version),
             model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
             screenWidth: width,
             screenHeight: height,
+            appName: identity.appName,
           },
-          app: {},
+          app: identity.app,
+          project: identity.project,
           userNote: '[Crash report]',
           crash: {
             message: error.message,
@@ -1232,17 +1235,20 @@ export class YaverFeedback {
         // Screenshot capture may fail (e.g. no view ref) — continue without it
       }
 
+      const identity = resolveReportIdentity();
       const bundle = {
         metadata: {
           timestamp: new Date().toISOString(),
-          device: {
+          deviceInfo: {
             platform: Platform.OS,
             osVersion: String(Platform.Version),
             model: Platform.OS === 'ios' ? 'iOS Device' : 'Android Device',
             screenWidth: width,
             screenHeight: height,
+            appName: identity.appName,
           },
-          app: {},
+          app: identity.app,
+          project: identity.project,
           userNote: '[Auto-report via shake]',
         },
         screenshots: screenshotPath ? [screenshotPath] : [],

@@ -51,7 +51,7 @@ describe('React Native SDK types', () => {
       const bundle: FeedbackBundle = {
         metadata: {
           timestamp: '2026-03-24T12:00:00Z',
-          device: {
+          deviceInfo: {
             platform: 'ios',
             osVersion: '18.0',
             model: 'iPhone 16 Pro',
@@ -68,7 +68,7 @@ describe('React Native SDK types', () => {
       };
 
       expect(bundle.metadata.timestamp).toBe('2026-03-24T12:00:00Z');
-      expect(bundle.metadata.device.platform).toBe('ios');
+      expect(bundle.metadata.deviceInfo.platform).toBe('ios');
       expect(bundle.screenshots).toEqual([]);
       expect(bundle.video).toBeUndefined();
     });
@@ -77,7 +77,7 @@ describe('React Native SDK types', () => {
       const bundle: FeedbackBundle = {
         metadata: {
           timestamp: '2026-03-24T12:00:00Z',
-          device: {
+          deviceInfo: {
             platform: 'android',
             osVersion: '15',
             model: 'Pixel 9',
@@ -168,7 +168,7 @@ describe('React Native SDK types', () => {
         bundle: {
           metadata: {
             timestamp: 'now',
-            device: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
+            deviceInfo: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
             app: {},
           },
           screenshots: [],
@@ -187,7 +187,7 @@ describe('React Native SDK types', () => {
           bundle: {
             metadata: {
               timestamp: 'now',
-              device: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
+              deviceInfo: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
               app: {},
             },
             screenshots: [],

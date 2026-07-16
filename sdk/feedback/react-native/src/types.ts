@@ -448,8 +448,23 @@ export interface CapturedError {
 
 export interface FeedbackMetadata {
   timestamp: string;
-  device: DeviceInfo;
+  /**
+   * Wire key is `deviceInfo`, matching the Flutter + web SDKs and the
+   * agent's `FeedbackReport.DeviceInfo` (`json:"deviceInfo"`). This was
+   * `device` until 0.9.2 — a key the agent never read, so the whole block
+   * (platform, model, and the app name the fix router needs) was silently
+   * dropped on every React Native report. The agent still accepts the old
+   * key so builds already in the field keep working.
+   */
+  deviceInfo: DeviceInfo;
   app: AppInfo;
+  /**
+   * Which of the host's projects this report is about. The agent resolves
+   * a feedback→fix task's working directory from this; without it the task
+   * falls back to whatever directory the agent happens to be sitting in.
+   * Populated automatically by `resolveReportIdentity()`.
+   */
+  project?: FeedbackProjectRef;
   userNote?: string;
   reportKind?: 'feedback' | 'auto-report' | 'crash';
   crash?: {
@@ -471,12 +486,40 @@ export interface DeviceInfo {
   model: string;
   screenWidth: number;
   screenHeight: number;
+  /** Host app name. First key the agent's fix router checks. */
+  appName?: string;
 }
 
 export interface AppInfo {
   bundleId?: string;
   version?: string;
   buildNumber?: string;
+}
+
+/**
+ * Identifies the host project a report belongs to. Mirrors the web SDK's
+ * `FeedbackProjectRef` and the agent's `FeedbackProject`.
+ */
+export interface FeedbackProjectRef {
+  appName?: string;
+  projectName?: string;
+  /**
+   * Bundle identifier / applicationId. The only unambiguous key: an app's
+   * display name ("Talos") does not match the agent's registry name for it
+   * ("talos / mobile"), and one repo can hold several mobile projects that
+   * all share a name prefix. The agent matches this against the project's
+   * pbxproj, build.gradle, and app.json.
+   */
+  bundleId?: string;
+  /**
+   * Deliberately never set by this SDK. The agent ignores client-supplied
+   * paths for feedback reports (an untrusted guest could otherwise point the
+   * fix task's CWD at ~/.ssh) and resolves the path server-side. Present only
+   * so the type matches the wire format the agent parses.
+   */
+  projectPath?: string;
+  surface?: 'web' | 'mobile' | 'backend';
+  releaseChannel?: 'production' | 'candidate' | 'development';
 }
 
 export interface TimelineEvent {

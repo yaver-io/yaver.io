@@ -34,7 +34,7 @@ describe('SDK Token Auth', () => {
       const bundle = {
         metadata: {
           timestamp: '2026-03-25T00:00:00Z',
-          device: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
+          deviceInfo: { platform: 'ios', osVersion: '18', model: 'iPhone', screenWidth: 393, screenHeight: 852 },
           app: {},
         },
         screenshots: [],
