@@ -45,6 +45,23 @@ func TestAutorunPromptDoesNotAdvertiseUnattendedMode(t *testing.T) {
 	}
 }
 
+// A runner that can't tell whose machine it is on treats a task arriving through
+// tooling as someone else's workload and stalls on authorization instead of
+// writing code. The preamble answers that up front; this pins the answer.
+func TestAutorunPromptEstablishesDeveloperOwnership(t *testing.T) {
+	lower := strings.ToLower(autorunPromptPreamble)
+	for _, want := range []string{
+		"developer who owns it",    // who is asking
+		"belong to that developer", // whose machine and repo
+		"his own local tooling",    // what Yaver is in this picture
+		"pooled",                   // what this explicitly is not
+	} {
+		if !strings.Contains(lower, want) {
+			t.Fatalf("prompt no longer establishes developer ownership (missing %q): %q", want, autorunPromptPreamble)
+		}
+	}
+}
+
 func TestRollbackAutorunChangesUsesDiagnosticStash(t *testing.T) {
 	original := autorunExec
 	defer func() { autorunExec = original }()

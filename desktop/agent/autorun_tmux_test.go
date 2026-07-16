@@ -56,12 +56,26 @@ func TestAutorunTailLinesKeepsTheEnd(t *testing.T) {
 }
 
 func TestAutorunTmuxSessionNameIsPerTask(t *testing.T) {
-	a := autorunTmuxSessionName("/repo/tasks/fix-gate.md")
-	b := autorunTmuxSessionName("/repo/tasks/other.md")
+	a := autorunTmuxSessionName("/repo/tasks/fix-gate.md", "claude")
+	b := autorunTmuxSessionName("/repo/tasks/other.md", "claude")
 	if a == b {
 		t.Fatal("two tasks must not share one runner TUI session")
 	}
 	if !strings.Contains(a, "fix-gate") {
 		t.Fatalf("session name should name its task for attachability: %q", a)
+	}
+}
+
+// With a master/doer split both seats drive a TUI for the SAME task at the same
+// time. Keying the session on the task alone sends the doer's prompt into the
+// master's TUI — tmux accepts the keystrokes and nothing reports it.
+func TestAutorunTmuxSessionNameIsPerRunner(t *testing.T) {
+	master := autorunTmuxSessionName("/repo/tasks/fix-gate.md", "claude")
+	doer := autorunTmuxSessionName("/repo/tasks/fix-gate.md", "codex")
+	if master == doer {
+		t.Fatalf("two runners on one task must not share a TUI session: %q", master)
+	}
+	if !strings.Contains(doer, "codex") {
+		t.Fatalf("session name should name its runner for attachability: %q", doer)
 	}
 }

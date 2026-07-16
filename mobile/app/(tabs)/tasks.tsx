@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
+import { agentSignalFromTask, agentStateBg, agentStateColor } from "../../src/lib/agentStatus";
 import { clipUrl } from "../../src/lib/vibePreview";
 import { isBundleLoaderAvailable } from "../../src/lib/bundleLoader";
 import { AuthenticatedVideoPlayer } from "../../src/components/AuthenticatedVideoPlayer";
@@ -122,18 +123,14 @@ import {
 // is a window onto recent activity, not the source of truth.
 // ── Constants ────────────────────────────────────────────────────────
 
-// Status palette. RUNNING is statusInfo (blue) rather than indigo —
-// the legacy #6366f1 sat in the same hue family as the brand purple
-// used for user message bubbles, so two purples shadowed each other
-// in the chat surface. See spec X3 status color discipline.
-const STATUS_COLORS: Record<TaskStatus, string> = {
-  queued: "#eab308",
-  running: "#3b82f6",
-  review: "#8b5cf6",
-  completed: "#22c55e",
-  failed: "#ef4444",
-  stopped: "#a1a1aa",
-};
+// Status colour now comes from src/lib/agentStatus.ts — the one vocabulary every
+// surface reads. The hardcoded map that lived here disagreed with the Home
+// session strip's (running was blue here, emerald there; completed was green
+// here, blue there), so the same task changed colour when you changed screens.
+// Both bypassed the token layer. RUNNING is still statusInfo (blue) rather than
+// indigo, for the original reason: the legacy #6366f1 sat in the same hue family
+// as the brand purple used for user message bubbles, so two purples shadowed
+// each other in the chat surface. That rule now lives in agentStateColor.
 
 function runnerAuthIssue(
   runner: Pick<RunnerInfo, "id" | "installed" | "ready" | "warning" | "error"> | null | undefined,
@@ -1117,6 +1114,8 @@ function TaskCardInner({
 }) {
   const c = useColors();
   const { isDark } = useTheme();
+  const signal = agentSignalFromTask(item);
+  const statusColor = agentStateColor(signal.state, c);
   const isRunning = item.status === "running" || item.status === "queued";
   const enter = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(isRunning ? 0.55 : 1)).current;
@@ -1212,14 +1211,23 @@ function TaskCardInner({
       >
         <View style={s.taskHeader}>
           <View style={s.taskHeaderMain}>
-            <View style={[s.statusBadge, { backgroundColor: STATUS_COLORS[item.status] + "14", borderColor: STATUS_COLORS[item.status] + "45" }]}>
-              {isRunning ? (
-                <Animated.View style={[s.statusPulseDot, { backgroundColor: STATUS_COLORS[item.status], opacity: pulse }]} />
+            <View style={[s.statusBadge, { backgroundColor: agentStateBg(signal.state, c), borderColor: statusColor + "45" }]}>
+              {signal.pulse ? (
+                <Animated.View style={[s.statusPulseDot, { backgroundColor: statusColor, opacity: pulse }]} />
               ) : (
-                <View style={[s.statusPulseDot, { backgroundColor: STATUS_COLORS[item.status] }]} />
+                <View
+                  style={[
+                    s.statusPulseDot,
+                    // Hollow = we cannot confirm it: queued has been accepted but
+                    // is not spending yet. Fill would claim more than we know.
+                    signal.hollow
+                      ? { borderWidth: 1.5, borderColor: statusColor, backgroundColor: "transparent" }
+                      : { backgroundColor: statusColor },
+                  ]}
+                />
               )}
-              <Text style={[s.statusText, { color: STATUS_COLORS[item.status] }]}>
-                {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+              <Text style={[s.statusText, { color: statusColor }]}>
+                {signal.label.charAt(0).toUpperCase() + signal.label.slice(1)}
               </Text>
             </View>
             {item.isAdopted && (

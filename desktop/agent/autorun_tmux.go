@@ -61,8 +61,18 @@ func autorunTmuxArgs(runner RunnerConfig) []string {
 	return args
 }
 
-func autorunTmuxSessionName(taskPath string) string {
-	return "yaver-autorun-" + autorunTaskName(taskPath)
+// autorunTmuxSessionName names the TUI for one task AND one runner. The runner
+// belongs in the name because a session outlives the runner that created it: with
+// a master/doer split both roles drive a TUI for the same task at the same time,
+// and on failover the successor inherits a session still running its predecessor's
+// binary. Keying on the task alone sends one runner's prompt into another
+// runner's TUI — silently, since tmux happily accepts the keystrokes.
+func autorunTmuxSessionName(taskPath, runnerID string) string {
+	name := "yaver-autorun-" + autorunTaskName(taskPath)
+	if id := normalizeRunnerID(strings.TrimSpace(runnerID)); id != "" {
+		name += "-" + id
+	}
+	return name
 }
 
 func autorunTmuxAvailable(ctx context.Context, workDir string) bool {

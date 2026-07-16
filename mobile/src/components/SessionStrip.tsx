@@ -6,9 +6,14 @@
  * Each chip:
  *   ● <title>          12s · 4.2k tok
  *
- * Status dot color: see DOT_COLOR. Tap dispatches onPress(task).
- * Strip auto-polls /tasks via quicClient.listTasks() on a 4s cadence;
- * the parent screen doesn't need to thread tasks in.
+ * Status dot colour comes from lib/agentStatus.ts — the one vocabulary every
+ * surface reads. It used to be defined here, and it disagreed with the Tasks
+ * screen: running was emerald here and blue there, completed was blue here and
+ * green there, so one task changed colour when you changed screens.
+ *
+ * Tap dispatches onPress(task). Strip auto-polls /tasks via
+ * quicClient.listTasks() on a 4s cadence; the parent screen doesn't need to
+ * thread tasks in.
  *
  * Glasses HUD (Mentra G2 / visionOS / Quest) re-uses the same
  * useActiveSessions() hook with a different renderer.
@@ -17,7 +22,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useColors } from "../context/ThemeContext";
-import { quicClient, Task, TaskStatus } from "../lib/quic";
+import { agentSignalFromTask, agentStateColor } from "../lib/agentStatus";
+import { quicClient, Task } from "../lib/quic";
 import { YaverGlass } from "./YaverGlass";
 
 interface Props {
@@ -31,14 +37,6 @@ interface Props {
   filter?: (task: Task) => boolean;
 }
 
-const DOT_COLOR: Record<TaskStatus, string> = {
-  queued: "#94a3b8",     // slate — waiting
-  running: "#10b981",    // emerald — active
-  review: "#f59e0b",     // amber — awaiting human
-  completed: "#3b82f6",  // blue — recently done
-  failed: "#ef4444",     // red — broken
-  stopped: "#6b7280",    // gray — paused
-};
 
 /** Hook the strip + the glasses HUD both consume. */
 export function useActiveSessions(opts?: { pollMs?: number; filter?: (t: Task) => boolean }): {
@@ -138,7 +136,8 @@ export function SessionStrip({ onPress, maxChips = 8, pollMs, filter }: Props): 
       {visible.map((t) => {
         const age = ageSeconds(t);
         const tok = tokensLabel(t);
-        const dot = DOT_COLOR[t.status] ?? "#94a3b8";
+        const signal = agentSignalFromTask(t);
+        const dot = agentStateColor(signal.state, c);
         return (
           <YaverGlass key={t.id} shape="capsule" tint={c.bgCard} style={styles.chipGlass}>
             <Pressable
@@ -148,7 +147,15 @@ export function SessionStrip({ onPress, maxChips = 8, pollMs, filter }: Props): 
                 { borderColor: c.border, opacity: pressed ? 0.7 : 1 },
               ]}
             >
-              <View style={[styles.dot, { backgroundColor: dot }]} />
+              <View
+                style={[
+                  styles.dot,
+                  // Hollow reads as "unconfirmed" — queued, or contact lost.
+                  signal.hollow
+                    ? { borderWidth: 1.5, borderColor: dot, backgroundColor: "transparent" }
+                    : { backgroundColor: dot },
+                ]}
+              />
               <View style={styles.body}>
                 <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "600" }} numberOfLines={1}>
                   {shortTitle(t.title)}

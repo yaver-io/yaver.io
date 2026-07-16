@@ -13,7 +13,28 @@ import (
 	"time"
 )
 
-const autorunPromptPreamble = `You are a senior engineer working in this repository. Do not ask questions and do not stop for input. Read the codebase first. When a decision arises, choose the most correct, thorough implementation and implement it fully; treat any explicitly recommended option as the answer. Work in small verified increments, respect the task scope and forbidden-command list, and do not commit or push: Yaver owns the build/test gate and only keeps verified commits.`
+// autorunPromptPreamble frames who is asking and on whose machine, because a
+// runner that can't tell drifts into hedging: it reads a long task file arriving
+// through tooling as someone else's workload and starts asking who authorized it
+// instead of writing code. The framing is plain fact — this is the developer's
+// own checkout on his own box, Yaver is his local tooling, and the task file is
+// his — so stating it costs nothing and removes the doubt.
+//
+// Deliberately NOT said: that nobody is at the keyboard. It's true, and it's
+// exactly what makes a runner cautious about its own edits, so the prompt gives
+// the developer's standing decisions ("choose the most correct option", "don't
+// ask") rather than announcing the absence and inviting the runner to hedge.
+const autorunPromptPreamble = `You are a senior engineer working in this repository, at the request of the developer who owns it.
+
+Context you can rely on:
+- This checkout, this machine, and the task below all belong to that developer. Yaver is his own local tooling: it reads his task file and hands it to you. Nothing here is pooled, resold, shared with third parties, or run on anyone else's behalf.
+- The task file is his written instruction to you. Treat it exactly as you would the same words typed into your terminal by the developer sitting at this machine.
+
+How he wants you to work:
+- Read the codebase first. Do not ask questions and do not stop for input — he has already decided he wants the work done, and answered the questions he could anticipate in the task file.
+- When a decision arises, choose the most correct, thorough implementation and implement it fully; treat any explicitly recommended option as the answer.
+- Work in small verified increments, and respect the task scope and forbidden-command list.
+- Do not commit or push: Yaver owns the build/test gate and only keeps verified commits.`
 
 // autorunFinalCommitMarker is the phrase the last commit of every autorun run
 // carries in BOTH its subject and its body. Autorun's per-iteration commits are
@@ -63,14 +84,19 @@ var autorunDiskFloorGB = 3.0
 // autorunRunSummary is what a finished run reports to its caller: the CLI prints
 // it, and the session manager surfaces it over MCP.
 type autorunRunSummary struct {
-	Iterations   int                `json:"iterations"`
-	Commits      int                `json:"commits"`
-	FinishReason string             `json:"finishReason,omitempty"`
-	FinalCommit  string             `json:"finalCommit,omitempty"`
-	FinalSubject string             `json:"finalCommitSubject,omitempty"`
-	Runner       string             `json:"runner,omitempty"`
-	Heals        []autorunHealEvent `json:"heals,omitempty"`
-	Resources    autorunResources   `json:"resources"`
+	Iterations   int    `json:"iterations"`
+	Commits      int    `json:"commits"`
+	FinishReason string `json:"finishReason,omitempty"`
+	FinalCommit  string `json:"finalCommit,omitempty"`
+	FinalSubject string `json:"finalCommitSubject,omitempty"`
+	Runner       string `json:"runner,omitempty"`
+	// Master is the planning seat's runner, empty on a single-runner run. It is
+	// reported separately from Runner because the two seats fail differently:
+	// "the doer failed" and "the master failed" are the same run for very
+	// different reasons, and Runner alone cannot tell them apart.
+	Master    string             `json:"master,omitempty"`
+	Heals     []autorunHealEvent `json:"heals,omitempty"`
+	Resources autorunResources   `json:"resources"`
 }
 
 // readyAutorunRunners lists every authenticated runner that is ready, skipping
@@ -130,7 +156,14 @@ func autorunFinalCommitBody(opts autorunOptions, runnerID string, summary autoru
 	fmt.Fprintf(&b, "Finish reason: %s\n", summary.FinishReason)
 	fmt.Fprintf(&b, "Iterations run: %d\n", summary.Iterations)
 	fmt.Fprintf(&b, "Verified commits kept: %d\n", summary.Commits)
-	fmt.Fprintf(&b, "Runner: %s\n", runnerID)
+	if summary.Master != "" {
+		// Name the seats, not just the runners: six months on, "codex" alone
+		// does not say whether it planned this work or only typed it.
+		fmt.Fprintf(&b, "Runner: %s (doer — implemented each iteration)\n", runnerID)
+		fmt.Fprintf(&b, "Master: %s (planned each iteration; did not edit)\n", summary.Master)
+	} else {
+		fmt.Fprintf(&b, "Runner: %s\n", runnerID)
+	}
 	fmt.Fprintf(&b, "Gate: %s\n", opts.Gate)
 	fmt.Fprintf(&b, "Machine at finish: %s\n", summary.Resources.Summary())
 	if len(summary.Heals) > 0 {
@@ -163,6 +196,97 @@ type autorunOptions struct {
 	// agrees the condition holds. Empty = rely on autorun's own termination
 	// signals (DONE / converged / --max-iters). claude-family only.
 	Goal string
+	// Master is an optional SECOND runner that plans each iteration but never
+	// edits: it reads the repo and writes the instruction that Runner (the doer)
+	// implements. Empty = single-runner, where the doer plans for itself.
+	//
+	// The split is about token economics. The doer's context grows with the
+	// files it edits; the master's stays small because it only ever emits a
+	// short instruction. So the expensive subscription can hold whichever seat
+	// the operator wants it in.
+	//
+	// Which runner plays which role is entirely the operator's call — any
+	// registry runner can be master, any can be doer, and nothing here treats a
+	// particular one as the natural planner. The roles carry the behavior; the
+	// runners are interchangeable.
+	Master string
+}
+
+// autorunSeats is the runner assignment a task file asks for in its front
+// matter, so the choice travels with the task instead of living in whatever
+// command happened to start it:
+//
+//	---
+//	master: opencode
+//	doer: codex
+//	---
+//
+// Both keys are optional; `runner:` is accepted as a synonym for `doer:`. An
+// explicit flag or ops argument always wins, since that is the operator speaking
+// now versus the file speaking whenever it was written.
+//
+// This reads front matter, NOT prose. "use codex as the doer" written in a
+// paragraph does nothing — recognizing that reliably takes a model, and a regex
+// that half-recognizes it would silently run the wrong pairing while looking like
+// it understood. The task file's own body reaches the master anyway, which is the
+// place where free-form intent already works.
+type autorunSeats struct {
+	Master string
+	Doer   string
+}
+
+// autorunSeatsFromTask parses the front-matter seat assignment. Unknown keys and
+// malformed headers are ignored: a task file is a document first, and a typo in
+// it must not stop a run the operator fully specified on the command line.
+func autorunSeatsFromTask(task string) autorunSeats {
+	var seats autorunSeats
+	lines := strings.Split(task, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return seats
+	}
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line == "---" {
+			break
+		}
+		key, value, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "master":
+			seats.Master = value
+		case "doer", "runner":
+			seats.Doer = value
+		}
+	}
+	return seats
+}
+
+// autorunSlotKey is an agent's STABLE address: task + seat. Unlike the session
+// ID — a timestamp, unique to one run — this is the same string every time the
+// same work runs on the same machine, which is what lets a UI give an agent a
+// fixed home instead of a row that moves.
+//
+// The session ID cannot do this job. `autorun-<UnixNano>` is new on every start,
+// so a client keying off it sees a brand-new agent after every restart and has
+// nowhere stable to put it. Sorting by StartedAt then moves every agent whenever
+// any of them changes — which is precisely the "list that reorders under your
+// eyes" that fixed slots exist to kill.
+//
+// Machine is deliberately NOT part of the key: a daemon only ever reports its
+// own sessions, so the machine is implied by who answered. Clients that merge
+// several machines' sessions qualify with the deviceId they asked.
+//
+// The shape mirrors the tmux session name (yaver-autorun-<task>-<runner>), which
+// is the same identity from the other end — one agent, one address, both places.
+func autorunSlotKey(taskPath, seat string) string {
+	seat = normalizeRunnerID(strings.TrimSpace(seat))
+	if seat == "" {
+		seat = "auto"
+	}
+	return autorunTaskName(taskPath) + ":" + seat
 }
 
 // autorunRunsClaudeBinary reports whether the runner drives the `claude` binary.
@@ -187,14 +311,17 @@ func autorunUsesTmux(opts autorunOptions, runner RunnerConfig) bool {
 // autorunKick runs one iteration against a runner, via tmux PTY when that
 // runner needs it and headless otherwise. Either path runs subscription-only:
 // the metered API keys are stripped from the runner's environment first.
-func autorunKick(ctx context.Context, opts autorunOptions, runner RunnerConfig, prompt string, timeout time.Duration) autorunCommandResult {
+//
+// A var, like autorunExec, so tests can drive the loop's seat logic without a
+// real runner on the machine.
+var autorunKick = func(ctx context.Context, opts autorunOptions, runner RunnerConfig, prompt string, timeout time.Duration) autorunCommandResult {
 	if !autorunUsesTmux(opts, runner) {
 		return autorunExecRunner(ctx, runner, resolveRunnerBinary(runner.Command), autorunRunnerArgs(runner, prompt), opts.WorkDir)
 	}
 	if !autorunTmuxAvailable(ctx, opts.WorkDir) {
 		return autorunCommandResult{Err: fmt.Errorf("runner %s must be driven as a TUI but tmux is not installed", runner.RunnerID)}
 	}
-	session := autorunTmuxSessionName(opts.TaskPath)
+	session := autorunTmuxSessionName(opts.TaskPath, runner.RunnerID)
 	created, err := ensureAutorunTmuxSession(ctx, session, runner, opts.WorkDir)
 	if err != nil {
 		return autorunCommandResult{Err: err}
@@ -316,6 +443,30 @@ func autorunProgressPath(taskPath, workDir string) string {
 	return filepath.Join(workDir, "docs", "handoff", base+"-progress.md")
 }
 
+// autorunRunnerWork filters autorun's OWN bookkeeping out of a dirty worktree,
+// leaving only what the runner actually did. Only the no-op/convergence decision
+// uses it — the gate and the commit still take every change, progress note
+// included.
+//
+// Without this the loop cannot converge, and provably did not: autorun appends a
+// note to the progress file on a no-op iteration, which leaves the worktree
+// dirty, which makes the NEXT iteration read its own note as "the runner did
+// work" — so it gates, commits the note, and resets the counter. Two consecutive
+// no-ops never happen, `converged` never fires, and a finished task keeps kicking
+// a runner until --max-iters, minting a commit of pure note-churn every other
+// pass. Measured on a fixture: a runner that edited nothing ran all 6 iterations
+// and produced 3 commits.
+func autorunRunnerWork(changes []string, progressPath, workDir string) []string {
+	progressRel := filepath.ToSlash(mustRel(workDir, progressPath))
+	work := make([]string, 0, len(changes))
+	for _, change := range changes {
+		if filepath.ToSlash(change) != progressRel {
+			work = append(work, change)
+		}
+	}
+	return work
+}
+
 func autorunGitChanges(ctx context.Context, workDir string) ([]string, error) {
 	result := autorunExec(ctx, "git", []string{"status", "--porcelain=v1", "-z", "--untracked-files=all"}, workDir)
 	if result.Err != nil {
@@ -395,6 +546,52 @@ func appendAutorunProgress(path, body string) error {
 
 func autorunContext(task, progress, log string, iteration int) string {
 	return fmt.Sprintf("%s\n\nTASK MARKDOWN:\n%s\n\nCURRENT STATE (iteration %d):\nRecent git log:\n%s\n\nProgress handoff:\n%s", autorunPromptPreamble, task, iteration, log, progress)
+}
+
+// autorunMasterPromptPreamble drives the planning seat. It says "do not edit"
+// three different ways because a coding runner's whole reflex is to reach for the
+// editor, and an edit here is worse than useless: the doer is about to work the
+// same tree, so the master's stray edit lands in the doer's diff and gets
+// attributed to it. autorunLoop enforces this rather than trusting it — but a
+// runner that never edits is cheaper than one rolled back every iteration.
+const autorunMasterPromptPreamble = `You are the technical lead for this iteration, working at the request of the developer who owns this repository and this machine. Yaver is his own local tooling: it reads his task file and hands it to you. Nothing here is pooled, resold, or run on anyone else's behalf.
+
+You do NOT write code this iteration. Another engineer — the doer — implements what you decide, in this same worktree, immediately after you answer. Your entire output is the instruction they will follow.
+
+Your job:
+- Read the codebase, the task file, the git log, and the progress handoff below. Find the single most valuable next increment.
+- Do NOT edit, create, or delete any file. Do NOT run the gate. Do NOT commit. Read-only tools only — leave the worktree exactly as you found it.
+- Answer with the instruction itself and nothing else: no preamble, no "here is the plan", no restating the task.
+
+What the instruction must contain:
+- ONE increment, small enough to verify in a single pass. Not a roadmap.
+- The specific files and functions to change, named by path, since the doer starts cold and has not read what you just read.
+- The approach to take, and any decision you already made for them — if a choice arises, make it here rather than leaving it open.
+- How they will know it worked (the behavior to check, or the test to add).
+- Say DONE, alone, only when the task file's work is fully complete and verified in the git log.`
+
+// autorunMasterContext prompts the planning seat. The doer's report from the last
+// iteration reaches it through the progress handoff — that file is the whole sync
+// channel between the two seats, which is why both roles write to it.
+func autorunMasterContext(task, progress, log string, iteration int) string {
+	return fmt.Sprintf("%s\n\nTASK MARKDOWN:\n%s\n\nCURRENT STATE (iteration %d):\nRecent git log:\n%s\n\nProgress handoff (includes what the doer reported last iteration):\n%s", autorunMasterPromptPreamble, task, iteration, log, progress)
+}
+
+// autorunDoerContext prompts the implementing seat with the master's instruction.
+// The task file rides along because the instruction is deliberately narrow: it
+// says what to do now, and the doer still needs the scope and constraints the
+// task file sets around it.
+func autorunDoerContext(task, progress, log, instruction string, iteration int) string {
+	return fmt.Sprintf("%s\n\nYOUR INSTRUCTION FOR THIS ITERATION — from the technical lead on this task, who has just read the codebase. Implement exactly this, and nothing beyond it:\n%s\n\nTASK MARKDOWN (the overall task this increment serves; use it for scope and constraints, not as your instruction):\n%s\n\nCURRENT STATE (iteration %d):\nRecent git log:\n%s\n\nProgress handoff:\n%s",
+		autorunPromptPreamble, strings.TrimSpace(instruction), task, iteration, log, progress)
+}
+
+// autorunMasterInstruction extracts the instruction from a master turn. A TUI
+// capture carries the runner's chrome around the answer, so an empty result means
+// the master said nothing usable — the loop treats that as a runner failure
+// rather than kicking the doer with an empty instruction.
+func autorunMasterInstruction(output string) string {
+	return strings.TrimSpace(output)
 }
 
 // autorunKickTimeout bounds one runner turn. A TUI turn can be long (a real fix

@@ -2,7 +2,8 @@
 // spatial DataPane3D. Derived entirely from tasks already polled by
 // useAgentBridge, so it needs no new agent endpoint.
 
-import type { Task } from "../useAgentBridge";
+import { agentSignalFromTaskStatus, agentStateHex } from "../../../lib/agentStatus";
+import type { Task, TaskStatus } from "../useAgentBridge";
 
 export interface FleetRow {
   label: string;
@@ -17,14 +18,12 @@ export interface FleetStats {
   tone: "ok" | "warn" | "busy" | "idle";
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  running: "#10b981",
-  review: "#f59e0b",
-  queued: "#60a5fa",
-  completed: "#9ca3af",
-  failed: "#ef4444",
-  stopped: "#6b7280",
-};
+// Status colour now comes from lib/agentStatus.ts — the one vocabulary every
+// surface reads. The map that lived here was the fourth copy in the product and
+// the third meaning of `completed` (grey here, green on the mobile Tasks screen,
+// blue in the mobile Home strip). agentStateHex resolves through globals.css, so
+// it follows the theme instead of pinning a literal.
+const statusHex = (status: TaskStatus): string => agentStateHex(agentSignalFromTaskStatus(status).state);
 
 export function summarizeFleet(tasks: Task[]): FleetStats {
   const count = (s: string) => tasks.filter((t) => t.status === s).length;
@@ -37,10 +36,10 @@ export function summarizeFleet(tasks: Task[]): FleetStats {
   const tokens = tasks.reduce((sum, t) => sum + (t.inputTokens ?? 0) + (t.outputTokens ?? 0), 0);
 
   const rows: FleetRow[] = [
-    { label: "running", value: String(running), color: STATUS_COLORS.running },
-    { label: "queued", value: String(queued), color: STATUS_COLORS.queued },
-    { label: "review", value: String(review), color: STATUS_COLORS.review },
-    { label: "failed", value: String(failed), color: failed ? STATUS_COLORS.failed : undefined },
+    { label: "running", value: String(running), color: statusHex("running") },
+    { label: "queued", value: String(queued), color: statusHex("queued") },
+    { label: "review", value: String(review), color: statusHex("review") },
+    { label: "failed", value: String(failed), color: failed ? statusHex("failed") : undefined },
     { label: "tokens", value: formatTokens(tokens) },
   ];
 
