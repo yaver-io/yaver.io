@@ -77,8 +77,66 @@ export function isManagedCloudDevice(d: {
   return Boolean(d.machineId) && (d.managed === true || d.hosting === "yaver-hosted");
 }
 
-/** True when the box is currently parked (paused) rather than running. */
+/**
+ * True when the box is currently parked (paused) rather than running.
+ *
+ * NOTE: this answers "is it parked", NOT "can it be woken" — a parked box with
+ * no snapshot cannot come back, and only the backend knows that. For anything
+ * that offers a wake action, read `device.machineWakeable` (the backend's own
+ * isMachineWakeable verdict) instead of calling this.
+ */
 export function isMachinePaused(machineStatus?: string): boolean {
   const s = String(machineStatus ?? "").toLowerCase();
   return s === "paused" || s === "stopped" || s === "suspended" || s === "off";
+}
+
+/** True when the box is up and billing — the only state where Pause is meaningful. */
+export function isMachineRunning(machineStatus?: string): boolean {
+  return String(machineStatus ?? "").toLowerCase() === "active";
+}
+
+/**
+ * describeMachineState turns a raw cloudMachines.status into what an operator
+ * needs to know: is this box asleep (and wakeable), busy changing state, or gone?
+ *
+ * The dashboard previously showed every non-running managed box as plain
+ * "Offline" with a ⏸ Pause button — so a parked box you could wake in two
+ * minutes looked identical to one that had been deleted.
+ */
+export function describeMachineState(
+  machineStatus: string | undefined,
+  wakeable: boolean,
+): { label: string; tone: "asleep" | "busy" | "gone" | "running"; hint: string } {
+  const s = String(machineStatus ?? "").toLowerCase();
+  if (s === "active") {
+    return { label: "Running", tone: "running", hint: "The box is up and billing." };
+  }
+  if (s === "resuming" || s === "starting") {
+    return { label: "Waking…", tone: "busy", hint: "Recreating from snapshot — usually 2-3 min." };
+  }
+  if (s === "stopping" || s === "pausing" || s === "snapshotting") {
+    return { label: "Parking…", tone: "busy", hint: "Snapshotting, then deleting the server so billing stops." };
+  }
+  if (wakeable) {
+    return {
+      label: "Asleep",
+      tone: "asleep",
+      hint: "Parked to stop billing. Wake recreates it from its snapshot (~2-3 min).",
+    };
+  }
+  if (s === "removed" || s === "deleted") {
+    return {
+      label: "Gone",
+      tone: "gone",
+      hint: "This box was deleted and has no snapshot to restore — it cannot be woken. Provision a new one.",
+    };
+  }
+  if (s === "error") {
+    return { label: "Error", tone: "gone", hint: "The box failed and cannot be woken. Check the machine log." };
+  }
+  return {
+    label: s ? s[0].toUpperCase() + s.slice(1) : "Unknown",
+    tone: "gone",
+    hint: "No wake action is available from this state.",
+  };
 }

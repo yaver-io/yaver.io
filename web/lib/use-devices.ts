@@ -152,6 +152,8 @@ export interface Device {
    *  Resume a Yaver-hosted box from the web dashboard, same as mobile does. */
   machineId?: string;
   machineStatus?: string;
+  /** Backend verdict (isMachineWakeable): can this box actually be woken from a snapshot? */
+  machineWakeable?: boolean;
   /**
    * True when this row lacks both hardwareId and publicKey AND is not a
    * guest. Such rows have unstable identity — a rename or platform
@@ -578,6 +580,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         managed: typeof d.managed === "boolean" ? d.managed : undefined,
         machineId: typeof d.machineId === "string" ? d.machineId : undefined,
         machineStatus: typeof d.machineStatus === "string" ? d.machineStatus : undefined,
+        machineWakeable: d.machineWakeable === true,
         // Ghost: non-guest row lacking both stable identifiers. Cannot
         // be reliably reconnect-targeted. Surfaced in the UI so the
         // user knows to re-pair from the device.

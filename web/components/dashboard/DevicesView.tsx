@@ -13,7 +13,8 @@ import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
 import {
-  isMachinePaused,
+  describeMachineState,
+  isMachineRunning,
   isManagedCloudDevice,
   startManagedCloudMachine,
   stopManagedCloudMachine,
@@ -2302,6 +2303,36 @@ function useManagedMachines(token: string | null | undefined): ManagedMachineSum
 }
 
 /**
+ * ManagedStateChip — says what a Yaver-hosted box actually IS right now.
+ *
+ * Every non-running managed box used to render as plain "Offline", so a box
+ * parked to save money (wakeable in ~2-3 min) was indistinguishable from one
+ * that had been deleted and can never come back. That is the difference between
+ * "click Wake" and "provision a new one", and the dashboard said neither.
+ */
+function ManagedStateChip({ device }: { device: Device }) {
+  if (!isManagedCloudDevice(device)) return null;
+  const state = describeMachineState(device.machineStatus, device.machineWakeable === true);
+  if (state.tone === "running") return null; // the normal online dot already says this
+
+  const tone =
+    state.tone === "asleep"
+      ? "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
+      : state.tone === "busy"
+        ? "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/10 dark:text-violet-300"
+        : "border-surface-300 bg-surface-100 text-surface-600 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-400";
+
+  return (
+    <span
+      title={state.hint}
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${tone}`}
+    >
+      {state.tone === "asleep" ? "🌙" : state.tone === "busy" ? "⏳" : "⊘"} {state.label}
+    </span>
+  );
+}
+
+/**
  * ManagedPowerButton — Pause / Resume a Yaver-hosted box from the WEB dashboard.
  * Mobile has had this (Devices tab ⏸ Pause / ▶ Resume); web did not, so the only
  * way to stop the meter from a laptop was the phone. Pause = snapshot then DELETE
@@ -2321,7 +2352,27 @@ function ManagedPowerButton({
   const [err, setErr] = useState<string | null>(null);
 
   if (!token || !isManagedCloudDevice(device) || !device.machineId) return null;
-  const paused = isMachinePaused(device.machineStatus);
+
+  // "Asleep" and "gone" are different, and conflating them produced the two bugs
+  // this block now prevents:
+  //
+  //  - A `removed`/`error` box is NOT paused, so the old isMachinePaused() check
+  //    fell through to the else-branch and offered ⏸ PAUSE on a box that had
+  //    already been deleted. Pausing a box that does not exist is nonsense.
+  //  - Wakeability also needs a snapshot to recreate FROM, which only the
+  //    backend knows. The web used to guess from status alone and offered
+  //    ▶ Resume on snapshot-less boxes that wakeMachine then refused.
+  //
+  // machineWakeable is the backend's own verdict (isMachineWakeable), so the
+  // button now offers exactly the action that will actually succeed.
+  const wakeable = device.machineWakeable === true;
+  const running = isMachineRunning(device.machineStatus);
+  if (!wakeable && !running) {
+    // Gone, or mid-transition: no power action is meaningful. The state chip
+    // (ManagedStateChip) says what happened; a button here would only mislead.
+    return null;
+  }
+  const paused = wakeable;
 
   const act = async () => {
     if (!device.machineId || !token) return;
@@ -2357,11 +2408,11 @@ function ManagedPowerButton({
       }`}
       title={
         paused
-          ? "Resume this box — recreate it from its latest snapshot (~2-3 min)"
+          ? "Wake this box — recreate it from its latest snapshot (~2-3 min)"
           : "Pause this box — snapshot then delete the server so billing stops (scale to zero)"
       }
     >
-      {busy ? "…" : paused ? "▶ Resume" : "⏸ Pause"}
+      {busy ? "…" : paused ? "▶ Wake" : "⏸ Pause"}
       {err ? (
         <span className="ml-1 normal-case text-red-600 dark:text-red-300" title={err}>
           ✗
@@ -2730,8 +2781,13 @@ export default function DevicesView({
                           {device.hosting === "yaver-hosted" ? "Yaver-hosted" : device.hosting === "byo" ? "BYO" : "Self-hosted"}
                         </span>
                       ) : null}
+                      {/* What the box IS (Asleep / Waking / Gone) before what you
+                          can DO to it — "Offline" alone can't tell a parked box
+                          from a deleted one. */}
+                      <ManagedStateChip device={device} />
                       {/* Yaver-managed box → Pause (snapshot+delete, meter stops)
-                          / Resume, same control the mobile Devices tab has. */}
+                          / Wake, same control the mobile Devices tab has. Renders
+                          nothing when neither action would succeed. */}
                       <ManagedPowerButton device={device} token={token} />
                     </div>
                     <div className="mt-1 text-sm text-slate-600 dark:text-surface-400">

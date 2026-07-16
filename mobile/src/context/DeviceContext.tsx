@@ -352,6 +352,13 @@ export interface Device {
   machineId?: string;
   /** cloudMachines.status (active|paused|stopped|resuming|suspended|…). */
   machineStatus?: string;
+  /**
+   * Backend verdict (isMachineWakeable): can this box actually be woken from a
+   * snapshot? Read this instead of inferring from machineStatus — a `removed`
+   * box is gone rather than asleep, and a parked box with no snapshot cannot
+   * come back at any price.
+   */
+  machineWakeable?: boolean;
   /** host's display name (only set when isGuest=true) */
   hostName?: string;
   /** host's email (only set when isGuest=true) */
@@ -1246,6 +1253,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             managed: typeof d.managed === "boolean" ? d.managed : undefined,
             machineId: typeof d.machineId === "string" ? d.machineId : undefined,
             machineStatus: typeof d.machineStatus === "string" ? d.machineStatus : undefined,
+            machineWakeable: d.machineWakeable === true,
             hostName: d.hostName,
             hostEmail: d.hostEmail,
             accessScope: d.accessScope,

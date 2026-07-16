@@ -8,6 +8,7 @@ import {
   listVisibleInfraGrantsForGuest,
 } from "./access";
 import { recommendPlacement } from "./edgePlacement";
+import { isMachineWakeable } from "./cloudMachines";
 import {
   smartDeviceLabel,
   smartAliasSlug,
@@ -260,6 +261,14 @@ type ListedDevice = {
   machineId?: string;
   /** cloudMachines.status (active|paused|stopped|stopping|resuming|suspended|grace|…). */
   machineStatus?: string;
+  /**
+   * True when this box can actually be woken from a snapshot — decided by
+   * isMachineWakeable (cloudMachines.ts), the same rule wakeMachine enforces.
+   * Clients must read this rather than re-deriving it from machineStatus: a
+   * `removed` box is gone rather than asleep, and a resumable status with no
+   * snapshot cannot come back at any price.
+   */
+  machineWakeable?: boolean;
 };
 
 function mergeHardwareProfile(
@@ -1472,12 +1481,24 @@ export const listMyDevices = query({
       .query("cloudMachines")
       .withIndex("by_user", (q) => q.eq("userId", session.user._id))
       .collect();
-    const managedByDeviceId = new Map<string, { machineId: string; status: string }>();
+    const managedByDeviceId = new Map<
+      string,
+      { machineId: string; status: string; wakeable: boolean }
+    >();
     for (const m of userCloudMachines) {
       if (typeof m.deviceId === "string" && m.deviceId.trim() !== "" && m.origin !== "self-hosted") {
+        const status = typeof (m as any).status === "string" ? (m as any).status : "active";
         managedByDeviceId.set(m.deviceId, {
           machineId: m._id,
-          status: typeof (m as any).status === "string" ? (m as any).status : "active",
+          status,
+          // Computed HERE, not in each client, because "can this box be woken"
+          // has exactly one correct answer and it belongs next to the rule that
+          // enforces it (wakeMachine below). The web previously re-derived it
+          // from status alone and drifted: it offered Resume on a box with no
+          // snapshot (which wakeMachine then refused), and offered PAUSE on a
+          // box that was already removed — an action that makes no sense on a
+          // box that is gone. Keep this in lockstep with wakeMachine's gate.
+          wakeable: isMachineWakeable(m),
         });
       }
     }
@@ -1612,6 +1633,10 @@ export const listMyDevices = query({
       hosting: hostingFor(d.deviceId),
       machineId: managedByDeviceId.get(d.deviceId)?.machineId,
       machineStatus: managedByDeviceId.get(d.deviceId)?.status,
+      // Whether this box can actually be woken from a snapshot, decided by the
+      // backend (isMachineWakeable) rather than re-derived per client. Clients
+      // must read this instead of inspecting machineStatus themselves.
+      machineWakeable: managedByDeviceId.get(d.deviceId)?.wakeable ?? false,
     }));
 
     // Device LIST (UI) must drop hidden beta grants — a beta user must never see

@@ -1358,6 +1358,34 @@ export const setStatus = internalMutation({
   },
 });
 
+/**
+ * isMachineWakeable — the ONE answer to "can this box be woken from a snapshot?"
+ *
+ * Two conditions, and both matter:
+ *   1. a resumable status — a `removed` or `error` box is gone, not asleep, and
+ *      offering to wake (or worse, PAUSE) it is a nonsense action.
+ *   2. something to recreate it FROM. Scale-to-zero DELETES the server (Hetzner
+ *      bills stopped ones), so without a snapshot or base image the box cannot
+ *      come back at any price.
+ *
+ * This lives next to wakeMachine, its enforcement point, and is exported so the
+ * device list can ship the same verdict to every client. The web previously
+ * re-derived it from status alone and drifted from this gate: it offered Resume
+ * on snapshot-less boxes that wakeMachine then refused, and offered PAUSE on
+ * boxes that were already removed. A client must never re-implement this rule —
+ * read `machineWakeable` off the device row instead.
+ */
+export function isMachineWakeable(machine: {
+  status?: string;
+  lastSnapshotId?: string;
+  baseImageId?: string;
+}): boolean {
+  const status = String(machine.status ?? "");
+  const resumable = status === "stopped" || status === "paused" || status === "suspended";
+  if (!resumable) return false;
+  return Boolean(machine.lastSnapshotId || machine.baseImageId);
+}
+
 // seedParkedMachine records a PARKED, wakeable managed machine — a box that was
 // snapshotted + deleted (metered billing) so it accrues no server cost but can
 // be recreated from its snapshot on demand. Without a row here the mobile/web/
@@ -1479,15 +1507,11 @@ export const wake = internalMutation({
     if (machine.status === "active") {
       return { ok: true, status: "active", alreadyAwake: true };
     }
-    const wakeable =
-      machine.status === "stopped" ||
-      machine.status === "paused" ||
-      machine.status === "suspended";
-    if (!wakeable) {
+    if (!isMachineWakeable(machine)) {
+      if (!machine.lastSnapshotId && !machine.baseImageId) {
+        return { ok: false, error: "no snapshot recorded — cannot recreate the box" };
+      }
       return { ok: false, error: `not wakeable from status ${machine.status}` };
-    }
-    if (!machine.lastSnapshotId && !machine.baseImageId) {
-      return { ok: false, error: "no snapshot recorded — cannot recreate the box" };
     }
     // Normalise stopped → paused (resumeMachine's gate) + stamp the wake time.
     await ctx.db.patch(args.machineId, {
