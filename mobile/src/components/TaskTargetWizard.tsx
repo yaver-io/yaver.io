@@ -488,12 +488,14 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed, onDis
   // ─────────────────────────────────────────────────────────────────
   // Render
 
-  // Eligible = either pool-connected (instant target) OR online with a
-  // fresh heartbeat (tap-to-connect target). User asked for "show
-  // other at least live (heartbeat machines) as well too" — those
-  // boxes are tappable; we connect on pick. Devices needing yaver
-  // auth or fully offline still get filtered out so the list stays
-  // honest. Sort connected first, then by name.
+  // Every real box the user owns, ranked by liveness: pool-connected
+  // (instant target), then online (tap-to-connect), then needing a yaver
+  // sign-in (tap routes through recoverDeviceAuth), then offline (shown,
+  // not selectable). Offline and needs-auth rows used to be filtered out
+  // here "so the list stays honest" — but a box that vanishes entirely is
+  // the dishonest outcome: a rebooted machine in bootstrap mode simply
+  // disappeared, with no way to see or sign it in. Honesty is the status
+  // line's job, not the filter's.
   const eligibleDevices = React.useMemo(() => {
     return eligibleRemoteBoxDevices(devices, connectedSet, activeDevice?.id);
   }, [devices, connectedSet, activeDevice?.id]);

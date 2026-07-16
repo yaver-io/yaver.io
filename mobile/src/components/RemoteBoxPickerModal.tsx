@@ -346,6 +346,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     refresh: refreshManagedMachines,
   } = useParkedMachines(token);
   const [recoveringMachineId, setRecoveringMachineId] = React.useState<string | null>(null);
+  const [recoveringDeviceId, setRecoveringDeviceId] = React.useState<string | null>(null);
   const sleepingMachines = React.useMemo(
     () =>
       managedMachines.filter(
@@ -577,6 +578,43 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
 
   const pickedDeviceIsCurrent = !!pickedDevice && activeDevice?.id === pickedDevice.id;
   const pickedDeviceIsConnected = !!pickedDevice && connectedSet.has(pickedDevice.id);
+
+  // Sign in a real (self-hosted) box that came back in bootstrap mode. The
+  // managed path below builds a synthetic Device because a parked cloud box
+  // has no device row yet; here the row is real and already carries the host
+  // + public key, so it goes straight to recoverDeviceAuth. Confirm first —
+  // recoverDeviceAuth calls selectDevice internally and tears down the
+  // currently active connection.
+  const signInDevice = React.useCallback(
+    async (device: Device) => {
+      const proceed = await new Promise<boolean>((resolve) => {
+        Alert.alert(
+          "Sign this machine in?",
+          `${device.name} is running but its Yaver session expired. Yaver will push this phone's session to it. Your current connection will be dropped while it reconnects.`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+            { text: "Sign in", onPress: () => resolve(true) },
+          ],
+        );
+      });
+      if (!proceed) return;
+      setRecoveringDeviceId(device.id);
+      try {
+        const result = await deviceCtx.recoverDeviceAuth(device);
+        if (!result?.ok && !result?.alreadyHealthy) {
+          Alert.alert(
+            "Sign-in did not finish",
+            result?.error || "Yaver could not sign this machine in. Check that it is reachable and try again.",
+          );
+        }
+      } catch (err: any) {
+        Alert.alert("Sign-in failed", err?.message || "Yaver could not sign this machine in.");
+      } finally {
+        setRecoveringDeviceId(null);
+      }
+    },
+    [deviceCtx],
+  );
 
   const recoverManagedMachineAuth = React.useCallback(
     async (machine: ManagedCloudMachineSummary) => {
@@ -812,12 +850,23 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                   !connectedSet.has(device.id) &&
                   !reachableNow &&
                   (device as any).relayConnected === false;
+                // Agent is up but running in bootstrap mode (no valid token) —
+                // typically a box that restarted after its token left disk. It
+                // is reachable and recoverable, so offer sign-in rather than a
+                // "tap to select" that would connect to a daemon with no auth.
+                const needsSignIn = !!device.needsAuth && !connectedSet.has(device.id);
                 const statusLine = connectedSet.has(device.id)
                   ? ping && ping.ok
                     ? `Connected · ${ping.rttMs}ms`
                     : ping && !ping.ok
                       ? "Connected (pool) · ping failed"
                       : "Connected · pinging…"
+                  : needsSignIn
+                    ? recoveringDeviceId === device.id
+                      ? "Signing in…"
+                      : device.online || reachableNow
+                        ? "Needs sign-in · tap to sign this machine in"
+                        : `Needs sign-in · ${lastSeenLabel((device as any).lastSeen)}`
                   : staleOnline
                     ? `${lastSeenLabel(lastSeenTs).replace(/^last seen/, "Last seen")} · may be unreachable`
                     : noRelayPath
@@ -837,6 +886,10 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                   <Pressable
                     key={device.id}
                     onPress={() => {
+                      if (needsSignIn && (device.online || reachableNow)) {
+                        void signInDevice(device);
+                        return;
+                      }
                       setPickedDeviceId(device.id);
                     }}
                     // Long-press a device → quick actions (Disconnect). Tearing

@@ -54,12 +54,25 @@ func TestAuthWaitDeviceCode_RespectsContextCancellation(t *testing.T) {
 }
 
 func TestAuthLogout_NoConfigIsIdempotent(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel(): t.Setenv forbids it, and the isolation matters more
+	// than the parallelism. authLogout() resolves ~/.yaver from $HOME and
+	// really does clear the token there. Without this temp HOME the test
+	// signs the DEVELOPER out of Yaver on their own machine — it did, which
+	// is how this got found — leaving config.json with device_id +
+	// previous_auth_tokens and no auth_token. That is the exact fingerprint
+	// of the "agent dropped to bootstrap after a restart" bug, so the test
+	// wasn't just destructive, it manufactured the incident it looks like.
+	// Any test that reaches a real credential path must own its HOME.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	// When there's no token to clear, logout is a no-op that reports
 	// "already logged out" without error.
 	res, err := authLogout()
 	if err != nil {
 		t.Fatalf("authLogout must not error on empty-config input, got %v", err)
 	}
-	_ = res // LoggedOut may be true or false depending on current real config
+	if res.LoggedOut {
+		t.Fatalf("empty config must report LoggedOut=false, got %+v", res)
+	}
 }

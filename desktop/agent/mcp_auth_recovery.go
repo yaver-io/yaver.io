@@ -555,6 +555,52 @@ func extractRemoteError(status int, raw []byte) string {
 	return message
 }
 
+// trySSHDeviceRecovery is the last-resort transport for device_reauth_start.
+// Reports ok=false only by returning handled=false, so the caller keeps its
+// own (more specific) HTTP error when SSH isn't a usable path either —
+// "ssh: Permission denied" would be a worse answer than "relay rejected".
+//
+// Bounded at 45s: this runs inside an MCP call, and a hung ssh (host key
+// prompt, dead route) must not wedge the tool.
+func trySSHDeviceRecovery(cfg *Config, target *DeviceInfo, probe deviceReauthProbe) (map[string]interface{}, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	transport, err := recoverDeviceAuthOverSSH(ctx, cfg, target)
+	if err != nil {
+		return nil, false
+	}
+	return sshRecoveryResult(cfg, target, probe, transport), true
+}
+
+func sshRecoveryResult(cfg *Config, target *DeviceInfo, probe deviceReauthProbe, transport string) map[string]interface{} {
+	after := probeOwnedDeviceReauth(cfg, target)
+	return map[string]interface{}{
+		"ok":                true,
+		"deviceId":          target.DeviceID,
+		"mode":              "pair",
+		"recoveryTransport": transport,
+		"state":             after.State,
+		"stateBefore":       probe.State,
+		"probe":             after,
+		"note":              "signed in by pushing this machine's session into the target's pair window",
+	}
+}
+
+// tryPairWindowRecovery handles the bootstrap case over HTTP. mode "pair"
+// via /auth/recover only OPENS a window and hands back a session id for
+// someone else to submit into — for an owner-driven fix, we ARE that
+// someone else, so drive the window to completion instead of returning a
+// half-finished handshake the caller has to babysit.
+func tryPairWindowRecovery(cfg *Config, target *DeviceInfo, probe deviceReauthProbe) (map[string]interface{}, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	transport, err := recoverDeviceAuthViaPairWindow(ctx, cfg, target)
+	if err != nil {
+		return nil, false
+	}
+	return sshRecoveryResult(cfg, target, probe, transport), true
+}
+
 func mcpDeviceReauthStart(deviceHint, mode, bootstrapSecret string) map[string]interface{} {
 	cfg, target, err := findOwnedDeviceForHint(deviceHint)
 	if err != nil {
@@ -575,9 +621,18 @@ func mcpDeviceReauthStart(deviceHint, mode, bootstrapSecret string) map[string]i
 			"probe":    probe,
 		}
 	case "wait-for-device", "check-transport":
+		// No HTTP transport reaches this box — which is the NORMAL state
+		// for auth loss, not an edge case: an unauthenticated agent gets
+		// its relay registration rejected, so the one transport that
+		// survives NAT is the first one auth loss removes. Refusing here
+		// left the box unrecoverable from anywhere but its own LAN. SSH
+		// doesn't depend on Yaver's auth state, so try it before giving up.
+		if res, ok := trySSHDeviceRecovery(cfg, target, probe); ok {
+			return res
+		}
 		return map[string]interface{}{
 			"ok":       false,
-			"error":    "device is not reachable enough to start recovery yet",
+			"error":    "device is not reachable over HTTP or SSH yet",
 			"deviceId": target.DeviceID,
 			"state":    probe.State,
 			"probe":    probe,
@@ -587,8 +642,20 @@ func mcpDeviceReauthStart(deviceHint, mode, bootstrapSecret string) map[string]i
 		return map[string]interface{}{"ok": false, "error": "mode must be auto, direct, pair, or device-code"}
 	}
 
+	// A reachable bootstrap box can be finished off right here.
+	if selectedMode == "pair" && probe.Reachable {
+		if res, ok := tryPairWindowRecovery(cfg, target, probe); ok {
+			return res
+		}
+	}
+
 	chosen, status, raw, reqErr := doOwnedDeviceRecover(cfg, target, selectedMode, bootstrapSecret)
 	if reqErr != nil {
+		// HTTP found a transport during the probe but lost it mid-recovery
+		// (relay drop, tunnel flap). Same reasoning as above — fall back.
+		if res, ok := trySSHDeviceRecovery(cfg, target, probe); ok {
+			return res
+		}
 		return map[string]interface{}{
 			"ok":       false,
 			"error":    reqErr.Error(),

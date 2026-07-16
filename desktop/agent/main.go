@@ -1040,6 +1040,9 @@ func runAuth(args []string) {
 		case "send":
 			runAuthSend(args[1:])
 			return
+		case "fix", "recover":
+			runAuthFix(args[1:])
+			return
 		case "status":
 			runAuthStatus(args[1:])
 			return
@@ -8672,6 +8675,18 @@ func inferSSHUser(host string, dev DeviceInfo) string {
 	// (e.g. pokayoke), producing "Connection closed by host port 22"
 	// well before any auth-bootstrap path could help.
 	if u := remoteAgentOSUser(dev.DeviceID, 3*time.Second); u != "" {
+		// Cache it while the agent is healthy enough to answer. This is
+		// the only window in which we CAN learn it, and the window closes
+		// exactly when recovery needs it (see rememberSSHUser).
+		rememberSSHUser(dev, u)
+		return u
+	}
+	// The agent didn't answer — down, or in bootstrap with its relay
+	// registration rejected. That's precisely when someone is trying to
+	// ssh in to FIX it, so fall back to whatever we learned last time
+	// rather than silently ssh-ing as the local user into an account
+	// that doesn't exist on the remote.
+	if u := recallSSHUser(dev); u != "" {
 		return u
 	}
 	// Fallback heuristic only for Linux boxes — historical Yaver

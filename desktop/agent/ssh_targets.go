@@ -75,6 +75,80 @@ func rememberSSHHost(cfg *Config, name, host string) {
 	cfg.SSHTargets = append(cfg.SSHTargets, SSHTarget{Name: name, Host: host})
 }
 
+// sshTargetBookKeys are the names a device might be filed under in the
+// local book: its alias (what the user types) and its hostname.
+func sshTargetBookKeys(dev DeviceInfo) []string {
+	var keys []string
+	for _, k := range []string{strings.TrimSpace(dev.Alias), strings.TrimSpace(dev.Name)} {
+		if k != "" {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// rememberSSHUser records the OS user a healthy agent reported, so we can
+// still ssh in once it ISN'T healthy.
+//
+// Learning the user costs an /info round-trip to the agent — which means
+// the one moment we cannot learn it is the moment we need it: an agent
+// that is down, or in bootstrap mode with its relay registration rejected,
+// answers nothing. `yaver ssh` then falls back to the LOCAL username, and
+// a box whose account is `pokayoke` closes the connection on `kivanccakmak`
+// before any recovery path gets a turn. Caching while things work is what
+// breaks that circle.
+//
+// Local-only, deliberately: an OS username is the same home-dir identity
+// leak the Convex privacy contract forbids paths for. It belongs in the
+// device book, never in a device row.
+//
+// Never clobbers a user the operator set by hand — same rule as
+// rememberSSHHost.
+func rememberSSHUser(dev DeviceInfo, user string) {
+	user = strings.TrimSpace(user)
+	keys := sshTargetBookKeys(dev)
+	if user == "" || len(keys) == 0 {
+		return
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return
+	}
+	changed := false
+	for _, key := range keys {
+		if t := lookupSSHTarget(cfg, key); t != nil {
+			if strings.TrimSpace(t.User) == "" {
+				t.User = user
+				changed = true
+			}
+			continue
+		}
+		upsertSSHTarget(cfg, SSHTarget{Name: key, User: user})
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	// Best-effort: a failed cache write must never break the ssh itself.
+	_ = SaveConfig(cfg)
+}
+
+// recallSSHUser reads back a user learned by rememberSSHUser.
+func recallSSHUser(dev DeviceInfo) string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	for _, key := range sshTargetBookKeys(dev) {
+		if t := lookupSSHTarget(cfg, key); t != nil {
+			if u := strings.TrimSpace(t.User); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
 // parseUserHostPort splits "user@host:port" / "host:port" / "host".
 func parseUserHostPort(s string) (user, host string, port int) {
 	s = strings.TrimSpace(s)
