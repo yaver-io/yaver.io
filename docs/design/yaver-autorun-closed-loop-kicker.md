@@ -209,3 +209,53 @@ sessions:
   parallel, each isolated in its own tmux session, all managed + observable through one yaver
   agent + its MCP. Runner id + session id are the handles for everything (status, stop,
   attach, auto-answer injection, highlights).
+
+## Multi-runner orchestration (one plan, many runners, graceful failover) — MCP-exposed
+
+yaver orchestrates a SINGLE plan (the task/plan MD) across MULTIPLE runners — claude code,
+codex, opencode/GLM — each in its OWN tmux session, to go faster, optimize token usage, and
+never get stuck on one runner's limits. This is the robustness core of remote autorun, and
+it is FULLY exposed via MCP.
+
+- PARALLELISM: split the plan into independent units and run them concurrently across
+  runners/sessions (one tmux session per runner); integrate their build-verified commits.
+  yaver tracks each by runner id + session id. Cuts wall-clock time.
+- TOKEN OPTIMIZATION / ROUTING: route each unit to the best-fit runner — cheapest/available
+  first (e.g. GLM/opencode for bulk, a stronger model for the hard bits), balance load, don't
+  burn premium tokens on trivial work.
+- GRACEFUL FAILOVER (the point): when a runner's tokens/quota/session dies ("Claude usage
+  limit reached", opencode auth error, codex rate limit), yaver DETECTS it and CONTINUES the
+  same unit on another authed runner — the task keeps moving. Detect signals: auth-expired,
+  usage-limit, rate-limit, empty/no-op output, non-zero exit. Fall through the configured
+  runner order (exactly like tonight: claude OAuth expired -> opencode+GLM silently no-op'd
+  -> codex worked). Retry with backoff; mark a limited runner "cooling down".
+- CONVERGENCE: the task EVENTUALLY works — yaver keeps orchestrating across whatever runners
+  are available until the gate passes and the plan's DONE markers are met, or it records a
+  genuine blocker in the progress MD. No single runner's exhaustion stalls the whole task.
+- MCP (full support): `autorun_start {plan, runners:[claude,codex,opencode], parallel, ...}`,
+  `autorun_list` / `autorun_status` (per runner + tmux session id: task, iteration, tokens,
+  cooling-down state, last commit, progress/highlights URL), `autorun_stop`, `autorun_enqueue`
+  / `autorun_answer`. So the phone / any MCP client sees + steers the whole multi-runner,
+  multi-session orchestration on the remote box.
+
+Net: one MD plan → many runners in many tmux sessions → token-aware routing + graceful
+failover → the remote task robustly, dynamically completes. Orchestrated by one yaver agent.
+
+### MCP entry: dump a plan MD + pick runners + pick machine
+The developer DUMPS a task into an MD and fires ONE MCP call:
+`autorun_start {plan: "<md text or file ref>", runners: "all" | ["claude"] | ["codex","opencode"] | ...,
+machine: "mac-mini"}`.
+- `runners: "all"` → use every AUTHED runner on that box; or name a subset ("just claude
+  code", or "codex + opencode"); or one. yaver on `machine` spins up the tmux session(s).
+- The developer never touches a terminal: dump intent as an MD from the phone/any MCP client,
+  choose the runner mix, and the remote box executes.
+
+### Planner/scheduler runner (decomposes + schedules + also develops)
+One runner acts as the ORCHESTRATOR: it reads the dumped plan MD, decomposes it into
+independent units with an order/dependencies, and SCHEDULES those units onto the worker
+runners (their own tmux sessions), integrating each worker's gate-verified commits. The
+scheduler is NOT idle overhead — it ALSO develops (claims and builds units itself) so no
+runner sits wasted. It maintains the plan/progress MD (units: todo/doing/done/blocked),
+reschedules on failover (a died runner's unit is reassigned), and stops when the plan's DONE
+markers + gate are met. The scheduler role is itself runner-agnostic (any authed runner can
+be the planner).
