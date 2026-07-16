@@ -387,14 +387,122 @@ function withYaverAndroidHotReload(config) {
     },
   ]);
 
-  // Patch MainApplication to register the package and use hot bundle
+  // Patch MainApplication to register the package and use hot bundle.
+  //
+  // MainApplication is Kotlin on React Native 0.73+ (every current Expo
+  // template) and Java before that. The two need genuinely different code —
+  // `new Foo()`, `final`, and `@Override` are all syntax errors in Kotlin —
+  // so branch on the language Expo reports rather than assuming.
   config = withMainApplication(config, (config) => {
-    let contents = config.modResults.contents;
-
-    if (contents.includes("YaverHotReload")) {
+    if (config.modResults.contents.includes("YaverHotReload")) {
       return config;
     }
+    config.modResults.contents =
+      config.modResults.language === "kt"
+        ? patchMainApplicationKotlin(config.modResults.contents)
+        : patchMainApplicationJava(config.modResults.contents);
+    return config;
+  });
 
+  return config;
+}
+
+/**
+ * Insert `snippet` immediately before the closing brace of the method whose
+ * signature contains `anchor`, by matching braces from the method's opening
+ * one.
+ *
+ * The boot guard has to run at the END of onCreate: it touches
+ * reactNativeHost, and reaching that before super.onCreate() and
+ * SoLoader.init() would initialise React before its native libraries are
+ * loaded. Returns the contents unchanged if the anchor isn't found — a
+ * missing safety net is survivable, a corrupted MainApplication is not.
+ */
+function insertAtEndOfMethod(contents, anchor, snippet) {
+  const anchorIdx = contents.indexOf(anchor);
+  if (anchorIdx === -1) return contents;
+  const open = contents.indexOf("{", anchorIdx);
+  if (open === -1) return contents;
+
+  let depth = 0;
+  for (let i = open; i < contents.length; i++) {
+    const ch = contents[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return contents.slice(0, i) + snippet + contents.slice(i);
+      }
+    }
+  }
+  return contents;
+}
+
+/** Kotlin MainApplication (React Native 0.73+). */
+function patchMainApplicationKotlin(contents) {
+  // Imports. Kotlin takes no semicolons.
+  contents = contents.replace(
+    "import com.facebook.react.ReactApplication",
+    "import com.facebook.react.ReactApplication\nimport io.yaver.feedback.YaverHotReloadModule\nimport io.yaver.feedback.YaverHotReloadPackage"
+  );
+
+  // Register the package. Anchor on `return packages` rather than on
+  // `packages.add(` — the template's only occurrence of that is inside a
+  // commented-out example line.
+  contents = contents.replace(
+    /(\n([ \t]*)return packages\n)/,
+    "\n$2packages.add(YaverHotReloadPackage())\n$1"
+  );
+
+  // Load a hot-pushed bundle when one is present. Inserted before
+  // getJSMainModuleName, which every Expo template defines.
+  if (!contents.includes("getJSBundleFile")) {
+    contents = contents.replace(
+      /(\n([ \t]*)override fun getJSMainModuleName\(\))/,
+      `
+$2override fun getJSBundleFile(): String? {
+$2  // Yaver Feedback SDK: load hot-reloaded bundle if available
+$2  val hotBundle = YaverHotReloadModule.getSavedBundleFile(application.applicationContext)
+$2  return hotBundle?.absolutePath ?: super.getJSBundleFile()
+$2}
+$1`
+    );
+  }
+
+  // Crash-revert safety net: clear the boot-attempt counter once the React
+  // context initialises (bundle loaded successfully), AND via a 10-s fallback
+  // in case that listener never fires (e.g. an infinite loop in the root
+  // component). If neither fires, YaverHotReloadModule.getSavedBundleFile()
+  // reverts to the APK-bundled bundle after 3 failed cold starts. Parity with
+  // YaverHotReload.swift on iOS.
+  if (!contents.includes("yaverHotReloadBootListener")) {
+    contents = insertAtEndOfMethod(
+      contents,
+      "override fun onCreate()",
+      `
+    // Yaver Feedback SDK hot-reload crash-revert safety net
+    val yaverHotReloadCtx: android.content.Context = applicationContext
+    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+      { YaverHotReloadModule.markBootSuccessful(yaverHotReloadCtx) },
+      10000
+    )
+    try {
+      reactNativeHost.reactInstanceManager.addReactInstanceEventListener {
+        YaverHotReloadModule.markBootSuccessful(yaverHotReloadCtx)
+      }
+    } catch (yaverHotReloadBootListener: Throwable) {
+      // Bridgeless / New Architecture does not expose reactInstanceManager;
+      // the 10-s fallback above still covers us.
+    }
+`
+    );
+  }
+
+  return contents;
+}
+
+/** Java MainApplication (React Native < 0.73). */
+function patchMainApplicationJava(contents) {
     // Add import
     contents = contents.replace(
       "import com.facebook.react.ReactApplication",
@@ -468,11 +576,7 @@ function withYaverAndroidHotReload(config) {
         contents.slice(0, insertionPoint) + bootGuard + contents.slice(insertionPoint);
     }
 
-    config.modResults.contents = contents;
-    return config;
-  });
-
-  return config;
+  return contents;
 }
 
 function withYaverFeedback(config, props) {
