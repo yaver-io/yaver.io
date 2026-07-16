@@ -5593,14 +5593,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	}
 
 	switch call.Name {
-	case "autorun_start", "autorun_status", "autorun_stop":
-		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
-		out := dispatchOps(octx, OpsRequest{Machine: "local", Verb: call.Name, Payload: call.Arguments})
-		if !out.OK {
-			return mcpToolError(call.Name + ": " + out.Error)
-		}
-		return mcpToolJSON(out.Initial)
-
 	case "create_task":
 		var args struct {
 			Prompt    string `json:"prompt"`
@@ -13129,6 +13121,11 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "yaver_health_deep":
 		return mcpToolJSON(composeDeepHealth(s, time.Now()))
+
+	case "deploy_all":
+		var req DeployAllRequest
+		json.Unmarshal(call.Arguments, &req)
+		return mcpToolJSON(s.mcpDeployAll(req))
 
 	// --- Source maps (MCP) ---
 	case "sourcemaps_list":

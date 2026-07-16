@@ -20,6 +20,7 @@
 - **P6 — Control primitives + Android surfaces + transport quality** — **PARTIAL 2026-07-16** (D-pad/crown key aliases + Wear/AndroidTV/XR/Auto surface targets shipped; iOS XCUIRemote bridge + RTP-for-Apple-sims file-tailer are follow-ons)
 - **P7 — Same-session runner continuation (no-fork)** — **DONE 2026-07-16** (keeper + 7 MCP verbs + persistence + runner_status telemetry parser)
 - **P8 — Install + self-healing hardening** — **PARTIAL 2026-07-16** (/health/deep + yaver_health_deep MCP verb shipped with graduated recovery hints; automated recovery beyond P7 nudges is follow-on)
+- **P9 — deploy_all MCP verb + full deploy** — **CODE DONE 2026-07-16** (orchestrator + tests shipped; live deploy run recorded in ~/n2n_deploy_report.md)
 
 ### P0 — 2026-07-16 (Europe/Istanbul)
 Landed five per-runtime dedicated target IDs (`ios-simulator`,
@@ -271,6 +272,35 @@ scoped tests), `mcp_tools.go` (1 tool schema), `httpserver.go` (mux
 route + MCP dispatcher).
 
 Closed-loop verification: `go test -run 'TestComposeDeepHealth|TestHandleHealthDeep' -count=1 .` → all pass. `TestComposeDeepHealth_StalledSessionGetsRecoveryHint` seeds a 20-minute-old LastActivity + asserts the composer flags `stalled` + attaches a hint. `TestHandleHealthDeep_HTTPRoundTrip` fires the real HTTP handler and decodes the response as a `DeepHealthReport` — same contract the phone / mcp client will parse.
+
+### P9 — 2026-07-16 (Europe/Istanbul)
+Orchestrator MCP verb `deploy_all` that runs the full beta/internal
+fan-out sequentially: **Convex backend**, **Cloudflare web**, **npm
+CLI**, **TestFlight iOS** (build embeds watch/tv/vision), **Play
+internal Android** (mobile + Wear/AndroidTV/Auto). Beta/internal
+channels ONLY — NEVER App Store or Play production.
+
+Hard gate: `go build ./...` under `desktop/agent` must succeed before
+any step fires. `force=true` bypasses (with a `forced` gate status on
+the response). `dryRun=true` lists steps without invoking them.
+`only=[...]` / `exclude=[...]` filter the fan-out. TestFlight
+follows the documented recovery path: source
+`~/.appstoreconnect/yaver.env`, run `scripts/deploy-testflight.sh`;
+on a codesign/keychain failure, `security unlock-keychain` the
+yaver-signing keychain + retry ONCE. If it still fails, mark
+`blocked` and record for a GUI/phone retry.
+
+Every run writes a canonical `~/n2n_deploy_report.md` (Markdown table
++ embedded JSON) so the phone / MCP client can render it later.
+
+Files touched: new `deploy_all.go` (orchestrator + step table +
+report writer with three var seams for tests), new
+`deploy_all_test.go` (6 scoped tests covering preflight red/forced,
+dry-run, TestFlight keychain retry, only/exclude filtering, report
+Markdown composer), `mcp_tools.go` (verb schema), `httpserver.go`
+(dispatcher).
+
+Closed-loop verification: `go test -run 'TestRunDeployAll|TestComposeDeployReportMarkdown' -count=1 .` → all pass. Live deploy run appended to `~/n2n_deploy_report.md`.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

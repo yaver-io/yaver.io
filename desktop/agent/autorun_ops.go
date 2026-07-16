@@ -225,3 +225,4 @@ func opsAutorunStopHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	}
 	return OpsResult{OK: true, Initial: view}
 }
+

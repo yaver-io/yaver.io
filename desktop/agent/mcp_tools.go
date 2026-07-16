@@ -3082,18 +3082,6 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// stay — ops is additive, not a replacement.
 	opsTools := []map[string]interface{}{
 		{
-			"name": "autorun_start", "description": "Start a runner-agnostic, scope-limited autorun loop. Returns immediately with a session ID; the gate must pass before Yaver commits changes.",
-			"inputSchema": autorunStartSchema(),
-		},
-		{
-			"name": "autorun_status", "description": "List autorun sessions or inspect one session, including its progress handoff tail.",
-			"inputSchema": autorunIDSchema(false),
-		},
-		{
-			"name": "autorun_stop", "description": "Stop one autorun session by ID.",
-			"inputSchema": autorunIDSchema(true),
-		},
-		{
 			"name":        "ops",
 			"description": "Run one verb on one machine. Single API for every Yaver capability (info, run, build, test, deploy, push, reload, logs, status, env, session, scale, provision, destroy, ...). Discover available verbs via `ops_verbs`.",
 			"inputSchema": map[string]interface{}{
@@ -3621,6 +3609,24 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 	}
 	tools = append(tools, healthDeepTools...)
+
+	// --- deploy_all (P9) — full fan-out to beta/internal channels + infra ---
+	deployAllTools := []map[string]interface{}{
+		{
+			"name":        "deploy_all",
+			"description": "Run the full deploy fan-out sequentially: Convex backend, Cloudflare web, npm CLI, TestFlight (iOS embeds watch/tv/vision), Play internal (Android + Wear/AndroidTV/Auto). Beta/internal channels ONLY — NEVER App Store or Play production. Preflight (go build) hard-gates the run; force=true bypasses. dryRun lists steps without invoking them. Writes ~/n2n_deploy_report.md.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"dryRun":  map[string]interface{}{"type": "boolean"},
+					"only":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Run only the named steps (convex, web-cloudflare, cli-npm, testflight-ios, playstore-android)."},
+					"exclude": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"force":   map[string]interface{}{"type": "boolean", "description": "Bypass a red preflight gate. Use with care."},
+				},
+			},
+		},
+	}
+	tools = append(tools, deployAllTools...)
 
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`

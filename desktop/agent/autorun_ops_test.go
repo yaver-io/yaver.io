@@ -37,3 +37,4 @@ func TestAutorunStatusAndStopUnknownSession(t *testing.T) {
 		t.Fatalf("unexpected stop result: %#v", stop)
 	}
 }
+
