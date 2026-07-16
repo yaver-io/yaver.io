@@ -13030,6 +13030,60 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(s.mcpFeedbackSpeak(args))
 
+	case "runtime_take_control":
+		var args struct {
+			SessionID   string `json:"sessionId"`
+			ClientID    string `json:"clientId"`
+			ClientLabel string `json:"clientLabel"`
+			Force       bool   `json:"force"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.SessionID) == "" || strings.TrimSpace(args.ClientID) == "" {
+			return mcpToolError("sessionId and clientId are required")
+		}
+		mgr := s.ensureRemoteRuntimeManager()
+		live, ok := mgr.getLive(args.SessionID)
+		if !ok {
+			return mcpToolError("remote runtime state missing for session " + args.SessionID)
+		}
+		snap, err := live.ensureLease().TakeControl(args.ClientID, args.ClientLabel, args.Force, time.Now())
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		snap.SessionID = args.SessionID
+		return mcpToolJSON(snap)
+	case "runtime_release_control":
+		var args struct {
+			SessionID string `json:"sessionId"`
+			ClientID  string `json:"clientId"`
+			Force     bool   `json:"force"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.SessionID) == "" || strings.TrimSpace(args.ClientID) == "" {
+			return mcpToolError("sessionId and clientId are required")
+		}
+		mgr := s.ensureRemoteRuntimeManager()
+		live, ok := mgr.getLive(args.SessionID)
+		if !ok {
+			return mcpToolError("remote runtime state missing for session " + args.SessionID)
+		}
+		snap := live.ensureLease().ReleaseControl(args.ClientID, args.Force)
+		snap.SessionID = args.SessionID
+		return mcpToolJSON(snap)
+	case "runtime_lease_status":
+		var args struct {
+			SessionID string `json:"sessionId"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		mgr := s.ensureRemoteRuntimeManager()
+		live, ok := mgr.getLive(args.SessionID)
+		if !ok {
+			return mcpToolError("remote runtime state missing for session " + args.SessionID)
+		}
+		snap := live.ensureLease().Snapshot()
+		snap.SessionID = args.SessionID
+		return mcpToolJSON(snap)
+
 	// --- Source maps (MCP) ---
 	case "sourcemaps_list":
 		store := GlobalSourceMapStore()

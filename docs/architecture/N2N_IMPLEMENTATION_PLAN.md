@@ -16,7 +16,7 @@
 - **P2 — `develop_for` verb** — **DONE 2026-07-16**
 - **P3 — Voice everywhere + phone→TV bridge** — **DONE 2026-07-16** (agent-side pieces; native client bindings are handoff work per plan)
 - **P4 — Feedback SDK n2n** — **DONE 2026-07-16**
-- **P5 — Concurrency + shared registry + cast** — _not started_
+- **P5 — Concurrency + shared registry + cast** — **PARTIAL 2026-07-16** (control lease shipped; shared reactive registry + JPEG/RTP unify + TURN are follow-ons)
 - **P6 — Control primitives + Android surfaces + transport quality** — _not started_
 - **P7 — Same-session runner continuation (no-fork)** — _not started_
 - **P8 — Install + self-healing hardening** — _not started_
@@ -132,6 +132,34 @@ helper), new `feedback_p4_test.go` (5 scoped tests), `mcp_tools.go`
 `-vet=off`.
 
 Closed-loop verification: `go test -run 'TestFeedbackCreate|TestFeedbackSpeak' -count=1 .` → all pass. `TestFeedbackCreate_PersistsReport` writes through the real `~/.yaver/feedback` layer (redirected via HOME override) and asserts `ListFeedback` returns the freshly-minted report. `TestFeedbackSpeak_SummarizesQueueThroughVoicePipe` subscribes a fake TV client and confirms the composed summary reaches it via the same `voice_speak` BlackBox command shape a real client will parse.
+
+### P5 (control lease slice) — 2026-07-16 (Europe/Istanbul)
+The biggest concrete "phone + TV at once" gap: `/remote-runtime/.../control`
+was free-for-all (last-writer-wins). Now every session has a
+`ControlLease` — at most one *controller*, N *viewers*. Three MCP
+verbs plus a gate inside `ExecuteControl`:
+
+  `runtime_take_control {sessionId, clientId, clientLabel?, force?}`
+  `runtime_release_control {sessionId, clientId, force?}`
+  `runtime_lease_status {sessionId}`
+
+Take semantics: free lease → succeed; different holder → error naming
+the holder (unless `force=true` or idle > 60s). Control POSTs carry
+`clientId`/`clientLabel`; strangers are rejected while a real holder
+is present, anonymous legacy web viewers are only allowed when the
+lease is free.
+
+The remaining P5 items (relay-bus-backed shared session registry,
+JPEG-DC / RTP unification so a mixed fleet co-views, cast routing +
+TURN) are follow-on slices — the control lease is the single biggest
+"the two clients don't fight" unlock and stands alone.
+
+Files touched: new `remote_runtime_lease.go` + `remote_runtime_lease_test.go`,
+`remote_runtime_webrtc.go` (embed `*ControlLease` on live state, gate
+in `ExecuteControl`, `ClientID/ClientLabel` on the request struct),
+`mcp_tools.go` (3 tool schemas), `httpserver.go` (3 dispatchers).
+
+Closed-loop verification: `go test -run 'TestControlLease|TestExecuteControl_LeaseGate' -count=1 .` → all pass. `TestExecuteControl_LeaseGate` drives the whole gate end-to-end (seed a lease held by phone-1, fire a real `ExecuteControl` as tv-1, assert the returned error names the holder).
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

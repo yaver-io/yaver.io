@@ -63,6 +63,24 @@ type remoteRuntimeLiveState struct {
 	streamCancel context.CancelFunc
 	lastFrame    []byte
 	lastFrameAt  time.Time
+
+	// lease is the P5 single-writer control lease. Nil-check-safe:
+	// callers use ensureLease() which lazily inits with the default
+	// idle timeout. Enforced by ExecuteControl and manipulated by
+	// runtime_take_control / runtime_release_control MCP verbs.
+	lease *ControlLease
+}
+
+// ensureLease lazily creates the control lease on first use so old
+// sessions rehydrated from disk (there are none today; forward-compat)
+// don't panic on nil deref.
+func (live *remoteRuntimeLiveState) ensureLease() *ControlLease {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if live.lease == nil {
+		live.lease = &ControlLease{idleTimeout: defaultControlLeaseIdle}
+	}
+	return live.lease
 }
 
 type remoteRuntimeControlRequest struct {
@@ -75,6 +93,12 @@ type remoteRuntimeControlRequest struct {
 	DurationMs int    `json:"durationMs,omitempty"`
 	Text       string `json:"text,omitempty"`
 	Key        string `json:"key,omitempty"`
+	// ClientID is the stable identifier of the surface making the
+	// call — used by the P5 control lease to enforce single-writer
+	// role split. Empty = anonymous (legacy web viewer). The lease
+	// still accepts anonymous callers when nothing else holds it.
+	ClientID    string `json:"clientId,omitempty"`
+	ClientLabel string `json:"clientLabel,omitempty"`
 }
 
 const remoteRuntimeMaxJPEGDataChannelBytes = 60 * 1024
@@ -589,6 +613,12 @@ func (m *RemoteRuntimeManager) ExecuteControl(sessionID string, req remoteRuntim
 	live, ok := m.getLive(sessionID)
 	if !ok {
 		return RemoteRuntimeSession{}, fmt.Errorf("remote runtime state missing")
+	}
+	// P5 single-writer control lease: reject strangers when the
+	// session is held. The gate keeps the lease alive as a
+	// last-activity marker; take/release is via TakeControl below.
+	if err := live.ensureLease().CheckAndRefresh(req.ClientID, time.Now()); err != nil {
+		return session, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

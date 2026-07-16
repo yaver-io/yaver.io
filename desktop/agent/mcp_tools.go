@@ -3465,6 +3465,52 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, feedbackP4Tools...)
 
+	// --- Concurrency arbitration (P5) ---
+	// Single-writer control lease so `phone + TV at once` doesn't turn
+	// into a tap war. Any client can take when it's free / stale, the
+	// holder releases when done, and everyone can see who's driving.
+	leaseTools := []map[string]interface{}{
+		{
+			"name":        "runtime_take_control",
+			"description": "Claim the control lease on a remote-runtime session. Fails cleanly when another client holds it unless force=true. Also succeeds when the current holder is idle beyond the lease timeout.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId", "clientId"},
+				"properties": map[string]interface{}{
+					"sessionId":   map[string]interface{}{"type": "string"},
+					"clientId":    map[string]interface{}{"type": "string", "description": "Stable per-surface id (e.g. mobile-1234, web-tab-A)."},
+					"clientLabel": map[string]interface{}{"type": "string", "description": "Human-readable label surfaced to other viewers (\"TV\", \"Kivanc's phone\")."},
+					"force":       map[string]interface{}{"type": "boolean"},
+				},
+			},
+		},
+		{
+			"name":        "runtime_release_control",
+			"description": "Release the control lease. Matching clientId is required unless force=true.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId", "clientId"},
+				"properties": map[string]interface{}{
+					"sessionId": map[string]interface{}{"type": "string"},
+					"clientId":  map[string]interface{}{"type": "string"},
+					"force":     map[string]interface{}{"type": "boolean"},
+				},
+			},
+		},
+		{
+			"name":        "runtime_lease_status",
+			"description": "Report the current control lease holder + last activity for a session.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId"},
+				"properties": map[string]interface{}{
+					"sessionId": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+	}
+	tools = append(tools, leaseTools...)
+
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
 	// upload/list/delete/resolve. Agents that drive mobile releases
