@@ -147,3 +147,65 @@ signals), that runs + tests + demonstrates on its own on the remote box, and rep
   developer fires from the phone — via `autorun_enqueue {task}`. Each prompt becomes a task
   the loop drains. The phone/MCP is the developer's signalling channel to the remote box;
   the queue is durable intent; the loop executes with skip-permissions.
+
+## Deep analysis — NEVER-BLOCK: keeping an autonomous runner from stalling on questions
+
+Failure mode: an autonomous coding runner, mid-task, poses a question ("Which approach: A)
+quick B) thorough?", "Should I also update X?") and stops, waiting for a human who isn't
+there — wasting a kick, or picking a lazy default. Two complementary defenses, BOTH in yaver:
+
+### 1. Prompt engineering (necessary, not sufficient)
+- Do NOT tell the model "you are in autorun / unattended mode." Counter-intuitively this can
+  make some models MORE cautious/hedgy (they surface caveats + ask permission). Frame it as a
+  normal senior-engineer task instead. (Confirmed tonight: dropped the "you are in autonomous
+  mode" header for exactly this reason.)
+- Positive framing: "Do not ask questions. When a choice arises, choose the MOST CORRECT,
+  most thorough option and implement it fully; treat any 'recommended' option as the answer;
+  note rejected alternatives in the commit message." This biases toward the RIGHT option (the
+  developer's stated rule: "option one = the true/correct, usually-more-effort one"), not
+  merely the first.
+- Why not sufficient: models still occasionally ask at genuine forks, and a CLI/tool itself
+  can emit a y/n prompt that prompt text cannot intercept.
+
+### 2. Hard-coded business logic in yaver (the robust layer)
+yaver's autorun/runner layer detects an awaiting-input signal and auto-answers it so the
+runner never blocks — runner-agnostic:
+- Tool/permission prompts: never let them appear — always drive runners with the
+  full-auto/bypass flags (codex `--dangerously-bypass-approvals-and-sandbox`, claude/opencode
+  `--dangerously-skip-permissions`). This alone killed tonight's silent no-op (opencode had
+  NO flag → its tools were never approved → it did nothing).
+- Model-level questions in the output: classify — an interrogative directed at the user +
+  an enumerated option set ("1) … 2) …", "A/B", "Which…?", "Should I…?", "recommended:").
+- Answer deterministically: prefer the option explicitly marked "recommended"; else the
+  most-thorough/correct one (heuristic: the most-complete option, the one implying the fuller
+  implementation); else option 1. Inject the answer as the next turn ("Proceed with the
+  recommended / most-thorough option; do not ask again; implement it fully."), continuing the
+  SAME session so the runner resumes with no wasted kick.
+- Escalate rarely: if a question is genuinely unsafe to auto-answer (destructive, ambiguous
+  scope, a secret is needed), do NOT guess — record it in the progress MD as a "needs-human"
+  item and continue other safe work. Auto-answer is for IMPLEMENTATION choices, never for
+  irreversible or scope-expanding decisions.
+- Ships as a small `autorun_answer` classifier+injector in the loop (sibling of `--runner
+  auto`), so ANY runner is kept unblocked by the same yaver logic. Also exposed via MCP.
+
+Net: prompt-engineer the model to not ask + prefer the correct option; back it with yaver
+hard-coded detect-and-auto-answer so a stray question never stalls the remote loop.
+
+## Multi-session management (one remote yaver hosts MANY autorun loops)
+A single yaver agent on a remote box manages MULTIPLE concurrent autorun loops, each in its
+own persistent session, tracked by a stable session/runner id — yaver is AWARE of its runner
+sessions:
+- Each `autorun_start` (and each queued task that spawns a loop) gets a RUNNER ID + a session
+  id = a tmux/screen session name, registered with the agent (in-memory + a durable registry
+  under ~/.yaver).
+- `autorun_list` / `autorun_status {id}` enumerate the live loops (id, task, runner, current
+  iteration, last commit, progress-MD tail, highlights stream URL) by reading tmux/screen
+  session state. `autorun_stop {id}` / `autorun_attach {id}` target one specifically.
+- tmux PREFERRED (attach / observe / scrollback / send-keys to inject auto-answers); screen
+  is the fallback when tmux is absent (tonight's case — the mini has screen, not tmux;
+  installing tmux unlocks attach/observe + the send-keys auto-answer path). The agent brokers
+  attach/observe so the phone/MCP can watch or steer ANY session live.
+- Result: the remote box is a multi-tenant autorun HOST — several tasks/queues developed in
+  parallel, each isolated in its own tmux session, all managed + observable through one yaver
+  agent + its MCP. Runner id + session id are the handles for everything (status, stop,
+  attach, auto-answer injection, highlights).
