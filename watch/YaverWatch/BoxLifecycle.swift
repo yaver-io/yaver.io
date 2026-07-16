@@ -33,6 +33,7 @@ enum WakePhase: String, CaseIterable, Identifiable {
     case connecting  // mobile: registering
     case online
     case ready
+    case needsAuth   // mobile: needs-auth
 
     var id: String { rawValue }
 
@@ -46,6 +47,7 @@ enum WakePhase: String, CaseIterable, Identifiable {
         case .connecting: return "Connecting"
         case .online:     return "Online"
         case .ready:      return "Ready"
+        case .needsAuth:  return "Sign-in needed"
         }
     }
 
@@ -59,6 +61,7 @@ enum WakePhase: String, CaseIterable, Identifiable {
         case .connecting: return 80
         case .online:     return 94
         case .ready:      return 100
+        case .needsAuth:  return 80
         }
     }
 
@@ -72,6 +75,7 @@ enum WakePhase: String, CaseIterable, Identifiable {
         case .connecting: return "Connecting over the relay…"
         case .online:     return "Network connected — finishing up…"
         case .ready:      return "Ready"
+        case .needsAuth:  return "Sign this box in on your phone to finish"
         }
     }
 
@@ -84,6 +88,7 @@ enum WakePhase: String, CaseIterable, Identifiable {
         case .connecting: return "antenna.radiowaves.left.and.right"
         case .online:     return "wifi"
         case .ready:      return "checkmark.circle.fill"
+        case .needsAuth:  return "person.badge.key.fill"
         }
     }
 
@@ -210,7 +215,22 @@ final class BoxLifecycle: ObservableObject {
             let elapsed = Date().timeIntervalSince(start)
             advanceOptimistic(elapsed)
 
-            if await healthOK(box: box) {
+            let probe = await healthProbe(box: box)
+
+            // The box is up but its Yaver session expired: it cannot register
+            // and will never reach Ready on its own, then parks itself again
+            // for "not authorized in time". Say so and stop — marching on to
+            // Ready would promise a box that can't run a single turn, and the
+            // watch has no way to sign it in (that needs the phone).
+            if probe.authExpired {
+                if Task.isCancelled { return }
+                setPhase(.needsAuth)
+                message = "Your box is awake but signed out. Open Yaver on your phone to sign it in."
+                isWaking = false
+                return
+            }
+
+            if probe.answered {
                 if Task.isCancelled { return }
                 setPhase(.online)
                 try? await Task.sleep(nanoseconds: 700_000_000)
@@ -248,28 +268,60 @@ final class BoxLifecycle: ObservableObject {
     /// allowed (it ends a run).
     private func setPhase(_ next: WakePhase) {
         if next == .asleep { phase = next; return }
+        // needsAuth is a verdict, not a rung. The monotonic guard exists so the
+        // bar never walks backwards mid-wake, but this state means the wake has
+        // STOPPED — and since it sits at 80, an optimistic ladder that had
+        // already crept past it would silently swallow the one message the user
+        // needs.
+        if next == .needsAuth { phase = next; return }
         if next.percent < phase.percent { return }
         phase = next
     }
 
-    /// GET http://<box.host>:18080/health — the one reachability signal the watch
-    /// can observe itself. 200 + {ok:true} (or any 200) counts as reachable.
-    private func healthOK(box: BoxTarget) async -> Bool {
+    /// What a /health poll actually told us.
+    ///
+    /// `ok` is NOT "the box is usable" — it only means the agent process
+    /// answered. A box whose Yaver session expired replies 200 with
+    /// `{"ok":true,"authExpired":true,"lifecycle":{"state":"yaver-auth-expired",
+    /// "usable":false,"recoveryMode":"reauth"}}`. Reading only `ok` marched the
+    /// ladder to Ready for a box that could not run a single turn, and the
+    /// user's next tap simply failed.
+    struct HealthProbe {
+        var answered: Bool
+        var authExpired: Bool
+    }
+
+    private func healthProbe(box: BoxTarget) async -> HealthProbe {
         guard let url = URL(string: "http://\(box.host):\(Backend.agentPort)/health") else {
-            return false
+            return HealthProbe(answered: false, authExpired: false)
         }
         do {
             let (data, resp) = try await health.data(from: url)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-                return false
+                return HealthProbe(answered: false, authExpired: false)
             }
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let ok = obj["ok"] as? Bool {
-                return ok
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                // 200 with no/other body still means the agent answered.
+                return HealthProbe(answered: true, authExpired: false)
             }
-            return true // 200 with no/other body still means the agent answered
+            let ok = (obj["ok"] as? Bool) ?? true
+            // Either spelling counts: the flat flag, or the lifecycle block the
+            // newer agents publish.
+            var expired = (obj["authExpired"] as? Bool) ?? false
+            if let lifecycle = obj["lifecycle"] as? [String: Any] {
+                if let state = lifecycle["state"] as? String, state == "yaver-auth-expired" {
+                    expired = true
+                }
+                if let usable = lifecycle["usable"] as? Bool, usable == false {
+                    expired = true
+                }
+            }
+            if let state = obj["lifecycleState"] as? String, state == "yaver-auth-expired" {
+                expired = true
+            }
+            return HealthProbe(answered: ok, authExpired: expired)
         } catch {
-            return false
+            return HealthProbe(answered: false, authExpired: false)
         }
     }
 }

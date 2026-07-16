@@ -29,6 +29,7 @@ enum BoxPhase: String, CaseIterable, Equatable {
     case connecting   // agent starting + registering over the free relay
     case online       // reachable, finishing up
     case ready        // fully reachable and usable
+    case needsAuth    // box is UP but its Yaver session expired — blocked on the user
 
     /// One/two-word chip label — identical to PHASE_META `short`.
     var short: String {
@@ -40,6 +41,7 @@ enum BoxPhase: String, CaseIterable, Equatable {
         case .connecting: return "Connecting"
         case .online: return "Online"
         case .ready: return "Ready"
+        case .needsAuth: return "Sign-in needed"
         }
     }
 
@@ -53,6 +55,7 @@ enum BoxPhase: String, CaseIterable, Equatable {
         case .connecting: return "Connecting over the free relay…"
         case .online: return "Network connected — finishing up…"
         case .ready: return "Ready"
+        case .needsAuth: return "Awake, but signed out — sign it in from your phone"
         }
     }
 
@@ -66,6 +69,7 @@ enum BoxPhase: String, CaseIterable, Equatable {
         case .connecting: return 80
         case .online: return 94
         case .ready: return 100
+        case .needsAuth: return 80
         }
     }
 
@@ -121,9 +125,10 @@ final class BoxLifecycle: ObservableObject {
     func refreshReachability(_ box: BoxTarget) {
         self.box = box
         Task {
-            let ok = await healthOK(box: box)
-            // Don't clobber a live run's phase with a stale probe.
-            if !isRunning { reachable = ok }
+            let probe = await healthProbe(box: box)
+            // A box that answers but is signed out cannot serve a turn, so it
+            // is not reachable for any purpose the TV has.
+            if !isRunning { reachable = probe.answered && !probe.authExpired }
         }
     }
 
@@ -185,7 +190,16 @@ final class BoxLifecycle: ObservableObject {
         let maxTicks = 45          // 45 × 4s ≈ 3 min
         var ticks = 0
         while !Task.isCancelled {
-            if await healthOK(box: box) {
+            let probe = await healthProbe(box: box)
+            if probe.authExpired {
+                // Up, but signed out: it will never reach Ready on its own and
+                // parks itself again for "not authorized in time". The TV can't
+                // sign it in — that needs the phone — so say so and stop.
+                setPhase(.needsAuth)
+                finish(error: "This box is awake but signed out. Sign it in from Yaver on your phone.")
+                return
+            }
+            if probe.answered {
                 reachable = true
                 setPhase(.online)
                 try? await Task.sleep(nanoseconds: 900_000_000)
@@ -235,18 +249,40 @@ final class BoxLifecycle: ObservableObject {
     }
 
     /// GET http://<host>:<port>/health — 200 + {ok:true} means the box is back.
-    private func healthOK(box: BoxTarget) async -> Bool {
-        guard let url = URL(string: "http://\(box.host):\(box.port)/health") else { return false }
+    /// What a /health poll actually told us.
+    ///
+    /// `ok` is NOT "the box is usable" — it only means the agent process
+    /// answered. A box whose Yaver session expired replies 200 with
+    /// `{"ok":true,"authExpired":true,"lifecycle":{"state":"yaver-auth-expired",
+    /// "usable":false}}`. Reading only `ok` drove the ladder to Ready for a box
+    /// that could not run a single turn.
+    struct HealthProbe {
+        var answered: Bool
+        var authExpired: Bool
+    }
+
+    private func healthProbe(box: BoxTarget) async -> HealthProbe {
+        guard let url = URL(string: "http://\(box.host):\(box.port)/health") else {
+            return HealthProbe(answered: false, authExpired: false)
+        }
         do {
             let (data, resp) = try await net.data(for: URLRequest(url: url))
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return false }
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let ok = obj["ok"] as? Bool {
-                return ok
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                return HealthProbe(answered: false, authExpired: false)
             }
-            return true   // 200 with no/other body still means reachable
+            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return HealthProbe(answered: true, authExpired: false)  // 200, other body
+            }
+            let ok = (obj["ok"] as? Bool) ?? true
+            var expired = (obj["authExpired"] as? Bool) ?? false
+            if let lifecycle = obj["lifecycle"] as? [String: Any] {
+                if let state = lifecycle["state"] as? String, state == "yaver-auth-expired" { expired = true }
+                if let usable = lifecycle["usable"] as? Bool, usable == false { expired = true }
+            }
+            if let state = obj["lifecycleState"] as? String, state == "yaver-auth-expired" { expired = true }
+            return HealthProbe(answered: ok, authExpired: expired)
         } catch {
-            return false
+            return HealthProbe(answered: false, authExpired: false)
         }
     }
 
