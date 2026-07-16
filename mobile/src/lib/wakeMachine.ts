@@ -5,7 +5,10 @@ import {
   stopManagedCloudMachine,
   type ManagedCloudMachineSummary,
 } from "./subscription";
+import { agentFetch } from "./agentRequest";
+import { probeMobileDeviceStatus } from "./deviceStatus";
 export {
+  canWakeOnLan,
   deriveServerPhase,
   isDeviceAsleep,
   isPhaseInFlight,
@@ -13,11 +16,17 @@ export {
   PARK_STEPS,
   PHASE_META,
   PHASE_TYPICAL_MS,
+  PHASE_TYPICAL_MS_LAN,
+  phaseTypicalMs,
   WAKE_STEPS,
+  WAKE_STEPS_LAN,
+  wakeKindFor,
+  wakeStepsFor,
   type LifecyclePhase,
   type LifecycleTone,
   type PhaseMeta,
   type WakeableDevice,
+  type WakeKind,
 } from "./wakeMachineCore";
 import {
   creepPercent,
@@ -26,10 +35,13 @@ import {
   PARK_STEPS,
   PHASE_META,
   stallHint,
+  wakeKindFor,
+  wakeStepsFor,
   WAKE_STEPS,
   type LifecyclePhase,
   type PhaseMeta,
   type WakeableDevice,
+  type WakeKind,
 } from "./wakeMachineCore";
 
 // wakeMachine — shared model + helpers for the managed-cloud box
@@ -81,6 +93,73 @@ export async function wakeManagedDevice(
 }
 
 /**
+ * wakePhysicalDevice wakes a self-hosted box that is asleep on a LAN, by
+ * asking an agent that is already awake on that same LAN to broadcast a
+ * magic packet for it (`POST /wake` on the peer).
+ *
+ * The indirection is not a design choice — a magic packet is link-local and
+ * cannot be routed. A watch on cellular, a car head unit, a headset or the
+ * web dashboard therefore has no way to wake anything on its own; the packet
+ * has to originate on the sleeping box's own wire. `viaDeviceId` is whoever
+ * is standing on it.
+ *
+ * Resolves when the packet has been SENT, which is as much as anyone can
+ * ever know: Wake-on-LAN is fire-and-forget, with no acknowledgement of any
+ * kind. Whether the box actually wakes is only observable by it reappearing,
+ * so drive `useMachineLifecycle` with kind "lan" to show the rest.
+ */
+export async function wakePhysicalDevice(
+  token: string | null | undefined,
+  target: { mac?: string; viaDeviceId?: string } | null | undefined,
+): Promise<WakeResult> {
+  if (!token) return { ok: false, error: "Not signed in." };
+  const mac = String(target?.mac ?? "").trim();
+  const via = String(target?.viaDeviceId ?? "").trim();
+  if (!mac) return { ok: false, error: "This machine has no known MAC address to wake." };
+  if (!via) {
+    return {
+      ok: false,
+      error: "Nothing is awake on that network to send the wake packet.",
+    };
+  }
+  try {
+    const res = await agentFetch(
+      { id: via },
+      token,
+      "/wake",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mac }),
+      },
+      15000,
+    );
+    // The agent answers 200 with ok:false when it couldn't broadcast (it
+    // isn't on the target's LAN, the MAC is malformed). That's a real answer
+    // worth showing verbatim, not a transport failure.
+    const body = (await res.json().catch(() => null)) as
+      | { ok?: boolean; message?: string }
+      | null;
+    if (!res.ok) {
+      return { ok: false, error: `Wake request failed (HTTP ${res.status}).` };
+    }
+    if (body?.ok === false) {
+      return { ok: false, error: body?.message || "The wake packet could not be sent." };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    // Reaching the waker is itself over the network — and it may have gone
+    // to sleep too, which is worth saying plainly.
+    return {
+      ok: false,
+      error: e?.message
+        ? `Couldn't reach the machine that would send the wake packet: ${String(e.message)}`
+        : "Couldn't reach the machine that would send the wake packet.",
+    };
+  }
+}
+
+/**
  * parkManagedDevice asks the control plane to park (snapshot + power down)
  * a running managed box to stop the meter. Resolves when the request is
  * ACCEPTED — the box snapshots then deletes its server asynchronously.
@@ -118,6 +197,27 @@ export interface MachineLifecycleState {
   /** An honest explanation when the current phase is overrunning (e.g. a long
    *  snapshot-restore boot, or the box not yet on the relay). Null when normal. */
   stallHint: string | null;
+  /**
+   * Why the box is stuck, straight from whoever knows. The control plane
+   * already writes an exact sentence into `machine.errorMessage` ("The box is
+   * awake but its Yaver agent session expired. Sign this machine in from your
+   * phone to finish wake.") and every surface used to throw it away, leaving
+   * the user staring at a bar that said "Connecting…" forever.
+   */
+  blockedReason: string | null;
+  /**
+   * Live detail probed off the box itself. A managed machine that never
+   * registered has deviceId=null, so the normal device-health path can't see
+   * it at all — but its agent is up and answers /health on serverIp with its
+   * real lifecycle state, version and recovery mode. This is that answer.
+   */
+  probe: {
+    lifecycleState?: string | null;
+    authExpired?: boolean;
+    version?: string | null;
+    hostname?: string | null;
+    reachable: boolean;
+  } | null;
   /** How long we've been in the current phase (ms). */
   elapsedInPhaseMs: number;
   /** The freshest managed-machine summary we polled, if available. */
@@ -149,12 +249,17 @@ export interface UseMachineLifecycleOpts {
 export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifecycleState {
   const { token, device, deviceReachable, onTick, pollMs = 3500 } = opts;
   const machineId = device?.machineId ?? null;
+  // How this box gets woken decides the ladder, the timings, the hints and
+  // the action. Default to cloud so a device we can't wake at all still
+  // renders its resting state exactly as before.
+  const kind: WakeKind = wakeKindFor(device) ?? "cloud";
 
   const [direction, setDirection] = useState<"wake" | "park" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [machine, setMachine] = useState<ManagedCloudMachineSummary | null>(null);
   const [optimistic, setOptimistic] = useState<LifecyclePhase | null>(null);
+  const [probe, setProbe] = useState<MachineLifecycleState["probe"]>(null);
   const floorRef = useRef(0); // monotonic percent floor within a run
   // When the current phase began — for in-phase creep + stall hints.
   const phaseStartRef = useRef<{ phase: LifecyclePhase; at: number }>({ phase: "asleep", at: Date.now() });
@@ -168,7 +273,12 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
   // Resting phase straight off the device status when no run is active.
   const restingPhase: LifecyclePhase = isDeviceAsleep(device) ? "asleep" : deviceReachable ? "ready" : "asleep";
 
-  const serverPhase = machine ? deriveServerPhase(machine, deviceReachable) : restingPhase;
+  const serverPhase =
+    kind === "lan"
+      ? deriveServerPhase(null, deviceReachable, "lan")
+      : machine
+        ? deriveServerPhase(machine, deviceReachable)
+        : restingPhase;
 
   // The optimistic phase wins only until the server catches up past it, so
   // a tap gives instant feedback but never masks real progress/regression.
@@ -190,8 +300,8 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
   const elapsedInPhaseMs = Date.now() - phaseStartRef.current.at;
 
   // Monotonic progress within a run, plus a continuous creep inside the phase.
-  const steps = direction === "park" ? PARK_STEPS : WAKE_STEPS;
-  const creep = direction ? creepPercent(phase, elapsedInPhaseMs, steps) : 0;
+  const steps = direction === "park" ? PARK_STEPS : wakeStepsFor(kind);
+  const creep = direction ? creepPercent(phase, elapsedInPhaseMs, steps, kind) : 0;
   let percent = PHASE_META[phase].percent + creep;
   if (direction) {
     percent = Math.max(floorRef.current, percent);
@@ -199,7 +309,48 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
   }
   percent = Math.min(100, percent);
   const meta = PHASE_META[phase];
-  const hint = direction ? stallHint(phase, elapsedInPhaseMs) : null;
+  const hint = direction ? stallHint(phase, elapsedInPhaseMs, kind) : null;
+
+  // A managed box that is UP but never registered (deviceId null) is
+  // invisible to every device-health path — yet its agent is running and
+  // answers /health on serverIp unauthenticated, with the real lifecycle
+  // state, version and recovery mode. Ask it directly; that answer is the
+  // difference between "Connecting…" forever and telling the user their
+  // session expired.
+  const serverIp = machine?.serverIp ?? null;
+  const shouldProbe = kind === "cloud" && !!serverIp && !deviceReachable;
+  useEffect(() => {
+    if (!shouldProbe || !serverIp) {
+      setProbe(null);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const r = await probeMobileDeviceStatus(
+          { id: machineId ?? serverIp, host: serverIp, port: 18080 },
+          token ?? null,
+          4000,
+        );
+        if (cancelled) return;
+        setProbe({
+          lifecycleState: r.lifecycleState ?? null,
+          authExpired: r.authExpired,
+          version: (r.info?.version as string) ?? null,
+          hostname: (r.info?.hostname as string) ?? null,
+          reachable: r.reachable,
+        });
+      } catch {
+        if (!cancelled) setProbe(null);
+      }
+    };
+    void run();
+    const iv = setInterval(run, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [shouldProbe, serverIp, machineId, token]);
 
   // Keep the bar alive while a run is in flight: a 1s tick re-renders so the
   // in-phase creep advances and the stall hint appears on time, independent of
@@ -234,6 +385,11 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
     const tick = async () => {
       try {
         onTickRef.current?.();
+        // A LAN box isn't in the managed-machine list, so there is nothing to
+        // look up — onTick's device refresh (the isOnline flip) is the only
+        // signal that matters. Asking anyway would burn a request per tick to
+        // always find nothing.
+        if (kind === "lan") return;
         const sub = await getManagedSubscription(token);
         if (cancelled) return;
         const m = sub?.machines?.find((x) => x.id === machineId) ?? null;
@@ -248,7 +404,7 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [direction, token, machineId, pollMs]);
+  }, [direction, token, machineId, pollMs, kind]);
 
   // Settle: once the phase is terminal for our direction, end the run.
   useEffect(() => {
@@ -267,13 +423,19 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
   }, [direction, phase]);
 
   const wake = useCallback(async () => {
-    if (busy || !machineId) return;
+    // A LAN box has no machineId — it isn't a managed machine at all — so
+    // only the cloud path can require one.
+    if (busy) return;
+    if (kind === "cloud" && !machineId) return;
     setBusy(true);
     setError(null);
     setDirection("wake");
     setOptimistic("requested");
     floorRef.current = PHASE_META.requested.percent;
-    const res = await wakeManagedDevice(token, machineId);
+    const res =
+      kind === "lan"
+        ? await wakePhysicalDevice(token, device?.wakeOnLan ?? null)
+        : await wakeManagedDevice(token, machineId);
     if (!res.ok) {
       setError(res.error ?? "Wake failed.");
       setDirection(null);
@@ -281,7 +443,7 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
       floorRef.current = 0;
     }
     setBusy(false);
-  }, [busy, token, machineId]);
+  }, [busy, token, machineId, kind, device?.wakeOnLan]);
 
   const park = useCallback(async () => {
     if (busy || !machineId) return;
@@ -300,6 +462,17 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
     setBusy(false);
   }, [busy, token, machineId]);
 
+  // Why the box is stuck. Prefer the control plane's own sentence — it is
+  // written for the user and names the fix — then fall back to what the box
+  // says about itself when it never registered and nobody else can see it.
+  const blockedReason =
+    phase === "needs-auth" || phase === "error"
+      ? (machine?.errorMessage ??
+        (probe?.authExpired
+          ? "This machine's Yaver session expired, so it can't finish connecting on its own. Sign it in to finish waking."
+          : null))
+      : null;
+
   return {
     phase,
     meta,
@@ -308,6 +481,8 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
     busy,
     error,
     stallHint: hint,
+    blockedReason,
+    probe,
     elapsedInPhaseMs,
     machine,
     wake,

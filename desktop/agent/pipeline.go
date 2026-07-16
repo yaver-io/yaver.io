@@ -37,6 +37,15 @@ type HardwareProfile struct {
 	Arch        string `json:"arch"`
 	DockerOK    bool   `json:"dockerOk"`
 	MaxParallel int    `json:"maxParallel"` // recommended parallel jobs
+	// MACs are this machine's physical NIC addresses — what a peer must
+	// target to wake it with a magic packet.
+	//
+	// Reported here precisely because this profile is captured while the
+	// machine is AWAKE and its last value persists on the device record after
+	// it sleeps. That ordering is the whole trick: once a box is asleep it
+	// can't tell anyone its MAC, and ARP won't resolve it either, so the only
+	// chance to learn it is beforehand.
+	MACs []string `json:"macs,omitempty"`
 }
 
 // DetectHardware probes the local machine and returns a HardwareProfile.
@@ -60,6 +69,10 @@ func DetectHardware() HardwareProfile {
 
 	// Docker availability
 	h.DockerOK = isDockerAvailable()
+
+	// Physical NIC addresses, so a peer on this LAN can wake us once we're
+	// asleep and can no longer answer for ourselves.
+	h.MACs = localMACAddrs()
 
 	// Recommended parallelism: cores/2, min 1, max 16
 	h.MaxParallel = h.CPUCores / 2
