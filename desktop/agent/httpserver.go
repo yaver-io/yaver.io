@@ -9515,7 +9515,29 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Device string `json:"device"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpSimulatorScreenshot(a.Device))
+		result := mcpSimulatorScreenshot(a.Device)
+		// P1: return a first-class MCP image block (same shape as
+		// droid_frame / robot_camera / runtime_frame) so the chat turn
+		// can `simulator_screenshot` → look at the pixels instead of
+		// juggling a filesystem path. Falls back to JSON on error.
+		info, ok := result.(map[string]interface{})
+		if !ok {
+			return mcpToolJSON(result)
+		}
+		path, _ := info["path"].(string)
+		if path == "" {
+			return mcpToolJSON(result)
+		}
+		buf, err := os.ReadFile(path)
+		if err != nil {
+			return mcpToolJSON(result)
+		}
+		return map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": fmt.Sprintf("iOS simulator screenshot (%s, %d bytes PNG)", info["device"], len(buf))},
+				{"type": "image", "data": base64.StdEncoding.EncodeToString(buf), "mimeType": "image/png"},
+			},
+		}
 
 	// --- Google Play / Android ---
 	case "playstore_status":
@@ -12818,6 +12840,167 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(fmt.Sprintf("delete failed: HTTP %d", status))
 		}
 		return mcpToolResult(fmt.Sprintf("Feedback %s deleted.", args.ID))
+
+	// --- Remote runtime (MCP keystone, P1) ---
+	// Every verb here proxies the local /remote-runtime/* HTTP handler
+	// via remoteRuntimeHTTPMCP so a runner can create + observe + drive
+	// any bootable simulator/emulator without the dashboard.
+	case "runtime_targets":
+		var args struct {
+			Framework string `json:"framework"`
+			WorkDir   string `json:"workDir"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Framework) == "" || strings.TrimSpace(args.WorkDir) == "" {
+			return mcpToolError("framework and workDir are required")
+		}
+		q := url.Values{}
+		q.Set("framework", args.Framework)
+		q.Set("workDir", args.WorkDir)
+		body, status, err := remoteRuntimeHTTPMCP("GET", "/remote-runtime/capabilities?"+q.Encode(), nil)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("runtime_targets: HTTP %d — %s", status, string(body)))
+		}
+		return mcpToolResult(string(body))
+
+	case "runtime_create":
+		var args struct {
+			Framework     string `json:"framework"`
+			WorkDir       string `json:"workDir"`
+			TargetID      string `json:"targetId"`
+			TransportMode string `json:"transportMode"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Framework) == "" || strings.TrimSpace(args.WorkDir) == "" || strings.TrimSpace(args.TargetID) == "" {
+			return mcpToolError("framework, workDir, and targetId are required")
+		}
+		payload := map[string]interface{}{
+			"framework": args.Framework,
+			"workDir":   args.WorkDir,
+			"targetId":  args.TargetID,
+		}
+		if args.TransportMode != "" {
+			payload["transportMode"] = args.TransportMode
+		}
+		body, status, err := remoteRuntimeHTTPMCP("POST", "/remote-runtime/sessions", payload)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("runtime_create: HTTP %d — %s", status, string(body)))
+		}
+		return mcpToolResult(string(body))
+
+	case "runtime_list":
+		body, status, err := remoteRuntimeHTTPMCP("GET", "/remote-runtime/sessions", nil)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("runtime_list: HTTP %d — %s", status, string(body)))
+		}
+		return mcpToolResult(string(body))
+
+	case "runtime_control":
+		var args struct {
+			SessionID  string `json:"sessionId"`
+			Action     string `json:"action"`
+			X          int    `json:"x"`
+			Y          int    `json:"y"`
+			X2         int    `json:"x2"`
+			Y2         int    `json:"y2"`
+			DurationMs int    `json:"durationMs"`
+			Text       string `json:"text"`
+			Key        string `json:"key"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.SessionID) == "" || strings.TrimSpace(args.Action) == "" {
+			return mcpToolError("sessionId and action are required")
+		}
+		payload := map[string]interface{}{
+			"action":     args.Action,
+			"x":          args.X,
+			"y":          args.Y,
+			"x2":         args.X2,
+			"y2":         args.Y2,
+			"durationMs": args.DurationMs,
+			"text":       args.Text,
+			"key":        args.Key,
+		}
+		body, status, err := remoteRuntimeHTTPMCP("POST", "/remote-runtime/sessions/"+args.SessionID+"/control", payload)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("runtime_control: HTTP %d — %s", status, string(body)))
+		}
+		return mcpToolResult(string(body))
+
+	case "runtime_command":
+		var args struct {
+			SessionID string `json:"sessionId"`
+			Command   string `json:"command"`
+			BundleID  string `json:"bundleId"`
+			Source    string `json:"source"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.SessionID) == "" || strings.TrimSpace(args.Command) == "" {
+			return mcpToolError("sessionId and command are required")
+		}
+		payload := map[string]interface{}{"command": args.Command}
+		if args.BundleID != "" {
+			payload["bundleId"] = args.BundleID
+		}
+		if args.Source != "" {
+			payload["source"] = args.Source
+		}
+		body, status, err := remoteRuntimeHTTPMCP("POST", "/remote-runtime/sessions/"+args.SessionID+"/command", payload)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("runtime_command: HTTP %d — %s", status, string(body)))
+		}
+		return mcpToolResult(string(body))
+
+	case "runtime_frame":
+		var args struct {
+			SessionID string `json:"sessionId"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		buf, status, err := remoteRuntimeFrameJPEG(args.SessionID)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("runtime_frame: HTTP %d — %s", status, string(buf)))
+		}
+		return map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": fmt.Sprintf("Frame of session %s (%d bytes JPEG)", args.SessionID, len(buf))},
+				{"type": "image", "data": base64.StdEncoding.EncodeToString(buf), "mimeType": "image/jpeg"},
+			},
+		}
+
+	case "runtime_stop":
+		var args struct {
+			SessionID string `json:"sessionId"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.SessionID) == "" {
+			return mcpToolError("sessionId is required")
+		}
+		body, status, err := remoteRuntimeHTTPMCP("DELETE", "/remote-runtime/sessions/"+args.SessionID, nil)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		if status >= 400 {
+			return mcpToolError(fmt.Sprintf("runtime_stop: HTTP %d — %s", status, string(body)))
+		}
+		return mcpToolResult(string(body))
 
 	// --- Source maps (MCP) ---
 	case "sourcemaps_list":

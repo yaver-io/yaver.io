@@ -12,7 +12,7 @@
 > changed + any deviations from the plan.
 
 - **P0 — Apple-runtime fan-out** — **DONE 2026-07-16**
-- **P1 — MCP keystone (`runtime_*`)** — _not started_
+- **P1 — MCP keystone (`runtime_*`)** — **DONE 2026-07-16**
 - **P2 — `develop_for` verb** — _not started_
 - **P3 — Voice everywhere + phone→TV bridge** — _not started_
 - **P4 — Feedback SDK n2n** — _not started_
@@ -42,6 +42,30 @@ test seam, expanded swift/flutter target lists), `remote_runtime_target.go`
 `remote_runtime_apple_targets_test.go` (new file, 6 tests).
 
 Closed-loop verification: `go test -run 'TestParseInstalledRuntimeFamilies|TestRuntimeTargetFor_AllAppleSimIDs|TestCapabilitiesEnumeratesAllAppleSurfacesAndBadgesSurface|TestInstalledRuntimeFamilies_NonDarwinReturnsEmpty|TestRemoteRuntimeCapabilities|TestHandleRemoteRuntimeCapabilitiesReturnsAppleFanOut' -count=1 .` → all pass. The end-to-end check inside `TestHandleRemoteRuntimeCapabilitiesReturnsAppleFanOut` fires the real `/remote-runtime/capabilities` HTTP handler with a stubbed families map and asserts the JSON body carries every Apple sim id + Surface badge — same contract the dashboard picker reads.
+
+### P1 — 2026-07-16 (Europe/Istanbul)
+Exposed the remote-runtime lane as MCP verbs so a runner can drive the
+*app* not just the code. Seven verbs registered:
+`runtime_targets`, `runtime_create`, `runtime_list`, `runtime_control`,
+`runtime_command`, `runtime_frame` (first-class image), `runtime_stop`.
+Each proxies the local `/remote-runtime/*` HTTP handler via a new
+`remoteRuntimeHTTPMCP` helper (mirrors `feedbackHttpMCP`).
+`runtime_frame` fetches the JPEG bytes and returns an MCP `image`
+content block (`image/jpeg`) — same shape as `droid_frame`.
+Session `command` handler extended with `boot` (idempotent re-attach)
+and `launch-app {bundleId}` (dispatches to simctl for every Apple sim
+family + adb for every Android target). `simulator_screenshot` upgraded
+to return an MCP image content block, so an iOS "launch + look" turn
+matches the Android path.
+
+Files touched: new `remote_runtime_mcp.go` (proxy helper +
+`remoteRuntimeFrameJPEG`), `remote_runtime.go` (`launchAppOnRuntimeTarget`
+helper, extended command handler with `boot`/`launch-app`, BundleID on
+the request struct), `mcp_tools.go` (7 tool schemas), `httpserver.go`
+(7 dispatchers + first-class image for `simulator_screenshot`), new
+`remote_runtime_mcp_test.go` (5 scoped tests).
+
+Closed-loop verification: `go test -run 'TestHandleRemoteRuntimeSessionCommand_LaunchAppRequiresBundleId|TestHandleRemoteRuntimeSessionCommand_LaunchAppNeedsDevice|TestHandleRemoteRuntimeSessionCommand_RejectsUnknownCommand|TestHandleRemoteRuntimeSessionCommand_BootIsIdempotentOnAttachedSession|TestLaunchAppOnRuntimeTarget_UnsupportedTargetReturnsError|TestRuntimeCommandRequestParsesBundleId' -count=1 .` → all pass. `TestHandleRemoteRuntimeSessionCommand_BootIsIdempotentOnAttachedSession` fires the real HTTP command handler with an already-booted session and asserts the JSON response carries the resolved device id + updated LastCommand — same wire contract a runner will see.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

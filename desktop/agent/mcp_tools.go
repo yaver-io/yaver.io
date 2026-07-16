@@ -3273,6 +3273,102 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, feedbackTools...)
 
+	// --- Remote runtime (MCP keystone, P1) ---
+	// Exposes the HTTP-only remote-runtime lane as MCP so a runner can
+	// create + observe + drive any bootable simulator/emulator without
+	// the dashboard. Pattern: proxy to the local /remote-runtime/*
+	// handler via remoteRuntimeHTTPMCP; runtime_frame returns a
+	// first-class MCP image (image/jpeg), the rest return JSON strings.
+	runtimeRuntimeTools := []map[string]interface{}{
+		{
+			"name":        "runtime_targets",
+			"description": "List remote-runtime targets for a project (iOS/iPadOS/watchOS/tvOS/visionOS sims, Android emu/device, browser-window). Returns each target's id, surface badge, and enabled/disabled state.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"framework", "workDir"},
+				"properties": map[string]interface{}{
+					"framework": map[string]interface{}{"type": "string", "description": "swift, kotlin, flutter, browser"},
+					"workDir":   map[string]interface{}{"type": "string", "description": "Project root the target list is computed for."},
+				},
+			},
+		},
+		{
+			"name":        "runtime_create",
+			"description": "Create a remote-runtime session (boot the sim/emulator and hold it addressable). Returns the session id + selected target + first-frame availability.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"framework", "workDir", "targetId"},
+				"properties": map[string]interface{}{
+					"framework":     map[string]interface{}{"type": "string"},
+					"workDir":       map[string]interface{}{"type": "string"},
+					"targetId":      map[string]interface{}{"type": "string", "description": "e.g. ios-simulator, watchos-simulator, android-emulator, browser-window."},
+					"transportMode": map[string]interface{}{"type": "string", "description": "direct-webrtc (default) or relay-jpeg-poll."},
+				},
+			},
+		},
+		{
+			"name":        "runtime_list",
+			"description": "List all remote-runtime sessions currently held by this agent.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			"name":        "runtime_control",
+			"description": "Send a control action (tap/swipe/text/key) to a remote-runtime session — the seam a runner uses to browse the app, not just the code.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId", "action"},
+				"properties": map[string]interface{}{
+					"sessionId":  map[string]interface{}{"type": "string"},
+					"action":     map[string]interface{}{"type": "string", "description": "tap | swipe | text | key"},
+					"x":          map[string]interface{}{"type": "integer"},
+					"y":          map[string]interface{}{"type": "integer"},
+					"x2":         map[string]interface{}{"type": "integer", "description": "Swipe end-point x."},
+					"y2":         map[string]interface{}{"type": "integer", "description": "Swipe end-point y."},
+					"durationMs": map[string]interface{}{"type": "integer", "description": "Swipe duration in ms."},
+					"text":       map[string]interface{}{"type": "string"},
+					"key":        map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "runtime_command",
+			"description": "Run a session-level command (boot re-attach, launch-app, launch-feedback). launch-app requires bundleId; boot is idempotent.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId", "command"},
+				"properties": map[string]interface{}{
+					"sessionId": map[string]interface{}{"type": "string"},
+					"command":   map[string]interface{}{"type": "string", "description": "boot | launch-app | launch-feedback"},
+					"bundleId":  map[string]interface{}{"type": "string", "description": "iOS/Android app bundle id for launch-app."},
+					"source":    map[string]interface{}{"type": "string", "description": "Optional trigger source label (e.g. shake, tap-menu)."},
+				},
+			},
+		},
+		{
+			"name":        "runtime_frame",
+			"description": "Return a live JPEG frame from a remote-runtime session as a first-class MCP image (image/jpeg). Same shape as droid_frame — a runner can 'launch app + look at the screen' end-to-end.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId"},
+				"properties": map[string]interface{}{
+					"sessionId": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "runtime_stop",
+			"description": "Delete a remote-runtime session (shuts down the local live state; the sim itself stays booted for reuse).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"sessionId"},
+				"properties": map[string]interface{}{
+					"sessionId": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+	}
+	tools = append(tools, runtimeRuntimeTools...)
+
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
 	// upload/list/delete/resolve. Agents that drive mobile releases

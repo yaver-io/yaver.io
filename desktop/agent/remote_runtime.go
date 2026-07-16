@@ -538,6 +538,22 @@ func (m *RemoteRuntimeManager) Create(workDir, framework, targetID, transportMod
 	return session, nil
 }
 
+// launchAppOnRuntimeTarget dispatches a `launch-app` session command to
+// the target-appropriate driver (simctl for iOS/iPadOS/watch/tv/vision,
+// adb for android). New in P1: adds the second useful command on top of
+// the legacy `launch-feedback`. Kept dispatcher-local (not a
+// runtimeTarget method) so browser/redroid/stream targets don't have to
+// implement a no-op.
+func launchAppOnRuntimeTarget(ctx context.Context, session RemoteRuntimeSession, bundleID string) error {
+	switch session.TargetID {
+	case "ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator":
+		return (&testkit.IOSSimDriver{BundleID: bundleID}).Launch(ctx, session.DeviceID)
+	case "android-emulator", "android-device", remoteRuntimeRedroidTargetID:
+		return (&testkit.AndroidEmuDriver{Package: bundleID}).Launch(ctx, session.DeviceID)
+	}
+	return fmt.Errorf("launch-app is not supported for target %q", session.TargetID)
+}
+
 func (s *HTTPServer) ensureRemoteRuntimeManager() *RemoteRuntimeManager {
 	if s.remoteRuntimeMgr == nil {
 		s.remoteRuntimeMgr = NewRemoteRuntimeManager()
@@ -616,8 +632,9 @@ func (s *HTTPServer) handleRemoteRuntimeSessionCommand(w http.ResponseWriter, r 
 		return
 	}
 	var req struct {
-		Command string `json:"command"`
-		Source  string `json:"source,omitempty"`
+		Command  string `json:"command"`
+		Source   string `json:"source,omitempty"`
+		BundleID string `json:"bundleId,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json body")
@@ -628,6 +645,58 @@ func (s *HTTPServer) handleRemoteRuntimeSessionCommand(w http.ResponseWriter, r 
 		return
 	}
 	switch strings.TrimSpace(req.Command) {
+	case "boot":
+		// Idempotent re-attach — useful when the picker created a
+		// session but the caller wants a fresh device id (a proxied
+		// session may have been dispatched to a builder, in which case
+		// the local Attach is a no-op).
+		attached, attachErr := mgr.Attach(session.ID)
+		if attachErr != nil {
+			jsonError(w, http.StatusBadRequest, attachErr.Error())
+			return
+		}
+		updated, _ := mgr.Update(session.ID, func(current *RemoteRuntimeSession) {
+			current.LastCommand = "boot"
+			current.Note = "Session (re)attached; device booted."
+		})
+		if attached.DeviceID != "" && updated.DeviceID == "" {
+			// The Attach return carries the freshly resolved device id;
+			// mgr.Update may not see it if the manager already stamped
+			// it on the session earlier. Merge the two views.
+			updated.DeviceID = attached.DeviceID
+		}
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":        true,
+			"sessionId": session.ID,
+			"command":   "boot",
+			"deviceId":  updated.DeviceID,
+			"session":   updated,
+		})
+	case "launch-app":
+		bundleID := strings.TrimSpace(req.BundleID)
+		if bundleID == "" {
+			jsonError(w, http.StatusBadRequest, "launch-app requires bundleId")
+			return
+		}
+		if session.DeviceID == "" {
+			jsonError(w, http.StatusBadRequest, "session has no device; run boot first")
+			return
+		}
+		if err := launchAppOnRuntimeTarget(r.Context(), session, bundleID); err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updated, _ := mgr.Update(session.ID, func(current *RemoteRuntimeSession) {
+			current.LastCommand = "launch-app"
+			current.Note = fmt.Sprintf("Launched %s on %s.", bundleID, session.TargetID)
+		})
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":        true,
+			"sessionId": session.ID,
+			"command":   "launch-app",
+			"bundleId":  bundleID,
+			"session":   updated,
+		})
 	case "launch-feedback":
 		source := strings.TrimSpace(req.Source)
 		if source == "" {
