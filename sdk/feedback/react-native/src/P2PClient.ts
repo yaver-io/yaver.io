@@ -86,6 +86,48 @@ export function resolveAppIdentity(opts?: {
 }
 
 /**
+ * Is this JS running inside Yaver's own container as a pushed Hermes guest?
+ *
+ * The YaverInfo native module is registered only by Yaver's app, so its
+ * presence means the ambient runtime describes Yaver rather than the app
+ * whose code is executing. Mirrors the checks in YaverFeedback.ts,
+ * ShakeDetector.ts and QuickActionIcon.tsx.
+ */
+function isInsideYaverContainer(): boolean {
+  try {
+    const { NativeModules } = require('react-native');
+    return !!NativeModules?.YaverInfo;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the guest project Yaver's host shell pinned for this bundle.
+ *
+ * When an app's JS is pushed into Yaver's container as a Hermes guest, the
+ * ambient runtime describes the HOST — `expo-constants` and `SettingsManager`
+ * both answer `Yaver` / `io.yaver.mobile`. Auto-resolution would therefore
+ * file every guest report against Yaver's own repo, and the fix task would
+ * edit the SDK instead of the app under test.
+ *
+ * Yaver already knows the right answer: picking a project in the Hot Reload
+ * tab calls `YaverInfo.setInheritedGuestProject(name, path)`. Only the name
+ * is used here — the agent resolves the path itself and deliberately ignores
+ * client-supplied ones on feedback reports.
+ */
+function resolveInheritedGuestProjectName(): string | undefined {
+  try {
+    const { NativeModules } = require('react-native');
+    const name = String(NativeModules?.YaverInfo?.inheritedGuestProjectName || '').trim();
+    return name || undefined;
+  } catch {
+    // Not inside Yaver's container, or react-native unavailable (unit tests).
+    return undefined;
+  }
+}
+
+/**
  * Build the app-identity half of a feedback report's metadata.
  *
  * `resolveAppIdentity()` has always fed /vibing/execute and /dev/reload-app,
@@ -95,50 +137,75 @@ export function resolveAppIdentity(opts?: {
  * whichever repo it happened to be sitting in. This closes that gap by
  * reusing the same resolver for the feedback path.
  *
+ * Precedence, most to least trustworthy:
+ *   1. What the host app declared (`FeedbackConfig.projectName`/`bundleId`).
+ *      An app knows its own identity; nothing should override it.
+ *   2. The guest project Yaver's host shell pinned, when running as a Hermes
+ *      guest. Ambient lookups describe Yaver there, not the guest.
+ *   3. Ambient expo-constants / native modules — correct for a standalone
+ *      build, which is the common case.
+ *
  * Every lookup is best-effort: a bare RN app with no expo-constants still
  * produces a report, just one the agent resolves by its own means.
  */
-export function resolveReportIdentity(): {
+export function resolveReportIdentity(opts?: {
+  projectName?: string;
+  bundleId?: string;
+}): {
   appName?: string;
   app: AppInfo;
   project?: FeedbackProjectRef;
 } {
-  const identity = resolveAppIdentity();
-
+  let projectName = (opts?.projectName || '').trim() || undefined;
+  let bundleId = (opts?.bundleId || '').trim() || undefined;
   let version: string | undefined;
   let buildNumber: string | undefined;
-  try {
-    const Constants = require('expo-constants').default ?? require('expo-constants');
-    const cfg = Constants?.expoConfig ?? Constants?.manifest ?? {};
-    version = Constants?.nativeAppVersion || cfg?.version;
-    buildNumber =
-      Constants?.nativeBuildVersion ||
-      cfg?.ios?.buildNumber ||
-      (cfg?.android?.versionCode != null ? String(cfg.android.versionCode) : undefined);
-  } catch {
-    // expo-constants not installed (bare RN). Version is cosmetic — the
-    // router keys off appName/bundleId, both of which survive without it.
+
+  if (isInsideYaverContainer()) {
+    // Every ambient lookup answers for the HOST here. Because the agent
+    // routes on bundle id first, letting Yaver's id through would resolve
+    // straight to Yaver's own repo and the guest's name would never be
+    // consulted — so nothing ambient is trusted in the container. The
+    // version is Yaver's too, and reporting it would only mislabel which
+    // build the report came from.
+    projectName = projectName || resolveInheritedGuestProjectName();
+  } else {
+    const ambient = resolveAppIdentity({ projectName, bundleId });
+    projectName = ambient.projectName;
+    bundleId = ambient.bundleId;
+    try {
+      const Constants = require('expo-constants').default ?? require('expo-constants');
+      const cfg = Constants?.expoConfig ?? Constants?.manifest ?? {};
+      version = Constants?.nativeAppVersion || cfg?.version;
+      buildNumber =
+        Constants?.nativeBuildVersion ||
+        cfg?.ios?.buildNumber ||
+        (cfg?.android?.versionCode != null ? String(cfg.android.versionCode) : undefined);
+    } catch {
+      // expo-constants not installed (bare RN). Version is cosmetic — the
+      // router keys off appName/bundleId, both of which survive without it.
+    }
   }
 
   const app: AppInfo = {};
-  if (identity.bundleId) app.bundleId = identity.bundleId;
+  if (bundleId) app.bundleId = bundleId;
   if (version) app.version = version;
   if (buildNumber) app.buildNumber = buildNumber;
 
-  if (!identity.projectName && !identity.bundleId) {
+  if (!projectName && !bundleId) {
     return { app };
   }
 
   const project: FeedbackProjectRef = { surface: 'mobile' };
-  if (identity.projectName) {
-    project.projectName = identity.projectName;
-    project.appName = identity.projectName;
+  if (projectName) {
+    project.projectName = projectName;
+    project.appName = projectName;
   }
   // Note: projectPath is intentionally omitted — the agent ignores
   // client-supplied paths on feedback reports and resolves them itself.
-  if (identity.bundleId) project.bundleId = identity.bundleId;
+  if (bundleId) project.bundleId = bundleId;
 
-  return { appName: identity.projectName, app, project };
+  return { appName: projectName, app, project };
 }
 
 /**

@@ -662,7 +662,11 @@ export const FeedbackModal: React.FC = () => {
     try {
       const { Dimensions } = require('react-native');
       const { width, height } = Dimensions.get('window');
-      const identity = resolveReportIdentity();
+      const cfg = YaverFeedback.getConfig();
+      const identity = resolveReportIdentity({
+        projectName: cfg?.projectName,
+        bundleId: cfg?.bundleId,
+      });
       const deviceInfo: DeviceInfo = {
         platform: Platform.OS,
         osVersion: String(Platform.Version),

@@ -74,6 +74,81 @@ describe('resolveReportIdentity', () => {
     expect(identity.app.buildNumber).toBe('427');
   });
 
+  // Inside Yaver's container the ambient runtime IS Yaver. These are the
+  // cases where getting it wrong routes a fix task into yaver.io and edits
+  // the SDK instead of the app under test.
+  describe('inside the Yaver container (Hermes guest)', () => {
+    const YAVER_CONFIG = {
+      name: 'Yaver',
+      version: '1.99.306',
+      ios: { bundleIdentifier: 'io.yaver.mobile' },
+      android: { package: 'io.yaver.mobile' },
+    };
+
+    function mockContainer(yaverInfo: Record<string, unknown>) {
+      jest.doMock('react-native', () => ({
+        Platform: { OS: 'ios' },
+        NativeModules: { YaverInfo: { isYaver: true, ...yaverInfo } },
+      }));
+      // The host's manifest — what expo-constants answers for a guest bundle.
+      mockExpoConstants(YAVER_CONFIG);
+    }
+
+    it("never reports the host's bundle id as the guest's", () => {
+      mockContainer({ inheritedGuestProjectName: 'talos / mobile' });
+      const { resolveReportIdentity: resolve } = require('../P2PClient');
+
+      const identity = resolve();
+
+      // The agent routes on bundle id FIRST. Leaking io.yaver.mobile here
+      // would resolve to yaver.io and the project name would never be read.
+      expect(identity.project?.bundleId).toBeUndefined();
+      expect(identity.app.bundleId).toBeUndefined();
+      // Nor should the host's version masquerade as the guest's build.
+      expect(identity.app.version).toBeUndefined();
+    });
+
+    it('reports the guest project Yaver pinned', () => {
+      mockContainer({ inheritedGuestProjectName: 'talos / mobile' });
+      const { resolveReportIdentity: resolve } = require('../P2PClient');
+
+      const identity = resolve();
+      expect(identity.appName).toBe('talos / mobile');
+      expect(identity.project?.projectName).toBe('talos / mobile');
+    });
+
+    it("lets the app's own declaration win over the pinned project", () => {
+      mockContainer({ inheritedGuestProjectName: 'something-else' });
+      const { resolveReportIdentity: resolve } = require('../P2PClient');
+
+      // A bundle knows its own identity; nothing ambient should override it.
+      const identity = resolve({ projectName: 'Talos', bundleId: 'works.talos.mobile' });
+      expect(identity.appName).toBe('Talos');
+      expect(identity.project?.bundleId).toBe('works.talos.mobile');
+    });
+
+    it('reports nothing rather than something wrong when no project is pinned', () => {
+      mockContainer({});
+      const { resolveReportIdentity: resolve } = require('../P2PClient');
+
+      // Better for the agent to reject/fall back than to confidently edit
+      // the wrong repo.
+      const identity = resolve();
+      expect(identity.project).toBeUndefined();
+      expect(identity.appName).toBeUndefined();
+      expect(identity.app).toEqual({});
+    });
+  });
+
+  it('lets an explicit declaration override the ambient identity', () => {
+    mockExpoConstants(EXPO_CONFIG);
+    const { resolveReportIdentity: resolve } = require('../P2PClient');
+
+    const identity = resolve({ projectName: 'Override', bundleId: 'com.override.app' });
+    expect(identity.appName).toBe('Override');
+    expect(identity.project?.bundleId).toBe('com.override.app');
+  });
+
   it('omits the project block when nothing identifies the app', () => {
     // Bare RN with no expo-constants and no native modules. The report must
     // still upload — the agent just resolves it by its own means.

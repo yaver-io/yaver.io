@@ -38,6 +38,17 @@ final class YaverInfo: NSObject {
     let inheritedToken = UserDefaults.standard.string(forKey: "yaverInheritedAuthToken") ?? ""
     let inheritedAgentURL = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
     let inheritedDeviceId = UserDefaults.standard.string(forKey: "yaverInheritedDeviceId") ?? ""
+    // The pinned guest project (setInheritedGuestProject, below). Native
+    // panes have always read these straight from UserDefaults; the guest's
+    // own bundled feedback SDK could not, because they were never exported.
+    // It needs them: inside this container every ambient identity lookup
+    // (expo-constants, SettingsManager) answers "Yaver" / io.yaver.mobile,
+    // so a guest report would be filed against Yaver's repo and the fix
+    // task would edit the SDK instead of the app under test.
+    let inheritedGuestProjectName =
+      UserDefaults.standard.string(forKey: "yaverInheritedGuestProjectName") ?? ""
+    let inheritedGuestProjectPath =
+      UserDefaults.standard.string(forKey: "yaverInheritedGuestProjectPath") ?? ""
 
     return [
       "isYaver": true,
@@ -64,6 +75,8 @@ final class YaverInfo: NSObject {
       "inheritedAuthToken": inheritedToken,
       "inheritedAgentUrl": inheritedAgentURL,
       "inheritedDeviceId": inheritedDeviceId,
+      "inheritedGuestProjectName": inheritedGuestProjectName,
+      "inheritedGuestProjectPath": inheritedGuestProjectPath,
     ]
   }
 

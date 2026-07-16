@@ -1039,7 +1039,10 @@ export class YaverFeedback {
       }
 
       const autoFix = opts?.autoFix ?? config.crashReporting.autoFix === true;
-      const identity = resolveReportIdentity();
+      const identity = resolveReportIdentity({
+        projectName: config?.projectName,
+        bundleId: config?.bundleId,
+      });
       const bundle = {
         metadata: {
           timestamp: new Date().toISOString(),
@@ -1235,7 +1238,10 @@ export class YaverFeedback {
         // Screenshot capture may fail (e.g. no view ref) — continue without it
       }
 
-      const identity = resolveReportIdentity();
+      const identity = resolveReportIdentity({
+        projectName: config?.projectName,
+        bundleId: config?.bundleId,
+      });
       const bundle = {
         metadata: {
           timestamp: new Date().toISOString(),

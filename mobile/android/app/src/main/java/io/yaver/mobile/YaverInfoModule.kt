@@ -43,6 +43,16 @@ class YaverInfoModule(private val ctx: ReactApplicationContext) :
         "inheritedAuthToken" to (p.getString(YaverNativePrefs.INHERITED_AUTH_TOKEN, "") ?: ""),
         "inheritedAgentUrl" to (p.getString(YaverNativePrefs.AGENT_BASE_URL, "") ?: ""),
         "inheritedDeviceId" to (p.getString(YaverNativePrefs.INHERITED_DEVICE_ID, "") ?: ""),
+        // The pinned guest project (setInheritedGuestProject, below). Native
+        // panes have always read these straight from prefs; the guest's own
+        // bundled feedback SDK could not, because they were never exported.
+        // It needs them: inside this container every ambient identity lookup
+        // (expo-constants, PlatformConstants) answers "Yaver" /
+        // io.yaver.mobile, so a guest report would be filed against Yaver's
+        // repo and the fix task would edit the SDK instead of the app under
+        // test. iOS counterpart: YaverInfo.swift constantsToExport.
+        "inheritedGuestProjectName" to (p.getString(YaverNativePrefs.GUEST_PROJECT_NAME, "") ?: ""),
+        "inheritedGuestProjectPath" to (p.getString(YaverNativePrefs.GUEST_PROJECT_PATH, "") ?: ""),
     )
   }
 
