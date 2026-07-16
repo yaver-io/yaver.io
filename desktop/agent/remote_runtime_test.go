@@ -57,27 +57,26 @@ func TestRemoteRuntimeCapabilitiesForSwiftOnLinuxRequiresMacHost(t *testing.T) {
 		t.Skip("linux-only expectation")
 	}
 	caps := remoteRuntimeCapabilitiesForProject("/tmp/swift-app", "swift")
-	// ios-simulator (default) + ios-device (physical, WDA). Both
-	// disabled on non-macOS — Swift/iOS needs a Mac either way.
-	if len(caps.Targets) != 2 {
-		t.Fatalf("swift targets = %d, want 2 (ios-simulator + ios-device)", len(caps.Targets))
+	// Five Apple sim surfaces (iPhone/iPad/watch/tv/vision) + ios-device.
+	// All disabled on non-macOS — Swift/iOS needs a Mac either way.
+	wantIDs := []string{"ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator", "ios-device"}
+	if len(caps.Targets) != len(wantIDs) {
+		t.Fatalf("swift targets = %d, want %d (%v)", len(caps.Targets), len(wantIDs), wantIDs)
 	}
-	target := caps.Targets[0]
-	if target.ID != "ios-simulator" {
-		t.Fatalf("swift target[0] id = %q, want ios-simulator", target.ID)
-	}
-	if target.RuntimeHostClass != "macos-ios" {
-		t.Fatalf("swift runtime host class = %q, want macos-ios", target.RuntimeHostClass)
-	}
-	if target.Enabled {
-		t.Fatal("swift target should be disabled on non-macOS hosts")
-	}
-	if !strings.Contains(target.Reason, "macOS host") {
-		t.Fatalf("swift disabled reason = %q, want macOS host guidance", target.Reason)
-	}
-	dev := caps.Targets[1]
-	if dev.ID != "ios-device" || dev.Enabled || !strings.Contains(dev.Reason, "macOS") {
-		t.Fatalf("swift target[1] should be a disabled ios-device w/ macOS reason, got %+v", dev)
+	for i, want := range wantIDs {
+		tg := caps.Targets[i]
+		if tg.ID != want {
+			t.Fatalf("swift target[%d] id = %q, want %q", i, tg.ID, want)
+		}
+		if tg.RuntimeHostClass != "macos-ios" {
+			t.Fatalf("swift target[%d] runtime host class = %q, want macos-ios", i, tg.RuntimeHostClass)
+		}
+		if tg.Enabled {
+			t.Fatalf("swift target[%d] should be disabled on non-macOS hosts", i)
+		}
+		if !strings.Contains(tg.Reason, "macOS") {
+			t.Fatalf("swift target[%d] disabled reason = %q, want macOS guidance", i, tg.Reason)
+		}
 	}
 }
 
@@ -111,11 +110,17 @@ func TestRemoteRuntimeCapabilitiesForFlutterExposesBothTargets(t *testing.T) {
 	if !caps.RemoteRuntimeEligible {
 		t.Fatal("flutter should be remote-runtime eligible")
 	}
-	if len(caps.Targets) != 5 {
-		t.Fatalf("flutter targets = %d, want 5 (android-emulator + android-redroid + android-device + ios-simulator + ios-device)", len(caps.Targets))
+	// Android (emulator + redroid + device) + Apple sim fan-out
+	// (iPhone/iPad/watch/tv/vision) + ios-device = 9 targets.
+	wantIDs := map[string]bool{
+		"android-emulator": true, "android-redroid": true, "android-device": true,
+		"ios-simulator": true, "ipados-simulator": true, "watchos-simulator": true,
+		"tvos-simulator": true, "visionos-simulator": true, "ios-device": true,
+	}
+	if len(caps.Targets) != len(wantIDs) {
+		t.Fatalf("flutter targets = %d, want %d", len(caps.Targets), len(wantIDs))
 	}
 	ids := []string{}
-	wantIDs := map[string]bool{"android-emulator": true, "android-redroid": true, "android-device": true, "ios-simulator": true, "ios-device": true}
 	for _, tg := range caps.Targets {
 		ids = append(ids, tg.ID)
 		if !wantIDs[tg.ID] {

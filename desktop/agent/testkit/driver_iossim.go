@@ -212,6 +212,59 @@ func (d *IOSSimDriver) Tap(ctx context.Context, udid string, x, y int) error {
 	return fmt.Errorf("simctl tap is unavailable on this Xcode; install a simulator control bridge (WDA/XCUITest) before using interactive iOS simulator taps")
 }
 
+// ParseInstalledRuntimeFamilies parses `xcrun simctl list runtimes` output and
+// returns the set of installed simulator runtime families ("iOS", "watchOS",
+// "tvOS", "visionOS"). Lines marked `(unavailable...)` are ignored so callers
+// only see runtimes Xcode can actually boot.
+//
+// Pure — no I/O, safe to unit-test with a captured fixture. Callers that need
+// the live host state go through InstalledRuntimeFamilies below.
+func ParseInstalledRuntimeFamilies(simctlRuntimesOutput string) map[string]bool {
+	out := map[string]bool{}
+	for _, line := range strings.Split(simctlRuntimesOutput, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "(unavailable") {
+			continue
+		}
+		// Runtime lines look like `iOS 26.4 (26.4 - 24E246) - com.apple...SimRuntime.iOS-26-4`.
+		// We only care about the family prefix (word before the version).
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "ios "):
+			out["iOS"] = true
+		case strings.HasPrefix(lower, "watchos "):
+			out["watchOS"] = true
+		case strings.HasPrefix(lower, "tvos "):
+			out["tvOS"] = true
+		case strings.HasPrefix(lower, "visionos "), strings.HasPrefix(lower, "xros "):
+			// Xcode historically labelled visionOS runtimes `xrOS`; accept both.
+			out["visionOS"] = true
+		}
+	}
+	return out
+}
+
+// InstalledRuntimeFamilies shells to `xcrun simctl list runtimes` and returns
+// the set of installed simulator families. macOS + xcrun only; returns an
+// empty map + no error on non-darwin hosts (the caller then treats every
+// per-runtime target as `Enabled:false` with the usual macOS-host reason).
+func InstalledRuntimeFamilies(ctx context.Context) (map[string]bool, error) {
+	if runtime.GOOS != "darwin" {
+		return map[string]bool{}, nil
+	}
+	if _, err := exec.LookPath("xcrun"); err != nil {
+		return map[string]bool{}, nil
+	}
+	out, err := runCtx(ctx, "xcrun", "simctl", "list", "runtimes")
+	if err != nil {
+		return map[string]bool{}, fmt.Errorf("simctl list runtimes: %w", err)
+	}
+	return ParseInstalledRuntimeFamilies(out), nil
+}
+
 // FullBootSequence is the convenience helper: boot → install → launch
 // → screenshot → shutdown. Used by `yaver test run` for `target: ios-sim`
 // specs (returned in M5 scaffold). We expose it now so the user can

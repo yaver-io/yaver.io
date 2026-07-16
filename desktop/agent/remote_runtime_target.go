@@ -62,7 +62,15 @@ type runtimeTarget interface {
 func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 	switch targetID {
 	case "ios-simulator":
-		return iosSimulatorTarget{}, nil
+		return iosSimulatorTarget{deviceType: "iPhone"}, nil
+	case "ipados-simulator":
+		return iosSimulatorTarget{deviceType: "iPad"}, nil
+	case "watchos-simulator":
+		return iosSimulatorTarget{deviceType: "Apple Watch"}, nil
+	case "tvos-simulator":
+		return iosSimulatorTarget{deviceType: "Apple TV"}, nil
+	case "visionos-simulator":
+		return iosSimulatorTarget{deviceType: "Apple Vision"}, nil
 	case "android-emulator":
 		return androidEmulatorTarget{}, nil
 	case "android-device":
@@ -85,10 +93,16 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 
 // ---- iOS Simulator -------------------------------------------------
 
-type iosSimulatorTarget struct{}
+// iosSimulatorTarget dispatches to every Apple simulator family. The
+// simctl driver is runtime-agnostic (see testkit/driver_iossim.go) —
+// picking a `iPhone` vs `iPad` vs `Apple Watch` UDID is enough to boot
+// the right sim; everything downstream (tap/screenshot/dims) takes the
+// resolved UDID and is device-type-agnostic. Empty deviceType keeps
+// backward compatibility with older ios-simulator dispatch arms.
+type iosSimulatorTarget struct{ deviceType string }
 
-func (iosSimulatorTarget) Attach(ctx context.Context) (string, error) {
-	return (&testkit.IOSSimDriver{}).Boot(ctx)
+func (t iosSimulatorTarget) Attach(ctx context.Context) (string, error) {
+	return (&testkit.IOSSimDriver{DeviceType: t.deviceType}).Boot(ctx)
 }
 func (iosSimulatorTarget) Tap(ctx context.Context, deviceID string, x, y int) error {
 	if err := (&testkit.IOSSimDriver{}).Tap(ctx, deviceID, x, y); err == nil {
