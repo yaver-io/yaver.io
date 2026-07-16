@@ -19,7 +19,7 @@
 - **P5 — Concurrency + shared registry + cast** — **PARTIAL 2026-07-16** (control lease shipped; shared reactive registry + JPEG/RTP unify + TURN are follow-ons)
 - **P6 — Control primitives + Android surfaces + transport quality** — **PARTIAL 2026-07-16** (D-pad/crown key aliases + Wear/AndroidTV/XR/Auto surface targets shipped; iOS XCUIRemote bridge + RTP-for-Apple-sims file-tailer are follow-ons)
 - **P7 — Same-session runner continuation (no-fork)** — **DONE 2026-07-16** (keeper + 7 MCP verbs + persistence + runner_status telemetry parser)
-- **P8 — Install + self-healing hardening** — _not started_
+- **P8 — Install + self-healing hardening** — **PARTIAL 2026-07-16** (/health/deep + yaver_health_deep MCP verb shipped with graduated recovery hints; automated recovery beyond P7 nudges is follow-on)
 
 ### P0 — 2026-07-16 (Europe/Istanbul)
 Landed five per-runtime dedicated target IDs (`ios-simulator`,
@@ -245,6 +245,32 @@ schemas), `httpserver.go` (7 dispatchers + `runnerKeeper` field +
 `keeperShortHash` to avoid a duplicate with `tunnel_cf_wizard.go`).
 
 Closed-loop verification: `go test -run 'TestKeeper|TestKeeperMCP|TestParseAutoRunnerCommit' -count=1 .` → all pass. `TestKeeper_TickNudgesWhenIdleAndQueued` exercises the entire idle-detect → nudge flow via seams (no real tmux); `TestKeeper_ContentChangeResetsIdleClock` proves content-based liveness resets the debounce; `TestKeeper_PersistenceIsOwnerOnly` guards the compliance requirement that state/queue files stay `0600`; `TestParseAutoRunnerCommit_ExtractsWorkWindowAndRunner` proves the runner_status parser round-trips a full commit body.
+
+### P8 (visibility slice) — 2026-07-16 (Europe/Istanbul)
+Closed-loop health visibility for the pieces most likely to silently
+stall a runner:
+
+  agent            HTTP mux answered (implicit)
+  tmux             binary on PATH + `tmux ls` count
+  runner_keeper    per-session mode + last-activity age + status
+                   (ok | idle | stalled | draining) + recovery hint
+  remote_runtime   session count + WebRTC pump liveness
+
+New HTTP endpoint `GET /health/deep` (auth-wrapped) and MCP verb
+`yaver_health_deep` — both call the same `composeDeepHealth`
+composer so the JSON shape is identical. Stalled sessions (no pane
+activity > 15 min) get a recovery hint ("consider a manual
+runner_attach or restart"). Automated recovery beyond the P7 keeper
+nudges (restart runner → resign binary → reinstall) is deliberately
+NOT wired here — the plan's design principle is that the agent
+reports the graduated hints and the caller (or a follow-on
+recovery orchestrator) decides the escalation.
+
+Files touched: new `health_deep.go` + new `health_deep_test.go` (5
+scoped tests), `mcp_tools.go` (1 tool schema), `httpserver.go` (mux
+route + MCP dispatcher).
+
+Closed-loop verification: `go test -run 'TestComposeDeepHealth|TestHandleHealthDeep' -count=1 .` → all pass. `TestComposeDeepHealth_StalledSessionGetsRecoveryHint` seeds a 20-minute-old LastActivity + asserts the composer flags `stalled` + attaches a hint. `TestHandleHealthDeep_HTTPRoundTrip` fires the real HTTP handler and decodes the response as a `DeepHealthReport` — same contract the phone / mcp client will parse.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

@@ -320,6 +320,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 
 	// Public
 	mux.HandleFunc("/health", s.handleHealth)
+	// P8: /health/deep — actionable per-subsystem health with
+	// graduated recovery hints. Auth-wrapped so it can't be scraped
+	// by unauthenticated clients (agent + keeper details leak).
+	mux.HandleFunc("/health/deep", s.auth(s.handleHealthDeep))
 	mux.HandleFunc("/integrations/whatsapp/command", s.handleWhatsAppCommand)
 
 	// Authenticated
@@ -13122,6 +13126,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		var args runnerStatusArgs
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(runRunnerStatus(s.ensureRunnerKeeper(), args))
+
+	case "yaver_health_deep":
+		return mcpToolJSON(composeDeepHealth(s, time.Now()))
 
 	// --- Source maps (MCP) ---
 	case "sourcemaps_list":

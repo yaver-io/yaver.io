@@ -3612,6 +3612,16 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, runnerKeeperTools...)
 
+	// --- Deep health (P8) — install + self-healing visibility ---
+	healthDeepTools := []map[string]interface{}{
+		{
+			"name":        "yaver_health_deep",
+			"description": "Per-subsystem actionable health: agent HTTP mux, tmux availability, runner keeper + per-session status (idle / stalled / draining), remote-runtime sessions + WebRTC pump liveness. Returns graduated recovery hints so callers can decide the escalation.",
+			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+	}
+	tools = append(tools, healthDeepTools...)
+
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
 	// upload/list/delete/resolve. Agents that drive mobile releases
