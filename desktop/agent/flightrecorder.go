@@ -170,9 +170,20 @@ func (r *flightRecorder) write(events []FlightEvent) error {
 	return os.Rename(tmp, r.path)
 }
 
-// record appends one event and trims to the cap. Errors are returned for tests
-// but callers in the agent deliberately ignore them.
+// record appends one event stamped now and trims to the cap. Errors are returned
+// for tests but callers in the agent deliberately ignore them.
 func (r *flightRecorder) record(kind, detail string) error {
+	return r.recordAt(kind, detail, time.Now())
+}
+
+// recordAt appends one event stamped at an explicit instant.
+//
+// Most events happen when we notice them, but not all: a `sleep` is only ever
+// observed retroactively, on resume, and stamping it "now" would place the
+// suspend at the moment the machine woke — inverting the timeline the recorder
+// exists to get right. The honest stamp is the last moment the machine was seen
+// awake, which only the caller knows.
+func (r *flightRecorder) recordAt(kind, detail string, at time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	events, err := r.read()
@@ -186,7 +197,7 @@ func (r *flightRecorder) record(kind, detail string) error {
 		Session: r.session,
 		Kind:    kind,
 		Detail:  strings.TrimSpace(detail),
-		At:      time.Now().UTC().Format(time.RFC3339),
+		At:      at.UTC().Format(time.RFC3339),
 	})
 	return r.write(events)
 }

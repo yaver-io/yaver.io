@@ -3836,6 +3836,10 @@ func runServe(args []string) {
 	// report as an unclean stop. By this line we are unambiguously the
 	// long-running daemon.
 	RecordFlightBoot(ctx)
+	// Sleep is the most likely reason a remote box goes silent, and a suspended
+	// process gets no signal to handle — so the only way to learn about it is to
+	// notice, on resume, that time passed while we were not running.
+	go watchFlightSleepWake(ctx)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
