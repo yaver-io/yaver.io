@@ -13,7 +13,7 @@
 
 - **P0 — Apple-runtime fan-out** — **DONE 2026-07-16**
 - **P1 — MCP keystone (`runtime_*`)** — **DONE 2026-07-16**
-- **P2 — `develop_for` verb** — _not started_
+- **P2 — `develop_for` verb** — **DONE 2026-07-16**
 - **P3 — Voice everywhere + phone→TV bridge** — _not started_
 - **P4 — Feedback SDK n2n** — _not started_
 - **P5 — Concurrency + shared registry + cast** — _not started_
@@ -66,6 +66,26 @@ the request struct), `mcp_tools.go` (7 tool schemas), `httpserver.go`
 `remote_runtime_mcp_test.go` (5 scoped tests).
 
 Closed-loop verification: `go test -run 'TestHandleRemoteRuntimeSessionCommand_LaunchAppRequiresBundleId|TestHandleRemoteRuntimeSessionCommand_LaunchAppNeedsDevice|TestHandleRemoteRuntimeSessionCommand_RejectsUnknownCommand|TestHandleRemoteRuntimeSessionCommand_BootIsIdempotentOnAttachedSession|TestLaunchAppOnRuntimeTarget_UnsupportedTargetReturnsError|TestRuntimeCommandRequestParsesBundleId' -count=1 .` → all pass. `TestHandleRemoteRuntimeSessionCommand_BootIsIdempotentOnAttachedSession` fires the real HTTP command handler with an already-booted session and asserts the JSON response carries the resolved device id + updated LastCommand — same wire contract a runner will see.
+
+### P2 — 2026-07-16 (Europe/Istanbul)
+Landed the composed `develop_for` MCP verb + a pure mechanism resolver.
+Turns "launch Talos for Android Watch" into one call: resolve machine
+→ hard-gate on an installed+authenticated runner (uses the existing
+`runnerAuthStatus` probe) → `ResolveMechanism(framework, surface,
+platform, hostCaps)` → POST /remote-runtime/sessions on the resolved
+target → launch-app when `bundleId` is set → fetch first frame →
+return `{sessionId, mechanism, targetId, runnerSessionHint, renderOn,
+firstFrameJpegBase64}`. Axis-3 `renderOn` is surfaced on the response
+so a sibling client can attach; full cast routing lands in P5.
+
+Files touched: new `dev_mechanism.go` (pure resolver, no I/O), new
+`dev_mechanism_test.go` (exhaustive table test), new `develop_for.go`
+(orchestrator + runner-auth gate + var seams for tests), new
+`develop_for_test.go` (4 scoped tests — happy path, gate fail, missing
+surface, missing framework), `mcp_tools.go` (verb schema),
+`httpserver.go` (dispatcher).
+
+Closed-loop verification: `go test -run 'TestResolveMechanism|TestRunDevelopFor' -count=1 .` → all pass. `TestRunDevelopFor_HappyPathReturnsSessionAndFrame` drives the whole verb end-to-end through the same seams a runner-facing MCP call would hit — stubbed only at the runner-auth gate + at the HTTP proxy boundary (so we don't need a live daemon on 127.0.0.1:18080), asserts session creation + launch-app + frame proxy were all called with the right paths + the response carries a base64 JPEG.
 
 _Environment: this work runs on the mac mini (`Mobiles-Mac-mini`,
 `~/Workspace/yaver.io`, aligned to github/main). Build check:

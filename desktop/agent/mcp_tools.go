@@ -3369,6 +3369,29 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, runtimeRuntimeTools...)
 
+	// --- develop_for orchestration (P2) ---
+	developForTools := []map[string]interface{}{
+		{
+			"name":        "develop_for",
+			"description": "One-verb dev loop: resolve machine → gate on authed runner → pick mechanism per (framework, surface, platform) → create+boot a remote-runtime session on the resolved target → launch app → return sessionId + first frame. Composes runtime_* + runner_auth + mechanism resolver; no new transport.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"project", "surface"},
+				"properties": map[string]interface{}{
+					"project":   map[string]interface{}{"type": "string", "description": "Project alias or workdir path — e.g. talos, yaver, sfmg, or a repo path."},
+					"framework": map[string]interface{}{"type": "string", "description": "expo|react-native|swift|kotlin|flutter|next|vite|browser. Auto-detected from project name / workDir extension when omitted."},
+					"surface":   map[string]interface{}{"type": "string", "description": "phone|tablet|watch|tv|vision|car|web"},
+					"platform":  map[string]interface{}{"type": "string", "description": "ios|android — defaults per-surface."},
+					"machine":   map[string]interface{}{"type": "string", "description": "Optional deviceId; empty = local mini."},
+					"renderOn":  map[string]interface{}{"type": "string", "description": "Optional Axis-3 sink deviceId (e.g. render on my phone from the car). Full cast routing lands in P5; surfaced here so a sibling can attach."},
+					"bundleId":  map[string]interface{}{"type": "string", "description": "Optional bundle id — launch-app runs after boot when set."},
+					"workDir":   map[string]interface{}{"type": "string", "description": "Optional project workdir override."},
+				},
+			},
+		},
+	}
+	tools = append(tools, developForTools...)
+
 	// --- Source maps (MCP) ---
 	// Table-stakes coverage gap: the CLI has `yaver sourcemaps`
 	// upload/list/delete/resolve. Agents that drive mobile releases

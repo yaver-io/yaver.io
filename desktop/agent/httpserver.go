@@ -13002,6 +13002,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(string(body))
 
+	case "develop_for":
+		var req DevelopForRequest
+		json.Unmarshal(call.Arguments, &req)
+		res, err := RunDevelopFor(context.Background(), req)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		body, _ := json.MarshalIndent(res, "", "  ")
+		return mcpToolResult(string(body))
+
 	// --- Source maps (MCP) ---
 	case "sourcemaps_list":
 		store := GlobalSourceMapStore()
