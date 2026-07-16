@@ -33,16 +33,80 @@ const (
 	autorunReasonRunner    = "runner failed"
 	autorunReasonScope     = "scope violation"
 	autorunReasonStopped   = "stopped by operator"
+	autorunReasonDisk      = "insufficient disk after reclaiming caches"
 )
+
+// Self-heal kinds. A long-running loop meets transient failures — a runner whose
+// auth hiccups, a disk the loop filled itself — and dying on the first one wastes
+// the whole run. Each heal is recorded rather than silently swallowed.
+const (
+	autorunHealRunnerFailover = "runner_failover"
+	autorunHealDiskReclaim    = "disk_reclaim"
+)
+
+// autorunHealEvent is one self-heal action, surfaced in the final commit, the
+// progress handoff, and autorun_status. Healing invisibly is how a loop ends up
+// "fine" for six hours while landing nothing.
+type autorunHealEvent struct {
+	Iteration int    `json:"iteration"`
+	Kind      string `json:"kind"`
+	Detail    string `json:"detail"`
+}
+
+// autorunDiskFloorGB is the free-space floor. Below it, the loop reclaims caches
+// before kicking a runner. The mini filled its own disk to 1.1 GB this way: hours
+// of full `go test ./...` fed a 5.2 GB build cache, and at zero the machine can't
+// even write a command's output.
+var autorunDiskFloorGB = 3.0
 
 // autorunRunSummary is what a finished run reports to its caller: the CLI prints
 // it, and the session manager surfaces it over MCP.
 type autorunRunSummary struct {
-	Iterations   int    `json:"iterations"`
-	Commits      int    `json:"commits"`
-	FinishReason string `json:"finishReason,omitempty"`
-	FinalCommit  string `json:"finalCommit,omitempty"`
-	FinalSubject string `json:"finalCommitSubject,omitempty"`
+	Iterations   int                `json:"iterations"`
+	Commits      int                `json:"commits"`
+	FinishReason string             `json:"finishReason,omitempty"`
+	FinalCommit  string             `json:"finalCommit,omitempty"`
+	FinalSubject string             `json:"finalCommitSubject,omitempty"`
+	Runner       string             `json:"runner,omitempty"`
+	Heals        []autorunHealEvent `json:"heals,omitempty"`
+}
+
+// readyAutorunRunners lists every authenticated runner that is ready, skipping
+// any already known to have failed this run. Order follows supportedRunnerIDs so
+// failover is deterministic.
+func readyAutorunRunners(workDir string, exclude map[string]bool) []RunnerConfig {
+	var ready []RunnerConfig
+	for _, id := range supportedRunnerIDs {
+		if exclude[id] {
+			continue
+		}
+		runner := GetRunnerConfig(id)
+		if err := CheckRunnerReady(runner, workDir); err == nil {
+			ready = append(ready, runner)
+		}
+	}
+	return ready
+}
+
+// reclaimAutorunDisk frees the caches a build/test loop generates. It only ever
+// touches caches — never the repo, never a path built from an unvalidated
+// variable. Returns a human-readable note on what it did.
+func reclaimAutorunDisk(ctx context.Context, workDir string) string {
+	before, _ := autorunFreeDiskGB(workDir)
+	// The go build cache is the dominant consumer for this loop; clearing it
+	// costs one slow rebuild and buys back GBs.
+	result := autorunExec(ctx, "go", []string{"clean", "-cache"}, workDir)
+	after, _ := autorunFreeDiskGB(workDir)
+	note := fmt.Sprintf("go clean -cache: %.1f GB free -> %.1f GB free", before, after)
+	if result.Err != nil {
+		note += fmt.Sprintf(" (go clean reported: %v)", result.Err)
+	}
+	return note
+}
+
+func autorunFreeDiskGB(dir string) (float64, bool) {
+	_, free, ok := statfsGB(dir)
+	return free, ok
 }
 
 func autorunTaskName(taskPath string) string {
@@ -66,6 +130,12 @@ func autorunFinalCommitBody(opts autorunOptions, runnerID string, summary autoru
 	fmt.Fprintf(&b, "Verified commits kept: %d\n", summary.Commits)
 	fmt.Fprintf(&b, "Runner: %s\n", runnerID)
 	fmt.Fprintf(&b, "Gate: %s\n", opts.Gate)
+	if len(summary.Heals) > 0 {
+		fmt.Fprintf(&b, "\nSelf-healed %d time(s) during this run:\n", len(summary.Heals))
+		for _, h := range summary.Heals {
+			fmt.Fprintf(&b, "- iteration %d [%s] %s\n", h.Iteration, h.Kind, h.Detail)
+		}
+	}
 	if runErr != nil {
 		fmt.Fprintf(&b, "\nThe run ended on an error. Its code changes were not kept; they are preserved in a diagnostic git stash:\n%s\n", runErr)
 	}

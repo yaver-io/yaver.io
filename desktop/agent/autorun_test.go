@@ -212,3 +212,58 @@ func TestAutorunGitChangesParsesRename(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+// The heal that would have saved 2026-07-16: claude died on headless-auth while
+// codex sat ready and unused. Failover must be recorded, not silent.
+func TestReadyAutorunRunnersSkipsFailedRunner(t *testing.T) {
+	all := readyAutorunRunners(t.TempDir(), nil)
+	if len(all) == 0 {
+		t.Skip("no runner authenticated on this machine")
+	}
+	excluded := readyAutorunRunners(t.TempDir(), map[string]bool{all[0].RunnerID: true})
+	for _, r := range excluded {
+		if r.RunnerID == all[0].RunnerID {
+			t.Fatalf("failed runner %q was offered again for failover", r.RunnerID)
+		}
+	}
+	if len(excluded) != len(all)-1 {
+		t.Fatalf("expected exactly one runner excluded: %d vs %d", len(excluded), len(all))
+	}
+}
+
+func TestAutorunFinalCommitBodyRecordsHeals(t *testing.T) {
+	opts := autorunOptions{TaskPath: "/repo/task.md", Gate: "go test ./...", WorkDir: "/repo"}
+	summary := autorunRunSummary{
+		Iterations: 3, Commits: 1, FinishReason: autorunReasonConverged,
+		Heals: []autorunHealEvent{
+			{Iteration: 1, Kind: autorunHealRunnerFailover, Detail: "runner claude failed; failing over to codex"},
+			{Iteration: 2, Kind: autorunHealDiskReclaim, Detail: "go clean -cache: 1.1 GB free -> 6.5 GB free"},
+		},
+	}
+	body := autorunFinalCommitBody(opts, "codex", summary, nil)
+	if !strings.Contains(body, "Self-healed 2 time(s)") {
+		t.Fatalf("heal count missing: %q", body)
+	}
+	for _, want := range []string{autorunHealRunnerFailover, autorunHealDiskReclaim, "failing over to codex", "6.5 GB free"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("heal detail %q missing from final commit: %q", want, body)
+		}
+	}
+}
+
+func TestReclaimAutorunDiskOnlyTouchesCaches(t *testing.T) {
+	original := autorunExec
+	defer func() { autorunExec = original }()
+	var ran [][]string
+	autorunExec = func(_ context.Context, name string, args []string, _ string) autorunCommandResult {
+		ran = append(ran, append([]string{name}, args...))
+		return autorunCommandResult{}
+	}
+	note := reclaimAutorunDisk(context.Background(), t.TempDir())
+	if len(ran) != 1 || ran[0][0] != "go" || ran[0][1] != "clean" || ran[0][2] != "-cache" {
+		t.Fatalf("reclaim must only clean caches, ran: %v", ran)
+	}
+	if !strings.Contains(note, "GB free") {
+		t.Fatalf("reclaim must report the space delta: %q", note)
+	}
+}

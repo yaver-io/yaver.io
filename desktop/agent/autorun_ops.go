@@ -44,6 +44,10 @@ type autorunSessionView struct {
 	// While it is empty the run has not ended, however quiet it looks.
 	FinalCommit        string `json:"finalCommit,omitempty"`
 	FinalCommitSubject string `json:"finalCommitSubject,omitempty"`
+	// ActiveRunner is the runner currently driving the loop — it changes when a
+	// failover heals a dead runner, so it is not always the one that was asked for.
+	ActiveRunner string             `json:"activeRunner,omitempty"`
+	Heals        []autorunHealEvent `json:"heals,omitempty"`
 }
 
 type autorunSessionManager struct {
@@ -104,7 +108,8 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 func (m *autorunSessionManager) view(s *autorunSession) autorunSessionView {
 	v := autorunSessionView{ID: s.ID, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error,
 		Iterations: s.Summary.Iterations, Commits: s.Summary.Commits, FinishReason: s.Summary.FinishReason,
-		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject}
+		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject,
+		ActiveRunner: s.Summary.Runner, Heals: s.Summary.Heals}
 	if b, err := os.ReadFile(s.ProgressPath); err == nil {
 		const maxTail = 16 * 1024
 		if len(b) > maxTail {
@@ -179,7 +184,7 @@ type autorunStartPayload struct {
 
 func init() {
 	registerOpsVerb(opsVerbSpec{Name: "autorun_start", Description: "Start a gate-verified autorun loop and return its session ID immediately.", Schema: autorunStartSchema(), Handler: opsAutorunStartHandler})
-	registerOpsVerb(opsVerbSpec{Name: "autorun_status", Description: "List autorun sessions, or inspect one session: progress tail, iterations, finish reason, and the final autorun commit. An empty finalCommit means the run has not finished. Pass machine to inspect a remote device's autoruns.", Schema: autorunIDSchema(false), Handler: opsAutorunStatusHandler})
+	registerOpsVerb(opsVerbSpec{Name: "autorun_status", Description: "List autorun sessions, or inspect one: progress tail, iterations, finish reason, activeRunner, self-heal events, and the final autorun commit. An empty finalCommit means the run has not finished. activeRunner differs from the requested runner after a failover. Pass machine to inspect a remote device's autoruns.", Schema: autorunIDSchema(false), Handler: opsAutorunStatusHandler})
 	registerOpsVerb(opsVerbSpec{Name: "autorun_stop", Description: "Cancel one running autorun session. It still records its final autorun commit.", Schema: autorunIDSchema(true), Handler: opsAutorunStopHandler})
 	registerOpsVerb(opsVerbSpec{Name: "autorun_stop_all", Description: "Cancel every running autorun session on a machine. Pass machine:<deviceId|alias|primary> to stop a remote device's autoruns; each stopped loop still records its final autorun commit.", Schema: autorunStopAllSchema(), Handler: opsAutorunStopAllHandler})
 }

@@ -151,6 +151,8 @@ func finalizeAutorun(ctx context.Context, opts autorunOptions, runnerID, progres
 func autorunLoop(ctx context.Context, opts autorunOptions, runner RunnerConfig, task, progressPath string, summary *autorunRunSummary) (string, error) {
 	taskPath := opts.TaskPath
 	noops := 0
+	failedRunners := map[string]bool{}
+	summary.Runner = runner.RunnerID
 	for iteration := 1; opts.MaxIters == 0 || iteration <= opts.MaxIters; iteration++ {
 		logResult := autorunExec(ctx, "git", []string{"log", "--oneline", "-10"}, opts.WorkDir)
 		progressBytes, _ := os.ReadFile(progressPath)
@@ -158,6 +160,19 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner RunnerConfig, 
 			return autorunReasonDone, nil
 		}
 		summary.Iterations = iteration
+
+		// Self-heal: this loop generates the very cache that fills the disk.
+		// Reclaim BEFORE kicking a runner, so a long run doesn't strand its own
+		// machine (and never at zero, where nothing can even write output).
+		if free, ok := autorunFreeDiskGB(opts.WorkDir); ok && free < autorunDiskFloorGB {
+			note := reclaimAutorunDisk(ctx, opts.WorkDir)
+			summary.Heals = append(summary.Heals, autorunHealEvent{Iteration: iteration, Kind: autorunHealDiskReclaim, Detail: note})
+			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SELF-HEAL disk below %.1f GB — %s", iteration, autorunDiskFloorGB, note))
+			if after, ok := autorunFreeDiskGB(opts.WorkDir); ok && after < autorunDiskFloorGB {
+				return autorunReasonDisk, fmt.Errorf("only %.1f GB free after reclaiming caches (floor %.1f GB); refusing to kick a runner that cannot finish", after, autorunDiskFloorGB)
+			}
+		}
+
 		prompt := autorunContext(task, string(progressBytes), logResult.Output, iteration)
 		result := autorunExec(ctx, resolveRunnerBinary(runner.Command), autorunRunnerArgs(runner, prompt), opts.WorkDir)
 		changes, statusErr := autorunGitChanges(ctx, opts.WorkDir)
@@ -178,7 +193,21 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner RunnerConfig, 
 				}
 			}
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: runner `%s` failed. Any changes were removed from the worktree and preserved in a diagnostic git stash.\n\n```text\n%s\n```", iteration, runner.RunnerID, strings.TrimSpace(result.Output)))
-			return autorunReasonRunner, fmt.Errorf("runner %s failed in iteration %d: %w", runner.RunnerID, iteration, result.Err)
+
+			// Self-heal: one runner's bad day must not end the run. A ready
+			// runner sat unused for six hours while this loop died on claude's
+			// headless-auth failure — fail over instead of giving up.
+			failedRunners[runner.RunnerID] = true
+			alternates := readyAutorunRunners(opts.WorkDir, failedRunners)
+			if len(alternates) == 0 {
+				return autorunReasonRunner, fmt.Errorf("runner %s failed in iteration %d and no other runner is ready: %w", runner.RunnerID, iteration, result.Err)
+			}
+			detail := fmt.Sprintf("runner %s failed (%v); failing over to %s", runner.RunnerID, result.Err, alternates[0].RunnerID)
+			summary.Heals = append(summary.Heals, autorunHealEvent{Iteration: iteration, Kind: autorunHealRunnerFailover, Detail: detail})
+			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SELF-HEAL %s", iteration, detail))
+			runner = alternates[0]
+			summary.Runner = runner.RunnerID
+			continue
 		}
 		if len(changes) == 0 {
 			noops++
