@@ -559,6 +559,77 @@ func autorunPushBranch(ctx context.Context, workDir string) error {
 	return nil
 }
 
+func autorunReleasesSlot(reason string) bool {
+	switch reason {
+	case autorunReasonConverged, autorunReasonDone:
+		return true
+	default:
+		return false
+	}
+}
+
+func autorunReleaseWorkspace(ctx context.Context, ws autorunWorkspace, push, land bool) error {
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+	}
+	if land {
+		status := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "status", "--porcelain"}, ws.SourceWorkDir)
+		if status.Err != nil {
+			return fmt.Errorf("git status --porcelain: %w: %s", status.Err, strings.TrimSpace(status.Output))
+		}
+		if strings.TrimSpace(status.Output) != "" {
+			return fmt.Errorf("source checkout is dirty; refusing to land autorun slot %s onto main", ws.Slot)
+		}
+		branch := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "branch", "--show-current"}, ws.SourceWorkDir)
+		if branch.Err != nil {
+			return fmt.Errorf("git branch --show-current: %w: %s", branch.Err, strings.TrimSpace(branch.Output))
+		}
+		if current := strings.TrimSpace(branch.Output); current != "main" {
+			checkout := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "checkout", "main"}, ws.SourceWorkDir)
+			if checkout.Err != nil {
+				return fmt.Errorf("git checkout main: %w: %s", checkout.Err, strings.TrimSpace(checkout.Output))
+			}
+		}
+		if push {
+			fetch := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "fetch", "origin"}, ws.SourceWorkDir)
+			if fetch.Err != nil {
+				return fmt.Errorf("git fetch origin: %w: %s", fetch.Err, strings.TrimSpace(fetch.Output))
+			}
+			pull := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "pull", "--ff-only", "origin", "main"}, ws.SourceWorkDir)
+			if pull.Err != nil {
+				return fmt.Errorf("git pull --ff-only origin main: %w: %s", pull.Err, strings.TrimSpace(pull.Output))
+			}
+		}
+		merge := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "merge", "--ff-only", ws.Branch}, ws.SourceWorkDir)
+		if merge.Err != nil {
+			return fmt.Errorf("git merge --ff-only %s into main: %w: %s", ws.Branch, merge.Err, strings.TrimSpace(merge.Output))
+		}
+		if push {
+			pushMain := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", "origin", "main"}, ws.SourceWorkDir)
+			if pushMain.Err != nil {
+				return fmt.Errorf("git push origin main: %w: %s", pushMain.Err, strings.TrimSpace(pushMain.Output))
+			}
+		}
+	}
+	remove := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "worktree", "remove", "--force", ws.WorkDir}, ws.SourceWorkDir)
+	if remove.Err != nil {
+		return fmt.Errorf("git worktree remove %s: %w: %s", ws.WorkDir, remove.Err, strings.TrimSpace(remove.Output))
+	}
+	deleteBranch := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "branch", "-D", ws.Branch}, ws.SourceWorkDir)
+	if deleteBranch.Err != nil {
+		return fmt.Errorf("git branch -D %s: %w: %s", ws.Branch, deleteBranch.Err, strings.TrimSpace(deleteBranch.Output))
+	}
+	if push {
+		deleteRemote := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", "origin", "--delete", ws.Branch}, ws.SourceWorkDir)
+		if deleteRemote.Err != nil && !strings.Contains(deleteRemote.Output, "remote ref does not exist") {
+			return fmt.Errorf("git push origin --delete %s: %w: %s", ws.Branch, deleteRemote.Err, strings.TrimSpace(deleteRemote.Output))
+		}
+	}
+	return nil
+}
+
 func autorunRunnerArgs(runner RunnerConfig, prompt string) []string {
 	args := make([]string, 0, len(runner.Args)+2)
 	if strings.TrimSpace(runner.Model) != "" {

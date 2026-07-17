@@ -80,6 +80,20 @@ func TestRollbackAutorunChangesUsesDiagnosticStash(t *testing.T) {
 	}
 }
 
+func TestAutorunReleasesSlot(t *testing.T) {
+	if !autorunReleasesSlot(autorunReasonConverged) {
+		t.Fatal("converged run should release its slot")
+	}
+	if !autorunReleasesSlot(autorunReasonDone) {
+		t.Fatal("DONE run should release its slot")
+	}
+	for _, reason := range []string{autorunReasonGate, autorunReasonRunner, autorunReasonScope, autorunReasonStopped, autorunReasonMaxIters} {
+		if autorunReleasesSlot(reason) {
+			t.Fatalf("%q should keep its slot for restart", reason)
+		}
+	}
+}
+
 func TestValidateAutorunShellCommand(t *testing.T) {
 	for _, command := range []string{"rm -rf build", "git reset --hard HEAD", "git push --force", "npm publish"} {
 		if validateAutorunShellCommand(command) == nil {
@@ -211,6 +225,72 @@ func TestFinalizeAutorunRecordsFinalCommitAfterCancellation(t *testing.T) {
 	}
 	if !sawLiveContext || summary.FinalCommit != "deadbeef" {
 		t.Fatalf("cancelled run failed to record its final commit: %q", summary.FinalCommit)
+	}
+}
+
+func TestAutorunReleaseWorkspaceLandsMainAndCleansUp(t *testing.T) {
+	original := autorunExec
+	defer func() { autorunExec = original }()
+	var calls []string
+	autorunExec = func(_ context.Context, name string, args []string, _ string) autorunCommandResult {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if name == "git" && len(args) >= 5 && args[0] == "-C" && args[2] == "status" {
+			return autorunCommandResult{}
+		}
+		if name == "git" && len(args) >= 5 && args[0] == "-C" && args[2] == "branch" && args[3] == "--show-current" {
+			return autorunCommandResult{Output: "feature\n"}
+		}
+		if name == "git" && len(args) >= 5 && args[0] == "-C" && args[2] == "push" && args[3] == "origin" && args[4] == "--delete" {
+			return autorunCommandResult{Output: "remote ref does not exist"}
+		}
+		return autorunCommandResult{}
+	}
+	ws := autorunWorkspace{Slot: "task:codex", Branch: "autorun/task/codex", SourceWorkDir: "/repo", WorkDir: "/slot"}
+	if err := autorunReleaseWorkspace(context.Background(), ws, true, true); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"git -C /repo status --porcelain",
+		"git -C /repo branch --show-current",
+		"git -C /repo checkout main",
+		"git -C /repo fetch origin",
+		"git -C /repo pull --ff-only origin main",
+		"git -C /repo merge --ff-only autorun/task/codex",
+		"git -C /repo push origin main",
+		"git -C /repo worktree remove --force /slot",
+		"git -C /repo branch -D autorun/task/codex",
+		"git -C /repo push origin --delete autorun/task/codex",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("release sequence missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestAutorunReleaseWorkspaceDeletesEmptySlotWithoutLanding(t *testing.T) {
+	original := autorunExec
+	defer func() { autorunExec = original }()
+	var calls []string
+	autorunExec = func(_ context.Context, name string, args []string, _ string) autorunCommandResult {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return autorunCommandResult{}
+	}
+	ws := autorunWorkspace{Slot: "task:codex", Branch: "autorun/task/codex", SourceWorkDir: "/repo", WorkDir: "/slot"}
+	if err := autorunReleaseWorkspace(context.Background(), ws, false, false); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	if strings.Contains(joined, " merge ") || strings.Contains(joined, " push ") || strings.Contains(joined, " checkout ") {
+		t.Fatalf("empty slot cleanup should not try to land or push anything:\n%s", joined)
+	}
+	for _, want := range []string{
+		"git -C /repo worktree remove --force /slot",
+		"git -C /repo branch -D autorun/task/codex",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("cleanup missing %q:\n%s", want, joined)
+		}
 	}
 }
 

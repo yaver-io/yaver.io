@@ -37,6 +37,25 @@ func autorunIsolateHome(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	// Closed-loop autorun tests isolate HOME so they do not read the developer's
+	// real runner state. Seed minimal auth fixtures so readiness checks still
+	// let the stubbed runners through.
+	codexHome := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"access_token":"test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	xdgData := filepath.Join(home, ".local", "share")
+	t.Setenv("XDG_DATA_HOME", xdgData)
+	opencodeHome := filepath.Join(xdgData, "opencode")
+	if err := os.MkdirAll(opencodeHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeHome, "auth.json"), []byte(`{"openai":{"type":"oauth","token":"x"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return home
 }
 
@@ -180,35 +199,38 @@ func TestAutorunClosedLoopMasterPlansDoerImplementsGateVerifies(t *testing.T) {
 		t.Fatalf("verified commits = %d, want 1", summary.Commits)
 	}
 
-	// The work is really in the slot worktree, while the source checkout stays untouched.
-	if body, err := os.ReadFile(filepath.Join(workspace.WorkDir, "src", "widget.txt")); err != nil || !strings.Contains(string(body), "widget") {
-		t.Fatalf("the doer's work is not in the autorun worktree: %v %q", err, body)
-	}
-	if status := repo.run(workspace.WorkDir, "git", "status", "--porcelain"); strings.TrimSpace(status) != "" {
-		t.Fatalf("loop left the autorun worktree dirty, which strands the NEXT run: %q", status)
+	// A released slot lands its work on main, then deletes the slot worktree.
+	if body, err := os.ReadFile(filepath.Join(repo.dir, "src", "widget.txt")); err != nil || !strings.Contains(string(body), "widget") {
+		t.Fatalf("the landed work is not on main: %v %q", err, body)
 	}
 	if status := repo.run(repo.dir, "git", "status", "--porcelain"); strings.TrimSpace(status) != "" {
-		t.Fatalf("loop dirtied the source checkout instead of its slot worktree: %q", status)
-	}
-	if log := repo.log(); strings.Contains(log, "autorun: verified iteration 1") {
-		t.Fatalf("source checkout should stay on main for this increment: %q", log)
+		t.Fatalf("landing left the source checkout dirty: %q", status)
 	}
 	if summary.FinalCommit == "" || !strings.Contains(summary.FinalSubject, autorunFinalCommitMarker) {
 		t.Fatalf("run ended without a marked final commit: %+v", summary)
 	}
+	if _, err := os.Stat(workspace.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("released slot worktree still exists: %v", err)
+	}
+	if log := repo.log(); !strings.Contains(log, autorunFinalCommitMarker) || !strings.Contains(log, "verified iteration 1") {
+		t.Fatalf("source checkout main did not absorb the slot branch: %q", log)
+	}
 	// Signed for real — `-S` against a real key, not a stubbed git.
-	if sig := repo.run(workspace.WorkDir, "git", "log", "-1", "--pretty=%GT"); strings.TrimSpace(sig) == "" {
+	if sig := repo.run(repo.dir, "git", "log", "-1", "--pretty=%GT"); strings.TrimSpace(sig) == "" {
 		t.Fatal("final commit carries no signature trailer")
 	}
-	// --push means the origin slot branch has it, not just the local worktree.
+	// --push means main was pushed and the temporary slot branch was deleted.
+	if remote := repo.run(repo.dir, "git", "log", "-1", "--oneline", "origin/main"); !strings.Contains(remote, autorunFinalCommitMarker) {
+		t.Fatalf("final commit was not pushed to origin/main: %q", remote)
+	}
 	branch := autorunBranchName(filepath.Join(repo.dir, "tasks", "widget.md"), "codex")
-	if remote := repo.run(repo.dir, "git", "log", "-1", "--oneline", "origin/"+branch); !strings.Contains(remote, autorunFinalCommitMarker) {
-		t.Fatalf("final commit was not pushed to the slot branch: %q", remote)
+	if err := exec.Command("git", "-C", repo.dir, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch).Run(); err == nil {
+		t.Fatalf("slot branch should be deleted after landing, but origin/%s still exists", branch)
 	}
 
 	// The two seats' conversation is on disk and committed — this is the sync
 	// channel, and it is what a human reads afterwards to see what happened.
-	progress, err := os.ReadFile(workspace.ProgressPath)
+	progress, err := os.ReadFile(filepath.Join(repo.dir, "docs", "handoff", "widget-progress.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,8 +294,11 @@ func TestAutorunClosedLoopConvergesWhenTheRunnerHasNothingToDo(t *testing.T) {
 	if summary.Commits != 0 {
 		t.Fatalf("a runner that edited nothing produced %d verified commit(s) of note-churn", summary.Commits)
 	}
-	if log := repo.run(workspace.WorkDir, "git", "log", "--oneline"); !strings.Contains(log, autorunFinalCommitMarker) {
-		t.Fatalf("converged run did not record its final commit in the slot worktree: %q", log)
+	if _, err := os.Stat(workspace.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("converged run should release its slot worktree: %v", err)
+	}
+	if log := repo.run(repo.dir, "git", "log", "--oneline"); !strings.Contains(log, autorunFinalCommitMarker) {
+		t.Fatalf("converged run did not land its final commit on main: %q", log)
 	}
 }
 

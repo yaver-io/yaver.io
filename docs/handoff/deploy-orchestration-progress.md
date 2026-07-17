@@ -80,3 +80,85 @@ Iteration 1: gate passed (`cd desktop/agent && go build ./...`) with runner `cod
 
 Changed: `desktop/agent/autorun.go`, `desktop/agent/autorun_closedloop_test.go`, `desktop/agent/autorun_cmd.go`, `desktop/agent/autorun_master_test.go`, `desktop/agent/autorun_ops.go`, `desktop/agent/autorun_slot_test.go`, `docs/handoff/deploy-orchestration-progress.md`
 
+## 2026-07-17T10:12:43Z
+
+MASTER INSTRUCTION (iteration 2, runner `claude`):
+
+▎ We're extending Claude Fable 5 access on all paid plans, as well as keeping
+ ▎ Claude Code’s weekly rate limits 50% higher, through July 19.
+ ▎
+ ▎ As before, you can use up to half of your weekly usage limit on Fable 5.
+ ▎ After that, you can keep using Fable 5 with usage credits, or switch to
+ ▎ another model to keep working within your remaining limits.
+ ▎
+ ▎ More details here: https://support.claude.com/en/articles/15424964-claude-fab
+ ▎ le-5-promotional-access
+
+❯ Read /var/folders/tf/9mxy7lhx5p55m_4_gwd9l2840000gn/T/yaver-autorun-deploy-or
+  chestration-claude-prompt.md and carry out the task it describes. Do not ask
+  questions.Read /var/folders/tf/9mxy7lhx5p55m_4_gwd9l2840000gn/T/yaver-autorun
+  -deploy-orchestration-claude-prompt.md and carry out the task it describes.
+  Do not ask questions.
+
+⏺ Login expired · Please run /login
+
+✻ Brewed for 0s
+                                                     Not logged in · Run /login
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+## 2026-07-17T10:36:19Z
+
+DOER REPORT (iteration 2, runner `codex`):
+
+```text
++
++func TestAutorunReleaseWorkspaceDeletesEmptySlotWithoutLanding(t *testing.T) {
++	original := autorunExec
++	defer func() { autorunExec = original }()
++	var calls []string
++	autorunExec = func(_ context.Context, name string, args []string, _ string) autorunCommandResult {
++		calls = append(calls, name+" "+strings.Join(args, " "))
++		return autorunCommandResult{}
++	}
++	ws := autorunWorkspace{Slot: "task:codex", Branch: "autorun/task/codex", SourceWorkDir: "/repo", WorkDir: "/slot"}
++	if err := autorunReleaseWorkspace(context.Background(), ws, false, false); err != nil {
++		t.Fatal(err)
++	}
++	joined := strings.Join(calls, "\n")
++	if strings.Contains(joined, " merge ") || strings.Contains(joined, " push ") || strings.Contains(joined, " checkout ") {
++		t.Fatalf("empty slot cleanup should not try to land or push anything:\n%s", joined)
++	}
++	for _, want := range []string{
++		"git -C /repo worktree remove --force /slot",
++		"git -C /repo branch -D autorun/task/codex",
++	} {
++		if !strings.Contains(joined, want) {
++			t.Fatalf("cleanup missing %q:\n%s", want, joined)
++		}
++	}
++}
++
+ func TestAutorunGitChangesParsesRename(t *testing.T) {
+ 	original := autorunExec
+ 	defer func() { autorunExec = original }()
+
+2026-07-17T10:36:18.809180Z ERROR codex_core::session: failed to record rollout items: thread 019f6f90-6c23-7813-912a-517006fd41f0 not found
+2026-07-17T10:36:18.806837Z ERROR codex_core::session: failed to record rollout items: thread 019f6f90-6c23-7813-912a-517006fd41f0 not found
+tokens used
+179,421
+Implemented the next P0 slice in `desktop/agent/**`: successful terminal autorun runs now release their slot instead of leaving a stranded branch/worktree behind. The new logic lands releasable runs (`converged` and `task marked DONE`) back onto `main`, pushes `main` and deletes the remote slot branch when `--push` is enabled, then removes the slot worktree and deletes the local slot branch. Empty `DONE` slots with no final commit are cleaned up without creating or landing note-only history. The main changes are in [desktop/agent/autorun.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun.go) and [desktop/agent/autorun_cmd.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun_cmd.go).
+
+I also updated the autorun tests to cover the release policy and the new terminal lifecycle, and adjusted the closed-loop fixture to seed isolated runner auth so readiness checks still pass under its temp `HOME`: [desktop/agent/autorun_test.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun_test.go) and [desktop/agent/autorun_closedloop_test.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun_closedloop_test.go).
+
+`gofmt -w` ran on the touched files. I was able to verify the new release-helper test once (`go test -run '^TestAutorunReleaseWorkspace'` returned `PASS` before I widened the scope), but the broader package-level `go test` / `go build ./...` invocations under `desktop/agent` did not return buffered output through the tool before this turn ended, so I can’t honestly claim a completed gate result yet.
+```
+
+## 2026-07-17T10:36:58Z
+
+Iteration 2: gate passed (`cd desktop/agent && go build ./...`) with runner `codex`.
+
+Changed: `desktop/agent/autorun.go`, `desktop/agent/autorun_closedloop_test.go`, `desktop/agent/autorun_cmd.go`, `desktop/agent/autorun_test.go`, `docs/handoff/deploy-orchestration-progress.md`
+

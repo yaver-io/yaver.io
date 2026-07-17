@@ -195,6 +195,11 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 	// A run that found the task already DONE did no work; minting a commit for
 	// it would spam history on every re-kick.
 	if reason == autorunReasonDone && summary.Iterations == 0 {
+		if autorunReleasesSlot(reason) {
+			if err := autorunReleaseWorkspace(ctx, workspace, opts.Push, false); err != nil {
+				return summary, err
+			}
+		}
 		return summary, runErr
 	}
 	if finalErr := finalizeAutorun(ctx, opts, runner.RunnerID, progressPath, &summary, runErr); finalErr != nil {
@@ -202,6 +207,11 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 			return summary, fmt.Errorf("%w (recording the final autorun commit also failed: %v)", runErr, finalErr)
 		}
 		return summary, finalErr
+	}
+	if autorunReleasesSlot(reason) {
+		if err := autorunReleaseWorkspace(ctx, workspace, opts.Push, summary.FinalCommit != ""); err != nil {
+			return summary, err
+		}
 	}
 	return summary, runErr
 }
