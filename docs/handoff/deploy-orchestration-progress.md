@@ -149,7 +149,7 @@ DOER REPORT (iteration 2, runner `codex`):
 2026-07-17T10:36:18.806837Z ERROR codex_core::session: failed to record rollout items: thread 019f6f90-6c23-7813-912a-517006fd41f0 not found
 tokens used
 179,421
-Implemented the next P0 slice in `desktop/agent/**`: successful terminal autorun runs now release their slot instead of leaving a stranded branch/worktree behind. The new logic lands releasable runs (`converged` and `task marked DONE`) back onto `main`, pushes `main` and deletes the remote slot branch when `--push` is enabled, then removes the slot worktree and deletes the local slot branch. Empty `DONE` slots with no final commit are cleaned up without creating or landing note-only history. The main changes are in [desktop/agent/autorun.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun.go) and [desktop/agent/autorun_cmd.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun_cmd.go).
+Implemented the next P0 slice in `desktop/agent/**`: successful terminal autorun runs now release their slot instead of leaving a stranded branch/worktree behind. The new logic lands releasable runs (`converged` and `task marked complete`) back onto `main`, pushes `main` and deletes the remote slot branch when `--push` is enabled, then removes the slot worktree and deletes the local slot branch. Empty `the completion marker` slots with no final commit are cleaned up without creating or landing note-only history. The main changes are in [desktop/agent/autorun.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun.go) and [desktop/agent/autorun_cmd.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun_cmd.go).
 
 I also updated the autorun tests to cover the release policy and the new terminal lifecycle, and adjusted the closed-loop fixture to seed isolated runner auth so readiness checks still pass under its temp `HOME`: [desktop/agent/autorun_test.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun_test.go) and [desktop/agent/autorun_closedloop_test.go](/Users/pokayoke/.yaver/worktrees/deploy-orchestration/desktop/agent/autorun_closedloop_test.go).
 
@@ -164,11 +164,11 @@ Changed: `desktop/agent/autorun.go`, `desktop/agent/autorun_closedloop_test.go`,
 
 ## 2026-07-17T10:41:58Z
 
-autorun: final autorun commit for deploy-orchestration (task marked DONE)
+autorun: final autorun commit for deploy-orchestration (task marked complete)
 
 This is the final autorun commit for task deploy-orchestration. No further autorun commits will follow for this run.
 
-Finish reason: task marked DONE
+Finish reason: task marked complete
 Iterations run: 2
 Verified commits kept: 2
 Runner: codex (doer — implemented each iteration)

@@ -43,7 +43,7 @@ Mobile now gives the session strip fixed slots in [mobile/src/components/Session
 
 The device-card coding-agent block was slimmed in [web/components/dashboard/DevicesView.tsx](/Users/pokayoke/Workspace/yaver.io/web/components/dashboard/DevicesView.tsx): the card now shows only the label plus the preferred chip, the rest moved behind a new `Coding agent…` modal opened from the existing `⋯` menu, and runner health now uses an explicit status mapper instead of substring sniffing.
 
-Verification: `web: npx tsc --noEmit` passed, `mobile: npx tsc --noEmit` passed, and the targeted grep for status words next to hardcoded hexes in the named files came back clean. I did not run the full project gate, so this is not marked `DONE`.
+Verification: `web: npx tsc --noEmit` passed, `mobile: npx tsc --noEmit` passed, and the targeted grep for status words next to hardcoded hexes in the named files came back clean. I did not run the full project gate, so this is not marked `the completion marker`.
 ```
 
 ## 2026-07-17T09:30:36Z
@@ -54,11 +54,11 @@ Changed: `docs/handoff/ambient-slots-progress.md`, `mobile/app/(tabs)/home.tsx`,
 
 ## 2026-07-17T09:35:36Z
 
-autorun: final autorun commit for ambient-slots (task marked DONE)
+autorun: final autorun commit for ambient-slots (task marked complete)
 
 This is the final autorun commit for task ambient-slots. No further autorun commits will follow for this run.
 
-Finish reason: task marked DONE
+Finish reason: task marked complete
 Iterations run: 1
 Verified commits kept: 1
 Runner: codex (doer — implemented each iteration)
