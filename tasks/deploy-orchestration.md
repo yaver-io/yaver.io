@@ -59,6 +59,44 @@ lifecycle so no operator has to know that.
 - Only after the work lands on `main` may the sink deploy (P6). Deploy from
   `main`, never from a slot branch.
 
+**Builds and deploys must be autorun-aware, or they compile a torn tree.** A
+loop is *by definition* mid-edit for most of its life. Any build that reads the
+same checkout while a doer is halfway through writing it compiles a half-written
+tree and ships it — a broken build with no bad commit to blame, which is the
+worst kind to debug. `scripts/deploy-web.sh` builds `web/` straight from the
+working tree today, so this is live.
+
+- **Build from a commit, never from a live directory.** A deploy resolves the SHA
+  it intends to ship, checks that SHA out into its own detached worktree, and
+  builds *there*. No live tree, no race, and the artefact is reproducible.
+- This is also a prerequisite for P2: you cannot assert "SHA X is serving" unless
+  you built SHA X rather than "whatever was in the folder at 12:04".
+- A checkout that has a live autorun slot is **not** a build input. If something
+  must read one, it needs an advisory lock — `deployMu` (`deploy_pipeline.go:72`)
+  serialises deploys against each other but knows nothing about autorun, so it
+  does not help here.
+
+**The lock is scoped, never global — this is a monorepo.** A repo-wide build lock
+would mean a loop compiling `mobile/**` blocks a loop working on
+`backend/convex/**`, which share nothing. That is not safety, it is queueing for
+no reason, and on a box running p0…p9 it would serialise the whole fleet.
+
+- **`--scope` already declares the lock domain.** It is mandatory for remote runs
+  and already enforced (`autorun.go` stages by explicit path, never `commit -a`).
+  It is now doing triple duty: what a loop may touch, which deploy targets its
+  diff implies (P5/P7), and which builds it excludes. Do not invent a fourth
+  declaration — derive.
+- Disjoint scopes ⇒ **fully parallel**. `mobile/**` and `backend/convex/**` never
+  wait on each other, and a mobile build proceeds while a backend loop iterates.
+- Overlapping scopes ⇒ **signal, don't corrupt**. The second party waits and says
+  why (`blocked` — P6 — naming the slot it is waiting on), rather than reading a
+  torn tree or failing with a mystery compile error. A visible wait beats a silent
+  race; see the "visible failure over silent retry" law.
+- Yaver's MCP/ops layer owns this. `runner_autorun` has no `machine` param today
+  and several `machine` params are documented "Reserved for future remote-attach
+  routing" — a scope-aware lock is meaningless if the layer holding it cannot
+  address the box the slots live on. Fix the addressing as part of this.
+
 ## P1 — `ops deploy` lies, and four of its targets do nothing
 
 `desktop/agent/ops_deploy.go`. `opsDeployHandler` maps a target to a CLI string,
