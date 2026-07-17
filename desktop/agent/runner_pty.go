@@ -101,7 +101,7 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 
 	var cmd *exec.Cmd
 	tmuxSession := ""
-	if _, terr := exec.LookPath("tmux"); terr == nil {
+	if tmuxAvailable() {
 		tmuxSession = sanitizeTmuxSessionName(q.Get("name"))
 		if tmuxSession == "" {
 			tmuxSession = "yaver-" + runnerID
@@ -136,7 +136,7 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 			tmuxArgs = append(tmuxArgs, "-c", cwd)
 		}
 		tmuxArgs = append(tmuxArgs, inner)
-		cmd = exec.Command("tmux", tmuxArgs...)
+		cmd = exec.Command(tmuxCmdName(), tmuxArgs...)
 	} else {
 		cmd = exec.Command(rc.Command, args...)
 		if cwd != "" {
@@ -166,12 +166,12 @@ func (s *HTTPServer) handleRunnerPTYWS(w http.ResponseWriter, r *http.Request) {
 		if chrome {
 			status = "on"
 		}
-		_ = exec.Command("tmux", "set-option", "-t", tmuxSession, "status", status).Run()
+		_ = exec.Command(tmuxCmdName(), "set-option", "-t", tmuxSession, "status", status).Run()
 		go func(sess, want string) {
 			for i := 0; i < 8; i++ {
 				time.Sleep(150 * time.Millisecond)
-				if exec.Command("tmux", "has-session", "-t", sess).Run() == nil {
-					_ = exec.Command("tmux", "set-option", "-t", sess, "status", want).Run()
+				if exec.Command(tmuxCmdName(), "has-session", "-t", sess).Run() == nil {
+					_ = exec.Command(tmuxCmdName(), "set-option", "-t", sess, "status", want).Run()
 				}
 			}
 		}(tmuxSession, status)
@@ -242,7 +242,7 @@ func runnerPaneAwaitingLogin(session, runnerBinaryID string) bool {
 	if strings.TrimSpace(session) == "" || runnerBinaryID == "" {
 		return false
 	}
-	if exec.Command("tmux", "has-session", "-t", session).Run() != nil {
+	if exec.Command(tmuxCmdName(), "has-session", "-t", session).Run() != nil {
 		return false
 	}
 	// If the runner really is signed out, a login screen is correct and the
@@ -252,11 +252,11 @@ func runnerPaneAwaitingLogin(session, runnerBinaryID string) bool {
 	if !auth.AuthConfigured || !auth.AuthVerified {
 		return false
 	}
-	current, err := exec.Command("tmux", "list-panes", "-t", session, "-F", "#{pane_current_command}").Output()
+	current, err := exec.Command(tmuxCmdName(), "list-panes", "-t", session, "-F", "#{pane_current_command}").Output()
 	if err != nil || runnerFromStartCommand(strings.TrimSpace(string(current))) != runnerBinaryID {
 		return false
 	}
-	pane, err := exec.Command("tmux", "capture-pane", "-p", "-t", session).Output()
+	pane, err := exec.Command(tmuxCmdName(), "capture-pane", "-p", "-t", session).Output()
 	if err != nil {
 		return false
 	}
@@ -287,10 +287,10 @@ func killStaleRunnerTmuxSession(session string) {
 	if strings.TrimSpace(session) == "" {
 		return
 	}
-	if exec.Command("tmux", "has-session", "-t", session).Run() != nil {
+	if exec.Command(tmuxCmdName(), "has-session", "-t", session).Run() != nil {
 		return
 	}
-	if out, err := exec.Command("tmux", "kill-session", "-t", session).CombinedOutput(); err != nil {
+	if out, err := exec.Command(tmuxCmdName(), "kill-session", "-t", session).CombinedOutput(); err != nil {
 		log.Printf("[runner-pty] could not kill stale session %q: %v (%s)", session, err, strings.TrimSpace(string(out)))
 		return
 	}
@@ -413,10 +413,10 @@ func (s *HTTPServer) handleRunnerSessionsClose(w http.ResponseWriter, r *http.Re
 }
 
 func closeTmuxSessions() []RunnerSessionCloseResult {
-	if _, err := exec.LookPath("tmux"); err != nil {
+	if !tmuxAvailable() {
 		return nil
 	}
-	raw, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	raw, err := exec.Command(tmuxCmdName(), "list-sessions", "-F", "#{session_name}").CombinedOutput()
 	if err != nil {
 		return nil
 	}
@@ -427,7 +427,7 @@ func closeTmuxSessions() []RunnerSessionCloseResult {
 			continue
 		}
 		res := RunnerSessionCloseResult{Name: name, Runner: detectRunnerFromTmuxSession(name)}
-		if out, kerr := exec.Command("tmux", "kill-session", "-t", name).CombinedOutput(); kerr != nil {
+		if out, kerr := exec.Command(tmuxCmdName(), "kill-session", "-t", name).CombinedOutput(); kerr != nil {
 			res.Error = strings.TrimSpace(string(out))
 			if res.Error == "" {
 				res.Error = kerr.Error()
@@ -440,10 +440,10 @@ func closeTmuxSessions() []RunnerSessionCloseResult {
 
 func listRunnerPTYSessions() []RunnerPTYSession {
 	out := []RunnerPTYSession{}
-	if _, err := exec.LookPath("tmux"); err != nil {
+	if !tmuxAvailable() {
 		return out
 	}
-	raw, err := exec.Command("tmux", "list-sessions", "-F",
+	raw, err := exec.Command(tmuxCmdName(), "list-sessions", "-F",
 		"#{session_name}\t#{session_created}\t#{session_attached}").CombinedOutput()
 	if err != nil {
 		return out // no server / no sessions
@@ -464,7 +464,7 @@ func listRunnerPTYSessions() []RunnerPTYSession {
 		attached := len(parts) > 2 && strings.TrimSpace(parts[2]) == "1"
 
 		startCmd, curCmd := "", ""
-		if pc, perr := exec.Command("tmux", "list-panes", "-t", name, "-F", "#{pane_start_command}\x1f#{pane_current_command}").CombinedOutput(); perr == nil {
+		if pc, perr := exec.Command(tmuxCmdName(), "list-panes", "-t", name, "-F", "#{pane_start_command}\x1f#{pane_current_command}").CombinedOutput(); perr == nil {
 			first := strings.Split(strings.TrimSpace(string(pc)), "\n")[0]
 			cols := strings.SplitN(first, "\x1f", 2)
 			startCmd = strings.TrimSpace(cols[0])

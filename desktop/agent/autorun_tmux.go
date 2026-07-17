@@ -76,15 +76,15 @@ func autorunTmuxSessionName(taskPath, runnerID string) string {
 }
 
 func autorunTmuxAvailable(ctx context.Context, workDir string) bool {
-	return autorunExec(ctx, "tmux", []string{"-V"}, workDir).Err == nil
+	return autorunExec(ctx, tmuxCmdName(), []string{"-V"}, workDir).Err == nil
 }
 
 func autorunTmuxHasSession(ctx context.Context, session, workDir string) bool {
-	return autorunExec(ctx, "tmux", []string{"has-session", "-t", session}, workDir).Err == nil
+	return autorunExec(ctx, tmuxCmdName(), []string{"has-session", "-t", session}, workDir).Err == nil
 }
 
 func autorunTmuxCapture(ctx context.Context, session, workDir string) string {
-	return autorunExec(ctx, "tmux", []string{"capture-pane", "-p", "-t", session}, workDir).Output
+	return autorunExec(ctx, tmuxCmdName(), []string{"capture-pane", "-p", "-t", session}, workDir).Output
 }
 
 // shellQuoteSingle wraps a token for a POSIX shell, which is how tmux
@@ -115,7 +115,7 @@ func ensureAutorunTmuxSession(ctx context.Context, session string, runner Runner
 	for _, p := range parts {
 		quoted = append(quoted, shellQuoteSingle(p))
 	}
-	res := autorunExec(ctx, "tmux", []string{
+	res := autorunExec(ctx, tmuxCmdName(), []string{
 		"new-session", "-d", "-s", session, "-c", workDir, strings.Join(quoted, " "),
 	}, workDir)
 	if res.Err != nil {
@@ -139,10 +139,10 @@ func autorunTmuxKick(ctx context.Context, session, prompt, workDir string, timeo
 
 	// -l sends the text literally; Enter must be a SEPARATE send-keys, or the
 	// TUI leaves the text sitting unsubmitted in its composer.
-	if res := autorunExec(ctx, "tmux", []string{"send-keys", "-t", session, "-l", instruction}, workDir); res.Err != nil {
+	if res := autorunExec(ctx, tmuxCmdName(), []string{"send-keys", "-t", session, "-l", instruction}, workDir); res.Err != nil {
 		return autorunCommandResult{Output: res.Output, Err: fmt.Errorf("send prompt to %s: %w", session, res.Err)}
 	}
-	if res := autorunExec(ctx, "tmux", []string{"send-keys", "-t", session, "Enter"}, workDir); res.Err != nil {
+	if res := autorunExec(ctx, tmuxCmdName(), []string{"send-keys", "-t", session, "Enter"}, workDir); res.Err != nil {
 		return autorunCommandResult{Output: res.Output, Err: fmt.Errorf("submit prompt to %s: %w", session, res.Err)}
 	}
 
@@ -214,10 +214,10 @@ func autorunTmuxSetGoal(ctx context.Context, session, goal string, runner Runner
 	}
 	// -l sends literally; Enter must be a SEPARATE send-keys or the command sits
 	// unsubmitted in the composer (same reason as autorunTmuxKick).
-	if res := autorunExec(ctx, "tmux", []string{"send-keys", "-t", session, "-l", "/goal " + goal}, workDir); res.Err != nil {
+	if res := autorunExec(ctx, tmuxCmdName(), []string{"send-keys", "-t", session, "-l", "/goal " + goal}, workDir); res.Err != nil {
 		return autorunCommandResult{Output: res.Output, Err: fmt.Errorf("send /goal to %s: %w", session, res.Err)}
 	}
-	if res := autorunExec(ctx, "tmux", []string{"send-keys", "-t", session, "Enter"}, workDir); res.Err != nil {
+	if res := autorunExec(ctx, tmuxCmdName(), []string{"send-keys", "-t", session, "Enter"}, workDir); res.Err != nil {
 		return autorunCommandResult{Output: res.Output, Err: fmt.Errorf("submit /goal to %s: %w", session, res.Err)}
 	}
 	return autorunCommandResult{}

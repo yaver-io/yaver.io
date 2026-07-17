@@ -76,10 +76,10 @@ func tmuxRunnerReady() string {
 	if session == "" {
 		return ""
 	}
-	if _, err := exec.LookPath("tmux"); err != nil {
+	if !tmuxAvailable() {
 		return ""
 	}
-	if exec.Command("tmux", "has-session", "-t", session).Run() != nil {
+	if exec.Command(tmuxCmdName(), "has-session", "-t", session).Run() != nil {
 		return ""
 	}
 	return session

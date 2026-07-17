@@ -392,20 +392,22 @@ func (k *RunnerKeeper) recomputeQueuedCountLocked(session string) {
 func defaultTmuxSendKeys(sessionName, text string) error {
 	// tmux send-keys with literal text + Enter. Explicit -l so ~/./
 	// aren't shell-interpreted; -R resets state for a fresh prompt.
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return fmt.Errorf("tmux not on PATH: %w", err)
+	tmux := tmuxBin()
+	if tmux == "" {
+		return fmt.Errorf("tmux is not installed: %s", TmuxInstallHint())
 	}
-	if err := exec.Command("tmux", "send-keys", "-t", sessionName, "-l", "-R", text).Run(); err != nil {
+	if err := exec.Command(tmux, "send-keys", "-t", sessionName, "-l", "-R", text).Run(); err != nil {
 		return fmt.Errorf("tmux send-keys text: %w", err)
 	}
-	return exec.Command("tmux", "send-keys", "-t", sessionName, "Enter").Run()
+	return exec.Command(tmux, "send-keys", "-t", sessionName, "Enter").Run()
 }
 
 func defaultTmuxCapturePane(sessionName string) (string, error) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		return "", fmt.Errorf("tmux not on PATH: %w", err)
+	tmux := tmuxBin()
+	if tmux == "" {
+		return "", fmt.Errorf("tmux is not installed: %s", TmuxInstallHint())
 	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", sessionName).Output()
+	out, err := exec.Command(tmux, "capture-pane", "-p", "-t", sessionName).Output()
 	if err != nil {
 		return "", err
 	}

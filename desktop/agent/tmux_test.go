@@ -4,11 +4,68 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// clearDiscoveryCache drops the 60s memo so a test can observe a lookup made
+// under the $PATH it just set, rather than one cached by an earlier caller.
+func clearDiscoveryCache(t *testing.T) {
+	t.Helper()
+	discoveryMu.Lock()
+	discoveryCache = map[string]discoveryEntry{}
+	discoveryMu.Unlock()
+}
+
+// The agent runs from launchd/systemd, whose $PATH does not include
+// /opt/homebrew/bin — so tmux is routinely installed and invisible to
+// exec.LookPath. This took down a Mac mini's autorun loop (2026-07-17): the
+// keeper reported "tmux is not installed" for a tmux one directory away, and
+// every runner seat died with it.
+//
+// tmux resolution must therefore survive an empty $PATH.
+func TestTmuxIsFoundWhenItIsInstalledOffPath(t *testing.T) {
+	// Locate tmux via a prefix the daemon would NOT have on $PATH. If tmux
+	// only exists on $PATH here, there is nothing to prove.
+	var offPath string
+	for _, prefix := range commonInstallPrefixes() {
+		candidate := filepath.Join(prefix, "tmux")
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			offPath = candidate
+			break
+		}
+	}
+	if offPath == "" {
+		t.Skip("tmux is not installed in a known prefix; nothing to resolve")
+	}
+
+	t.Setenv("PATH", "") // exactly what LookPath cannot survive
+	clearDiscoveryCache(t)
+	defer clearDiscoveryCache(t)
+
+	if _, err := exec.LookPath("tmux"); err == nil {
+		t.Fatal("precondition: LookPath must fail with an empty PATH")
+	}
+	got := tmuxBin()
+	if got == "" {
+		t.Fatalf("tmux is installed at %s but tmuxBin() reported it missing", offPath)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("tmuxBin() must return an absolute path (callers exec it under the same broken PATH), got %q", got)
+	}
+	if !tmuxAvailable() {
+		t.Fatal("tmuxAvailable() must agree with tmuxBin()")
+	}
+	// argv[0] must be the resolved path, never the bare name — a bare name
+	// re-inherits the same $PATH the lookup just worked around.
+	if name := tmuxCmdName(); name != got {
+		t.Fatalf("tmuxCmdName() = %q, want the resolved %q", name, got)
+	}
+}
 
 // skipIfNoTmux skips the test if tmux is not installed.
 func skipIfNoTmux(t *testing.T) {

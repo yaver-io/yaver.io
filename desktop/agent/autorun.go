@@ -612,8 +612,8 @@ var autorunSignInMarkers = []string{
 // contain these glyphs, so they are what distinguishes "this turn is a
 // screenshot of a terminal" from "this turn is an answer".
 var autorunTUIChromeMarkers = []string{
-	"▐▛███▜▌",             // Claude Code wordmark, line 1
-	"▝▜█████▛▘",           // wordmark, line 2
+	"▐▛███▜▌",               // Claude Code wordmark, line 1
+	"▝▜█████▛▘",             // wordmark, line 2
 	"bypass permissions on", // permission-mode footer
 }
 

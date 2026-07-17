@@ -128,7 +128,7 @@ func runnerSessionIsConfirmed(name string) bool {
 
 // capturePaneTail returns the last n non-empty lines the pane is showing.
 func capturePaneTail(sessionName string, n int) string {
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", sessionName).Output()
+	out, err := exec.Command(tmuxCmdName(), "capture-pane", "-p", "-t", sessionName).Output()
 	if err != nil {
 		return ""
 	}

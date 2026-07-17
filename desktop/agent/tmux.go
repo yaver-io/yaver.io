@@ -61,10 +61,43 @@ func NewTmuxManager(taskMgr *TaskManager) *TmuxManager {
 	}
 }
 
-// tmuxAvailable checks whether tmux is installed and in PATH.
+// tmuxBin returns the absolute path to tmux, or "" if it genuinely is not
+// installed.
+//
+// Why not exec.LookPath: the agent usually runs from launchd (macOS) or a
+// systemd user unit (Linux), neither of which reads a shell profile — so $PATH
+// is minimal and excludes exactly where tmux lives. On an Apple Silicon Mac
+// that is /opt/homebrew/bin, which is frequently on NO path the daemon can see,
+// not even the user's login shell. LookPath then reports "tmux is not
+// installed" for a tmux that is installed and one directory away.
+//
+// That is not hypothetical: it silently killed a Mac mini's autorun loop
+// (2026-07-17). tmux is load-bearing — the runner TUI, the keeper, and every
+// autorun seat are driven through it, so this misdiagnosis takes the whole
+// remote-runner surface down and blames the wrong thing.
+//
+// DiscoverBinary already probes the install prefixes ($PATH first, then
+// homebrew/snap/cargo/...). Resolving to an ABSOLUTE path matters as much as
+// finding it: callers exec tmux, and a bare "tmux" argv would re-inherit the
+// same broken $PATH the lookup just worked around.
+func tmuxBin() string {
+	return DiscoverBinary("tmux")
+}
+
+// tmuxCmdName returns the tmux argv[0] for exec. It falls back to the bare name
+// so a caller still produces the familiar "executable file not found" error
+// rather than trying to exec "".
+func tmuxCmdName() string {
+	if p := tmuxBin(); p != "" {
+		return p
+	}
+	return "tmux"
+}
+
+// tmuxAvailable reports whether tmux is installed anywhere this agent can reach
+// it — not merely whether it is on $PATH.
 func tmuxAvailable() bool {
-	_, err := exec.LookPath("tmux")
-	return err == nil
+	return tmuxBin() != ""
 }
 
 // TmuxInstallHint returns a platform-specific one-line install command
@@ -119,7 +152,7 @@ func (m *TmuxManager) BootstrapDefaultSession() error {
 		home = "/tmp"
 	}
 	// tmux new-session -d (detached) -s yaver -c $HOME
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", "yaver", "-c", home)
+	cmd := exec.Command(tmuxCmdName(), "new-session", "-d", "-s", "yaver", "-c", home)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux new-session: %w: %s", err, strings.TrimSpace(string(out)))
@@ -130,7 +163,7 @@ func (m *TmuxManager) BootstrapDefaultSession() error {
 // ListTmuxSessions returns all tmux sessions with metadata about their
 // relationship to Yaver (adopted, forked-by-yaver, or unrelated).
 func (m *TmuxManager) ListTmuxSessions() ([]TmuxSession, error) {
-	out, err := exec.Command("tmux", "list-sessions", "-F",
+	out, err := exec.Command(tmuxCmdName(), "list-sessions", "-F",
 		"#{session_name}|#{session_windows}|#{session_created}|#{session_attached}").CombinedOutput()
 	if err != nil {
 		// tmux returns error if no server is running (no sessions)
@@ -302,7 +335,7 @@ var tmuxSubmitDelay = 250 * time.Millisecond
 // where the keypress itself is the confirmation.
 func sendTmuxKey(sessionName, input string) error {
 	key := strings.TrimSpace(input)
-	if out, err := exec.Command("tmux", "send-keys", "-t", sessionName, "-l", "--", key).CombinedOutput(); err != nil {
+	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", sessionName, "-l", "--", key).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys (choice): %w: %s", err, string(out))
 	}
 	return nil
@@ -314,11 +347,11 @@ func sendTmuxKey(sessionName, input string) error {
 // containing words like "Enter", "Space" or "C-c" would be delivered as those
 // keystrokes instead of as text. `--` guards inputs that begin with a dash.
 func sendTmuxLine(sessionName, input string) error {
-	if out, err := exec.Command("tmux", "send-keys", "-t", sessionName, "-l", "--", input).CombinedOutput(); err != nil {
+	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", sessionName, "-l", "--", input).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys (text): %w: %s", err, string(out))
 	}
 	time.Sleep(tmuxSubmitDelay)
-	if out, err := exec.Command("tmux", "send-keys", "-t", sessionName, "Enter").CombinedOutput(); err != nil {
+	if out, err := exec.Command(tmuxCmdName(), "send-keys", "-t", sessionName, "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys (submit): %w: %s", err, string(out))
 	}
 	return nil
@@ -342,7 +375,7 @@ var tmuxMenuOptionPattern = regexp.MustCompile(`^\s*[›❯>*]?\s*(\d{1,2})[.)]\
 // purpose: a single "1." can appear in ordinary agent output (a numbered list
 // in a reply), while a real menu always offers an alternative.
 func tmuxPaneAwaitingChoice(sessionName string) (bool, []string) {
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", sessionName).Output()
+	out, err := exec.Command(tmuxCmdName(), "capture-pane", "-p", "-t", sessionName).Output()
 	if err != nil {
 		return false, nil // cannot see the pane; do not block the caller
 	}
@@ -600,13 +633,13 @@ func parseTmuxSessionLine(line string) TmuxSession {
 
 // tmuxSessionExists checks if a tmux session with the given name exists.
 func tmuxSessionExists(name string) bool {
-	err := exec.Command("tmux", "has-session", "-t", name).Run()
+	err := exec.Command(tmuxCmdName(), "has-session", "-t", name).Run()
 	return err == nil
 }
 
 // getPanePID returns the PID of the active pane's process in a tmux session.
 func getPanePID(sessionName string) int {
-	out, err := exec.Command("tmux", "list-panes", "-t", sessionName,
+	out, err := exec.Command(tmuxCmdName(), "list-panes", "-t", sessionName,
 		"-F", "#{pane_pid}").CombinedOutput()
 	if err != nil {
 		return 0
@@ -705,7 +738,7 @@ func capturePaneMode(sessionName string, lines int, alternate bool) string {
 	if alternate {
 		args = []string{"capture-pane", "-a", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", lines)}
 	}
-	out, err := exec.Command("tmux", args...).CombinedOutput()
+	out, err := exec.Command(tmuxCmdName(), args...).CombinedOutput()
 	if err != nil {
 		return ""
 	}

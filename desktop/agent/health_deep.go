@@ -71,13 +71,16 @@ func composeDeepHealth(s *HTTPServer, now time.Time) DeepHealthReport {
 		Agent:       DeepHealthComponent{Status: "ok", Detail: "HTTP mux answered"},
 	}
 
-	// tmux availability + session count.
-	if _, err := exec.LookPath("tmux"); err != nil {
-		r.Tmux = DeepHealthComponent{Status: "down", Detail: "tmux not on PATH — runner sessions cannot be supervised"}
+	// tmux availability + session count. Resolved via tmuxBin, not $PATH: the
+	// daemon's PATH omits /opt/homebrew/bin, so a PATH-only probe reports an
+	// installed tmux as missing and sends the reader chasing an install hint
+	// they have already followed.
+	if tmux := tmuxBin(); tmux == "" {
+		r.Tmux = DeepHealthComponent{Status: "down", Detail: "tmux is not installed — runner sessions cannot be supervised"}
 		r.RecoveryHints = append(r.RecoveryHints, TmuxInstallHint())
 		r.OK = false
 	} else {
-		out, _ := exec.Command("tmux", "ls").CombinedOutput()
+		out, _ := exec.Command(tmux, "ls").CombinedOutput()
 		count := 0
 		for _, line := range strings.Split(string(out), "\n") {
 			if strings.TrimSpace(line) != "" {
