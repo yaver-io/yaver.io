@@ -168,6 +168,17 @@ func (h *DeployHistory) Start(run DeployRun) *DeployRun {
 	h.runs = append(h.runs, rp)
 	h.byID[rp.ID] = rp
 	h.persistRunLocked(rp)
+	// h.runs stays in INSERTION order, so runs[0] is genuinely the oldest and
+	// the ring is FIFO. Do not sort the storage here: List() already sorts its
+	// own copy for presentation (sortDeployRuns), so the only thing a storage
+	// sort achieved was destroying the one ordering eviction can rely on.
+	//
+	// It cannot be reconstructed afterwards either — StartedAt is unix millis,
+	// so a burst of runs shares a timestamp and no comparison can separate
+	// them. Sorting here made the ring run backwards: sortRunsLocked orders
+	// slot-major then NEWEST-first, so runs[0] became the run just created and
+	// Start deleted the log you were about to read, while the oldest run stayed
+	// forever.
 	if len(h.runs) > h.maxLen {
 		evicted := h.runs[0]
 		delete(h.byID, evicted.ID)
@@ -177,7 +188,6 @@ func (h *DeployHistory) Start(run DeployRun) *DeployRun {
 		}
 		h.runs = h.runs[1:]
 	}
-	h.sortRunsLocked()
 	return rp
 }
 
@@ -246,9 +256,9 @@ func (h *DeployHistory) Finish(id string, exitCode int, timedOut bool) {
 	if r.OK {
 		r.Status = runStatusCompleted
 	} else if timedOut {
-		r.Status = statusBlocked
+		r.Status = runStatusBlocked
 	} else {
-		r.Status = statusFailed
+		r.Status = runStatusFailed
 	}
 	h.persistRunLocked(r)
 	// Opportunistic GC: if the on-disk logs are getting chunky, drop
@@ -418,7 +428,7 @@ func (h *DeployHistory) loadPersistedRuns() {
 			case run.OK:
 				run.Status = runStatusCompleted
 			default:
-				run.Status = statusFailed
+				run.Status = runStatusFailed
 			}
 		}
 		run.InProgress = deployStatusInProgress(run.Status)
@@ -427,8 +437,19 @@ func (h *DeployHistory) loadPersistedRuns() {
 		h.runs = append(h.runs, &rp)
 		h.byID[rp.ID] = &rp
 	}
-	h.sortRunsLocked()
+	// Persisted runs come off disk in readdir order, so establish the ring's
+	// invariant explicitly: oldest first. Ascending, NOT sortRunsLocked — that
+	// one is slot-major and newest-first, which is a presentation order and
+	// would leave runs[0] pointing at the newest run for every later eviction.
+	sort.SliceStable(h.runs, func(i, j int) bool { return h.runs[i].StartedAt < h.runs[j].StartedAt })
 	if len(h.runs) > h.maxLen {
+		// Keep the NEWEST maxLen — the tail. Slicing the other end (or slicing
+		// this end of a newest-first sort) brought a restarted box back showing
+		// its most ancient deploys. Drop the evicted byID entries too; they used
+		// to leak, leaving Get() able to return a run List() no longer had.
+		for _, ev := range h.runs[:len(h.runs)-h.maxLen] {
+			delete(h.byID, ev.ID)
+		}
 		h.runs = h.runs[len(h.runs)-h.maxLen:]
 	}
 }

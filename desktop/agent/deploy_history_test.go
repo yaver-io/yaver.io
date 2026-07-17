@@ -9,6 +9,10 @@ import (
 )
 
 func TestDeployHistoryRingBuffer(t *testing.T) {
+	// Isolate HOME: NewDeployHistory loads (and evicts, deleting log
+	// dirs from) ~/.yaver/deploys. Without this a test run mutates the
+	// developer's real deploy history and reads their runs as its own.
+	t.Setenv("HOME", t.TempDir())
 	h := NewDeployHistory(3)
 
 	ids := []string{}
@@ -30,6 +34,10 @@ func TestDeployHistoryRingBuffer(t *testing.T) {
 }
 
 func TestDeployHistoryAppendCap(t *testing.T) {
+	// Isolate HOME: NewDeployHistory loads (and evicts, deleting log
+	// dirs from) ~/.yaver/deploys. Without this a test run mutates the
+	// developer's real deploy history and reads their runs as its own.
+	t.Setenv("HOME", t.TempDir())
 	h := NewDeployHistory(5)
 	r := h.Start(DeployRun{App: "x", Target: "y"})
 	// Pump lots of lines — total bytes should land under the 8 KB cap.
@@ -50,6 +58,10 @@ func TestDeployHistoryAppendCap(t *testing.T) {
 }
 
 func TestDeployHistoryFinish(t *testing.T) {
+	// Isolate HOME: NewDeployHistory loads (and evicts, deleting log
+	// dirs from) ~/.yaver/deploys. Without this a test run mutates the
+	// developer's real deploy history and reads their runs as its own.
+	t.Setenv("HOME", t.TempDir())
 	h := NewDeployHistory(5)
 	r := h.Start(DeployRun{App: "a", Target: "b"})
 	h.Finish(r.ID, 0, false)
@@ -75,6 +87,10 @@ func TestDeployHistoryFinish(t *testing.T) {
 }
 
 func TestDeployHistoryGuestFilter(t *testing.T) {
+	// Isolate HOME: NewDeployHistory loads (and evicts, deleting log
+	// dirs from) ~/.yaver/deploys. Without this a test run mutates the
+	// developer's real deploy history and reads their runs as its own.
+	t.Setenv("HOME", t.TempDir())
 	h := NewDeployHistory(10)
 	_ = h.Start(DeployRun{App: "a", Target: "b", RequestedBy: "owner"})
 	guestA := h.Start(DeployRun{App: "a", Target: "b", RequestedBy: "guest-A"})
@@ -132,6 +148,10 @@ func TestDeployLimiter(t *testing.T) {
 }
 
 func TestDeployRunsEndpoints(t *testing.T) {
+	// Isolate HOME: NewDeployHistory loads (and evicts, deleting log
+	// dirs from) ~/.yaver/deploys. Without this a test run mutates the
+	// developer's real deploy history and reads their runs as its own.
+	t.Setenv("HOME", t.TempDir())
 	h := NewDeployHistory(10)
 	// Pre-populate with one owner run + one guest run.
 	_ = h.Start(DeployRun{App: "web", Target: "cloudflare", RequestedBy: "owner", IsGuest: false})
