@@ -149,6 +149,39 @@ Handle it explicitly — either fall back to `autorun_status` and project locall
 or report `{reachable:true, unsupported:true, agentVersion}`. Do not let an old
 box look like an idle one; that is a light that lies at fleet scale.
 
+## Every surface — web, mobile, tablet, car, tvOS, watch, Wear, glass/AR-VR
+
+Parity is the law here (CLAUDE.md): a fix is not done until it exists on EVERY
+surface. But parity means the *capability* reaches every surface — not that every
+surface grows the same panel. Two families propagate differently:
+
+**RN family — mobile, tablet, car, glass — share code.** One `/ops` client seam
+and one status vocabulary serve all four.
+**Native — web, tvOS, watch, Wear — must be ported explicitly.** They inherit
+nothing.
+
+Today **NO surface renders autorun at all.** Verified.
+
+| Surface | Ship | Seam (verified) |
+|---|---|---|
+| **web** | `components/dashboard/AutorunView.tsx` + tab | `callOps()` **already works** — `web/lib/agent-client.ts:1944`. Register in the `activeTab` ladder (`app/dashboard/page.tsx:2704`) + sidebar (`:1975`, near `ops`). Port `agentSignalFromAutorun` into `web/lib/agentStatus.ts` — it claims to mirror mobile but has NO autorun branch; `web/lib/agentStatus.test.ts:39` is the contract table that keeps them honest. |
+| **mobile / tablet** | `app/(tabs)/autorun.tsx`, `href:null` (`_layout.tsx:472`), linked from `more.tsx` | **`quic.ts` has NO `/ops` helper — add one** next to `getRunners()` (`:3395`). This is the only real client work. |
+| **tvOS** | `Views/AutorunView.swift` + one `NavigationLink` (`DashboardView.swift:45`) | `AgentClient.ops<T>()` (`:29`) is **already generic** — a one-liner. Lean-back: slot + `5/9` + state. No tail, ever. |
+| **glass / AR-VR** | 4th pane in `app/glass-workspace.tsx` | `agentSlots.ts:5` **names "the VR arc picks its panes"** as a surface it was written for. Shares RN code. |
+| **car** | spoken one-liner, **no panel** | `app/car-voice-coding.tsx:6` — voice-only, hard confirm gate. "Mini: one running, iteration five of nine, healed once." The digest IS the sentence. |
+| **watch** | complication / tile: **ONE aggregate signal** | `WatchStore.swift:8`: *"No task list, no history, no code."* Worst-of across runs. |
+| **Wear** | same, + reuse `ConfirmScreen` to stop a run | `WearApp.kt:32`: *"No tabs, no lists, no diffs. Ever."* |
+
+**The digest is what makes the lean-back surfaces possible at all.** `totals`
+(`1 running · 3 completed · 9 failed`) IS a watch complication and IS a TV row.
+`autorun_status` can never be — it is 56 KB of prose. A watch cannot parse a
+progress tail; it does not want to. Build the digest and car/watch/Wear/TV become
+small.
+
+Watch and Wear are the parity TEST: shipping a list there would violate an
+explicit, load-bearing constraint written in those files. One honest light is the
+port. Do not "achieve parity" by ignoring them.
+
 ## Surfacing (do not invent a new vocabulary)
 
 `docs/architecture/AUTORUN_SURFACES.md` is the design; read it. The status
