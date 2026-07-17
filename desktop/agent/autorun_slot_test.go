@@ -65,14 +65,58 @@ func TestAutorunWorkspaceForUsesStableSlotPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The slot keeps its colon: it is an identity string, and the UIs key off it.
 	if got, want := ws.Slot, "fix-gate:codex"; got != want {
 		t.Fatalf("slot = %q, want %q", got, want)
 	}
-	if got, want := ws.WorkDir, filepath.Join(filepath.Dir(filepath.Dir(ws.WorkDir)), "worktrees", "fix-gate:codex"); got != want {
+	// The PATH must not. This assertion used to demand "fix-gate:codex" on disk
+	// and so guarded the bug it should have caught: a colon is the PATH/IFS
+	// separator, and every runner launched into that worktree died resolving
+	// its own cwd (codex: "No such file or directory (os error 2)") before it
+	// could print a word. Because all seats shared the flaw, the loop walked
+	// the whole fallback chain and blamed whichever runner happened to be last.
+	if got, want := ws.WorkDir, filepath.Join(filepath.Dir(filepath.Dir(ws.WorkDir)), "worktrees", "fix-gate-codex"); got != want {
 		t.Fatalf("worktree path = %q, want %q", got, want)
 	}
 	if got, want := ws.TaskPath, filepath.Join(ws.WorkDir, "tasks", "fix-gate.md"); got != want {
 		t.Fatalf("task path = %q, want %q", got, want)
+	}
+}
+
+// A worktree path is handed to git, to a shell, and to whatever runner binary
+// we exec inside it. Anything that needs quoting to survive that trip does not
+// belong in the name.
+func TestAutorunWorktreePathIsShellSafe(t *testing.T) {
+	autorunIsolateHome(t)
+	for _, seat := range []string{"codex", "claude", "opencode", "glm", ""} {
+		ws, err := autorunWorkspaceFor("/repo/tasks/fix-gate.md", "/repo", seat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := filepath.Base(ws.WorkDir)
+		for _, bad := range []string{":", " ", "$", "\"", "'", "\\", "*", "?", "|", "&", ";", "(", ")", "<", ">", "\t", "\n"} {
+			if strings.Contains(base, bad) {
+				t.Fatalf("seat %q: worktree dir %q contains %q — it will not survive being cd'd into", seat, base, bad)
+			}
+		}
+	}
+}
+
+// Two seats on one task are two agents and must stay two worktrees. Sanitizing
+// the path must not collapse them into one — that would have two runners
+// editing the same checkout.
+func TestAutorunWorktreePathsStayDistinctPerSeat(t *testing.T) {
+	autorunIsolateHome(t)
+	seen := map[string]string{}
+	for _, seat := range []string{"codex", "claude", "opencode", "glm"} {
+		ws, err := autorunWorkspaceFor("/repo/tasks/fix-gate.md", "/repo", seat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if prev, dup := seen[ws.WorkDir]; dup {
+			t.Fatalf("seats %q and %q collapsed onto one worktree %q", prev, seat, ws.WorkDir)
+		}
+		seen[ws.WorkDir] = seat
 	}
 }
 

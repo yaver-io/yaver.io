@@ -317,6 +317,21 @@ func autorunSlotKey(taskPath, seat string) string {
 	return autorunTaskName(taskPath) + ":" + seat
 }
 
+// autorunSlotDirName is the slot's on-disk form: same task+seat identity, but
+// safe to hand to a filesystem and to any tool we then run inside it. Kept
+// beside autorunSlotKey so the two can't drift apart unnoticed.
+func autorunSlotDirName(taskPath, seat string) string {
+	task := autorunRefComponent(autorunTaskName(taskPath))
+	seat = autorunRefComponent(normalizeRunnerID(strings.TrimSpace(seat)))
+	if seat == "" {
+		seat = "auto"
+	}
+	if task == "" {
+		task = "task"
+	}
+	return task + "-" + seat
+}
+
 func autorunBranchName(taskPath, seat string) string {
 	task := autorunRefComponent(autorunTaskName(taskPath))
 	seat = autorunRefComponent(normalizeRunnerID(strings.TrimSpace(seat)))
@@ -402,7 +417,16 @@ func autorunWorkspaceFor(taskPath, sourceWorkDir, seat string) (autorunWorkspace
 	if err != nil {
 		return autorunWorkspace{}, err
 	}
-	worktreePath := filepath.Join(root, "worktrees", slot)
+	// The slot is an identity string, not a path. It joins task and seat with
+	// a colon, and a colon in a directory name is hostile: it's the PATH/IFS
+	// separator, so tools that resolve their own cwd through the environment
+	// break on it. codex dies with "No such file or directory (os error 2)"
+	// before it prints anything — and because every seat's worktree carried
+	// the colon, every runner failed identically and the loop reported only
+	// the LAST one in the fallback chain, which is why this read as a runner
+	// problem for so long. Reuse the same sanitizer the branch name has always
+	// used; the slot keeps its shape for the UIs that key off it.
+	worktreePath := filepath.Join(root, "worktrees", autorunSlotDirName(taskPath, seat))
 	return autorunWorkspace{
 		Slot:          slot,
 		Branch:        autorunBranchName(taskPath, seat),
