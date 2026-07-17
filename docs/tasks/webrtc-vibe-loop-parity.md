@@ -62,7 +62,45 @@ the bug — fix it in the same change.**
 
 ## Phases (in order; each must gate green before the next)
 
+### P0 — Todo apps: real feedback-SDK support, then commit + push
+The demo todo apps are thinner than `demo/mobile/README.md` claims. Audited
+2026-07-17 — the README's "Same Todo UX as todo-rn" is FALSE:
+
+| app | storage today | feedback SDK today | builds from clean clone |
+|---|---|---|---|
+| todo-rn | AsyncStorage | `yaver-feedback-react-native` ✅ | ✅ (last recorded build FAILED — `.yaver-build/status.json` = `bundle failed`) |
+| todo-web | localStorage | `yaver-feedback-web` ✅ | ⚠️ NO lockfile, never `npm install`ed |
+| todo-kt | **in-memory** | ❌ none exists | ✅ (gradlew committed) |
+| todo-swift | **in-memory** | ❌ none exists | ❌ no `.xcodeproj`; `project.yml` target is `TodoSwift` but tests `@testable import YaverFixture` |
+| todo-flutter | **in-memory**, no delete, Turkish mfg seed data | ❌ not wired | ❌ `.gitignore` excludes `android/ ios/ …` + `pubspec.lock`; needs `flutter create .`, which clobbers the 2 force-tracked overlays; `analysis_options.yaml` includes `flutter_lints` that isn't in pubspec |
+
+Do, per app:
+- **todo-flutter**: wire `yaver_feedback` (it IS published on pub.dev — use
+  it). Fix the platform-shell/lockfile problem so it builds from a clean
+  clone. Add `flutter_lints` to dev_deps. Replace the Turkish manufacturing
+  seed data with a plain todo seed. Add delete.
+- **todo-kt / todo-swift**: there is NO native SDK — **do not fake one**.
+  Their feedback path is the VIEWER's `launch-feedback` →
+  `feedback-launch-request` (see Ground truth). Give them real persistence
+  (SharedPreferences / UserDefaults) so the vibe loop has state to survive a
+  rebuild. Fix todo-swift's target/module name mismatch and the missing
+  `.xcodeproj` (xcodegen).
+- **todo-rn**: verify the Android build actually passes now.
+- **todo-web**: generate + commit a lockfile.
+- SDK version drift: demos pin `^0.8.8`/`^0.4.8`; local `sdk/feedback` is at
+  0.9.1/0.5.0 (npm has 0.9.0/0.5.0). Decide and align — don't leave it silent.
+
+Commit + push each app separately with `git commit -- <paths>`.
+
+GATE P0: each app builds from a CLEAN clone (`git clone` to a tmpdir, build,
+no `flutter create` / xcodegen by hand beyond what a documented README step
+says). rn+web+flutter show a working in-app feedback trigger; kt+swift
+documented as viewer-triggered. Pushed.
+
 ### P1 — Remove the demo apps from this repo ("keep yaver as yaver only")
+NOTE: the todo apps stay in-repo until the human creates the `yaver` GitHub
+org (extraction is Out of scope below). This phase removes ONLY bento + the
+acme text.
 The "Acme Store" was renamed twice and IS `demo/mobile/bento` today
 (`acme-store` → `demo/BentoApp` → `demo/mobile/bento`; same LoginForm.tsx
 /ProductCard.tsx).
@@ -242,13 +280,25 @@ a real Android receiver.
    Use the existing browser automation seams (`browser_*` / `selenium_*` MCP
    verbs, `e2e/` playwright) — do not invent a new driver.
 
-3. **The money use case — the landing-video loop.** With the stream live:
-   change the app's background color in source → agent rebuilds →
-   relaunches → assert the RECEIVED frames' dominant color actually
-   changed. Sample the decoded frame on the receiver, not the sender.
-   This is the whole product claim in one test: *see the app change while
-   you vibe-code it*, on a stack Hermes cannot serve. A passing version of
-   this is worth more than every other test here.
+3. **The money use case — the landing-video loop, driven BY PROMPT.**
+   This is the whole product claim in one test, and it must be the real
+   claim, not a scripted `sed`. With the stream live on magara:
+   - Send a natural-language prompt the way the landing page shows it —
+     *"change the background color to purple"* — through the normal task
+     path (the runner/agent session on the mini, the same seam the phone
+     uses to dispatch a task). NOT a hand-written patch.
+   - The agent edits the source, rebuilds, relaunches on the emulator.
+   - Assert the RECEIVED frames' dominant color changed to the requested
+     color. **Sample the decoded frame on the RECEIVER (magara), not the
+     sender** — otherwise you've proven nothing about the stream.
+   - Do it for a Hermes stack (todo-rn, which should be fast) AND a
+     non-Hermes stack (todo-kt, full rebuild). Record both wall-clock
+     times — the gap between them IS the honest story about what
+     `native-webrtc` costs versus Hermes.
+   A passing version of this is worth more than every other test here.
+   If the prompt path can't be driven headlessly, say so plainly and fall
+   back to a scripted edit — but mark the cell as NOT proving the prompt
+   loop.
 
 4. **Per-stack matrix.** For each of rn (BOTH Hermes and webrtc lanes),
    flutter, kotlin, swift (mac-only — no Linux path, Apple SDK), web:
@@ -262,6 +312,30 @@ a real Android receiver.
 GATE P5: harness runs green from a cold start on the mini, with magara as
 receiver — or the matrix honestly records which cells fail and why, with
 the reason.
+
+### P6 — Deploy, once and only when everything above is green
+Only after P0–P5 converge. **One deploy per converged change — never one
+per iteration.** Do not deploy to check something; use the local dev
+server / `wrangler dev` / a preview.
+- web (landing page changed in P1): `./scripts/deploy-web.sh` — BUT there is
+  no local `CLOUDFLARE_API_TOKEN` (vault v2 is dead on this machine), so it
+  goes via `gh workflow run release-web.yml`. Web bundle must stay under
+  15 MB.
+- CLI ships only via a `cli/v*` tag.
+- Mobile: TestFlight is local-only and capped at ~15–20 uploads/app/day with
+  NO rollback. Do NOT burn an upload for this task unless explicitly asked —
+  `yaver wireless push` / `yaver wire push` is the iteration path.
+- Convex only if schema/HTTP routes changed: `cd backend && npx convex deploy --yes`.
+Report what each deploy cost.
+
+## Not this task — already in flight elsewhere
+**Autorun video recap** (watch a run back from the phone, narrated) is being
+built RIGHT NOW in another session: `recap_autorun.go` (joins a finished run
+to its recap via the completion goroutine in `autorunSessionManager.start`),
+`recap_build.go` (screenlog frames → MP4), `recap_narrate.go` (TTS), plus
+`recap_http.go`/`recap_script.go`. **Do not touch any `recap*.go`, and do not
+build a competing recap.** If this autorun's own run needs to be watchable,
+that falls out of their feature for free.
 
 ## Out of scope (do not start these)
 - Writing native Kotlin/Swift feedback SDKs (weeks; separate effort).
