@@ -213,7 +213,7 @@ func recapCloser(act *GitActivity, opts RecapBuildOpts) string {
 	var b strings.Builder
 	switch {
 	case opts.Commits > 0:
-		b.WriteString(fmt.Sprintf("Landed %s", recapPlural(opts.Commits, "verified commit")))
+		b.WriteString(fmt.Sprintf("Landed %s", recapPlural(opts.Commits, "commit")))
 		if act != nil && len(act.Highlights) > 0 {
 			b.WriteString(": " + strings.ToLower(strings.TrimSuffix(act.Highlights[0], ".")))
 		}
@@ -234,9 +234,25 @@ func recapCloser(act *GitActivity, opts RecapBuildOpts) string {
 	if opts.Heals > 0 {
 		b.WriteString(fmt.Sprintf(" It self-healed %s along the way.", recapPlural(opts.Heals, "time")))
 	}
+	if opts.PriorityCount > 0 {
+		switch opts.Complete {
+		case recapCompleteComplete:
+			b.WriteString(fmt.Sprintf(" That covers all %d priorities in the task.", opts.PriorityCount))
+		case recapCompleteIncomplete:
+			remaining := opts.PriorityCount - opts.EvidencedPriorities
+			if remaining < 0 {
+				remaining = 0
+			}
+			b.WriteString(fmt.Sprintf(" The task named %d priorities; this run only evidences %d, so %d remain.", opts.PriorityCount, opts.EvidencedPriorities, remaining))
+		default:
+			b.WriteString(fmt.Sprintf(" The task named %d priorities, and the progress file does not show enough verified evidence to call them all done.", opts.PriorityCount))
+		}
+	}
 	// The claim, clearly marked as a claim rather than a result.
-	if opts.FinishReason == autorunReasonDone && !opts.Verified {
+	if opts.FinishReason == autorunReasonDone && !opts.Landed {
 		b.WriteString(" The runner said it was done, but nothing was committed to show for it — worth a look.")
+	} else if opts.FinishReason == autorunReasonDone && opts.Complete != recapCompleteComplete {
+		b.WriteString(" The runner said it was done, but the task evidence does not support that yet.")
 	} else if opts.FinishReason == autorunReasonConverged && opts.Commits == 0 {
 		b.WriteString(" It stopped making changes rather than finishing.")
 	}
@@ -316,8 +332,11 @@ func buildRecapPrompt(draft []recapBeat, episodes []ProcessEpisode, act *GitActi
 	b.WriteString("- A runner claiming it was done is a claim, not a fact. Say so plainly if nothing was committed.\n")
 	b.WriteString("- Do not invent detail that is not in the source material below.\n\n")
 
-	fmt.Fprintf(&b, "Evidence: %d iterations, %d verified commits kept, finish reason %q, %d self-heals.\n",
+	fmt.Fprintf(&b, "Evidence: %d iterations, %d landed commits, finish reason %q, %d self-heals.\n",
 		opts.Iterations, opts.Commits, opts.FinishReason, opts.Heals)
+	if opts.PriorityCount > 0 {
+		fmt.Fprintf(&b, "Task priorities: %d total, %d evidenced, completion state %q.\n", opts.PriorityCount, opts.EvidencedPriorities, opts.Complete)
+	}
 
 	if act != nil && len(act.Highlights) > 0 {
 		b.WriteString("\nUser-facing changes that landed:\n")

@@ -111,7 +111,7 @@ func TestBuildRecap_endToEnd(t *testing.T) {
 		Iterations:   4,
 		Commits:      3,
 		FinalCommit:  "abc1234",
-		Verified:     true,
+		Landed:       true,
 	})
 	if err != nil {
 		t.Fatalf("BuildRecap: %v", err)

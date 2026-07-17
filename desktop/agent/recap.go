@@ -37,6 +37,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -104,23 +105,19 @@ type RecapRecord struct {
 	// FinishReason is a CLAIM. Per 3a32a4fc3, autorunReasonDone means "a line
 	// in the progress file said DONE" — a runner that wrote "this is NOT done"
 	// once ended a run as complete. `converged` and `maxIters` are equally
-	// ambiguous about whether the work is actually finished. Commits + a
-	// passing gate are the only load-bearing facts, so Verified is computed
-	// from those and never from FinishReason. The recap narrates the claim and
-	// the evidence separately; it must never say "shipped" off the claim alone.
-	FinishReason string `json:"finishReason,omitempty"`
-	Iterations   int    `json:"iterations"`
-	Commits      int    `json:"commits"`
-	FinalCommit  string `json:"finalCommit,omitempty"`
-	Verified     bool   `json:"verified"`
-	Heals        int    `json:"heals"`
-}
-
-// recapVerified reports whether a run produced evidence of real work, as
-// opposed to a runner asserting it was finished. See the note on
-// RecapRecord.FinishReason.
-func recapVerified(summary autorunRunSummary) bool {
-	return summary.Commits > 0 && summary.FinalCommit != ""
+	// ambiguous about whether the work is actually finished. Landed and
+	// Complete are computed from evidence, never from FinishReason. The recap
+	// narrates the claim and the evidence separately; it must never say
+	// "shipped" off the claim alone.
+	FinishReason        string `json:"finishReason,omitempty"`
+	Iterations          int    `json:"iterations"`
+	Commits             int    `json:"commits"`
+	FinalCommit         string `json:"finalCommit,omitempty"`
+	Landed              bool   `json:"landed"`
+	Complete            string `json:"complete,omitempty"` // complete | incomplete | unknown
+	PriorityCount       int    `json:"priorityCount,omitempty"`
+	EvidencedPriorities int    `json:"evidencedPriorities,omitempty"`
+	Heals               int    `json:"heals"`
 }
 
 // --- storage ---------------------------------------------------------------
@@ -367,6 +364,13 @@ func pruneRecaps(maxCount int, maxMB int64, maxDays int) (removed int, err error
 		}
 	}
 	return removed, nil
+}
+
+func pruneRecapsBestEffort() {
+	cfg := loadRecapConfig()
+	if n, err := pruneRecaps(cfg.MaxCount, cfg.MaxMB, cfg.MaxDays); err == nil && n > 0 {
+		log.Printf("[recap] pruned %d old recap(s)", n)
+	}
 }
 
 // --- config ----------------------------------------------------------------

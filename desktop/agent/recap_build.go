@@ -59,15 +59,22 @@ type RecapBuildOpts struct {
 	Runner  string
 
 	// Evidence carried from the run (see RecapRecord.FinishReason).
-	FinishReason string
-	Iterations   int
-	Commits      int
-	FinalCommit  string
-	Verified     bool
-	Heals        int
+	FinishReason        string
+	Iterations          int
+	Commits             int
+	FinalCommit         string
+	Landed              bool
+	Complete            string
+	PriorityCount       int
+	EvidencedPriorities int
+	Heals               int
 	// WorkDir is the repo the run touched; used to collect git activity for
 	// the script. Never stored in the record.
 	WorkDir string
+	// TaskPath + ProgressPath are read only to derive completion evidence.
+	// They are never stored in the record.
+	TaskPath     string
+	ProgressPath string
 }
 
 const (
@@ -356,24 +363,34 @@ func BuildRecap(ctx context.Context, opts RecapBuildOpts) (*RecapRecord, error) 
 	}
 
 	rec := &RecapRecord{
-		ID:            newRecapID(),
-		AutorunID:     opts.AutorunID,
-		Slot:          opts.Slot,
-		Task:          opts.Task,
-		Tag:           opts.Tag,
-		Title:         opts.Title,
-		Status:        RecapStatusBuilding,
-		CreatedAt:     time.Now().UnixMilli(),
-		DurationSec:   total,
-		Frames:        len(frames),
-		SourceSession: sessID,
-		Display:       opts.Display,
-		FinishReason:  opts.FinishReason,
-		Iterations:    opts.Iterations,
-		Commits:       opts.Commits,
-		FinalCommit:   opts.FinalCommit,
-		Verified:      opts.Verified,
-		Heals:         opts.Heals,
+		ID:                  newRecapID(),
+		AutorunID:           opts.AutorunID,
+		Slot:                opts.Slot,
+		Task:                opts.Task,
+		Tag:                 opts.Tag,
+		Title:               opts.Title,
+		Status:              RecapStatusBuilding,
+		CreatedAt:           time.Now().UnixMilli(),
+		DurationSec:         total,
+		Frames:              len(frames),
+		SourceSession:       sessID,
+		Display:             opts.Display,
+		FinishReason:        opts.FinishReason,
+		Iterations:          opts.Iterations,
+		Commits:             opts.Commits,
+		FinalCommit:         opts.FinalCommit,
+		Landed:              opts.Landed,
+		Complete:            opts.Complete,
+		PriorityCount:       opts.PriorityCount,
+		EvidencedPriorities: opts.EvidencedPriorities,
+		Heals:               opts.Heals,
+	}
+	if rec.Complete == "" {
+		ev := deriveRecapCompletion(opts.TaskPath, opts.ProgressPath, rec.Landed)
+		rec.Landed = ev.Landed
+		rec.Complete = ev.Complete
+		rec.PriorityCount = ev.PriorityCount
+		rec.EvidencedPriorities = ev.EvidencedPriorities
 	}
 	if rec.Title == "" {
 		rec.Title = recapDefaultTitle(opts)
@@ -390,6 +407,7 @@ func BuildRecap(ctx context.Context, opts RecapBuildOpts) (*RecapRecord, error) 
 		rec.Status = RecapStatusFailed
 		rec.Error = err.Error()
 		_ = saveRecap(rec)
+		pruneRecapsBestEffort()
 		return rec, err
 	}
 
@@ -443,10 +461,7 @@ func BuildRecap(ctx context.Context, opts RecapBuildOpts) (*RecapRecord, error) 
 		return rec, err
 	}
 
-	cfg := loadRecapConfig()
-	if n, err := pruneRecaps(cfg.MaxCount, cfg.MaxMB, cfg.MaxDays); err == nil && n > 0 {
-		log.Printf("[recap] pruned %d old recap(s)", n)
-	}
+	pruneRecapsBestEffort()
 	return rec, nil
 }
 

@@ -2337,6 +2337,7 @@ func runServe(args []string) {
 	// Reboot-durable screen logging: resume recording if the owner opted in
 	// (yaver screenlog start --persist) — local, no auth/internet needed.
 	go resumeScreenlogIfEnabled()
+	go pruneRecapsBestEffort()
 
 	// Builder role advertisement is process-local — set once here,
 	// read on every /info request. SetBuilderPlatforms lives in

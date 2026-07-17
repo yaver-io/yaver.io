@@ -68,13 +68,19 @@ func onAutorunFinished(s *autorunSession) {
 		Voice:        cfg.Voice,
 		Runner:       cfg.Runner,
 		WorkDir:      s.WorkDir,
+		TaskPath:     s.Task,
+		ProgressPath: s.ProgressPath,
 		FinishReason: s.Summary.FinishReason,
 		Iterations:   s.Summary.Iterations,
 		Commits:      s.Summary.Commits,
 		FinalCommit:  s.Summary.FinalCommit,
-		Verified:     recapVerified(s.Summary),
 		Heals:        len(s.Summary.Heals),
 	}
+	ev := deriveRecapCompletion(s.Task, s.ProgressPath, recapLanded(s.Summary))
+	base.Landed = ev.Landed
+	base.Complete = ev.Complete
+	base.PriorityCount = ev.PriorityCount
+	base.EvidencedPriorities = ev.EvidencedPriorities
 
 	nightly := base
 	nightly.Tag = RecapTagNightly
@@ -121,6 +127,12 @@ func autorunRunLooksBad(s *autorunSession) bool {
 	// Claimed done, nothing to show for it.
 	if s.Summary.FinishReason == autorunReasonDone && s.Summary.Commits == 0 {
 		return true
+	}
+	if s.Summary.FinishReason == autorunReasonDone {
+		ev := deriveRecapCompletion(s.Task, s.ProgressPath, recapLanded(s.Summary))
+		if ev.PriorityCount > 0 && ev.Complete != recapCompleteComplete {
+			return true
+		}
 	}
 	// Converged without landing anything: it stopped changing things rather
 	// than finishing them.

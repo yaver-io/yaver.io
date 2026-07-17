@@ -559,7 +559,7 @@ func TestRecapCloser_neverClaimsSuccessFromAnUnverifiedDoneClaim(t *testing.T) {
 	got := recapCloser(nil, RecapBuildOpts{
 		FinishReason: autorunReasonDone,
 		Commits:      0,
-		Verified:     false,
+		Landed:       false,
 	})
 	low := strings.ToLower(got)
 	for _, banned := range []string{"shipped", "successful", "completed successfully"} {
@@ -581,7 +581,7 @@ func TestRecapCloser_reportsRealOutcomes(t *testing.T) {
 		opts RecapBuildOpts
 		want string
 	}{
-		{"commits landed", RecapBuildOpts{Commits: 3, Verified: true}, "landed 3 verified commits"},
+		{"commits landed", RecapBuildOpts{Commits: 3, Landed: true}, "landed 3 commits"},
 		{"gate failed", RecapBuildOpts{FinishReason: autorunReasonGate}, "gate failed"},
 		{"scope violation", RecapBuildOpts{FinishReason: autorunReasonScope}, "scope violation"},
 		{"runner failed", RecapBuildOpts{FinishReason: autorunReasonRunner}, "runner failed"},
@@ -599,9 +599,26 @@ func TestRecapCloser_reportsRealOutcomes(t *testing.T) {
 }
 
 func TestRecapCloser_mentionsHeals(t *testing.T) {
-	got := strings.ToLower(recapCloser(nil, RecapBuildOpts{Commits: 1, Verified: true, Heals: 2}))
+	got := strings.ToLower(recapCloser(nil, RecapBuildOpts{Commits: 1, Landed: true, Heals: 2}))
 	if !strings.Contains(got, "self-healed 2 times") {
 		t.Errorf("heals must be narrated — healing invisibly is how a loop looks fine for six hours: %q", got)
+	}
+}
+
+func TestRecapCloser_callsOutRemainingPriorities(t *testing.T) {
+	got := strings.ToLower(recapCloser(nil, RecapBuildOpts{
+		Commits:             2,
+		Landed:              true,
+		FinishReason:        autorunReasonDone,
+		Complete:            recapCompleteIncomplete,
+		PriorityCount:       9,
+		EvidencedPriorities: 1,
+	}))
+	if !strings.Contains(got, "only evidences 1") || !strings.Contains(got, "8 remain") {
+		t.Fatalf("closer must say what landed and what remains, got %q", got)
+	}
+	if !strings.Contains(got, "said it was done") {
+		t.Fatalf("closer must keep the done claim framed as a claim, got %q", got)
 	}
 }
 
@@ -623,14 +640,14 @@ func TestBuildRecapPrompt_carriesTheHonestyRule(t *testing.T) {
 	}
 }
 
-func TestRecapVerified_requiresEvidenceNotAClaim(t *testing.T) {
-	if recapVerified(autorunRunSummary{FinishReason: autorunReasonDone, Commits: 0}) {
-		t.Error("a DONE claim with no commits is not verified")
+func TestRecapLanded_requiresEvidenceNotAClaim(t *testing.T) {
+	if recapLanded(autorunRunSummary{FinishReason: autorunReasonDone, Commits: 0}) {
+		t.Error("a DONE claim with no commits is not landed")
 	}
-	if recapVerified(autorunRunSummary{Commits: 2, FinalCommit: ""}) {
-		t.Error("commits without a final commit is not a completed run")
+	if recapLanded(autorunRunSummary{Commits: 2, FinalCommit: ""}) {
+		t.Error("commits without a final commit is not landed")
 	}
-	if !recapVerified(autorunRunSummary{Commits: 2, FinalCommit: "abc123"}) {
+	if !recapLanded(autorunRunSummary{Commits: 2, FinalCommit: "abc123"}) {
 		t.Error("commits + a final commit is the evidence that counts")
 	}
 }
@@ -752,6 +769,46 @@ func TestPcmDurationSec(t *testing.T) {
 // --- autorun join ----------------------------------------------------------
 
 func TestAutorunRunLooksBad(t *testing.T) {
+	writeEvidenceTask := func(t *testing.T, priorities int, progress string) (string, string) {
+		t.Helper()
+		dir := t.TempDir()
+		taskPath := filepath.Join(dir, "task.md")
+		progressPath := filepath.Join(dir, "progress.md")
+		var body strings.Builder
+		body.WriteString("# Task\n\n")
+		for i := 0; i < priorities; i++ {
+			body.WriteString(fmt.Sprintf("## P%d — priority\n\n", i))
+		}
+		if err := os.WriteFile(taskPath, []byte(body.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(progressPath, []byte(progress), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return taskPath, progressPath
+	}
+
+	incompleteTask, incompleteProgress := writeEvidenceTask(t, 9, `# Yaver autorun progress
+## 2026-07-17T10:00:00Z
+
+DOER REPORT (iteration 1, runner "codex"):
+
+Implemented the first P0 increment.
+`)
+	completeTask, completeProgress := writeEvidenceTask(t, 2, `# Yaver autorun progress
+## 2026-07-17T10:00:00Z
+
+DOER REPORT (iteration 1, runner "codex"):
+
+Implemented P0.
+
+## 2026-07-17T10:05:00Z
+
+DOER REPORT (iteration 2, runner "codex"):
+
+Implemented P1.
+`)
+
 	cases := []struct {
 		name string
 		sess autorunSession
@@ -764,9 +821,19 @@ func TestAutorunRunLooksBad(t *testing.T) {
 		{"status failed", autorunSession{Status: "failed"}, true},
 		// The 3a32a4fc3 signature: claimed done, landed nothing.
 		{"claimed done, no commits", autorunSession{Summary: autorunRunSummary{FinishReason: autorunReasonDone, Commits: 0}}, true},
+		{"claimed done, priorities not all evidenced", autorunSession{
+			Task:         incompleteTask,
+			ProgressPath: incompleteProgress,
+			Summary:      autorunRunSummary{FinishReason: autorunReasonDone, Commits: 2, FinalCommit: "a1"},
+		}, true},
 		{"converged with nothing", autorunSession{Summary: autorunRunSummary{FinishReason: autorunReasonConverged, Commits: 0}}, true},
 		// Healthy runs — a heal that still landed work is not a failure.
-		{"done with commits", autorunSession{Status: "completed", Summary: autorunRunSummary{FinishReason: autorunReasonDone, Commits: 4, FinalCommit: "a1"}}, false},
+		{"done with priorities evidenced", autorunSession{
+			Status:       "completed",
+			Task:         completeTask,
+			ProgressPath: completeProgress,
+			Summary:      autorunRunSummary{FinishReason: autorunReasonDone, Commits: 4, FinalCommit: "a1"},
+		}, false},
 		{"healed but landed", autorunSession{Status: "completed", Summary: autorunRunSummary{
 			FinishReason: autorunReasonDone, Commits: 2, FinalCommit: "a1",
 			Heals: []autorunHealEvent{{Kind: autorunHealDiskReclaim}},
@@ -779,6 +846,42 @@ func TestAutorunRunLooksBad(t *testing.T) {
 				t.Errorf("autorunRunLooksBad = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestRecapCompletion_ed9311d1aTwoCommitsAgainstNinePriorityTaskIsNotComplete(t *testing.T) {
+	dir := t.TempDir()
+	taskPath := filepath.Join(dir, "deploy-orchestration.md")
+	progressPath := filepath.Join(dir, "deploy-orchestration-progress.md")
+	task := "# Task\n\n"
+	for i := 0; i < 9; i++ {
+		task += fmt.Sprintf("## P%d — priority\n\n", i)
+	}
+	progress := `# Yaver autorun progress
+## 2026-07-17T09:52:44Z
+
+DOER REPORT (iteration 1, runner "codex"):
+
+Implemented the first P0 increment.
+
+## 2026-07-17T10:36:19Z
+
+DOER REPORT (iteration 2, runner "codex"):
+
+Implemented the next P0 slice.
+`
+	if err := os.WriteFile(taskPath, []byte(task), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(progressPath, []byte(progress), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := deriveRecapCompletion(taskPath, progressPath, true)
+	if got.Complete != recapCompleteIncomplete {
+		t.Fatalf("completion = %q, want %q", got.Complete, recapCompleteIncomplete)
+	}
+	if got.EvidencedPriorities != 1 || got.PriorityCount != 9 {
+		t.Fatalf("evidence = %+v, want 1 of 9", got)
 	}
 }
 
@@ -842,7 +945,8 @@ func TestRecapConvexPayload_isCounterOnly(t *testing.T) {
 		"sizeBytes":   1843200,
 		"frames":      210,
 		"commits":     3,
-		"verified":    true,
+		"landed":      true,
+		"complete":    recapCompleteUnknown,
 		"createdAt":   1714000000,
 	})
 
