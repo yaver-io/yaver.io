@@ -462,12 +462,29 @@ const KNOWN_RUNNERS = [
 ] as const;
 
 type RunnerHealth = "ready" | "needs-auth" | "down" | "not-installed" | "unknown";
+type RunnerReportedStatus = "" | "running" | "idle" | "ready" | "needs-auth" | "needs_auth" | "down";
 
 interface RunnerChipState {
   id: string;
   label: string;
   health: RunnerHealth;
   hint?: string;
+}
+
+function normalizeRunnerReportedStatus(status?: string): RunnerReportedStatus | "unknown" {
+  switch (String(status || "").trim().toLowerCase()) {
+    case "":
+      return "";
+    case "running":
+    case "idle":
+    case "ready":
+    case "needs-auth":
+    case "needs_auth":
+    case "down":
+      return String(status || "").trim().toLowerCase() as RunnerReportedStatus;
+    default:
+      return "unknown";
+  }
 }
 
 function deriveRunnerChipStates(
@@ -491,15 +508,21 @@ function deriveRunnerChipStates(
   const out: RunnerChipState[] = [];
 
   const classify = (id: string, status?: string): RunnerChipState => {
-    const s = (status || "").toLowerCase();
-    if (s.includes("needs-auth") || s.includes("needs_auth") || s.includes("unauth") || s.includes("login")) {
-      return { id, label: id, health: "needs-auth", hint: status };
+    const reported = normalizeRunnerReportedStatus(status);
+    switch (reported) {
+      case "":
+      case "idle":
+      case "ready":
+      case "running":
+        return { id, label: id, health: "ready", hint: status };
+      case "needs-auth":
+      case "needs_auth":
+        return { id, label: id, health: "needs-auth", hint: status };
+      case "down":
+        return { id, label: id, health: "down", hint: status };
+      default:
+        return { id, label: id, health: "unknown", hint: status };
     }
-    if (s.includes("down") || s.includes("error") || s.includes("fail")) {
-      return { id, label: id, health: "down", hint: status };
-    }
-    if (!status) return { id, label: id, health: "ready" };
-    return { id, label: id, health: "ready", hint: status };
   };
 
   for (const id of KNOWN_RUNNERS) {
@@ -821,6 +844,225 @@ function RunnerChipWithTest({
         </button>
       ) : null}
     </span>
+  );
+}
+
+function CodingAgentModal({
+  device,
+  token,
+  signedInEmail,
+  primaryRunnerByDevice,
+  primaryModelByDevice,
+  primaryProviderByDevice,
+  liveOpenCodeByDevice,
+  setPrimaryRunner,
+  onSignIn,
+  onClose,
+}: {
+  device: Device;
+  token: string | null;
+  signedInEmail?: string;
+  primaryRunnerByDevice: Record<string, string>;
+  primaryModelByDevice: Record<string, string>;
+  primaryProviderByDevice: Record<string, string>;
+  liveOpenCodeByDevice: Record<string, { provider?: string; model?: string } | undefined>;
+  setPrimaryRunner: (
+    deviceId: string,
+    runnerId: string | null,
+    model?: string | null,
+    mode?: string | null,
+    provider?: string | null,
+  ) => Promise<void>;
+  onSignIn: (runnerId: string) => void;
+  onClose: () => void;
+}) {
+  const states = deriveRunnerChipStates(device);
+  const explicitPrimary = primaryRunnerByDevice[device.id];
+  const seededPrimary = (() => {
+    if (explicitPrimary) return explicitPrimary;
+    const readyIds = states.filter((s) => s.health === "ready").map((s) => s.id);
+    return preferredDefaultRunnerForDevice(device, signedInEmail, readyIds);
+  })();
+  const primaryId = explicitPrimary ?? seededPrimary ?? "";
+  const availableStates = states.filter((s) => s.health !== "not-installed");
+  const availableOthers = availableStates.filter((s) => s.id !== primaryId);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-3xl rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-surface-700 dark:bg-surface-900">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-surface-100">Coding agent</h3>
+            <p className="text-xs text-slate-500 dark:text-surface-400">
+              {device.alias || device.name} · runner, model, test, and sign-in
+            </p>
+          </div>
+          <button onClick={onClose} className="text-xl leading-none text-slate-500 hover:text-slate-900 dark:text-surface-500 dark:hover:text-surface-200">×</button>
+        </div>
+
+        <div className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-3 dark:border-indigo-500/30 dark:bg-indigo-500/5">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+                Preferred
+              </span>
+              {primaryId ? (
+                <span className="rounded border border-indigo-300 bg-white px-2 py-1 text-[11px] font-medium text-indigo-700 dark:border-indigo-500/30 dark:bg-surface-950 dark:text-indigo-100">
+                  {primaryId}
+                </span>
+              ) : (
+                <span className="text-[12px] text-slate-500 dark:text-surface-500">(none set)</span>
+              )}
+              {!explicitPrimary && seededPrimary ? (
+                <span
+                  className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
+                  title="Suggested default based on which runners are ready on this device. Click Confirm to persist."
+                >
+                  suggested
+                </span>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
+              <select
+                value={primaryId}
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  const seeded = next ? preferredDefaultModelForRunner(next, device, signedInEmail) : undefined;
+                  const curModel = primaryModelByDevice[device.id];
+                  const prevRunner = primaryRunnerByDevice[device.id];
+                  const model = next && prevRunner === next && curModel ? curModel : seeded ?? null;
+                  void setPrimaryRunner(device.id, next, model).catch(() => {});
+                }}
+                className="rounded border border-indigo-300 bg-white px-2 py-1 text-[12px] font-medium text-indigo-700 hover:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400/40 dark:border-indigo-500/30 dark:bg-surface-900 dark:text-indigo-100 dark:hover:border-indigo-400/50"
+                title="Change primary coding agent for this device. Auto-selected in every Yaver surface when this device is active."
+              >
+                <option value="">(none)</option>
+                {availableStates.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}{s.health === "needs-auth" ? " · signs-in" : ""}
+                  </option>
+                ))}
+              </select>
+              {primaryId && primaryId !== "opencode" && MODEL_OPTIONS_BY_RUNNER[primaryId] ? (
+                <select
+                  value={primaryModelByDevice[device.id] ?? preferredDefaultModelForRunner(primaryId, device, signedInEmail) ?? ""}
+                  onChange={(e) => {
+                    const nextModel = e.target.value || null;
+                    void setPrimaryRunner(device.id, primaryId, nextModel).catch(() => {});
+                  }}
+                  className="rounded border border-indigo-300 bg-white px-2 py-1 text-[11px] text-indigo-700 hover:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400/40 dark:border-indigo-500/30 dark:bg-surface-900 dark:text-indigo-100 dark:hover:border-indigo-400/50"
+                  title={`Model used when spawning ${primaryId}.`}
+                >
+                  {MODEL_OPTIONS_BY_RUNNER[primaryId].map((m) => (
+                    <option key={m.id} value={m.id} title={m.hint || ""}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              {primaryId === "opencode" ? (() => {
+                const liveCfg = liveOpenCodeByDevice[device.id];
+                const savedProvider = primaryProviderByDevice[device.id] || liveCfg?.provider || "";
+                const savedModelFull = primaryModelByDevice[device.id] || liveCfg?.model || "";
+                const inferredProviderId = savedProvider
+                  || (savedModelFull.includes("/") ? savedModelFull.split("/")[0] : "")
+                  || OPENCODE_PROVIDER_CATALOGUE[0].id;
+                const provider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === inferredProviderId)
+                  || OPENCODE_PROVIDER_CATALOGUE[0];
+                const inferredModelId = (() => {
+                  if (!savedModelFull) return provider.models[0]?.id || "";
+                  const slash = savedModelFull.indexOf("/");
+                  const tail = slash >= 0 ? savedModelFull.slice(slash + 1) : savedModelFull;
+                  const match = provider.models.find((m) => m.id === tail);
+                  return match ? match.id : provider.models[0]?.id || "";
+                })();
+                return (
+                  <>
+                    <select
+                      value={provider.id}
+                      onChange={(e) => {
+                        const nextProvider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === e.target.value);
+                        if (!nextProvider) return;
+                        const nextModel = nextProvider.models[0]?.id || "";
+                        const fullModel = nextModel ? `${nextProvider.id}/${nextModel}` : null;
+                        void setPrimaryRunner(device.id, "opencode", fullModel, null, nextProvider.id).catch(() => {});
+                      }}
+                      className="rounded border border-cyan-400/40 bg-white px-2 py-1 text-[11px] text-cyan-700 hover:border-cyan-400/70 focus:outline-none focus:ring-1 focus:ring-cyan-400/40 dark:border-cyan-400/30 dark:bg-surface-900 dark:text-cyan-100 dark:hover:border-cyan-400/60"
+                      title="OpenCode provider for this device."
+                    >
+                      {OPENCODE_PROVIDER_CATALOGUE.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    {provider.models.length > 0 ? (
+                      <select
+                        value={inferredModelId}
+                        onChange={(e) => {
+                          const nextModelId = e.target.value;
+                          const fullModel = nextModelId ? `${provider.id}/${nextModelId}` : null;
+                          void setPrimaryRunner(device.id, "opencode", fullModel, null, provider.id).catch(() => {});
+                        }}
+                        className="rounded border border-fuchsia-400/40 bg-white px-2 py-1 text-[11px] text-fuchsia-700 hover:border-fuchsia-400/70 focus:outline-none focus:ring-1 focus:ring-fuchsia-400/40 dark:border-fuchsia-400/30 dark:bg-surface-900 dark:text-fuchsia-100 dark:hover:border-fuchsia-400/60"
+                        title={`Model OpenCode spawns with on this device (${provider.label}).`}
+                      >
+                        {provider.models.map((m) => (
+                          <option key={m.id} value={m.id} title={m.hint || ""}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                  </>
+                );
+              })() : null}
+              {!explicitPrimary && seededPrimary ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const seededModel = preferredDefaultModelForRunner(seededPrimary, device, signedInEmail);
+                    void setPrimaryRunner(device.id, seededPrimary, seededModel).catch(() => {});
+                  }}
+                  className="rounded bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
+                  title="Persist this suggestion as the device's primary."
+                >
+                  Confirm
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-400">
+            Available agents
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-3 dark:border-surface-700/70 dark:bg-[rgba(22,24,31,0.78)]">
+            {availableStates.map((state) => (
+              <RunnerChipWithTest
+                key={`${device.id}:runner:${state.id}`}
+                device={device}
+                state={state}
+                token={token}
+                onSignIn={onSignIn}
+              />
+            ))}
+          </div>
+          {availableOthers.length > 0 ? (
+            <div className="mt-2 text-[11px] text-slate-500 dark:text-surface-500">
+              Other available agents ({availableOthers.length})
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2603,6 +2845,7 @@ export default function DevicesView({
   const [updateModalDevice, setUpdateModalDevice] = useState<Device | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ device: Device; runner: string } | null>(null);
+  const [codingAgentModalDeviceId, setCodingAgentModalDeviceId] = useState<string | null>(null);
   // The "Rescue" inline panel — Convex-backed command queue that
   // works even when a device's relay tunnel is wedged (the agent's
   // heartbeat polls Convex on a separate path). Tracks which device's
@@ -3105,6 +3348,7 @@ export default function DevicesView({
                       onRecycle={() => setRecycleFor({ id: device.id, name: device.alias || device.name || device.id })}
                       onRescue={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
                       onShell={() => setShellDevice(device)}
+                      onCodingAgent={() => setCodingAgentModalDeviceId(device.id)}
                       onToggleDetails={() => setExpandedId(expandedId === device.id ? null : device.id)}
                       onLeftShare={() => { void onRefresh(); }}
                     />
@@ -3257,12 +3501,9 @@ export default function DevicesView({
                     </div>
                   </div>
                 ) : null}
-          {(() => {
+                {(() => {
                   const states = deriveRunnerChipStates(device);
                   if (states.length === 0) return null;
-                  // Seed a sensible default from the device's actual
-                  // runner health. Only seeds when no explicit pref
-                  // exists yet — never overrides a user choice.
                   const explicitPrimary = primaryRunnerByDevice[device.id];
                   const seededPrimary = (() => {
                     if (explicitPrimary) return explicitPrimary;
@@ -3271,226 +3512,53 @@ export default function DevicesView({
                   })();
                   const primaryId = explicitPrimary ?? seededPrimary ?? "";
                   const primaryState = states.find((s) => s.id === primaryId);
-                  // "Available" = anything that's actually present on
-                  // the agent. We strip "not-installed" entries so the
-                  // dropdown / chip rail isn't full of dead options the
-                  // user can't act on. The whitelist used to also gate
-                  // this rail to the three "vibing-grade" runners
-                  // (claude/codex/opencode), which hid aider /
-                  // aider-ollama / ollama from the user even when they
-                  // were installed — confusing on a machine that
-                  // genuinely has six runners ready. Now we surface
-                  // every installed runner here; the whitelist still
-                  // governs the *primary* picker so the default vibing
-                  // experience doesn't accidentally land on a local
-                  // model. Test / Sign-in business logic is unchanged
-                  // — we just route them through RunnerChipWithTest.
-                  const availableStates = states.filter((s) => s.health !== "not-installed");
-                  const availableOthers = availableStates.filter((s) => s.id !== primaryId);
                   return (
                     <div className="mt-3">
                       <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-400">
                         Coding agents
                       </div>
-                      {/* Preferred coding agent — promoted to its own card. This
-                          is the default runner used when chat / hot
-                          reload / web reload opens a workspace on this
-                          device, so we make it visually load-bearing
-                          instead of one chip among many. Labelled
-                          "Preferred" (not "Primary") so it doesn't
-                          collide with the device-level PRIMARY star. */}
-                      <div className="mb-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 dark:border-indigo-500/30 dark:bg-indigo-500/5">
-                        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-                          <div className="flex min-w-0 flex-wrap items-center gap-2">
-                            <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
-                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-                              </svg>
-                              Preferred
-                            </span>
-                            {primaryState ? (
-                              <RunnerChipWithTest
-                                device={device}
-                                state={primaryState}
-                                token={token ?? null}
-                                onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
-                              />
-                            ) : (
-                              <span className="text-[12px] text-slate-500 dark:text-surface-500">(none set)</span>
-                            )}
-                            {!explicitPrimary && seededPrimary ? (
-                              <span
-                                className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
-                                title="Suggested default based on which runners are ready on this device. Click Confirm to persist."
-                              >
-                                suggested
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-                          <select
-                            value={primaryId}
-                            onChange={(e) => {
-                              const next = e.target.value || null;
-                              // When switching to a runner that has model
-                              // presets, seed the default so the user
-                              // doesn't land on an empty "(default)" for
-                              // a runner where it matters. Preserve any
-                              // existing explicit model when the user is
-                              // re-selecting the same runner.
-                              const seeded = next ? preferredDefaultModelForRunner(next, device, signedInEmail) : undefined;
-                              const curModel = primaryModelByDevice[device.id];
-                              const prevRunner = primaryRunnerByDevice[device.id];
-                              const model = next && prevRunner === next && curModel
-                                ? curModel
-                                : seeded ?? null;
-                              void setPrimaryRunner(device.id, next, model).catch(() => {});
-                            }}
-                            className="rounded border border-indigo-300 bg-white px-2 py-1 text-[12px] font-medium text-indigo-700 hover:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400/40 dark:border-indigo-500/30 dark:bg-surface-900 dark:text-indigo-100 dark:hover:border-indigo-400/50"
-                            title="Change primary coding agent for this device. Auto-selected in every Yaver surface (chat, hot reload, web reload, mobile) when this device is active."
-                          >
-                            <option value="">(none)</option>
-                            {availableStates.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.label}{s.health === "needs-auth" ? " · signs-in" : ""}
-                              </option>
-                            ))}
-                          </select>
-                          {/* Model selector — surfaces when the current
-                              primary runner has model presets
-                              (claude / codex). For OpenCode we render
-                              two selects (provider + model from the
-                              shared catalogue) so users can pick
-                              GLM 4.7 / Anthropic / etc. straight from
-                              the device card without bouncing to the
-                              chat composer. The same Convex row backs
-                              both surfaces. */}
-                          {primaryId && primaryId !== "opencode" && MODEL_OPTIONS_BY_RUNNER[primaryId] ? (
-                            <select
-                              value={
-                                primaryModelByDevice[device.id]
-                                  ?? preferredDefaultModelForRunner(primaryId, device, signedInEmail)
-                                  ?? ""
-                              }
-                              onChange={(e) => {
-                                const nextModel = e.target.value || null;
-                                void setPrimaryRunner(device.id, primaryId, nextModel).catch(() => {});
-                              }}
-                              className="rounded border border-indigo-300 bg-white px-2 py-1 text-[11px] text-indigo-700 hover:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400/40 dark:border-indigo-500/30 dark:bg-surface-900 dark:text-indigo-100 dark:hover:border-indigo-400/50"
-                              title={`Model used when spawning ${primaryId}. Forwarded as --model / env var to the runner.`}
-                            >
-                              {MODEL_OPTIONS_BY_RUNNER[primaryId].map((m) => (
-                                <option key={m.id} value={m.id} title={m.hint || ""}>
-                                  {m.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : null}
-                          {primaryId === "opencode" ? (() => {
-                            const liveCfg = liveOpenCodeByDevice[device.id];
-                            const savedProvider = primaryProviderByDevice[device.id] || liveCfg?.provider || "";
-                            const savedModelFull = primaryModelByDevice[device.id] || liveCfg?.model || "";
-                            const inferredProviderId = savedProvider
-                              || (savedModelFull.includes("/") ? savedModelFull.split("/")[0] : "")
-                              || OPENCODE_PROVIDER_CATALOGUE[0].id;
-                            const provider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === inferredProviderId)
-                              || OPENCODE_PROVIDER_CATALOGUE[0];
-                            const inferredModelId = (() => {
-                              if (!savedModelFull) return provider.models[0]?.id || "";
-                              const slash = savedModelFull.indexOf("/");
-                              const tail = slash >= 0 ? savedModelFull.slice(slash + 1) : savedModelFull;
-                              const match = provider.models.find((m) => m.id === tail);
-                              return match ? match.id : provider.models[0]?.id || "";
-                            })();
-                            return (
-                              <>
-                                <select
-                                  value={provider.id}
-                                  onChange={(e) => {
-                                    const nextProvider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === e.target.value);
-                                    if (!nextProvider) return;
-                                    const nextModel = nextProvider.models[0]?.id || "";
-                                    const fullModel = nextModel ? `${nextProvider.id}/${nextModel}` : null;
-                                    const mode = primaryRunnerByDevice[device.id] === "opencode"
-                                      ? null
-                                      : null;
-                                    void setPrimaryRunner(device.id, "opencode", fullModel, mode, nextProvider.id).catch(() => {});
-                                  }}
-                                  className="rounded border border-cyan-400/40 bg-white px-2 py-1 text-[11px] text-cyan-700 hover:border-cyan-400/70 focus:outline-none focus:ring-1 focus:ring-cyan-400/40 dark:border-cyan-400/30 dark:bg-surface-900 dark:text-cyan-100 dark:hover:border-cyan-400/60"
-                                  title="OpenCode provider for this device. The matching API key is read from opencode.json on the agent — secrets never round-trip to Convex."
-                                >
-                                  {OPENCODE_PROVIDER_CATALOGUE.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                {provider.models.length > 0 ? (
-                                  <select
-                                    value={inferredModelId}
-                                    onChange={(e) => {
-                                      const nextModelId = e.target.value;
-                                      const fullModel = nextModelId ? `${provider.id}/${nextModelId}` : null;
-                                      void setPrimaryRunner(device.id, "opencode", fullModel, null, provider.id).catch(() => {});
-                                    }}
-                                    className="rounded border border-fuchsia-400/40 bg-white px-2 py-1 text-[11px] text-fuchsia-700 hover:border-fuchsia-400/70 focus:outline-none focus:ring-1 focus:ring-fuchsia-400/40 dark:border-fuchsia-400/30 dark:bg-surface-900 dark:text-fuchsia-100 dark:hover:border-fuchsia-400/60"
-                                    title={`Model OpenCode spawns with on this device (${provider.label}).`}
-                                  >
-                                    {provider.models.map((m) => (
-                                      <option key={m.id} value={m.id} title={m.hint || ""}>
-                                        {m.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : null}
-                              </>
-                            );
-                          })() : null}
+                      <div className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 dark:border-indigo-500/30 dark:bg-indigo-500/5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                            </svg>
+                            Preferred
+                          </span>
+                          {primaryState ? (
+                            <RunnerChipWithTest
+                              device={device}
+                              state={primaryState}
+                              token={token ?? null}
+                              onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
+                            />
+                          ) : (
+                            <span className="text-[12px] text-slate-500 dark:text-surface-500">(none set)</span>
+                          )}
                           {!explicitPrimary && seededPrimary ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const seededModel = preferredDefaultModelForRunner(seededPrimary, device, signedInEmail);
-                                void setPrimaryRunner(device.id, seededPrimary, seededModel).catch(() => {});
-                              }}
-                              className="rounded bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
-                              title="Persist this suggestion as the device's primary."
+                            <span
+                              className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
+                              title="Suggested default based on which runners are ready on this device."
                             >
-                              Confirm
-                            </button>
+                              suggested
+                            </span>
                           ) : null}
-                          </div>
                         </div>
                       </div>
-                      {/* Other available agents — collapsed by default
-                          since the user already chose a primary. Click
-                          to expose the full chip rail with Test +
-                          Sign-in buttons preserved for each one. */}
-                      {availableOthers.length > 0 ? (
-                        <details className="rounded-lg border border-slate-200 bg-slate-50/70 dark:border-surface-700/70 dark:bg-[rgba(22,24,31,0.78)]">
-                          <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-slate-600 hover:text-slate-900 dark:text-surface-400 dark:hover:text-surface-200">
-                            <span>Other available agents</span>
-                            <span className="text-[10px] text-slate-500 dark:text-surface-500">({availableOthers.length})</span>
-                          </summary>
-                          <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200 px-3 py-2 dark:border-surface-800/60">
-                            {availableOthers.map((state) => (
-                              <RunnerChipWithTest
-                                key={`${device.id}:runner:${state.id}`}
-                                device={device}
-                                state={state}
-                                token={token ?? null}
-                                onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
-                              />
-                            ))}
-                          </div>
-                        </details>
+                      {codingAgentModalDeviceId === device.id ? (
+                        <CodingAgentModal
+                          device={device}
+                          token={token ?? null}
+                          signedInEmail={signedInEmail}
+                          primaryRunnerByDevice={primaryRunnerByDevice}
+                          primaryModelByDevice={primaryModelByDevice}
+                          primaryProviderByDevice={primaryProviderByDevice}
+                          liveOpenCodeByDevice={liveOpenCodeByDevice}
+                          setPrimaryRunner={setPrimaryRunner}
+                          onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
+                          onClose={() => setCodingAgentModalDeviceId(null)}
+                        />
                       ) : null}
-                      {/* Projects on this machine — same fold-with-count
-                          shape as "Other available agents" so the device
-                          card stays scannable. Each chip surfaces the
-                          stack badge, a git-configured marker, and a
-                          monorepo marker. Click for the richer
-                          per-project view inside the Details panel. */}
                       {!device.isGuest ? (
                         <DeviceProjectsRail device={device} token={token ?? null} onShowDetails={() => setExpandedId(device.id)} />
                       ) : null}
@@ -4157,6 +4225,7 @@ function DeviceActionsMenu({
   onRecycle,
   onRescue,
   onShell,
+  onCodingAgent,
   onToggleDetails,
   onLeftShare,
 }: {
@@ -4173,6 +4242,7 @@ function DeviceActionsMenu({
   onRecycle: () => void;
   onRescue: () => void;
   onShell: () => void;
+  onCodingAgent: () => void;
   onToggleDetails: () => void;
   onLeftShare: () => void;
 }) {
@@ -4243,6 +4313,10 @@ function DeviceActionsMenu({
             <button className={itemClass} onClick={() => { onShell(); setOpen(false); }}>
               <span>Shell</span>
               <span className={hintClass}>PTY in browser</span>
+            </button>
+            <button className={itemClass} onClick={() => { onCodingAgent(); setOpen(false); }}>
+              <span>Coding agent…</span>
+              <span className={hintClass}>runner · model</span>
             </button>
             <button
               className={itemClass}

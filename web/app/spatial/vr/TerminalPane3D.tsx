@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { BridgeConfig, Task } from "../useAgentBridge";
+import { agentSignalFromTaskStatus, agentStateHex } from "../../../lib/agentStatus";
 
 interface Props {
   task: Task;
@@ -207,15 +208,7 @@ function compositeXtermCanvases(screenEl: HTMLElement, dest: HTMLCanvasElement):
 }
 
 function statusColorFor(status: string): string {
-  switch (status) {
-    case "running": return "#10b981";
-    case "queued": return "#94a3b8";
-    case "review": return "#f59e0b";
-    case "completed": return "#3b82f6";
-    case "failed": return "#ef4444";
-    case "stopped": return "#6b7280";
-    default: return "#6b7280";
-  }
+  return agentStateHex(agentSignalFromTaskStatus(status as any).state);
 }
 
 export default TerminalPane3D;

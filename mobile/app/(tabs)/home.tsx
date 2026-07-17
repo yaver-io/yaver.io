@@ -108,6 +108,7 @@ export default function HomeScreen() {
             <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700", marginTop: 20 }}>Quick Actions</Text>
             <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
               <QuickBtn c={c} label="🚀 Deploy" onPress={() => router.navigate("/(tabs)/ops" as any)} />
+              <QuickBtn c={c} label="🤖 Autoruns" onPress={() => router.navigate("/autoruns" as any)} />
               <QuickBtn c={c} label="🗄️ Data" onPress={() => router.navigate("/(tabs)/data" as any)} />
               <QuickBtn c={c} label="💻 Console" onPress={() => router.navigate("/(tabs)/console" as any)} />
               <QuickBtn c={c} label="⚙️ CI" onPress={() => router.navigate("/ci" as any)} />

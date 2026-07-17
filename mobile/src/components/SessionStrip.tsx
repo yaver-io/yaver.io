@@ -22,18 +22,19 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useColors } from "../context/ThemeContext";
-import { agentSignalFromTask, agentStateColor } from "../lib/agentStatus";
+import { agentSignalFromTask, agentStateColor, slotKeyForTask } from "../lib/agentStatus";
+import { DEFAULT_SLOT_COUNT, useAgentSlots } from "../lib/agentSlots";
 import { quicClient, Task } from "../lib/quic";
 import { YaverGlass } from "./YaverGlass";
 
 interface Props {
   /** Called when the user taps a chip. */
   onPress?: (task: Task) => void;
-  /** Max chips to render. Older tasks fall off. Default 8. */
+  /** Fixed slot count. Defaults to the six-key deck. */
   maxChips?: number;
   /** Poll interval in ms. Default 4000. */
   pollMs?: number;
-  /** Filter — default keeps running + review + recently completed (last 2 min). */
+  /** Filter — default keeps every task the agent still reports. */
   filter?: (task: Task) => boolean;
 }
 
@@ -75,14 +76,9 @@ export function useActiveSessions(opts?: { pollMs?: number; filter?: (t: Task) =
   return { tasks, error, refresh };
 }
 
-/** Default filter: anything live + anything completed in the last 2min. */
+/** Default filter: every task the agent still reports owns its place. */
 function defaultFilter(t: Task): boolean {
-  if (t.status === "running" || t.status === "queued" || t.status === "review") return true;
-  if (t.status === "completed" || t.status === "failed") {
-    // Treat very recently finished tasks as still "interesting"
-    return ageSeconds(t) < 120;
-  }
-  return false;
+  return !!t.id;
 }
 
 function ageSeconds(t: Task): number {
@@ -112,9 +108,10 @@ function shortTitle(s: string, max = 22): string {
   return trimmed.slice(0, max - 1) + "…";
 }
 
-export function SessionStrip({ onPress, maxChips = 8, pollMs, filter }: Props): React.JSX.Element | null {
+export function SessionStrip({ onPress, maxChips = DEFAULT_SLOT_COUNT, pollMs, filter }: Props): React.JSX.Element {
   const c = useColors();
   const { tasks, error } = useActiveSessions({ pollMs, filter });
+  const { slots, overflow } = useAgentSlots(tasks, slotKeyForTask, maxChips);
 
   if (error) {
     return (
@@ -123,9 +120,6 @@ export function SessionStrip({ onPress, maxChips = 8, pollMs, filter }: Props): 
       </View>
     );
   }
-  if (tasks.length === 0) return null;
-
-  const visible = tasks.slice(0, maxChips);
 
   return (
     <ScrollView
@@ -133,13 +127,31 @@ export function SessionStrip({ onPress, maxChips = 8, pollMs, filter }: Props): 
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.scroll}
     >
-      {visible.map((t) => {
+      {slots.map((slot) => {
+        const t = slot.item;
+        if (!t) {
+          return (
+            <YaverGlass key={slot.key} shape="capsule" tint={c.bgCard} style={styles.chipGlass}>
+              <View style={[styles.chip, { borderColor: c.border, opacity: 0.55 }]}>
+                <View style={[styles.dot, { borderWidth: 1, borderColor: c.textMuted, backgroundColor: "transparent" }]} />
+                <View style={styles.body}>
+                  <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600" }} numberOfLines={1}>
+                    Slot {slot.ordinal}
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "Menlo" }} numberOfLines={1}>
+                    idle
+                  </Text>
+                </View>
+              </View>
+            </YaverGlass>
+          );
+        }
         const age = ageSeconds(t);
         const tok = tokensLabel(t);
         const signal = agentSignalFromTask(t);
         const dot = agentStateColor(signal.state, c);
         return (
-          <YaverGlass key={t.id} shape="capsule" tint={c.bgCard} style={styles.chipGlass}>
+          <YaverGlass key={slot.key} shape="capsule" tint={c.bgCard} style={styles.chipGlass}>
             <Pressable
               onPress={() => onPress?.(t)}
               style={({ pressed }) => [
@@ -150,7 +162,6 @@ export function SessionStrip({ onPress, maxChips = 8, pollMs, filter }: Props): 
               <View
                 style={[
                   styles.dot,
-                  // Hollow reads as "unconfirmed" — queued, or contact lost.
                   signal.hollow
                     ? { borderWidth: 1.5, borderColor: dot, backgroundColor: "transparent" }
                     : { backgroundColor: dot },
@@ -169,6 +180,11 @@ export function SessionStrip({ onPress, maxChips = 8, pollMs, filter }: Props): 
           </YaverGlass>
         );
       })}
+      {overflow.length > 0 ? (
+        <View style={[styles.overflowPill, { borderColor: c.border, backgroundColor: c.bgCard }]}>
+          <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "600" }}>+{overflow.length} off deck</Text>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -177,6 +193,15 @@ const styles = StyleSheet.create({
   scroll: { paddingVertical: 6, paddingHorizontal: 12, gap: 8 },
   row: { flexDirection: "row", alignItems: "center", gap: 8 },
   chipGlass: { marginRight: 8, minWidth: 140, maxWidth: 220 },
+  overflowPill: {
+    marginLeft: 2,
+    marginRight: 8,
+    alignSelf: "center",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
   chip: {
     flexDirection: "row",
     alignItems: "center",

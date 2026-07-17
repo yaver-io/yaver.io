@@ -396,6 +396,21 @@ export interface Task {
   videoStatus?: "queued" | "recording" | "ready" | "failed" | "stale";
 }
 
+export interface AutorunSessionInfo {
+  id: string;
+  slot: string;
+  task: string;
+  status: "running" | "completed" | "failed" | "stopped" | "stopping";
+  activeRunner?: string;
+  master?: string;
+  iterations?: number;
+  commits?: number;
+  finishReason?: string;
+  finalCommit?: string;
+  heals?: Array<{ iteration: number; kind: string; detail: string }>;
+  progressTail?: string;
+}
+
 export type AgentGraphStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 export type AgentNodeStatus = "pending" | "running" | "completed" | "failed" | "blocked" | "stopped";
 export type AgentNodeKind = "chat" | "autoideas" | "autotest";
@@ -8678,6 +8693,13 @@ export class QuicClient {
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
     }
+  }
+
+  async listAutorunSessions(id?: string): Promise<AutorunSessionInfo[]> {
+    const res = await this.callOps("autorun_status", id ? { id } : {});
+    if (!res.ok) throw new Error(res.error || "autorun_status failed");
+    const sessions = res.initial?.sessions;
+    return Array.isArray(sessions) ? sessions : [];
   }
 
   async mfgRFQImportBOM(opts: {

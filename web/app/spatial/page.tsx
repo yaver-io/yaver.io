@@ -27,6 +27,7 @@ import { readBridgeFromURL, useTasks, useTmuxSessions, useVoiceBridge, type Task
 import { useSurface } from "./lib/surfaceDetect";
 import { useSpatialShortcuts, SHORTCUT_HELP_ROWS } from "./lib/keyboardShortcuts";
 import { TmuxPane } from "./TmuxPane";
+import { agentSignalFromTaskStatus, agentStateCssColor } from "../../lib/agentStatus";
 
 // VR scene is a client-only WebGL bundle (Three.js + R3F + XR). Load
 // it dynamically so the 2D /spatial route doesn't ship ~600KB of
@@ -625,15 +626,7 @@ function shortTitle(s: string, max: number): string {
 }
 
 function dotColor(status: string): string {
-  switch (status) {
-    case "running": return "#10b981";
-    case "queued": return "#94a3b8";
-    case "review": return "#f59e0b";
-    case "completed": return "#3b82f6";
-    case "failed": return "#ef4444";
-    case "stopped": return "#6b7280";
-    default: return "#6b7280";
-  }
+  return agentStateCssColor(agentSignalFromTaskStatus(status as any).state);
 }
 
 function orbColor(status: string): string {

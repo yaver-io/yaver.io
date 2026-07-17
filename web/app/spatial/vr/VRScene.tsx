@@ -24,6 +24,8 @@ import { AppScreenPlane3D } from "./AppScreenPlane3D";
 import { RemoteWindow3D } from "./RemoteWindow3D";
 import { DataPane3D } from "./DataPane3D";
 import { summarizeFleet } from "../lib/fleetStats";
+import { agentSignalFromTaskStatus, agentStateHex, slotKeyForTask } from "../../../lib/agentStatus";
+import { useAgentSlots } from "../../../../mobile/src/lib/agentSlots";
 
 // Single XR store shared across the page so the "Enter VR" button
 // in page.tsx can trigger session entry without prop-drilling.
@@ -130,27 +132,6 @@ function GroundReference() {
 function PaneArc({ cfg, tasks }: { cfg: BridgeConfig; tasks: Task[] }) {
   const [focusIdx, setFocusIdx] = useState(1); // middle pane by default
 
-  // Pick 3 most-relevant tasks: running first, then review/queued,
-  // then completed. Stable order by id for visual continuity across
-  // polls (no flicker on /tasks refresh).
-  const visible = useMemo(() => {
-    const score = (t: Task) => {
-      switch (t.status) {
-        case "running": return 0;
-        case "review": return 1;
-        case "queued": return 2;
-        case "completed": return 3;
-        case "failed": return 4;
-        default: return 5;
-      }
-    };
-    const sorted = [...tasks].sort((a, b) => {
-      const d = score(a) - score(b);
-      return d !== 0 ? d : a.id.localeCompare(b.id);
-    });
-    return sorted.slice(0, 3);
-  }, [tasks]);
-
   // Arrange three panes on a 1.5m radius arc at eye height (~1.6m).
   // Center pane straight ahead, flankers at ±35°.
   const RADIUS = 1.5;
@@ -158,11 +139,13 @@ function PaneArc({ cfg, tasks }: { cfg: BridgeConfig; tasks: Task[] }) {
   const PANE_W = 1.05;  // ~80cm wide in headset's perceived FOV
   const PANE_H = 0.65;
   const ANGLES = [-Math.PI / 5.1, 0, Math.PI / 5.1]; // ~±35°
+  const { slots } = useAgentSlots(tasks, slotKeyForTask, ANGLES.length);
 
   return (
     <>
-      {visible.map((task, i) => {
-        const a = ANGLES[i] ?? 0;
+      {slots.filter((slot) => slot.item).map((slot) => {
+        const task = slot.item!;
+        const a = ANGLES[slot.index] ?? 0;
         const x = Math.sin(a) * RADIUS;
         const z = -Math.cos(a) * RADIUS;
         return (
@@ -174,12 +157,12 @@ function PaneArc({ cfg, tasks }: { cfg: BridgeConfig; tasks: Task[] }) {
             rotationY={-a}
             width={PANE_W}
             height={PANE_H}
-            focused={i === focusIdx}
-            onFocus={() => setFocusIdx(i)}
+            focused={slot.index === focusIdx}
+            onFocus={() => setFocusIdx(slot.index)}
           />
         );
       })}
-      {visible.length === 0 && <EmptyHint />}
+      {slots.every((slot) => !slot.item) && <EmptyHint />}
     </>
   );
 }
@@ -191,21 +174,18 @@ function RemoteWindowStack({ cfg }: { cfg: BridgeConfig }) {
   // Layout: arc them above the terminal panes — 2.3m height, 1.8m
   // radius, ±25° spread, max 3 visible. Less aggressive curvature
   // than the terminals so the user can read text at the edges.
-  const visible = sessions.slice(0, 3);
   const RADIUS = 1.8;
   const Y = 2.35;
   const PANE_W = 1.1;
   const PANE_H = 0.7;
-  const angles = visible.length === 1
-    ? [0]
-    : visible.length === 2
-    ? [-0.25, 0.25]
-    : [-0.45, 0, 0.45];
+  const angles = [-0.45, 0, 0.45];
+  const { slots } = useAgentSlots(sessions, (session) => `glass:${session.id}`, angles.length);
 
   return (
     <>
-      {visible.map((s, i) => {
-        const a = angles[i] ?? 0;
+      {slots.filter((slot) => slot.item).map((slot) => {
+        const s = slot.item!;
+        const a = angles[slot.index] ?? 0;
         const x = Math.sin(a) * RADIUS;
         const z = -Math.cos(a) * RADIUS;
         return (
@@ -220,7 +200,7 @@ function RemoteWindowStack({ cfg }: { cfg: BridgeConfig }) {
             rotationY={-a}
             width={PANE_W}
             height={PANE_H}
-            focused={focusId === s.id || (focusId === null && i === 0)}
+            focused={focusId === s.id || (focusId === null && slot.index === 0)}
             onFocus={() => setFocusId(s.id)}
           />
         );
@@ -249,6 +229,7 @@ function StatusStrip({ tasks }: { tasks: Task[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const texRef = useRef<THREE.CanvasTexture | null>(null);
   const [, force] = useState(0);
+  const { slots } = useAgentSlots(tasks, slotKeyForTask, 4);
 
   useEffect(() => {
     const c = document.createElement("canvas");
@@ -279,10 +260,11 @@ function StatusStrip({ tasks }: { tasks: Task[] }) {
     ctx.fillText(`[yaver]`, x, y);
     x += ctx.measureText(`[yaver] `).width;
     ctx.fillStyle = "#e5e7eb";
-    tasks.slice(0, 4).forEach((t, i) => {
+    slots.filter((slot) => slot.item).forEach((slot) => {
+      const t = slot.item!;
       const focused = t.status === "running" ? "*" : "-";
-      const label = ` ${i}:${shortTitle(t.title, 12)}${focused}`;
-      ctx.fillStyle = t.status === "running" ? "#3b82f6" : t.status === "review" ? "#f59e0b" : "#6b7280";
+      const label = ` ${slot.index}:${shortTitle(t.title, 12)}${focused}`;
+      ctx.fillStyle = agentStateHex(agentSignalFromTaskStatus(t.status).state);
       ctx.fillText(label, x, y);
       x += ctx.measureText(label).width;
     });
@@ -292,7 +274,7 @@ function StatusStrip({ tasks }: { tasks: Task[] }) {
     ctx.fillText(right, c.width - 14 - ctx.measureText(right).width, y);
     if (texRef.current) texRef.current.needsUpdate = true;
     force((n) => n + 1);
-  }, [tasks]);
+  }, [slots, tasks]);
 
   return (
     <mesh position={[0, 1.05, -1.5]} rotation={[-0.15, 0, 0]}>
