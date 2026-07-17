@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -600,6 +602,101 @@ func autorunReleasesSlot(reason string) bool {
 	}
 }
 
+// autorunLandMu is the landing queue: every autorun on this machine lands onto
+// main one at a time.
+//
+// Runs are isolated where it matters — each gets its own clone/worktree and its
+// own branch — but they all LAND on the same branch, and nothing serialized that
+// last step. Two loops finishing together both fetched, both merged, and the
+// second `git push origin main` was rejected. The run was then marked failed
+// despite having converged, because the work and the bookkeeping share one
+// verdict.
+//
+// A mutex is the whole queue. Landing is seconds of git against a local clone,
+// so the wait is nothing next to a run that took an hour to earn its commit.
+var autorunLandMu sync.Mutex
+
+// autorunLandAttempts bounds the rebase-and-retry. The lock removes contention
+// between THIS box's autoruns; it cannot touch the developer's laptop, another
+// session, or CI pushing to the same branch — so the retry is what makes landing
+// actually reliable, and the lock only stops us from being our own worst racer.
+const autorunLandAttempts = 4
+
+// autorunLandOntoMain merges the run's branch into main and pushes it, waiting
+// its turn and re-basing onto whatever landed while it waited.
+//
+// The retry must NOT be `pull --ff-only`. Once our merge is sitting on local main
+// and origin/main has moved, the branches have genuinely diverged and --ff-only
+// is correct to refuse — which is why a single lost race poisoned the clone and
+// the NEXT run died on "Diverging branches can't be fast-forwarded, aborting"
+// before it started. Replaying our commits on top of theirs is what actually
+// resolves it, and it is safe: these are our own not-yet-pushed commits, the
+// push stays non-forced, and a real conflict still fails loudly rather than
+// inventing a merge.
+func autorunLandOntoMain(ctx context.Context, ws autorunWorkspace, push bool) error {
+	if !push {
+		// Nothing to race for: merge locally and leave the branch alone.
+		merge := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "merge", "--ff-only", ws.Branch}, ws.SourceWorkDir)
+		if merge.Err != nil {
+			return fmt.Errorf("git merge --ff-only %s into main: %w: %s", ws.Branch, merge.Err, strings.TrimSpace(merge.Output))
+		}
+		return nil
+	}
+
+	autorunLandMu.Lock()
+	defer autorunLandMu.Unlock()
+
+	var lastErr error
+	for attempt := 1; attempt <= autorunLandAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return fmt.Errorf("landing cancelled: %w", ctx.Err())
+		}
+
+		fetch := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "fetch", "origin"}, ws.SourceWorkDir)
+		if fetch.Err != nil {
+			return fmt.Errorf("git fetch origin: %w: %s", fetch.Err, strings.TrimSpace(fetch.Output))
+		}
+
+		// Take whatever landed while we waited. --rebase (not --ff-only) because
+		// on a retry our own merge is already on local main; see above.
+		sync := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "pull", "--rebase", "origin", "main"}, ws.SourceWorkDir)
+		if sync.Err != nil {
+			// A rebase that stops mid-way leaves the checkout in a rebasing state,
+			// which would strand the clone for every future run. Put it back.
+			autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "rebase", "--abort"}, ws.SourceWorkDir)
+			return fmt.Errorf("git pull --rebase origin main: %w: %s", sync.Err, strings.TrimSpace(sync.Output))
+		}
+
+		// Idempotent across attempts: once merged, this reports "Already up to date".
+		merge := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "merge", "--ff-only", ws.Branch}, ws.SourceWorkDir)
+		if merge.Err != nil {
+			return fmt.Errorf("git merge --ff-only %s into main: %w: %s", ws.Branch, merge.Err, strings.TrimSpace(merge.Output))
+		}
+
+		pushMain := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", "origin", "main"}, ws.SourceWorkDir)
+		if pushMain.Err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("git push origin main: %w: %s", pushMain.Err, strings.TrimSpace(pushMain.Output))
+		if !autorunPushWasRejected(pushMain.Output) {
+			// Auth, network, a protected branch — retrying just repeats it.
+			return lastErr
+		}
+		log.Printf("[autorun] land: push rejected for slot %s (attempt %d/%d) — someone landed first; rebasing and retrying",
+			ws.Slot, attempt, autorunLandAttempts)
+	}
+	return fmt.Errorf("could not land onto main after %d attempts: %w", autorunLandAttempts, lastErr)
+}
+
+// autorunPushWasRejected distinguishes "someone else landed first" — the one
+// failure a retry actually fixes — from every other push failure.
+func autorunPushWasRejected(output string) bool {
+	o := strings.ToLower(output)
+	return strings.Contains(o, "[rejected]") ||
+		strings.Contains(o, "fetch first") ||
+		strings.Contains(o, "non-fast-forward")
+}
+
 func autorunReleaseWorkspace(ctx context.Context, ws autorunWorkspace, push, land bool) error {
 	if ctx.Err() != nil {
 		var cancel context.CancelFunc
@@ -624,25 +721,8 @@ func autorunReleaseWorkspace(ctx context.Context, ws autorunWorkspace, push, lan
 				return fmt.Errorf("git checkout main: %w: %s", checkout.Err, strings.TrimSpace(checkout.Output))
 			}
 		}
-		if push {
-			fetch := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "fetch", "origin"}, ws.SourceWorkDir)
-			if fetch.Err != nil {
-				return fmt.Errorf("git fetch origin: %w: %s", fetch.Err, strings.TrimSpace(fetch.Output))
-			}
-			pull := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "pull", "--ff-only", "origin", "main"}, ws.SourceWorkDir)
-			if pull.Err != nil {
-				return fmt.Errorf("git pull --ff-only origin main: %w: %s", pull.Err, strings.TrimSpace(pull.Output))
-			}
-		}
-		merge := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "merge", "--ff-only", ws.Branch}, ws.SourceWorkDir)
-		if merge.Err != nil {
-			return fmt.Errorf("git merge --ff-only %s into main: %w: %s", ws.Branch, merge.Err, strings.TrimSpace(merge.Output))
-		}
-		if push {
-			pushMain := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", "origin", "main"}, ws.SourceWorkDir)
-			if pushMain.Err != nil {
-				return fmt.Errorf("git push origin main: %w: %s", pushMain.Err, strings.TrimSpace(pushMain.Output))
-			}
+		if err := autorunLandOntoMain(ctx, ws, push); err != nil {
+			return err
 		}
 	}
 	remove := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "worktree", "remove", "--force", ws.WorkDir}, ws.SourceWorkDir)
