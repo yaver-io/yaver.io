@@ -1,7 +1,15 @@
 ---
-master: claude
 doer: codex
 ---
+
+<!-- No `master:` seat on purpose. The planning seat rides the claude binary and
+     claude is NOT signed in on the mini, so a master here dies on iteration 1
+     with "runner TUI session … vanished". Seats in front matter are not a hint:
+     autorunSeatsFromTask applies them whenever the caller omits the flag, so
+     leaving `master: claude` here silently overrode a deliberate codex-solo
+     start. Re-add a master only once that box has an authenticated planning
+     runner — glm is the candidate (same claude binary, z.ai auth, no Claude
+     subscription needed). -->
 
 # Autorun-level orchestration for deploys
 
