@@ -180,6 +180,58 @@ func TestAutorunPlanRefusesEmptyInstruction(t *testing.T) {
 	}
 }
 
+// The splash screen of an unauthenticated runner is not a plan. A TUI turn is a
+// pane capture, so a master with no credentials exits 0 and returns its sign-in
+// chrome: non-empty, so the empty-instruction guard waves it through and the
+// doer gets a banner as its work order. Observed in the wild 2026-07-17 — the
+// doer was handed "Claude Code v2.1.211 … Not logged in · Run /login" as
+// "YOUR INSTRUCTION FOR THIS ITERATION" and burned a full iteration on it.
+func TestAutorunPlanRefusesAMasterThatIsNotSignedIn(t *testing.T) {
+	originalKick, originalExec := autorunKick, autorunExec
+	defer func() { autorunKick, autorunExec = originalKick, originalExec }()
+
+	const signInSplash = "▐▛███▜▌   Claude Code v2.1.211\n" +
+		"▝▜█████▛▘  Opus 4.7 · API Usage Billing\n" +
+		"  ▘▘ ▝▝    ~/Workspace/yaver.io\n\n" +
+		"                     Not logged in · Run /login\n" +
+		"────────────────────────────────────────────────\n" +
+		"❯ Read /tmp/prompt.md and carry out the task it describes.\n" +
+		"────────────────────────────────────────────────\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+
+	autorunKick = func(_ context.Context, _ autorunOptions, _ RunnerConfig, _ string, _ time.Duration) autorunCommandResult {
+		return autorunCommandResult{Output: signInSplash} // exit 0 — that is the trap
+	}
+	autorunExec = func(_ context.Context, _ string, _ []string, _ string) autorunCommandResult {
+		return autorunCommandResult{}
+	}
+	workDir := t.TempDir()
+	_, err := autorunPlan(context.Background(), autorunOptions{WorkDir: workDir}, GetRunnerConfig("claude"), "# Task", "", "", filepath.Join(workDir, "p.md"), 1)
+	if err == nil {
+		t.Fatal("a sign-in splash must not reach the doer as an instruction")
+	}
+	if !strings.Contains(err.Error(), "not signed in") || !strings.Contains(err.Error(), "master claude") {
+		t.Fatalf("the error must diagnose the auth failure and name the seat, got: %v", err)
+	}
+}
+
+// The guard must key on chrome + sign-in phrase together, never the phrase
+// alone: an instruction may legitimately be about login UI, and killing that
+// loop would be worse than the bug being fixed.
+func TestAutorunSignInGuardSparesAnInstructionAboutLogin(t *testing.T) {
+	instruction := "In web/app/login/page.tsx, render \"Not logged in\" when the " +
+		"session expires, and point the button at /login."
+	if autorunTurnIsSignInChrome(instruction) {
+		t.Fatalf("an instruction that merely discusses login must stay usable: %q", instruction)
+	}
+	// Chrome alone is not a sign-in failure either — an authenticated TUI turn
+	// carries the same wordmark around a real answer.
+	authed := "▐▛███▜▌   Claude Code v2.1.211\n\nEdit desktop/agent/convex.go: teach it CONVEX_URL.\n"
+	if autorunTurnIsSignInChrome(authed) {
+		t.Fatal("chrome around a real answer is a usable turn, not a sign-in screen")
+	}
+}
+
 // A failed master must not be reported as "the doer failed". Same run, very
 // different diagnosis.
 func TestAutorunPlanNamesTheMasterOnFailure(t *testing.T) {

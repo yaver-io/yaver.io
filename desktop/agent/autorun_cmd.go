@@ -423,6 +423,12 @@ func autorunPlan(ctx context.Context, opts autorunOptions, master RunnerConfig, 
 	if result.Err != nil {
 		return "", fmt.Errorf("master %s failed to plan iteration %d: %w: %s", master.RunnerID, iteration, result.Err, strings.TrimSpace(autorunTailLines(result.Output, 40)))
 	}
+	// A runner with no credentials exits 0 and returns its sign-in splash. That
+	// is non-empty, so it would pass the guard below and reach the doer as its
+	// instruction. Diagnose it as the auth failure it is.
+	if autorunTurnIsSignInChrome(result.Output) {
+		return "", fmt.Errorf("master %s is not signed in for iteration %d: its turn returned the runner's sign-in screen, not an instruction — run `yaver primary auth %s`", master.RunnerID, iteration, master.RunnerID)
+	}
 	instruction := autorunMasterInstruction(result.Output)
 	if instruction == "" {
 		return "", fmt.Errorf("master %s produced no instruction for iteration %d; refusing to kick the doer with an empty plan", master.RunnerID, iteration)

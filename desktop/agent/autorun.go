@@ -594,6 +594,61 @@ func autorunMasterInstruction(output string) string {
 	return strings.TrimSpace(output)
 }
 
+// autorunSignInMarkers are phrases a runner prints when it needs credentials.
+// They are matched only against a turn that ALSO carries the runner's TUI
+// chrome (see autorunTurnIsSignInChrome) — on their own they are perfectly
+// ordinary words for an instruction to use ("show 'Not logged in' when the
+// session expires"), and a false positive here would kill a healthy loop.
+var autorunSignInMarkers = []string{
+	"Not logged in",
+	"Run /login",
+	"Please run /login",
+	"Invalid API key",
+	"credit balance is too low",
+}
+
+// autorunTUIChromeMarkers are fragments unique to a runner's splash//chrome —
+// the Claude Code wordmark and the permission-mode footer. Real prose does not
+// contain these glyphs, so they are what distinguishes "this turn is a
+// screenshot of a terminal" from "this turn is an answer".
+var autorunTUIChromeMarkers = []string{
+	"▐▛███▜▌",             // Claude Code wordmark, line 1
+	"▝▜█████▛▘",           // wordmark, line 2
+	"bypass permissions on", // permission-mode footer
+}
+
+// autorunTurnIsSignInChrome reports whether a runner turn is the runner's
+// sign-in screen rather than an answer.
+//
+// Why this exists: a TUI turn is a pane capture, so an unauthenticated runner
+// exits 0 and returns its splash screen — non-empty text that looks like output
+// but contains no instruction. That sails past an `instruction == ""` guard, and
+// the loop then hands the doer a banner as its work order. Observed in the wild
+// (2026-07-17): a master with no credentials produced "Claude Code v2.1.211 …
+// Not logged in · Run /login … ⏵⏵ bypass permissions on", which was passed to
+// the doer verbatim as "YOUR INSTRUCTION FOR THIS ITERATION".
+//
+// Both halves are required — chrome AND a sign-in phrase — so that an
+// instruction merely discussing login stays usable.
+func autorunTurnIsSignInChrome(output string) bool {
+	hasChrome := false
+	for _, m := range autorunTUIChromeMarkers {
+		if strings.Contains(output, m) {
+			hasChrome = true
+			break
+		}
+	}
+	if !hasChrome {
+		return false
+	}
+	for _, m := range autorunSignInMarkers {
+		if strings.Contains(output, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // autorunKickTimeout bounds one runner turn. A TUI turn can be long (a real fix
 // with tests), but it must not hang the loop forever.
 const autorunKickTimeout = 30 * time.Minute
