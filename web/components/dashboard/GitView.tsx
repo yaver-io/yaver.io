@@ -13,6 +13,7 @@ import {
   type GitStatusRow,
 } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
+import { GitMembersPanel } from "./GitMembersPanel";
 
 type Project = {
   name: string;
@@ -962,6 +963,11 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                           </div>
                         </div>
                       </div>
+
+                      {/* Access lives with the repo, not in a separate admin
+                          screen: the question "who can reach this?" comes up
+                          while you are already looking at the project. */}
+                      <GitMembersPanel projectPath={project.path} projectName={project.name} />
                     </div>
                   ) : null}
                 </details>

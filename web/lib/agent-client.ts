@@ -897,6 +897,75 @@ export interface GitRemoteRepo {
   sshUrl?: string;
 }
 
+/**
+ * ForgeKind is the git host family. Named "forge", not "provider": in this
+ * codebase `provider` already means OAuth login identity, IaaS vendor, TTS
+ * engine, and LLM vendor depending on the file. It is a closed union on
+ * purpose — the older `GitProviderStatusRow.provider` is a bare `string`,
+ * which is why nothing could ever switch on it exhaustively.
+ */
+export type ForgeKind = "github" | "gitlab";
+
+/** ForgeRole is the provider-neutral permission level (agent maps it to
+ *  GitHub's pull/push/admin and GitLab's 10/20/30/40/50). */
+export type ForgeRole = "read" | "triage" | "write" | "maintain" | "admin";
+
+export interface ForgeMember {
+  username: string;
+  name?: string;
+  role: ForgeRole;
+  /** What the forge itself calls this role ("push", "developer") — shown so
+   *  the UI never has to pretend the two vocabularies are the same. */
+  nativeRole?: string;
+  /** "active" | "pending" — pending means invited but not yet accepted. */
+  state?: string;
+  avatarUrl?: string;
+  profileUrl?: string;
+  id?: string | number;
+}
+
+export interface ForgeInvite {
+  username?: string;
+  email?: string;
+  role: ForgeRole;
+  /** invited | added | already_member. "added" means they already had access
+   *  and NO invitation email went out — see the agent's forge_github.go. */
+  state: string;
+  inviteId?: string | number;
+  url?: string;
+  message?: string;
+}
+
+/** Common envelope on every forge verb result. `via` reports whether the call
+ *  went through the gh/glab CLI or direct REST — the first thing worth knowing
+ *  when a call unexpectedly 403s. */
+export interface ForgeResultBase {
+  repo: string;
+  host: string;
+  kind: ForgeKind;
+  via: string;
+}
+
+export interface ForgeMembersResult extends ForgeResultBase {
+  members: ForgeMember[];
+  count: number;
+}
+
+export interface ForgeInviteResult extends ForgeResultBase {
+  user: string;
+  role: ForgeRole;
+  invite: ForgeInvite;
+}
+
+/** Identifies which repo a forge verb should act on. All fields optional:
+ *  the agent resolves explicit repo > directory > cwd. */
+export interface ForgeTarget {
+  repo?: string;
+  directory?: string;
+  host?: string;
+  kind?: ForgeKind;
+}
+
 export interface GitCommitRow {
   hash: string;
   shortHash: string;
@@ -7044,6 +7113,47 @@ export class AgentClient {
     if (!res.ok) throw new Error(data?.error || `git/provider/repos ${res.status}`);
     return Array.isArray(data?.repos) ? data.repos : [];
   }
+  /**
+   * gitMembers lists everyone with access to a repo, on GitHub or GitLab.
+   *
+   * These three go through the ops layer rather than a bespoke /git/provider/*
+   * route: the agent registers them as neutral verbs (forge_surface.go), so the
+   * schema and the handler cannot drift apart, and every surface — web, mobile,
+   * tvOS, CLI, MCP — calls the identical verb instead of each re-deriving
+   * GitHub-vs-GitLab. Pending invitations come back in the list with
+   * state:"pending"; without them, invite-then-list reads as a silent failure.
+   */
+  async gitMembers(t: ForgeTarget = {}): Promise<ForgeMembersResult> {
+    const res = await this.callOps("git_members", { ...t });
+    if (res?.error || res?.ok === false) throw new Error(res?.error || "git_members failed");
+    return res.initial as ForgeMembersResult;
+  }
+
+  /**
+   * gitMemberInvite grants someone access. `role` is neutral (read|triage|
+   * write|maintain|admin) and the agent maps it per forge. Defaults to write.
+   *
+   * Read the returned invite.state rather than assuming success means an email
+   * went out: GitHub replies "added" when the user already had access, and no
+   * invitation is sent in that case.
+   */
+  async gitMemberInvite(
+    user: string,
+    role: ForgeRole = "write",
+    t: ForgeTarget = {},
+  ): Promise<ForgeInviteResult> {
+    const res = await this.callOps("git_member_invite", { user, role, ...t });
+    if (res?.error || res?.ok === false) throw new Error(res?.error || "git_member_invite failed");
+    return res.initial as ForgeInviteResult;
+  }
+
+  /** gitMemberRemove revokes a member's access. */
+  async gitMemberRemove(user: string, t: ForgeTarget = {}): Promise<ForgeResultBase> {
+    const res = await this.callOps("git_member_remove", { user, ...t });
+    if (res?.error || res?.ok === false) throw new Error(res?.error || "git_member_remove failed");
+    return res.initial as ForgeResultBase;
+  }
+
   async gitProviderRemove(host: string, target?: string): Promise<void> {
     this.assertConnected();
     const res = await fetch(this.peerOrLocalUrl(target, `/git/provider/${encodeURIComponent(host)}`), {
