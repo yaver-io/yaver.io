@@ -138,6 +138,42 @@ Full detail stays on web and mobile. Use the fixed-slot model
 active edit by another session. Re-read each file immediately before editing it,
 and keep every commit to explicit paths.
 
+## Task 4 — Make graceful landing a verb, not a ritual
+
+**Why:** `autorunLandOntoMain` (`autorun.go`, commit `f7b9f3d54`) knows how to land
+onto a moving branch: take the queue lock, fetch, `pull --rebase`, merge, push, and
+retry on `! [rejected] (fetch first)` — aborting a stuck rebase instead of stranding
+the clone. **Only the autorun loop can reach it.** Every other actor — a coding
+agent, a surface, a human at a terminal — hand-rolls the same dance and gets it
+wrong. On 2026-07-17 a session had to land work by cherry-picking into a throwaway
+`git worktree` FOUR times, and once deleted a branch whose work had not landed
+because the push had been rejected and the delete had not.
+
+**Do:**
+
+1. Expose landing as an ops verb (e.g. `git_land`): given a workDir and a target
+   branch, do fetch → rebase → push with the same bounded retry, and RETURN what
+   happened — landed / retried N times / rebase conflict / rejected-for-a-reason-
+   retry-cannot-fix (auth, protected branch, DNS). Reuse the existing helpers;
+   do NOT fork a second copy of the rule. `autorunPushWasRejected` is the only
+   place that decides "someone landed first".
+2. Never `--force`. Never touch a checkout the caller does not own. On conflict,
+   stop and report — a merge invented by a retry loop is worse than a failed push.
+3. Register it like the other verbs so `ops_verbs` lists it with a payload schema,
+   and it is reachable from every surface, not just the CLI.
+
+**And make the loop aware of the git state it is standing in.** Autorun currently
+discovers the repo's condition only by failing: a dirty clone, a diverged main, a
+branch already landed. Surface it — is the workspace clean, how far ahead/behind
+origin, did the last land succeed — in `autorun_status` alongside `landingError`,
+so a surface can say "3 commits waiting to land" instead of the user learning it
+from a red run an hour later.
+
+**Test the classifier, not the network.** `autorun_land_test.go` is the precedent:
+it asserts against verbatim git output (`! [rejected] main -> main (fetch first)`,
+`Permission denied (publickey)`, `GH006: Protected branch update failed`) rather
+than standing up a remote.
+
 ## Definition of done
 
 - Every autorun commit carries `Autorun-Run-Id` + `Autorun-Slot`, and two runs of
