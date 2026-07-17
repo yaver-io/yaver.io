@@ -71,10 +71,8 @@ func composeDeepHealth(s *HTTPServer, now time.Time) DeepHealthReport {
 		Agent:       DeepHealthComponent{Status: "ok", Detail: "HTTP mux answered"},
 	}
 
-	// tmux availability + session count. Resolved via tmuxBin, not $PATH: the
-	// daemon's PATH omits /opt/homebrew/bin, so a PATH-only probe reports an
-	// installed tmux as missing and sends the reader chasing an install hint
-	// they have already followed.
+	// tmux availability + session count, resolved from the same source of truth
+	// /infra/summary reports from rather than from $PATH alone.
 	if tmux := tmuxBin(); tmux == "" {
 		r.Tmux = DeepHealthComponent{Status: "down", Detail: "tmux is not installed — runner sessions cannot be supervised"}
 		r.RecoveryHints = append(r.RecoveryHints, TmuxInstallHint())

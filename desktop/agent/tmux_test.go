@@ -21,13 +21,11 @@ func clearDiscoveryCache(t *testing.T) {
 	discoveryMu.Unlock()
 }
 
-// The agent runs from launchd/systemd, whose $PATH does not include
-// /opt/homebrew/bin — so tmux is routinely installed and invisible to
-// exec.LookPath. This took down a Mac mini's autorun loop (2026-07-17): the
-// keeper reported "tmux is not installed" for a tmux one directory away, and
-// every runner seat died with it.
-//
-// tmux resolution must therefore survive an empty $PATH.
+// The agent is launched with a minimal $PATH (launchd/systemd), which omits
+// /opt/homebrew/bin. augmentAgentPATH() normally repairs that at startup, but
+// it bails when os.UserHomeDir() fails and it never runs for code reached
+// outside main(). tmux is load-bearing for every runner seat, so its resolution
+// must not depend on that repair having happened.
 func TestTmuxIsFoundWhenItIsInstalledOffPath(t *testing.T) {
 	// Locate tmux via a prefix the daemon would NOT have on $PATH. If tmux
 	// only exists on $PATH here, there is nothing to prove.
@@ -64,6 +62,23 @@ func TestTmuxIsFoundWhenItIsInstalledOffPath(t *testing.T) {
 	// re-inherits the same $PATH the lookup just worked around.
 	if name := tmuxCmdName(); name != got {
 		t.Fatalf("tmuxCmdName() = %q, want the resolved %q", name, got)
+	}
+}
+
+// serve calls EnsureTmuxInstalled on every startup, so the already-installed
+// path must be free: no package manager, no subprocess, no log noise. A
+// regression here would make every agent boot shell out to brew/apt.
+func TestEnsureTmuxInstalledIsANoOpWhenPresent(t *testing.T) {
+	if tmuxBin() == "" {
+		t.Skip("tmux not installed here; nothing to short-circuit")
+	}
+	logged := 0
+	ok := EnsureTmuxInstalled(context.Background(), func(string, ...interface{}) { logged++ })
+	if !ok {
+		t.Fatal("must report tmux usable when it is installed")
+	}
+	if logged != 0 {
+		t.Fatalf("must not log or act on the happy path, logged %d line(s)", logged)
 	}
 }
 

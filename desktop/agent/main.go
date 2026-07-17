@@ -3075,8 +3075,13 @@ func runServe(args []string) {
 	// Initialize tmux manager if tmux is available. Make first-launch
 	// seamless: bootstrap a default `yaver` session when none exist,
 	// so the /spatial 3-pane layout has something to attach to on the
-	// trio user's first connection. If tmux ISN'T installed, log the
-	// platform-specific install command so they don't have to google it.
+	// trio user's first connection.
+	//
+	// tmux is a hard dependency of the runner surface, not a garnish, so a box
+	// that lacks it gets it installed here rather than a hint it may never
+	// read: without tmux this agent will accept an autorun and silently never
+	// run it. Best-effort and never interactive — see EnsureTmuxInstalled.
+	EnsureTmuxInstalled(context.Background(), log.Printf)
 	taskMgr.TmuxMgr = NewTmuxManager(taskMgr)
 	if taskMgr.TmuxMgr != nil {
 		log.Println("Tmux: available — session adoption enabled")
@@ -3087,7 +3092,11 @@ func runServe(args []string) {
 			log.Println("Tmux: bootstrapped fresh 'yaver' session — /spatial will attach to it")
 		}
 	} else {
-		log.Printf("Tmux: not installed — /spatial and the Terminal tab will be empty until you install it.")
+		// Say what actually breaks. The old wording named only /spatial and the
+		// Terminal tab, so an operator whose autorun never started had no way to
+		// connect the two.
+		log.Printf("Tmux: NOT INSTALLED — runner seats cannot start. autorun, the runner keeper,")
+		log.Printf("       `yaver code`, /spatial and the Terminal tab are all unavailable until it is.")
 		log.Printf("       One-liner for your platform: %s", TmuxInstallHint())
 		log.Printf("       OR: yaver install tmux  (uses the same recipe)")
 	}

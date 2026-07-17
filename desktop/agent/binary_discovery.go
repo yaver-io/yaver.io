@@ -173,6 +173,16 @@ type discoveryEntry struct {
 	when time.Time
 }
 
+// clearDiscoveryCacheFor drops the memo for one tool. Call it after installing
+// that tool: the cache would otherwise keep answering "missing" for up to
+// discoveryWindow, so the caller that just ran the install would conclude it
+// had failed.
+func clearDiscoveryCacheFor(name string) {
+	discoveryMu.Lock()
+	delete(discoveryCache, name)
+	discoveryMu.Unlock()
+}
+
 // DiscoverBinary is the exported, cached wrapper around discoverBinary.
 // Use this for anything on the hot path (`/infra/summary`,
 // `/install/list`, runner bootstrap).

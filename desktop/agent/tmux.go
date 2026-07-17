@@ -61,25 +61,30 @@ func NewTmuxManager(taskMgr *TaskManager) *TmuxManager {
 	}
 }
 
-// tmuxBin returns the absolute path to tmux, or "" if it genuinely is not
-// installed.
+// tmuxBin returns the absolute path to tmux, or "" if it is not installed.
 //
-// Why not exec.LookPath: the agent usually runs from launchd (macOS) or a
-// systemd user unit (Linux), neither of which reads a shell profile — so $PATH
-// is minimal and excludes exactly where tmux lives. On an Apple Silicon Mac
-// that is /opt/homebrew/bin, which is frequently on NO path the daemon can see,
-// not even the user's login shell. LookPath then reports "tmux is not
-// installed" for a tmux that is installed and one directory away.
+// The agent is launched by launchd/systemd with a minimal $PATH (observed on
+// the Mac mini: PATH=/usr/bin:/bin:/usr/sbin:/sbin), which does not include
+// /opt/homebrew/bin where tmux lives on Apple Silicon. augmentAgentPATH()
+// (main.go) is the first thing main() does and normally repairs that, so a
+// plain exec.LookPath usually works.
 //
-// That is not hypothetical: it silently killed a Mac mini's autorun loop
-// (2026-07-17). tmux is load-bearing — the runner TUI, the keeper, and every
-// autorun seat are driven through it, so this misdiagnosis takes the whole
-// remote-runner surface down and blames the wrong thing.
+// This is belt-and-braces for the cases where it does not:
+//   - augmentAgentPATH returns early when os.UserHomeDir() fails, leaving the
+//     minimal $PATH intact;
+//   - it probes a narrower set of prefixes than binary_discovery.go (no
+//     cargo/snap/flatpak/pipx);
+//   - it runs only via main(), so any path that reaches this code without
+//     going through main() (tests, future embedding) never gets the repair.
 //
-// DiscoverBinary already probes the install prefixes ($PATH first, then
-// homebrew/snap/cargo/...). Resolving to an ABSOLUTE path matters as much as
-// finding it: callers exec tmux, and a bare "tmux" argv would re-inherit the
-// same broken $PATH the lookup just worked around.
+// tmux is load-bearing — the runner TUI, the keeper, and every autorun seat are
+// driven through it — so it is worth resolving from the same source of truth
+// that /infra/summary reports from, rather than from whatever $PATH happens to
+// hold.
+//
+// Resolving to an ABSOLUTE path matters as much as finding it: callers exec
+// tmux, and a bare "tmux" argv would re-inherit whatever $PATH the lookup just
+// worked around.
 func tmuxBin() string {
 	return DiscoverBinary("tmux")
 }
@@ -98,6 +103,98 @@ func tmuxCmdName() string {
 // it — not merely whether it is on $PATH.
 func tmuxAvailable() bool {
 	return tmuxBin() != ""
+}
+
+// EnsureTmuxInstalled installs tmux when it is missing, best-effort, at agent
+// startup. Reports whether tmux is usable afterwards.
+//
+// Why the agent installs this itself rather than printing a hint: tmux is not a
+// nice-to-have. autorun, the runner keeper, and every runner seat are driven
+// through it, so a box without tmux accepts an autorun and then silently never
+// runs it. That is not a thought experiment — a Mac mini here sat with a
+// configured autorun loop that could not start, because nothing on the box had
+// ever installed tmux and `yaver serve` only mentioned it in a log line about
+// the Terminal tab. A fresh cloud machine has exactly the same hole.
+//
+// Constraints, because this runs unattended inside a daemon:
+//   - NEVER prompt. brew needs no sudo; on Linux we install only as root or
+//     when `sudo -n` already works. Otherwise we decline and say so, rather
+//     than hanging serve on a password prompt forever.
+//   - NEVER fatal. A box with no package manager is still a useful agent; it
+//     just cannot host runner seats.
+func EnsureTmuxInstalled(ctx context.Context, logf func(format string, v ...interface{})) bool {
+	if tmuxBin() != "" {
+		return true
+	}
+	install := func(name string, args ...string) bool {
+		c, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(c, name, args...)
+		cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive", "NONINTERACTIVE=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			logf("Tmux: auto-install via %s failed (non-fatal): %v: %s", name, err, strings.TrimSpace(lastLine(string(out))))
+			return false
+		}
+		clearDiscoveryCacheFor("tmux") // the 60s memo still says "missing"
+		return tmuxBin() != ""
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		brew := DiscoverBinary("brew")
+		if brew == "" {
+			logf("Tmux: not installed and Homebrew is absent — cannot auto-install. %s", TmuxInstallHint())
+			return false
+		}
+		logf("Tmux: not installed — installing it now with brew (runner seats need it)")
+		return install(brew, "install", "tmux")
+	case "linux":
+		type mgr struct {
+			bin  string
+			args []string
+		}
+		for _, m := range []mgr{
+			{"apt-get", []string{"install", "-y", "tmux"}},
+			{"dnf", []string{"install", "-y", "tmux"}},
+			{"pacman", []string{"-S", "--noconfirm", "tmux"}},
+			{"apk", []string{"add", "tmux"}},
+			{"zypper", []string{"install", "-y", "tmux"}},
+		} {
+			bin := DiscoverBinary(m.bin)
+			if bin == "" {
+				continue
+			}
+			if os.Geteuid() == 0 {
+				logf("Tmux: not installed — installing it now with %s (runner seats need it)", m.bin)
+				return install(bin, m.args...)
+			}
+			// Only use sudo if it is already password-less; a prompt here would
+			// hang the daemon forever.
+			if sudo := DiscoverBinary("sudo"); sudo != "" {
+				probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+				ok := exec.CommandContext(probe, sudo, "-n", "true").Run() == nil
+				cancel()
+				if ok {
+					logf("Tmux: not installed — installing it now with sudo %s (runner seats need it)", m.bin)
+					return install(sudo, append([]string{"-n", bin}, m.args...)...)
+				}
+			}
+			logf("Tmux: not installed and installing it needs a password. Run: %s", TmuxInstallHint())
+			return false
+		}
+		logf("Tmux: not installed and no known package manager found. %s", TmuxInstallHint())
+		return false
+	}
+	logf("Tmux: not installed. %s", TmuxInstallHint())
+	return false
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[len(lines)-1]
 }
 
 // TmuxInstallHint returns a platform-specific one-line install command
