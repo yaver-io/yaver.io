@@ -79,3 +79,51 @@ func TestAutorunTmuxSessionNameIsPerRunner(t *testing.T) {
 		t.Fatalf("session name should name its runner for attachability: %q", doer)
 	}
 }
+
+// codex spells headless as a SUBCOMMAND, not a flag: `codex exec` is headless,
+// bare `codex` is the TUI. A flag-only filter left `codex --model X exec
+// --full-auto`, which exits on the spot — so every --tmux codex run died, the
+// loop failed over down the chain, and the error named whichever runner came
+// last. codex was the only authenticated runner on the mini and was never
+// actually launchable. Verified live 2026-07-17: exec form dies, bare form runs.
+func TestAutorunTmuxArgsDropsCodexExecSubcommand(t *testing.T) {
+	args := autorunTmuxArgs(GetRunnerConfig("codex"))
+	joined := strings.Join(args, " ")
+
+	for _, a := range args {
+		if a == "exec" {
+			t.Fatalf("the exec subcommand selects headless mode and must not reach the TUI: %q", joined)
+		}
+		if a == "{prompt}" {
+			t.Fatalf("prompt placeholder survived into the TUI invocation: %q", joined)
+		}
+		if a == "--full-auto" {
+			t.Fatalf("--full-auto is exec-only (and deprecated); it must be mapped to the TUI equivalent: %q", joined)
+		}
+	}
+	// Unattended is the whole point — a TUI sitting on an approval prompt is
+	// just a slower way to fail.
+	if !strings.Contains(joined, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("codex TUI must stay unattended: %q", joined)
+	}
+	if !strings.Contains(joined, "--model") {
+		t.Fatalf("model override must survive into the TUI: %q", joined)
+	}
+}
+
+// Guard the general shape rather than one runner: whatever a runner's headless
+// config looks like, the derived TUI invocation must not carry a placeholder or
+// a headless selector.
+func TestAutorunTmuxArgsNeverCarryPlaceholdersForAnyRunner(t *testing.T) {
+	for _, id := range []string{"claude", "codex", "opencode"} {
+		cfg := GetRunnerConfig(id)
+		if strings.TrimSpace(cfg.Command) == "" {
+			continue
+		}
+		for _, a := range autorunTmuxArgs(cfg) {
+			if strings.Contains(a, "{") && strings.Contains(a, "}") {
+				t.Fatalf("%s: unsubstituted placeholder %q reached the TUI invocation", id, a)
+			}
+		}
+	}
+}

@@ -33,12 +33,35 @@ const (
 // autorunTmuxArgs derives the interactive invocation from a runner's headless
 // config: drop `-p`, the prompt placeholder, and the print-mode output flags,
 // but keep the permission flag so the TUI is just as unattended.
+//
+// Headless-ness is not always spelled as a flag. claude selects it with `-p`,
+// which a flag filter can drop; codex selects it with a SUBCOMMAND —
+// `codex exec` is headless, bare `codex` is the TUI. Filtering only flags left
+// codex being launched as `codex --model X exec --full-auto`, which exits
+// immediately. Every seat's TUI then "vanished mid-turn" and the loop failed
+// over down the chain, reporting whichever runner happened to be last — so
+// codex, the only authenticated runner on the box, was never actually
+// launchable, and the error never said so. Verified on the mini 2026-07-17:
+// the exec form dies, the bare form comes up.
 func autorunTmuxArgs(runner RunnerConfig) []string {
 	dropFlag := map[string]bool{
 		"-p": true, "--print": true, "--verbose": true,
 		"--include-partial-messages": true, "--output-format": true, "--tools": true,
 	}
 	dropFlagWithValue := map[string]bool{"--output-format": true, "--tools": true}
+
+	// Subcommands that mean "run headless". Dropping the flags around them is
+	// not enough — the subcommand itself picks the mode.
+	dropSubcommand := map[string]bool{"exec": true}
+
+	// Permission flags that exist only in a runner's headless mode, mapped to
+	// the interactive equivalent. Keeping the TUI just as unattended is the
+	// whole point; silently dropping these would leave it waiting on an
+	// approval prompt nobody is there to answer. (`--full-auto` is also
+	// deprecated in codex 0.128 in favour of --sandbox.)
+	interactiveEquivalent := map[string]string{
+		"--full-auto": "--dangerously-bypass-approvals-and-sandbox",
+	}
 
 	var args []string
 	if strings.TrimSpace(runner.Model) != "" {
@@ -50,7 +73,11 @@ func autorunTmuxArgs(runner RunnerConfig) []string {
 			skipNext = false
 			continue
 		}
-		if a == "{prompt}" {
+		if a == "{prompt}" || dropSubcommand[a] {
+			continue
+		}
+		if repl, ok := interactiveEquivalent[a]; ok {
+			args = append(args, repl)
 			continue
 		}
 		if dropFlag[a] {
