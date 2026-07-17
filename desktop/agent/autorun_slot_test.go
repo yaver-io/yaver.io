@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,33 @@ func TestAutorunSlotKeyAgreesWithTmuxSessionName(t *testing.T) {
 	name, seat, _ := strings.Cut(slot, ":")
 	if !strings.Contains(session, name) || !strings.Contains(session, seat) {
 		t.Fatalf("slot %q and tmux session %q do not describe the same agent", slot, session)
+	}
+}
+
+func TestAutorunBranchNameTracksTheSlotWithoutUsingColon(t *testing.T) {
+	branch := autorunBranchName("/repo/tasks/fix-gate.md", "codex")
+	if branch != "autorun/fix-gate/codex" {
+		t.Fatalf("branch name = %q", branch)
+	}
+	if strings.Contains(branch, ":") {
+		t.Fatalf("git branch names cannot contain a colon: %q", branch)
+	}
+}
+
+func TestAutorunWorkspaceForUsesStableSlotPath(t *testing.T) {
+	autorunIsolateHome(t)
+	ws, err := autorunWorkspaceFor("/repo/tasks/fix-gate.md", "/repo", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ws.Slot, "fix-gate:codex"; got != want {
+		t.Fatalf("slot = %q, want %q", got, want)
+	}
+	if got, want := ws.WorkDir, filepath.Join(filepath.Dir(filepath.Dir(ws.WorkDir)), "worktrees", "fix-gate:codex"); got != want {
+		t.Fatalf("worktree path = %q, want %q", got, want)
+	}
+	if got, want := ws.TaskPath, filepath.Join(ws.WorkDir, "tasks", "fix-gate.md"); got != want {
+		t.Fatalf("task path = %q, want %q", got, want)
 	}
 }
 

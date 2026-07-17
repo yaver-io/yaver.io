@@ -87,11 +87,16 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 	if _, err = os.Stat(taskPath); err != nil {
 		return autorunSessionView{}, fmt.Errorf("task: %w", err)
 	}
+	seat := autorunRequestedDoer(taskPath, opts.Runner)
+	workspace, err := autorunWorkspaceFor(taskPath, opts.WorkDir, seat)
+	if err != nil {
+		return autorunSessionView{}, err
+	}
 	id := fmt.Sprintf("autorun-%d", time.Now().UTC().UnixNano())
 	ctx, cancel := autorunSessionContext(parent)
 	s := &autorunSession{
-		ID: id, Slot: autorunSlotKey(taskPath, opts.Runner), Task: taskPath, Runner: opts.Runner, WorkDir: opts.WorkDir,
-		ProgressPath: autorunProgressPath(taskPath, opts.WorkDir), Status: "running",
+		ID: id, Slot: workspace.Slot, Task: taskPath, Runner: opts.Runner, WorkDir: workspace.WorkDir,
+		ProgressPath: workspace.ProgressPath, Status: "running",
 		StartedAt: time.Now().UTC(), cancel: cancel,
 	}
 	m.mu.Lock()

@@ -30,6 +30,16 @@ type autorunTestRepo struct {
 	t      *testing.T
 }
 
+func autorunIsolateHome(t *testing.T) string {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	return home
+}
+
 func newAutorunTestRepo(t *testing.T) *autorunTestRepo {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -97,6 +107,7 @@ func TestAutorunClosedLoopMasterPlansDoerImplementsGateVerifies(t *testing.T) {
 	if _, err := exec.LookPath("ssh-keygen"); err != nil {
 		t.Skip("ssh-keygen not available")
 	}
+	autorunIsolateHome(t)
 	repo := newAutorunTestRepo(t)
 	repo.write("tasks/widget.md", "---\nmaster: opencode\ndoer: codex\n---\n\n# Task\n\nCreate src/widget.txt containing the word `widget`.\n")
 	repo.run(repo.dir, "git", "add", "-A")
@@ -122,7 +133,12 @@ func TestAutorunClosedLoopMasterPlansDoerImplementsGateVerifies(t *testing.T) {
 			// Implement once, then go quiet so the loop converges — the same
 			// shape as a real doer that has finished the task.
 			if _, err := os.Stat(filepath.Join(opts.WorkDir, "src", "widget.txt")); os.IsNotExist(err) {
-				repo.write("src/widget.txt", "widget\n")
+				if err := os.MkdirAll(filepath.Join(opts.WorkDir, "src"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(opts.WorkDir, "src", "widget.txt"), []byte("widget\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			return autorunCommandResult{Output: "done"}
 		}
@@ -144,6 +160,10 @@ func TestAutorunClosedLoopMasterPlansDoerImplementsGateVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("closed loop failed: %v (reason %q)", err, summary.FinishReason)
 	}
+	workspace, err := autorunWorkspaceFor(opts.TaskPath, opts.WorkDir, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// It stopped because the doer went quiet, not because it ran out of road.
 	if summary.FinishReason != autorunReasonConverged {
@@ -160,31 +180,35 @@ func TestAutorunClosedLoopMasterPlansDoerImplementsGateVerifies(t *testing.T) {
 		t.Fatalf("verified commits = %d, want 1", summary.Commits)
 	}
 
-	// The work is really in the repo, really committed, and really pushed.
-	if body, err := os.ReadFile(filepath.Join(repo.dir, "src", "widget.txt")); err != nil || !strings.Contains(string(body), "widget") {
-		t.Fatalf("the doer's work is not in the worktree: %v %q", err, body)
+	// The work is really in the slot worktree, while the source checkout stays untouched.
+	if body, err := os.ReadFile(filepath.Join(workspace.WorkDir, "src", "widget.txt")); err != nil || !strings.Contains(string(body), "widget") {
+		t.Fatalf("the doer's work is not in the autorun worktree: %v %q", err, body)
+	}
+	if status := repo.run(workspace.WorkDir, "git", "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Fatalf("loop left the autorun worktree dirty, which strands the NEXT run: %q", status)
 	}
 	if status := repo.run(repo.dir, "git", "status", "--porcelain"); strings.TrimSpace(status) != "" {
-		t.Fatalf("loop left the worktree dirty, which strands the NEXT run: %q", status)
+		t.Fatalf("loop dirtied the source checkout instead of its slot worktree: %q", status)
 	}
-	if log := repo.log(); !strings.Contains(log, "autorun: verified iteration 1") {
-		t.Fatalf("no verified iteration commit: %q", log)
+	if log := repo.log(); strings.Contains(log, "autorun: verified iteration 1") {
+		t.Fatalf("source checkout should stay on main for this increment: %q", log)
 	}
 	if summary.FinalCommit == "" || !strings.Contains(summary.FinalSubject, autorunFinalCommitMarker) {
 		t.Fatalf("run ended without a marked final commit: %+v", summary)
 	}
 	// Signed for real — `-S` against a real key, not a stubbed git.
-	if sig := repo.run(repo.dir, "git", "log", "-1", "--pretty=%GT"); strings.TrimSpace(sig) == "" {
+	if sig := repo.run(workspace.WorkDir, "git", "log", "-1", "--pretty=%GT"); strings.TrimSpace(sig) == "" {
 		t.Fatal("final commit carries no signature trailer")
 	}
-	// --push means the origin has it, not just the local branch.
-	if remote := repo.run(repo.dir, "git", "log", "-1", "--oneline", "origin/main"); !strings.Contains(remote, autorunFinalCommitMarker) {
-		t.Fatalf("final commit was not pushed to origin: %q", remote)
+	// --push means the origin slot branch has it, not just the local worktree.
+	branch := autorunBranchName(filepath.Join(repo.dir, "tasks", "widget.md"), "codex")
+	if remote := repo.run(repo.dir, "git", "log", "-1", "--oneline", "origin/"+branch); !strings.Contains(remote, autorunFinalCommitMarker) {
+		t.Fatalf("final commit was not pushed to the slot branch: %q", remote)
 	}
 
 	// The two seats' conversation is on disk and committed — this is the sync
 	// channel, and it is what a human reads afterwards to see what happened.
-	progress, err := os.ReadFile(autorunProgressPath(opts.TaskPath, repo.dir))
+	progress, err := os.ReadFile(workspace.ProgressPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +229,7 @@ func TestAutorunClosedLoopConvergesWhenTheRunnerHasNothingToDo(t *testing.T) {
 	if _, err := exec.LookPath("ssh-keygen"); err != nil {
 		t.Skip("ssh-keygen not available")
 	}
+	autorunIsolateHome(t)
 	repo := newAutorunTestRepo(t)
 	repo.write("tasks/widget.md", "# Task\n\nAlready done.\n")
 	repo.run(repo.dir, "git", "add", "-A")
@@ -230,6 +255,10 @@ func TestAutorunClosedLoopConvergesWhenTheRunnerHasNothingToDo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	workspace, err := autorunWorkspaceFor(opts.TaskPath, opts.WorkDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if summary.FinishReason != autorunReasonConverged {
 		t.Fatalf("finish reason = %q, want %q — an idle runner was kicked to the iteration cap", summary.FinishReason, autorunReasonConverged)
 	}
@@ -243,8 +272,8 @@ func TestAutorunClosedLoopConvergesWhenTheRunnerHasNothingToDo(t *testing.T) {
 	if summary.Commits != 0 {
 		t.Fatalf("a runner that edited nothing produced %d verified commit(s) of note-churn", summary.Commits)
 	}
-	if !strings.Contains(repo.log(), autorunFinalCommitMarker) {
-		t.Fatalf("converged run did not record its final commit: %q", repo.log())
+	if log := repo.run(workspace.WorkDir, "git", "log", "--oneline"); !strings.Contains(log, autorunFinalCommitMarker) {
+		t.Fatalf("converged run did not record its final commit in the slot worktree: %q", log)
 	}
 }
 
@@ -269,6 +298,7 @@ func TestAutorunClosedLoopGateFailureLeavesRepoClean(t *testing.T) {
 	if _, err := exec.LookPath("ssh-keygen"); err != nil {
 		t.Skip("ssh-keygen not available")
 	}
+	autorunIsolateHome(t)
 	repo := newAutorunTestRepo(t)
 	repo.write("tasks/widget.md", "# Task\n\nCreate src/widget.txt.\n")
 	repo.run(repo.dir, "git", "add", "-A")
@@ -278,8 +308,13 @@ func TestAutorunClosedLoopGateFailureLeavesRepoClean(t *testing.T) {
 
 	originalKick := autorunKick
 	defer func() { autorunKick = originalKick }()
-	autorunKick = func(_ context.Context, _ autorunOptions, _ RunnerConfig, _ string, _ time.Duration) autorunCommandResult {
-		repo.write("src/widget.txt", "WRONG CONTENT\n") // will fail the gate
+	autorunKick = func(_ context.Context, opts autorunOptions, _ RunnerConfig, _ string, _ time.Duration) autorunCommandResult {
+		if err := os.MkdirAll(filepath.Join(opts.WorkDir, "src"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(opts.WorkDir, "src", "widget.txt"), []byte("WRONG CONTENT\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		return autorunCommandResult{Output: "done"}
 	}
 
@@ -294,17 +329,24 @@ func TestAutorunClosedLoopGateFailureLeavesRepoClean(t *testing.T) {
 	if err == nil {
 		t.Fatal("a gate failure must be reported, not swallowed")
 	}
+	workspace, wsErr := autorunWorkspaceFor(opts.TaskPath, opts.WorkDir, "")
+	if wsErr != nil {
+		t.Fatal(wsErr)
+	}
 	if summary.FinishReason != autorunReasonGate {
 		t.Fatalf("finish reason = %q, want %q", summary.FinishReason, autorunReasonGate)
 	}
 	if summary.Commits != 0 {
 		t.Fatalf("gate-failed work was committed anyway: %d commit(s)", summary.Commits)
 	}
+	if status := repo.run(workspace.WorkDir, "git", "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Fatalf("gate failure left the autorun worktree dirty; the next run cannot start: %q", status)
+	}
 	if status := repo.run(repo.dir, "git", "status", "--porcelain"); strings.TrimSpace(status) != "" {
-		t.Fatalf("gate failure left the worktree dirty; the next run cannot start: %q", status)
+		t.Fatalf("gate failure dirtied the source checkout instead of isolating it: %q", status)
 	}
 	// The rejected work is recoverable, not destroyed.
-	if stash := repo.run(repo.dir, "git", "stash", "list"); !strings.Contains(stash, "autorun") {
+	if stash := repo.run(workspace.WorkDir, "git", "stash", "list"); !strings.Contains(stash, "autorun") {
 		t.Fatalf("the doer's rejected work was not parked in a diagnostic stash: %q", stash)
 	}
 	// The run still ends with its marked final commit — that is what tells a
@@ -312,8 +354,8 @@ func TestAutorunClosedLoopGateFailureLeavesRepoClean(t *testing.T) {
 	if summary.FinalCommit == "" {
 		t.Fatal("a gate-blocked run must still record its final commit")
 	}
-	if after := strings.TrimSpace(repo.run(repo.dir, "git", "rev-parse", "HEAD")); after == before {
-		t.Fatal("no final commit landed at all")
+	if after := strings.TrimSpace(repo.run(repo.dir, "git", "rev-parse", "HEAD")); after != before {
+		t.Fatal("gate failure should not advance the source checkout during this increment")
 	}
 	if log := repo.log(); strings.Contains(log, "verified iteration") {
 		t.Fatalf("gate-failed iteration must not appear as verified: %q", log)
@@ -326,6 +368,7 @@ func TestAutorunClosedLoopScopeViolationStopsTheRun(t *testing.T) {
 	if _, err := exec.LookPath("ssh-keygen"); err != nil {
 		t.Skip("ssh-keygen not available")
 	}
+	autorunIsolateHome(t)
 	repo := newAutorunTestRepo(t)
 	repo.write("tasks/widget.md", "# Task\n")
 	repo.run(repo.dir, "git", "add", "-A")
@@ -334,9 +377,19 @@ func TestAutorunClosedLoopScopeViolationStopsTheRun(t *testing.T) {
 
 	originalKick := autorunKick
 	defer func() { autorunKick = originalKick }()
-	autorunKick = func(_ context.Context, _ autorunOptions, _ RunnerConfig, _ string, _ time.Duration) autorunCommandResult {
-		repo.write("src/widget.txt", "widget\n")    // in scope
-		repo.write("secrets/prod.env", "TOKEN=1\n") // NOT in scope
+	autorunKick = func(_ context.Context, opts autorunOptions, _ RunnerConfig, _ string, _ time.Duration) autorunCommandResult {
+		if err := os.MkdirAll(filepath.Join(opts.WorkDir, "src"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(opts.WorkDir, "src", "widget.txt"), []byte("widget\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(opts.WorkDir, "secrets"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(opts.WorkDir, "secrets", "prod.env"), []byte("TOKEN=1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		return autorunCommandResult{Output: "done"}
 	}
 
@@ -351,10 +404,17 @@ func TestAutorunClosedLoopScopeViolationStopsTheRun(t *testing.T) {
 	if err == nil || summary.FinishReason != autorunReasonScope {
 		t.Fatalf("out-of-scope edit was accepted: %v (reason %q)", err, summary.FinishReason)
 	}
-	if _, statErr := os.Stat(filepath.Join(repo.dir, "secrets", "prod.env")); !os.IsNotExist(statErr) {
-		t.Fatal("the out-of-scope file is still in the worktree; the rollback did not happen")
+	workspace, wsErr := autorunWorkspaceFor(opts.TaskPath, opts.WorkDir, "")
+	if wsErr != nil {
+		t.Fatal(wsErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace.WorkDir, "secrets", "prod.env")); !os.IsNotExist(statErr) {
+		t.Fatal("the out-of-scope file is still in the autorun worktree; the rollback did not happen")
 	}
 	if summary.Commits != 0 {
 		t.Fatalf("out-of-scope work was committed: %d", summary.Commits)
+	}
+	if status := repo.run(repo.dir, "git", "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Fatalf("scope rollback dirtied the source checkout instead of isolating it: %q", status)
 	}
 }

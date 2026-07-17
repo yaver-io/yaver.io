@@ -54,6 +54,7 @@ func TestAutorunExplicitSeatsBeatTaskFile(t *testing.T) {
 
 // A run whose two seats hold the same runner is a misconfiguration, not a split.
 func TestAutorunRejectsSameRunnerInBothSeats(t *testing.T) {
+	autorunIsolateHome(t)
 	workDir := t.TempDir()
 	taskPath := filepath.Join(workDir, "task.md")
 	if err := os.WriteFile(taskPath, []byte("# Task\n"), 0644); err != nil {

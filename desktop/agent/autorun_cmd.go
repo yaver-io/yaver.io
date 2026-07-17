@@ -146,6 +146,9 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 		return summary, err
 	}
 	opts.TaskPath = taskPath
+	if opts.WorkDir, err = filepath.Abs(opts.WorkDir); err != nil {
+		return summary, err
+	}
 	taskBytes, err := os.ReadFile(taskPath)
 	if err != nil {
 		return summary, fmt.Errorf("read task: %w", err)
@@ -158,14 +161,13 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 	if r := strings.TrimSpace(opts.Runner); (r == "" || r == "auto") && seats.Doer != "" {
 		opts.Runner = seats.Doer
 	}
-	progressPath := autorunProgressPath(taskPath, opts.WorkDir)
-	initial, err := autorunGitChanges(ctx, opts.WorkDir)
+	workspace, err := autorunPrepareWorkspace(ctx, opts.TaskPath, opts.WorkDir, opts.Runner)
 	if err != nil {
 		return summary, err
 	}
-	if len(initial) > 0 {
-		return summary, fmt.Errorf("worktree must be clean before autorun; found: %s", strings.Join(initial, ", "))
-	}
+	opts.WorkDir = workspace.WorkDir
+	opts.TaskPath = workspace.TaskPath
+	progressPath := workspace.ProgressPath
 	runner, err := selectAutorunRunner(opts.WorkDir, opts.Runner)
 	if err != nil {
 		return summary, err
@@ -183,8 +185,8 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 			return summary, fmt.Errorf("master and doer are both %q; the split exists to put two different runners in the two seats", master.RunnerID)
 		}
 	}
-	if pull := autorunExec(ctx, "git", []string{"pull", "--ff-only"}, opts.WorkDir); pull.Err != nil {
-		return summary, fmt.Errorf("git pull --ff-only: %w: %s", pull.Err, strings.TrimSpace(pull.Output))
+	if fetch := autorunExec(ctx, "git", []string{"fetch", "origin"}, opts.WorkDir); fetch.Err != nil {
+		return summary, fmt.Errorf("git fetch origin: %w: %s", fetch.Err, strings.TrimSpace(fetch.Output))
 	}
 
 	reason, runErr := autorunLoop(ctx, opts, runner, master, string(taskBytes), progressPath, &summary)
@@ -235,8 +237,8 @@ func finalizeAutorun(ctx context.Context, opts autorunOptions, runnerID, progres
 		summary.FinalCommit = strings.TrimSpace(head.Output)
 	}
 	if opts.Push {
-		if pushResult := autorunExec(ctx, "git", []string{"push"}, opts.WorkDir); pushResult.Err != nil {
-			return fmt.Errorf("push final commit: %w: %s", pushResult.Err, strings.TrimSpace(pushResult.Output))
+		if err := autorunPushBranch(ctx, opts.WorkDir); err != nil {
+			return fmt.Errorf("push final commit: %w", err)
 		}
 	}
 	return nil
@@ -389,8 +391,8 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			}
 			summary.Commits++
 			if opts.Push {
-				if pushResult := autorunExec(ctx, "git", []string{"push"}, opts.WorkDir); pushResult.Err != nil {
-					return autorunReasonGate, fmt.Errorf("push: %w: %s", pushResult.Err, strings.TrimSpace(pushResult.Output))
+				if err := autorunPushBranch(ctx, opts.WorkDir); err != nil {
+					return autorunReasonGate, fmt.Errorf("push: %w", err)
 				}
 			}
 		}
