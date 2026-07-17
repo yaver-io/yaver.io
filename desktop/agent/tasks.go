@@ -316,7 +316,15 @@ var cachedModels []BackendModel
 // LoadRunnersFromBackend populates builtinRunners from Convex backend data.
 func LoadRunnersFromBackend(runners []backendRunnerFull) {
 	for _, r := range runners {
-		if r.Command == "" || r.RunnerID == "custom" {
+		// Normalize BEFORE anything keys off the id. Convex ships Claude as
+		// "claude-code" while builtinRunners is keyed "claude", so the raw id
+		// missed the builtin lookup below and registered a second Claude — and
+		// the runner list dedups on the raw id too (httpserver.go:3561), so
+		// every picker showed "Claude Code" twice. Normalizing on ingestion is
+		// the boundary fix: an alias can never enter the map as a key, which
+		// closes the list, the MCP list_runners verb, and env_profile at once.
+		id := normalizeRunnerID(r.RunnerID)
+		if r.Command == "" || id == "custom" {
 			continue // skip custom runner template
 		}
 		// Shipped runners (claude / codex / opencode) keep the local
@@ -329,14 +337,14 @@ func LoadRunnersFromBackend(runners []backendRunnerFull) {
 		// after the slice guard, opencode interprets the prompt as a
 		// filename and exits with ENAMETOOLONG. Argv for shipped
 		// runners must come from the binary that ships them.
-		if IsSupportedRunner(r.RunnerID) {
-			if existing, ok := builtinRunners[r.RunnerID]; ok {
+		if IsSupportedRunner(id) {
+			if existing, ok := builtinRunners[id]; ok {
 				log.Printf("  Runner loaded: %s (%s) — using local builtin (ignoring backend args)", existing.Name, existing.RunnerID)
 				continue
 			}
 		}
 		rc := RunnerConfig{
-			RunnerID:        r.RunnerID,
+			RunnerID:        id,
 			Name:            r.Name,
 			Command:         r.Command,
 			OutputMode:      r.OutputMode,
@@ -349,7 +357,7 @@ func LoadRunnersFromBackend(runners []backendRunnerFull) {
 		if r.ResumeArgs != "" {
 			_ = json.Unmarshal([]byte(r.ResumeArgs), &rc.ResumeArgs)
 		}
-		builtinRunners[r.RunnerID] = rc
+		builtinRunners[id] = rc
 		log.Printf("  Runner loaded: %s (%s)", rc.Name, rc.RunnerID)
 	}
 }

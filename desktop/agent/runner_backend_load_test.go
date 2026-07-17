@@ -12,14 +12,17 @@ import (
 // -> true — but then looks the row up with the RAW id, which misses, so the
 // `continue` never fires and the backend row is injected as a SECOND runner.
 //
-// That injected row carries the backend's argv, which is `-p` headless. `-p`
-// makes claude report an OAuth failure on a box whose TUI is signed in, so a
-// runner spawned from it fails auth for a reason that looks nothing like the
-// cause. Argv for a shipped runner must come from the binary that ships it —
-// which is exactly what the guard was written to enforce, and what the raw-id
-// lookup silently defeats.
+// The shadow row is not inert. GetRunnerConfig normalizes (tasks.go:237) so it
+// can't be SELECTED through that path, but the runner LIST is built by ranging
+// the map ("Any remaining runners from Convex", httpserver.go:3607) and dedups
+// on the RAW id (seenIDs[r.RunnerID], :3561). "claude" and "claude-code" are
+// different keys, so every runner picker — web, mobile, and the list_runners
+// MCP verb (:5977) — shows "Claude Code" twice whenever /config is reachable.
 //
-// Both of these lock the guard against the aliasing that broke it.
+// The root cause is that this codebase normalizes for BEHAVIOUR but not for
+// IDENTITY: two lines below the raw-id dedup, the same row is asked
+// normalizeRunnerID(r.RunnerID) == "claude" (:3588). The boundary fix is to
+// normalize on ingestion, so an alias can never enter the map as a key.
 func TestLoadRunnersFromBackend_ClaudeCodeAliasDoesNotOverrideBuiltin(t *testing.T) {
 	restore := snapshotBuiltinRunners()
 	defer restore()
@@ -39,16 +42,13 @@ func TestLoadRunnersFromBackend_ClaudeCodeAliasDoesNotOverrideBuiltin(t *testing
 			"the alias must collapse onto the builtin, not shadow it")
 	}
 
+	// Argv for a shipped runner must come from the binary that ships it — the
+	// backend rows are snapshots from older CLI releases (see the opencode
+	// rename note at tasks.go:320).
 	got := builtinRunners["claude"]
 	if strings.Join(got.Args, " ") != strings.Join(before.Args, " ") {
 		t.Errorf("builtin claude argv was overwritten by the backend row.\n got: %v\nwant: %v",
 			got.Args, before.Args)
-	}
-	for _, arg := range got.Args {
-		if arg == "-p" {
-			t.Error("builtin claude argv contains `-p` — headless mode reports a false " +
-				"OAuth failure on a box whose TUI is signed in; argv must come from the builtin")
-		}
 	}
 }
 
