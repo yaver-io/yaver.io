@@ -79,7 +79,15 @@ even though its React key is stable. Address `ANGLES` by slot index from
 `assignSlots`, not by position in a sorted list. Same bug, same fix, in
 `RemoteWindowStack` (`:194`) and `StatusStrip` (`:282`).
 
-`agentSlots.ts` is pure and framework-free precisely so the arc can use it.
+`agentSlots.ts` is pure and framework-free precisely so the arc can use it —
+but **do not import it across packages.** `web/` reaching into
+`../../../../mobile/src/lib/agentSlots` fails the gate; web and mobile are
+separate TypeScript projects with separate tsconfigs. Port the pure functions
+(`assignSlots`, `buildSlots`, `overflowItems`, `Slot`, `DEFAULT_SLOT_COUNT`) to
+`web/lib/agentSlots.ts`, exactly as `web/lib/agentStatus.ts` already mirrors the
+mobile module. Duplication across the two packages is the accepted shape here —
+`agentStatus.ts` set that precedent deliberately. Keep the React binding
+(`useAgentSlots`) mobile-only; the arc drives the pure `assignSlots` itself.
 
 ### 4. Give `autorun_status` a route, then a screen
 
