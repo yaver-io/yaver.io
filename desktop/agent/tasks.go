@@ -1843,7 +1843,7 @@ func CheckRunnerBinary(command string) error {
 		log.Printf("[runner-check] %s found at %s (not in default PATH — using expanded search)", command, path)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runnerVersionProbeTimeout)
 	defer cancel()
 	args := []string{"--version"}
 	switch filepath.Base(path) {
@@ -1854,6 +1854,24 @@ func CheckRunnerBinary(command string) error {
 	cmd.Env = append(os.Environ(), "PATH="+expandedPath())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// A runner that ANSWERED and then failed to exit is working.
+		//
+		// The question this probe asks is "does this binary run?", and a version
+		// string IS the answer — whether the process then lingers is a fact about
+		// the CLI's shutdown, not about its health. exec.CommandContext SIGKILLs on
+		// deadline, so a slow-exiting runner came back as `signal: killed` and was
+		// declared broken while its version sat right there in the output.
+		//
+		// That was not theoretical: opencode 1.14.41 printed its version and did
+		// not exit, so this returned `opencode found but not working: signal:
+		// killed (output: 1.14.41)` at exactly the 10s mark and killed a whole
+		// autorun — with the answer in hand. Trusting the answer over the exit is
+		// the difference between a loop that runs and one that gives up.
+		if ctx.Err() == context.DeadlineExceeded && looksLikeRunnerVersion(out) {
+			log.Printf("[runner-check] %s at %s — answered %q but did not exit within %s; treating as ready",
+				command, path, strings.TrimSpace(string(out)), runnerVersionProbeTimeout)
+			return nil
+		}
 		return fmt.Errorf("%s found but not working: %v (output: %s)", command, err, strings.TrimSpace(string(out)))
 	}
 	if strings.TrimSpace(string(out)) == "" {
@@ -1862,6 +1880,24 @@ func CheckRunnerBinary(command string) error {
 		log.Printf("[runner-check] %s at %s — %s", command, path, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// runnerVersionProbeTimeout bounds the `--version` probe. It is a liveness
+// bound, not a correctness one: a runner that answers and lingers is still a
+// working runner (see the DeadlineExceeded branch above).
+const runnerVersionProbeTimeout = 10 * time.Second
+
+// looksLikeRunnerVersion reports whether a probe's output is a real answer rather
+// than noise. Deliberately narrow: a version has a digit in it. A binary that
+// hangs while printing a banner, a stack trace, or nothing at all has not
+// answered, and must still be reported broken — "it wrote something before we
+// killed it" is not health.
+func looksLikeRunnerVersion(out []byte) bool {
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return false
+	}
+	return strings.ContainsAny(s, "0123456789")
 }
 
 // findInExpandedPath searches for a command in common binary locations beyond PATH.
