@@ -18,6 +18,14 @@ const managedPatchValidator = v.object({
   llm:       v.optional(v.union(v.boolean(), v.null())),
 });
 
+const deployPreferencePatchValidator = v.object({
+  web: v.optional(v.union(v.string(), v.null())),
+  convex: v.optional(v.union(v.string(), v.null())),
+  npm: v.optional(v.union(v.string(), v.null())),
+  testflight: v.optional(v.union(v.string(), v.null())),
+  play: v.optional(v.union(v.string(), v.null())),
+});
+
 // mergeManagedPatch applies a caller's patch to the existing managed
 // object. Booleans win; nulls clear; undefined keeps the previous
 // value. Returns the new object with empty keys elided so we don't
@@ -34,6 +42,24 @@ function mergeManagedPatch(
     if (v === null) {
       delete merged[k];
     } else if (typeof v === "boolean") {
+      merged[k] = v;
+    }
+  }
+  return Object.keys(merged).length === 0 ? undefined : merged;
+}
+
+function mergeDeployPreferencePatch(
+  existing: Record<string, string | undefined> | undefined,
+  patch: Record<string, string | null | undefined>,
+): Record<string, string> | undefined {
+  const merged: Record<string, string> = {};
+  for (const [k, v] of Object.entries(existing ?? {})) {
+    if (typeof v === "string" && v) merged[k] = v;
+  }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) {
+      delete merged[k];
+    } else if (typeof v === "string" && v) {
       merged[k] = v;
     }
   }
@@ -146,6 +172,7 @@ export const set = internalMutation({
     // subsystem(s) they're changing; unspecified keys retain their
     // existing value. Null on any key clears that subsystem.
     managed: v.optional(managedPatchValidator),
+    deployPreferences: v.optional(deployPreferencePatchValidator),
   },
   handler: async (ctx, args) => {
     const normalizedPrimaryDeviceId = await normalizeOwnedDeviceId(
@@ -239,6 +266,12 @@ export const set = internalMutation({
         args.managed as Record<string, boolean | null | undefined>,
       );
     }
+    if (args.deployPreferences !== undefined) {
+      patch.deployPreferences = mergeDeployPreferencePatch(
+        existing?.deployPreferences as Record<string, string | undefined> | undefined,
+        args.deployPreferences as Record<string, string | null | undefined>,
+      );
+    }
     if (existing) {
       await ctx.db.patch(existing._id, patch);
     } else {
@@ -284,6 +317,7 @@ export const setByToken = mutation({
       }),
     ),
     managed: v.optional(managedPatchValidator),
+    deployPreferences: v.optional(deployPreferencePatchValidator),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -380,6 +414,12 @@ export const setByToken = mutation({
         args.managed as Record<string, boolean | null | undefined>,
       );
     }
+    if (args.deployPreferences !== undefined) {
+      patch.deployPreferences = mergeDeployPreferencePatch(
+        existing?.deployPreferences as Record<string, string | undefined> | undefined,
+        args.deployPreferences as Record<string, string | null | undefined>,
+      );
+    }
     if (existing) {
       await ctx.db.patch(existing._id, patch);
     } else {
@@ -469,9 +509,10 @@ export const seedDefaults = internalMutation({
           relayUrl: defaultRelayUrl,
           relayPassword: randomHex(24),
           moreOptionalTools: [],
+          deployPreferences: { web: "auto", convex: "auto", npm: "ask", testflight: "ask", play: "ask" },
         });
         seeded++;
-      } else if (!existing.relayPassword || existing.relayPassword === platformRelayPassword || existing.relayUrl !== defaultRelayUrl || existing.moreOptionalTools === undefined) {
+      } else if (!existing.relayPassword || existing.relayPassword === platformRelayPassword || existing.relayUrl !== defaultRelayUrl || existing.moreOptionalTools === undefined || existing.deployPreferences === undefined) {
         // Keep relay URL synced to the platform free relay, but never
         // copy the platform/shared relay password into user rows. Public
         // clients get per-user random relay credentials.
@@ -484,6 +525,9 @@ export const seedDefaults = internalMutation({
         }
         if (existing.moreOptionalTools === undefined) {
           patch.moreOptionalTools = [];
+        }
+        if (existing.deployPreferences === undefined) {
+          patch.deployPreferences = { web: "auto", convex: "auto", npm: "ask", testflight: "ask", play: "ask" };
         }
         if (Object.keys(patch).length > 0) {
           await ctx.db.patch(existing._id, patch);

@@ -20,12 +20,14 @@ package main
 //     business, not another guest's.
 
 import (
-	"crypto/rand"
+	cryptorand "crypto/rand"
+	"encoding/json"
 	"encoding/hex"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -45,10 +47,12 @@ const deployDiskQuotaBytes = 500 * 1024 * 1024
 // the endpoint just serializes it verbatim.
 type DeployRun struct {
 	ID          string           `json:"id"`
+	Slot        string           `json:"slot,omitempty"`
 	App         string           `json:"app"`
 	Target      string           `json:"target"`
 	Stack       string           `json:"stack,omitempty"`
 	Path        string           `json:"path,omitempty"`
+	Status      string           `json:"status,omitempty"`
 	RequestedBy string           `json:"requested_by,omitempty"` // "owner" or guest userID
 	IsGuest     bool             `json:"is_guest,omitempty"`
 	StartedAt   int64            `json:"started_at"` // unix millis
@@ -98,6 +102,7 @@ func NewDeployHistory(maxLen int) *DeployHistory {
 			h.logRoot = ""
 		}
 	}
+	h.loadPersistedRuns()
 	return h
 }
 
@@ -112,7 +117,7 @@ func (h *DeployHistory) LogRoot() string {
 // enough for a few hundred runs per agent lifetime.
 func NewRunID() string {
 	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := cryptorand.Read(b); err != nil {
 		// Fallback: nanosecond clock. Never happens on any real OS,
 		// but we don't want to panic in a deploy path.
 		t := time.Now().UnixNano()
@@ -136,7 +141,14 @@ func (h *DeployHistory) Start(run DeployRun) *DeployRun {
 	if run.StartedAt == 0 {
 		run.StartedAt = time.Now().UnixMilli()
 	}
-	run.InProgress = true
+	if strings.TrimSpace(run.Slot) == "" {
+		run.Slot = deploySlot(run.Target)
+	}
+	if strings.TrimSpace(run.Status) == "" {
+		run.Status = runStatusRunning
+	}
+	run.InProgress = deployStatusInProgress(run.Status)
+	run.OK = deployStatusOK(run.Status)
 	rp := &run
 	if h.logRoot != "" {
 		runDir := filepath.Join(h.logRoot, rp.ID)
@@ -155,6 +167,7 @@ func (h *DeployHistory) Start(run DeployRun) *DeployRun {
 	}
 	h.runs = append(h.runs, rp)
 	h.byID[rp.ID] = rp
+	h.persistRunLocked(rp)
 	if len(h.runs) > h.maxLen {
 		evicted := h.runs[0]
 		delete(h.byID, evicted.ID)
@@ -164,6 +177,7 @@ func (h *DeployHistory) Start(run DeployRun) *DeployRun {
 		}
 		h.runs = h.runs[1:]
 	}
+	h.sortRunsLocked()
 	return rp
 }
 
@@ -197,6 +211,7 @@ func (h *DeployHistory) Append(id string, text string) {
 		}
 		r.LogBytes += int64(n)
 	}
+	h.persistRunLocked(r)
 }
 
 // Finish marks a run complete and runs error classification against
@@ -228,6 +243,14 @@ func (h *DeployHistory) Finish(id string, exitCode int, timedOut bool) {
 	r.ErrorClass = class
 	r.OK = exitCode == 0 || treatAsOK
 	r.InProgress = false
+	if r.OK {
+		r.Status = runStatusCompleted
+	} else if timedOut {
+		r.Status = statusBlocked
+	} else {
+		r.Status = statusFailed
+	}
+	h.persistRunLocked(r)
 	// Opportunistic GC: if the on-disk logs are getting chunky, drop
 	// oldest until we're under quota again. Runs on Finish because
 	// that's when we know the final size of the just-closed log.
@@ -312,11 +335,7 @@ func (h *DeployHistory) List(limit int, guestFilter string) []DeployRun {
 			break
 		}
 	}
-	// Already descending by insertion order; re-sort defensively in
-	// case a future path mutates StartedAt mid-flight.
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].StartedAt > out[j].StartedAt
-	})
+	sortDeployRuns(out)
 	return out
 }
 
@@ -336,4 +355,104 @@ func (h *DeployHistory) Get(id string, guestFilter string) (DeployRun, bool) {
 		return DeployRun{}, false
 	}
 	return *r, true
+}
+
+func (h *DeployHistory) metaPath(id string) string {
+	if h.logRoot == "" || strings.TrimSpace(id) == "" {
+		return ""
+	}
+	return filepath.Join(h.logRoot, id, "meta.json")
+}
+
+func (h *DeployHistory) persistRunLocked(run *DeployRun) {
+	path := h.metaPath(run.ID)
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return
+	}
+	meta := *run
+	meta.outputBuf = nil
+	meta.logFile = nil
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0600)
+}
+
+func (h *DeployHistory) loadPersistedRuns() {
+	if h.logRoot == "" {
+		return
+	}
+	items, err := os.ReadDir(h.logRoot)
+	if err != nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, item := range items {
+		if !item.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(h.logRoot, item.Name(), "meta.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+		var run DeployRun
+		if err := json.Unmarshal(data, &run); err != nil {
+			continue
+		}
+		if run.ID == "" {
+			run.ID = item.Name()
+		}
+		if strings.TrimSpace(run.Slot) == "" {
+			run.Slot = deploySlot(run.Target)
+		}
+		if strings.TrimSpace(run.Status) == "" {
+			switch {
+			case run.InProgress:
+				run.Status = runStatusRunning
+			case run.OK:
+				run.Status = runStatusCompleted
+			default:
+				run.Status = statusFailed
+			}
+		}
+		run.InProgress = deployStatusInProgress(run.Status)
+		run.OK = deployStatusOK(run.Status)
+		rp := run
+		h.runs = append(h.runs, &rp)
+		h.byID[rp.ID] = &rp
+	}
+	h.sortRunsLocked()
+	if len(h.runs) > h.maxLen {
+		h.runs = h.runs[len(h.runs)-h.maxLen:]
+	}
+}
+
+func (h *DeployHistory) sortRunsLocked() {
+	sort.SliceStable(h.runs, func(i, j int) bool {
+		if h.runs[i].Slot != h.runs[j].Slot {
+			return h.runs[i].Slot < h.runs[j].Slot
+		}
+		if h.runs[i].StartedAt != h.runs[j].StartedAt {
+			return h.runs[i].StartedAt > h.runs[j].StartedAt
+		}
+		return h.runs[i].ID < h.runs[j].ID
+	})
+}
+
+func sortDeployRuns(runs []DeployRun) {
+	sort.SliceStable(runs, func(i, j int) bool {
+		if runs[i].Slot != runs[j].Slot {
+			return runs[i].Slot < runs[j].Slot
+		}
+		if runs[i].StartedAt != runs[j].StartedAt {
+			return runs[i].StartedAt > runs[j].StartedAt
+		}
+		return runs[i].ID < runs[j].ID
+	})
 }

@@ -923,6 +923,13 @@ export default defineSchema({
       voice:     v.optional(v.boolean()),
       llm:       v.optional(v.boolean()),
     })),
+    deployPreferences: v.optional(v.object({
+      web: v.optional(v.string()),
+      convex: v.optional(v.string()),
+      npm: v.optional(v.string()),
+      testflight: v.optional(v.string()),
+      play: v.optional(v.string()),
+    })),
     // Per-capability à-la-carte opt-in for the metered Yaver-managed
     // services (distinct from `managed` above, which only picks WHO
     // hosts a subsystem). This is the user's explicit "charge me to run

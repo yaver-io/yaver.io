@@ -237,14 +237,25 @@ type autorunSeats struct {
 	Doer   string
 }
 
+type autorunTaskConfig struct {
+	Seats  autorunSeats
+	Needs  []string
+	Deploy autorunDeployConfig
+}
+
+type autorunDeployConfig struct {
+	Mode    string
+	Targets []string
+}
+
 // autorunSeatsFromTask parses the front-matter seat assignment. Unknown keys and
 // malformed headers are ignored: a task file is a document first, and a typo in
 // it must not stop a run the operator fully specified on the command line.
-func autorunSeatsFromTask(task string) autorunSeats {
-	var seats autorunSeats
+func autorunTaskConfigFromTask(task string) autorunTaskConfig {
+	var cfg autorunTaskConfig
 	lines := strings.Split(task, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return seats
+		return cfg
 	}
 	for _, line := range lines[1:] {
 		line = strings.TrimSpace(line)
@@ -258,12 +269,63 @@ func autorunSeatsFromTask(task string) autorunSeats {
 		value = strings.TrimSpace(value)
 		switch strings.ToLower(strings.TrimSpace(key)) {
 		case "master":
-			seats.Master = value
+			cfg.Seats.Master = value
 		case "doer", "runner":
-			seats.Doer = value
+			cfg.Seats.Doer = value
+		case "needs":
+			cfg.Needs = autorunParseFrontMatterList(value)
+		case "deploy":
+			cfg.Deploy = autorunParseDeployConfig(value)
 		}
 	}
-	return seats
+	return cfg
+}
+
+func autorunSeatsFromTask(task string) autorunSeats {
+	return autorunTaskConfigFromTask(task).Seats
+}
+
+func autorunParseFrontMatterList(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		value = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "["), "]"))
+	}
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		part = strings.Trim(strings.TrimSpace(part), `"'`)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		out = append(out, part)
+	}
+	return out
+}
+
+func autorunParseDeployConfig(value string) autorunDeployConfig {
+	value = strings.TrimSpace(value)
+	switch value {
+	case "", "auto":
+		return autorunDeployConfig{Mode: "auto"}
+	case "none":
+		return autorunDeployConfig{Mode: "none"}
+	}
+	targets := autorunParseFrontMatterList(value)
+	if len(targets) == 0 {
+		return autorunDeployConfig{Mode: "auto"}
+	}
+	return autorunDeployConfig{Mode: "targets", Targets: targets}
 }
 
 // autorunMarksDone reports whether text carries the DONE marker — a line that is

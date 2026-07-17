@@ -81,7 +81,7 @@ func RunDeploy(projectDir string, trigger string) (*DeployRecord, error) {
 	id := fmt.Sprintf("dep_%s", time.Now().Format("20060102_150405"))
 	rec := &DeployRecord{
 		ID: id, ProjectDir: projectDir, Branch: cfg.Branch,
-		StartedAt: time.Now(), Status: "running", Trigger: trigger,
+		StartedAt: time.Now(), Status: runStatusRunning, Trigger: trigger,
 	}
 	// Capture previous HEAD so rollback can replay it.
 	if prev, err := runIn(projectDir, "git", "rev-parse", "HEAD"); err == nil {
@@ -187,7 +187,7 @@ func RunDeploy(projectDir string, trigger string) (*DeployRecord, error) {
 		globalNotifyManager.NotifyAgentEvent("Deploy succeeded", fmt.Sprintf("%s @ %s", filepath.Base(projectDir), rec.Commit[:8]))
 	}
 
-	return finishDeploy(rec, "success", ""), nil
+	return finishDeploy(rec, runStatusCompleted, ""), nil
 }
 
 func rollback(rec *DeployRecord, reason string) (*DeployRecord, error) {
@@ -205,7 +205,7 @@ func rollback(rec *DeployRecord, reason string) (*DeployRecord, error) {
 			rec.Logs = append(rec.Logs, "rolled back to "+rec.PrevCommit[:8])
 		}
 	}
-	return finishDeploy(rec, "rolled-back", reason), nil
+	return finishDeploy(rec, runStatusRolledBack, reason), nil
 }
 
 func finishDeploy(rec *DeployRecord, status, _ string) *DeployRecord {

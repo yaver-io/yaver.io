@@ -140,25 +140,13 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	}
 	switch strings.ToLower(strings.TrimSpace(p.Target)) {
 	case "cloud", "yaver-cloud":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call cloud_deploy MCP tool — handles plan + provision + push",
-			"mcpTool": "cloud_deploy",
-		}}
+		return OpsResult{OK: false, Code: "unimplemented", Error: "cloud deploy is not implemented on ops deploy; use cloud_deploy instead", Initial: map[string]interface{}{"mcpTool": "cloud_deploy"}}
 	case "platform":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call platform_deploy MCP tool — Yaver-managed apps lifecycle",
-			"mcpTool": "platform_deploy",
-		}}
+		return OpsResult{OK: false, Code: "unimplemented", Error: "platform deploy is not implemented on ops deploy; use platform_deploy instead", Initial: map[string]interface{}{"mcpTool": "platform_deploy"}}
 	case "testflight":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call mobile_project_build with {platform: \"ios\", track: \"testflight\"} — handles archive + export + App Store Connect upload",
-			"mcpTool": "mobile_project_build",
-		}}
+		return OpsResult{OK: false, Code: "unimplemented", Error: "testflight deploy is not implemented on ops deploy; use mobile_project_build instead", Initial: map[string]interface{}{"mcpTool": "mobile_project_build"}}
 	case "playstore", "play":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call mobile_project_build with {platform: \"android\", track: \"internal\"} — handles AAB + service-account upload",
-			"mcpTool": "mobile_project_build",
-		}}
+		return OpsResult{OK: false, Code: "unimplemented", Error: "playstore deploy is not implemented on ops deploy; use mobile_project_build instead", Initial: map[string]interface{}{"mcpTool": "mobile_project_build"}}
 	}
 
 	cmd, tool, err := resolveDeployCommand(p, stackDetect(workDir))
@@ -189,11 +177,14 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		initial["inferredTarget"] = resolvedTarget
 		initial["inferredFrom"] = inferredFrom
 	}
-	return OpsResult{
-		OK:       true,
-		StreamID: sess.ID,
-		Initial:  initial,
+	final := waitOpsExec(sess)
+	for k, v := range final {
+		initial[k] = v
 	}
+	ok, _ := initial["ok"].(bool)
+	code, _ := initial["code"].(string)
+	errText, _ := initial["error"].(string)
+	return OpsResult{OK: ok, Code: code, Error: errText, Initial: initial}
 }
 
 type deployResolveError struct {
@@ -386,15 +377,9 @@ func opsDeployRollbackHandler(c OpsContext, p opsDeployPayload, extra string) Op
 	case "playstore", "play":
 		return OpsResult{OK: false, Code: "no_rollback", Error: "Play Store has no rollback — submit a new build with a higher versionCode (or use a staged-rollout halt)"}
 	case "cloud", "yaver-cloud":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call cloud_deploy MCP tool with rollback=true — Yaver cloud manages its own snapshot-based rollback",
-			"mcpTool": "cloud_deploy",
-		}}
+		return OpsResult{OK: false, Code: "unimplemented", Error: "cloud rollback is not implemented on ops deploy; use cloud_deploy instead", Initial: map[string]interface{}{"mcpTool": "cloud_deploy"}}
 	case "platform":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call platform_deploy MCP tool with rollback=true — Yaver platform handles app rollback",
-			"mcpTool": "platform_deploy",
-		}}
+		return OpsResult{OK: false, Code: "unimplemented", Error: "platform rollback is not implemented on ops deploy; use platform_deploy instead", Initial: map[string]interface{}{"mcpTool": "platform_deploy"}}
 	default:
 		return OpsResult{OK: false, Code: "bad_payload", Error: "rollback not supported for target: " + p.Target}
 	}
@@ -403,18 +388,70 @@ func opsDeployRollbackHandler(c OpsContext, p opsDeployPayload, extra string) Op
 	if err != nil {
 		return OpsResult{OK: false, Code: "exec_failed", Error: err.Error()}
 	}
-	return OpsResult{
-		OK:       true,
-		StreamID: sess.ID,
-		Initial: map[string]interface{}{
-			"sessionId":  sess.ID,
-			"tool":       tool,
-			"command":    strings.TrimSpace(cmd),
-			"workDir":    workDir,
-			"deployment": deployment,
-			"sseHint":    fmt.Sprintf("/exec/%s/stream for live rollback output", sess.ID),
-		},
+	initial := map[string]interface{}{
+		"sessionId":  sess.ID,
+		"tool":       tool,
+		"command":    strings.TrimSpace(cmd),
+		"workDir":    workDir,
+		"deployment": deployment,
+		"sseHint":    fmt.Sprintf("/exec/%s/stream for live rollback output", sess.ID),
 	}
+	final := waitOpsExec(sess)
+	for k, v := range final {
+		initial[k] = v
+	}
+	ok, _ := initial["ok"].(bool)
+	code, _ := initial["code"].(string)
+	errText, _ := initial["error"].(string)
+	return OpsResult{OK: ok, Code: code, Error: errText, Initial: initial}
+}
+
+func waitOpsExec(sess *ExecSession) map[string]interface{} {
+	<-sess.doneCh
+	sess.mu.RLock()
+	defer sess.mu.RUnlock()
+	out := map[string]interface{}{
+		"status":     string(sess.Status),
+		"finishedAt": sess.FinishedAt,
+	}
+	if sess.ExitCode != nil {
+		out["exitCode"] = *sess.ExitCode
+	}
+	const tail = 4096
+	stdout := sess.Stdout
+	stderr := sess.Stderr
+	if len(stdout) > tail {
+		stdout = stdout[len(stdout)-tail:]
+	}
+	if len(stderr) > tail {
+		stderr = stderr[len(stderr)-tail:]
+	}
+	if strings.TrimSpace(stdout) != "" {
+		out["stdoutTail"] = stdout
+	}
+	if strings.TrimSpace(stderr) != "" {
+		out["stderrTail"] = stderr
+	}
+	switch sess.Status {
+	case ExecStatusCompleted:
+		out["ok"] = true
+		out["code"] = ""
+	case ExecStatusKilled:
+		out["ok"] = false
+		out["code"] = statusBlocked
+		out["error"] = "deploy timed out"
+	default:
+		out["ok"] = false
+		out["code"] = "exec_failed"
+		if strings.TrimSpace(stderr) != "" {
+			out["error"] = strings.TrimSpace(stderr)
+		} else if strings.TrimSpace(stdout) != "" {
+			out["error"] = strings.TrimSpace(stdout)
+		} else {
+			out["error"] = "deploy failed"
+		}
+	}
+	return out
 }
 
 // argContainsShellMetacharacter reports whether s contains any byte
