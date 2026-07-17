@@ -1,6 +1,19 @@
 ---
-doer: claude
+doer: codex
 ---
+
+<!-- No `master:` seat: this task's ground truth is already audited and inlined
+below, so the planning seat would only re-derive what the doc states. The doer
+reads the phases and the gate is the oracle.
+
+Seat is codex, not claude, and deliberately so: the mini's claude credential
+record has `expiresAt: 0` (epoch) despite a present keychain item, a present
+~/.claude/.credentials.json, a live refreshToken, and subscriptionType=max. So
+every readiness probe reads it as expired and autorun fails over — correctly,
+and with a recorded heal event. `claude --version` succeeding proves the binary
+exists, not that it is signed in. Re-auth on the mini with
+`claude auth login --claudeai` before ever setting this seat back to claude. -->
+
 
 # Task: user-authored routine agents (normie agents on someone else's box)
 
