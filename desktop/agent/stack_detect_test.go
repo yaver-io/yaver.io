@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 )
 
 // writeTree materialises a fixture project from a path→content map.
@@ -30,6 +32,10 @@ func hasTag(d *StackDetection, tag string) bool {
 		}
 	}
 	return false
+}
+
+func hasFramework(d *StackDetection, framework string) bool {
+	return slices.Contains(d.Frameworks, framework)
 }
 
 func findTarget(d *StackDetection, id string) *DetectedTarget {
@@ -121,6 +127,27 @@ func TestStackDetectExpoBeatsReactNative(t *testing.T) {
 	}
 }
 
+func TestStackDetectSolitoReportsAllFrameworks(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json":   `{"name":"app","dependencies":{"expo":"51","react-native":"0.74","react":"18","next":"14"}}`,
+		"app.json":       `{"expo":{"name":"app"}}`,
+		"next.config.js": "module.exports = {}\n",
+	})
+
+	d := stackDetect(root)
+	if d.Framework != FwExpo {
+		t.Fatalf("primary framework = %q, want %q", d.Framework, FwExpo)
+	}
+	for _, want := range []string{FwExpo, FwReactNative, FwNextJS, FwReact} {
+		if !hasFramework(d, want) {
+			t.Errorf("frameworks = %v, missing %q", d.Frameworks, want)
+		}
+		if !hasTag(d, want) {
+			t.Errorf("tags = %v, missing %q", d.Tags, want)
+		}
+	}
+}
+
 func TestStackDetectBareReactNative(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"package.json": `{"name":"m","dependencies":{"react-native":"0.74","react":"18"}}`,
@@ -208,6 +235,56 @@ func TestStackDetectMonorepoWorkspaces(t *testing.T) {
 	// Child tags roll up so a monorepo card shows the whole stack.
 	if !hasTag(d, "supabase") || !hasTag(d, "vercel") {
 		t.Errorf("root tags = %v, want rolled-up supabase + vercel", d.Tags)
+	}
+	if got := d.Roles["backend"]; got != "supabase" {
+		t.Errorf("backend role = %q, want supabase", got)
+	}
+	if got := d.Roles["frontend"]; got != "nextjs" {
+		t.Errorf("frontend role = %q, want nextjs", got)
+	}
+}
+
+func TestStackDetectMonorepoRolesRollUp(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json":              `{"name":"root","workspaces":["apps/*","packages/*"]}`,
+		"apps/web/package.json":     `{"name":"web","dependencies":{"next":"14"}}`,
+		"apps/web/next.config.js":   "module.exports = {}\n",
+		"packages/api/package.json": `{"name":"api"}`,
+		"packages/api/convex.json":  "{}\n",
+		"apps/mobile/package.json":  `{"name":"mobile","dependencies":{"expo":"51","react-native":"0.74"}}`,
+		"apps/mobile/app.json":      `{"expo":{"name":"mobile"}}`,
+	})
+
+	d := stackDetect(root)
+	if d.Role != "unknown" {
+		t.Fatalf("root role = %q, want unknown", d.Role)
+	}
+	want := map[string]string{"backend": "convex", "frontend": "nextjs", "mobile": "expo"}
+	if len(d.Roles) != len(want) {
+		t.Fatalf("roles = %#v, want %#v", d.Roles, want)
+	}
+	for role, stack := range want {
+		if got := d.Roles[role]; got != stack {
+			t.Errorf("role %q = %q, want %q", role, got, stack)
+		}
+	}
+}
+
+func TestStackDetectMonorepoTwoFrontendsWarns(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json":              `{"name":"root","workspaces":["apps/*"]}`,
+		"apps/web/package.json":     `{"name":"web","dependencies":{"next":"14"}}`,
+		"apps/web/next.config.js":   "module.exports = {}\n",
+		"apps/admin/package.json":   `{"name":"admin","dependencies":{"react":"18"}}`,
+		"apps/admin/vite.config.ts": "export default {}\n",
+	})
+
+	d := stackDetect(root)
+	if got := d.Roles["frontend"]; got != "nextjs" {
+		t.Fatalf("frontend role = %q, want nextjs (shortest rel path wins)", got)
+	}
+	if len(d.Warnings) == 0 {
+		t.Fatal("expected collision warning for multiple frontend packages")
 	}
 }
 
@@ -318,4 +395,133 @@ func TestStackDetectEmptyDirIsQuiet(t *testing.T) {
 		t.Errorf("empty dir produced framework=%q targets=%d monorepo=%v, want all empty",
 			d.Framework, len(d.Targets), d.IsMonorepo)
 	}
+}
+
+func TestStackDetectCacheSameTreeHits(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json":   `{"name":"web","dependencies":{"next":"14"}}`,
+		"next.config.js": "module.exports = {}\n",
+	})
+	stackDetectInvalidate(root)
+	first, changed := stackDetectCached(root)
+	if !changed {
+		t.Fatal("cold cache should report changed=true")
+	}
+	second, changed := stackDetectCached(root)
+	if changed {
+		t.Fatal("same tree should report changed=false on cache hit")
+	}
+	if first.Fingerprint != second.Fingerprint {
+		t.Fatalf("fingerprints differ: %q vs %q", first.Fingerprint, second.Fingerprint)
+	}
+}
+
+func TestStackDetectCacheDetectsAddedSupabaseConfig(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json": `{"name":"web","dependencies":{"@supabase/supabase-js":"^2","next":"14"}}`,
+	})
+	stackDetectInvalidate(root)
+	first, _ := stackDetectCached(root)
+	if findTarget(first, "supabase") == nil || findTarget(first, "supabase").Supported {
+		t.Fatalf("initial detection = %+v, want weak supabase only", first.Targets)
+	}
+	mustSleepForMtime()
+	if err := os.MkdirAll(filepath.Join(root, "supabase"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "supabase", "config.toml"), []byte("project_id = \"x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, changed := stackDetectCached(root)
+	if !changed {
+		t.Fatal("adding supabase/config.toml must invalidate the cache")
+	}
+	if second.Fingerprint == first.Fingerprint {
+		t.Fatal("fingerprint did not change after adding supabase config")
+	}
+	tgt := findTarget(second, "supabase")
+	if tgt == nil || !tgt.Supported || tgt.Weak {
+		t.Fatalf("supabase target = %+v, want strong deployable target", tgt)
+	}
+}
+
+func TestStackDetectCacheDetectsRemovedFirebase(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"firebase.json": "{}\n",
+	})
+	stackDetectInvalidate(root)
+	first, _ := stackDetectCached(root)
+	if findTarget(first, "firebase") == nil {
+		t.Fatal("expected firebase target before removal")
+	}
+	mustSleepForMtime()
+	if err := os.Remove(filepath.Join(root, "firebase.json")); err != nil {
+		t.Fatal(err)
+	}
+	second, changed := stackDetectCached(root)
+	if !changed {
+		t.Fatal("removing firebase.json must invalidate the cache")
+	}
+	if findTarget(second, "firebase") != nil {
+		t.Fatalf("firebase target still present after removal: %+v", second.Targets)
+	}
+}
+
+func TestStackDetectCacheDetectsPackageJSONEdit(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json": `{"name":"web","dependencies":{"react":"18"}}`,
+	})
+	stackDetectInvalidate(root)
+	first, _ := stackDetectCached(root)
+	mustSleepForMtime()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"name":"web","dependencies":{"react":"18","next":"14"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, changed := stackDetectCached(root)
+	if !changed {
+		t.Fatal("editing package.json must invalidate the cache")
+	}
+	if second.Fingerprint == first.Fingerprint {
+		t.Fatal("fingerprint did not change after package.json edit")
+	}
+}
+
+func TestStackDetectCacheIgnoresUnrelatedReadmeTouch(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json":   `{"name":"web","dependencies":{"next":"14"}}`,
+		"next.config.js": "module.exports = {}\n",
+		"README.md":      "# repo\n",
+	})
+	stackDetectInvalidate(root)
+	first, _ := stackDetectCached(root)
+	mustSleepForMtime()
+	now := time.Now().UTC().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(root, "README.md"), now, now); err != nil {
+		t.Fatal(err)
+	}
+	second, changed := stackDetectCached(root)
+	if changed {
+		t.Fatal("touching README.md should not invalidate detection cache")
+	}
+	if second.Fingerprint != first.Fingerprint {
+		t.Fatal("fingerprint changed after unrelated README touch")
+	}
+}
+
+func TestStackDetectInvalidateForcesRedetect(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"package.json":   `{"name":"web","dependencies":{"next":"14"}}`,
+		"next.config.js": "module.exports = {}\n",
+	})
+	stackDetectInvalidate(root)
+	_, _ = stackDetectCached(root)
+	stackDetectInvalidate(root)
+	_, changed := stackDetectCached(root)
+	if !changed {
+		t.Fatal("invalidate should force changed=true on next lookup")
+	}
+}
+
+func mustSleepForMtime() {
+	time.Sleep(20 * time.Millisecond)
 }

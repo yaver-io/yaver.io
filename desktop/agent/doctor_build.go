@@ -26,6 +26,8 @@ import (
 	"time"
 )
 
+var discoverToolBinary = DiscoverBinary
+
 // buildTool is one binary requirement in a deploy target's toolchain.
 type buildTool struct {
 	Name        string   `json:"name"`
@@ -64,6 +66,41 @@ var buildTargets = map[string]buildTarget{
 		},
 		Secrets: []string{"CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"},
 	},
+	"firebase": {
+		Name:        "firebase",
+		Stack:       "firebase",
+		Description: "Firebase deploy via firebase-tools.",
+		Tools: []buildTool{
+			{Name: "firebase", VersionFlag: "--version", Required: true, InstallHint: "npm install -g firebase-tools"},
+		},
+	},
+	"fly": {
+		Name:        "fly",
+		Stack:       "fly",
+		Description: "Fly deploy via flyctl.",
+		Tools: []buildTool{
+			{Name: "flyctl", VersionFlag: "version", Required: true, InstallHint: "brew install flyctl"},
+		},
+	},
+	"netlify": {
+		Name:        "netlify",
+		Stack:       "netlify",
+		Description: "Netlify deploy via netlify-cli.",
+		Tools: []buildTool{
+			{Name: "node", VersionFlag: "--version", Required: true, InstallHint: "brew install node"},
+			{Name: "netlify", VersionFlag: "--version", Required: false, InstallHint: "npm install -g netlify-cli"},
+		},
+	},
+	"pages": {
+		Name:        "pages",
+		Stack:       "cloudflare",
+		Description: "Cloudflare Pages deploy via wrangler.",
+		Tools: []buildTool{
+			{Name: "node", VersionFlag: "--version", Required: true, InstallHint: "brew install node"},
+			{Name: "wrangler", VersionFlag: "--version", Required: false, InstallHint: "npm install -g wrangler"},
+		},
+		Secrets: []string{"CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"},
+	},
 	"convex": {
 		Name:        "convex",
 		Stack:       "convex",
@@ -92,6 +129,30 @@ var buildTargets = map[string]buildTarget{
 		// Phase 1 cloud-init). The generated deploy script fails
 		// loudly if it's absent, so doctor stays secret-free here.
 		Secrets: nil,
+	},
+	"railway": {
+		Name:        "railway",
+		Stack:       "railway",
+		Description: "Railway deploy via railway CLI.",
+		Tools: []buildTool{
+			{Name: "railway", VersionFlag: "--version", Required: true, InstallHint: "npm install -g @railway/cli"},
+		},
+	},
+	"supabase-db": {
+		Name:        "supabase-db",
+		Stack:       "supabase",
+		Description: "Supabase schema push via supabase CLI.",
+		Tools: []buildTool{
+			{Name: "supabase", VersionFlag: "--version", Required: true, InstallHint: "brew install supabase/tap/supabase"},
+		},
+	},
+	"supabase-functions": {
+		Name:        "supabase-functions",
+		Stack:       "supabase",
+		Description: "Supabase functions deploy via supabase CLI.",
+		Tools: []buildTool{
+			{Name: "supabase", VersionFlag: "--version", Required: true, InstallHint: "brew install supabase/tap/supabase"},
+		},
 	},
 	"playstore": {
 		Name:        "playstore",
@@ -138,6 +199,15 @@ var buildTargets = map[string]buildTarget{
 			"APP_STORE_KEY_ID",
 			"APP_STORE_KEY_ISSUER",
 			"APPLE_TEAM_ID",
+		},
+	},
+	"vercel": {
+		Name:        "vercel",
+		Stack:       "nextjs",
+		Description: "Vercel deploy via Vercel CLI.",
+		Tools: []buildTool{
+			{Name: "node", VersionFlag: "--version", Required: true, InstallHint: "brew install node"},
+			{Name: "vercel", VersionFlag: "--version", Required: false, InstallHint: "npm install -g vercel"},
 		},
 	},
 }
@@ -318,8 +388,8 @@ func probeTool(t buildTool) BuildToolResult {
 			return res
 		}
 	}
-	path, err := exec.LookPath(t.Name)
-	if err != nil {
+	path := discoverToolBinary(t.Name)
+	if path == "" {
 		return res
 	}
 	res.Found = true

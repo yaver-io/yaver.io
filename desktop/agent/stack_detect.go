@@ -25,11 +25,16 @@ package main
 //     when it guesses wrong on someone else's monorepo.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // ---------------------------------------------------------------------
@@ -118,11 +123,19 @@ type StackDetection struct {
 	RelPath string `json:"relPath"`
 	Name    string `json:"name"`
 
-	Framework string   `json:"framework,omitempty"`
-	Backend   string   `json:"backend,omitempty"` // canonical BackendKind value
-	Hosting   []string `json:"hosting,omitempty"`
-	ORM       string   `json:"orm,omitempty"`
-	Services  []string `json:"services,omitempty"`
+	// Framework is the PRIMARY framework for legacy callers and compact
+	// UI display. Frameworks carries every detected framework. Primary is
+	// chosen by the ordered precedence in detectCanonicalFrameworks:
+	// Expo before React Native, JS/Flutter before native. That ordering
+	// is load-bearing and matches classify.go:319 so a RN app is never
+	// labelled swift just because ios/*.xcodeproj exists.
+	Framework  string   `json:"framework,omitempty"`
+	Frameworks []string `json:"frameworks,omitempty"`
+	Role       string   `json:"role,omitempty"`
+	Backend    string   `json:"backend,omitempty"` // canonical BackendKind value
+	Hosting    []string `json:"hosting,omitempty"`
+	ORM        string   `json:"orm,omitempty"`
+	Services   []string `json:"services,omitempty"`
 
 	// Tags are the UI chips. Union of framework + backend + hosting +
 	// orm + language markers, deduped and stable-sorted.
@@ -133,6 +146,10 @@ type StackDetection struct {
 	// Warnings surface things the user should know but that don't block
 	// detection (e.g. a self-hosted Convex on the public default admin key).
 	Warnings []string `json:"warnings,omitempty"`
+	// Roles is only populated on a monorepo root: role -> primary stack.
+	Roles       map[string]string `json:"roles,omitempty"`
+	Fingerprint string            `json:"fingerprint,omitempty"`
+	DetectedAt  time.Time         `json:"detectedAt,omitempty"`
 
 	IsMonorepo bool              `json:"isMonorepo,omitempty"`
 	Packages   []*StackDetection `json:"packages,omitempty"`
@@ -299,46 +316,88 @@ var stackProviders = []stackProvider{
 // as a Kotlin *mobile* project.
 // ---------------------------------------------------------------------
 
-func detectCanonicalFramework(dir string, pkg pkgJSON) (string, StackEvidence) {
+func detectCanonicalFrameworks(dir string, pkg pkgJSON) ([]string, []StackEvidence) {
+	var frameworks []string
+	var evidence []StackEvidence
+	add := func(framework, signal string) {
+		if framework == "" || signal == "" {
+			return
+		}
+		frameworks = append(frameworks, framework)
+		evidence = append(evidence, StackEvidence{Implies: framework, Signal: signal})
+	}
 	// Expo before react-native: every Expo app also depends on react-native.
 	if pkg.hasDep("expo") {
-		return FwExpo, StackEvidence{Implies: FwExpo, Signal: "package.json:expo"}
+		add(FwExpo, "package.json:expo")
 	}
 	if pkg.hasDep("react-native") {
-		return FwReactNative, StackEvidence{Implies: FwReactNative, Signal: "package.json:react-native"}
+		add(FwReactNative, "package.json:react-native")
 	}
 	if f := firstExisting(dir, "pubspec.yaml"); f != "" {
-		return FwFlutter, StackEvidence{Implies: FwFlutter, Signal: f}
+		add(FwFlutter, f)
 	}
 	if f := firstExisting(dir, "next.config.ts", "next.config.js", "next.config.mjs"); f != "" {
-		return FwNextJS, StackEvidence{Implies: FwNextJS, Signal: f}
+		add(FwNextJS, f)
 	}
 	if f := firstExisting(dir, "vite.config.ts", "vite.config.js", "vite.config.mts"); f != "" {
-		return FwVite, StackEvidence{Implies: FwVite, Signal: f}
+		add(FwVite, f)
 	}
 	if pkg.hasDep("react") {
-		return FwReact, StackEvidence{Implies: FwReact, Signal: "package.json:react"}
+		add(FwReact, "package.json:react")
 	}
 	// Native only after JS/Flutter fall through.
 	if f := firstExisting(dir, "Package.swift"); f != "" {
-		return FwSwift, StackEvidence{Implies: FwSwift, Signal: f}
+		add(FwSwift, f)
 	}
 	if hasDir(dir, ".xcodeproj") {
-		return FwSwift, StackEvidence{Implies: FwSwift, Signal: "*.xcodeproj"}
+		add(FwSwift, "*.xcodeproj")
 	}
 	if isKotlinAndroidProject(dir) {
-		return FwKotlin, StackEvidence{Implies: FwKotlin, Signal: "build.gradle.kts"}
+		add(FwKotlin, "build.gradle.kts")
 	}
 	if f := firstExisting(dir, "go.mod"); f != "" {
-		return FwGo, StackEvidence{Implies: FwGo, Signal: f}
+		add(FwGo, f)
 	}
 	if f := firstExisting(dir, "Cargo.toml"); f != "" {
-		return FwRust, StackEvidence{Implies: FwRust, Signal: f}
+		add(FwRust, f)
 	}
 	if f := firstExisting(dir, "pyproject.toml", "setup.py", "requirements.txt"); f != "" {
-		return FwPython, StackEvidence{Implies: FwPython, Signal: f}
+		add(FwPython, f)
 	}
-	return "", StackEvidence{}
+	frameworks = dedupeSorted(frameworks)
+	sort.SliceStable(evidence, func(i, j int) bool {
+		return frameworkRank(evidence[i].Implies) < frameworkRank(evidence[j].Implies)
+	})
+	return frameworks, evidence
+}
+
+func frameworkRank(framework string) int {
+	switch framework {
+	case FwExpo:
+		return 0
+	case FwReactNative:
+		return 1
+	case FwFlutter:
+		return 2
+	case FwNextJS:
+		return 3
+	case FwVite:
+		return 4
+	case FwReact:
+		return 5
+	case FwSwift:
+		return 6
+	case FwKotlin:
+		return 7
+	case FwGo:
+		return 8
+	case FwRust:
+		return 9
+	case FwPython:
+		return 10
+	default:
+		return 999
+	}
 }
 
 // ---------------------------------------------------------------------
@@ -414,12 +473,9 @@ func (p pkgJSON) hasDep(name string) bool {
 // The detector
 // ---------------------------------------------------------------------
 
-// stackDetect is the canonical entry point. It scans one directory and,
-// when that directory is a monorepo root, each of its workspace packages.
-//
-// It is pure and does no network I/O — safe to call on every project list
-// render. Callers that need it hot should cache; there is deliberately no
-// cache here so a detector bug can't become a stale-state bug.
+// stackDetect is the canonical uncached entry point. It scans one
+// directory and, when that directory is a monorepo root, each of its
+// workspace packages. Use stackDetectCached on hot HTTP paths.
 func stackDetect(root string) *StackDetection {
 	d := detectOneDir(root, root)
 	d.Packages = discoverPackages(root)
@@ -438,7 +494,11 @@ func stackDetect(root string) *StackDetection {
 			d.Tags = append(d.Tags, p.Tags...)
 		}
 		d.Tags = dedupeSorted(d.Tags)
+		d.Role = "unknown"
+		d.Roles = rollupMonorepoRoles(d)
 	}
+	d.Fingerprint = computeStackFingerprint(d)
+	d.DetectedAt = time.Now().UTC()
 	return d
 }
 
@@ -455,11 +515,14 @@ func detectOneDir(dir, root string) *StackDetection {
 		d.Name = pkg.Name
 	}
 
-	if fw, ev := detectCanonicalFramework(dir, pkg); fw != "" {
-		d.Framework = fw
-		ev.Path = rel
-		d.Evidence = append(d.Evidence, ev)
-		d.Tags = append(d.Tags, fw)
+	if frameworks, evidence := detectCanonicalFrameworks(dir, pkg); len(frameworks) > 0 {
+		d.Frameworks = frameworks
+		d.Framework = primaryFramework(frameworks)
+		for _, ev := range evidence {
+			ev.Path = rel
+			d.Evidence = append(d.Evidence, ev)
+		}
+		d.Tags = append(d.Tags, frameworks...)
 	}
 
 	for _, p := range stackProviders {
@@ -502,10 +565,140 @@ func detectOneDir(dir, root string) *StackDetection {
 	}
 
 	d.Warnings = append(d.Warnings, detectStackWarnings(dir, d)...)
+	d.Role = detectStackRole(d)
 	d.Tags = dedupeSorted(d.Tags)
 	d.Services = dedupeSorted(d.Services)
 	d.Hosting = dedupeSorted(d.Hosting)
+	sort.SliceStable(d.Evidence, func(i, j int) bool {
+		if d.Evidence[i].Path != d.Evidence[j].Path {
+			return d.Evidence[i].Path < d.Evidence[j].Path
+		}
+		if d.Evidence[i].Signal != d.Evidence[j].Signal {
+			return d.Evidence[i].Signal < d.Evidence[j].Signal
+		}
+		return d.Evidence[i].Implies < d.Evidence[j].Implies
+	})
 	return d
+}
+
+func primaryFramework(frameworks []string) string {
+	if len(frameworks) == 0 {
+		return ""
+	}
+	best := frameworks[0]
+	for _, fw := range frameworks[1:] {
+		if frameworkRank(fw) < frameworkRank(best) {
+			best = fw
+		}
+	}
+	return best
+}
+
+func detectStackRole(d *StackDetection) string {
+	switch {
+	case d == nil:
+		return "unknown"
+	case d.IsMonorepo:
+		return "unknown"
+	case d.Backend != "" && !containsAnyString(d.Frameworks, FwExpo, FwReactNative, FwFlutter, FwSwift, FwKotlin, FwNextJS, FwVite, FwReact):
+		return "backend"
+	case containsAnyString(d.Frameworks, FwExpo, FwReactNative, FwFlutter, FwSwift, FwKotlin):
+		return "mobile"
+	case containsAnyString(d.Frameworks, FwNextJS, FwVite, FwReact):
+		return "frontend"
+	case containsAnyString(d.Frameworks, FwGo, FwRust, FwPython):
+		if hasAnyHostingConfig(d.Hosting) || hasTargetID(d, "docker") {
+			return "backend"
+		}
+		return "cli"
+	case hasTargetID(d, "docker"):
+		return "infra"
+	case d.Framework == "" && len(d.Targets) == 0:
+		return "unknown"
+	default:
+		return "library"
+	}
+}
+
+func containsAnyString(in []string, want ...string) bool {
+	for _, s := range in {
+		for _, w := range want {
+			if s == w {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasAnyHostingConfig(hosting []string) bool { return len(hosting) > 0 }
+
+func hasTargetID(d *StackDetection, id string) bool {
+	for _, t := range d.Targets {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func rollupMonorepoRoles(root *StackDetection) map[string]string {
+	if root == nil || len(root.Packages) == 0 {
+		return nil
+	}
+	type rolePick struct {
+		stack   string
+		relPath string
+	}
+	candidates := map[string]rolePick{}
+	var warnings []string
+	for _, pkg := range root.Packages {
+		role := strings.TrimSpace(pkg.Role)
+		if role == "" || role == "unknown" {
+			continue
+		}
+		stack := pkg.Framework
+		if stack == "" {
+			stack = pkg.Backend
+		}
+		if stack == "" && len(pkg.Hosting) > 0 {
+			stack = pkg.Hosting[0]
+		}
+		if stack == "" {
+			stack = pkg.Role
+		}
+		if cur, ok := candidates[role]; ok {
+			if shorterRelPath(pkg.RelPath, cur.relPath) {
+				warnings = append(warnings, "multiple "+role+" packages detected; preferred "+pkg.RelPath+" over "+cur.relPath)
+				candidates[role] = rolePick{stack: stack, relPath: pkg.RelPath}
+			} else {
+				warnings = append(warnings, "multiple "+role+" packages detected; preferred "+cur.relPath+" over "+pkg.RelPath)
+			}
+			continue
+		}
+		candidates[role] = rolePick{stack: stack, relPath: pkg.RelPath}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	roles := make(map[string]string, len(candidates))
+	keys := make([]string, 0, len(candidates))
+	for role := range candidates {
+		keys = append(keys, role)
+	}
+	sort.Strings(keys)
+	for _, role := range keys {
+		roles[role] = candidates[role].stack
+	}
+	root.Warnings = append(root.Warnings, dedupeSorted(warnings)...)
+	return roles
+}
+
+func shorterRelPath(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) < len(b)
+	}
+	return a < b
 }
 
 func weakDetail(weak bool, p stackProvider) string {
@@ -737,3 +930,148 @@ func (d *StackDetection) DeployableTargets() []DetectedTarget {
 	}
 	return out
 }
+
+const stackDetectCacheCap = 256
+
+var (
+	stackDetectCacheMu sync.RWMutex
+	stackDetectCache   = map[string]*StackDetection{}
+	stackDetectSeen    = map[string]time.Time{}
+)
+
+// stackDetectCached returns the cached detection when the stat-only
+// fingerprint still matches. changed reports whether the cached value
+// was refreshed because the tree changed or the cache was cold.
+func stackDetectCached(root string) (*StackDetection, bool) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		absRoot = root
+	}
+	stackDetectCacheMu.RLock()
+	cached := stackDetectCache[absRoot]
+	stackDetectCacheMu.RUnlock()
+	if cached != nil {
+		fp := computeStackFingerprint(cached)
+		if fp == cached.Fingerprint {
+			return cached, false
+		}
+	}
+	det := stackDetect(absRoot)
+	stackDetectCacheMu.Lock()
+	stackDetectCache[absRoot] = det
+	stackDetectSeen[absRoot] = time.Now().UTC()
+	for len(stackDetectCache) > stackDetectCacheCap {
+		evictOldestStackDetect()
+	}
+	stackDetectCacheMu.Unlock()
+	return det, true
+}
+
+func stackDetectInvalidate(root string) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		absRoot = root
+	}
+	stackDetectCacheMu.Lock()
+	delete(stackDetectCache, absRoot)
+	delete(stackDetectSeen, absRoot)
+	stackDetectCacheMu.Unlock()
+}
+
+func evictOldestStackDetect() {
+	var oldestKey string
+	var oldest time.Time
+	for key, seenAt := range stackDetectSeen {
+		if oldestKey == "" || seenAt.Before(oldest) {
+			oldestKey = key
+			oldest = seenAt
+		}
+	}
+	if oldestKey != "" {
+		delete(stackDetectCache, oldestKey)
+		delete(stackDetectSeen, oldestKey)
+	}
+}
+
+func computeStackFingerprint(d *StackDetection) string {
+	if d == nil {
+		return ""
+	}
+	var inputs []string
+	seenDirs := map[string]bool{}
+	addDir := func(path string) {
+		if path == "" || seenDirs[path] {
+			return
+		}
+		seenDirs[path] = true
+		if st, err := os.Stat(path); err == nil {
+			inputs = append(inputs, "dir:"+path+":"+st.ModTime().UTC().Format(time.RFC3339Nano)+":"+itoa64(st.Size()))
+		}
+	}
+	addFile := func(path string) {
+		if path == "" {
+			return
+		}
+		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+			inputs = append(inputs, "file:"+path+":"+st.ModTime().UTC().Format(time.RFC3339Nano)+":"+itoa64(st.Size()))
+		}
+	}
+	collectFingerprintInputs(d, addDir, addFile)
+	sort.Strings(inputs)
+	sum := sha256.Sum256([]byte(strings.Join(inputs, "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+func collectFingerprintInputs(d *StackDetection, addDir, addFile func(string)) {
+	if d == nil {
+		return
+	}
+	addDir(d.Root)
+	addFile(filepath.Join(d.Root, "package.json"))
+	addFile(filepath.Join(d.Root, "pnpm-workspace.yaml"))
+	for _, ev := range d.Evidence {
+		signalPath := signalToFingerprintPath(ev.Signal)
+		if signalPath == "" {
+			continue
+		}
+		addFile(filepath.Join(d.Root, filepath.FromSlash(signalPath)))
+	}
+	for _, path := range stackFingerprintMarkerPaths() {
+		addFile(filepath.Join(d.Root, filepath.FromSlash(path)))
+	}
+	for _, p := range d.Packages {
+		collectFingerprintInputs(p, addDir, addFile)
+	}
+}
+
+func stackFingerprintMarkerPaths() []string {
+	var out []string
+	out = append(out,
+		"package.json",
+		"pnpm-workspace.yaml",
+		"pubspec.yaml",
+		"next.config.ts", "next.config.js", "next.config.mjs",
+		"vite.config.ts", "vite.config.js", "vite.config.mts",
+		"Package.swift", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py", "requirements.txt",
+		"build.gradle.kts", "settings.gradle.kts", "build.gradle", "settings.gradle",
+	)
+	for _, provider := range stackProviders {
+		out = append(out, provider.Files...)
+	}
+	return dedupeSorted(out)
+}
+
+func signalToFingerprintPath(signal string) string {
+	if signal == "" {
+		return ""
+	}
+	if i := strings.IndexByte(signal, ':'); i >= 0 {
+		return signal[:i]
+	}
+	if strings.HasSuffix(signal, "/") || strings.Contains(signal, "*") {
+		return ""
+	}
+	return signal
+}
+
+func itoa64(v int64) string { return strconv.FormatInt(v, 10) }

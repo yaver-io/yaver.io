@@ -138,11 +138,19 @@ type DeployCapabilitiesReport struct {
 // means there is no CI fallback (everything has one today, but the
 // shape stays open for future targets that are inherently local).
 var targetCIWorkflow = map[string]string{
-	"testflight":        "release-mobile.yml workflow_dispatch (upload_testflight=true)",
-	"playstore":         "release-mobile.yml workflow_dispatch (upload_playstore=true)",
-	"convex":            "release-web.yml on web/* tag (also runs convex deploy)",
-	"convex-selfhosted": "release-web.yml on web/* tag (self-hosted Convex deploy script)",
-	"cloudflare":        "release-web.yml on web/* tag",
+	"cloudflare":         "release-web.yml on web/* tag",
+	"convex":             "release-web.yml on web/* tag (also runs convex deploy)",
+	"convex-selfhosted":  "release-web.yml on web/* tag (self-hosted Convex deploy script)",
+	"firebase":           "release-web.yml workflow_dispatch (firebase deploy step)",
+	"fly":                "release-web.yml workflow_dispatch (fly deploy step)",
+	"netlify":            "release-web.yml workflow_dispatch (netlify deploy step)",
+	"pages":              "release-web.yml on web/* tag",
+	"playstore":          "release-mobile.yml workflow_dispatch (upload_playstore=true)",
+	"railway":            "release-web.yml workflow_dispatch (railway deploy step)",
+	"supabase-db":        "release-web.yml workflow_dispatch (supabase db push step)",
+	"supabase-functions": "release-web.yml workflow_dispatch (supabase functions step)",
+	"testflight":         "release-mobile.yml workflow_dispatch (upload_testflight=true)",
+	"vercel":             "release-web.yml workflow_dispatch (vercel deploy step)",
 }
 
 // targetDefaultVaultProject is the vault project a target's secrets
@@ -159,6 +167,14 @@ var targetDefaultVaultProject = map[string]string{
 	"convex":               "backend",
 	"convex-selfhosted":    "backend",
 	"cloudflare":           "web",
+	"firebase":             "web",
+	"fly":                  "web",
+	"netlify":              "web",
+	"pages":                "web",
+	"railway":              "web",
+	"supabase-db":          "backend",
+	"supabase-functions":   "backend",
+	"vercel":               "web",
 }
 
 // targetPlatformLock returns the GOOS the target is locked to (single

@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -47,8 +48,7 @@ func init() {
 		Name:        "deploy",
 		Description: "Deploy the project at workDir to a hosting target. target=cloud (Yaver cloud), cloudflare, vercel, fly, netlify, railway, firebase, platform (Yaver platform), convex, eas (Expo), testflight, playstore. action=deploy (default) | rollback — rollback uses the provider's native rollback API (Vercel `vercel rollback`, Fly `flyctl releases rollback`, Netlify `netlify rollback`, Cloudflare Pages `wrangler pages rollback`, Railway `railway rollback`, Convex `npx convex env get DEPLOY_KEY && npx convex deploy --previous-deployment`). Platform-aware (testflight refuses on non-macOS) and dependency-aware (playstore returns deps_missing if JDK/Android SDK absent; pass installDeps:true to install with approval). Streams provider output.",
 		Schema: map[string]interface{}{
-			"type":     "object",
-			"required": []string{"target"},
+			"type": "object",
 			"properties": map[string]interface{}{
 				"target":      map[string]interface{}{"type": "string"},
 				"workDir":     map[string]interface{}{"type": "string"},
@@ -72,15 +72,9 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
 	}
-	if p.Target == "" {
-		return OpsResult{OK: false, Code: "bad_payload", Error: "target is required"}
-	}
 	workDir := p.WorkDir
 	if workDir == "" {
 		workDir = "."
-	}
-	if c.Server == nil || c.Server.execMgr == nil {
-		return OpsResult{OK: false, Code: "unavailable", Error: "exec manager not initialised"}
 	}
 
 	// C-6: guest hardening. The deploy verb is AllowGuest=true so a
@@ -105,6 +99,17 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		// keep behaviour conservative.
 		workDir = "."
 	}
+	p.WorkDir = workDir
+
+	resolvedTarget, inferredFrom, resolveErr := resolveDeployTarget(p, stackDetect(workDir))
+	if resolveErr != nil {
+		var derr *deployResolveError
+		if errors.As(resolveErr, &derr) {
+			return OpsResult{OK: false, Code: derr.Code, Error: derr.Error(), Initial: derr.initial()}
+		}
+		return OpsResult{OK: false, Code: "bad_payload", Error: resolveErr.Error()}
+	}
+	p.Target = resolvedTarget
 
 	// Platform + dependency gate. For testflight this rejects non-macOS
 	// hosts up front (it is impossible, not merely missing a tool); for
@@ -117,10 +122,6 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	}
 
 	extra := strings.Join(p.Args, " ")
-	envFlag := ""
-	if p.Env != "" {
-		envFlag = " --env=" + opsShellQuote(p.Env)
-	}
 
 	action := strings.ToLower(strings.TrimSpace(p.Action))
 	if action == "" {
@@ -137,16 +138,159 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if action != "deploy" {
 		return OpsResult{OK: false, Code: "bad_payload", Error: "action must be deploy or rollback"}
 	}
-
-	var cmd, tool string
-	switch strings.ToLower(p.Target) {
+	switch strings.ToLower(strings.TrimSpace(p.Target)) {
 	case "cloud", "yaver-cloud":
-		// Points to the existing cloud_deploy tool; its full
-		// implementation handles plan + provision + push.
 		return OpsResult{OK: true, Initial: map[string]interface{}{
 			"hint":    "call cloud_deploy MCP tool — handles plan + provision + push",
 			"mcpTool": "cloud_deploy",
 		}}
+	case "platform":
+		return OpsResult{OK: true, Initial: map[string]interface{}{
+			"hint":    "call platform_deploy MCP tool — Yaver-managed apps lifecycle",
+			"mcpTool": "platform_deploy",
+		}}
+	case "testflight":
+		return OpsResult{OK: true, Initial: map[string]interface{}{
+			"hint":    "call mobile_project_build with {platform: \"ios\", track: \"testflight\"} — handles archive + export + App Store Connect upload",
+			"mcpTool": "mobile_project_build",
+		}}
+	case "playstore", "play":
+		return OpsResult{OK: true, Initial: map[string]interface{}{
+			"hint":    "call mobile_project_build with {platform: \"android\", track: \"internal\"} — handles AAB + service-account upload",
+			"mcpTool": "mobile_project_build",
+		}}
+	}
+
+	cmd, tool, err := resolveDeployCommand(p, stackDetect(workDir))
+	if err != nil {
+		var derr *deployResolveError
+		if errors.As(err, &derr) {
+			return OpsResult{OK: false, Code: derr.Code, Error: derr.Error(), Initial: derr.initial()}
+		}
+		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+	}
+
+	if c.Server == nil || c.Server.execMgr == nil {
+		return OpsResult{OK: false, Code: "unavailable", Error: "exec manager not initialised"}
+	}
+	sess, err := c.Server.execMgr.StartExec(strings.TrimSpace(cmd), workDir, "", nil, p.TimeoutSec)
+	if err != nil {
+		return OpsResult{OK: false, Code: "exec_failed", Error: err.Error()}
+	}
+	initial := map[string]interface{}{
+		"sessionId": sess.ID,
+		"tool":      tool,
+		"command":   strings.TrimSpace(cmd),
+		"workDir":   workDir,
+		"env":       p.Env,
+		"sseHint":   fmt.Sprintf("/exec/%s/stream for live output", sess.ID),
+	}
+	if inferredFrom != "" {
+		initial["inferredTarget"] = resolvedTarget
+		initial["inferredFrom"] = inferredFrom
+	}
+	return OpsResult{
+		OK:       true,
+		StreamID: sess.ID,
+		Initial:  initial,
+	}
+}
+
+type deployResolveError struct {
+	Code       string
+	Message    string
+	Scanned    string
+	Candidates []string
+}
+
+func (e *deployResolveError) Error() string { return e.Message }
+
+func (e *deployResolveError) initial() map[string]interface{} {
+	out := map[string]interface{}{}
+	if e.Scanned != "" {
+		out["scanned"] = e.Scanned
+	}
+	if len(e.Candidates) > 0 {
+		out["candidates"] = append([]string(nil), e.Candidates...)
+	}
+	return out
+}
+
+func resolveDeployTarget(p opsDeployPayload, det *StackDetection) (target, inferredFrom string, err error) {
+	if strings.TrimSpace(p.Target) != "" {
+		if err := validateTargetAgainstDetection(strings.TrimSpace(p.Target), det); err != nil {
+			return "", "", err
+		}
+		return strings.TrimSpace(p.Target), "", nil
+	}
+	workDir := p.WorkDir
+	if workDir == "" {
+		workDir = "."
+	}
+	deployable := det.DeployableTargets()
+	switch len(deployable) {
+	case 0:
+		return "", "", &deployResolveError{
+			Code:    "bad_payload",
+			Message: "no deployable target detected in " + workDir + " — scanned stack markers but found nothing deployable",
+			Scanned: workDir,
+		}
+	case 1:
+		opsTarget := firstOpsTarget(deployable[0])
+		if opsTarget == "" {
+			return "", "", &deployResolveError{
+				Code:    "bad_payload",
+				Message: "detected " + deployable[0].ID + " but it exposes no deploy action",
+				Scanned: workDir,
+			}
+		}
+		return opsTarget, deployable[0].Evidence, nil
+	default:
+		candidates := make([]string, 0, len(deployable))
+		for _, tgt := range deployable {
+			if opsTarget := firstOpsTarget(tgt); opsTarget != "" {
+				candidates = append(candidates, opsTarget)
+			}
+		}
+		candidates = dedupeSorted(candidates)
+		return "", "", &deployResolveError{
+			Code:       "ambiguous_target",
+			Message:    "multiple deployable targets detected; specify target explicitly",
+			Scanned:    workDir,
+			Candidates: candidates,
+		}
+	}
+}
+
+func validateTargetAgainstDetection(target string, det *StackDetection) error {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "supabase-functions", "supabase-db":
+		if tgt := findDetectedTarget(det, "supabase"); tgt == nil || tgt.Weak || !tgt.Supported {
+			return &deployResolveError{
+				Code:    "bad_payload",
+				Message: "supabase deploy refused: no local Supabase project detected in this workDir",
+			}
+		}
+	}
+	return nil
+}
+
+func resolveDeployCommand(p opsDeployPayload, det *StackDetection) (cmd, tool string, err error) {
+	target, _, err := resolveDeployTarget(p, det)
+	if err != nil {
+		return "", "", err
+	}
+	p.Target = target
+	extra := strings.Join(p.Args, " ")
+	envFlag := ""
+	if p.Env != "" {
+		envFlag = " --env=" + opsShellQuote(p.Env)
+	}
+	switch strings.ToLower(strings.TrimSpace(p.Target)) {
+	case "cloud", "yaver-cloud":
+		// Points to the existing cloud_deploy tool; its full
+		// implementation handles plan + provision + push.
+		return "", "", &deployResolveError{Code: "bad_payload", Message: "cloud deploy is handled by the cloud_deploy MCP tool"}
 	case "cloudflare", "cf", "workers":
 		cmd, tool = "npx wrangler deploy"+envFlag+" "+extra, "cloudflare"
 	case "pages":
@@ -171,43 +315,22 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		cmd, tool = "firebase deploy "+extra, "firebase"
 	case "convex":
 		cmd, tool = "npx convex deploy "+extra, "convex"
+	case "supabase-functions":
+		cmd, tool = "supabase functions deploy "+strings.TrimSpace(extra), "supabase"
+	case "supabase-db":
+		cmd, tool = "supabase db push "+strings.TrimSpace(extra), "supabase"
 	case "eas", "expo":
 		cmd, tool = "eas submit "+extra, "eas"
 	case "platform":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call platform_deploy MCP tool — Yaver-managed apps lifecycle",
-			"mcpTool": "platform_deploy",
-		}}
+		return "", "", &deployResolveError{Code: "bad_payload", Message: "platform deploy is handled by the platform_deploy MCP tool"}
 	case "testflight":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call mobile_project_build with {platform: \"ios\", track: \"testflight\"} — handles archive + export + App Store Connect upload",
-			"mcpTool": "mobile_project_build",
-		}}
+		return "", "", &deployResolveError{Code: "bad_payload", Message: "testflight deploy is handled by mobile_project_build"}
 	case "playstore", "play":
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    "call mobile_project_build with {platform: \"android\", track: \"internal\"} — handles AAB + service-account upload",
-			"mcpTool": "mobile_project_build",
-		}}
+		return "", "", &deployResolveError{Code: "bad_payload", Message: "playstore deploy is handled by mobile_project_build"}
 	default:
-		return OpsResult{OK: false, Code: "bad_payload", Error: "unknown target: " + p.Target}
+		return "", "", &deployResolveError{Code: "bad_payload", Message: "unknown target: " + p.Target}
 	}
-
-	sess, err := c.Server.execMgr.StartExec(strings.TrimSpace(cmd), workDir, "", nil, p.TimeoutSec)
-	if err != nil {
-		return OpsResult{OK: false, Code: "exec_failed", Error: err.Error()}
-	}
-	return OpsResult{
-		OK:       true,
-		StreamID: sess.ID,
-		Initial: map[string]interface{}{
-			"sessionId": sess.ID,
-			"tool":      tool,
-			"command":   strings.TrimSpace(cmd),
-			"workDir":   workDir,
-			"env":       p.Env,
-			"sseHint":   fmt.Sprintf("/exec/%s/stream for live output", sess.ID),
-		},
-	}
+	return strings.TrimSpace(cmd), tool, nil
 }
 
 // opsDeployRollbackHandler routes to the provider-native rollback CLI.
@@ -215,15 +338,16 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 // guest gate, preflight); this just maps target → rollback command.
 //
 // Provider rollback shapes (verified against each tool's CLI):
-//   cloudflare/pages   wrangler pages rollback [deployment]
-//   vercel             vercel rollback [deployment-url]
-//   netlify            netlify rollback (rolls to previous deploy)
-//   fly                flyctl releases rollback [version]
-//   railway            railway rollback (interactive when no version)
-//   firebase           firebase hosting:rollback [--site=NAME] [version]
-//   cloudflare workers wrangler rollback [version-id]
-//   convex             convex env get DEPLOY_KEY (no native rollback;
-//                                                 emit hint instead)
+//
+//	cloudflare/pages   wrangler pages rollback [deployment]
+//	vercel             vercel rollback [deployment-url]
+//	netlify            netlify rollback (rolls to previous deploy)
+//	fly                flyctl releases rollback [version]
+//	railway            railway rollback (interactive when no version)
+//	firebase           firebase hosting:rollback [--site=NAME] [version]
+//	cloudflare workers wrangler rollback [version-id]
+//	convex             convex env get DEPLOY_KEY (no native rollback;
+//	                                              emit hint instead)
 //
 // testflight / playstore have no native rollback — you ship a new
 // build with a higher version. Refuse rather than fake it.
@@ -255,6 +379,8 @@ func opsDeployRollbackHandler(c OpsContext, p opsDeployPayload, extra string) Op
 		cmd, tool = "firebase hosting:rollback "+extra, "firebase-rollback"
 	case "convex":
 		return OpsResult{OK: false, Code: "no_rollback", Error: "convex has no native rollback — re-deploy a previous git commit instead"}
+	case "supabase-functions", "supabase-db":
+		return OpsResult{OK: false, Code: "no_rollback", Error: "Supabase has no native rollback for functions or db push — deploy a corrective change instead"}
 	case "testflight":
 		return OpsResult{OK: false, Code: "no_rollback", Error: "TestFlight has no rollback — submit a new build with a higher CFBundleVersion"}
 	case "playstore", "play":
@@ -303,4 +429,16 @@ func argContainsShellMetacharacter(s string) bool {
 		}
 	}
 	return false
+}
+
+func findDetectedTarget(det *StackDetection, id string) *DetectedTarget {
+	if det == nil {
+		return nil
+	}
+	for i := range det.Targets {
+		if det.Targets[i].ID == id {
+			return &det.Targets[i]
+		}
+	}
+	return nil
 }
