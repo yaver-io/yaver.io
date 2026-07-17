@@ -52,3 +52,17 @@ Iteration 1: gate passed (`(cd web && npx tsc --noEmit) && (cd mobile && npx tsc
 
 Changed: `docs/handoff/ambient-slots-progress.md`, `mobile/app/(tabs)/home.tsx`, `mobile/app/autoruns.tsx`, `mobile/src/components/SessionStrip.tsx`, `mobile/src/lib/quic.ts`, `web/app/spatial/page.tsx`, `web/app/spatial/vr/TerminalPane3D.tsx`, `web/app/spatial/vr/VRScene.tsx`, `web/components/dashboard/DevicesView.tsx`
 
+## 2026-07-17T09:35:36Z
+
+autorun: final autorun commit for ambient-slots (task marked DONE)
+
+This is the final autorun commit for task ambient-slots. No further autorun commits will follow for this run.
+
+Finish reason: task marked DONE
+Iterations run: 1
+Verified commits kept: 1
+Runner: codex (doer — implemented each iteration)
+Master: claude (planned each iteration; did not edit)
+Gate: (cd web && npx tsc --noEmit) && (cd mobile && npx tsc --noEmit)
+Machine at finish: disk 26.1 GB free, RAM 8.0 GB, 8 CPUs, load 14.80 (1.85/core)
+
