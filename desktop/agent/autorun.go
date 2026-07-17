@@ -264,6 +264,32 @@ func autorunSeatsFromTask(task string) autorunSeats {
 	return seats
 }
 
+// autorunMarksDone reports whether text carries the DONE marker — a line that is
+// nothing but DONE.
+//
+// This MUST NOT be a substring test. Both prompts tell the runner to "Say DONE,
+// alone", and a runner discussing that contract writes the word in prose all the
+// time. The progress file is worse than free text: appendAutorunProgress writes
+// the doer's own transcript into it every iteration, so a substring test hands
+// the runner a loaded gun pointed at the loop.
+//
+// It fired. A doer wrote "I did not run the full project gate, so this is not
+// marked `DONE`" — a sentence whose whole purpose is to deny completion — and the
+// next iteration read the substring and ended the run as complete, mid-task,
+// after one iteration of a six-part job. The runner said not done; autorun heard
+// DONE. Same shape as autorunTurnIsSignInChrome's bug: free text matched loosely.
+//
+// Markdown decoration is stripped because a runner writing a marker on its own
+// line reaches for `DONE`, **DONE**, or "- DONE" without meaning anything by it.
+func autorunMarksDone(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(strings.Trim(strings.TrimSpace(line), "`*_#>-\t ")) == "DONE" {
+			return true
+		}
+	}
+	return false
+}
+
 // autorunSlotKey is an agent's STABLE address: task + seat. Unlike the session
 // ID — a timestamp, unique to one run — this is the same string every time the
 // same work runs on the same machine, which is what lets a UI give an agent a

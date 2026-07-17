@@ -253,7 +253,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 	for iteration := 1; opts.MaxIters == 0 || iteration <= opts.MaxIters; iteration++ {
 		logResult := autorunExec(ctx, "git", []string{"log", "--oneline", "-10"}, opts.WorkDir)
 		progressBytes, _ := os.ReadFile(progressPath)
-		if strings.Contains(string(progressBytes), "DONE") {
+		if autorunMarksDone(string(progressBytes)) {
 			return autorunReasonDone, nil
 		}
 		summary.Iterations = iteration
@@ -304,7 +304,11 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			if masterErr != nil {
 				return autorunReasonRunner, masterErr
 			}
-			if strings.Contains(instruction, "DONE") && len(instruction) < 16 {
+			// The length guard was doing all the real work here — the substring
+			// test alone ends the run on any instruction that merely mentions the
+			// marker. Say what is meant: the master signals completion by
+			// answering DONE and nothing else.
+			if autorunMarksDone(instruction) && len(strings.TrimSpace(instruction)) < 16 {
 				return autorunReasonDone, nil
 			}
 			prompt = autorunDoerContext(task, string(progressBytes), logResult.Output, instruction, iteration)
