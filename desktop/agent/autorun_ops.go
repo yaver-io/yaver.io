@@ -69,6 +69,11 @@ type autorunSessionView struct {
 	Master    string             `json:"master,omitempty"`
 	Heals     []autorunHealEvent `json:"heals,omitempty"`
 	Resources autorunResources   `json:"resources"`
+	// Landing answers "did the work actually get out?" — commits/finalCommit
+	// only prove the loop wrote something locally. Populated by the status
+	// handler from git, not from the loop's own bookkeeping. See
+	// autorunLandingSnapshot (ops_git_land.go).
+	Landing *autorunLandingState `json:"landing,omitempty"`
 }
 
 type autorunSessionManager struct {
@@ -317,6 +322,12 @@ func opsAutorunStatusHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	views, err := autorunSessions.status(strings.TrimSpace(p.ID))
 	if err != nil {
 		return OpsResult{OK: false, Code: "not_found", Error: err.Error()}
+	}
+	// Enrich with commit/push awareness. A finished run whose commits never
+	// reached the remote looks identical to a landed one on every field above,
+	// so read it off git per session rather than trusting the loop's own count.
+	for i := range views {
+		views[i].Landing = autorunLandingSnapshot(views[i].WorkDir, "")
 	}
 	return OpsResult{OK: true, Initial: map[string]interface{}{"sessions": views}}
 }
