@@ -123,6 +123,32 @@ An optional managed-cloud option, for people who don't want to run their own alw
 | `demo-videos/` | Source notes for the landing/demo clips |
 | `docs/` | Architecture notes, setup guides, audits, handoffs, and planning material |
 
+## Validation apps
+
+The apps that prove Yaver works live in their own repos, not in this one. They
+are **local-only** todo apps — no backend, no accounts, no network — and they
+are deliberately boring, because they are the control.
+
+The same todo app is built five ways. Yaver reaches each one differently, so
+when the loop feels different across stacks, it is the transport that differs
+and not the app:
+
+| Repo | Stack | How Yaver reaches it |
+|---|---|---|
+| [yaver-todo-rn](https://github.com/kivanccakmak/yaver-todo-rn) | Expo / React Native | **Hermes** — the agent compiles an HBC bundle and the container swaps it in place |
+| [yaver-todo-kt](https://github.com/kivanccakmak/yaver-todo-kt) | Native Android (Kotlin) | **native-webrtc** — runs on a build host, H.264 streamed to the phone, taps sent back |
+| [yaver-todo-swift](https://github.com/kivanccakmak/yaver-todo-swift) | Native iOS (SwiftUI) | **native-webrtc** — same, macOS build host only |
+| [yaver-todo-flutter](https://github.com/kivanccakmak/yaver-todo-flutter) | Flutter / Dart | **native-webrtc** — Dart has no Hermes equivalent |
+| [yaver-todo-web](https://github.com/kivanccakmak/yaver-todo-web) | Next.js | **dev server** — HMR through the tunnelled port |
+
+Hermes is React-Native-only: native and Flutter apps compile to real binaries
+and can never be loaded into the Yaver container. That is why three of the five
+exist — they are the only honest way to exercise the streaming path.
+
+They are separate repos so they can be cloned, built, and broken without
+touching this one. Each README states what works and what doesn't per stack,
+including where a feedback SDK does not exist yet.
+
 ## Documentation
 
 [Docs index](docs/README.md) · [Setup](docs/setup/SETUP.md) · [Contributing](docs/setup/CONTRIBUTING.md) · [Runtime architecture](docs/architecture/AI_ARCH.md) · [Protocol](docs/yaver-protocol.md) · [Feedback SDK](docs/mobile/FEEDBACK_SDK.md) · [Security](docs/security/SECURITY.md) · [License](docs/planning/LICENSING.md)

@@ -234,6 +234,33 @@ test enumerates forbidden keys (`path`, `workDir`, `token`, `stdout`,
 `/home/`, `/root/`, `C:\Users\`). New sync paths must add their fields to
 `fieldsWeForbidInAnyConvexPayload` and a test for the payload.
 
+## Validation apps live OUTSIDE this repo
+
+The todo fixtures are their own public repos, not `demo/` subdirectories:
+
+| Repo | Stack | Reach | Feedback SDK |
+|---|---|---|---|
+| [yaver-todo-rn](https://github.com/kivanccakmak/yaver-todo-rn) | Expo / RN | Hermes (HBC swap) | ✅ `yaver-feedback-react-native` |
+| [yaver-todo-kt](https://github.com/kivanccakmak/yaver-todo-kt) | Android / Kotlin | `native-webrtc` | ❌ **none exists** — viewer-triggered only |
+| [yaver-todo-swift](https://github.com/kivanccakmak/yaver-todo-swift) | iOS / SwiftUI | `native-webrtc` | ❌ **none exists** — viewer-triggered only |
+| [yaver-todo-flutter](https://github.com/kivanccakmak/yaver-todo-flutter) | Flutter | `native-webrtc` | ✅ `yaver_feedback` (pub.dev) |
+| [yaver-todo-web](https://github.com/kivanccakmak/yaver-todo-web) | Next.js | dev server / HMR | ✅ `yaver-feedback-web` |
+
+Same todo UX five ways, on purpose: the app is the control, so any difference
+you observe is the transport. Local-only — no backend, no accounts, no network.
+
+Three facts worth not rediscovering:
+- **Hermes is RN/Expo-only**, gated at `hotreload.tsx:77`. Flutter is classed
+  `DevServerKindWeb` (`devserver_kind.go:37`). Native and Flutter apps can never
+  load into the Yaver container — they take `native-webrtc` or a standalone
+  install via `yaver wire push`.
+- **There is no native Kotlin/Swift feedback SDK.** `sdk/feedback/` ships
+  react-native, web, flutter, unity, browser-extension. Don't import one.
+- **The viewer owns the feedback trigger** for streamed apps:
+  `remote_runtime.go:709` `case "launch-feedback"` pushes
+  `feedback-launch-request` down the events DataChannel. That's how kt/swift get
+  the loop without an in-app SDK.
+
 ## Three-part architecture
 
 1. **Mobile app** (App Store / Play Store) — native container for testing
