@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,16 @@ func shellQuoteSingle(s string) string {
 func ensureAutorunTmuxSession(ctx context.Context, session string, runner RunnerConfig, workDir string) (bool, error) {
 	if autorunTmuxHasSession(ctx, session, workDir) {
 		return false, nil
+	}
+	// A worktree is a directory nobody has opened before, which is exactly the
+	// case Claude Code opens its folder-trust dialog for — and
+	// --dangerously-skip-permissions does not skip it. If the TUI comes up on
+	// that dialog, autorunTmuxKick types the task instruction straight into it.
+	// Pre-accept trust for this workDir before the TUI can ask. Best-effort: a
+	// failure here is not a reason to abandon the run, and a runner that does
+	// not gate on trust is unaffected.
+	if err := ensureClaudeFolderTrustedForLocalHome(workDir); err != nil {
+		log.Printf("[autorun] could not pre-accept folder trust for %s: %v", workDir, err)
 	}
 	parts := append([]string{resolveRunnerBinary(runner.Command)}, autorunTmuxArgs(runner)...)
 	quoted := make([]string, 0, len(parts)+4)

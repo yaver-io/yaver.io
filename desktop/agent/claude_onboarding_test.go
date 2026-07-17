@@ -128,3 +128,104 @@ func TestClaudeConfigJSONPathHonorsConfigDir(t *testing.T) {
 		t.Error("marker must not be written to $HOME when CLAUDE_CONFIG_DIR is set")
 	}
 }
+
+// The trust dialog is a SECOND blocking first-run screen, independent of
+// onboarding. A config that has completed onboarding still stops dead in a
+// directory Claude has not seen.
+
+func TestEnsureClaudeFolderTrustedMarksTheWorkDir(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	if err := ensureClaudeFolderTrusted(home, work); err != nil {
+		t.Fatal(err)
+	}
+	cfg := readClaudeConfig(t, filepath.Join(home, ".claude.json"))
+	projects, _ := cfg["projects"].(map[string]any)
+	entry, _ := projects[work].(map[string]any)
+	if entry == nil {
+		t.Fatalf("no projects entry for %s; got %v", work, projects)
+	}
+	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+		t.Fatalf("hasTrustDialogAccepted not set for %s: %v", work, entry)
+	}
+}
+
+// Trusting one worktree must not forget the user's real projects, their MCP
+// servers, or their onboarding state.
+func TestEnsureClaudeFolderTrustedPreservesEverythingElse(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	path := filepath.Join(home, ".claude.json")
+	seed := map[string]any{
+		"hasCompletedOnboarding": true,
+		"oauthAccount":           map[string]any{"emailAddress": "someone@example.com"},
+		"projects": map[string]any{
+			"/Users/x/Workspace/real": map[string]any{
+				"hasTrustDialogAccepted": true,
+				"mcpServers":             map[string]any{"yaver": map[string]any{}},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureClaudeFolderTrusted(home, work); err != nil {
+		t.Fatal(err)
+	}
+	cfg := readClaudeConfig(t, path)
+	if done, _ := cfg["hasCompletedOnboarding"].(bool); !done {
+		t.Fatal("dropped hasCompletedOnboarding")
+	}
+	if cfg["oauthAccount"] == nil {
+		t.Fatal("dropped oauthAccount — that is the user's credential binding")
+	}
+	projects, _ := cfg["projects"].(map[string]any)
+	real, _ := projects["/Users/x/Workspace/real"].(map[string]any)
+	if real == nil || real["mcpServers"] == nil {
+		t.Fatalf("clobbered an existing project entry: %v", projects)
+	}
+	if _, ok := projects[work]; !ok {
+		t.Fatalf("did not add the new workDir: %v", projects)
+	}
+}
+
+func TestEnsureClaudeFolderTrustedIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	work := t.TempDir()
+	if err := ensureClaudeFolderTrusted(home, work); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude.json")
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureClaudeFolderTrusted(home, work); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("second call rewrote an already-trusted config")
+	}
+}
+
+// Same reasoning as onboarding: a config we cannot parse is not ours to
+// rewrite. A blocked TUI is recoverable; a destroyed ~/.claude.json is not.
+func TestEnsureClaudeFolderTrustedRefusesToClobberUnparseableConfig(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureClaudeFolderTrusted(home, t.TempDir()); err == nil {
+		t.Fatal("expected a parse error rather than a clobbered config")
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "{not json" {
+		t.Fatalf("config was modified despite the parse failure: %q", data)
+	}
+}
