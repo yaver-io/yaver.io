@@ -7,9 +7,12 @@ import (
 
 func TestGitSurfaceOpsRegistered(t *testing.T) {
 	want := map[string]bool{
-		"git_prs":       false,
-		"git_issues":    false,
-		"git_ci_status": false,
+		"git_prs":           false,
+		"git_issues":        false,
+		"git_ci_status":     false,
+		"git_members":       false,
+		"git_member_invite": false,
+		"git_member_remove": false,
 	}
 	for _, v := range listOpsVerbs() {
 		if _, ok := want[v.Name]; ok {

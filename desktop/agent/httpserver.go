@@ -11236,6 +11236,36 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGitHubStargazers(a.Repo))
+	case "git_members":
+		var a struct {
+			Repo string `json:"repo"`
+			Dir  string `json:"directory"`
+			Host string `json:"host"`
+			Kind string `json:"kind"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitMembers(a.Repo, a.Dir, a.Host, a.Kind))
+	case "git_member_invite":
+		var a struct {
+			User string `json:"user"`
+			Role string `json:"role"`
+			Repo string `json:"repo"`
+			Dir  string `json:"directory"`
+			Host string `json:"host"`
+			Kind string `json:"kind"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitMemberInvite(a.User, a.Role, a.Repo, a.Dir, a.Host, a.Kind))
+	case "git_member_remove":
+		var a struct {
+			User string `json:"user"`
+			Repo string `json:"repo"`
+			Dir  string `json:"directory"`
+			Host string `json:"host"`
+			Kind string `json:"kind"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitMemberRemove(a.User, a.Repo, a.Dir, a.Host, a.Kind))
 	// --- gh / glab generic + write-op ---
 	case "gh_run":
 		var a struct {
