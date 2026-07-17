@@ -105,7 +105,6 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 	go func() {
 		summary, err := executeAutorun(ctx, opts)
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		s.FinishedAt = time.Now().UTC()
 		s.cancel = nil
 		s.Status = "completed"
@@ -118,6 +117,12 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 				s.Status = "failed"
 			}
 		}
+		// Snapshot under the lock, notify outside it: this is the only place
+		// that knows a run ended, and onAutorunFinished must not run while we
+		// hold the manager's write lock.
+		finished := *s
+		m.mu.Unlock()
+		onAutorunFinished(&finished)
 	}()
 	return m.view(s), nil
 }

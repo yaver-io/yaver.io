@@ -151,7 +151,9 @@ func recapsDir() (string, error) {
 // recapValidID gates every id that reaches the filesystem. IDs are r_<hex> by
 // construction; anything with a path component in it is an attack, not a typo.
 func recapValidID(id string) bool {
-	if id == "" || len(id) > 64 {
+	// len > 3, not just non-empty: a bare "r_" passes a hex loop over an empty
+	// string trivially, and would reach filepath.Join as an empty component.
+	if len(id) < 3 || len(id) > 64 {
 		return false
 	}
 	if !strings.HasPrefix(id, "r_") {
@@ -378,15 +380,15 @@ func pruneRecaps(maxCount int, maxMB int64, maxDays int) (removed int, err error
 // makes cost-awareness a product requirement, not a house rule, so this is
 // opt-in and says what it costs when you turn it on.
 type RecapConfig struct {
-	AutoOnAutorun bool   `json:"autoOnAutorun"`
+	AutoOnAutorun bool    `json:"autoOnAutorun"`
 	TargetSec     float64 `json:"targetSec,omitempty"`
-	MaxWidth      int    `json:"maxWidth,omitempty"`
-	Narrate       bool   `json:"narrate,omitempty"`
-	Voice         string `json:"voice,omitempty"`  // TTS provider; "" = configured default
-	Runner        string `json:"runner,omitempty"` // script polish runner; "" = default
-	MaxCount      int    `json:"maxCount,omitempty"`
-	MaxMB         int64  `json:"maxMB,omitempty"`
-	MaxDays       int    `json:"maxDays,omitempty"`
+	MaxWidth      int     `json:"maxWidth,omitempty"`
+	Narrate       bool    `json:"narrate,omitempty"`
+	Voice         string  `json:"voice,omitempty"`  // TTS provider; "" = configured default
+	Runner        string  `json:"runner,omitempty"` // script polish runner; "" = default
+	MaxCount      int     `json:"maxCount,omitempty"`
+	MaxMB         int64   `json:"maxMB,omitempty"`
+	MaxDays       int     `json:"maxDays,omitempty"`
 	// FailureCut also emits a `failure` tagged recap when a run ends badly —
 	// gate failed, runner failed, scope violation, or heals occurred.
 	FailureCut bool `json:"failureCut,omitempty"`

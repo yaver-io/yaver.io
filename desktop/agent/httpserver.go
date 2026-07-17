@@ -1033,6 +1033,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/vibing/preview/clip/", s.authSDKOrGuest(s.handleVibePreviewClip))
 	mux.HandleFunc("/vibing/preview/summaries", s.authSDKOrGuest(s.handleVibePreviewSummaries))
 	mux.HandleFunc("/vibing/preview/clip/upload", s.auth(s.handleVibePreviewClipUpload))
+
+	// Recaps. Read paths are authSDKOrGuest so a guest can watch what the
+	// agent did; build/config are s.auth — generating one spends CPU and
+	// (with narration) inference tokens, which is an owner's decision.
+	mux.HandleFunc("/recaps", s.authSDKOrGuest(s.handleRecaps))
+	mux.HandleFunc("/recaps/build", s.auth(s.handleRecapBuild))
+	mux.HandleFunc("/recap/config", s.auth(s.handleRecapConfig))
+	mux.HandleFunc("/recap/", s.authSDKOrGuest(s.handleRecap))
 	mux.HandleFunc("/vibing/project/remote", s.auth(s.handleProjectRemote))
 
 	// Recovery: central catalog of fix prompts routed to the wrapped AI agent.
