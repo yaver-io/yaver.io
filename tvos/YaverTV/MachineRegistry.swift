@@ -99,6 +99,39 @@ private func dockerish(_ ip: String) -> Bool { ip.hasPrefix("172.17.") || ip.has
 
 enum MachineRegistry {
     struct DeviceList: Decodable { let devices: [RegisteredDevice] }
+    struct GuestList: Decodable { let guests: [HostGuest] }
+
+    /// One guest on the HOST side of sharing (`GET /guests/list`).
+    struct HostGuest: Decodable, Identifiable, Equatable {
+        let email: String?
+        let userId: String?
+        let fullName: String?
+        let status: String?
+        let createdAt: Double?
+        let acceptedAt: Double?
+        let revokedAt: Double?
+
+        var id: String {
+            if let userId, !userId.isEmpty { return userId }
+            if let email, !email.isEmpty { return email }
+            return "\(createdAt ?? 0)-\(acceptedAt ?? 0)-\(revokedAt ?? 0)"
+        }
+
+        var displayName: String {
+            if let fullName, !fullName.isEmpty { return fullName }
+            if let email, !email.isEmpty { return email }
+            if let userId, !userId.isEmpty { return userId }
+            return "Unknown guest"
+        }
+
+        var detail: String {
+            if let email, !email.isEmpty { return email }
+            if let userId, !userId.isEmpty { return userId }
+            return "No email available"
+        }
+
+        var isAccepted: Bool { status == "accepted" }
+    }
 
     /// Fetch the account's machines. Throws AgentError with a readable message so
     /// the picker can show WHY it's empty (expired token, offline, etc.) instead
@@ -117,6 +150,15 @@ enum MachineRegistry {
             throw AgentError(message: "Couldn't load your machines (\(http.statusCode)).")
         }
         return (try JSONDecoder().decode(DeviceList.self, from: data)).devices
+    }
+
+    /// GET /guests/list — who this account has shared with. The host-side TV
+    /// surface only acts on accepted guests; pending/revoked rows stay out of
+    /// view because there is nothing useful to do with them from the couch.
+    static func listGuests(token: String) async throws -> [HostGuest] {
+        let data = try await getGuest(path: "guests/list", token: token,
+                                      failure: "Couldn't load shared access")
+        return (try JSONDecoder().decode(GuestList.self, from: data)).guests
     }
 
     /// Ask a machine to update its agent, WITHOUT reaching it.
@@ -195,6 +237,20 @@ enum MachineRegistry {
                                 failure: "Couldn't accept the invitation")
     }
 
+    /// POST /guests/revoke — remove someone else's access to every machine this
+    /// account shared with them. Key by the identifiers /guests/list already
+    /// returns; email is preferred because it is the human-visible identity.
+    static func revokeGuest(email: String?, userId: String?, token: String) async throws {
+        var body: [String: Any] = [:]
+        if let email, !email.isEmpty { body["email"] = email }
+        if let userId, !userId.isEmpty { body["userId"] = userId }
+        guard !body.isEmpty else {
+            throw AgentError(message: "Can't tell which guest this is — try again from your phone or the web.")
+        }
+        _ = try await postGuest(path: "guests/revoke", body: body, token: token,
+                                failure: "Couldn't remove access")
+    }
+
     /// Shared shape of the guest POSTs: bearer token to Convex, {error} carried
     /// through verbatim (the backend's reasons — "Invitation not found",
     /// "No shared access found" — beat a bare status code).
@@ -208,6 +264,27 @@ enum MachineRegistry {
         req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
         req.timeoutInterval = 12
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response from Yaver") }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw AgentError(message: "Your TV session expired — sign in again.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "\(failure) (\(http.statusCode)).")
+        }
+        return data
+    }
+
+    private static func getGuest(path: String, token: String, failure: String) async throws -> Data {
+        var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent(path))
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        req.timeoutInterval = 12
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response from Yaver") }
         if http.statusCode == 401 || http.statusCode == 403 {

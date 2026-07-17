@@ -1,5 +1,5 @@
-// GuestAccessView.swift — guest-side access management on the wrist: see who
-// shared machines with me, accept a pending invite, drop my own access.
+// GuestAccessView.swift — share management on the wrist: see who shared with
+// me, accept/leave as a guest, and remove guests as the host with no typing.
 //
 // Why this is coherent on a surface with NO device list: guest access is
 // anchored to a HOST (a person), not to a box. `/guests/hosts` is Convex-direct
@@ -15,8 +15,8 @@
 // authenticate these calls with, so the entry point is hidden rather than shown
 // broken.
 //
-// Host-side verbs (invite / revoke) are deliberately absent: both need an email
-// typed in, which is hostile on a wrist. They stay on phone/web.
+// Host-side invite stays absent: it needs an email typed in, which is hostile on
+// a wrist. Host-side revoke is viable because the list already names the guest.
 
 import SwiftUI
 
@@ -27,13 +27,23 @@ struct GuestAccessView: View {
     /// ("nobody shared anything") rather than an indistinguishable blank.
     private enum LoadState: Equatable {
         case loading
-        case loaded(GuestHosts)
+        case loaded(GuestOverview)
         case failed(String)
+    }
+
+    private struct GuestOverview: Equatable {
+        let hosts: GuestHosts
+        let guests: HostGuests
+
+        var isEmpty: Bool { hosts.isEmpty && acceptedGuests.isEmpty }
+        var acceptedGuests: [HostGuest] { guests.guests.filter(\.isAccepted) }
     }
 
     @State private var state: LoadState = .loading
     /// The host the user asked to leave; non-nil drives the confirm sheet.
     @State private var leaving: GuestActiveHost?
+    /// The guest the user asked to revoke; non-nil drives the confirm sheet.
+    @State private var revoking: HostGuest?
     /// A row-level action in flight (accept or leave), keyed by row id, so the
     /// whole list doesn't flip to a spinner for one tap.
     @State private var busyID: String?
@@ -51,19 +61,24 @@ struct GuestAccessView: View {
                 case .failed(let message):
                     Text(message).font(.footnote).foregroundStyle(.orange)
                     Button("Try again") { Task { await load() } }.font(.footnote)
-                case .loaded(let hosts):
-                    if hosts.isEmpty {
-                        Text("No one has shared machines with you.")
+                case .loaded(let overview):
+                    if overview.isEmpty {
+                        Text("No shared access right now.")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else {
-                        if !hosts.pending.isEmpty {
+                        if !overview.hosts.pending.isEmpty {
                             sectionTitle("Invitations")
-                            ForEach(hosts.pending) { pendingRow($0) }
+                            ForEach(overview.hosts.pending) { pendingRow($0) }
                         }
-                        if !hosts.active.isEmpty {
-                            if !hosts.pending.isEmpty { Divider() }
+                        if !overview.hosts.active.isEmpty {
+                            if !overview.hosts.pending.isEmpty { Divider() }
                             sectionTitle("Shared with you")
-                            ForEach(hosts.active) { activeRow($0) }
+                            ForEach(overview.hosts.active) { activeRow($0) }
+                        }
+                        if !overview.acceptedGuests.isEmpty {
+                            if !overview.hosts.pending.isEmpty || !overview.hosts.active.isEmpty { Divider() }
+                            sectionTitle("Shared by you")
+                            ForEach(overview.acceptedGuests) { guestRow($0) }
                         }
                     }
                 }
@@ -82,6 +97,12 @@ struct GuestAccessView: View {
             ConfirmView(prompt: confirmPrompt(for: host)) { reply in
                 guard reply == .confirm else { return }
                 Task { await leave(host) }
+            }
+        }
+        .sheet(item: $revoking) { guest in
+            ConfirmView(prompt: revokePrompt(for: guest)) { reply in
+                guard reply == .confirm else { return }
+                Task { await revoke(guest) }
             }
         }
     }
@@ -136,6 +157,26 @@ struct GuestAccessView: View {
         .padding(.vertical, 2)
     }
 
+    /// A guest on the HOST side. Name + email both stay visible so a wrist tap
+    /// is less likely to remove the wrong person.
+    @ViewBuilder private func guestRow(_ guest: HostGuest) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(guest.displayName).font(.footnote).fontWeight(.semibold)
+            Text(guest.detail).font(.caption2).foregroundStyle(.secondary)
+            if busyID == guest.id {
+                HStack(spacing: 6) {
+                    ProgressView()
+                    Text("Removing…").font(.caption2)
+                }
+            } else {
+                Button("Remove access", role: .destructive) { revoking = guest }
+                    .font(.footnote)
+                    .disabled(busyID != nil)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     /// Say what actually happens: it covers EVERY machine this host shared (not
     /// just one), and it is reversible by re-invitation — both facts the user
     /// needs before a destructive tap they can't inspect on a wrist.
@@ -146,11 +187,17 @@ struct GuestAccessView: View {
         return "Remove your access to \(scope) \(host.hostName) shared? They can invite you again."
     }
 
+    private func revokePrompt(for guest: HostGuest) -> String {
+        "Remove \(guest.displayName)'s access to every machine you shared? They'd need a fresh invitation to come back."
+    }
+
     private func load() async {
         state = .loading
         actionError = nil
         do {
-            state = .loaded(try await GuestAccess.hosts(token: store.token))
+            async let hosts = GuestAccess.hosts(token: store.token)
+            async let guests = GuestAccess.guests(token: store.token)
+            state = .loaded(GuestOverview(hosts: try await hosts, guests: try await guests))
         } catch {
             state = .failed(friendly(error))
         }
@@ -175,6 +222,18 @@ struct GuestAccessView: View {
         do {
             // By email, NOT the reported hostUserId — see GuestAccess.leave.
             try await GuestAccess.leave(hostEmail: host.hostEmail, token: store.token)
+            await load()
+        } catch {
+            actionError = friendly(error)
+        }
+    }
+
+    private func revoke(_ guest: HostGuest) async {
+        busyID = guest.id
+        actionError = nil
+        defer { busyID = nil }
+        do {
+            try await GuestAccess.revoke(email: guest.email, userId: guest.userId, token: store.token)
             await load()
         } catch {
             actionError = friendly(error)

@@ -195,6 +195,42 @@ struct GuestHosts: Decodable, Equatable {
     var isEmpty: Bool { pending.isEmpty && active.isEmpty }
 }
 
+/// One guest on the HOST side of sharing (`GET /guests/list`).
+struct HostGuest: Decodable, Identifiable, Equatable {
+    let email: String?
+    let userId: String?
+    let fullName: String?
+    let status: String?
+    let createdAt: Double?
+    let acceptedAt: Double?
+    let revokedAt: Double?
+
+    var id: String {
+        if let userId, !userId.isEmpty { return userId }
+        if let email, !email.isEmpty { return email }
+        return "\(createdAt ?? 0)-\(acceptedAt ?? 0)-\(revokedAt ?? 0)"
+    }
+
+    var displayName: String {
+        if let fullName, !fullName.isEmpty { return fullName }
+        if let email, !email.isEmpty { return email }
+        if let userId, !userId.isEmpty { return userId }
+        return "Unknown guest"
+    }
+
+    var detail: String {
+        if let email, !email.isEmpty { return email }
+        if let userId, !userId.isEmpty { return userId }
+        return "No email available"
+    }
+
+    var isAccepted: Bool { status == "accepted" }
+}
+
+struct HostGuests: Decodable, Equatable {
+    let guests: [HostGuest]
+}
+
 /// Guest-side access management: see who shared machines with me, accept an
 /// invite, and drop my own access.
 ///
@@ -204,8 +240,9 @@ struct GuestHosts: Decodable, Equatable {
 /// watch's "one box by address" model is simply not involved. Nothing here needs
 /// a route to any box, exactly like AgentUpdate above.
 ///
-/// Host-side verbs (invite / revoke) are deliberately ABSENT: both require
-/// typing an email address, which is hostile on a wrist. They stay on phone/web.
+/// Host-side revoke is present because it needs no typing: the list already
+/// names the guest. Host-side invite stays absent because typing an email on a
+/// wrist is hostile, and there is no email-less invite backend verb.
 enum GuestAccess {
     /// Shared request builder — every call is Bearer + the watch surface tag.
     private static func request(_ path: String, method: String, token: String) -> URLRequest {
@@ -237,6 +274,13 @@ enum GuestAccess {
         let (data, resp) = try await URLSession.shared.data(for: request("guests/hosts", method: "GET", token: token))
         try check(data, resp, fallback: "Couldn't load shared access")
         return try JSONDecoder().decode(GuestHosts.self, from: data)
+    }
+
+    /// GET /guests/list — who this account has shared with as the host.
+    static func guests(token: String) async throws -> HostGuests {
+        let (data, resp) = try await URLSession.shared.data(for: request("guests/list", method: "GET", token: token))
+        try check(data, resp, fallback: "Couldn't load people you shared with")
+        return try JSONDecoder().decode(HostGuests.self, from: data)
     }
 
     /// POST /guests/accept-code — accept a pending invite by its 6-char code.
@@ -271,6 +315,22 @@ enum GuestAccess {
         req.httpBody = try JSONSerialization.data(withJSONObject: ["hostEmail": hostEmail])
         let (data, resp) = try await URLSession.shared.data(for: req)
         try check(data, resp, fallback: "Couldn't remove your access")
+    }
+
+    /// POST /guests/revoke — remove a guest from every machine this account
+    /// shared with them. Use the identifiers /guests/list already returns.
+    static func revoke(email: String?, userId: String?, token: String) async throws {
+        var body: [String: Any] = [:]
+        if let email, !email.isEmpty { body["email"] = email }
+        if let userId, !userId.isEmpty { body["userId"] = userId }
+        guard !body.isEmpty else {
+            throw AgentError(message: "Can't tell which guest this is.")
+        }
+        var req = request("guests/revoke", method: "POST", token: token)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try check(data, resp, fallback: "Couldn't remove access")
     }
 }
 

@@ -448,7 +448,7 @@ async function refreshDevices() {
   // Dedup by hostname, keep latest
   const seen = new Map();
   for (const d of devices) { const k = (d.name||d.deviceId||'').toLowerCase(); const e = seen.get(k); if (!e || (d.lastHeartbeat||0) > (e.lastHeartbeat||0)) seen.set(k, d); }
-  devices = Array.from(seen.values()).filter(d => d.isOnline);
+  devices = Array.from(seen.values()).filter(d => d.isGuest || d.isOnline);
 
   // If local agent found, remove remote entries that are actually this same machine
   const localHostname = (local.found && local.hostname) ? local.hostname.toLowerCase() : null;
@@ -499,11 +499,15 @@ async function refreshDevices() {
     const leave = d.isGuest
       ? `<button class="btn-icon no-drag" onclick="event.stopPropagation();leaveHost(${i})" title="Remove my access to ${esc(host)}'s machines" style="width:22px;height:22px;font-size:10px;color:var(--red)">&#x2715;</button>`
       : '';
-    html += `<div class="device-card no-drag" onclick="connectRemote(${i})">
-      <div class="dot" style="background:var(--green)"></div>
+    const online = !!d.isOnline;
+    const dot = online ? 'var(--green)' : 'var(--text-muted)';
+    const connectBadge = online ? '<span class="badge badge-green">Connect</span>' : '<span class="badge" style="background:rgba(255,255,255,0.08);color:var(--text-muted)">Offline</span>';
+    const cardStyle = online ? '' : ' style="opacity:0.75"';
+    html += `<div class="device-card no-drag"${online ? ` onclick="connectRemote(${i})"` : cardStyle}>
+      <div class="dot" style="background:${dot}"></div>
       <div style="flex:1"><div style="font-size:14px;font-weight:500">${esc(d.name||d.deviceId)}</div>
       <div style="font-size:11px;color:var(--text-muted)">${d.platform||'unknown'}${d.isGuest && d.accessScope ? ' &middot; ' + esc(d.accessScope) : ''}</div></div>
-      ${shared}<span class="badge badge-green">Connect</span>${leave}</div>`;
+      ${shared}${connectBadge}${leave}</div>`;
   }
 
   if (!html) {
