@@ -23,6 +23,7 @@ import SwitchView from "@/components/dashboard/SwitchView";
 import AccountsView from "@/components/dashboard/AccountsView";
 import ObservabilityView from "@/components/dashboard/ObservabilityView";
 import OpsView from "@/components/dashboard/OpsView";
+import AutorunsView from "@/components/dashboard/AutorunsView";
 import ToolPanelView from "@/components/dashboard/ToolPanelView";
 import OverviewView from "@/components/dashboard/OverviewView";
 import ExtrasView from "@/components/dashboard/ExtrasView";
@@ -734,7 +735,7 @@ const CONNECTION_REQUIRED_TABS = new Set<string>([
   "chat", "projects", "vault", "storage", "ops", "git", "data", "convex",
   "schedules", "apikeys", "exec", "companion", "builds", "quality", "observ",
   "screenlog", "extras", "accounts", "switch", "tools", "phone", "health",
-  "todos", "arm", "appletv", "verbs",
+  "todos", "arm", "appletv", "verbs", "autoruns",
 ]);
 
 // HN-LAUNCH-HIDE-PAID: paid surfaces (Billing, Cloud + Build/CapabilityShelf
@@ -833,7 +834,7 @@ export default function DashboardPage() {
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "stores" | "cloud" | "build" | "arm" | "appletv" | "packages" | "verbs">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "autoruns" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "stores" | "cloud" | "build" | "arm" | "appletv" | "packages" | "verbs">("devices");
   const [autoStart2faSetup, setAutoStart2faSetup] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
@@ -1992,6 +1993,7 @@ export default function DashboardPage() {
     { id: "tools", label: "Tools", icon: "\uD83E\uDDE9" },
     { id: "observ", label: "Observ", icon: "\uD83D\uDCCA" },
     { id: "ops", label: "Ops", icon: "\uD83D\uDE80" },
+    { id: "autoruns", label: "Autoruns", icon: "\u267B\uFE0F" },
     { id: "verbs", label: "Tools+", icon: "\uD83E\uDDF0" },
     { id: "extras", label: "Extras", icon: "\u2699\uFE0F" },
     { id: "share", label: "Share", icon: "\uD83D\uDCE3" },
@@ -2787,6 +2789,8 @@ export default function DashboardPage() {
             <ToolsView devices={devices} />
           ) : activeTab === "observ" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ObservabilityView /></div>
+          ) : activeTab === "autoruns" ? (
+            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><AutorunsView /></div>
           ) : activeTab === "ops" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OpsView /></div>
           ) : activeTab === "verbs" ? (
