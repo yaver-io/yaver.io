@@ -173,12 +173,16 @@ yaver auth --headless
 
 ## Repository
 
-- **Source of truth**: `github.com/kivanccakmak/yaver.io` (open source). Only
-  one remote here — `github` (HTTPS). `branch.main.remote=github`, so plain
-  `git push` works. No GitLab mirror.
+- **Source of truth**: `github.com/yaver-io/yaver.io` (open source). Owned by
+  the `yaver-io` org since 2026-07-17 — it was `kivanccakmak/yaver.io` before,
+  and GitHub still redirects the old URL, so a stale remote keeps working and
+  will quietly hide its own staleness. Only one remote here — `github`, over
+  **SSH** (`git@github.com:yaver-io/yaver.io.git`). `branch.main.remote=github`,
+  so plain `git push` works. No GitLab mirror.
 - **Tags trigger releases**: `cli/v*` → release-cli.yml, `mobile/v*` →
-  release-mobile.yml, `web/v*` → release-web.yml. Tag protection rules limit
-  pushes to the repo owner.
+  release-mobile.yml, `web/v*` → release-web.yml. Tag protection is a repo
+  ruleset (`release tag protection`); it survived the org transfer, as did all
+  61 Actions secrets — verified by diffing before/after.
 - **Cloudflare web deploy**: `./scripts/deploy-web.sh` (size-guarded at 15 MB,
   uses `@opennextjs/cloudflare` + `wrangler deploy`).
 - **Convex backend deploy**: `cd backend && npx convex deploy --yes`. Not
@@ -188,7 +192,7 @@ yaver auth --headless
 
 Three places. Never anywhere else. Never in a tracked file or git history.
 
-1. **GitHub Actions secrets** (CI). `gh secret list -R kivanccakmak/yaver.io`
+1. **GitHub Actions secrets** (CI). `gh secret list -R yaver-io/yaver.io`
    for the canonical list. Includes:
    `ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
    `ANDROID_KEY_PASSWORD`, `APPLE_CERTIFICATE_P12`,
@@ -234,17 +238,32 @@ test enumerates forbidden keys (`path`, `workDir`, `token`, `stdout`,
 `/home/`, `/root/`, `C:\Users\`). New sync paths must add their fields to
 `fieldsWeForbidInAnyConvexPayload` and a test for the payload.
 
+## Monorepo rule
+
+**Yaver is ONE monorepo — this one.** Agent, CLI, mobile, watch, TV, car,
+AR/VR, web, relay, backend, SDKs all ship together here. Don't propose
+splitting a surface out: they have to agree on protocol and version, and
+separate repos would only buy skew.
+
+The `yaver-io` org holds this repo plus **validation / use-case apps** —
+anything whose job is to exercise Yaver from the OUTSIDE. Those get their own
+repos on purpose: a fixture that lives in here inherits this repo's tooling and
+stops being an honest test of what a user's project actually hits.
+
+**Rule: product code here; anything that tests the product from outside gets
+its own repo.**
+
 ## Validation apps live OUTSIDE this repo
 
 The todo fixtures are their own public repos, not `demo/` subdirectories:
 
 | Repo | Stack | Reach | Feedback SDK |
 |---|---|---|---|
-| [yaver-todo-rn](https://github.com/kivanccakmak/yaver-todo-rn) | Expo / RN | Hermes (HBC swap) | ✅ `yaver-feedback-react-native` |
-| [yaver-todo-kt](https://github.com/kivanccakmak/yaver-todo-kt) | Android / Kotlin | `native-webrtc` | ❌ **none exists** — viewer-triggered only |
-| [yaver-todo-swift](https://github.com/kivanccakmak/yaver-todo-swift) | iOS / SwiftUI | `native-webrtc` | ❌ **none exists** — viewer-triggered only |
-| [yaver-todo-flutter](https://github.com/kivanccakmak/yaver-todo-flutter) | Flutter | `native-webrtc` | ✅ `yaver_feedback` (pub.dev) |
-| [yaver-todo-web](https://github.com/kivanccakmak/yaver-todo-web) | Next.js | dev server / HMR | ✅ `yaver-feedback-web` |
+| [yaver-todo-rn](https://github.com/yaver-io/yaver-todo-rn) | Expo / RN | Hermes (HBC swap) | ✅ `yaver-feedback-react-native` |
+| [yaver-todo-kt](https://github.com/yaver-io/yaver-todo-kt) | Android / Kotlin | `native-webrtc` | ❌ **none exists** — viewer-triggered only |
+| [yaver-todo-swift](https://github.com/yaver-io/yaver-todo-swift) | iOS / SwiftUI | `native-webrtc` | ❌ **none exists** — viewer-triggered only |
+| [yaver-todo-flutter](https://github.com/yaver-io/yaver-todo-flutter) | Flutter | `native-webrtc` | ✅ `yaver_feedback` (pub.dev) |
+| [yaver-todo-web](https://github.com/yaver-io/yaver-todo-web) | Next.js | dev server / HMR | ✅ `yaver-feedback-web` |
 
 Same todo UX five ways, on purpose: the app is the control, so any difference
 you observe is the transport. Local-only — no backend, no accounts, no network.
@@ -392,7 +411,7 @@ App Store Connect issuer/key.
 
 GitHub Actions secrets backing the same flow (already populated): `APPLE_TEAM_ID`,
 `APP_STORE_CONNECT_API_KEY`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`,
-`APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD`. Verify with `gh secret list -R kivanccakmak/yaver.io`.
+`APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD`. Verify with `gh secret list -R yaver-io/yaver.io`.
 
 Vault entries (write once when vault is unlocked, then `yaver vault env --project mobile`
 emits the same exports as the env file):

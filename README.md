@@ -3,19 +3,19 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml"><img src="https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/yaver-io/yaver.io/actions/workflows/test-suite.yml"><img src="https://github.com/yaver-io/yaver.io/actions/workflows/test-suite.yml/badge.svg" alt="Tests"></a>
   <a href="https://www.npmjs.com/package/yaver-cli"><img src="https://img.shields.io/npm/v/yaver-cli?color=34D399&labelColor=101010&label=yaver-cli" alt="yaver-cli on npm"></a>
   <a href="docs/planning/LICENSING.md"><img src="https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-7C66FF?labelColor=101010" alt="License: FSL-1.1-Apache-2.0"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/kivanccakmak/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4">
+  <a href="https://github.com/yaver-io/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4">
     <img src="demo-videos/yaver-hosting-demo.gif" alt="Demo: a task sent from a phone runs on the desktop agent and the app reloads live on the device" width="820">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/kivanccakmak/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4"><sub>Watch the full demo →</sub></a>
+  <a href="https://github.com/yaver-io/yaver.io/releases/download/yaver-hosting-demo-v1/yaver-hosting-demo.mp4"><sub>Watch the full demo →</sub></a>
 </p>
 
 ## What Yaver is
@@ -123,6 +123,22 @@ An optional managed-cloud option, for people who don't want to run their own alw
 | `demo-videos/` | Source notes for the landing/demo clips |
 | `docs/` | Architecture notes, setup guides, audits, handoffs, and planning material |
 
+## This repo is the monorepo
+
+**Yaver is one monorepo — this one.** Agent, CLI, mobile, watch, TV, car,
+AR/VR, web, relay, backend, and SDKs all live here and ship together. Splitting
+them would only buy version skew between surfaces that have to agree.
+
+Everything else in the [`yaver-io`](https://github.com/yaver-io) org is a
+**validation / use-case app** — something whose only job is to exercise Yaver
+from the outside. Those are separate repos precisely because they must be
+clonable, buildable, and breakable on their own, exactly as a user's project
+is. If they lived in here they'd inherit this repo's tooling and stop being an
+honest test.
+
+The rule: **product code goes in this repo; anything that tests the product
+from outside gets its own repo.**
+
 ## Validation apps
 
 The apps that prove Yaver works live in their own repos, not in this one. They
@@ -135,11 +151,11 @@ and not the app:
 
 | Repo | Stack | How Yaver reaches it |
 |---|---|---|
-| [yaver-todo-rn](https://github.com/kivanccakmak/yaver-todo-rn) | Expo / React Native | **Hermes** — the agent compiles an HBC bundle and the container swaps it in place |
-| [yaver-todo-kt](https://github.com/kivanccakmak/yaver-todo-kt) | Native Android (Kotlin) | **native-webrtc** — runs on a build host, H.264 streamed to the phone, taps sent back |
-| [yaver-todo-swift](https://github.com/kivanccakmak/yaver-todo-swift) | Native iOS (SwiftUI) | **native-webrtc** — same, macOS build host only |
-| [yaver-todo-flutter](https://github.com/kivanccakmak/yaver-todo-flutter) | Flutter / Dart | **native-webrtc** — Dart has no Hermes equivalent |
-| [yaver-todo-web](https://github.com/kivanccakmak/yaver-todo-web) | Next.js | **dev server** — HMR through the tunnelled port |
+| [yaver-todo-rn](https://github.com/yaver-io/yaver-todo-rn) | Expo / React Native | **Hermes** — the agent compiles an HBC bundle and the container swaps it in place |
+| [yaver-todo-kt](https://github.com/yaver-io/yaver-todo-kt) | Native Android (Kotlin) | **native-webrtc** — runs on a build host, H.264 streamed to the phone, taps sent back |
+| [yaver-todo-swift](https://github.com/yaver-io/yaver-todo-swift) | Native iOS (SwiftUI) | **native-webrtc** — same, macOS build host only |
+| [yaver-todo-flutter](https://github.com/yaver-io/yaver-todo-flutter) | Flutter / Dart | **native-webrtc** — Dart has no Hermes equivalent |
+| [yaver-todo-web](https://github.com/yaver-io/yaver-todo-web) | Next.js | **dev server** — HMR through the tunnelled port |
 
 Hermes is React-Native-only: native and Flutter apps compile to real binaries
 and can never be loaded into the Yaver container. That is why three of the five
