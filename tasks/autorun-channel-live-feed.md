@@ -215,19 +215,25 @@ sessions hold uncommitted work in sibling checkouts. Never `stash`,
 `reset --hard`, `checkout -- .`, or `--autostash` anything you did not write. A
 sibling session wiped ~15 finished files that way once.
 
-## Known state of the world, 2026-07-17 ~16:00 — read this
+## Known state of the world, 2026-07-17 ~16:10 — read this
 
-- **`main` on the remote does not build** as of `799ea6291` — `mcpOps` is called
-  in three `git_*` MCP adapters (`httpserver.go:8248,8262,8274`) and was never
-  defined. The fix exists but could not be pushed (below). **This checkout has it
-  applied locally.** If your gate fails on `mcpOps`, that is not your change.
-- **Pushing to `main` is currently impossible for everyone.** The
-  `main branch protection` ruleset gained `required_signatures` at 15:42 today
-  with zero bypass actors, and no SSH signing key is registered on the account —
-  so every commit, including autorun's own `git commit -S`, reports
-  `verified: false / unknown_key`. **This run has `--push` OFF for that reason.**
-  Commit locally; landing happens once the owner registers a signing key.
-  Do not try to work around this. Do not disable signing. Do not force anything.
+- **`main` builds again** as of `38031928e`. It did not, for about 40 minutes:
+  `mcpOps` was called in three `git_*` MCP adapters
+  (`httpserver.go:8248,8262,8274`) and never defined, and `66463c1f8` left three
+  call sites on a pre-rename spelling. Both were landed by autoruns whose gates
+  could not have passed either. **If your gate fails on something you did not
+  touch, check `git log` before assuming it's yours** — `go build ./...`
+  compiles all of package `main`, so anyone's broken file fails your gate.
+- **`main` now requires verified signatures.** The `main branch protection`
+  ruleset gained `required_signatures` at 15:42 today with **zero bypass
+  actors**. The owner has registered the SSH signing key, so this box's
+  `git commit -S` commits verify (`verified: true / valid`) and `--push` works.
+  If a push is ever rejected with `GH013 ... must have verified signatures`,
+  that is **terminal, not a race** — do not retry it, do not disable signing,
+  do not force anything. Stop and say so.
+- **`main` moves constantly and several autoruns push to it.** A push rejected
+  as *behind* is a normal race — rebase and retry. A push rejected for
+  *signatures* or *rules* is not. Do not conflate them.
 
 ## Done means
 
