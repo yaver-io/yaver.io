@@ -8,7 +8,7 @@
 // answer to "can I run a coding task on box X right now?".
 //
 // This module normalizes those raw agent reports into ONE BoxReadiness object: a
-// short checklist (agent / opencode / glm / claude / codex / git) where every entry carries a
+// short checklist (agent / opencode / claude / codex / git) where every entry carries a
 // status AND the remediation the UI can trigger. The RN layer (boxInitStore.ts)
 // gathers the raw inputs over QUIC and drives the suggested actions; the screen
 // just renders checks and wires buttons to actions. All policy lives here so it
@@ -21,7 +21,7 @@
 // target the user can code on.
 
 /** Runner families the checklist cares about. */
-export type RunnerKind = "claude" | "codex" | "opencode" | "glm";
+export type RunnerKind = "claude" | "codex" | "opencode";
 
 /** Subset of the agent's RunnerAuthStatusRow we need. The store maps the full
  *  quic shape (which uses ids like "claude" | "claude-code" | "codex" |
@@ -72,11 +72,10 @@ export type BoxActionId =
   | "setup_claude"
   | "setup_codex"
   | "setup_opencode"
-  | "setup_glm"
   | "configure_git_github"
   | "configure_git_gitlab";
 
-export type CheckKey = "agent" | "opencode" | "glm" | "claude" | "codex" | "git_github" | "git_gitlab";
+export type CheckKey = "agent" | "opencode" | "claude" | "codex" | "git_github" | "git_gitlab";
 
 export interface BoxCheck {
   key: CheckKey;
@@ -109,11 +108,6 @@ function isCodex(id: string): boolean {
 
 function isOpenCode(id: string): boolean {
   return id.toLowerCase().includes("opencode");
-}
-
-function isGLM(id: string): boolean {
-  const normalized = id.toLowerCase();
-  return normalized === "glm" || normalized.includes("z.ai") || normalized.includes("zai");
 }
 
 function findRunner(runners: RunnerReadinessInput[], pred: (id: string) => boolean): RunnerReadinessInput | undefined {
@@ -169,20 +163,6 @@ function opencodeCheck(input: BoxReadinessInput): BoxCheck {
   return { key: "opencode", label: "OpenCode", status: "warn", detail: "installed, provider not configured", action: "setup_opencode" };
 }
 
-function glmCheck(input: BoxReadinessInput): BoxCheck {
-  if (input.isLocalDevice) {
-    return { key: "glm", label: "GLM (z.ai)", status: "n-a", detail: "runs on a paired box", action: "none" };
-  }
-  const r = findRunner(input.runners, isGLM);
-  if (!r || !r.installed) {
-    return { key: "glm", label: "GLM (z.ai)", status: "missing", detail: "not configured", action: "setup_glm" };
-  }
-  if (r.authConfigured && r.ready) {
-    return { key: "glm", label: "GLM (z.ai)", status: "ok", detail: r.version ? `ready · ${r.version}` : "provider configured", action: "none" };
-  }
-  return { key: "glm", label: "GLM (z.ai)", status: "warn", detail: "provider not configured", action: "setup_glm" };
-}
-
 function codexCheck(input: BoxReadinessInput): BoxCheck {
   if (input.isLocalDevice) {
     // No codex CLI on the phone sandbox — claude/subscription is the path.
@@ -227,7 +207,7 @@ function agentCheck(input: BoxReadinessInput): BoxCheck {
  * Compute the one-screen readiness for a box from raw agent reports.
  *
  * Order is deliberate: agent first (gates everything), then the coding runners
- * (opencode, glm, claude, codex), then git (recommended). The overall verdict:
+ * (opencode, claude, codex), then git (recommended). The overall verdict:
  *   - not-ready when the agent is offline, or no coding runner is "ok"
  *     (you literally can't run a task).
  *   - partial when you CAN code but a check is still warn/missing.
@@ -237,7 +217,6 @@ export function computeBoxReadiness(input: BoxReadinessInput): BoxReadiness {
   const checks: BoxCheck[] = [
     agentCheck(input),
     opencodeCheck(input),
-    glmCheck(input),
     claudeCheck(input),
     codexCheck(input),
     gitCheck(input, "github"),
@@ -245,7 +224,7 @@ export function computeBoxReadiness(input: BoxReadinessInput): BoxReadiness {
   ];
 
   const agentOk = checks[0].status === "ok";
-  const canCode = checks.some((c) => (c.key === "opencode" || c.key === "glm" || c.key === "claude" || c.key === "codex") && c.status === "ok");
+  const canCode = checks.some((c) => (c.key === "opencode" || c.key === "claude" || c.key === "codex") && c.status === "ok");
   const pending = checks.filter((c) => c.status === "warn" || c.status === "missing");
 
   let overall: OverallReadiness;

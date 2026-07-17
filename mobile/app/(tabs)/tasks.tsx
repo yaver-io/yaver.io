@@ -813,9 +813,9 @@ function deriveRunnerBannerState(
     const selectedRow = runners.find(
       (r) => normalizeTaskRunnerId(r.id) === wantId,
     );
-    // Always-distinct label ("Claude Code" / "OpenAI Codex" / "OpenCode"
-    // / "GLM (z.ai)") even when the runner has no row yet (not installed
-    // on this box). Prefer the agent's own name; fall back to the id map.
+    // Always-distinct label ("Claude Code" / "OpenAI Codex" / "OpenCode")
+    // even when the runner has no row yet (not installed on this box).
+    // Prefer the agent's own name; fall back to the id map.
     const label = selectedRow?.name || displayRunnerLabel(wantId);
     if (!selectedRow || selectedRow.installed === false) {
       // Say so for THIS runner + offer its setup — don't imply another
@@ -1862,7 +1862,7 @@ export default function TasksScreen() {
   // updates.
   useEffect(() => {
     if (availableRunners.length === 0) return;
-    const RUNNER_WL = new Set(["claude", "codex", "opencode", "glm"]);
+    const RUNNER_WL = new Set(["claude", "codex", "opencode"]);
     const installed = availableRunners.filter((runner) => runner.installed && RUNNER_WL.has(runner.id));
     if (installed.length === 0) return;
     const ready = installed.filter((runner) => runner.ready !== false);

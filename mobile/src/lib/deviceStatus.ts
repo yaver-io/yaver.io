@@ -160,7 +160,7 @@ async function fetchCodingRunnersAt(
 
 function codingReady(runners: CodingRunnerProbe[]): boolean {
   return runners.some((r) =>
-    (r.id === "claude" || r.id === "claude-code" || r.id === "codex" || r.id === "opencode" || r.id === "glm") &&
+    (r.id === "claude" || r.id === "claude-code" || r.id === "codex" || r.id === "opencode") &&
     r.ready,
   );
 }

@@ -37,9 +37,8 @@ test("agent offline ⇒ not-ready and agent check wants wait", () => {
 test("agent online but no runners ⇒ not-ready (can't code)", () => {
   const r = computeBoxReadiness(BASE);
   assert.equal(r.overall, "not-ready");
-  // OpenCode/GLM/Claude/Codex missing → setup actions offered.
+  // OpenCode/Claude/Codex missing → setup actions offered.
   assert.equal(check(BASE, "opencode").action, "setup_opencode");
-  assert.equal(check(BASE, "glm").action, "setup_glm");
   assert.equal(check(BASE, "claude").action, "setup_claude");
   assert.equal(check(BASE, "codex").action, "setup_codex");
 });
@@ -62,7 +61,6 @@ test("everything green ⇒ ready, no pending", () => {
     ...BASE,
     runners: [
       { id: "opencode", installed: true, ready: true, authConfigured: true },
-      { id: "glm", installed: true, ready: true, authConfigured: true },
       { id: "claude", installed: true, ready: true, authConfigured: true },
       { id: "codex", installed: true, ready: true, authConfigured: true },
     ],
@@ -101,7 +99,6 @@ test("local phone: subscription token ⇒ claude ok, codex + git n-a", () => {
   assert.equal(check(input, "agent").status, "ok");
   assert.equal(check(input, "claude").status, "ok");
   assert.equal(check(input, "opencode").status, "n-a");
-  assert.equal(check(input, "glm").status, "n-a");
   assert.equal(check(input, "codex").status, "n-a");
   assert.equal(check(input, "git_github").status, "n-a");
   assert.equal(r.overall, "ready");
@@ -128,6 +125,6 @@ test("pending excludes n-a and ok entries", () => {
     providers: [{ id: "github", ready: true, configured: true }],
   };
   const r = computeBoxReadiness(input);
-  // opencode + glm + codex (missing) + gitlab (missing) remain
-  assert.deepEqual(r.pending.map((c) => c.key).sort(), ["codex", "git_gitlab", "glm", "opencode"]);
+  // opencode + codex (missing) + gitlab (missing) remain
+  assert.deepEqual(r.pending.map((c) => c.key).sort(), ["codex", "git_gitlab", "opencode"]);
 });

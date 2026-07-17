@@ -70,7 +70,7 @@ interface CloudStatusPayload {
 
 export interface ManagedCloudFlowOpts {
   /** Runner to configure on the new box. */
-  runner?: "claude" | "codex" | "opencode" | "glm";
+  runner?: "claude" | "codex" | "opencode";
   /** Max minutes to wait before giving up on the box coming online. */
   maxWaitMinutes?: number;
   /** Called for every step transition. */

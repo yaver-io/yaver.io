@@ -15,7 +15,6 @@ export type DeviceIdentityLike = {
 };
 
 export const HETZNER_OPENCODE_MODEL = "zai-coding-plan/glm-4.7";
-export const HETZNER_GLM_MODEL = "glm-4.7";
 
 export function isKivancAccount(email: string | null | undefined): boolean {
   const normalized = String(email || "").trim().toLowerCase();
@@ -61,7 +60,6 @@ export function displayRunnerLabel(runnerId?: string | null): string {
   if (normalized === "claude" || normalized === "claude-code") return "Claude Code";
   if (normalized === "codex") return "Codex";
   if (normalized === "opencode") return "OpenCode";
-  if (normalized === "glm") return "GLM (z.ai)";
   return normalized || "Selected agent";
 }
 
@@ -93,7 +91,6 @@ export function preferredDefaultRunnerForDevice(
   if (unique.includes("claude")) return "claude";
   if (unique.includes("codex")) return "codex";
   if (unique.includes("opencode")) return "opencode";
-  if (unique.includes("glm")) return "glm";
   return unique[0] || null;
 }
 
@@ -107,13 +104,11 @@ export function preferredDefaultModelForRunner(
   if (isKivancAccount(signedInEmail)) {
     if (normalized === "claude" && isKivancMacBook(device)) return "claude-opus-4-7";
     if (normalized === "opencode" && !isKivancMacBook(device)) return HETZNER_OPENCODE_MODEL;
-    if (normalized === "glm" && !isKivancMacBook(device)) return HETZNER_GLM_MODEL;
     if (normalized === "codex" && !isKivancMacBook(device)) return "gpt-5.3-codex";
   }
   if (normalized === "claude") return "claude-opus-4-7";
   if (normalized === "codex") return "gpt-5.3-codex";
   if (normalized === "opencode") return HETZNER_OPENCODE_MODEL;
-  if (normalized === "glm") return HETZNER_GLM_MODEL;
   return null;
 }
 

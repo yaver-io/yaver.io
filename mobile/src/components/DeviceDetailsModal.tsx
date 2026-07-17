@@ -1021,8 +1021,8 @@ export function CodingAgentsSection({ device }: { device: Device }) {
   const [statusRows, setStatusRows] = useState<RunnerAuthStatusRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [authModalRunner, setAuthModalRunner] = useState<string | null>(null);
-  // OpenCode/GLM don't use the Claude/Codex browser OAuth path. Route
-  // their "Sign in" to the config sheet instead of the browser-auth modal,
+  // OpenCode doesn't use the Claude/Codex browser OAuth path. Route its
+  // "Sign in" to the config sheet instead of the browser-auth modal,
   // which errors with "unsupported runner" for anything but claude/codex.
   const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
   const [defaultBusy, setDefaultBusy] = useState<string | null>(null);
@@ -1515,9 +1515,9 @@ export function CodingAgentsSection({ device }: { device: Device }) {
               <Pressable
                 onPress={() => {
                   const nid = String(id).toLowerCase();
-                  // opencode/glm authenticate through provider config, not
-                  // browser OAuth — send them to the config sheet.
-                  if (nid === "opencode" || nid === "glm") {
+                  // opencode authenticates through provider config, not
+                  // browser OAuth — send it to the config sheet.
+                  if (nid === "opencode") {
                     setShowOpenCodeConfig(true);
                   } else {
                     setAuthModalRunner(id);
@@ -1529,7 +1529,7 @@ export function CodingAgentsSection({ device }: { device: Device }) {
                 }}
               >
                 <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
-                  {String(id).toLowerCase() === "opencode" || String(id).toLowerCase() === "glm" ? "Set up →" : "Sign in →"}
+                  {String(id).toLowerCase() === "opencode" ? "Set up →" : "Sign in →"}
                 </Text>
               </Pressable>
             ) : null}

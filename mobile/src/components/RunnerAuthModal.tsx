@@ -53,7 +53,6 @@ const runnerLabel = (runner: string) => {
   if (id === "claude" || id === "claude-code") return "Claude Code";
   if (id === "codex") return "Codex";
   if (id === "opencode") return "OpenCode";
-  if (id === "glm") return "GLM (z.ai)";
   return runner || "agent";
 };
 

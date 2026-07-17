@@ -147,17 +147,6 @@ export async function runBoxAction(
         return resultFromSetup(r);
       }
 
-      case "setup_glm": {
-        const r = await client.runnerAuthSetup({
-          runner: "glm",
-          installIfMissing: true,
-          allowInstallOnly: true,
-          setupMcp: true,
-          glmApiKey: params.glmApiKey,
-        });
-        return resultFromSetup(r);
-      }
-
       case "configure_git_github": {
         if (!params.githubToken) return { ok: false, error: "a GitHub token is required" };
         const r = await client.machineOnboardingApply({

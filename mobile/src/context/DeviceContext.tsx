@@ -193,13 +193,10 @@ export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   // Codex-native model — general gpt-5.x error on a ChatGPT-account login
   // ("not supported when using Codex with a ChatGPT account").
   codex: "gpt-5.3-codex",
-  // GLM runs on the claude binary against z.ai's Anthropic endpoint; the
-  // model id is forwarded verbatim. Mirrors builtinRunners["glm"].Model.
-  glm: "glm-4.7",
 };
 
 function deviceRunnerReadyFromHeartbeat(device: Pick<Device, "runners" | "installedRunnerIds">): boolean {
-  const runnerIds = new Set(["claude", "claude-code", "codex", "opencode", "glm"]);
+  const runnerIds = new Set(["claude", "claude-code", "codex", "opencode"]);
   for (const runner of device.runners || []) {
     const id = String((runner as any).runnerId || (runner as any).id || "").trim().toLowerCase();
     const status = String((runner as any).status || "").trim().toLowerCase();
