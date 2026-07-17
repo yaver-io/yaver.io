@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,11 @@ type autorunSession struct {
 	StartedAt    time.Time `json:"startedAt"`
 	FinishedAt   time.Time `json:"finishedAt,omitempty"`
 	Error        string    `json:"error,omitempty"`
+	// LandingError is set when the WORK succeeded and only the bookkeeping —
+	// the final commit, its push, the merge onto main — failed. Such a run is
+	// `completed`: its iterations ran and its commits exist. Kept separate from
+	// Error so no surface has to guess which half of a run went wrong.
+	LandingError string `json:"landingError,omitempty"`
 	Summary      autorunRunSummary
 	cancel       context.CancelFunc
 }
@@ -43,10 +49,13 @@ type autorunSessionView struct {
 	StartedAt    time.Time `json:"startedAt"`
 	FinishedAt   time.Time `json:"finishedAt,omitempty"`
 	Error        string    `json:"error,omitempty"`
-	ProgressTail string    `json:"progressTail,omitempty"`
-	Iterations   int       `json:"iterations"`
-	Commits      int       `json:"commits"`
-	FinishReason string    `json:"finishReason,omitempty"`
+	// LandingError: the work succeeded, only the bookkeeping failed to land. A
+	// surface must not paint such a run as a failure — see autorunSession.
+	LandingError string `json:"landingError,omitempty"`
+	ProgressTail string `json:"progressTail,omitempty"`
+	Iterations   int    `json:"iterations"`
+	Commits      int    `json:"commits"`
+	FinishReason string `json:"finishReason,omitempty"`
 	// FinalCommit is the SHA of the run's explicitly-marked final commit.
 	// While it is empty the run has not ended, however quiet it looks.
 	FinalCommit        string `json:"finalCommit,omitempty"`
@@ -111,9 +120,19 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 		s.Summary = summary
 		if err != nil {
 			s.Error = err.Error()
-			if ctx.Err() != nil {
+			var landing *autorunLandingError
+			switch {
+			case ctx.Err() != nil:
 				s.Status = "stopped"
-			} else {
+			case errors.As(err, &landing) && autorunWorkSucceeded(summary.FinishReason):
+				// The loop did its job and only the bookkeeping failed to land.
+				// Calling that `failed` is how a converged 3-iteration run got
+				// recorded as a failure for losing a push race — the work is real,
+				// the commits exist, and the run must say so. The landing failure
+				// is still reported, just not as the run's verdict.
+				s.Status = "completed"
+				s.LandingError = err.Error()
+			default:
 				s.Status = "failed"
 			}
 		}
@@ -128,7 +147,7 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 }
 
 func (m *autorunSessionManager) view(s *autorunSession) autorunSessionView {
-	v := autorunSessionView{ID: s.ID, Slot: s.Slot, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error,
+	v := autorunSessionView{ID: s.ID, Slot: s.Slot, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error, LandingError: s.LandingError,
 		Iterations: s.Summary.Iterations, Commits: s.Summary.Commits, FinishReason: s.Summary.FinishReason,
 		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject,
 		ActiveRunner: s.Summary.Runner, Master: s.Summary.Master, Heals: s.Summary.Heals, Resources: s.Summary.Resources}

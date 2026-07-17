@@ -46,6 +46,8 @@ type AutorunSession = {
   startedAt?: string;
   finishedAt?: string;
   error?: string;
+  /** Set when the work succeeded and only the final commit/push failed to land. */
+  landingError?: string;
   progressTail?: string;
   iterations?: number;
   commits?: number;
@@ -79,18 +81,26 @@ function tone(s: AutorunSession): { label: string; cls: string } {
 }
 
 /**
- * The one distinction the raw fields refuse to make. A run whose work converged
- * but whose final push was rejected is reported failed — and reading that as "my
- * autorun didn't work" is exactly the wrong conclusion, because the iterations
- * landed. Say so plainly instead of showing a red chip and nothing else.
+ * Did the work succeed and only the bookkeeping fail to land?
+ *
+ * The agent now answers this itself: a run whose loop converged and whose final
+ * push lost a race is `completed` with `landingError` set, rather than `failed`.
+ * Trust that field — the agent is the only thing that knows which half broke.
+ *
+ * The fallback below is for an OLDER agent, which had no landingError and marked
+ * such a run `failed` with the push error in `error`. A dashboard talks to boxes
+ * it did not ship, so recognising the old shape is what keeps those runs from
+ * reading as failures here. Remove it once no agent that old can still report.
  */
 function landingOnlyFailure(s: AutorunSession): boolean {
+  if (String(s.landingError || "").trim() !== "") return true;
   if (String(s.status || "").toLowerCase() !== "failed") return false;
   const reason = String(s.finishReason || "").toLowerCase();
   const converged = reason.includes("converged") || reason.includes("done");
   const err = String(s.error || "").toLowerCase();
-  const pushRace = err.includes("rejected") || err.includes("fetch first") || err.includes("push final commit");
-  return converged || pushRace;
+  const pushRace =
+    err.includes("rejected") || err.includes("fetch first") || err.includes("push final commit");
+  return converged && pushRace;
 }
 
 function fmtWhen(iso?: string): string {
@@ -265,6 +275,11 @@ export default function AutorunsView() {
                   The work finished ({s.finishReason}) — it was the final commit that
                   failed to land, not the run. The iterations are not lost.
                 </p>
+                {s.landingError ? (
+                  <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-[10px] text-surface-500">
+                    {s.landingError}
+                  </pre>
+                ) : null}
               </div>
             ) : null}
 

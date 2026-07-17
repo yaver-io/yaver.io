@@ -207,7 +207,7 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 	if reason == autorunReasonDone && summary.Iterations == 0 {
 		if autorunReleasesSlot(reason) {
 			if err := autorunReleaseWorkspace(ctx, workspace, opts.Push, false); err != nil {
-				return summary, err
+				return summary, asAutorunLandingError(err)
 			}
 		}
 		return summary, runErr
@@ -216,11 +216,11 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 		if runErr != nil {
 			return summary, fmt.Errorf("%w (recording the final autorun commit also failed: %v)", runErr, finalErr)
 		}
-		return summary, finalErr
+		return summary, asAutorunLandingError(finalErr)
 	}
 	if autorunReleasesSlot(reason) {
 		if err := autorunReleaseWorkspace(ctx, workspace, opts.Push, summary.FinalCommit != ""); err != nil {
-			return summary, err
+			return summary, asAutorunLandingError(err)
 		}
 	}
 	return summary, runErr

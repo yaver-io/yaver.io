@@ -617,6 +617,43 @@ func autorunPushBranch(ctx context.Context, workDir string) error {
 	return nil
 }
 
+// autorunLandingError marks a failure that happened AFTER the loop did its work:
+// committing the final note, pushing it, merging the branch onto main.
+//
+// It exists because those two outcomes were one verdict. executeAutorun returns a
+// single error, so a run that converged and then lost a push race returned the
+// push error and was recorded `status: failed` — with `finishReason: converged`
+// sitting right next to it. Reading that as "my autorun didn't work" is exactly
+// backwards: the iterations ran, the gate passed, the commits exist. Only the
+// bookkeeping didn't land.
+//
+// Landing is retried now (autorunLandOntoMain), so reaching here means the retries
+// were exhausted — worth reporting loudly, but never as "the work failed".
+type autorunLandingError struct{ err error }
+
+func (e *autorunLandingError) Error() string { return e.err.Error() }
+func (e *autorunLandingError) Unwrap() error { return e.err }
+
+// asAutorunLandingError tags a post-work failure. nil stays nil so call sites can
+// wrap unconditionally.
+func asAutorunLandingError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &autorunLandingError{err}
+}
+
+// autorunWorkSucceeded reports whether the LOOP reached a good end — the question
+// "did the run do its job?", asked independently of whether the result landed.
+func autorunWorkSucceeded(reason string) bool {
+	switch reason {
+	case autorunReasonConverged, autorunReasonDone:
+		return true
+	default:
+		return false
+	}
+}
+
 func autorunReleasesSlot(reason string) bool {
 	switch reason {
 	case autorunReasonConverged, autorunReasonDone:
