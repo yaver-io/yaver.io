@@ -159,6 +159,9 @@ let config: FeedbackConfig | null = null;
 let enabled = false;
 let p2pClient: P2PClient | null = null;
 let shakeDetector: ShakeDetector | null = null;
+/** Unsubscribe for the BlackBox command handler registered by init(). Held so
+ *  a re-init (or destroy) can drop the old one instead of stacking. */
+let commandUnsubscribe: (() => void) | null = null;
 let p2pAuthToken: string | null = null;
 let p2pRelayPassword: string = '';
 let reportLaunchInFlight = false;
@@ -380,22 +383,11 @@ export class YaverFeedback {
       YaverFeedback.installCrashHandler();
     }
 
-    // Wire up shake detection when trigger is 'shake'
-    if (shakeDetector) {
-      shakeDetector.stop();
-      shakeDetector = null;
-    }
-    if (enabled && config.trigger === 'shake' && !config.disableShakeGesture) {
-      shakeDetector = new ShakeDetector();
-      shakeDetector.start(() => {
-        YaverFeedback.notifyShake();
-        if (config?.reportingOnly) {
-          YaverFeedback.sendAutoReport();
-        } else {
-          YaverFeedback.startReport();
-        }
-      });
-    }
+    // Wire up shake detection when trigger is 'shake'. Rebuild from scratch:
+    // config was just replaced, so the old detector may be closing over stale
+    // settings.
+    YaverFeedback.stopShakeDetector();
+    YaverFeedback.syncShakeDetector();
 
     // Wire up BlackBox command handlers for reload + status signals from
     // the agent. Opens an SSE channel the agent uses to:
@@ -405,7 +397,14 @@ export class YaverFeedback {
     //     assets…", "Done") so the SDK can surface it like a normal
     //     "Working…" spinner instead of a silent 60-second freeze.
     if (enabled) {
-      BlackBox.onCommand((cmd) => {
+      // onCommand appends to a static array and hands back an unsubscribe.
+      // Dropping that unsubscribe meant every re-init stacked another handler
+      // on top of the last, so an app that re-initialised (say, a settings
+      // toggle) reloaded twice per agent command, then three times, and so on.
+      // destroy() never cleared them either. Drop the previous registration
+      // first so init() is idempotent here.
+      commandUnsubscribe?.();
+      commandUnsubscribe = BlackBox.onCommand((cmd) => {
         if (cmd.command === 'reload') {
           if (cfg.onReload) {
             cfg.onReload();
@@ -887,30 +886,70 @@ export class YaverFeedback {
       }
       BlackBox.unwrapConsole(); // ensure console is restored even if BlackBox wasn't started
       errorBuffer = [];
-      if (shakeDetector) {
-        shakeDetector.stop();
-        shakeDetector = null;
-      }
+      YaverFeedback.stopShakeDetector();
     } else {
       // === ENABLE ===
       if (blackBoxWasStreaming) {
         BlackBox.start(); // restart with previous config
       }
-      // Restart shake detector if trigger is 'shake'
-      if (config?.trigger === 'shake' && !config?.disableShakeGesture && !shakeDetector) {
-        shakeDetector = new ShakeDetector();
-        shakeDetector.start(() => {
-          YaverFeedback.notifyShake();
-          if (config?.reportingOnly) {
-            YaverFeedback.sendAutoReport();
-          } else {
-            YaverFeedback.startReport();
-          }
-        });
-      }
+      enabled = true; // syncShakeDetector reads this
+      YaverFeedback.syncShakeDetector();
     }
 
     enabled = value;
+  }
+
+  /**
+   * Turn shake-to-report on or off without tearing the SDK down.
+   *
+   * `trigger` is read only inside init(), so before this the only ways to
+   * stop listening for a shake were setEnabled(false) — which also kills the
+   * flight recorder and the agent command channel — or a re-init, which used
+   * to stack a duplicate command handler. Neither is what "turn the shake
+   * catcher off" should cost.
+   *
+   * Persists onto config.disableShakeGesture, so a later setEnabled(true)
+   * honours it rather than resurrecting the listener.
+   */
+  static setShakeEnabled(value: boolean): void {
+    if (!config) return;
+    config.disableShakeGesture = !value;
+    YaverFeedback.syncShakeDetector();
+  }
+
+  /** Whether the shake listener is currently armed. */
+  static isShakeEnabled(): boolean {
+    return shakeDetector !== null;
+  }
+
+  /**
+   * Bring the shake listener in line with the current config. Idempotent —
+   * safe to call whenever `enabled`, `trigger`, or `disableShakeGesture`
+   * moves.
+   */
+  private static syncShakeDetector(): void {
+    const want =
+      enabled && config?.trigger === 'shake' && !config?.disableShakeGesture;
+    if (want && !shakeDetector) {
+      shakeDetector = new ShakeDetector();
+      shakeDetector.start(() => {
+        YaverFeedback.notifyShake();
+        if (config?.reportingOnly) {
+          YaverFeedback.sendAutoReport();
+        } else {
+          YaverFeedback.startReport();
+        }
+      });
+    } else if (!want && shakeDetector) {
+      YaverFeedback.stopShakeDetector();
+    }
+  }
+
+  private static stopShakeDetector(): void {
+    if (shakeDetector) {
+      shakeDetector.stop();
+      shakeDetector = null;
+    }
   }
 
   /** Returns whether the SDK is currently enabled. */
@@ -1422,6 +1461,14 @@ export class YaverFeedback {
       shakeDetector.stop();
       shakeDetector = null;
     }
+    // Drop the agent command handler and un-monkey-patch console. Without
+    // these, destroy() left the SDK half-alive: console stayed wrapped, and
+    // the reload handler kept firing on a "destroyed" SDK — then a later
+    // init() stacked a second one on top.
+    commandUnsubscribe?.();
+    commandUnsubscribe = null;
+    BlackBox.stop();
+    BlackBox.unwrapConsole();
     firstShakeFired = false;
     enabled = false;
     config = null;
