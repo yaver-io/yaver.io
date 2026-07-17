@@ -88,6 +88,22 @@ func commonInstallPrefixes() []string {
 			filepath.Join(home, ".yaver/runtimes/bin"),
 			filepath.Join(home, ".yaver/bin"),
 		)
+		// Google Cloud SDK installs to a fixed home path on macOS/Linux
+		// and is NOT picked up by any of the package managers above.
+		// Without this entry neither $PATH augmentation nor
+		// DiscoverBinary finds gcloud on a fresh install.
+		prefixes = append(prefixes, filepath.Join(home, "google-cloud-sdk/bin"))
+	}
+
+	// macOS pip bootstraps a per-user ~/Library/Python/<py>/bin (pip3.11
+	// --user, PEP 370). The path is version-stamped so we glob it at
+	// runtime. This is the ONE entry that needs expansion after the
+	// static prefixes are assembled — it's shared by both
+	// commonInstallPrefixes callers ($PATH augmentation and
+	// DiscoverBinary), so they can no longer disagree about whether
+	// pip-installed CLIs like awscli or pipx are installed.
+	if pyDirs, err := filepath.Glob(filepath.Join(home, "Library", "Python", "*", "bin")); err == nil {
+		prefixes = append(prefixes, pyDirs...)
 	}
 	return prefixes
 }

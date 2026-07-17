@@ -20,3 +20,9 @@ Runner: opencode
 Gate: cd desktop/agent && go build ./... && go vet ./...
 Machine at finish: disk 18.0 GB free, RAM 8.0 GB, 8 CPUs, load 7.39 (0.92/core)
 
+## 2026-07-17T10:47:07Z
+
+Iteration 1: gate passed (`cd desktop/agent && go build ./... && go vet ./...`) with runner `opencode`.
+
+Changed: `desktop/agent/binary_discovery.go`, `desktop/agent/binary_discovery_test.go`, `desktop/agent/main.go`, `desktop/agent/ops_git_verbs.go`, `desktop/agent/ops_git_verbs_test.go`
+

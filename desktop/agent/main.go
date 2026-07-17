@@ -50,32 +50,38 @@ var version = "1.99.285"
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
 
 func augmentAgentPATH() {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return
-	}
 	current := strings.TrimSpace(os.Getenv("PATH"))
+	// Record the EXISTING precedence of every directory already on
+	// $PATH. We only ever append missing fallbacks — never reorder —
+	// so a directory the user already placed (e.g. a specific
+	// /usr/local/bin) keeps its position. Overriding that choice is a
+	// separate decision the user makes in their shell profile.
 	seen := map[string]struct{}{}
+	existingOrder := []string{}
 	for _, part := range strings.Split(current, ":") {
 		part = strings.TrimSpace(part)
-		if part != "" {
-			seen[part] = struct{}{}
+		if part == "" {
+			continue
 		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		existingOrder = append(existingOrder, part)
 	}
 
-	candidates := []string{
-		filepath.Join(home, ".local", "bin"),
-		filepath.Join(home, ".npm-global", "bin"),
-		"/opt/homebrew/bin",
-		"/usr/local/bin",
-		"/usr/bin",
-		"/bin",
-	}
-	if pyDirs, _ := filepath.Glob(filepath.Join(home, "Library", "Python", "*", "bin")); len(pyDirs) > 0 {
-		candidates = append(candidates, pyDirs...)
-	}
+	// ONE source of truth: commonInstallPrefixes() is also what
+	// DiscoverBinary probes, so the daemon's $PATH and the
+	// /infra/summary report can no longer disagree about which tools
+	// are installed. This used to be a separate hardcoded list that
+	// omitted ~/go/bin, ~/.cargo/bin, ~/.bun/bin, ~/.deno/bin,
+	// ~/google-cloud-sdk/bin, /snap/bin, and the Yaver runtime paths —
+	// a binary in any of those was invisible to any subprocess shelled
+	// out by bare name, even while /infra/summary cheerfully reported
+	// it as installed.
+	candidates := commonInstallPrefixes()
 
-	var prepend []string
+	var additions []string
 	for _, dir := range candidates {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
@@ -85,28 +91,17 @@ func augmentAgentPATH() {
 			continue
 		}
 		if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
-			prepend = append(prepend, dir)
+			additions = append(additions, dir)
 			seen[dir] = struct{}{}
 		}
 	}
-	if len(prepend) == 0 {
+	if len(additions) == 0 {
 		return
 	}
-	parts := append(prepend, strings.Split(current, ":")...)
-	var cleaned []string
-	seen = map[string]struct{}{}
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if _, ok := seen[part]; ok {
-			continue
-		}
-		seen[part] = struct{}{}
-		cleaned = append(cleaned, part)
-	}
-	_ = os.Setenv("PATH", strings.Join(cleaned, ":"))
+	// Append the new fallbacks AFTER the existing $PATH — additions
+	// only ever run last, so the user's existing tool choice wins.
+	parts := append(append([]string{}, existingOrder...), additions...)
+	_ = os.Setenv("PATH", strings.Join(parts, ":"))
 }
 
 func relayInfosFromConfig(servers []RelayServerConfig) ([]RelayServerInfo, map[string]string) {
