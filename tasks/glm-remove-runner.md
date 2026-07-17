@@ -1,7 +1,11 @@
 ---
-master: claude
 doer: codex
 ---
+
+<!-- Single seat, deliberately. claude is not authed on the mini, and seats in
+     front matter are binding — naming an unauthed master fails the run at
+     iteration 1 rather than falling back. codex runs this solo. -->
+
 
 # Retire GLM as a runner — it must never spawn the `claude` binary
 
