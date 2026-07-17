@@ -128,7 +128,10 @@ func opsRecapShowHandler(_ OpsContext, raw json.RawMessage) OpsResult {
 	return OpsResult{OK: true, Initial: recapOpsView(rec)}
 }
 
-func opsRecapBuildHandler(_ OpsContext, raw json.RawMessage) OpsResult {
+func opsRecapBuildHandler(c OpsContext, raw json.RawMessage) OpsResult {
+	if c.Caller != "" && c.Caller != "owner" {
+		return OpsResult{OK: false, Code: "unauthorized", Error: "recap_build is owner-only"}
+	}
 	var opts RecapBuildOpts
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &opts); err != nil {

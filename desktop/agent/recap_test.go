@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -882,6 +884,20 @@ Implemented the next P0 slice.
 	}
 	if got.EvidencedPriorities != 1 || got.PriorityCount != 9 {
 		t.Fatalf("evidence = %+v, want 1 of 9", got)
+	}
+}
+
+func TestRecapBuild_ownerOnly(t *testing.T) {
+	res := dispatchOps(OpsContext{Ctx: context.Background(), Caller: "support"}, OpsRequest{
+		Machine: "local",
+		Verb:    "recap_build",
+		Payload: json.RawMessage(`{}`),
+	})
+	if res.OK {
+		t.Fatalf("support caller should not be allowed to build recaps: %+v", res)
+	}
+	if res.Code != "unauthorized" {
+		t.Fatalf("code = %q, want unauthorized (%+v)", res.Code, res)
 	}
 }
 
