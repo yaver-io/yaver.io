@@ -141,6 +141,11 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 	if err := validateAutorunShellCommand(opts.Gate); err != nil {
 		return summary, fmt.Errorf("unsafe gate: %w", err)
 	}
+	// A CLI autorun has no session row, but it is still a loop on this machine
+	// that a freeze has to be able to hold. Mint an identity so it can park.
+	if strings.TrimSpace(opts.SessionID) == "" {
+		opts.SessionID = fmt.Sprintf("autorun-cli-%d", time.Now().UTC().UnixNano())
+	}
 	taskPath, err := filepath.Abs(opts.TaskPath)
 	if err != nil {
 		return summary, err
@@ -278,6 +283,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 	taskPath := opts.TaskPath
 	noops := 0
 	failedRunners := map[string]bool{}
+	gateID := opts.SessionID
 	summary.Runner = runner.RunnerID
 	summary.Master = master.RunnerID
 	for iteration := 1; opts.MaxIters == 0 || iteration <= opts.MaxIters; iteration++ {
@@ -287,6 +293,16 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			return autorunReasonDone, nil
 		}
 		summary.Iterations = iteration
+
+		// Park if the machine is frozen for a deploy. This sits before the probe
+		// and the kick so a held loop spends nothing, and after the previous
+		// iteration's commit+push so it holds no uncommitted work while it waits.
+		// A freeze parks the loop; it never ends the run.
+		if err := autorunFreeze.await(ctx, gateID, func() {
+			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: PARKED — machine frozen for a deploy. The loop is holding at the iteration boundary with nothing uncommitted, and resumes on thaw.", iteration))
+		}); err != nil {
+			return autorunReasonStopped, err
+		}
 
 		// Measure BEFORE spending. This loop is what exhausts the machine, so
 		// it checks disk, RAM and CPU load ahead of every kick rather than

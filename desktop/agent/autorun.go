@@ -181,8 +181,14 @@ func autorunFinalCommitBody(opts autorunOptions, runnerID string, summary autoru
 }
 
 type autorunOptions struct {
-	TaskPath string
-	Runner   string
+	// SessionID is the run's identity at the freeze gate (autorun_gate.go). The
+	// session manager sets it to the session ID so a caller can cross-reference
+	// parked loops against autorun_status. A CLI run has no session, so
+	// executeAutorun mints one — every loop on the machine has to be holdable,
+	// including the ones nothing is tracking.
+	SessionID string
+	TaskPath  string
+	Runner    string
 	Interval time.Duration
 	MaxIters int
 	Gate     string

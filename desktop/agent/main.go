@@ -552,6 +552,8 @@ func main() {
 		runRunnerAuth(os.Args[2:])
 	case "autorun":
 		runAutorun(os.Args[2:])
+	case "ship":
+		runShipCmd(os.Args[2:])
 	case "launch":
 		runLaunch(os.Args[2:])
 	case "build":

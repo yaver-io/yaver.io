@@ -69,6 +69,13 @@ type autorunSessionView struct {
 	Master    string             `json:"master,omitempty"`
 	Heals     []autorunHealEvent `json:"heals,omitempty"`
 	Resources autorunResources   `json:"resources"`
+	// Parked is true while the loop is held at the freeze gate for a deploy.
+	// It is deliberately NOT a Status value: the run is still `running` and
+	// still counts as live, so a client filtering on status keeps seeing it.
+	// Parked answers a different question — "has it stopped touching the repo
+	// yet?" A running loop that is not parked during a freeze is still
+	// mid-iteration and may yet commit. See autorunGate.
+	Parked bool `json:"parked,omitempty"`
 	// Landing answers "did the work actually get out?" — commits/finalCommit
 	// only prove the loop wrote something locally. Populated by the status
 	// handler from git, not from the loop's own bookkeeping. See
@@ -107,6 +114,9 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 		return autorunSessionView{}, err
 	}
 	id := fmt.Sprintf("autorun-%d", time.Now().UTC().UnixNano())
+	// The loop parks under the session's own ID, so a caller can cross-reference
+	// the freeze gate's parked list against autorun_status without a second map.
+	opts.SessionID = id
 	ctx, cancel := autorunSessionContext(parent)
 	s := &autorunSession{
 		ID: id, Slot: workspace.Slot, Task: taskPath, Runner: opts.Runner, WorkDir: workspace.WorkDir,
@@ -155,7 +165,8 @@ func (m *autorunSessionManager) view(s *autorunSession) autorunSessionView {
 	v := autorunSessionView{ID: s.ID, Slot: s.Slot, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error, LandingError: s.LandingError,
 		Iterations: s.Summary.Iterations, Commits: s.Summary.Commits, FinishReason: s.Summary.FinishReason,
 		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject,
-		ActiveRunner: s.Summary.Runner, Master: s.Summary.Master, Heals: s.Summary.Heals, Resources: s.Summary.Resources}
+		ActiveRunner: s.Summary.Runner, Master: s.Summary.Master, Heals: s.Summary.Heals, Resources: s.Summary.Resources,
+		Parked: autorunFreeze.isParked(s.ID)}
 	if b, err := os.ReadFile(s.ProgressPath); err == nil {
 		const maxTail = 16 * 1024
 		if len(b) > maxTail {
@@ -252,6 +263,17 @@ func init() {
 	registerOpsVerb(opsVerbSpec{Name: "autorun_status", Description: "List autorun sessions, or inspect one: progress tail, iterations, finish reason, activeRunner, self-heal events, and the final autorun commit. An empty finalCommit means the run has not finished. activeRunner differs from the requested runner after a failover. Pass machine to inspect a remote device's autoruns.", Schema: autorunIDSchema(false), Handler: opsAutorunStatusHandler})
 	registerOpsVerb(opsVerbSpec{Name: "autorun_stop", Description: "Cancel one running autorun session. It still records its final autorun commit.", Schema: autorunIDSchema(true), Handler: opsAutorunStopHandler})
 	registerOpsVerb(opsVerbSpec{Name: "autorun_stop_all", Description: "Cancel every running autorun session on a machine. Pass machine:<deviceId|alias|primary> to stop a remote device's autoruns; each stopped loop still records its final autorun commit.", Schema: autorunStopAllSchema(), Handler: opsAutorunStopAllHandler})
+	registerOpsVerb(opsVerbSpec{Name: "autorun_pause_all", Description: "Freeze every autorun on a machine at its iteration boundary WITHOUT ending any run — the loops park with nothing uncommitted and resume on autorun_resume_all. Use before a deploy so N loops cannot cause N deploys. Loops that start while frozen park too. Freezing is instant but draining is not: a loop already inside a runner kick takes up to 30m to reach the gate and may still commit until it does. Pass waitFor (e.g. 30m) to block until every loop parks; read drained to know whether it did. Pass machine:<deviceId|alias|primary> for a remote device.", Schema: autorunPauseAllSchema(), Handler: opsAutorunPauseAllHandler})
+	registerOpsVerb(opsVerbSpec{Name: "autorun_resume_all", Description: "Lift the freeze on a machine and wake every parked autorun. Loops continue from their next iteration; nothing was lost while they were held. Pass machine:<deviceId|alias|primary> for a remote device.", Schema: autorunStopAllSchema(), Handler: opsAutorunResumeAllHandler})
+}
+
+func autorunPauseAllSchema() map[string]interface{} {
+	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+		"reason":  map[string]interface{}{"type": "string", "description": "Why the fleet is frozen. Written to each parked loop's progress file so the gap is explained in the run's own log."},
+		"waitFor": map[string]interface{}{"type": "string", "description": "Block up to this long (e.g. 30m) for every running loop to reach the gate. Omit to return immediately with whatever has parked so far. A timeout is not an error — read drained."},
+		"leaseMs": map[string]interface{}{"type": "integer", "minimum": 0, "description": "Dead-man lease in ms. The freeze thaws itself after this unless renewed, so a coordinator that dies cannot leave this machine frozen forever. 0 = no lease (only an explicit resume lifts it) — correct only for a human at a terminal on THIS machine."},
+		"renew":   map[string]interface{}{"type": "boolean", "description": "Heartbeat an existing freeze's lease instead of taking a new one. Re-freezes if the lease already lapsed."},
+	}, "additionalProperties": false}
 }
 
 func autorunStopAllSchema() map[string]interface{} {
@@ -349,4 +371,64 @@ func opsAutorunStopHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 func opsAutorunStopAllHandler(_ OpsContext, _ json.RawMessage) OpsResult {
 	stopped := autorunSessions.stopAll()
 	return OpsResult{OK: true, Initial: map[string]interface{}{"stopped": stopped, "count": len(stopped)}}
+}
+
+func opsAutorunPauseAllHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	var p struct {
+		Reason  string `json:"reason"`
+		WaitFor string `json:"waitFor"`
+		LeaseMs int64  `json:"leaseMs"`
+		Renew   bool   `json:"renew"`
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+		}
+	}
+	reason := strings.TrimSpace(p.Reason)
+	if reason == "" {
+		reason = "deploy"
+	}
+	lease := time.Duration(p.LeaseMs) * time.Millisecond
+	// A renew from a live coordinator, not a fresh freeze. Kept on the same verb
+	// so the heartbeat needs no second round-trip shape.
+	if p.Renew {
+		if autorunFreeze.renew(lease) {
+			return OpsResult{OK: true, Initial: map[string]interface{}{"renewed": true, "drain": autorunDrain()}}
+		}
+		// Not frozen: the lease already expired or someone thawed. Re-freeze
+		// rather than silently doing nothing — the caller believes it holds a
+		// freeze and is about to deploy.
+	}
+	owned := autorunFreeze.pause(reason, lease)
+	drain := autorunDrain()
+	if w := strings.TrimSpace(p.WaitFor); w != "" {
+		timeout, err := time.ParseDuration(w)
+		if err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: "invalid waitFor: " + err.Error()}
+		}
+		drain = autorunAwaitDrain(c.Ctx, timeout)
+	}
+	return OpsResult{OK: true, Initial: map[string]interface{}{
+		"paused": true,
+		// alreadyFrozen tells a second caller it did not create this freeze, so
+		// it must not lift one it does not own — two overlapping ships would
+		// otherwise thaw each other's fleet mid-deploy.
+		"alreadyFrozen": !owned,
+		"reason":        reason,
+		"drain":         drain,
+		"gate":          autorunFreeze.state(),
+	}}
+}
+
+func opsAutorunResumeAllHandler(_ OpsContext, _ json.RawMessage) OpsResult {
+	lifted := autorunFreeze.resume()
+	return OpsResult{OK: true, Initial: map[string]interface{}{
+		"resumed": lifted,
+		// wasFrozen false means there was nothing to lift. Reported rather than
+		// swallowed: a resume that finds no freeze usually means someone else
+		// already thawed the fleet, which the caller should know.
+		"wasFrozen": lifted,
+		"drain":     autorunDrain(),
+	}}
 }
