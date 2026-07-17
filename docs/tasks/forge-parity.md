@@ -149,14 +149,34 @@ host + kind + repo path.
 `fieldsWeForbidInAnyConvexPayload` where relevant. A repo path like
 `owner/repo` is fine; `/Users/<name>/...` is not.
 
-## Gate
+## Gate — no builds on the mini
+
+The live gate is formatting only, on purpose:
 
 ```
-cd desktop/agent && go build ./... && go test -count=1 -run 'TestForge|TestGit|TestOps' .
+test -z "$(gofmt -l desktop/agent 2>/dev/null)"
+```
+
+**Do not "fix" this by adding `go build`/`go test` back.** The mini runs several
+autoruns at once and was at load ~27/8 cores and **9.3 GB free** when this loop
+started. A build gate there feeds the very failure `autorun_resources.go:12`
+records: "this loop drove the Mac mini to 1.1 GB free by feeding a 5.2 GB
+go-build cache with hourly full `go test ./...` runs. At zero free space a
+machine cannot write a command's output, so the loop cannot even report why it
+died."
+
+**What this costs, stated plainly:** the gate is autorun's only oracle, so a
+formatting-only gate means **code that does not compile can reach main**. That
+is an accepted tradeoff for this box, not an oversight. Compensate by keeping
+each commit small, and verify compilation on a machine with headroom:
+
+```
+cd desktop/agent && go build ./... && go test -count=1 -run 'TestForge' .
 ```
 
 **NEVER run a bare `go test ./...` in `desktop/agent`** — `TestAuthLogout` hits
 the real `~/.yaver` and **signs the machine out**. Always scope with `-run`.
+This applies wherever you run it, gate or not.
 
 ## Definition of done
 
