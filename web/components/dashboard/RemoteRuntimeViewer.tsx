@@ -327,9 +327,15 @@ export default function RemoteRuntimeViewer({
         }
       };
 
-      // Build + send the offer.
+      // Build + send the offer. Signaling is non-trickle — the agent
+      // answers once over HTTP and there is no addIceCandidate path on
+      // either side — so the offer has to carry its own candidates.
+      // Without this wait we ship a candidate-less SDP and only connect
+      // if the agent happens to discover us peer-reflexively.
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      await waitForIce(pc);
+      if (cancelled) return;
       const local = pc.localDescription;
       if (!local) throw new Error("Missing local WebRTC offer.");
       const result = await agentClient.createRemoteRuntimeWebRTCAnswer(session.id, {
@@ -539,4 +545,22 @@ export default function RemoteRuntimeViewer({
       <div className="text-xs text-surface-500">{viewerNote}</div>
     </div>
   );
+}
+
+// Bounded wait for ICE gathering. Mirrors RemoteSessionView's copy —
+// both exist because signaling is non-trickle. The 2s cap keeps a slow
+// STUN/TURN server from stalling the session forever; a host-only offer
+// still connects on-LAN.
+function waitForIce(pc: RTCPeerConnection): Promise<void> {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    const check = () => {
+      if (pc.iceGatheringState === "complete") {
+        pc.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      }
+    };
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(resolve, 2000);
+  });
 }

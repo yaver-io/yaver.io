@@ -497,13 +497,18 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <style>
       html, body { margin: 0; padding: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; height: 100%; overflow: hidden; }
-      #root { position: relative; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
-      #frame { width: 100%; height: 100%; object-fit: contain; }
+      #root { position: relative; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; touch-action: none; }
+      #frame, #video { width: 100%; height: 100%; object-fit: contain; }
+      /* Exactly one surface is live at a time — the RTP <video> when the
+         agent attaches an H.264 track, the JPEG <img> otherwise. The idle
+         one is hidden so a stale frame can't bleed through. */
+      .hidden { display: none; }
       #status { position: absolute; top: 10px; left: 10px; right: 10px; font-size: 12px; color: #d1d5db; background: rgba(0,0,0,0.55); padding: 8px 10px; border-radius: 10px; }
     </style>
   </head>
   <body>
     <div id="root">
+      <video id="video" class="hidden" autoplay playsinline muted></video>
       <img id="frame" alt="remote frame" />
       <div id="status">Negotiating WebRTC…</div>
     </div>
@@ -511,7 +516,27 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
       const cfg = ${payload};
       const statusEl = document.getElementById("status");
       const frameEl = document.getElementById("frame");
+      const videoEl = document.getElementById("video");
+      const rootEl = document.getElementById("root");
       let objectUrl = null;
+
+      // The live render surface. RTP paints into <video> (intrinsic size is
+      // videoWidth/videoHeight); JPEG paints into <img> (naturalWidth/Height).
+      // Everything downstream — hit-testing, swipe mapping — goes through here
+      // so it never has to know which transport won.
+      function activeSurface() {
+        if (videoEl.srcObject && videoEl.videoWidth > 0) {
+          return { el: videoEl, w: videoEl.videoWidth, h: videoEl.videoHeight };
+        }
+        if (frameEl.naturalWidth > 0) {
+          return { el: frameEl, w: frameEl.naturalWidth, h: frameEl.naturalHeight };
+        }
+        return null;
+      }
+      function showVideoSurface() {
+        frameEl.classList.add("hidden");
+        videoEl.classList.remove("hidden");
+      }
       function post(payload) {
         if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
           window.ReactNativeWebView.postMessage(JSON.stringify(payload));
@@ -532,18 +557,19 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
         if (data.session) post({ type: "session", session: data.session, note: data.session.note || "" });
       }
       function contentPointFromClient(clientX, clientY) {
-        if (!frameEl.naturalWidth || !frameEl.naturalHeight) return null;
-        const rect = frameEl.getBoundingClientRect();
-        const scale = Math.min(rect.width / frameEl.naturalWidth, rect.height / frameEl.naturalHeight);
-        const drawW = frameEl.naturalWidth * scale;
-        const drawH = frameEl.naturalHeight * scale;
+        const surface = activeSurface();
+        if (!surface) return null;
+        const rect = surface.el.getBoundingClientRect();
+        const scale = Math.min(rect.width / surface.w, rect.height / surface.h);
+        const drawW = surface.w * scale;
+        const drawH = surface.h * scale;
         const left = rect.left + (rect.width - drawW) / 2;
         const top = rect.top + (rect.height - drawH) / 2;
         const nx = (clientX - left) / Math.max(1, drawW);
         const ny = (clientY - top) / Math.max(1, drawH);
         if (nx < 0 || ny < 0 || nx > 1 || ny > 1) return null;
-        const targetW = cfg.deviceDims && cfg.deviceDims.width ? cfg.deviceDims.width : frameEl.naturalWidth;
-        const targetH = cfg.deviceDims && cfg.deviceDims.height ? cfg.deviceDims.height : frameEl.naturalHeight;
+        const targetW = cfg.deviceDims && cfg.deviceDims.width ? cfg.deviceDims.width : surface.w;
+        const targetH = cfg.deviceDims && cfg.deviceDims.height ? cfg.deviceDims.height : surface.h;
         return {
           x: Math.round(nx * targetW),
           y: Math.round(ny * targetH),
@@ -551,6 +577,19 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
       }
       function contentPoint(event) {
         return contentPointFromClient(event.clientX, event.clientY);
+      }
+      function waitForIce(pc) {
+        return new Promise((resolve) => {
+          if (pc.iceGatheringState === "complete") return resolve();
+          const check = () => {
+            if (pc.iceGatheringState === "complete") {
+              pc.removeEventListener("icegatheringstatechange", check);
+              resolve();
+            }
+          };
+          pc.addEventListener("icegatheringstatechange", check);
+          setTimeout(resolve, 2000);
+        });
       }
       async function start() {
         if (cfg.transportMode === "relay-jpeg-poll") {
@@ -577,8 +616,36 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
           void pump();
           return;
         }
-        const pc = new RTCPeerConnection();
+        // ICE servers from the agent: STUN always, plus the relay's colocated
+        // TURN when the operator set YAVER_TURN_URL + --turn-port. Without
+        // this the PC has no STUN at all and only connects by peer-reflexive
+        // discovery — which is why direct-webrtc was flaky off the local link.
+        let iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+        try {
+          const iceRes = await fetch(cfg.baseUrl + "/stream/webrtc/ice", { headers: cfg.headers, cache: "no-store" });
+          const iceData = await iceRes.json().catch(() => ({}));
+          if (iceRes.ok && iceData.iceServers && iceData.iceServers.length > 0) iceServers = iceData.iceServers;
+        } catch {}
+        const pc = new RTCPeerConnection({ iceServers });
+        // SCTP m-line: the agent creates the "frames"/"events" channels from
+        // its side, so a video-only offer would leave them un-negotiable.
         pc.createDataChannel("primer");
+        // Offer a video transceiver. The agent's selectRemoteRuntimeStreamer()
+        // greps the offer SDP for m=video and only then attaches the Pion
+        // H.264 track; without this it silently picks JPEG-over-DataChannel
+        // every time and the RTP path is unreachable. If the agent can't
+        // encode for this target it still falls back to JPEG-DC below.
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.ontrack = (event) => {
+          const stream = event.streams[0];
+          if (!stream) return;
+          videoEl.srcObject = stream;
+          videoEl.muted = true;
+          showVideoSurface();
+          // Autoplay: muted inline playback is allowed without a gesture.
+          videoEl.play().catch(() => {});
+          setStatus("H.264 stream active.");
+        };
         pc.onconnectionstatechange = () => setStatus("Peer state: " + pc.connectionState);
         pc.ondatachannel = (event) => {
           if (event.channel.label === "frames") {
@@ -608,10 +675,15 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
         };
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        // Signaling is non-trickle (agent answers once over HTTP), so the
+        // offer must carry its candidates. Bounded — a host-only offer still
+        // connects on-LAN, and waiting forever beats nothing.
+        await waitForIce(pc);
+        const local = pc.localDescription || offer;
         const res = await fetch(cfg.baseUrl + "/remote-runtime/sessions/" + encodeURIComponent(cfg.sessionId) + "/webrtc/offer", {
           method: "POST",
           headers: { ...cfg.headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ type: offer.type, sdp: offer.sdp }),
+          body: JSON.stringify({ type: local.type, sdp: local.sdp }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "WebRTC offer failed");
@@ -620,7 +692,7 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
         await pc.setRemoteDescription({ type: data.answer.type || "answer", sdp: data.answer.sdp || "" });
       }
       let suppressClickUntil = 0;
-      frameEl.addEventListener("click", async (event) => {
+      rootEl.addEventListener("click", async (event) => {
         if (Date.now() < suppressClickUntil) return;
         const point = contentPoint(event);
         if (!point) return;
@@ -633,7 +705,7 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
       let startPoint = null;
       let startClient = null;
       let moved = false;
-      frameEl.addEventListener("touchstart", (event) => {
+      rootEl.addEventListener("touchstart", (event) => {
         if (event.touches.length !== 1) return;
         const t = event.touches[0];
         startClient = { x: t.clientX, y: t.clientY };
@@ -641,13 +713,13 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
         moved = false;
         event.preventDefault();
       }, { passive: false });
-      frameEl.addEventListener("touchmove", (event) => {
+      rootEl.addEventListener("touchmove", (event) => {
         if (!startClient || event.touches.length !== 1) return;
         const t = event.touches[0];
         if (Math.abs(t.clientX - startClient.x) > 12 || Math.abs(t.clientY - startClient.y) > 12) moved = true;
         event.preventDefault();
       }, { passive: false });
-      frameEl.addEventListener("touchend", async (event) => {
+      rootEl.addEventListener("touchend", async (event) => {
         if (!startPoint) return;
         const t = event.changedTouches[0];
         const endPoint = contentPointFromClient(t.clientX, t.clientY);
