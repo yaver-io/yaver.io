@@ -60,11 +60,21 @@ read that box's logs but cannot see its diff, stash its work, or land a commit.
   parallel sessions in one checkout; a bare commit swept nine files into the
   wrong commit today. Verbs stage explicit paths only.
 - Keep each iteration to one increment the gate can verify.
+- **`desktop/agent/ops_git.go` and `ops_git_test.go` ALREADY EXIST and are NOT
+  yours.** `ops_git.go` is the Phase-D3 security contract for pushing the user's
+  GitHub/GitLab credentials to an owned box (owned-devices-only, self excluded,
+  tokens never touch Convex). An earlier draft of this task called it "a new
+  file"; a run followed that literally and deleted all 191 lines of it. Only the
+  gate stopped it landing. **Do not open, move, or rewrite either file.** Your
+  verbs go in a NEW file, `desktop/agent/ops_git_verbs.go`.
 - **Stay inside these files — anything else is a scope violation that kills the
   run.** Prefix work: `desktop/agent/binary_discovery.go` + its tests in
-  `desktop/agent/binary_discovery_test.go`, and `desktop/agent/main.go`. Git
-  verbs: `desktop/agent/ops_git.go` + its tests in
-  `desktop/agent/ops_git_test.go`. Do not create test files under other names.
+  `desktop/agent/binary_discovery_test.go` (new), and `desktop/agent/main.go`.
+  Git verbs: `desktop/agent/ops_git_verbs.go` (new) + its tests in
+  `desktop/agent/ops_git_verbs_test.go` (new). Do not create files under other
+  names.
+- **Before you write a "new" file, `git ls-files` it.** This task was wrong once
+  already; the repo is the source of truth, not this file.
 
 ## Work
 
@@ -97,7 +107,8 @@ add a home prefix for it; that is what `npx` is for.
 
 ### 3. `git_ops` read verbs
 
-New file `desktop/agent/ops_git.go`. Register:
+New file `desktop/agent/ops_git_verbs.go` — NOT `ops_git.go`, which exists and
+is someone else's security contract (see Ground rules). Register:
 
 - `git_status` — porcelain v1, parsed into `{path, index, worktree, untracked}`.
 - `git_diff` — the real one. `{ref?, staged?, paths?[], stat?}`. Default: unstaged
@@ -137,6 +148,8 @@ first; pushing gets its own decision.
 
 ## Out of scope
 
+- Do not touch `desktop/agent/ops_git.go` or `desktop/agent/ops_git_test.go`.
+  They are the existing credential-push contract, not this task's files.
 - Do not touch `desktop/agent/autorun*.go`, `tmux.go`, `runner_*.go` — another
   loop owns those.
 - Do not touch `mobile/`, `web/`, `backend/convex/`.
@@ -152,7 +165,8 @@ Say DONE, alone, only when:
   a test pins that `~/go/bin` and `~/.cargo/bin` are in it.
 - `gcloud`/`aws`/`supabase`/`firebase` are probeable.
 - `git_status`, `git_diff`, `git_log`, `git_stash_ops`, `git_commit`,
-  `git_rebase`, `git_merge` are registered ops verbs, each with a test.
+  `git_rebase`, `git_merge` are registered ops verbs in `ops_git_verbs.go`, each
+  with a test, and `ops_git.go` is byte-for-byte untouched.
 - `git_commit` with empty `paths` is proven to fail rather than stage everything.
 - The gate passes and it is all in the git log.
 </content>
