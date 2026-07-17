@@ -41,6 +41,7 @@ import type * as gpuRentals from "../gpuRentals.js";
 import type * as guests from "../guests.js";
 import type * as hostShare from "../hostShare.js";
 import type * as http from "../http.js";
+import type * as machineLinkFix from "../machineLinkFix.js";
 import type * as managedMeter from "../managedMeter.js";
 import type * as managedRelays from "../managedRelays.js";
 import type * as managedServices from "../managedServices.js";
@@ -113,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   guests: typeof guests;
   hostShare: typeof hostShare;
   http: typeof http;
+  machineLinkFix: typeof machineLinkFix;
   managedMeter: typeof managedMeter;
   managedRelays: typeof managedRelays;
   managedServices: typeof managedServices;

@@ -1575,6 +1575,16 @@ export const listMyDevices = query({
       { machineId: string; status: string; wakeable: boolean }
     >();
     for (const m of userCloudMachines) {
+      // A decommissioned row must never shadow a live one. Two rows can share a
+      // deviceId — a box that boots from a snapshot carrying a previous machine's
+      // identity registers under the OLD deviceId — and this map is last-write-
+      // wins, so a dead row could silently win on collect() order alone and
+      // report its own (unwakeable) status for a box that is very much alive.
+      // That is not hypothetical: it hid the Wake action on a parked box whose
+      // snapshot was sitting right there. Dead rows carry no lifecycle worth
+      // showing, so drop them and let a live row own the deviceId.
+      const rowStatus = typeof (m as any).status === "string" ? (m as any).status : "";
+      if (rowStatus === "removed" || rowStatus === "deleted") continue;
       if (typeof m.deviceId === "string" && m.deviceId.trim() !== "" && m.origin !== "self-hosted") {
         const status = typeof (m as any).status === "string" ? (m as any).status : "active";
         managedByDeviceId.set(m.deviceId, {
