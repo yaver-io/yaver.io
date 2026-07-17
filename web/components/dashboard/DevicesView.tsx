@@ -2213,9 +2213,6 @@ export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   // ChatGPT-account Codex login ("not supported when using Codex with a
   // ChatGPT account").
   codex: "gpt-5.3-codex",
-  // GLM runs on the claude binary against z.ai's Anthropic endpoint; the
-  // model id is forwarded verbatim. Mirrors builtinRunners["glm"].Model.
-  glm: "glm-4.7",
 };
 
 export function isKivancAccount(email: string | null | undefined): boolean {
@@ -2282,7 +2279,7 @@ export function preferredDefaultModelForRunner(
 // callable from the CLI + MCP — they just don't show up in the
 // consumer UIs. Local Ollama is reachable through OpenCode as a
 // provider.
-export const RUNNER_WHITELIST = ["claude", "codex", "opencode", "glm"] as const;
+export const RUNNER_WHITELIST = ["claude", "codex", "opencode"] as const;
 export const RUNNER_WHITELIST_SET: ReadonlySet<string> = new Set(RUNNER_WHITELIST);
 
 // OpenCode provider catalogue — what the user picks when they choose
@@ -5172,7 +5169,7 @@ function RunnerAuthModal({
     }
   };
 
-  const runnerLabel = runner === "codex" ? "OpenAI Codex" : runner === "claude" ? "Claude Code" : runner === "glm" ? "GLM (z.ai)" : runner;
+  const runnerLabel = runner === "codex" ? "OpenAI Codex" : runner === "claude" ? "Claude Code" : runner;
 
   return (
     <div

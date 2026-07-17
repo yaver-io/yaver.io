@@ -126,7 +126,7 @@ export interface YaverDeveloperWorkspaceContract {
     readonly notes: string;
   };
   readonly codingRunners: {
-    readonly supported: readonly ("claude" | "codex" | "opencode" | "glm" | "custom-tmux")[];
+    readonly supported: readonly ("claude" | "codex" | "opencode" | "custom-tmux")[];
     readonly opencodeGlm: "byok" | "yaver-managed-credits" | "both";
     readonly credentialStorage: "local-device-or-target-machine";
   };
@@ -261,7 +261,7 @@ const defaultDeveloperWorkspace = {
       "Yaver Cloud is optional managed compute for builds, previews, and runners. Hetzner machines must snapshot and delete when idle; stopped boxes still bill.",
   },
   codingRunners: {
-    supported: ["claude", "codex", "opencode", "glm", "custom-tmux"],
+    supported: ["claude", "codex", "opencode", "custom-tmux"],
     opencodeGlm: "both",
     credentialStorage: "local-device-or-target-machine",
   },
