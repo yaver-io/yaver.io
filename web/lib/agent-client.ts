@@ -3743,11 +3743,14 @@ export class AgentClient {
     } catch (err) {
       this._lastConnectDiagnostics = diagnostics;
       this.setConnectionState("error");
+      // Read this BEFORE scheduleReconnect(), which increments reconnectAttempt.
+      // Reading it after meant the check below was never true, so the first
+      // failure was swallowed: connect() resolved, callers believed they were
+      // connected, and the next call surfaced assertConnected()'s internal
+      // "not connected — call connect() first" instead of the real reason.
+      const isFirstAttempt = this.reconnectAttempt === 0;
       this.scheduleReconnect();
-      if (this.reconnectAttempt === 0) {
-        this.reconnectAttempt = 1;
-        throw err;
-      }
+      if (isFirstAttempt) throw err;
     }
   }
 
