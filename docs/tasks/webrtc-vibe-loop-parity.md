@@ -92,6 +92,33 @@ Do, per app:
 
 Commit + push each app separately with `git commit -- <paths>`.
 
+**Each app's own README.md** (these become public standalone repos —
+`yaver-todo-rn`, `yaver-todo-kt`, `yaver-todo-swift`, `yaver-todo-flutter`,
+`yaver-todo-web` — under a `yaver` GitHub org the human is creating):
+- Say plainly it is a **local-only** todo app whose purpose is to VALIDATE
+  Yaver — not a product, not a starter template, no backend, no accounts.
+- Say WHY it exists: one identical todo UX per stack is what makes the
+  comparison honest. rn proves the Hermes bundle-swap lane; kt/swift/flutter
+  prove the `native-webrtc` remote-runtime lane (Hermes cannot reach them);
+  web proves the dev-server + web-SDK lane. Same app, four transports — the
+  differences you see are the transports, not the app.
+- Link back to https://github.com/kivanccakmak/yaver.io and to the sibling
+  repos, so someone landing on one can find the set.
+- State the feedback story truthfully per stack: rn/web/flutter have a real
+  in-app SDK (`yaver-feedback-react-native`, `yaver-feedback-web`,
+  `yaver_feedback`); **kt/swift have NO native SDK — feedback comes from the
+  Yaver viewer** over the streaming session. Do not imply otherwise.
+- Exact build steps that work from a clean clone. If a step is needed
+  (`xcodegen generate`, `flutter create .`), write it down.
+
+**yaver.io's own README/docs** must reference the set with links and say why
+they're separate repos ("yaver.io is Yaver only; the validation apps live
+outside it so they can be cloned, built, and broken independently"). Update
+`demo/mobile/README.md` (or whatever replaces it after P1) to point at the
+repos rather than describing directories that will be gone. Do not leave a
+table describing local dirs that no longer exist — that is the exact drift
+this repo keeps producing.
+
 GATE P0: each app builds from a CLEAN clone (`git clone` to a tmpdir, build,
 no `flutter create` / xcodegen by hand beyond what a documented README step
 says). rn+web+flutter show a working in-app feedback trigger; kt+swift
