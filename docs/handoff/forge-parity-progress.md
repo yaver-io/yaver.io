@@ -22,3 +22,19 @@ Self-healed 1 time(s) during this run:
 The run ended on an error. Its code changes were not kept; they are preserved in a diagnostic git stash:
 git status: context canceled:
 
+## 2026-07-17T12:26:45Z
+
+autorun: final autorun commit for forge-parity (runner failed)
+
+This is the final autorun commit for task forge-parity. No further autorun commits will follow for this run.
+
+Finish reason: runner failed
+Iterations run: 1
+Verified commits kept: 0
+Runner: codex
+Gate: cd desktop/agent && go build ./... && go test -count=1 -run TestForge .
+Machine at finish: disk 10.9 GB free, RAM 8.0 GB, 8 CPUs, load 17.40 (2.17/core)
+
+The run ended on an error. Its code changes were not kept; they are preserved in a diagnostic git stash:
+git status: context canceled:
+
