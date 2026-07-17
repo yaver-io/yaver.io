@@ -6394,7 +6394,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		// Redact sensitive fields
 		safeCfg := map[string]interface{}{
 			"auto_start":       cfg.AutoStart,
-			"auto_update":      cfg.AutoUpdate,
+			"auto_update":      shouldAutoUpdate(cfg),
 			"relay_count":      len(cfg.RelayServers),
 			"acl_peers":        len(cfg.ACLPeers),
 			"email_configured": cfg.Email != nil && cfg.Email.Provider != "",
@@ -7361,11 +7361,11 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 			return mcpToolResult(fmt.Sprintf("auto-start set to %v", cfg.AutoStart))
 		case "auto-update":
-			cfg.AutoUpdate = args.Value == "true" || args.Value == "1" || args.Value == "yes"
+			cfg.AutoUpdate = boolPtr(args.Value == "true" || args.Value == "1" || args.Value == "yes")
 			if err := SaveConfig(cfg); err != nil {
 				return mcpToolError(fmt.Sprintf("save config: %v", err))
 			}
-			return mcpToolResult(fmt.Sprintf("auto-update set to %v", cfg.AutoUpdate))
+			return mcpToolResult(fmt.Sprintf("auto-update set to %v", *cfg.AutoUpdate))
 		case "headless-keep-awake":
 			enabled := args.Value == "true" || args.Value == "1" || args.Value == "yes"
 			cfg.HeadlessKeepAwake = &enabled
@@ -17135,8 +17135,7 @@ func yaverOnboardChecklist() string {
 	mark(autoStartReady, autoStartLabel, autoStartRemedy)
 
 	// 8. Auto-update
-	autoUpdate := cfg != nil && cfg.AutoUpdate
-	mark(autoUpdate, "Auto-update enabled", "yaver config set auto-update true")
+	mark(shouldAutoUpdate(cfg), "Auto-update enabled", "yaver config set auto-update true")
 
 	b.WriteString("\nNext suggested action: ")
 	switch {

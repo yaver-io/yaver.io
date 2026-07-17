@@ -677,7 +677,7 @@ for (const path of [
   "/gateway/policy", "/gateway/policy/set",
   "/gateway/token/mint", "/gateway/token/revoke", "/gateway/token/rotate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
-  "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
+  "/guests/find-by-code", "/guests/revoke", "/guests/leave", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage", "/guests/conversion",
   "/connections/request", "/connections/accept", "/connections/remove",
   "/connections/block", "/connections/unblock", "/connections/nickname",
@@ -2206,7 +2206,75 @@ http.route({
       // cycle — a quiet box then makes zero rescue/publish claim calls.
       pendingRescue: heartbeatResult?.pendingRescue ?? false,
       pendingPublish: heartbeatResult?.pendingPublish ?? false,
+      // Non-null when some surface asked this box to update while it
+      // was unreachable. `?? null` (not `?? false`) so the agent can
+      // tell "no request" from "a request for a version". Absent on an
+      // old backend, which older agents correctly read as no request.
+      desiredAgentVersion: heartbeatResult?.desiredAgentVersion ?? null,
     });
+  }),
+});
+
+/** POST /devices/request-update — Any surface: ask a box to update its
+ *  agent, reachable or not. Owner-only.
+ *
+ *  Unlike /agent-rescue/queue this never expires, which is the whole
+ *  point: the caller may be a TV on a different network, or a watch
+ *  that has no route to the box at all. The request waits on the device
+ *  row until the box next heartbeats. Body: {deviceId, version?}. */
+http.route({
+  path: "/devices/request-update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string") {
+      return errorResponse("deviceId required", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.devices.requestAgentUpdate, {
+        tokenHash,
+        deviceId: body.deviceId,
+        version: typeof body.version === "string" ? body.version : undefined,
+      });
+      return jsonResponse({ ...out, ok: true });
+    } catch (e: any) {
+      return errorResponse(e?.message || "request failed", 400);
+    }
+  }),
+});
+
+/** POST /devices/claim-update — Agent: atomically read-and-clear its own
+ *  pending update request. Called only when a heartbeat response carried
+ *  a non-null desiredAgentVersion. */
+http.route({
+  path: "/devices/claim-update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string") {
+      return errorResponse("deviceId required", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.devices.claimAgentUpdateRequest, {
+        tokenHash,
+        deviceId: body.deviceId,
+      });
+      return jsonResponse({ ok: true, version: out.version });
+    } catch (e: any) {
+      return errorResponse(e?.message || "claim failed", 400);
+    }
   }),
 });
 
@@ -6399,6 +6467,42 @@ http.route({
       return jsonResponse({ ok: true });
     } catch (e: any) {
       return errorResponse(e.message || "Failed to revoke guest", 400);
+    }
+  }),
+});
+
+/**
+ * POST /guests/leave — Guest drops their OWN access to a host's shared infra.
+ * Guest only; the session user is always the guest, so this can never remove
+ * anyone else's access. Re-invitable afterwards.
+ */
+http.route({
+  path: "/guests/leave",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json();
+    const hostUserId = typeof body.hostUserId === "string" ? body.hostUserId : undefined;
+    const hostEmail = typeof body.hostEmail === "string" ? body.hostEmail : undefined;
+    if (!hostUserId && !hostEmail) {
+      return errorResponse("hostUserId or hostEmail is required");
+    }
+
+    try {
+      const result = await ctx.runMutation(api.guests.leave, {
+        tokenHash,
+        hostUserId,
+        hostEmail,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to leave shared access", 400);
     }
   }),
 });

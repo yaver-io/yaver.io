@@ -32,6 +32,47 @@ struct AgentError: Error, LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Ask a box who it is (GET /info → {deviceId, …}).
+///
+/// Static, and takes host/port rather than a BoxTarget, because it runs BEFORE
+/// the BoxTarget exists — resolving the deviceId is part of constructing one.
+///
+/// This is the ONE call that needs a live route to the box, and it is deliberately
+/// made at sign-in, when the user has just typed the address and is provably on
+/// its network. The deviceId is then persisted forever, so the thing that needs
+/// it later (`/devices/request-update`, for a box we can't reach) never has to
+/// ask. Matching the host against a registry's localIps would be a guess and
+/// could target the WRONG box; the box naming itself cannot.
+enum BoxIdentity {
+    private struct Info: Decodable { let deviceId: String? }
+
+    /// Returns the box's deviceId, or throws a readable reason. Short timeout —
+    /// this runs inline in sign-in and must not hang the wrist.
+    static func fetchDeviceId(host: String, port: Int, token: String) async throws -> String {
+        guard let url = URL(string: "http://\(host):\(port)/info") else {
+            throw AgentError(message: "Bad box address.")
+        }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("watch", forHTTPHeaderField: "X-Yaver-Surface")
+        req.timeoutInterval = 6
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "No response from the box.") }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw AgentError(message: "The box rejected this session.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AgentError(message: "The box didn't answer (\(http.statusCode)).")
+        }
+        guard let id = (try? JSONDecoder().decode(Info.self, from: data))?.deviceId, !id.isEmpty else {
+            // An agent too old to report a deviceId. Say so rather than
+            // inventing one — every caller of this is better off with nothing.
+            throw AgentError(message: "This box's agent is too old to identify itself.")
+        }
+        return id
+    }
+}
+
 actor AgentClient {
     private let token: String
     private let box: BoxTarget

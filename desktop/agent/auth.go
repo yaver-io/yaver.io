@@ -520,6 +520,58 @@ func RevokeGuestWith(baseURL, token, email, userID string) error {
 	return nil
 }
 
+// LeaveSharedAccessResult is returned from the guest-side leave endpoint.
+type LeaveSharedAccessResult struct {
+	OK          bool   `json:"ok"`
+	AlreadyGone bool   `json:"alreadyGone"`
+	HostName    string `json:"hostName"`
+	HostUserID  string `json:"hostUserId"`
+}
+
+// LeaveSharedAccess drops the CALLER's own guest access to a host's shared
+// infra, identified by the host's public userId or email. The mirror of
+// RevokeGuestWith: that one is the host pushing a guest out, this one is the
+// guest walking out.
+//
+// Not a block — the host can invite again and the guest can accept again.
+func LeaveSharedAccess(baseURL, token, hostUserID, hostEmail string) (*LeaveSharedAccessResult, error) {
+	payload := map[string]string{}
+	if u := strings.TrimSpace(hostUserID); u != "" {
+		payload["hostUserId"] = u
+	}
+	if e := strings.TrimSpace(hostEmail); e != "" {
+		payload["hostEmail"] = strings.ToLower(e)
+	}
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("host userId or email is required")
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal leave: %w", err)
+	}
+
+	req, err := newBearerRequest("POST", baseURL+"/guests/leave", token, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create leave request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("leave request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+	}
+	var result LeaveSharedAccessResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode leave response: %w", err)
+	}
+	return &result, nil
+}
+
 // AcceptInviteResult is returned from the accept-code endpoint.
 type AcceptInviteResult struct {
 	OK        bool   `json:"ok"`
@@ -1670,6 +1722,13 @@ type HeartbeatResult struct {
 	GatingSupported       bool
 	PendingRescue         bool
 	PendingPublish        bool
+	// DesiredAgentVersion is non-empty when a surface asked this box to
+	// update while it was unreachable. "latest" or a pinned release.
+	// Deliberately NOT folded into GatingSupported: that flag means "the
+	// backend speaks the rescue/publish gating contract", and an absent
+	// desiredAgentVersion is the steady state on a perfectly current
+	// backend, so letting it vote would make GatingSupported flap.
+	DesiredAgentVersion string
 }
 
 // SendHeartbeat sends a heartbeat to the Convex backend so the device stays
@@ -1811,6 +1870,7 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 		ConnectionPreferences []ConnectionPreference `json:"connectionPreferences"`
 		PendingRescue         *bool                  `json:"pendingRescue"`
 		PendingPublish        *bool                  `json:"pendingPublish"`
+		DesiredAgentVersion   *string                `json:"desiredAgentVersion"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&heartbeatResp); err != nil {
 		// Beat succeeded (200) but the body was unreadable — return a
@@ -1818,12 +1878,59 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 		// polling the claim queues rather than silently skipping them.
 		return &HeartbeatResult{}, nil
 	}
-	return &HeartbeatResult{
+	result := &HeartbeatResult{
 		ConnectionPreferences: heartbeatResp.ConnectionPreferences,
 		GatingSupported:       heartbeatResp.PendingRescue != nil || heartbeatResp.PendingPublish != nil,
 		PendingRescue:         heartbeatResp.PendingRescue != nil && *heartbeatResp.PendingRescue,
 		PendingPublish:        heartbeatResp.PendingPublish != nil && *heartbeatResp.PendingPublish,
-	}, nil
+	}
+	if heartbeatResp.DesiredAgentVersion != nil {
+		result.DesiredAgentVersion = strings.TrimSpace(*heartbeatResp.DesiredAgentVersion)
+	}
+	return result, nil
+}
+
+// ClaimAgentUpdateRequest atomically reads and clears this device's
+// pending update request. Returns "" when there was nothing queued —
+// which is the steady state, so callers only bother when a heartbeat
+// response carried a non-empty DesiredAgentVersion.
+//
+// The clear happens on claim, not on success: see the rationale on
+// claimAgentUpdateRequest in backend/convex/devices.ts. A request that
+// can't be satisfied must not re-fire every beat.
+func ClaimAgentUpdateRequest(baseURL, token, deviceID string) (string, error) {
+	body, err := json.Marshal(map[string]string{"deviceId": deviceID})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest("POST", strings.TrimRight(baseURL, "/")+"/devices/claim-update", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		return "", ErrAuthExpired
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("claim-update returned HTTP %d", resp.StatusCode)
+	}
+	var out struct {
+		Version *string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Version == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(*out.Version), nil
 }
 
 // CPU/RAM metrics are now folded into the heartbeat payload (see

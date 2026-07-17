@@ -134,6 +134,36 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"runnerWorkDir",
 	"outputTail",
 	"logPath",
+	// Autorun (autorun.go / autorun_ops.go). A run may publish metadata —
+	// slot, task BASENAME, seats, iteration counts, status — because those
+	// are slug-class, the same call userProjects already makes. What it must
+	// never publish is the run's content or its filesystem:
+	//
+	//   - progressTail / progressPath: the handoff markdown IS the run's
+	//     verbatim reasoning, and its path is absolute (docs/handoff/... under
+	//     the user's home). autorunSessionView carries both; the Convex
+	//     projection must drop them.
+	//   - taskPath: the absolute path to the task file. autorunTaskName()
+	//     reduces it to a basename — sync THAT, never this.
+	//   - gate: a shell command ("command" is fenced above for the same
+	//     reason). goal: user-written natural language.
+	//   - healDetail / finishDetail: free text. Convex gets healCount and the
+	//     closed finishReason enum instead.
+	//
+	// A free-text field is how content leaks under a respectable name; the
+	// autorun tables deliberately have no `detail`/`note`/`message` column.
+	"progressTail",
+	"progressPath",
+	"progress_tail",
+	"progress_path",
+	"taskPath",
+	"task_path",
+	"gate",
+	"goal",
+	"finalCommitSubject",
+	"healDetail",
+	"finishDetail",
+	"autorunOutput",
 	// Unified Runner — Phase 2 (sandbox + agent sessions). Exec
 	// output, file content, agent message text, agent prompt /
 	// result text, and the chained TaskManager output all stay

@@ -43,9 +43,11 @@ func runManualUpdate(args []string) {
 		os.Exit(0)
 	}
 
-	// Force the update path by faking a config with AutoUpdate=true.
-	// We deliberately don't persist anything: this run only.
-	cfg := &Config{AutoUpdate: true}
+	// Force the update path regardless of the operator's auto-update
+	// setting. forcedAutoUpdateConfig copies, so nothing is persisted:
+	// this run only.
+	loaded, _ := LoadConfig()
+	cfg := forcedAutoUpdateConfig(loaded)
 
 	fmt.Println("yaver update")
 	fmt.Println("============")

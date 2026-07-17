@@ -446,6 +446,34 @@ export default defineSchema({
     // "no version info" in the dashboard.
     agentVersion: v.optional(v.string()),
     agentVersionReportedAt: v.optional(v.number()),
+
+    // Desired-state update request. Set by any surface that wants this
+    // box on a newer agent; the agent reads it back off its own
+    // heartbeat response and self-updates, then clears it by reporting
+    // the new agentVersion.
+    //
+    // Why a field on the row rather than agentRescueCommands, which
+    // already has a `reinstall-latest` command: that queue carries a
+    // 5-minute TTL (a deliberate replay-window cap on a shell-adjacent
+    // channel) and its executor is Linux/.deb-only. A box that is
+    // offline for six minutes — the whole case this exists for — would
+    // never see the command. Desired state has no expiry: whenever the
+    // box comes back, it converges. The two are different lifetimes,
+    // not duplicates: rescue is "do this now, while I'm watching",
+    // this is "be on this version whenever you next wake up".
+    //
+    // This is also the ONLY update trigger that works from tvOS,
+    // watchOS and Wear OS. Those surfaces can reach Convex but cannot
+    // reach the box (tvOS is direct-LAN with no relay; the watches hold
+    // no box host at all when phone-paired), so the POST /agent/update
+    // path web and mobile use is unavailable to them.
+    //
+    // Empty string is not a valid value — absent means "nothing
+    // requested". "latest" means "whatever GitHub says is newest at the
+    // time you read this", which is what every surface sends today; a
+    // concrete "1.99.309" pins a specific release.
+    desiredAgentVersion: v.optional(v.string()),
+    desiredAgentVersionRequestedAt: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_deviceId", ["deviceId"])

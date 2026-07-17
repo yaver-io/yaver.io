@@ -11,6 +11,7 @@ import {
   findInviteByCode,
   inviteGuest,
   listGuests,
+  leaveSharedAccess,
   lookupPublicUser,
   revokeGuest,
   type ActiveHost,
@@ -182,6 +183,8 @@ export default function GuestsStatusView() {
   const [guests, setGuests] = useState<GuestInfo[]>([]);
   const [hostsPending, setHostsPending] = useState<GuestInvitation[]>([]);
   const [hostsActive, setHostsActive] = useState<ActiveHost[]>([]);
+  /** hostEmail of the active host whose "Remove my access" is awaiting confirm. */
+  const [leaveConfirm, setLeaveConfirm] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -435,6 +438,24 @@ export default function GuestsStatusView() {
     setErr(null);
     try {
       await acceptGuestInvitation(token, invite.hostUserId, defaults);
+      await load();
+    } catch (e) {
+      setErr(friendlyGuestError(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Guest-side counterpart to handleRevoke. Keyed by hostEmail, not
+  // h.hostUserId — listHosts returns the Convex doc _id there, which the
+  // leave endpoint can't resolve.
+  async function handleLeaveHost(host: ActiveHost) {
+    if (!token) return;
+    setBusy(`leave:${host.hostEmail}`);
+    setErr(null);
+    try {
+      await leaveSharedAccess(token, { hostEmail: host.hostEmail });
+      setLeaveConfirm(null);
       await load();
     } catch (e) {
       setErr(friendlyGuestError(e));
@@ -982,7 +1003,44 @@ export default function GuestsStatusView() {
                       ? ` · scope: ${machineScopeLabel(undefined, h.devices)}`
                       : ""}
                   </div>
+                  {leaveConfirm === h.hostEmail ? (
+                    <p className="mt-1 text-xs text-amber-300">
+                      Remove your access to {h.hostName}&rsquo;s machines? They can share
+                      again later, and you can accept again.
+                    </p>
+                  ) : null}
                 </div>
+                {/* Guest-side exit. Mirrors the host's Revoke above — either
+                    party can end the share; only the host can start one. */}
+                {leaveConfirm === h.hostEmail ? (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleLeaveHost(h)}
+                      disabled={busy === `leave:${h.hostEmail}`}
+                      className="bg-rose-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+                    >
+                      {busy === `leave:${h.hostEmail}` ? "Removing…" : "Yes, remove"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLeaveConfirm(null)}
+                      disabled={busy === `leave:${h.hostEmail}`}
+                      className="border border-surface-700 px-3 py-2 text-xs text-surface-300 disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setLeaveConfirm(h.hostEmail)}
+                    title={`Remove your own access to ${h.hostName}'s shared machines`}
+                    className="shrink-0 border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/10"
+                  >
+                    Remove my access
+                  </button>
+                )}
               </li>
             ))}
           </ul>

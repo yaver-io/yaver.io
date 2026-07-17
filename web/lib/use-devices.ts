@@ -77,6 +77,8 @@ export interface Device {
   needsAuth?: boolean;
   hostName?: string;
   hostEmail?: string;
+  /** Host's public userId string — identifies the share to POST /guests/leave. */
+  hostUserIdString?: string;
   accessScope?: "owner" | "shared-scoped" | "shared-legacy";
   tunnelUrl?: string;
   publicEndpoints?: string[];
@@ -545,6 +547,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         needsAuth: Boolean(d.needsAuth ?? false),
         hostName: d.hostName,
         hostEmail: d.hostEmail,
+        hostUserIdString: d.hostUserIdString,
         accessScope: d.accessScope,
         tunnelUrl: d.tunnelUrl,
         publicEndpoints: Array.isArray(d.publicEndpoints) ? d.publicEndpoints : undefined,

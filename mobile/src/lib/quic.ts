@@ -7126,6 +7126,113 @@ export class QuicClient {
   }
 
   /**
+   * Subscribe to the agent's self-update progress stream and yield one
+   * parsed `{type:"progress", phase, text, bytes?, total?}` frame per
+   * onEvent call. `phase` walks queued → fetch_release → check →
+   * download → extract → replace → restart → ready (or `error`), and
+   * `total` is -1 when the release length is unknown. Returns an abort
+   * function.
+   *
+   * LOCAL DEVICE ONLY — deliberately no `target` parameter, unlike
+   * every other agent-update helper here. /peer/<id>/... would resolve,
+   * but handlePeerProxy buffers the whole upstream body before writing
+   * it back and stamps Content-Type: application/json, so a peer'd SSE
+   * stream delivers nothing until the agent restarts and everything at
+   * once after — i.e. no live progress, which is the only reason to
+   * stream at all. Callers targeting a peer should poll /info instead.
+   *
+   * XMLHttpRequest rather than fetch().body.getReader() for the same
+   * reason streamTaskOutput uses it: RN-Android's fetch buffers the
+   * whole response body, which would defeat the point here too.
+   * streamLog() takes the fetch route and is fine only because its
+   * consumers can tolerate an end-of-stream dump.
+   */
+  streamAgentUpdate(
+    onEvent: (ev: {
+      type?: string;
+      phase?: string;
+      text?: string;
+      bytes?: number;
+      total?: number;
+    }) => void,
+    onClose?: () => void,
+  ): () => void {
+    const url = `${this.baseUrl}/streams/agent-update`;
+    const xhr = new XMLHttpRequest();
+    let lastIndex = 0;
+    let aborted = false;
+
+    // Same priority as install progress: the user is watching it, but a
+    // live task's output still outranks it.
+    const slot = this.acquireStreamSlot(STREAM_PRIORITY.installProgress, "streams/agent-update", () => {
+      aborted = true;
+      try {
+        xhr.abort();
+      } catch {
+        // ignore
+      }
+    });
+
+    const flushBuffer = (chunk: string) => {
+      for (const line of chunk.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          onEvent(JSON.parse(line.slice(6)));
+        } catch {
+          // ignore malformed frame
+        }
+      }
+    };
+
+    xhr.open("GET", url, true);
+    for (const [k, v] of Object.entries(this.authHeaders)) {
+      xhr.setRequestHeader(k, v as string);
+    }
+    xhr.setRequestHeader("Accept", "text/event-stream");
+    xhr.onprogress = () => {
+      if (aborted) return;
+      const text = xhr.responseText || "";
+      // Carry an incomplete final line forward — split only at the last
+      // \n so a chunk that ends mid-event doesn't drop the leftover.
+      const lastNewline = text.lastIndexOf("\n", text.length - 1);
+      if (lastNewline <= lastIndex) return;
+      const ready = text.slice(lastIndex, lastNewline);
+      lastIndex = lastNewline + 1;
+      flushBuffer(ready);
+    };
+    xhr.onerror = () => {
+      this.releaseStreamSlot(slot);
+    };
+    xhr.onloadend = () => {
+      this.releaseStreamSlot(slot);
+      if (aborted) return;
+      const tail = (xhr.responseText || "").slice(lastIndex);
+      if (tail) flushBuffer(tail);
+      // The agent replacing its own binary tears this stream down, so a
+      // close is normal mid-update — callers treat it as "go poll /info",
+      // never as a failure.
+      if (onClose) {
+        try { onClose(); } catch { /* ignore */ }
+      }
+    };
+    try {
+      xhr.send();
+    } catch {
+      this.releaseStreamSlot(slot);
+    }
+
+    return () => {
+      aborted = true;
+      this.releaseStreamSlot(slot);
+      try {
+        xhr.abort();
+      } catch {
+        // ignore
+      }
+    };
+  }
+
+  /**
    * Fetch agent update status + advertised latest version. Used by
    * the device card to render a "v1.99.36 → v1.99.221" hint before
    * the user opens the update sheet.

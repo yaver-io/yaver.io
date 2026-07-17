@@ -20,7 +20,8 @@ type agentUpdateStatus struct {
 }
 
 var runForcedAgentUpdate = func() {
-	checkAutoUpdate(&Config{AutoUpdate: true})
+	cfg, _ := LoadConfig()
+	checkAutoUpdate(forcedAutoUpdateConfig(cfg))
 }
 
 var latestAgentReleaseVersionFunc = func() (string, error) {
@@ -52,7 +53,7 @@ func buildAgentUpdateStatus(cfg *Config, updating bool) (*agentUpdateStatus, err
 	status := &agentUpdateStatus{
 		CurrentVersion:    current,
 		LatestVersion:     latest,
-		AutoUpdateEnabled: cfg != nil && cfg.AutoUpdate,
+		AutoUpdateEnabled: shouldAutoUpdate(cfg),
 		Repo:              updateRepo(),
 		Updating:          updating,
 	}

@@ -7875,3 +7875,42 @@ export class AgentClientPool {
 
 /** Process-wide pool shared across the dashboard. */
 export const agentClientPool = new AgentClientPool();
+
+/** Ask a device to update its agent WITHOUT needing to reach it.
+ *
+ *  Pairs with backend/convex/devices.ts::requestAgentUpdate. The request
+ *  lands on the device's Convex row and the agent applies it on its next
+ *  heartbeat. Unlike AgentClient.triggerAgentUpdate(), which POSTs to the
+ *  box and so needs a live connection, this works on a box that is
+ *  offline, asleep, or simply unreachable from this browser.
+ *
+ *  Deliberately a free function rather than an AgentClient method: the
+ *  caller that needs it most is the one whose connect() just failed, and
+ *  hanging it off a client instance would imply a connection state that
+ *  is irrelevant here. All it needs is the user's Convex token.
+ *
+ *  `version` defaults to "latest" server-side. Note the agent can only
+ *  install latest today — it rejects a pinned version rather than
+ *  silently substituting one.
+ */
+export async function requestAgentUpdateViaConvex(
+  token: string,
+  deviceId: string,
+  version?: string,
+): Promise<{ requestedVersion: string }> {
+  const res = await fetch(`${CONVEX_URL}/devices/request-update`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ deviceId, ...(version ? { version } : {}) }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.error || `update request HTTP ${res.status}`);
+  }
+  return {
+    requestedVersion: typeof data?.requestedVersion === "string" ? data.requestedVersion : "latest",
+  };
+}

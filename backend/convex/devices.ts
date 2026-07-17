@@ -882,6 +882,90 @@ export const reportAgentVersion = mutation({
 });
 
 /**
+ * Ask a device to update its agent, whether or not it is reachable
+ * right now.
+ *
+ * This is desired state, not a command: it sets a field the agent reads
+ * off its own heartbeat response. A box that is offline, asleep, on
+ * cellular, or behind a NAT we can't punch converges the moment it next
+ * heartbeats. Nothing here needs the caller to be able to reach the box
+ * — which is the point, and why every surface uses this. tvOS, watchOS
+ * and Wear OS have no path to the box at all (see the schema comment on
+ * desiredAgentVersion); this is the only trigger available to them.
+ *
+ * `version` is "latest" (resolve at apply time) or a concrete release
+ * like "1.99.309" to pin. The request is one-shot: the agent claims it
+ * via claimAgentUpdateRequest, which clears it. A failed update does not
+ * re-fire on the next beat — auto-update's own 6-12h cycle is the
+ * backstop, and the user can always ask again.
+ */
+export const requestAgentUpdate = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    version: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const requested = (args.version ?? "latest").trim() || "latest";
+    await ctx.db.patch(device._id, {
+      desiredAgentVersion: requested,
+      desiredAgentVersionRequestedAt: Date.now(),
+    });
+    return { ok: true, requestedVersion: requested };
+  },
+});
+
+/**
+ * Agent side of requestAgentUpdate: atomically read-and-clear the
+ * pending request.
+ *
+ * Clearing on claim (rather than on success) is deliberate, and mirrors
+ * claimNextRescueCommand. If we cleared only once the box reached the
+ * target, a request that can't succeed — GitHub rate-limiting the
+ * download, no release asset for this platform — would re-fire on every
+ * 30s heartbeat forever, and a fleet of such boxes would hammer the
+ * releases API in a loop. One claim, one attempt; the periodic
+ * auto-update check is what makes convergence eventual rather than
+ * dependent on this request landing.
+ */
+export const claimAgentUpdateRequest = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const requested = device.desiredAgentVersion;
+    if (!requested) return { version: null };
+
+    await ctx.db.patch(device._id, {
+      desiredAgentVersion: undefined,
+      desiredAgentVersionRequestedAt: undefined,
+    });
+    return { version: requested };
+  },
+});
+
+/**
  * Update device heartbeat — marks it as online.
  */
 export const heartbeat = mutation({
@@ -1243,6 +1327,11 @@ export const heartbeat = mutation({
         ?? [],
       pendingRescue: pendingRescueRow !== null,
       pendingPublish: pendingPublishRow !== null,
+      // Same gate-then-claim shape as pendingRescue: the agent only
+      // calls claimAgentUpdateRequest when this is non-null. Carries the
+      // version rather than a boolean because it's a single field read
+      // we already have in hand — no extra query to save.
+      desiredAgentVersion: device.desiredAgentVersion ?? null,
     };
   },
 });

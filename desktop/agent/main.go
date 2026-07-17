@@ -3107,19 +3107,33 @@ func runServe(args []string) {
 	// (no Convex call) and caches the latest value for the heartbeat to send.
 	go metricsSamplerLoop(ctx)
 
-	// Periodic auto-update check (every 6 hours when idle)
+	// Periodic auto-update check. Each pass re-rolls its own delay in
+	// [6h, 12h) rather than running on a fixed tick — see
+	// autoUpdateCheckInterval for why the jitter matters.
+	//
+	// This no longer waits for the agent to go idle. That gate meant a
+	// box running a long autorun loop never updated at all, which is the
+	// opposite of what a box under continuous load needs; the operator's
+	// call (2026-07-17) is that convergence wins. The cost is real and
+	// worth naming: applying an update restarts the agent, so a task
+	// running at that moment dies with it.
 	go func() {
-		ticker := time.NewTicker(6 * time.Hour)
-		defer ticker.Stop()
+		timer := time.NewTimer(autoUpdateCheckInterval())
+		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				if cfg.AutoUpdate && taskMgr.GetRunningTaskCount() == 0 {
-					log.Println("[auto-update] Periodic check (agent idle)...")
+			case <-timer.C:
+				if shouldAutoUpdate(cfg) {
+					if n := taskMgr.GetRunningTaskCount(); n > 0 {
+						log.Printf("[auto-update] Periodic check — %d task(s) running; a new version will restart the agent and end them", n)
+					} else {
+						log.Println("[auto-update] Periodic check (agent idle)...")
+					}
 					checkAutoUpdate(cfg)
 				}
+				timer.Reset(autoUpdateCheckInterval())
 			}
 		}
 	}()
@@ -4077,27 +4091,33 @@ func runAutoUpdate(args []string) {
 	}
 	switch sub {
 	case "", "status":
+		source := "default"
+		if cfg.AutoUpdate != nil {
+			source = "configured"
+		}
 		fmt.Println("auto-update")
-		fmt.Printf("  enabled: %v\n", cfg.AutoUpdate)
+		fmt.Printf("  enabled: %v (%s)\n", shouldAutoUpdate(cfg), source)
 		fmt.Printf("  repo:    %s\n", updateRepo())
 		fmt.Printf("  current: v%s\n", version)
+		fmt.Printf("  checks:  on boot, then every 6-12h (randomized per agent)\n")
 		fmt.Println("")
 		fmt.Println("Subcommands:")
-		fmt.Println("  yaver auto-update enable   — opt in to auto-update on agent boot")
-		fmt.Println("  yaver auto-update disable  — opt out (default)")
+		fmt.Println("  yaver auto-update enable   — keep this agent on the latest release (default)")
+		fmt.Println("  yaver auto-update disable  — pin this agent; update only via `yaver update`")
 		fmt.Println("  yaver auto-update check    — run the update check once, ignoring config")
 		fmt.Println("")
+		fmt.Println("Applying an update restarts the agent, which ends any running task.")
 		fmt.Println("Override repo: YAVER_UPDATE_REPO=<owner>/<repo> yaver serve")
 	case "enable", "on", "true":
-		cfg.AutoUpdate = true
+		cfg.AutoUpdate = boolPtr(true)
 		if err := SaveConfig(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("auto-update: enabled")
-		fmt.Printf("Will check %s for newer releases on agent boot.\n", updateRepo())
+		fmt.Printf("Will check %s on boot and every 6-12h thereafter.\n", updateRepo())
 	case "disable", "off", "false":
-		cfg.AutoUpdate = false
+		cfg.AutoUpdate = boolPtr(false)
 		if err := SaveConfig(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 			os.Exit(1)
@@ -4106,11 +4126,8 @@ func runAutoUpdate(args []string) {
 		fmt.Println("Run `yaver update` manually when you want a new version.")
 	case "check":
 		// Force a single check + apply, ignoring config. Used to test
-		// the new semver guard / repo without flipping persistent
-		// settings.
-		forced := *cfg
-		forced.AutoUpdate = true
-		checkAutoUpdate(&forced)
+		// the semver guard / repo without flipping persistent settings.
+		checkAutoUpdate(forcedAutoUpdateConfig(cfg))
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown auto-update subcommand: %q\n", sub)
 		fmt.Fprintln(os.Stderr, "Try: yaver auto-update [status|enable|disable|check]")
@@ -4177,7 +4194,7 @@ func runConfig(args []string) {
 	fmt.Printf("device_id:       %s\n", valueOrEmpty(cfg.DeviceID))
 	fmt.Printf("convex_site_url: %s\n", valueOrEmpty(cfg.ConvexSiteURL))
 	fmt.Printf("auto_start:      %v\n", cfg.AutoStart)
-	fmt.Printf("auto_update:     %v\n", cfg.AutoUpdate)
+	fmt.Printf("auto_update:     %v\n", shouldAutoUpdate(cfg))
 	fmt.Printf("headless_keep_awake: %v\n", shouldEnableHeadlessKeepAwake(cfg))
 	fmt.Printf("require_private_recovery: %v\n", cfg.RequirePrivateRecoveryTransport)
 }
@@ -4220,15 +4237,15 @@ func runConfigSet(key, value string) {
 
 	case "auto-update":
 		enabled := value == "true" || value == "1" || value == "yes"
-		cfg.AutoUpdate = enabled
+		cfg.AutoUpdate = &enabled
 		if err := SaveConfig(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 			os.Exit(1)
 		}
 		if enabled {
-			fmt.Println("Auto-update enabled. Yaver will check for updates on startup.")
+			fmt.Println("Auto-update enabled. Yaver keeps itself on the latest release.")
 		} else {
-			fmt.Println("Auto-update disabled.")
+			fmt.Println("Auto-update disabled. Run `yaver update` when you want a new version.")
 		}
 
 	case "headless-keep-awake":
@@ -4946,7 +4963,7 @@ func updateRepoForLog() string { return updateRepo() }
 // checkAutoUpdate checks for a newer release on GitHub and self-updates the binary.
 // Returns silently if auto-update is disabled or if already up-to-date.
 func checkAutoUpdate(cfg *Config) {
-	if !cfg.AutoUpdate {
+	if !shouldAutoUpdate(cfg) {
 		return
 	}
 
@@ -7425,6 +7442,20 @@ func runDevices(args []string) {
 				fmt.Fprintln(os.Stderr, "Refusing to remove the current device from itself. Run this from another device or use the mobile app.")
 				os.Exit(1)
 			}
+			// A shared device isn't ours to remove — the owner-scoped remove
+			// would no-op confusingly. Point at the verb that actually works.
+			if devices, err := listDevicesEnsuringAuth(cfg); err == nil {
+				for _, d := range devices {
+					if d.DeviceID != deviceID || !d.IsGuest {
+						continue
+					}
+					host := firstNonEmpty(d.HostEmail, d.HostUserIDString, d.HostName)
+					fmt.Fprintf(os.Stderr, "%s is shared with you by %s — it isn't yours to remove.\n",
+						firstNonEmpty(d.Name, deviceID), firstNonEmpty(d.HostName, host))
+					fmt.Fprintf(os.Stderr, "To drop your own access to their machines:\n\n    yaver guests leave %s\n", host)
+					os.Exit(1)
+				}
+			}
 			if err := RemoveDevice(cfg.ConvexSiteURL, cfg.AuthToken, deviceID); err != nil {
 				fmt.Fprintf(os.Stderr, "Remove failed: %v\n", err)
 				os.Exit(1)
@@ -9275,27 +9306,29 @@ type DeviceInfo struct {
 	Name     string `json:"name"`
 	// Alias is the caller's optional short name for this Yaver device,
 	// stored in Convex and shared across CLI / web / mobile surfaces.
-	Alias                     string   `json:"alias,omitempty"`
-	Platform                  string   `json:"platform"`
-	QuicHost                  string   `json:"quicHost"`
-	LocalIps                  []string `json:"localIps,omitempty"`
-	PublicEndpoints           []string `json:"publicEndpoints,omitempty"`
-	GeoRegion                 string   `json:"geoRegion,omitempty"`
-	QuicPort                  int      `json:"quicPort"`
-	IsOnline                  bool     `json:"isOnline"`
-	NeedsAuth                 bool     `json:"needsAuth,omitempty"`
-	RelayConnected            bool     `json:"relayConnected,omitempty"`
-	LastHeartbeat             int64    `json:"lastHeartbeat,omitempty"`
-	LastTunnelEvent           int64    `json:"lastTunnelEvent,omitempty"`
-	AgentVersion              string   `json:"agentVersion,omitempty"`
-	IsGuest                   bool     `json:"isGuest,omitempty"`
-	HostName                  string   `json:"hostName,omitempty"`
-	HostEmail                 string   `json:"hostEmail,omitempty"`
-	AccessScope               string   `json:"accessScope,omitempty"`
-	PriorityMode              string   `json:"priorityMode,omitempty"`
-	UseHostAPIKeys            bool     `json:"useHostApiKeys,omitempty"`
-	AllowGuestProvidedAPIKeys bool     `json:"allowGuestProvidedApiKeys,omitempty"`
-	SessionBinding            string   `json:"sessionBinding,omitempty"`
+	Alias           string   `json:"alias,omitempty"`
+	Platform        string   `json:"platform"`
+	QuicHost        string   `json:"quicHost"`
+	LocalIps        []string `json:"localIps,omitempty"`
+	PublicEndpoints []string `json:"publicEndpoints,omitempty"`
+	GeoRegion       string   `json:"geoRegion,omitempty"`
+	QuicPort        int      `json:"quicPort"`
+	IsOnline        bool     `json:"isOnline"`
+	NeedsAuth       bool     `json:"needsAuth,omitempty"`
+	RelayConnected  bool     `json:"relayConnected,omitempty"`
+	LastHeartbeat   int64    `json:"lastHeartbeat,omitempty"`
+	LastTunnelEvent int64    `json:"lastTunnelEvent,omitempty"`
+	AgentVersion    string   `json:"agentVersion,omitempty"`
+	IsGuest         bool     `json:"isGuest,omitempty"`
+	HostName        string   `json:"hostName,omitempty"`
+	HostEmail       string   `json:"hostEmail,omitempty"`
+	// Host's public userId string — identifies the share to `guests leave`.
+	HostUserIDString          string `json:"hostUserIdString,omitempty"`
+	AccessScope               string `json:"accessScope,omitempty"`
+	PriorityMode              string `json:"priorityMode,omitempty"`
+	UseHostAPIKeys            bool   `json:"useHostApiKeys,omitempty"`
+	AllowGuestProvidedAPIKeys bool   `json:"allowGuestProvidedApiKeys,omitempty"`
+	SessionBinding            string `json:"sessionBinding,omitempty"`
 	// Hosting provenance (populated by listMyDevices). "yaver-hosted" =
 	// a Yaver-managed cloud box (paid via LemonSqueezy or owner-adopted);
 	// "byo" = a bring-your-own cloud box provisioned through Yaver;
@@ -10168,6 +10201,16 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		}
 		if forceClaimSweep || !hbResult.GatingSupported || hbResult.PendingPublish {
 			go claimAndExecutePublishJobSingleFlight(baseURL, currentToken(), deviceID)
+		}
+		// Some surface asked this box to update while it couldn't be
+		// reached. Unlike the rescue/publish gates there's no periodic
+		// sweep fallback here: an absent field is the steady state, so
+		// sweeping would mean claiming nothing on every quiet box
+		// forever. If the backend is too old to send it, the request
+		// simply never arrives and auto-update's own cycle converges the
+		// box instead — which is the designed backstop, not a gap.
+		if hbResult.DesiredAgentVersion != "" {
+			go claimAndApplyAgentUpdateRequestSingleFlight(baseURL, currentToken(), deviceID)
 		}
 	}
 

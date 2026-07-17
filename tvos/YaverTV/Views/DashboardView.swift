@@ -6,6 +6,7 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject var store: YaverStore
     @State private var showPicker = false
+    @State private var showUpdateAgent = false
     @StateObject private var lifecycle = BoxLifecycle()
 
     var body: some View {
@@ -59,6 +60,14 @@ struct DashboardView: View {
                             Button { showPicker = true } label: {
                                 Tile(icon: "server.rack", title: store.selectedBox?.name ?? "Box", detail: "Switch machine")
                             }
+                            // Not scoped to the selected box on purpose: the TV
+                            // reaches boxes over direct LAN only, so the machines
+                            // that most need an update are the ones it can't
+                            // select. UpdateAgentView asks the account, not the
+                            // box — see its header.
+                            Button { showUpdateAgent = true } label: {
+                                Tile(icon: "arrow.down.circle", title: "Update agent", detail: "Ask a machine to update")
+                            }
                             Button { store.signOut() } label: {
                                 Tile(icon: "rectangle.portrait.and.arrow.right", title: "Sign out", detail: "")
                             }
@@ -68,6 +77,7 @@ struct DashboardView: View {
                 .padding(56)
             }
             .sheet(isPresented: $showPicker) { MachinePickerView() }
+            .sheet(isPresented: $showUpdateAgent) { UpdateAgentView() }
             .task(id: store.selectedBox?.id) {
                 guard let box = store.selectedBox else { return }
                 lifecycle.refreshReachability(box)

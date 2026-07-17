@@ -10,7 +10,7 @@ import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
 import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import { CONVEX_URL } from "@/lib/constants";
-import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
+import { agentClient, AgentClient, requestAgentUpdateViaConvex, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
 import {
   describeMachineState,
@@ -19,6 +19,7 @@ import {
   startManagedCloudMachine,
   stopManagedCloudMachine,
 } from "@/lib/managed-cloud";
+import { leaveSharedAccess } from "@/lib/guests";
 import { classifyFetchError, type ClassifiedFailure } from "@/lib/connection-error";
 import {
   probeAllowed,
@@ -2559,6 +2560,27 @@ export default function DevicesView({
       ),
     [managedMachines, deviceIdSet],
   );
+  // A PARKED box with no live device card of its own. Scale-to-zero deletes the
+  // server, so once the box's device row goes stale (or it never registered one)
+  // the box exists only as a cloudMachines row + a snapshot — and it rendered
+  // nowhere at all, which is exactly the moment the user needs a Wake button.
+  // pendingManagedBoxes deliberately excludes paused/suspended because its card
+  // is a provisioning-progress card; a parked box is not provisioning, so it gets
+  // its own card here rather than a misleading "Setup failed" bar.
+  //
+  // Wakeability is NOT re-derived here: /subscription only returns a paused or
+  // suspended box that still has a recovery pointer to wake from, so every box
+  // reaching this list is genuinely wakeable (see isMachineWakeable — the client
+  // must never re-implement that rule).
+  const parkedManagedBoxes = useMemo(
+    () =>
+      managedMachines.filter(
+        (m) =>
+          (m.status === "paused" || m.status === "suspended") &&
+          !(m.deviceId && deviceIdSet.has(m.deviceId)),
+      ),
+    [managedMachines, deviceIdSet],
+  );
   const { primaryRunnerByDevice, primaryModelByDevice, primaryProviderByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   // Phase C: which device (if any) has the recycle dialog open. The
   // dialog is a fixed overlay so it can render inline next to the
@@ -2727,7 +2749,48 @@ export default function DevicesView({
         </div>
       ) : null}
 
-      {renderedDevices.length === 0 && pendingManagedBoxes.length === 0 ? (
+      {parkedManagedBoxes.length > 0 ? (
+        <div className="mb-4 space-y-2">
+          {parkedManagedBoxes.map((m) => {
+            const state = describeMachineState(m.status, true);
+            const name = m.hostname || m.deviceId || `cloud-${m.id.slice(0, 8)}`;
+            const busy = boxBusy === m.id;
+            return (
+              <div key={m.id} className="card border border-amber-500/20 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                      Yaver Managed Cloud
+                    </span>
+                    <span className="text-sm font-medium text-surface-100">{name}</span>
+                    <span className="text-xs text-surface-500">
+                      {m.machineType.toUpperCase()}
+                      {m.region ? ` · ${m.region}` : ""}
+                    </span>
+                  </div>
+                  <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                    {state.label}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] text-surface-500">{state.hint}</p>
+                  <button
+                    onClick={() => void pauseResumeBox(m.id, "start")}
+                    disabled={busy}
+                    className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/20 disabled:opacity-60 dark:text-amber-300"
+                  >
+                    {busy ? "Waking…" : "▶ Wake"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {renderedDevices.length === 0 &&
+      pendingManagedBoxes.length === 0 &&
+      parkedManagedBoxes.length === 0 ? (
         <div className="card p-8 text-center">
           <p className="mb-2 text-sm text-surface-400">No devices registered.</p>
           {dormantDevices.length > 0 ? (
@@ -3043,6 +3106,7 @@ export default function DevicesView({
                       onRescue={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
                       onShell={() => setShellDevice(device)}
                       onToggleDetails={() => setExpandedId(expandedId === device.id ? null : device.id)}
+                      onLeftShare={() => { void onRefresh(); }}
                     />
                   </div>
                 </div>
@@ -3536,21 +3600,31 @@ function AgentUpdateModal({
   token: string;
   onClose: () => void;
 }) {
-  const [phase, setPhase] = useState<string>("starting");
+  // "connect" rather than "starting": the first thing this modal does
+  // is open a transient connection to the target, which on a cold relay
+  // can take seconds. Naming that phase honestly is the difference
+  // between a dialog that looks stuck and one that looks busy.
+  const [phase, setPhase] = useState<string>("connect");
   const [lines, setLines] = useState<Array<{ phase: string; text: string }>>([]);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmedVersion, setConfirmedVersion] = useState<string | null>(null);
   const [downloadBytes, setDownloadBytes] = useState<{ read: number; total: number } | null>(null);
+  // Set when the box was unreachable and we queued the update via Convex
+  // instead. Not an error state — the update WILL happen, just not while
+  // we watch. unreachableReason carries why we fell back, so the user
+  // learns something about their box instead of just "queued".
+  const [requested, setRequested] = useState(false);
+  const [unreachableReason, setUnreachableReason] = useState<string | null>(null);
   // Tick state so the user sees something move while we wait for
   // the first SSE event from the agent. Flips every 500ms; the
   // spinner / shimmer in the modal reads from this.
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    if (done || error) return;
+    if (done || error || requested) return;
     const t = setInterval(() => setTick((n) => (n + 1) % 1_000_000), 500);
     return () => clearInterval(t);
-  }, [done, error]);
+  }, [done, error, requested]);
 
   // Transient AgentClient bound to the target device. Lives for the
   // lifetime of the modal; disconnected in cleanup. Holding it in a
@@ -3607,10 +3681,31 @@ function AgentUpdateModal({
         try {
           await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
         } catch (err) {
-          if (!cancelled) {
-            setError(
-              `Couldn't reach ${device.name} to start the update: ${err instanceof Error ? err.message : String(err)}`,
-            );
+          // Unreachable is not a dead end. Fall back to desired state:
+          // write the request to the device's Convex row and let the box
+          // apply it on its next heartbeat. The user's intent ("update
+          // this box") is satisfiable even though this browser has no
+          // path to it — refusing here would strand every box that's
+          // asleep, on another network, or behind a NAT we can't punch.
+          //
+          // The failed client never made it into clientRef, so nothing
+          // else will tear it down: disconnect it here or it keeps
+          // retrying its backoff ladder in the background for the life
+          // of the page.
+          try { client.disconnect(); } catch { /* nothing useful to do */ }
+          if (cancelled) return;
+          try {
+            await requestAgentUpdateViaConvex(token, device.id);
+            if (!cancelled) {
+              setUnreachableReason(err instanceof Error ? err.message : String(err));
+              setRequested(true);
+            }
+          } catch (reqErr) {
+            if (!cancelled) {
+              setError(
+                `Couldn't reach ${device.name} (${err instanceof Error ? err.message : String(err)}), and queueing the update for later also failed: ${reqErr instanceof Error ? reqErr.message : String(reqErr)}`,
+              );
+            }
           }
           return;
         }
@@ -3619,6 +3714,11 @@ function AgentUpdateModal({
           return;
         }
         clientRef.current = client;
+        // Reached the box. Leave the connect phase immediately — the
+        // agent's first SSE event can be a second or two out, and until
+        // it lands the modal would otherwise still claim to be
+        // connecting when it is in fact already asking for the update.
+        setPhase("queued");
 
         // Kick off the update on the agent. Returns started=true
         // when an update is now in flight, started=false when the
@@ -3672,12 +3772,13 @@ function AgentUpdateModal({
         if (started) {
           setTimeout(() => {
             if (cancelled) return;
-            // Only kick the poll if no progress event has arrived.
-            // Detected by phase still being the initial "starting".
-            // Reading state from a closure is fragile — use a ref-
-            // less heuristic: if we never moved past "starting"
-            // for 45s, the agent likely doesn't emit progress.
-            // pollForNewVersion is idempotent.
+            // Fires unconditionally rather than checking whether any
+            // progress event arrived: reading phase from this closure
+            // would only ever see its value at effect-setup time, so the
+            // check it looks like it wants is not available here.
+            // pollForNewVersion is idempotent and gives up on its own
+            // deadline, so a redundant call on an agent that DID stream
+            // progress costs one /info poll.
             pollForNewVersion();
           }, 45_000);
         }
@@ -3743,7 +3844,7 @@ function AgentUpdateModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget && (done || error)) onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget && (done || error || requested)) onClose(); }}
     >
       <div className="w-full max-w-lg rounded-xl border border-surface-800 bg-surface-900 p-5 shadow-2xl">
         <div className="mb-3 flex items-start justify-between gap-3">
@@ -3768,6 +3869,26 @@ function AgentUpdateModal({
               {device.name} now reports v{confirmedVersion}.
             </div>
           </div>
+        ) : requested ? (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-800 dark:text-amber-200">
+            <div className="mb-1 flex items-center gap-2 font-semibold">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400" />
+              </span>
+              Update queued
+            </div>
+            <div className="text-xs text-amber-800/80 dark:text-amber-300/80">
+              {device.name} isn&apos;t reachable from this browser right now, so the update is
+              waiting on the device instead. It will install the next time the box checks in —
+              typically within a minute of coming back online. You can close this.
+            </div>
+            {unreachableReason ? (
+              <div className="mt-2 border-t border-amber-500/20 pt-2 text-[10px] text-amber-800/70 dark:text-amber-300/60">
+                Couldn&apos;t connect: {unreachableReason}
+              </div>
+            ) : null}
+          </div>
         ) : (
           <>
             {(() => {
@@ -3777,6 +3898,7 @@ function AgentUpdateModal({
               // understands what is happening right now (vs. "phase:
               // download" which is technical jargon).
               const STEPS: Array<{ phase: string; label: string }> = [
+                { phase: "connect",        label: `Connecting to ${device.name}` },
                 { phase: "queued",         label: "Preparing" },
                 { phase: "fetch_release",  label: "Checking GitHub for the new version" },
                 { phase: "check",          label: "Found a new version" },
@@ -3792,6 +3914,11 @@ function AgentUpdateModal({
               // Progress fraction: when on download phase with known
               // byte total, blend in the byte percent; otherwise step
               // index / total.
+              // Connecting has no measurable fraction — we're racing a
+              // relay/tunnel/LAN ladder with no idea which will win or
+              // when. Drawing "step 1 of 9" as 11% would be a number we
+              // made up; the sliding bar is the honest rendering.
+              const indeterminate = phase === "connect";
               let pct = ((idx + 1) / total) * 100;
               if (phase === "download" && downloadBytes && downloadBytes.total > 0) {
                 const dlPct = Math.max(0, Math.min(100, (downloadBytes.read * 100) / downloadBytes.total));
@@ -3804,11 +3931,24 @@ function AgentUpdateModal({
                   ? "bg-red-400"
                   : phase === "restarting" || phase === "restart"
                   ? "bg-amber-400 animate-pulse"
+                  : phase === "connect"
+                  ? "bg-sky-400 animate-pulse"
                   : "bg-indigo-400 animate-pulse";
               const subtitle = (() => {
-                if (phase === "starting" || phase === "queued") {
-                  // First few seconds — no agent event yet. Use the
-                  // tick spinner so the user sees motion.
+                if (phase === "connect") {
+                  // We have not reached the box yet. Say that, rather
+                  // than the old copy ("Asking <box> to start the
+                  // update"), which claimed a conversation that hadn't
+                  // started — so a slow or failing relay looked like a
+                  // stuck update instead of a connection still being
+                  // negotiated.
+                  const dots = ".".repeat((tick % 4) + 1);
+                  return `Finding a route to ${device.name}${dots}`;
+                }
+                if (phase === "queued") {
+                  // Connected, POST sent, but the agent's first progress
+                  // event hasn't landed yet. Use the tick spinner so the
+                  // user sees motion.
                   const dots = ".".repeat((tick % 4) + 1);
                   return `Asking ${device.name} to start the update${dots}`;
                 }
@@ -3829,18 +3969,26 @@ function AgentUpdateModal({
                     <span className="font-medium">{step.label}</span>
                     <span className="ml-auto text-[10px] text-surface-500">step {Math.min(idx + 1, total)} of {total}</span>
                   </div>
-                  <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-surface-800">
-                    <div
-                      className={`h-full ${phase === "error" ? "bg-red-500" : "bg-indigo-500"} transition-all duration-300`}
-                      style={{ width: `${Math.max(2, pct)}%` }}
-                    />
+                  <div className="relative mb-2 h-2 w-full overflow-hidden rounded-full bg-surface-800">
+                    {indeterminate ? (
+                      // No route to the box yet, so no honest fraction to
+                      // draw. Reuse the dashboard's existing indeterminate
+                      // treatment (see PreviewPane) — a sliding gradient
+                      // says "working" without inventing a percentage.
+                      <div className="absolute inset-y-0 left-0 h-full w-1/4 animate-[slide_1.6s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-indigo-400 to-transparent" />
+                    ) : (
+                      <div
+                        className={`h-full ${phase === "error" ? "bg-red-500" : "bg-indigo-500"} transition-all duration-300 ease-out`}
+                        style={{ width: `${Math.max(2, pct)}%` }}
+                      />
+                    )}
                   </div>
                   {subtitle ? (
                     <p className="mb-2 text-[11px] text-surface-400">{subtitle}</p>
                   ) : null}
                   <pre className="max-h-48 overflow-auto rounded-lg border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400 whitespace-pre-wrap">
                     {lines.length === 0
-                      ? `Connecting to ${device.name}…`
+                      ? `[${phase}] ${step.label}…`
                       : lines.map((l) => `[${l.phase}] ${l.text}`).join("\n")}
                   </pre>
                   <p className="mt-2 text-[10px] text-surface-600">
@@ -4010,6 +4158,7 @@ function DeviceActionsMenu({
   onRescue,
   onShell,
   onToggleDetails,
+  onLeftShare,
 }: {
   device: Device;
   token: string | null | undefined;
@@ -4025,12 +4174,35 @@ function DeviceActionsMenu({
   onRescue: () => void;
   onShell: () => void;
   onToggleDetails: () => void;
+  onLeftShare: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [leaveConfirming, setLeaveConfirming] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState<string | null>(null);
   const { pingState, ping } = useDevicePing(device, token);
   const pingFailure = pingState.ok === false ? classifyPingFailure(pingState) : null;
   const canManage = !device.isGuest && !!token;
+
+  async function doLeave() {
+    if (!token) return;
+    setLeaving(true);
+    setLeaveError(null);
+    try {
+      await leaveSharedAccess(token, {
+        hostUserId: device.hostUserIdString,
+        hostEmail: device.hostEmail,
+      });
+      setOpen(false);
+      setLeaveConfirming(false);
+      onLeftShare();
+    } catch (e: any) {
+      setLeaveError(e?.message || "Failed to remove access");
+    } finally {
+      setLeaving(false);
+    }
+  }
 
   const itemClass =
     "flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[12px] text-slate-700 hover:bg-slate-100 dark:text-surface-200 dark:hover:bg-surface-800";
@@ -4144,6 +4316,53 @@ function DeviceActionsMenu({
                 <span>{rescueOpen ? "Hide rescue" : "Rescue"}</span>
                 <span className={hintClass}>wedged agent</span>
               </button>
+            ) : null}
+            {/* Guest-side exit. The host's own revoke lives in Guests; this is
+                the mirror for the receiving end — drop a share you never
+                wanted without having to ask the host to pull it. */}
+            {device.isGuest && token ? (
+              <>
+                <div className="my-1 border-t border-slate-200 dark:border-surface-800" />
+                {leaveConfirming ? (
+                  <div className="px-3 py-2">
+                    <p className="text-[11px] leading-snug text-slate-600 dark:text-surface-300">
+                      Remove your access to{" "}
+                      <span className="font-semibold">{device.hostName || "this host"}</span>
+                      &rsquo;s shared machines? They can share again later, and you can accept again.
+                    </p>
+                    {leaveError ? (
+                      <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">{leaveError}</p>
+                    ) : null}
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={leaving}
+                        onClick={() => void doLeave()}
+                        className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:bg-rose-500/20"
+                      >
+                        {leaving ? "Removing…" : "Yes, remove"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={leaving}
+                        onClick={() => { setLeaveConfirming(false); setLeaveError(null); }}
+                        className="rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-surface-700 dark:text-surface-300 dark:hover:bg-surface-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className={`${itemClass} text-rose-700 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/10`}
+                    onClick={() => setLeaveConfirming(true)}
+                    title={`Remove your own access to ${device.hostName || "this host"}'s shared machines. Reversible — they can share again.`}
+                  >
+                    <span>Remove my access</span>
+                    <span className={hintClass}>leave share</span>
+                  </button>
+                )}
+              </>
             ) : null}
             {canManage ? (
               <>

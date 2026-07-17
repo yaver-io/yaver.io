@@ -46,7 +46,10 @@ type Config struct {
 	TLSCert           string              `json:"tls_cert,omitempty"`
 	TLSKey            string              `json:"tls_key,omitempty"`
 	AutoStart         bool                `json:"auto_start,omitempty"`
-	AutoUpdate        bool                `json:"auto_update,omitempty"`
+	// AutoUpdate is tri-state: nil ("operator never said") defaults to
+	// ON — see shouldAutoUpdate in auto_update_policy.go. Read it
+	// through that helper, never directly.
+	AutoUpdate        *bool               `json:"auto_update,omitempty"`
 	HeadlessKeepAwake *bool               `json:"headless_keep_awake,omitempty"`
 	RelayPassword     string              `json:"relay_password,omitempty"`
 	RelayServers      []RelayServerConfig `json:"relay_servers,omitempty"`

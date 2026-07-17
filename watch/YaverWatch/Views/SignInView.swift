@@ -129,22 +129,53 @@ struct AddBoxView: View {
 
     @State private var name = ""
     @State private var host = ""
+    @State private var saving = false
+    @State private var identityWarning: String?
 
     var body: some View {
         VStack(spacing: 10) {
             Text("Your box").font(.system(size: 16, weight: .bold))
             TextField("Name (e.g. magara)", text: $name)
             TextField("LAN host or IP", text: $host)
-            Button("Save") {
-                let trimmed = host.trimmingCharacters(in: .whitespaces)
-                guard !trimmed.isEmpty else { return }
-                let box = BoxTarget(id: trimmed, name: name.isEmpty ? trimmed : name, host: trimmed)
-                store.signInStandalone(token: token, box: box)
-                store.standaloneOptIn = true
-                onDone()
+            Button(saving ? "Saving…" : "Save") { Task { await save() } }
+                .disabled(saving || host.trimmingCharacters(in: .whitespaces).isEmpty)
+            // Sign-in still SUCCEEDS without an identity — the turn transport
+            // only needs host+token. Only "Update agent" needs the deviceId, so
+            // a failure here is a note, not a wall.
+            if let identityWarning {
+                Text(identityWarning)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
-            .disabled(host.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(.horizontal, 6)
+    }
+
+    /// Ask the box who it is BEFORE persisting, so the deviceId is captured while
+    /// the box is provably reachable — the user just typed its address and is on
+    /// its network. Later, when "Update agent" needs that id, the box may be
+    /// asleep or a continent away; there is no second chance to ask it.
+    private func save() async {
+        let trimmed = host.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        saving = true
+        defer { saving = false }
+
+        let deviceId = try? await BoxIdentity.fetchDeviceId(
+            host: trimmed, port: Backend.agentPort, token: token
+        )
+        if deviceId == nil {
+            identityWarning = "Saved, but couldn't identify this box — Update agent needs it. Open Settings on its network to finish."
+        }
+        let box = BoxTarget(id: trimmed, name: name.isEmpty ? trimmed : name,
+                            host: trimmed, deviceId: deviceId)
+        store.signInStandalone(token: token, box: box)
+        store.standaloneOptIn = true
+        // On a clean resolve, leave immediately. On a miss, hold the sheet for a
+        // beat so the note is actually readable on a wrist.
+        if deviceId == nil {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+        }
+        onDone()
     }
 }

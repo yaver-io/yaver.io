@@ -772,6 +772,129 @@ export const revoke = mutation({
   },
 });
 
+/**
+ * Guest-side counterpart to `revoke`: the GUEST drops their own access to a
+ * host's shared infra. Keyed on the session user as the guest — a caller can
+ * only ever remove the access that was granted TO them, never someone else's.
+ *
+ * Lands the exact same terminal state as a host-initiated `revoke`
+ * (invitations -> "revoked", guestAccess.revokedAt set, infra grants torn
+ * down), which is what keeps the share re-establishable: `invite` only
+ * rejects on "pending"/"accepted" invitations and live guestAccess rows, so
+ * after a leave the host can invite again and the guest can accept again.
+ * Leaving is a clean detach, not a block.
+ */
+export const leave = mutation({
+  args: {
+    tokenHash: v.string(),
+    // Public userId string of the host, or their email. Either identifies the
+    // share to drop; both are surfaced on guest device rows.
+    hostUserId: v.optional(v.string()),
+    hostEmail: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const guestUserId = session.user._id;
+    const hostUserIdStr = (args.hostUserId ?? "").trim();
+    const hostEmail = (args.hostEmail ?? "").trim().toLowerCase();
+
+    if (!hostUserIdStr && !hostEmail) {
+      throw new Error("hostUserId or hostEmail is required");
+    }
+
+    // Resolve the host (prefer userId when provided).
+    let hostUser: Awaited<ReturnType<typeof ctx.db.get>> extends infer T ? (T | null) : never = null;
+    if (hostUserIdStr) {
+      const matches = await ctx.db
+        .query("users")
+        .filter((q) => q.eq(q.field("userId"), hostUserIdStr))
+        .collect();
+      hostUser = matches[0] ?? null;
+    } else if (hostEmail) {
+      hostUser = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", hostEmail))
+        .first();
+    }
+    if (!hostUser) throw new Error("No Yaver user found for that host");
+
+    const hostId = (hostUser as any)._id as Id<"users">;
+    if (hostId === guestUserId) {
+      throw new Error("These are your own devices — nothing to leave");
+    }
+
+    const now = Date.now();
+
+    // Revoke invitations this host addressed to me, by userId and by email.
+    // Both are needed: email-routed invites predate the userId pin.
+    const invitations = new Map<string, any>();
+    const byUser = await ctx.db
+      .query("guestInvitations")
+      .withIndex("by_host_guestUser", (q) =>
+        q.eq("hostUserId", hostId).eq("guestUserId", guestUserId)
+      )
+      .collect();
+    byUser.forEach((i) => invitations.set(String(i._id), i));
+
+    const myEmail = (session.user.email ?? "").toLowerCase();
+    if (myEmail) {
+      const byEmail = await ctx.db
+        .query("guestInvitations")
+        .withIndex("by_host_guest", (q) =>
+          q.eq("hostUserId", hostId).eq("guestEmail", myEmail)
+        )
+        .collect();
+      byEmail.forEach((i) => invitations.set(String(i._id), i));
+    }
+
+    let removedInvitations = 0;
+    for (const inv of invitations.values()) {
+      if (inv.status === "pending" || inv.status === "accepted") {
+        await ctx.db.patch(inv._id, { status: "revoked", revokedAt: now });
+        removedInvitations++;
+      }
+    }
+
+    // Drop the access row(s) — covers the legacy "all host devices" path,
+    // which has no infra grant at all.
+    const accessRecords = await ctx.db
+      .query("guestAccess")
+      .withIndex("by_host_guest", (q) =>
+        q.eq("hostUserId", hostId).eq("guestUserId", guestUserId)
+      )
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .collect();
+    for (const access of accessRecords) {
+      await ctx.db.patch(access._id, { revokedAt: now });
+    }
+
+    // ...and the scoped grants + their device/machine link rows.
+    await revokeInfraGrantsBetweenUsers(ctx, hostId, guestUserId, now);
+
+    if (removedInvitations === 0 && accessRecords.length === 0) {
+      // Nothing was live. Grants are already torn down above; report it so the
+      // caller can tell "left" from "there was nothing to leave".
+      return {
+        ok: true,
+        alreadyGone: true,
+        hostName: (hostUser as any).fullName as string,
+        hostUserId: (hostUser as any).userId as string,
+      };
+    }
+
+    return {
+      ok: true,
+      alreadyGone: false,
+      hostName: (hostUser as any).fullName as string,
+      hostUserId: (hostUser as any).userId as string,
+      removedInvitations,
+      removedAccess: accessRecords.length,
+    };
+  },
+});
+
 // ─── Queries ────────────────────────────────────────────────────
 
 /**

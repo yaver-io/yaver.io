@@ -363,6 +363,9 @@ export interface Device {
   hostName?: string;
   /** host's email (only set when isGuest=true) */
   hostEmail?: string;
+  /** host's public userId string (only set when isGuest=true) — identifies the
+   *  share to POST /guests/leave when the guest drops their own access. */
+  hostUserIdString?: string;
   /** owner vs explicitly shared vs legacy broad sharing */
   accessScope?: "owner" | "shared-scoped" | "shared-legacy";
   /** host scheduling / priority hint for shared usage */
@@ -804,6 +807,12 @@ export interface DeviceState {
   disconnect: () => void;
   refreshDevices: () => Promise<void>;
   detachDevice: (device: Device) => Promise<void>;
+  /** Guest-only: revoke my own access to this host's shared infra, server-side. */
+  leaveSharedAccess: (device: Device) => Promise<{ hostName: string; removedDevices: number }>;
+  /** How many devices the local "Hide from this phone" list is hiding. */
+  hiddenDeviceCount: number;
+  /** Undo every local hide on this phone. */
+  unhideAllDevices: () => Promise<void>;
   removeDevice: (device: Device) => Promise<void>;
   /**
    * Set or clear the per-user alias for a device. Returns the
@@ -997,6 +1006,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [relaysReady, setRelaysReady] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [deviceListError, setDeviceListError] = useState<string | null>(null);
+  /** How many rows the local "Hide from this phone" list is currently hiding. */
+  const [hiddenDeviceCount, setHiddenDeviceCount] = useState(0);
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
   const [agentAuthExpired, setAgentAuthExpired] = useState(false);
   const [unreachableSet, setUnreachableSet] = useState<Set<string>>(() => new Set());
@@ -1256,6 +1267,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             machineWakeable: d.machineWakeable === true,
             hostName: d.hostName,
             hostEmail: d.hostEmail,
+            hostUserIdString: d.hostUserIdString,
             accessScope: d.accessScope,
             tunnelUrl: d.tunnelUrl,
             publicEndpoints: Array.isArray(d.publicEndpoints) ? d.publicEndpoints : undefined,
@@ -1289,6 +1301,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           setDeviceListError("Local hidden-device cache was stale; restored your device list.");
           appLog("warn", "[devices] stale detached-device cache hid every backend device; cleared it");
         }
+        // Surface how many rows the local hide is swallowing. Without this the
+        // hide is a one-way door: the auto-recover above only fires when EVERY
+        // device is hidden, so hiding 3 of 4 stranded them until reinstall.
+        setHiddenDeviceCount(collapsed.length - filtered.length);
         // Real-time presence override: ask the primary relay server which
         // devices have an active QUIC tunnel RIGHT NOW. This signal is
         // authoritative — heartbeat can be up to ~90 s stale, but the relay
@@ -1658,6 +1674,17 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activeDevice, markDeviceUnreachable, refreshDevices]);
 
+  /**
+   * Undo every local "Hide from this phone". Mirrors the web dashboard's
+   * "N devices hidden in this browser — Show all" escape hatch; hiding is
+   * local and persistent, so it needs a way back that isn't a reinstall.
+   */
+  const handleUnhideAllDevices = useCallback(async () => {
+    await clearDetachedDevices(uid);
+    setHiddenDeviceCount(0);
+    await refreshDevices();
+  }, [uid, refreshDevices]);
+
   const handleDetachDevice = useCallback(async (device: Device) => {
     const key = deviceIdentityKey(device);
     await addDetachedDevice(key, uid);
@@ -1674,6 +1701,73 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
     setDevices((prev) => prev.filter((d) => deviceIdentityKey(d) !== key));
   }, [activeDevice, uid]);
+
+  /**
+   * Guest-side leave: drop MY OWN access to a host's shared infra, server-side.
+   *
+   * Distinct from handleDetachDevice, which only hides a row locally and lets
+   * it reappear on the next poll. This revokes the grant in Convex, so every
+   * device that host shared with me goes away everywhere (web, CLI, other
+   * phones) — not just on this screen.
+   *
+   * Reversible by design: the host can share again and I can accept again.
+   */
+  const handleLeaveSharedAccess = useCallback(
+    async (device: Device): Promise<{ hostName: string; removedDevices: number }> => {
+      if (!token) throw new Error("Not signed in");
+      if (!device.isGuest) throw new Error("This is your own device — nothing to leave");
+      if (!device.hostUserIdString && !device.hostEmail) {
+        throw new Error("This shared device has no host on record — pull to refresh and retry");
+      }
+
+      const res = await fetch(`${getConvexSiteUrl()}/guests/leave`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          hostUserId: device.hostUserIdString,
+          hostEmail: device.hostEmail,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to remove your access");
+
+      // A grant is per-host, so drop every row from that host — matching what
+      // the server just did rather than hiding only the tapped card.
+      const fromSameHost = (d: Device) =>
+        d.isGuest &&
+        ((!!d.hostUserIdString &&
+          !!device.hostUserIdString &&
+          d.hostUserIdString === device.hostUserIdString) ||
+          (!!d.hostEmail && !!device.hostEmail && d.hostEmail === device.hostEmail));
+
+      const gone = devices.filter(fromSameHost);
+      for (const d of gone) {
+        connectionManager.disconnect(d.id);
+        if (activeDevice?.id === d.id) {
+          setActiveDevice(null);
+          setConnectionStatus("disconnected");
+          setAgentAuthExpired(false);
+        }
+      }
+      setDevices((prev) => prev.filter((d) => !fromSameHost(d)));
+
+      try {
+        await refreshDevices();
+      } catch {
+        // Local state is already correct; a failed refresh must not look like
+        // the leave failed.
+      }
+
+      return {
+        hostName: data?.hostName || device.hostName || "that host",
+        removedDevices: gone.length,
+      };
+    },
+    [token, devices, activeDevice, refreshDevices],
+  );
 
   const handleSetDeviceAlias = useCallback(
     async (
@@ -1745,9 +1839,14 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
   const handleRemoveDevice = useCallback(async (device: Device) => {
     if (!token) throw new Error("Not signed in");
+    // A shared device isn't ours to remove. This used to silently downgrade to
+    // a local hide, so callers believed they'd removed something that came
+    // back on the next poll. Fail loudly instead — the caller picks: hide it
+    // locally (detachDevice) or drop the grant for real (leaveSharedAccess).
     if (device.isGuest) {
-      await handleDetachDevice(device);
-      return;
+      throw new Error(
+        "This machine is shared with you — it isn't yours to remove. Hide it on this phone, or use 'Remove my access' to drop the share.",
+      );
     }
     const res = await fetch(`${getConvexSiteUrl()}/devices/remove`, {
       method: "POST",
@@ -1773,7 +1872,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectionManager.disconnect(device.id);
     }
     setDevices((prev) => prev.filter((d) => d.id !== device.id));
-  }, [activeDevice, handleDetachDevice, token]);
+  }, [activeDevice, token]);
 
   // Sync DeviceContext state with QUIC client's internal state changes
   // (e.g., polling failures trigger reconnection inside the QUIC client)
@@ -3581,6 +3680,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       disconnect,
       refreshDevices,
       detachDevice: handleDetachDevice,
+      leaveSharedAccess: handleLeaveSharedAccess,
+      hiddenDeviceCount,
+      unhideAllDevices: handleUnhideAllDevices,
       removeDevice: handleRemoveDevice,
       setDeviceAlias: handleSetDeviceAlias,
       setDeviceVoiceHints: handleSetDeviceVoiceHints,
@@ -3612,7 +3714,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleLeaveSharedAccess, hiddenDeviceCount, handleUnhideAllDevices, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

@@ -245,6 +245,29 @@ export async function revokeGuest(
   if (!res.ok) throw new Error(await parseError(res, "Failed to revoke guest"));
 }
 
+/**
+ * Guest-side counterpart to revokeGuest: drop MY OWN access to a host's
+ * shared infra. The session token identifies the guest, so this can only
+ * ever remove the caller's own access.
+ *
+ * Not a block — the host can invite again and the guest can accept again.
+ */
+export async function leaveSharedAccess(
+  token: string,
+  host: { hostUserId?: string; hostEmail?: string },
+): Promise<{ ok: boolean; alreadyGone?: boolean; hostName?: string }> {
+  const res = await fetch(`${CONVEX_URL}/guests/leave`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(host),
+  });
+  if (!res.ok) throw new Error(await parseError(res, "Failed to remove your access"));
+  return res.json();
+}
+
 export async function listGuests(token: string): Promise<GuestInfo[]> {
   const res = await fetch(`${CONVEX_URL}/guests/list`, {
     headers: { Authorization: `Bearer ${token}` },

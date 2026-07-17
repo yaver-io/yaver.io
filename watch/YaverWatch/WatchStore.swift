@@ -98,6 +98,33 @@ final class WatchStore: ObservableObject {
         self.token = token
         storedToken = token
         self.box = box
+        persistBox(box)
+    }
+
+    /// Backfill the deviceId for a box signed in before BoxTarget carried one.
+    ///
+    /// Sign-in captures the deviceId up front (SignInView), so this only ever
+    /// fires for already-persisted installs. It runs when Settings appears —
+    /// the moment the user is most likely at home on the box's LAN, which is
+    /// the only place `/info` can answer.
+    ///
+    /// Silent on failure BY DESIGN: the box being unreachable right now is the
+    /// normal case (that's why request-update exists), and the wrist must not
+    /// nag about it. SettingsView reads `box.deviceId` and explains the gap in
+    /// place rather than offering a button that would fail.
+    func resolveDeviceIdIfNeeded() async {
+        guard standaloneOptIn, !token.isEmpty, let box, box.deviceId == nil else { return }
+        guard let id = try? await BoxIdentity.fetchDeviceId(host: box.host, port: box.port, token: token) else {
+            return
+        }
+        // Re-check: a sign-out / re-sign-in may have raced the request.
+        guard var current = self.box, current.id == box.id, current.deviceId == nil else { return }
+        current.deviceId = id
+        self.box = current
+        persistBox(current)
+    }
+
+    private func persistBox(_ box: BoxTarget) {
         if let data = try? JSONEncoder().encode(box), let s = String(data: data, encoding: .utf8) {
             storedBoxJSON = s
         }

@@ -3,13 +3,14 @@
 // transport classification, relay version, LAN/Tailscale/Cloudflare
 // breakdown, and runtime info on the phone.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useColors, useTheme } from "../context/ThemeContext";
 import { quicClient, type RunnerAuthStatusRow } from "../lib/quic";
+import { getConvexSiteUrl } from "../lib/auth";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import RunnerAuthModal from "./RunnerAuthModal";
 import { OpenCodeConfigModal } from "./OpenCodeConfigModal";
@@ -81,6 +82,19 @@ function formatMemoryMb(value: number | undefined): string | null {
   if (typeof value !== "number" || value <= 0) return null;
   if (value >= 1024) return `${(value / 1024).toFixed(value >= 10 * 1024 ? 0 : 1)} GB`;
   return `${Math.round(value)} MB`;
+}
+
+// Byte formatter for the agent-update download line. Local by the same
+// logic as formatMemoryMb above: the only other copies live inside
+// app/phone-projects.tsx and app/phone-project/[slug].tsx, both private
+// to those screens, and importing a helper out of an expo-router route
+// into a shared component would wire a component to a screen. Kept to
+// MB like those copies — agent binaries are tens of MB, never GB.
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatList(items: string[] | undefined): string | null {
@@ -290,6 +304,63 @@ function VoiceHintsRow({ device }: { device: Device }) {
 }
 
 // uniqueness errors verbatim so the user knows which alias is taken.
+/**
+ * Guest-only exit from a share, mirroring the web card's "Remove my access".
+ * Two-step by design: this reaches Convex and drops every machine the host
+ * shared, on all of the user's surfaces — not just this row.
+ *
+ * Reversible: the host can share again and the guest can accept again.
+ */
+function LeaveShareRow({ device }: { device: Device }) {
+  const c = useColors();
+  const { leaveSharedAccess } = useDevice();
+  const [leaving, setLeaving] = useState(false);
+  const hostLabel = device.hostName || device.hostEmail || "this host";
+
+  const confirmLeave = () => {
+    Alert.alert(
+      `Remove your access to ${hostLabel}'s machines?`,
+      `You'll lose access to every machine ${hostLabel} shared with you, on all your devices.\n\n${hostLabel} can share again later, and you can accept again.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove access",
+          style: "destructive",
+          onPress: async () => {
+            setLeaving(true);
+            try {
+              const res = await leaveSharedAccess(device);
+              Alert.alert(
+                "Access removed",
+                `You no longer have access to ${res.hostName}'s machines. They can share again whenever you both want.`,
+              );
+            } catch (e: any) {
+              Alert.alert("Error", e?.message || "Failed to remove access");
+            } finally {
+              setLeaving(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  return (
+    <Pressable
+      onPress={leaving ? undefined : confirmLeave}
+      disabled={leaving}
+      style={{ paddingVertical: 8, opacity: leaving ? 0.5 : 1 }}
+    >
+      <Text style={{ color: c.error, fontSize: 12, fontWeight: "700" }}>
+        {leaving ? "Removing…" : "Remove my access"}
+      </Text>
+      <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }}>
+        Drops every machine {hostLabel} shared with you. They can share again later.
+      </Text>
+    </Pressable>
+  );
+}
+
 function AliasRow({ device }: { device: Device }) {
   const c = useColors();
   const { setDeviceAlias } = useDevice();
@@ -895,6 +966,40 @@ function compareSemverLite(a: string, b: string): number {
   return 0;
 }
 
+// Phase → label map for the agent self-update stream. Every phase the
+// agent emits on /streams/agent-update maps to exactly one step, and the
+// labels are copied verbatim from the web AgentUpdateModal's STEPS so
+// both surfaces narrate an update with the same words. "starting" is a
+// client-side pseudo-phase covering the gap between the POST and the
+// first frame; it folds onto "queued".
+const AGENT_UPDATE_STEPS: ReadonlyArray<{ phase: string; label: string }> = [
+  { phase: "queued", label: "Preparing" },
+  { phase: "fetch_release", label: "Checking GitHub for the new version" },
+  { phase: "check", label: "Found a new version" },
+  { phase: "download", label: "Downloading the new binary" },
+  { phase: "extract", label: "Unpacking" },
+  { phase: "replace", label: "Replacing the running binary" },
+  { phase: "restart", label: "Restarting" },
+  { phase: "ready", label: "Ready" },
+];
+
+// Progress fraction for the update bar. Steps carry the bar on their own
+// except during download, where the byte counts fill that step's slot —
+// otherwise the bar would sit still through the slowest phase (a ~50 MB
+// pull on a Pi over cellular).
+function agentUpdateProgressPct(
+  phase: string,
+  bytes: { read: number; total: number } | undefined,
+): number {
+  const total = AGENT_UPDATE_STEPS.length;
+  const idx = Math.max(0, AGENT_UPDATE_STEPS.findIndex((s) => s.phase === phase));
+  if (phase === "download" && bytes && bytes.total > 0) {
+    const dl = Math.max(0, Math.min(1, bytes.read / bytes.total));
+    return ((idx + dl) / total) * 100;
+  }
+  return ((idx + 1) / total) * 100;
+}
+
 // Coding agents auth + default-runner picker. Same agent surface (claude /
 // codex / opencode) on every device, so we render the rows from a constant
 // instead of relying on whatever the agent reports — that way "agent
@@ -909,6 +1014,10 @@ export function CodingAgentsSection({ device }: { device: Device }) {
     primaryModelByDevice,
     setPrimaryRunnerForDevice,
   } = useDevice();
+  // The Convex session token backs the update fallback. It isn't on the
+  // DeviceState interface — same `as any` read PingRow and
+  // WirelessPhonesSection already use in this file.
+  const { token } = useDevice() as any;
   const [statusRows, setStatusRows] = useState<RunnerAuthStatusRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [authModalRunner, setAuthModalRunner] = useState<string | null>(null);
@@ -927,18 +1036,40 @@ export function CodingAgentsSection({ device }: { device: Device }) {
     Record<string, { kind: "installing" | "ok" | "fail"; lastLine?: string; error?: string }>
   >({});
   // Agent-update state for THIS device. Backs the "vX.Y.Z → vA.B.C
-  // Update" row at the top of the section. Mirrors the web Devices
-  // view AgentUpdateModal in spirit; we just poll /info for restart
-  // completion rather than streaming SSE (peer SSE doesn't fan back
-  // through the relay cleanly — see project_remote_dev_via_beam_pro
-  // for the long story).
+  // Update" row at the top of the section, and mirrors the web Devices
+  // view AgentUpdateModal's step model + vocabulary.
+  //
+  // Two paths, in preference order:
+  //   1. direct — POST /agent/update on the box, then follow
+  //      /streams/agent-update for live phases + download bytes. Only
+  //      this path can show progress, so it is always tried first.
+  //   2. requested — POST /devices/request-update on Convex, which
+  //      parks a desiredAgentVersion on the device row that the agent
+  //      claims off its next heartbeat. No progress to show (nobody is
+  //      connected to the box), but it works when the box is asleep, on
+  //      cellular, or behind a NAT we can't punch — which is the whole
+  //      reason the fallback exists. Unreachable must never dead-end.
+  //
+  // SSE is local-device-only: handlePeerProxy buffers the upstream body,
+  // so a peer'd stream yields nothing until the agent restarts. Peer
+  // targets fall back to polling /info — same as before this row grew a
+  // progress bar.
   const [latestVersion, setLatestVersion] = useState<string>("");
+  const [latestProbed, setLatestProbed] = useState(false);
   const [updateState, setUpdateState] = useState<
     | { kind: "idle" }
-    | { kind: "updating" }
+    | { kind: "updating"; phase: string; bytes?: { read: number; total: number } }
+    | { kind: "requested"; version: string }
     | { kind: "done"; newVersion: string }
     | { kind: "fail"; error: string }
   >({ kind: "idle" });
+  // Live SSE unsubscribe for the in-flight update, held in a ref so the
+  // unmount cleanup can reach it without re-running runUpdate.
+  const stopUpdateStreamRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    stopUpdateStreamRef.current?.();
+    stopUpdateStreamRef.current = null;
+  }, []);
 
   const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
   // /runner-auth/status routes via /peer/<id> when target is set; pass it
@@ -963,14 +1094,20 @@ export function CodingAgentsSection({ device }: { device: Device }) {
 
   // Probe agent-update on mount + whenever target changes so the
   // version chip shows the current → latest gap as soon as the
-  // sheet opens.
+  // sheet opens. `latestProbed` distinguishes "probe still in flight"
+  // from "probe came back empty" (an unreachable box) — without it the
+  // Update button, which now shows whenever the box isn't *confirmed*
+  // current, would flash on for every device and then vanish a moment
+  // later on the boxes that are already up to date.
   useEffect(() => {
     let cancelled = false;
+    setLatestProbed(false);
     (async () => {
       const st = await quicClient.getAgentUpdateStatus(target);
       if (cancelled) return;
       const lv = String(st?.latestVersion || "").replace(/^v/i, "");
       setLatestVersion(lv);
+      setLatestProbed(true);
     })();
     return () => { cancelled = true; };
   }, [target]);
@@ -982,33 +1119,145 @@ export function CodingAgentsSection({ device }: { device: Device }) {
     });
 
   const currentVersion = String(device.agentVersion || "").replace(/^v/i, "");
-  const updateAvailable =
+  // Offer the action unless we've CONFIRMED the box is current. The old
+  // gate also required a known latestVersion, which reads fine until you
+  // notice where latestVersion comes from: getAgentUpdateStatus, which
+  // returns null whenever the box is unreachable. So the one case this
+  // feature exists for — a box you can't reach — was the exact case that
+  // hid the button. Mobile has no reachability-independent version oracle
+  // (web fetches GitHub releases/latest directly), so "unknown" now means
+  // "offer it" rather than "hide it": the worst case is a queued request
+  // the box no-ops on, versus no way to update an offline box at all.
+  const onLatest =
     !!currentVersion &&
     !!latestVersion &&
-    compareSemverLite(currentVersion, latestVersion) < 0;
+    compareSemverLite(currentVersion, latestVersion) >= 0;
+  const updateAvailable = latestProbed && !onLatest;
+
+  // Fallback path: park desired state on the device row via Convex and
+  // let the box pick it up on its next heartbeat. Deliberately does not
+  // pin `version` — "latest" resolves at apply time on the box, so a
+  // request that sits for a day still installs the newest release rather
+  // than whatever we happened to have probed here.
+  const requestUpdateViaConvex = useCallback(async () => {
+    if (!token) {
+      setUpdateState({
+        kind: "fail",
+        error: "Sign in on this phone to queue an update for this machine.",
+      });
+      return;
+    }
+    try {
+      const res = await fetch(`${getConvexSiteUrl()}/devices/request-update`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deviceId: device.id, version: "latest" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Convex authors these (Unauthorized / Device not found) for a
+        // human, so they are safe to show verbatim — unlike a transport
+        // error string, which is what the direct path guards against.
+        setUpdateState({ kind: "fail", error: body?.error || `HTTP ${res.status}` });
+        return;
+      }
+      setUpdateState({ kind: "requested", version: String(body?.requestedVersion || "latest") });
+    } catch {
+      // The phone can't even reach Convex — that's this device's network,
+      // not the box's, and it's the one failure the user can act on.
+      setUpdateState({
+        kind: "fail",
+        error: "No connection — check this phone's network and try again.",
+      });
+    }
+  }, [token, device.id]);
 
   const runUpdate = useCallback(async () => {
-    setUpdateState({ kind: "updating" });
+    stopUpdateStreamRef.current?.();
+    stopUpdateStreamRef.current = null;
+    setUpdateState({ kind: "updating", phase: "queued" });
+
+    // 1. CONNECT FIRST. Only the direct path can show live progress, so
+    //    always try the box before parking desired state.
+    //
+    //    quicClient.isConnected is checked up front because
+    //    triggerAgentUpdate calls assertConnected(), which throws the raw
+    //    "QuicClient is not connected. Call connect() first." string —
+    //    the exact leak app/(tabs)/tasks.tsx:2945 documents. A device row
+    //    can read "online" (presence is heartbeat-derived) while the QUIC
+    //    client is mid-handshake or dropped, so this is a routine state,
+    //    not an error. Every unreachable shape lands in the same place:
+    //    the Convex fallback, never a dead-end.
+    if (!quicClient.isConnected) {
+      await requestUpdateViaConvex();
+      return;
+    }
+    let resp: Awaited<ReturnType<typeof quicClient.triggerAgentUpdate>>;
     try {
-      const r = await quicClient.triggerAgentUpdate(target);
-      if (!r.ok) {
-        setUpdateState({ kind: "fail", error: r.error || "trigger failed" });
-        return;
-      }
-      if (r.started === false) {
-        // Agent reports it's already on latest. Surface why so the
-        // user understands; this matches the web modal's behaviour.
-        setUpdateState({
-          kind: "fail",
-          error: `Agent reports it's already up to date (current ${r.currentVersion || currentVersion}).`,
-        });
-        return;
-      }
-      // Poll /info until the version flips or we time out (90 s
-      // budget — matches the web modal's restart watchdog).
+      resp = await quicClient.triggerAgentUpdate(target);
+    } catch {
+      await requestUpdateViaConvex();
+      return;
+    }
+    if (!resp.ok) {
+      // Covers relay 502s, a dead peer behind the /peer proxy, and the
+      // box dropping between the presence beat and this POST.
+      await requestUpdateViaConvex();
+      return;
+    }
+    if (resp.started === false) {
+      // Reachable and refusing: the box's updater believes it is current.
+      // Queueing desired state would only make it refuse again on the next
+      // beat, so surface the agent's own reasoning instead — matches the
+      // web modal, which explains the stale-updateRepo case the same way.
+      setUpdateState({
+        kind: "fail",
+        error: `${device.name} reports it's already up to date (it has v${
+          resp.currentVersion || currentVersion || "?"
+        }). Its auto-update repo may be stale.`,
+      });
+      return;
+    }
+
+    // 2. Live progress — local device only (see the state comment).
+    let streamError: string | null = null;
+    if (!target) {
+      stopUpdateStreamRef.current = quicClient.streamAgentUpdate((ev) => {
+        if (ev.type !== "progress" || typeof ev.phase !== "string") return;
+        if (ev.phase === "error") {
+          streamError = (ev.text || "").trim() || "the agent reported an update error";
+          return;
+        }
+        setUpdateState((prev) =>
+          prev.kind === "updating"
+            ? {
+                kind: "updating",
+                phase: ev.phase as string,
+                bytes:
+                  typeof ev.bytes === "number"
+                    ? { read: ev.bytes, total: typeof ev.total === "number" ? ev.total : -1 }
+                    : prev.bytes,
+              }
+            : prev,
+        );
+      });
+    }
+
+    // 3. Poll /info until the version flips or we time out (90 s budget —
+    //    matches the web modal's restart watchdog). This, not the stream,
+    //    is what confirms success: the agent replaces its own binary and
+    //    restarts, which kills the stream by design.
+    try {
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
         await new Promise((res) => setTimeout(res, 2500));
+        if (streamError) {
+          setUpdateState({ kind: "fail", error: streamError });
+          return;
+        }
         const info = await quicClient.getInfoFor(target);
         const newV = String(info?.version || "").replace(/^v/i, "");
         if (newV && (latestVersion === "" || compareSemverLite(newV, latestVersion) >= 0)) {
@@ -1016,11 +1265,15 @@ export function CodingAgentsSection({ device }: { device: Device }) {
           return;
         }
       }
-      setUpdateState({ kind: "fail", error: "Restart timed out — the box may need manual intervention." });
-    } catch (err: any) {
-      setUpdateState({ kind: "fail", error: err?.message || String(err) });
+      setUpdateState({
+        kind: "fail",
+        error: streamError || "Restart timed out — the box may need manual intervention.",
+      });
+    } finally {
+      stopUpdateStreamRef.current?.();
+      stopUpdateStreamRef.current = null;
     }
-  }, [target, latestVersion, currentVersion]);
+  }, [target, latestVersion, currentVersion, device.name, requestUpdateViaConvex]);
 
   const runInstall = useCallback(
     async (runnerId: "claude" | "codex" | "opencode") => {
@@ -1074,54 +1327,117 @@ export function CodingAgentsSection({ device }: { device: Device }) {
         CODING AGENTS
       </Text>
 
-      {/* Agent self-update row. Cross-device by virtue of
-          quicClient.triggerAgentUpdate(target) hitting
-          /peer/<id>/agent/update on the peer proxy. Shows current
-          version always; the "Update →" button only appears when
-          we've fetched a newer latestVersion. */}
+      {/* Agent self-update row. Reaches every device: the direct path
+          rides quicClient.triggerAgentUpdate(target) → /agent/update
+          (via /peer/<id> for non-active boxes), and anything it can't
+          reach falls through to the Convex desired-state request. Shows
+          current version always; "Update →" appears unless we've
+          confirmed the box is already on latest. */}
       <View
         style={{
-          flexDirection: "row",
-          alignItems: "center",
           paddingVertical: 8,
           borderBottomWidth: 1,
           borderBottomColor: c.border,
           marginBottom: 8,
-          gap: 8,
         }}
       >
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
-            Agent
-          </Text>
-          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
-            {updateState.kind === "updating"
-              ? `updating v${currentVersion || "?"}${latestVersion ? ` → v${latestVersion}` : ""}…`
-              : updateState.kind === "done"
-              ? `✓ now on v${updateState.newVersion}`
-              : updateState.kind === "fail"
-              ? `update failed — ${updateState.error}`
-              : updateAvailable
-              ? `v${currentVersion} · update → v${latestVersion}`
-              : currentVersion
-              ? `v${currentVersion}${latestVersion ? " · ✓ latest" : ""}`
-              : "version unknown"}
-          </Text>
-        </View>
-        {updateState.kind === "updating" ? (
-          <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>⟳</Text>
-        ) : updateAvailable && updateState.kind !== "done" ? (
-          <Pressable
-            onPress={() => { void runUpdate(); }}
-            style={{
-              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
-              backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
-            }}
-          >
-            <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
-              Update →
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+              Agent
             </Text>
-          </Pressable>
+            <Text
+              style={{
+                color:
+                  updateState.kind === "fail"
+                    ? "#ef4444"
+                    : updateState.kind === "done"
+                    ? "#22c55e"
+                    : updateState.kind === "requested"
+                    ? "#f59e0b"
+                    : c.textMuted,
+                fontSize: 11,
+                marginTop: 2,
+              }}
+            >
+              {updateState.kind === "updating"
+                ? (AGENT_UPDATE_STEPS.find((s) => s.phase === updateState.phase)?.label ??
+                   AGENT_UPDATE_STEPS[0].label)
+                : updateState.kind === "requested"
+                ? // The honest fallback line. Says what happened (we
+                  // couldn't reach it), what we did instead (queued), and
+                  // when it lands (next check-in) — no raw error, no
+                  // false claim that anything is installing right now.
+                  `couldn't reach ${device.name} — update queued; it installs ${
+                    updateState.version === "latest" ? "the latest agent" : `v${updateState.version}`
+                  } the next time it checks in`
+                : updateState.kind === "done"
+                ? `✓ now on v${updateState.newVersion}`
+                : updateState.kind === "fail"
+                ? `update failed — ${updateState.error}`
+                : onLatest
+                ? `v${currentVersion} · ✓ latest`
+                : currentVersion && latestVersion
+                ? `v${currentVersion} · update → v${latestVersion}`
+                : currentVersion
+                ? `v${currentVersion}`
+                : "version unknown"}
+            </Text>
+          </View>
+          {updateState.kind === "updating" ? (
+            <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>⟳</Text>
+          ) : updateAvailable && updateState.kind !== "done" && updateState.kind !== "requested" ? (
+            <Pressable
+              onPress={() => { void runUpdate(); }}
+              style={{
+                paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+                backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
+              }}
+            >
+              <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
+                {updateState.kind === "fail" ? "Retry →" : "Update →"}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {/* Progress — direct path only. The step counter mirrors the web
+            modal ("step 4 of 8"); the bar blends download bytes into the
+            download step so it keeps moving through the slow phase. */}
+        {updateState.kind === "updating" ? (
+          <View style={{ marginTop: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+              <Text style={{ color: c.textMuted, fontSize: 10, flex: 1 }}>
+                {updateState.phase === "download" && updateState.bytes
+                  ? updateState.bytes.total > 0
+                    ? `${formatBytes(updateState.bytes.read)} of ${formatBytes(updateState.bytes.total)} (${Math.round(
+                        (updateState.bytes.read * 100) / updateState.bytes.total,
+                      )}%)`
+                    : `${formatBytes(updateState.bytes.read)} downloaded`
+                  : updateState.phase === "restart"
+                  ? "Waiting for the agent to come back on the new version"
+                  : `on ${device.name}`}
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                step{" "}
+                {Math.min(
+                  Math.max(0, AGENT_UPDATE_STEPS.findIndex((s) => s.phase === updateState.phase)) + 1,
+                  AGENT_UPDATE_STEPS.length,
+                )}{" "}
+                of {AGENT_UPDATE_STEPS.length}
+              </Text>
+            </View>
+            <View style={{ height: 4, borderRadius: 2, backgroundColor: c.border, overflow: "hidden" }}>
+              <View
+                style={{
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: "#f59e0b",
+                  width: `${Math.max(2, agentUpdateProgressPct(updateState.phase, updateState.bytes))}%`,
+                }}
+              />
+            </View>
+          </View>
         ) : null}
       </View>
 
@@ -1773,6 +2089,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
             {device.accessScope ? <Row label="Access scope" value={device.accessScope} /> : null}
             {device.priorityMode ? <Row label="Priority mode" value={device.priorityMode} /> : null}
             {device.isGuest && device.hostName ? <Row label="Shared from" value={device.hostName} /> : null}
+            {device.isGuest ? <LeaveShareRow device={device} /> : null}
           </View>
 
           {/* Runtime */}

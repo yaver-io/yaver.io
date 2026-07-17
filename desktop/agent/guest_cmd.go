@@ -22,6 +22,8 @@ func runGuests(args []string) {
 		runGuestsList()
 	case "remove", "revoke", "rm":
 		runGuestsRemove(args[1:])
+	case "leave":
+		runGuestsLeave(args[1:])
 	case "unshare-machine":
 		runGuestsUnshareMachine(args[1:])
 	case "hostkeys":
@@ -341,6 +343,81 @@ func runGuestsRemove(args []string) {
 	}
 
 	fmt.Printf("Guest access revoked for %s\n", email)
+}
+
+// runGuestsLeave is the guest-side mirror of `guests remove`: the caller drops
+// their OWN access to a host's shared machines. `remove` needs you to be the
+// host; this needs you to be the guest.
+func runGuestsLeave(args []string) {
+	var target string
+	yes := false
+	for _, a := range args {
+		switch {
+		case a == "--yes" || a == "-y":
+			yes = true
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", a)
+			os.Exit(1)
+		default:
+			if target == "" {
+				target = strings.TrimSpace(a)
+			}
+		}
+	}
+	if target == "" {
+		fmt.Fprintln(os.Stderr, "Usage: yaver guests leave <host-email|host-userid> [--yes]")
+		fmt.Fprintln(os.Stderr, "\nRemoves YOUR access to that host's shared machines.")
+		fmt.Fprintln(os.Stderr, "Run 'yaver guests list' or 'yaver devices' to see who shares with you.")
+		os.Exit(1)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Not signed in. Run 'yaver auth' first.")
+		os.Exit(1)
+	}
+	convexURL := cfg.ConvexSiteURL
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+
+	// An email has an @; anything else is treated as a public userId.
+	hostEmail, hostUserID := "", ""
+	if strings.Contains(target, "@") {
+		hostEmail = target
+	} else {
+		hostUserID = target
+	}
+
+	if !yes {
+		fmt.Printf("Remove your access to %s's shared machines?\n", target)
+		fmt.Println("You'll lose access on every one of your devices. They can share again later,")
+		fmt.Println("and you can accept again.")
+		fmt.Print("Type 'yes' to confirm: ")
+		var answer string
+		fmt.Scanln(&answer)
+		if strings.ToLower(strings.TrimSpace(answer)) != "yes" {
+			fmt.Println("Aborted — nothing changed.")
+			return
+		}
+	}
+
+	res, err := LeaveSharedAccess(convexURL, cfg.AuthToken, hostUserID, hostEmail)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to remove your access: %v\n", err)
+		os.Exit(1)
+	}
+
+	hostLabel := res.HostName
+	if hostLabel == "" {
+		hostLabel = target
+	}
+	if res.AlreadyGone {
+		fmt.Printf("You already had no access to %s's machines. Nothing to remove.\n", hostLabel)
+		return
+	}
+	fmt.Printf("Removed your access to %s's shared machines.\n", hostLabel)
+	fmt.Println("They can share again whenever you both want — this was not a block.")
 }
 
 func runGuestsUnshareMachine(args []string) {
@@ -750,7 +827,10 @@ Commands:
   invite <email|id> --machines <id1,id2>  Propose a limited machine scope
   accept <code> [--machines id1,id2]      Accept a pending invite (guest side)
   list                                    List all guests and their status
-  remove <email>                          Revoke guest access
+  remove <email>                          Revoke a guest's access (host side)
+  leave <host-email|id> [--yes]           Remove YOUR OWN access to a host's shared
+                                          machines (guest side). Reversible — they
+                                          can share again and you can accept again.
   unshare-machine <email> <machine-id>  Stop sharing one machine with a guest
   hostkeys <email> <on|off>  Toggle host-managed keys for a guest
   config            Show all guest configs

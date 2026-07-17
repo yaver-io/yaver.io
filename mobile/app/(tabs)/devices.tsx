@@ -984,6 +984,9 @@ export default function DevicesScreen() {
     disconnectDevice,
     refreshDevices,
     detachDevice,
+    leaveSharedAccess,
+    hiddenDeviceCount,
+    unhideAllDevices,
     removeDevice,
     acceptGuestByCode,
     unreachableDeviceIds,
@@ -1394,6 +1397,38 @@ export default function DevicesScreen() {
           contentContainerStyle={[styles.listContent, useMasterDetail ? null : tabletContent]}
           refreshing={isLoadingDevices}
           onRefresh={refreshDevices}
+          ListHeaderComponent={
+            hiddenDeviceCount > 0 ? (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  borderWidth: 1,
+                  borderColor: c.border,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  marginBottom: 12,
+                }}
+              >
+                <Text style={{ color: c.textMuted, fontSize: 12, flex: 1 }}>
+                  {hiddenDeviceCount} device{hiddenDeviceCount === 1 ? "" : "s"} hidden on this phone.
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    void unhideAllDevices().catch((e: any) =>
+                      Alert.alert("Error", e?.message || "Failed to show hidden devices"),
+                    );
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Show all</Text>
+                </Pressable>
+              </View>
+            ) : null
+          }
           ListEmptyComponent={isLoadingDevices ? (
             <View style={styles.center}>
               <ActivityIndicator size="large" color={c.accent} />
@@ -1429,12 +1464,18 @@ export default function DevicesScreen() {
               authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
               forceDetailsOpen={openDetailsId === item.id}
               onLongPress={() => {
-                const actionLabel = item.isGuest ? "Detach" : "Remove";
+                // Guests get two distinct exits, because they mean different
+                // things: "Hide" is the old local-only detach (row comes back
+                // on the next poll), "Remove my access" revokes the grant in
+                // Convex so it's gone on every surface until the host shares
+                // again.
+                const actionLabel = item.isGuest ? "Hide from this phone" : "Remove";
                 const isConnectedHere = connectedSet.has(item.id);
+                const hostLabel = item.hostName || item.hostEmail || "the host";
                 const message = item.isGuest
                   ? isConnectedHere
-                    ? "Disconnect from this shared machine, or remove it from your list? It will reappear if the host shares it again."
-                    : "Remove this shared machine from your list? It will reappear if the host shares it again."
+                    ? `Disconnect from this shared machine, hide it on this phone, or remove your access to ${hostLabel}'s machines entirely?`
+                    : `Hide this shared machine on this phone, or remove your access to ${hostLabel}'s machines entirely?`
                   : isConnectedHere
                     ? "Disconnect from this machine, or remove it from your account? The node will need to re-register before it shows up again."
                     : "Remove this device from your account? The node will need to re-register before it shows up again.";
@@ -1485,6 +1526,38 @@ export default function DevicesScreen() {
                     }
                   },
                 });
+                if (item.isGuest) {
+                  buttons.push({
+                    text: "Remove my access",
+                    style: "destructive",
+                    onPress: () => {
+                      // Second confirm: this one reaches the server and takes
+                      // every machine from this host, not just the tapped row.
+                      Alert.alert(
+                        `Remove your access to ${hostLabel}'s machines?`,
+                        `You'll lose access to every machine ${hostLabel} shared with you, on all your devices.\n\n${hostLabel} can share again later, and you can accept again.`,
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Remove access",
+                            style: "destructive",
+                            onPress: async () => {
+                              try {
+                                const res = await leaveSharedAccess(item);
+                                Alert.alert(
+                                  "Access removed",
+                                  `You no longer have access to ${res.hostName}'s machines. They can share again whenever you both want.`,
+                                );
+                              } catch (e: any) {
+                                Alert.alert("Error", e?.message || "Failed to remove access");
+                              }
+                            },
+                          },
+                        ],
+                      );
+                    },
+                  });
+                }
                 Alert.alert(item.name, message, buttons);
               }}
               onRecoverAuth={async () => {

@@ -99,6 +99,51 @@ enum MachineRegistry {
         return (try JSONDecoder().decode(DeviceList.self, from: data)).devices
     }
 
+    /// Ask a machine to update its agent, WITHOUT reaching it.
+    ///
+    /// This is the only update trigger this surface can honestly offer. The TV
+    /// talks to a box over direct LAN only (YaverStore has no relay), so it
+    /// cannot POST /agent/update to a box on another network — or to one that is
+    /// asleep on this one. `/devices/request-update` instead writes desired state
+    /// onto the device row; the agent reads it off its own next heartbeat and
+    /// updates itself. Owner-only, and it never expires.
+    ///
+    /// The consequence for the UI: there is NO progress to show. We know the
+    /// request was accepted, not that the box applied it — so the surface says
+    /// "requested", never "updating". `version` nil means "latest".
+    ///
+    /// Convex-direct, like fetch(token:) above — AgentClient can't serve this: its
+    /// postJSON is hardwired to http://<box.host>:<box.port>, which is exactly the
+    /// address we may have no route to.
+    @discardableResult
+    static func requestUpdate(deviceId: String, version: String? = nil, token: String) async throws -> String {
+        var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent("devices/request-update"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        req.timeoutInterval = 12
+        var body: [String: Any] = ["deviceId": deviceId]
+        if let version, !version.isEmpty { body["version"] = version }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response from Yaver") }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw AgentError(message: "Your TV session expired — sign in again.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            // The backend answers {error: "…"} — carry the real reason ("Device
+            // not found", "Unauthorized") rather than a bare status code.
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "Couldn't request the update (\(http.statusCode)).")
+        }
+        struct Ack: Decodable { let requestedVersion: String? }
+        return (try? JSONDecoder().decode(Ack.self, from: data))?.requestedVersion ?? "latest"
+    }
+
     /// Probe address candidates and return the first that answers /info within a
     /// short deadline, so selecting a machine lands on an address that actually
     /// works — mirrors mobile's raceDirectCandidates (quic.ts:5993), sequential

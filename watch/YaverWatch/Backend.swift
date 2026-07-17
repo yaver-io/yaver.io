@@ -113,12 +113,79 @@ enum DeviceCodeAuth {
     }
 }
 
+/// Ask a box to update its agent, WITHOUT reaching it.
+///
+/// Convex-direct, and the only update trigger this surface can honestly offer.
+/// In the DEFAULT phone-paired mode the watch holds no token and no box, so this
+/// is standalone-only — it's called from SettingsView behind the opt-in.
+///
+/// `/devices/request-update` writes desired state onto the device row; the agent
+/// reads it off its own next heartbeat and updates itself. Owner-only, never
+/// expires. Nothing here needs a route to the box, which is the entire point on
+/// a wrist: SessionClient can only reach a box on the same LAN, and a box that
+/// needs updating is often one we can't reach at all.
+///
+/// The consequence for the UI: there is NO progress to read. We learn the
+/// request was ACCEPTED, not that it was applied — so the surface says
+/// "requested", never "updating". Mirrors tvos MachineRegistry.requestUpdate.
+enum AgentUpdate {
+    /// Returns the version the backend recorded ("latest" unless pinned).
+    @discardableResult
+    static func request(deviceId: String, version: String? = nil, token: String) async throws -> String {
+        var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent("devices/request-update"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("watch", forHTTPHeaderField: "X-Yaver-Surface")
+        req.timeoutInterval = 12
+        var body: [String: Any] = ["deviceId": deviceId]
+        if let version, !version.isEmpty { body["version"] = version }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "No response from Yaver.") }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw AgentError(message: "Session expired — sign in again.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            // The backend answers {error: "…"} — carry the real reason.
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "Couldn't request the update (\(http.statusCode)).")
+        }
+        struct Ack: Decodable { let requestedVersion: String? }
+        return (try? JSONDecoder().decode(Ack.self, from: data))?.requestedVersion ?? "latest"
+    }
+}
+
 /// A box (device) the watch can drive in standalone mode. For the LAN MVP the
 /// user supplies the host; later this can be populated from the Convex device
 /// registry / LAN beacon. Mirrors tvos/YaverTV/Models.swift::BoxTarget.
 struct BoxTarget: Codable, Identifiable, Equatable {
-    var id: String          // deviceId (or a stable local id)
+    /// Stable local identity. In practice this is the HOST STRING the user typed
+    /// (SignInView's AddBoxView is the only construction site) — NOT a deviceId,
+    /// despite what this field was once documented to be. It stays the host: it
+    /// is the Identifiable key, and changing it would churn persisted rows for
+    /// no gain.
+    var id: String
     var name: String
     var host: String        // LAN IP / hostname running `yaver serve`
     var port: Int = Backend.agentPort
+
+    /// The box's REAL deviceId, as the account knows it — resolved from the
+    /// box's own `/info` at sign-in and persisted from then on.
+    ///
+    /// Why it's captured at setup and not on demand: the one caller that needs
+    /// it (`/devices/request-update`) exists precisely for a box we CANNOT
+    /// reach — asleep, moved networks, on cellular. Asking the box who it is at
+    /// that moment would fail exactly when it matters. At sign-in the user is
+    /// standing on the box's LAN by construction (they just typed its address
+    /// and the transport works), so that is the one moment identity is free.
+    ///
+    /// Optional because boxes persisted before this field existed decode to nil
+    /// (synthesized Codable uses decodeIfPresent for Optionals — the same
+    /// forward-compat trick tvOS's BoxTarget.managed/machineId rely on). Those
+    /// installs re-resolve lazily; see WatchStore.resolveDeviceIdIfNeeded.
+    var deviceId: String? = nil
 }

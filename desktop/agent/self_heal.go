@@ -411,16 +411,18 @@ func BuildSelfHealReport(ctx context.Context) *SelfHealReport {
 // All errors are collected; one bad path doesn't abort the rest.
 func ApplySelfHeal(ctx context.Context, rep *SelfHealReport, opts SelfHealOptions) {
 	if opts.AllowSelfUpdate && rep.NeedsSelfPull {
-		// checkAutoUpdate respects cfg.AutoUpdate — fake the flag for
-		// this single call. It updates os.Executable() in place; on
+		// checkAutoUpdate respects the operator's auto-update setting —
+		// force it on for this single call, since the operator asked for
+		// a heal explicitly. forcedAutoUpdateConfig copies, so nothing
+		// is persisted. It updates os.Executable() in place; on
 		// completion the running process exits and systemd/launchd
 		// restarts on the new binary. From the perspective of this
 		// function, we never see the post-update state — that's fine,
 		// the next agent boot will re-run BuildSelfHealReport and find
 		// the rest of the installs still need reconciling.
 		log.Printf("[self-heal] running self-update to v%s before reconciling other paths", rep.LatestRelease)
-		fakeCfg := &Config{AutoUpdate: true}
-		checkAutoUpdate(fakeCfg)
+		healCfg, _ := LoadConfig()
+		checkAutoUpdate(forcedAutoUpdateConfig(healCfg))
 		// If we're still alive, the update was a no-op. Refresh the
 		// snapshot so the rest of the reconcile sees current state.
 		fresh := BuildSelfHealReport(ctx)
