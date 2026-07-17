@@ -470,7 +470,11 @@ export class YaverFeedback {
         const autoStartTimer = setTimeout(() => {
           if (config?.agentUrl && (config?.authToken || p2pAuthToken)) {
             try {
-              BlackBox.start();
+              // Pass the host's BlackBox config through. This used to call
+              // start() bare, so a host that configured the flight recorder
+              // — as the README itself shows — had it silently replaced by
+              // defaults, and appName came out ''.
+              BlackBox.start(config?.blackBox);
             } catch (err) {
               console.warn('[YaverFeedback] BlackBox auto-start failed:', err);
             }

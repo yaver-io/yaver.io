@@ -1,3 +1,7 @@
+// Type-only: BlackBox.ts already imports from this module, so a value import
+// would close a cycle. `import type` is erased at compile time.
+import type { BlackBoxConfig } from './BlackBox';
+
 /**
  * Remote browser-style sign-in session for a coding-agent CLI on the
  * connected yaver host. Mirrors runnerBrowserAuthSession on the agent
@@ -247,6 +251,22 @@ export interface FeedbackConfig {
    * Calling `BlackBox.start()` manually is still safe — it's idempotent.
    */
   autoStartBlackBox?: boolean;
+  /**
+   * Config handed to BlackBox when the SDK auto-starts it.
+   *
+   * Without this there was no way to configure the flight recorder at all.
+   * The obvious move — and the one the README's own snippet makes — is:
+   *
+   *     YaverFeedback.init({ trigger: 'shake' });
+   *     BlackBox.start({ appName: 'my-app' });
+   *
+   * but that start() early-returns, because a zero-config init has no
+   * agentUrl yet (discovery resolves it asynchronously). The auto-start then
+   * fires ~500ms later once the agent and token exist and calls `start()`
+   * with NO arguments — so the host's config is silently dropped and appName
+   * is ''. Pass it here instead and the auto-start will honour it.
+   */
+  blackBox?: BlackBoxConfig;
   /**
    * Small tap-to-open icon that floats above the app so the user
    * doesn't have to shake every time they want to open feedback.
