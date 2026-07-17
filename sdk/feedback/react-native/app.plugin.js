@@ -487,9 +487,22 @@ $1`
       10000
     )
     try {
-      reactNativeHost.reactInstanceManager.addReactInstanceEventListener {
-        YaverHotReloadModule.markBootSuccessful(yaverHotReloadCtx)
-      }
+      // Anonymous object, not a lambda: SAM conversion needs a Java interface
+      // or a Kotlin \`fun interface\`, and as of RN 0.81
+      // com.facebook.react.ReactInstanceEventListener is a plain Kotlin
+      // interface (ReactInstanceEventListener.kt). A lambda there fails
+      // :app:compileReleaseKotlin with "Argument type mismatch: actual type is
+      // 'Function0<Unit>'" — i.e. the host app cannot build a release AAB at
+      // all. The Java path below already did this correctly.
+      reactNativeHost.reactInstanceManager.addReactInstanceEventListener(
+        object : com.facebook.react.ReactInstanceEventListener {
+          override fun onReactContextInitialized(
+            context: com.facebook.react.bridge.ReactContext
+          ) {
+            YaverHotReloadModule.markBootSuccessful(yaverHotReloadCtx)
+          }
+        }
+      )
     } catch (yaverHotReloadBootListener: Throwable) {
       // Bridgeless / New Architecture does not expose reactInstanceManager;
       // the 10-s fallback above still covers us.
