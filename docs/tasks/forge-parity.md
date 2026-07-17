@@ -1,3 +1,21 @@
+---
+doer: codex
+---
+
+<!-- No `master:` seat on purpose, and do not add one. The planning seat rides
+     the claude binary; claude is NOT signed in on the mini, so a master there
+     dies on iteration 1 with "master claude failed to plan: runner TUI session
+     vanished" (learned the hard way in 760d015a1). Seats in front matter are
+     binding, not a hint: autorunSeatsFromTask applies them whenever the caller
+     omits the flag, so a stray `master: claude` would silently override a
+     deliberate codex-solo start. Re-add a master only once that box has an
+     authenticated planning runner — glm is the candidate (same claude binary,
+     z.ai auth, no Claude subscription involved).
+
+     Also relevant if you switch the doer to opencode: pin glm-5.2, NOT 4.7.
+     On 4.7 the adapter cannot read its reasoning reply and the run silently
+     no-ops — exit 0, 29 bytes of output, looks exactly like success. -->
+
 # Task: forge parity — GitHub/GitLab as a first-class resource on every surface
 
 Goal: Yaver understands a **project's git resource** — Yaver-managed git, GitHub
