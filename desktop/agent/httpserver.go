@@ -8245,7 +8245,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Limit     int    `json:"limit"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		return mcpToolJSON(mcpOps("local", "git_prs", mustJSON(map[string]interface{}{
+		return mcpToolJSON(s.mcpOps("local", "git_prs", mustJSON(map[string]interface{}{
 			"provider":  args.Provider,
 			"directory": args.Directory,
 			"state":     args.State,
@@ -8259,7 +8259,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Limit     int    `json:"limit"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		return mcpToolJSON(mcpOps("local", "git_issues", mustJSON(map[string]interface{}{
+		return mcpToolJSON(s.mcpOps("local", "git_issues", mustJSON(map[string]interface{}{
 			"provider":  args.Provider,
 			"directory": args.Directory,
 			"state":     args.State,
@@ -8271,7 +8271,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Directory string `json:"directory"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		return mcpToolJSON(mcpOps("local", "git_ci_status", mustJSON(map[string]interface{}{
+		return mcpToolJSON(s.mcpOps("local", "git_ci_status", mustJSON(map[string]interface{}{
 			"provider":  args.Provider,
 			"directory": args.Directory,
 		})))

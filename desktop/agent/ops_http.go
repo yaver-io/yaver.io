@@ -12,10 +12,24 @@ package main
 // flag, which lets each verb decide whether to honour the call.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 )
+
+// mcpOps dispatches one ops verb from an MCP tool handler and returns the raw
+// result for mcpToolJSON.
+//
+// Callers reaching the MCP dispatch have already cleared the owner-auth
+// boundary upstream (auth() on /mcp); guests and support sessions use their own
+// scoped routes, never /mcp. That is why Caller is "owner" here — the same
+// reasoning, and the same construction, the `ops` grand-tool uses for its own
+// dispatch in handleMCPToolCallWithAddr.
+func (s *HTTPServer) mcpOps(machine, verb string, payload json.RawMessage) OpsResult {
+	octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
+	return dispatchOps(octx, OpsRequest{Machine: machine, Verb: verb, Payload: payload})
+}
 
 // opsCallIsRemote reports whether this /ops call originates from another machine
 // — relay-bridged (X-Yaver-Via-Relay), proxied by another agent
