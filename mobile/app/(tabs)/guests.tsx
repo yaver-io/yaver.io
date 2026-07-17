@@ -100,9 +100,13 @@ export default function GuestsScreen() {
     devices,
     activeDevice,
     guestInvitations,
+    activeHosts,
+    leaveHost,
     acceptGuestInvitation: ctxAcceptPending,
     refreshDevices,
   } = useDevice();
+  /** hostEmail of the active host whose "Remove my access" awaits confirm. */
+  const [leavingHost, setLeavingHost] = useState<string | null>(null);
 
   const [mode, setMode] = useState<Tab>("my-guests");
   const [guests, setGuests] = useState<GuestInfo[]>([]);
@@ -818,6 +822,79 @@ export default function GuestsScreen() {
                         Review & accept
                       </Text>
                     </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Hosts I've already accepted. Mirrors the web dashboard's
+                active-hosts list — this is the only place on the phone where a
+                share can be dropped by host rather than by tapping one of its
+                machines, and the anchor the phone was missing entirely. */}
+            {activeHosts && activeHosts.length > 0 && (
+              <View style={[card(c), { gap: 8 }]}>
+                <Text style={sectionLabel as any}>Sharing with me</Text>
+                {activeHosts.map((h) => (
+                  <View
+                    key={h.hostUserId || h.hostEmail}
+                    style={{ padding: 10, backgroundColor: c.bgCard, borderRadius: 8, gap: 6 }}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 13 }}>{h.hostName}</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11, fontFamily: "Menlo" }}>
+                      {h.hostEmail}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Since {new Date(h.grantedAt).toLocaleDateString()}
+                      {h.devices && h.devices.length > 0
+                        ? ` · ${h.devices.length} machine${h.devices.length === 1 ? "" : "s"}`
+                        : ""}
+                    </Text>
+                    {leavingHost === h.hostEmail ? (
+                      <>
+                        <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                          Remove your access to every machine {h.hostName} shared with you? They
+                          can share again later, and you can accept again.
+                        </Text>
+                        <View style={{ flexDirection: "row", gap: 8 }}>
+                          <Pressable
+                            onPress={async () => {
+                              try {
+                                const res = await leaveHost({ hostEmail: h.hostEmail });
+                                setLeavingHost(null);
+                                Alert.alert(
+                                  "Access removed",
+                                  `You no longer have access to ${res.hostName}'s machines.`,
+                                );
+                              } catch (e: any) {
+                                Alert.alert("Error", e?.message || "Failed to remove access");
+                              }
+                            }}
+                            style={[actionBtn(c), { backgroundColor: c.error, paddingVertical: 8, flex: 1 }]}
+                          >
+                            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>
+                              Yes, remove
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => setLeavingHost(null)}
+                            style={[actionBtn(c), { paddingVertical: 8, flex: 1 }]}
+                          >
+                            <Text style={{ color: c.textMuted, fontWeight: "700", fontSize: 13 }}>
+                              Cancel
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </>
+                    ) : (
+                      <Pressable
+                        onPress={() => setLeavingHost(h.hostEmail)}
+                        style={[actionBtn(c), { paddingVertical: 8 }]}
+                      >
+                        <Text style={{ color: c.error, fontWeight: "700", fontSize: 13 }}>
+                          Remove my access
+                        </Text>
+                      </Pressable>
+                    )}
                   </View>
                 ))}
               </View>

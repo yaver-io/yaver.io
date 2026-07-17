@@ -6,7 +6,7 @@
 // docs/yaver-mesh-mobile-tailscale-ui-design.md.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
@@ -51,7 +51,39 @@ export default function MeshHomeScreen() {
   const tabletContent = useTabletContentStyle("regular");
   const { token } = useAuth();
   const mesh = useMesh();
-  const { devices } = useDevice();
+  const { devices, leaveSharedAccess } = useDevice();
+
+  // Long-press on a SHARED WITH ME row. Host-keyed like the endpoint, so the
+  // copy has to say it takes every machine that host shared — not just this
+  // row — and that it's reversible.
+  const confirmLeaveShared = useCallback(
+    (d: Device) => {
+      const hostLabel = d.hostName || d.hostEmail || "that host";
+      Alert.alert(
+        `Remove your access to ${hostLabel}'s machines?`,
+        `You'll lose access to every machine ${hostLabel} shared with you, on all your devices.\n\n${hostLabel} can share again later, and you can accept again.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove access",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                const res = await leaveSharedAccess(d);
+                Alert.alert(
+                  "Access removed",
+                  `You no longer have access to ${res.hostName}'s machines.`,
+                );
+              } catch (e: any) {
+                Alert.alert("Error", e?.message || "Failed to remove access");
+              }
+            },
+          },
+        ],
+      );
+    },
+    [leaveSharedAccess],
+  );
   const [query, setQuery] = useState("");
 
   const tunnelSupported = isMeshTunnelSupported();
@@ -345,6 +377,7 @@ export default function MeshHomeScreen() {
       phase={phaseById[d.id]}
       onEnable={() => void handleEnableOne(d)}
       onOpen={() => openNode(d.id)}
+      onLeave={d.isGuest ? () => confirmLeaveShared(d) : undefined}
     />
   );
 

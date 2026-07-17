@@ -2837,7 +2837,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "guest_revoke",
-			"description": "Revoke guest access for an email address. Removes both pending invitations and active access.",
+			"description": "Remove SOMEONE ELSE'S access to YOUR machines. You are the host here: this kicks a guest out of your own shared infra, removing both their pending invitation and their active access. Do NOT use this to give up your own access to a machine someone shared with you — that is guest_leave.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"email"},
@@ -2845,6 +2845,42 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"email": map[string]interface{}{
 						"type":        "string",
 						"description": "Email address of the guest to remove",
+					},
+				},
+			},
+		},
+		{
+			"name":        "guest_leave",
+			"description": "Remove YOUR OWN access to SOMEONE ELSE'S machines. You are the guest here: this walks you out of a host's shared infra, so you can no longer use their machines. It does not touch your own machines and does not remove anyone else. Reversible — the host can share again and you can accept again with guest_accept. Do NOT use this to kick a guest off your own machines — that is guest_revoke. Identify the host by their Yaver user id or their email; at least one is required.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"hostUserId": map[string]interface{}{
+						"type":        "string",
+						"description": "Public Yaver user id of the host whose shared machines you want to stop using. Provide either hostUserId or hostEmail.",
+					},
+					"hostEmail": map[string]interface{}{
+						"type":        "string",
+						"description": "Email address of the host whose shared machines you want to stop using. Provide either hostUserId or hostEmail.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "guest_accept",
+			"description": "Accept an invitation SOMEONE ELSE sent YOU, gaining access to their machines. You are the guest here: after this you can use the host's shared infra. Use the 6-character invite code they shared with you. Optionally scope the grant to specific machines so you only take access to the ones you actually need. To undo it later, use guest_leave.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"code"},
+				"properties": map[string]interface{}{
+					"code": map[string]interface{}{
+						"type":        "string",
+						"description": "The 6-character invite code the host shared with you.",
+					},
+					"machines": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional host device ids to scope your grant to specific machines. Empty = every machine the host offered.",
+						"items":       map[string]interface{}{"type": "string"},
 					},
 				},
 			},

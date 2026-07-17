@@ -523,6 +523,27 @@ ipcMain.handle('invite-guest', async (_e, email) => agentRequest('POST', '/guest
 ipcMain.handle('list-guests', async () => agentRequest('GET', '/guests'));
 ipcMain.handle('revoke-guest', async (_e, email) => agentRequest('POST', '/guests/revoke', { email }));
 
+// Leave a host's shared access (guest side, via Convex — not the host's agent).
+// The host's box may be offline or already unreachable, and dropping our own
+// access is a Convex-side fact, so this never goes through agentRequest.
+// hostUserId is the host's PUBLIC userId string (device rows: hostUserIdString),
+// NOT the users table _id. Either identifier alone is enough.
+ipcMain.handle('leave-shared-access', async (_e, host) => {
+  authToken = getToken();
+  if (!authToken) return { ok: false, error: 'Not signed in' };
+  const body = {};
+  if (host?.hostUserId) body.hostUserId = host.hostUserId;
+  if (host?.hostEmail) body.hostEmail = host.hostEmail;
+  if (!body.hostUserId && !body.hostEmail) {
+    return { ok: false, error: 'hostUserId or hostEmail is required' };
+  }
+  try {
+    return await convexRequest('POST', '/guests/leave', body);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // Dev server
 ipcMain.handle('dev-server-status', async () => agentRequest('GET', '/dev/status'));
 ipcMain.handle('dev-server-start', async (_e, opts) => agentRequest('POST', '/dev/start', opts));

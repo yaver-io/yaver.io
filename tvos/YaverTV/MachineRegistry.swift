@@ -32,7 +32,27 @@ struct RegisteredDevice: Decodable, Identifiable {
     let machineId: String?
     let lastHeartbeat: Double? // ms epoch
 
+    // Sharing. A box someone else owns and shared with this account comes back
+    // from /devices/list looking exactly like an owned one unless we decode
+    // these (devices.ts:1795, :1863). Without them the TV silently renders
+    // another person's machine as if it were yours.
+    let isGuest: Bool?
+    let hostName: String?
+    let hostEmail: String?
+    let hostUserIdString: String?
+    let accessScope: String? // "owner" | "shared-scoped" | "shared-legacy"
+
     var id: String { deviceId }
+
+    var shared: Bool { isGuest ?? false }
+
+    /// Who shared it, best-effort — name, else email, else a generic. Shown on
+    /// the row, so it must never be empty on a shared box.
+    var hostLabel: String {
+        if let n = hostName, !n.isEmpty { return n }
+        if let e = hostEmail, !e.isEmpty { return e }
+        return "another account"
+    }
 
     var displayName: String {
         if let a = alias, !a.isEmpty { return a }
@@ -142,6 +162,65 @@ enum MachineRegistry {
         }
         struct Ack: Decodable { let requestedVersion: String? }
         return (try? JSONDecoder().decode(Ack.self, from: data))?.requestedVersion ?? "latest"
+    }
+
+    /// Drop this account's OWN access to everything a host shared.
+    ///
+    /// Guest-side only: the backend takes the guest from the session token, so
+    /// this can never remove anyone else's access (http.ts:6480). Note the blast
+    /// radius the UI must state plainly — it is keyed on the HOST, not the row,
+    /// so it removes every machine that host shared, not just the one in hand.
+    /// Reversible: the host can invite again and the guest can accept again.
+    ///
+    /// Convex-direct for the same reason as requestUpdate: a shared box may be
+    /// on someone else's LAN, so there is no address to POST to.
+    static func leaveHost(hostUserId: String?, hostEmail: String?, token: String) async throws {
+        var body: [String: Any] = [:]
+        if let hostUserId, !hostUserId.isEmpty { body["hostUserId"] = hostUserId }
+        if let hostEmail, !hostEmail.isEmpty { body["hostEmail"] = hostEmail }
+        guard !body.isEmpty else {
+            throw AgentError(message: "Can't tell who shared this machine — try again from your phone or the web.")
+        }
+        _ = try await postGuest(path: "guests/leave", body: body, token: token,
+                               failure: "Couldn't remove your access")
+    }
+
+    /// Redeem a 6-char invitation code. The TV has no real keyboard, so the code
+    /// is the ONLY guest-side entry we offer here — the host does the inviting on
+    /// a surface where typing an email isn't hostile.
+    static func acceptInviteCode(_ code: String, token: String) async throws {
+        let clean = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !clean.isEmpty else { throw AgentError(message: "Enter the invitation code.") }
+        _ = try await postGuest(path: "guests/accept-code", body: ["code": clean], token: token,
+                                failure: "Couldn't accept the invitation")
+    }
+
+    /// Shared shape of the guest POSTs: bearer token to Convex, {error} carried
+    /// through verbatim (the backend's reasons — "Invitation not found",
+    /// "No shared access found" — beat a bare status code).
+    @discardableResult
+    private static func postGuest(path: String, body: [String: Any], token: String,
+                                  failure: String) async throws -> Data {
+        var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent(path))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+        req.timeoutInterval = 12
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response from Yaver") }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw AgentError(message: "Your TV session expired — sign in again.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "\(failure) (\(http.statusCode)).")
+        }
+        return data
     }
 
     /// Probe address candidates and return the first that answers /info within a

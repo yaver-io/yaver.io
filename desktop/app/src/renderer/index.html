@@ -491,11 +491,19 @@ async function refreshDevices() {
   // Remote devices (already filtered out local duplicates)
   for (let i = 0; i < devices.length; i++) {
     const d = devices[i];
+    // Shared rows come from /devices/list with isGuest + host identity attached.
+    const host = d.hostName || d.hostEmail || 'someone';
+    const shared = d.isGuest
+      ? `<span class="badge badge-yellow" title="Shared with you by ${esc(d.hostEmail||host)}">SHARED &middot; ${esc(host)}</span>`
+      : '';
+    const leave = d.isGuest
+      ? `<button class="btn-icon no-drag" onclick="event.stopPropagation();leaveHost(${i})" title="Remove my access to ${esc(host)}'s machines" style="width:22px;height:22px;font-size:10px;color:var(--red)">&#x2715;</button>`
+      : '';
     html += `<div class="device-card no-drag" onclick="connectRemote(${i})">
       <div class="dot" style="background:var(--green)"></div>
       <div style="flex:1"><div style="font-size:14px;font-weight:500">${esc(d.name||d.deviceId)}</div>
-      <div style="font-size:11px;color:var(--text-muted)">${d.platform||'unknown'}</div></div>
-      <span class="badge badge-green">Connect</span></div>`;
+      <div style="font-size:11px;color:var(--text-muted)">${d.platform||'unknown'}${d.isGuest && d.accessScope ? ' &middot; ' + esc(d.accessScope) : ''}</div></div>
+      ${shared}<span class="badge badge-green">Connect</span>${leave}</div>`;
   }
 
   if (!html) {
@@ -533,6 +541,29 @@ async function acceptGuestCode() {
     if (r.ok || r.hostName) { alert('Joined ' + (r.hostName||'host') + "'s machine!"); document.getElementById('guest-code').value = ''; refreshDevices(); }
     else alert(r.error || 'Invalid code.');
   } catch(e) { alert(e.message); }
+}
+
+// Guest side of invite/revoke: drop MY access to everything one host shared.
+// Scoped to the host, not the card — the API has no per-device leave.
+async function leaveHost(i) {
+  const d = window._devices?.[i]; if (!d || !d.isGuest) return;
+  const host = d.hostName || d.hostEmail || 'this host';
+  const n = (window._devices || []).filter(x => x.isGuest && sameHost(x, d)).length;
+  const machines = n > 1 ? `all ${n} machines` : 'the machine';
+  if (!confirm(
+    `Remove your access to ${machines} ${host} shared with you?\n\n` +
+    `This drops every machine from ${host} — not just "${d.name||d.deviceId}".\n\n` +
+    `You can be given access again at any time: ${host} re-invites you, you accept the code.`
+  )) return;
+  const r = await window.yaver.leaveSharedAccess({ hostUserId: d.hostUserIdString, hostEmail: d.hostEmail });
+  if (r && r.ok === false) alert(r.error || 'Could not remove access.');
+  refreshDevices();
+}
+
+// Two shared rows are the same host when either identifier matches.
+function sameHost(a, b) {
+  if (a.hostUserIdString && b.hostUserIdString) return a.hostUserIdString === b.hostUserIdString;
+  return !!a.hostEmail && a.hostEmail === b.hostEmail;
 }
 
 function enterMain(device, mode) {

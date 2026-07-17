@@ -19,6 +19,8 @@ struct MachinePickerView: View {
     @State private var error: String?
     @State private var connecting: String?   // deviceId being resolved
     @State private var showManualAdd = false
+    @State private var showAcceptCode = false
+    @State private var leaveTarget: RegisteredDevice?   // non-nil ⇒ confirming
     @StateObject private var lifecycle = BoxLifecycle()
 
     // Captured once per load so liveness is a pure comparison (no Date.now in the model).
@@ -45,11 +47,33 @@ struct MachinePickerView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Type an address") { showManualAdd = true }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Accept an invitation") { showAcceptCode = true }
+                }
             }
             .sheet(isPresented: $showManualAdd, onDismiss: {
                 // AddBoxView selects the box it adds; if it did, we're done.
                 if store.selectedBox != nil { dismiss() }
             }) { AddBoxView() }
+            .sheet(isPresented: $showAcceptCode) {
+                AcceptInviteView(token: store.token) { Task { await load() } }
+            }
+            // Leaving is keyed on the HOST, not the row — say so before firing,
+            // and say that it's undoable, because a TV remote makes a misclick
+            // cheap and a re-invite is the only way back.
+            .confirmationDialog("Remove your access?",
+                                isPresented: Binding(get: { leaveTarget != nil },
+                                                     set: { if !$0 { leaveTarget = nil } }),
+                                titleVisibility: .visible) {
+                Button("Remove my access", role: .destructive) {
+                    if let d = leaveTarget { Task { await leave(d) } }
+                }
+                Button("Cancel", role: .cancel) { leaveTarget = nil }
+            } message: {
+                if let d = leaveTarget {
+                    Text("This removes every machine \(d.hostLabel) shared with you — not just \(d.displayName). Nothing on the machine is deleted, and it's reversible: \(d.hostLabel) can share again and you can accept a new invitation.")
+                }
+            }
         }
         .task { await load() }
     }
@@ -67,6 +91,14 @@ struct MachinePickerView: View {
                     }
                     .buttonStyle(.card)
                     .disabled(connecting != nil)
+                    // tvOS has no swipe and no room for a second button in the
+                    // card — long-press (the platform's own secondary gesture)
+                    // is where a destructive per-row action belongs.
+                    .contextMenu {
+                        if d.shared {
+                            Button("Remove my access", role: .destructive) { leaveTarget = d }
+                        }
+                    }
                 }
             }
             .padding(32)
@@ -154,9 +186,93 @@ struct MachinePickerView: View {
         dismiss()
     }
 
+    /// Drop our access to everything this host shared, then reload so the rows
+    /// that just went away actually go away. If the box we were pointed at was
+    /// one of them, deselect it — a selected box we can no longer reach is worse
+    /// than none.
+    private func leave(_ d: RegisteredDevice) async {
+        leaveTarget = nil
+        connecting = d.deviceId
+        defer { connecting = nil }
+        do {
+            try await MachineRegistry.leaveHost(hostUserId: d.hostUserIdString,
+                                                hostEmail: d.hostEmail,
+                                                token: store.token)
+        } catch {
+            self.error = error.localizedDescription
+            return
+        }
+        // Drop the local entries too. The rows vanish from /devices/list on
+        // reload, but a box we already added lives in the store — left behind it
+        // would keep a dead machine (and its host's LAN address) on the TV.
+        let gone = Set(devices.filter { $0.shared && $0.hostLabel == d.hostLabel }.map(\.deviceId))
+            .union([d.deviceId])
+        for box in store.boxes where gone.contains(box.id) { store.removeBox(box) }
+        await load()
+    }
+
     private func boxTarget(for d: RegisteredDevice, host: String) -> BoxTarget {
         BoxTarget(id: d.deviceId, name: d.displayName, host: host, port: d.port,
                   managed: d.managed, machineId: d.machineId)
+    }
+}
+
+/// Redeem a 6-char invitation code.
+///
+/// Deliberately the only guest-side entry on this surface: inviting means typing
+/// an email on a TV remote, which is hostile — the host does that on a phone or
+/// the web. Six characters is about the most we can ask of a remote, and the
+/// code is uppercased/trimmed for the user so the on-screen keyboard's case and
+/// stray spaces never cause a bogus "not found".
+private struct AcceptInviteView: View {
+    let token: String
+    let onAccepted: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                Image(systemName: "envelope.open").font(.system(size: 48)).foregroundStyle(.secondary)
+                Text("Enter the 6-character code from the person sharing their machine with you.")
+                    .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 640)
+
+                TextField("ABC123", text: $code)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .frame(maxWidth: 420)
+
+                if let error {
+                    Text(error).foregroundStyle(.orange).multilineTextAlignment(.center).frame(maxWidth: 640)
+                }
+
+                Button(busy ? "Accepting…" : "Accept") { Task { await accept() } }
+                    .disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("Accept an invitation")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(busy)
+                }
+            }
+        }
+    }
+
+    private func accept() async {
+        busy = true
+        error = nil
+        do {
+            try await MachineRegistry.acceptInviteCode(code, token: token)
+            onAccepted()   // the shared machines only exist after a refetch
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        busy = false
     }
 }
 
@@ -171,6 +287,15 @@ private struct MachineRow: View {
             Image(systemName: platformIcon).font(.system(size: 30)).frame(width: 44)
             VStack(alignment: .leading, spacing: 4) {
                 Text(device.displayName).font(.system(size: 26, weight: .semibold))
+                // A shared box is someone else's machine. Saying so on the row —
+                // not buried in a detail screen — is the whole point: owned and
+                // borrowed rendered identically is how you act on the wrong box.
+                if device.shared {
+                    Text("SHARED · \(device.hostLabel)")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.purple)
+                        .lineLimit(1)
+                }
                 Text(subtitle).font(.system(size: 16)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()

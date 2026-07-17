@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('yaver', {
   guestConfig: (email) => ipcRenderer.invoke('guest-config', email),
   updateGuestConfig: (data) => ipcRenderer.invoke('update-guest-config', data),
   guestUsage: (date) => ipcRenderer.invoke('guest-usage', date),
+  leaveSharedAccess: (host) => ipcRenderer.invoke('leave-shared-access', host),
 
   // ── Git ─────────────────────────────────────────────
   gitPull: (wd) => ipcRenderer.invoke('agent-request', 'POST', `/git/pull?workDir=${encodeURIComponent(wd)}`),

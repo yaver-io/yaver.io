@@ -159,6 +159,121 @@ enum AgentUpdate {
     }
 }
 
+// MARK: - Guest access (Convex-direct, token-only)
+
+/// A pending invitation someone sent to this account.
+struct GuestPendingInvite: Decodable, Identifiable, Equatable {
+    let inviteId: String
+    let inviteCode: String
+    let hostName: String
+    let hostEmail: String
+    let expiresAt: Double
+    var id: String { inviteId }
+}
+
+/// A host whose machines this account currently has access to.
+struct GuestActiveHost: Decodable, Identifiable, Equatable {
+    struct Device: Decodable, Equatable {
+        let deviceId: String
+        let name: String
+    }
+    let hostName: String
+    let hostEmail: String
+    let grantedAt: Double
+    let devices: [Device]?
+
+    /// Identity for the list AND the only key we may `leave` by — see
+    /// GuestAccess.leave for why `hostUserId` is deliberately not decoded.
+    var id: String { hostEmail }
+    var deviceCount: Int { devices?.count ?? 0 }
+}
+
+struct GuestHosts: Decodable, Equatable {
+    let pending: [GuestPendingInvite]
+    let active: [GuestActiveHost]
+
+    var isEmpty: Bool { pending.isEmpty && active.isEmpty }
+}
+
+/// Guest-side access management: see who shared machines with me, accept an
+/// invite, and drop my own access.
+///
+/// Convex-direct and keyed ONLY by the session token — this is why it works on a
+/// wrist that has no device registry. Guest access is anchored to a HOST (a
+/// person), not to a box: `/guests/hosts` returns a short list of people, so the
+/// watch's "one box by address" model is simply not involved. Nothing here needs
+/// a route to any box, exactly like AgentUpdate above.
+///
+/// Host-side verbs (invite / revoke) are deliberately ABSENT: both require
+/// typing an email address, which is hostile on a wrist. They stay on phone/web.
+enum GuestAccess {
+    /// Shared request builder — every call is Bearer + the watch surface tag.
+    private static func request(_ path: String, method: String, token: String) -> URLRequest {
+        var req = URLRequest(url: Backend.convexSiteURL.appendingPathComponent(path))
+        req.httpMethod = method
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("watch", forHTTPHeaderField: "X-Yaver-Surface")
+        req.timeoutInterval = 12
+        return req
+    }
+
+    /// Turn a non-2xx into the backend's own `{error: "…"}` reason where it has one.
+    private static func check(_ data: Data, _ resp: URLResponse, fallback: String) throws {
+        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "No response from Yaver.") }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw AgentError(message: "Session expired — sign in again.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = obj["error"] as? String {
+                throw AgentError(message: err)
+            }
+            throw AgentError(message: "\(fallback) (\(http.statusCode)).")
+        }
+    }
+
+    /// GET /guests/hosts → { pending, active } from the GUEST's perspective.
+    static func hosts(token: String) async throws -> GuestHosts {
+        let (data, resp) = try await URLSession.shared.data(for: request("guests/hosts", method: "GET", token: token))
+        try check(data, resp, fallback: "Couldn't load shared access")
+        return try JSONDecoder().decode(GuestHosts.self, from: data)
+    }
+
+    /// POST /guests/accept-code — accept a pending invite by its 6-char code.
+    ///
+    /// The code comes off the pending row we just listed, so the wrist never has
+    /// to type it. `approvedDeviceIds` is omitted deliberately: the watch has no
+    /// device registry to choose from, and omitting it accepts the invitation as
+    /// the host proposed it.
+    static func acceptCode(_ code: String, token: String) async throws {
+        var req = request("guests/accept-code", method: "POST", token: token)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try check(data, resp, fallback: "Couldn't accept the invitation")
+    }
+
+    /// POST /guests/leave — drop MY OWN access to everything `hostEmail` shared.
+    ///
+    /// Keyed by email, NOT by the `hostUserId` that `/guests/hosts` reports for an
+    /// active host. That field is the host's internal Convex document id, whereas
+    /// `guests.leave` resolves `hostUserId` against the PUBLIC `users.userId`
+    /// string — feeding it the doc id fails with "No Yaver user found for that
+    /// host". The active rows carry no public userId (only the pending rows do,
+    /// as `hostUserIdString`), so email is the one identifier that is both
+    /// present and correct here. The endpoint accepts either.
+    ///
+    /// Guest-only by construction: the session user IS the guest, so this can
+    /// never remove anyone else's access.
+    static func leave(hostEmail: String, token: String) async throws {
+        var req = request("guests/leave", method: "POST", token: token)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["hostEmail": hostEmail])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try check(data, resp, fallback: "Couldn't remove your access")
+    }
+}
+
 /// A box (device) the watch can drive in standalone mode. For the LAN MVP the
 /// user supplies the host; later this can be populated from the Convex device
 /// registry / LAN beacon. Mirrors tvos/YaverTV/Models.swift::BoxTarget.

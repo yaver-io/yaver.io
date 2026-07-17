@@ -30,6 +30,7 @@ import {
   acceptGuestInvitation as apiAcceptInvitation,
   acceptGuestByCode as apiAcceptByCode,
   inviteGuest as apiInviteGuest,
+  type ActiveHost,
 } from "../lib/guests";
 
 /** User-scoped storage key. Falls back to global key if no userId. */
@@ -849,6 +850,14 @@ export interface DeviceState {
   retryConnection: () => void;
   /** Pending guest invitations from other users */
   guestInvitations: GuestInvitation[];
+  /** Hosts sharing with me that I've already accepted. */
+  activeHosts: ActiveHost[];
+  /**
+   * Remove my own access to a host's shared machines, by host identity rather
+   * than by device — the grant is per-host, so this drops every machine that
+   * host shared. Reversible: they can share again, I can accept again.
+   */
+  leaveHost: (host: { hostEmail?: string; hostUserId?: string }) => Promise<{ hostName: string }>;
   /** Accept a guest invitation by email match. Optional approvedDeviceIds narrows scope. */
   acceptGuestInvitation: (hostUserId: string, approvedDeviceIds?: string[]) => Promise<void>;
   /** Accept a guest invitation by 6-char invite code (works with any OAuth email). */
@@ -1009,6 +1018,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   /** How many rows the local "Hide from this phone" list is currently hiding. */
   const [hiddenDeviceCount, setHiddenDeviceCount] = useState(0);
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
+  /** Hosts whose share I've already accepted — the anchor for "remove my access". */
+  const [activeHosts, setActiveHosts] = useState<ActiveHost[]>([]);
   const [agentAuthExpired, setAgentAuthExpired] = useState(false);
   const [unreachableSet, setUnreachableSet] = useState<Set<string>>(() => new Set());
   // Sub-minute peer presence harvested from the connected agent's
@@ -1350,6 +1361,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       try {
         const hosts = await fetchGuestHosts(token);
         setGuestInvitations(hosts.pending || []);
+        // `active` used to be dropped here, which is why mobile had no
+        // active-hosts surface at all — you could accept a share on the phone
+        // but never leave one. Web drives its leave UI off exactly this array.
+        setActiveHosts(hosts.active || []);
       } catch {
         // Non-critical — don't fail device refresh
       }
@@ -1684,6 +1699,47 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     setHiddenDeviceCount(0);
     await refreshDevices();
   }, [uid, refreshDevices]);
+
+  /**
+   * Leave by HOST identity rather than by device — the anchor for the active-
+   * hosts list, where there is no Device object to hand to leaveSharedAccess.
+   *
+   * Prefer hostEmail: `GET /guests/hosts` returns `hostUserId` as the Convex
+   * document _id, NOT the public userId string the endpoint resolves. Passing
+   * that id would fail to resolve the host. Device rows carry the public id as
+   * `hostUserIdString`; the hosts list does not.
+   */
+  const handleLeaveHost = useCallback(
+    async (host: { hostEmail?: string; hostUserId?: string }): Promise<{ hostName: string }> => {
+      if (!token) throw new Error("Not signed in");
+      const body: Record<string, string> = {};
+      if (host.hostEmail) body.hostEmail = host.hostEmail;
+      else if (host.hostUserId) body.hostUserId = host.hostUserId;
+      if (Object.keys(body).length === 0) throw new Error("No host on record to leave");
+
+      const res = await fetch(`${getConvexSiteUrl()}/guests/leave`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to remove your access");
+
+      // Drop that host's rows locally so the list reacts immediately, then
+      // reconcile with the server.
+      setDevices((prev) =>
+        prev.filter((d) => !(d.isGuest && !!host.hostEmail && d.hostEmail === host.hostEmail)),
+      );
+      try {
+        await refreshDevices();
+      } catch {
+        // Local state is already correct; a failed refresh must not read as a
+        // failed leave.
+      }
+      return { hostName: data?.hostName || "that host" };
+    },
+    [token, refreshDevices],
+  );
 
   const handleDetachDevice = useCallback(async (device: Device) => {
     const key = deviceIdentityKey(device);
@@ -3692,6 +3748,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       stopReconnectAndBounce,
       retryConnection,
       guestInvitations,
+      activeHosts,
+      leaveHost: handleLeaveHost,
       acceptGuestInvitation,
       acceptGuestByCode,
       inviteGuest,
@@ -3714,7 +3772,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleLeaveSharedAccess, hiddenDeviceCount, handleUnhideAllDevices, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleLeaveSharedAccess, hiddenDeviceCount, handleUnhideAllDevices, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, activeHosts, handleLeaveHost, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

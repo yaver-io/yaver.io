@@ -12546,6 +12546,63 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		})
 		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
 
+	case "guest_leave":
+		var args struct {
+			HostUserID string `json:"hostUserId"`
+			HostEmail  string `json:"hostEmail"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.HostUserID) == "" && strings.TrimSpace(args.HostEmail) == "" {
+			return mcpToolError("hostUserId or hostEmail is required")
+		}
+		leaveResult, err := LeaveSharedAccess(s.convexURL, s.token, args.HostUserID, args.HostEmail)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		host := strings.TrimSpace(leaveResult.HostName)
+		if host == "" {
+			host = strings.TrimSpace(args.HostEmail)
+		}
+		if host == "" {
+			host = strings.TrimSpace(leaveResult.HostUserID)
+		}
+		if host == "" {
+			host = strings.TrimSpace(args.HostUserID)
+		}
+		if leaveResult.AlreadyGone {
+			return mcpToolResult(fmt.Sprintf("Nothing to leave — you already had no access to %s's machines. Your own machines are untouched.", host))
+		}
+		return mcpToolResult(fmt.Sprintf("You left %s's shared machines — your access is removed. Your own machines are untouched.\nReversible: %s can share again and you can accept again with guest_accept.", host, host))
+
+	case "guest_accept":
+		var args struct {
+			Code     string   `json:"code"`
+			Machines []string `json:"machines"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Code) == "" {
+			return mcpToolError("code is required")
+		}
+		acceptResult, err := AcceptGuestByCode(s.convexURL, s.token, args.Code, cleanProjectList(args.Machines))
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		host := strings.TrimSpace(acceptResult.HostName)
+		if host == "" {
+			host = strings.TrimSpace(acceptResult.HostEmail)
+		}
+		if host == "" {
+			host = "the host"
+		}
+		msg := fmt.Sprintf("Invitation accepted — you now have access to %s's shared machines.\n", host)
+		if ids := cleanProjectList(args.Machines); len(ids) > 0 {
+			msg += fmt.Sprintf("Machine narrowing: %s (you took access to these machines only).\n", strings.Join(ids, ", "))
+		} else {
+			msg += "Scope: every machine the host offered.\n"
+		}
+		msg += "Use guest_leave to give this access back at any time."
+		return mcpToolResult(msg)
+
 	case "company_ai_resolve":
 		var args struct {
 			TeamID            string `json:"teamId"`

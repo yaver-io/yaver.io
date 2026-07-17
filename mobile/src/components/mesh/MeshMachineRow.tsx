@@ -30,6 +30,7 @@ export function MeshMachineRow({
   phase,
   onEnable,
   onOpen,
+  onLeave,
 }: {
   name: string;
   os?: string;
@@ -45,6 +46,12 @@ export function MeshMachineRow({
   onEnable: () => void;
   /** Open the node detail screen — only meaningful when the box is a peer. */
   onOpen?: () => void;
+  /**
+   * Guest-only: drop my own access to this box's host. Bound to long-press
+   * rather than a second right-side control, which the layout below
+   * deliberately keeps to one element.
+   */
+  onLeave?: () => void;
 }) {
   const c = useColors();
   const glyph = osGlyph(os);
@@ -65,7 +72,10 @@ export function MeshMachineRow({
   return (
     <Pressable
       onPress={canOpen ? onOpen : undefined}
-      disabled={!canOpen}
+      onLongPress={onLeave}
+      // Stay pressable when the only available action is the long-press leave,
+      // otherwise a shared box that isn't a mesh peer would be inert.
+      disabled={!canOpen && !onLeave}
       style={{
         flexDirection: "row",
         alignItems: "center",
