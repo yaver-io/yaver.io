@@ -8237,6 +8237,44 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(s.mcpDeviceBroadcastCommand(args))
 
 	// --- GitHub ---
+	case "git_prs":
+		var args struct {
+			Provider  string `json:"provider"`
+			Directory string `json:"directory"`
+			State     string `json:"state"`
+			Limit     int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpOps("local", "git_prs", mustJSON(map[string]interface{}{
+			"provider":  args.Provider,
+			"directory": args.Directory,
+			"state":     args.State,
+			"limit":     args.Limit,
+		})))
+	case "git_issues":
+		var args struct {
+			Provider  string `json:"provider"`
+			Directory string `json:"directory"`
+			State     string `json:"state"`
+			Limit     int    `json:"limit"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpOps("local", "git_issues", mustJSON(map[string]interface{}{
+			"provider":  args.Provider,
+			"directory": args.Directory,
+			"state":     args.State,
+			"limit":     args.Limit,
+		})))
+	case "git_ci_status":
+		var args struct {
+			Provider  string `json:"provider"`
+			Directory string `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpOps("local", "git_ci_status", mustJSON(map[string]interface{}{
+			"provider":  args.Provider,
+			"directory": args.Directory,
+		})))
 	case "github_prs":
 		var args struct {
 			Directory string `json:"directory"`
@@ -9214,13 +9252,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpNPMInfo(args.Package))
-	case "github_trending":
-		var args struct {
-			Language string `json:"language"`
-			Since    string `json:"since"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		return mcpToolJSON(mcpGitHubTrending(args.Language, args.Since))
 	case "jwt_decode":
 		var args struct {
 			Token string `json:"token"`
@@ -11269,18 +11300,20 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	// --- gh / glab generic + write-op ---
 	case "gh_run":
 		var a struct {
-			Args []string `json:"args"`
-			Dir  string   `json:"directory"`
+			Args    []string `json:"args"`
+			Dir     string   `json:"directory"`
+			Confirm bool     `json:"confirm"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpGhRun(a.Dir, a.Args))
+		return mcpToolJSON(mcpGhRun(a.Dir, a.Args, a.Confirm))
 	case "glab_run":
 		var a struct {
-			Args []string `json:"args"`
-			Dir  string   `json:"directory"`
+			Args    []string `json:"args"`
+			Dir     string   `json:"directory"`
+			Confirm bool     `json:"confirm"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpGlabRun(a.Dir, a.Args))
+		return mcpToolJSON(mcpGlabRun(a.Dir, a.Args, a.Confirm))
 	case "github_pr_create":
 		var a struct {
 			Dir   string `json:"directory"`

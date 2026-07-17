@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	osexec "os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -427,52 +428,87 @@ func mcpRailwayDeploy(dir string) interface{} {
 // against an unauthed gh hangs on a stdin prompt.
 // ---------------------------------------------------------------------------
 
-func mcpGhRun(dir string, args []string) interface{} {
+func mcpGhRun(dir string, args []string, confirm bool) interface{} {
+	return runForgeCLICommand("gh", dir, args, confirm)
+}
+
+func mcpGlabRun(dir string, args []string, confirm bool) interface{} {
+	return runForgeCLICommand("glab", dir, args, confirm)
+}
+
+func runForgeCLICommand(name, dir string, args []string, confirm bool) interface{} {
 	clis := DetectGitProviderCLIs()
-	cli, ok := clis["gh"]
+	cli, ok := clis[name]
 	if !ok || !cli.Available {
+		if name == "glab" {
+			return map[string]interface{}{"error": "glab CLI not on PATH — install with `yaver install glab` (or brew install glab)"}
+		}
 		return map[string]interface{}{"error": "gh CLI not on PATH — install with `yaver install gh` (or brew install gh)"}
 	}
 	if !cli.Authed {
+		if name == "glab" {
+			return map[string]interface{}{"error": "glab is installed but not authenticated — run `glab auth login` (one-time, opens browser)"}
+		}
 		return map[string]interface{}{"error": "gh is installed but not authenticated — run `gh auth login` (one-time, opens browser)"}
 	}
 	if len(args) == 0 {
-		return map[string]interface{}{"error": "args is required (gh subcommand + flags)"}
+		return map[string]interface{}{"error": fmt.Sprintf("args is required (%s subcommand + flags)", name)}
+	}
+	if err := validateForgeCLIArgs(name, args, confirm); err != "" {
+		return map[string]interface{}{"error": err, "argv": append([]string{name}, args...)}
 	}
 	cmd := osexec.Command(cli.Path, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	out, err := cmd.CombinedOutput()
-	resp := map[string]interface{}{"output": string(out), "argv": append([]string{"gh"}, args...)}
+	resp := map[string]interface{}{"output": string(out), "argv": append([]string{name}, args...)}
 	if err != nil {
 		resp["error"] = err.Error()
 	}
 	return resp
 }
 
-func mcpGlabRun(dir string, args []string) interface{} {
-	clis := DetectGitProviderCLIs()
-	cli, ok := clis["glab"]
-	if !ok || !cli.Available {
-		return map[string]interface{}{"error": "glab CLI not on PATH — install with `yaver install glab` (or brew install glab)"}
+func validateForgeCLIArgs(name string, args []string, confirm bool) string {
+	normalized := make([]string, 0, len(args))
+	for _, arg := range args {
+		normalized = append(normalized, strings.ToLower(strings.TrimSpace(arg)))
 	}
-	if !cli.Authed {
-		return map[string]interface{}{"error": "glab is installed but not authenticated — run `glab auth login` (one-time, opens browser)"}
+
+	if name == "gh" {
+		switch {
+		case slices.Equal(normalized, []string{"auth", "token"}):
+			return "gh auth token is blocked because it prints the active credential"
+		case len(normalized) >= 2 && normalized[0] == "secret" && normalized[1] == "list":
+			return "gh secret list is blocked on gh_run"
+		case len(normalized) >= 3 && (normalized[0] == "repo" || normalized[0] == "org" || normalized[0] == "environment") && normalized[1] == "secret" && normalized[2] == "list":
+			return fmt.Sprintf("gh %s secret list is blocked on gh_run", normalized[0])
+		}
 	}
-	if len(args) == 0 {
-		return map[string]interface{}{"error": "args is required (glab subcommand + flags)"}
+	if name == "glab" && len(normalized) >= 3 && normalized[0] == "auth" && normalized[1] == "status" && slices.Contains(normalized[2:], "--show-token") {
+		return "glab auth status --show-token is blocked because it prints the active credential"
 	}
-	cmd := osexec.Command(cli.Path, args...)
-	if dir != "" {
-		cmd.Dir = dir
+	if forgeCLIDestructive(normalized) && !confirm {
+		return fmt.Sprintf("%s destructive command blocked without confirm:true", name)
 	}
-	out, err := cmd.CombinedOutput()
-	resp := map[string]interface{}{"output": string(out), "argv": append([]string{"glab"}, args...)}
-	if err != nil {
-		resp["error"] = err.Error()
+	return ""
+}
+
+func forgeCLIDestructive(args []string) bool {
+	if len(args) >= 2 && args[0] == "repo" && args[1] == "delete" {
+		return true
 	}
-	return resp
+	if len(args) >= 2 && args[0] == "api" {
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "-x", "--method":
+				if i+1 < len(args) && args[i+1] == "delete" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -502,7 +538,7 @@ func mcpGitHubPRCreate(dir, title, body, base, head string, draft bool) interfac
 	if draft {
 		args = append(args, "--draft")
 	}
-	return mcpGhRun(dir, args)
+	return mcpGhRun(dir, args, false)
 }
 
 func mcpGitHubIssueCreate(dir, title, body string, labels []string) interface{} {
@@ -516,7 +552,7 @@ func mcpGitHubIssueCreate(dir, title, body string, labels []string) interface{} 
 			args = append(args, "--label", l)
 		}
 	}
-	return mcpGhRun(dir, args)
+	return mcpGhRun(dir, args, false)
 }
 
 func mcpGitHubWorkflowRun(dir, workflow, ref string, inputs map[string]string) interface{} {
@@ -530,7 +566,7 @@ func mcpGitHubWorkflowRun(dir, workflow, ref string, inputs map[string]string) i
 	for k, v := range inputs {
 		args = append(args, "--field", k+"="+v)
 	}
-	return mcpGhRun(dir, args)
+	return mcpGhRun(dir, args, false)
 }
 
 func mcpGitLabMRCreate(dir, title, description, sourceBranch, targetBranch string, draft bool) interface{} {
@@ -550,7 +586,7 @@ func mcpGitLabMRCreate(dir, title, description, sourceBranch, targetBranch strin
 	// glab won't push interactively when a TTY isn't attached; tell
 	// it explicitly so non-interactive callers don't hang.
 	args = append(args, "--yes")
-	return mcpGlabRun(dir, args)
+	return mcpGlabRun(dir, args, false)
 }
 
 func mcpGitLabIssueCreate(dir, title, description string, labels []string) interface{} {
@@ -565,7 +601,7 @@ func mcpGitLabIssueCreate(dir, title, description string, labels []string) inter
 		}
 	}
 	args = append(args, "--yes")
-	return mcpGlabRun(dir, args)
+	return mcpGlabRun(dir, args, false)
 }
 
 // Unused import guard
