@@ -60,6 +60,11 @@ read that box's logs but cannot see its diff, stash its work, or land a commit.
   parallel sessions in one checkout; a bare commit swept nine files into the
   wrong commit today. Verbs stage explicit paths only.
 - Keep each iteration to one increment the gate can verify.
+- **Stay inside these files — anything else is a scope violation that kills the
+  run.** Prefix work: `desktop/agent/binary_discovery.go` + its tests in
+  `desktop/agent/binary_discovery_test.go`, and `desktop/agent/main.go`. Git
+  verbs: `desktop/agent/ops_git.go` + its tests in
+  `desktop/agent/ops_git_test.go`. Do not create test files under other names.
 
 ## Work
 
