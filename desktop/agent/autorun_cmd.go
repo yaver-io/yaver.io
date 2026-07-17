@@ -172,6 +172,16 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 	if err != nil {
 		return summary, err
 	}
+	// Iteration 0: the substitution happened before the loop existed. Recording it
+	// as a heal keeps "why is codex driving my opencode run?" answerable from
+	// autorun_status alone, instead of only from whoever read the logs that day.
+	if req := normalizeRunnerID(strings.TrimSpace(opts.Runner)); req != "" && req != "auto" && runner.RunnerID != req {
+		summary.Heals = append(summary.Heals, autorunHealEvent{
+			Iteration: 0,
+			Kind:      autorunHealRunnerFailover,
+			Detail:    fmt.Sprintf("requested runner %s was not ready; fell back to %s", req, runner.RunnerID),
+		})
+	}
 	// The master seat is optional and resolved the same way as the doer: any
 	// registry runner, validated and readiness-checked identically. Resolving it
 	// here means a run with an unauthenticated master fails before the first

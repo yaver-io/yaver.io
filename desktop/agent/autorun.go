@@ -518,23 +518,55 @@ func runAutorunCommandEnv(ctx context.Context, name string, args []string, dir s
 	return autorunCommandResult{Output: output.String(), Err: err}
 }
 
+// selectAutorunRunner picks the runner that will drive the loop.
+//
+// A requested runner that is not ready must NOT end the run. The point of an
+// autorun is to make progress unattended, and "opencode's version probe got
+// SIGKILLed on this box" is a fact about one binary, not a reason to abandon
+// the task while codex sits right there, authenticated and idle. So an explicit
+// request is a PREFERENCE, not a precondition: try it first, then fall back to
+// the same best-effort sweep `auto` already does. The caller records the
+// substitution as a runner_failover heal event, so a fallback is always visible
+// in autorun_status rather than a silent swap.
+//
+// This cannot escalate cost. Every candidate goes through CheckRunnerReady,
+// which gates on the runner's own subscription login, and supportedRunnerIDs is
+// the CLI set — so a fallback swaps one signed-in CLI for another, or it fails.
+// It can never reach for a paid API key.
 func selectAutorunRunner(workDir, requested string) (RunnerConfig, error) {
+	return selectAutorunRunnerWith(workDir, requested, CheckRunnerReady)
+}
+
+// selectAutorunRunnerWith is selectAutorunRunner with the readiness probe passed
+// in. The probe is the one thing here that depends on which CLIs happen to be
+// installed and signed in on this box, so lifting it out is what lets the
+// fallback ORDER be tested deterministically — on a bare CI box and on a laptop
+// with four runners authenticated, which otherwise silently skip each other's
+// coverage.
+func selectAutorunRunnerWith(workDir, requested string, ready func(RunnerConfig, string) error) (RunnerConfig, error) {
 	requested = normalizeRunnerID(strings.TrimSpace(requested))
+	var failures []string
+
 	if requested != "" && requested != "auto" {
+		// An unsupported name is a caller bug, not an unready box — no amount of
+		// falling back makes a typo into a runner, so it still fails loudly.
 		if !IsSupportedRunner(requested) {
 			return RunnerConfig{}, fmt.Errorf("unsupported runner %q", requested)
 		}
 		runner := GetRunnerConfig(requested)
-		if err := CheckRunnerReady(runner, workDir); err != nil {
-			return RunnerConfig{}, fmt.Errorf("runner %s is not ready: %w", requested, err)
+		if err := ready(runner, workDir); err == nil {
+			return runner, nil
+		} else {
+			failures = append(failures, requested+": "+err.Error())
 		}
-		return runner, nil
 	}
 
-	var failures []string
 	for _, id := range supportedRunnerIDs {
+		if id == requested {
+			continue // already tried, and it failed — don't report it twice
+		}
 		runner := GetRunnerConfig(id)
-		if err := CheckRunnerReady(runner, workDir); err == nil {
+		if err := ready(runner, workDir); err == nil {
 			return runner, nil
 		} else {
 			failures = append(failures, id+": "+err.Error())
