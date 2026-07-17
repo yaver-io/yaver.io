@@ -87,6 +87,25 @@ changing those.
   10 MB in ddd5868d — demo videos push it over; enforced identically in
   `scripts/deploy-web.sh` and `release-web.yml`). If you add video, compress
   first (`ffmpeg -crf 32 -vf scale=720 -an`) or host external.
+- **Deploys and cloud tools cost money — coalesce, never spray.** Vercel billed
+  us harshly per build/bandwidth; that is why `web/` runs on Cloudflare Workers
+  (`@opennextjs/cloudflare` + `wrangler`). **Cloudflare is cheaper, not cheap.**
+  Every deploy is metered somewhere — Workers requests, Convex function calls,
+  GitHub Actions minutes, and TestFlight's hard **~15–20 uploads/app/day** cap
+  (which has no rollback: a bad build can only be superseded). Treat a deploy
+  like a Hetzner hour, not like a save:
+  1. **One deploy per converged change — never one per iteration.** When several
+     autorun loops or queued tasks (p0…p9) touch the same target, they
+     `commit` + `push` only; the **last** one deploys, once, after the whole
+     queue converges. N loops must not mean N deploys.
+  2. **Never deploy to "check" something.** Use the local dev server, `wrangler
+     dev`, or a preview. A deploy is not a build step.
+  3. **Be quota-aware before you are quota-blind.** Read the remaining budget
+     (TestFlight uploads today, CI minutes) and park the run rather than burn
+     it. Out-of-quota is a state that needs a human, not a retry.
+  4. Cost-awareness is a product requirement, not just a house rule — it is the
+     whole "lower dev opex" wedge. Cloud tool usage and deploys should report
+     what they cost (`remote_cost`, `switch_cost` are the existing seams).
 - **Never WebView for third-party RN apps.** Use the Hermes-bundle native load
   path (`/dev/build-native` → ExpoReactNativeFactory). WebView is OK for plain
   web content (landing pages, docs).

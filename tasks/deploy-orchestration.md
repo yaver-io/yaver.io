@@ -1,0 +1,176 @@
+---
+master: claude
+doer: codex
+---
+
+# Autorun-level orchestration for deploys
+
+## Why this exists
+
+Autorun already models the hard thing: declarative intent, a **required** gate,
+bounded blast radius, named self-heal kinds, a stable address, and iterate-until-
+verified. The deploy layer was written earlier and has the same needs with none of
+the answers. Almost all of this is pointing the second system at the first
+system's spine — read `desktop/agent/autorun.go`, `autorun_ops.go` and
+`autorun_cmd.go` first; their header comments are the contract you are copying.
+
+**The law: a deploy is metered, irreversible-ish, and externally visible.** It is
+not a build step. Every rule below follows from that.
+
+## Ground rules
+
+- Do the priorities **in order**. Each is one increment the gate can verify.
+- Do not weaken a gate to make it pass. A gate that can be bypassed is not a gate
+  — that is the bug you are fixing.
+- Never make a real deploy from inside this loop. You are changing the machinery,
+  not exercising it. Do not run `wrangler deploy`, `convex deploy`, `npm publish`,
+  or any `scripts/deploy-*.sh`.
+- New status strings must come from ONE vocabulary (P3). Do not invent a sixth.
+
+## P0 — `ops deploy` lies, and four of its targets do nothing
+
+`desktop/agent/ops_deploy.go`. `opsDeployHandler` maps a target to a CLI string,
+calls `StartExec` (`:195`), and returns `OK: true` **as soon as the process
+spawns** (`:199-210`) — it never waits, never reads the exit code, never asks
+whether anything happened. Worse, `cloud` (`:146`), `platform` (`:177`),
+`testflight` (`:182`) and `playstore` (`:187`) are **stubs that deploy nothing
+and return `OK: true`** with a hint string.
+
+- Make the verb await completion and report the real exit code.
+- A stub must not return `OK: true`. Return an explicit unimplemented result, the
+  way `opsDeployRollbackHandler` already honestly refuses with `no_rollback`
+  (`:257-261`). Copy that shape.
+- `deploy_pipeline.go` already has the real staged path with a health check
+  (`:177`) and rollback (`:193`). `mcpDeployRun` (`deploy_pipeline.go:425`)
+  reaches it; ops `deploy` routes around it. Converge them: one path, gated.
+
+## P1 — a deploy gate asks the world, not the process
+
+"Deployed" currently means "uploaded" everywhere. Nothing confirms the new
+version is serving. Add a required post-deploy gate per target, and treat its
+absence as fatal rather than as success.
+
+- `deploy_pipeline.go:288` passes on `StatusCode < 500` — **a 404 counts as
+  healthy.** Fix: assert the deployed build identifier, not merely a response.
+- Uploaded-but-unconfirmed is **not** success. It is `unknown` — the same
+  contract autorun already has, where an empty `finalCommit` means the run did not
+  finish however quiet it looks (`agentStatus.ts:189-207` documents the reasoning).
+  A confirmed live version is a deploy's `finalCommit`.
+- Gates are a question about the world:
+  - web → fetch the deployed URL, assert the shipped SHA/version
+  - convex → query the deployment for its version
+  - npm → `npm view yaver-cli@<v> version`
+  - testflight → App Store Connect build state == PROCESSED
+    (`desktop/agent/appstoreconnect.go` already speaks this API — reuse it)
+
+## P2 — deploy identity is random; make it a slot
+
+`deploy_history.go`. `NewRunID()` (`:113`) is 8 random bytes, and `:317` sorts by
+`StartedAt` descending — so "the current deploy for web" is a guess at the top of
+a recency-sorted list. This is **exactly** the shape `autorunSlotKey`
+(`autorun.go:284`) was introduced to kill; read that comment, it makes the whole
+argument.
+
+- Give a deploy a stable address: `deploy:<target>` (e.g. `deploy:web`).
+- Sort by slot, not recency — mirror `sortAutorunViewsBySlot`
+  (`autorun_ops.go:162`) and its comment.
+- History is in-memory and lost on agent restart (`deploy_history.go:72-87`,
+  logs persist but rows don't). A slot that forgets itself on restart is not an
+  address. Persist the rows.
+
+## P3 — one status vocabulary (there are five)
+
+- `autorun_ops.go` → `running · completed · failed · stopped · stopping`
+- `deploy_pipeline.go:33` → `running · success · failed · rolled-back`
+- `deploy_all.go:56` → `deployed · skipped · blocked · failed` (+ gate
+  `green/red/forced`)
+- `deploy_history.go:58` → **no status at all**, just `OK bool` + `InProgress bool`
+- `publish.go:55` → `running · completed · failed · dispatched`
+
+Deploy says `success` where two others say `completed`. Both UIs already paper
+over the hole by **synthesising** the missing field — `BuildsView.tsx:395` and
+`builds.tsx:595` both do `run.status || (run.ok ? "completed" : "failed")`. When
+two surfaces independently invent the same field, it belongs in the model.
+
+Converge on autorun's wire vocabulary, add `unknown` (P1), keep `rolled-back`
+(it is a real deploy state autorun has no analogue for). Delete the synthesis in
+both UIs once the field is real.
+
+## P4 — the DAG: publish is an edge, deploy is a sink
+
+A push is internal and composable; a deploy is external, metered and effectively
+irreversible (`convex`, `testflight`, `playstore` all return `no_rollback` —
+`ops_deploy.go:257-261`). So **N loops must not mean N deploys.**
+
+- Task front matter grows two keys, parsed exactly like the seats are today
+  (`autorunSeatsFromTask`, `autorun.go:238` — read it; front matter only, never
+  prose, and the operator's explicit flag always wins):
+  - `needs: [<slot key>, …]` — this loop's dependencies
+  - `deploy: auto | none | [targets]`
+- A loop **with dependents publishes only** (commit + push). The **terminal** loop
+  deploys, once, after the whole queue (p0…p9) converges.
+- `needs` takes **slot keys**, not session IDs — a session ID is new on every
+  restart, which is the entire reason `task:seat` exists.
+
+## P5 — quota is `blocked`, not `failed`
+
+Nothing anywhere detects a usage limit: grep `autorun*.go` and
+`runner_session*.go` for quota / rate-limit / 429 and you get zero hits.
+
+This is the **same bug** as commit `7a5c652d7`. A TUI turn is a pane capture, so a
+runner that has hit its limit exits 0 and returns its limit screen; non-empty text
+sails past the `instruction == ""` guard in `autorunPlan` and the doer is kicked
+with a billing notice as "YOUR INSTRUCTION FOR THIS ITERATION".
+`autorunTurnIsSignInChrome` matches a **sign-in phrase**, so a quota screen walks
+straight through it.
+
+- Extend the chrome detector to usage-limit screens, with the same both-signals
+  rule it already uses (chrome AND a limit phrase — either alone is legitimate,
+  since an instruction may legitimately discuss quotas).
+- Surface it as `blocked` — the one state that is a request. Not `failed` (nothing
+  is broken, retrying won't help) and not `healing` (the loop cannot fix it).
+- TestFlight is **quota-aware, not quota-blind**: ~15–20 uploads/app/day, and no
+  rollback. Read the remaining budget before spending it and park as `blocked`
+  when it's gone. Burning the day's quota on loop iterations is the failure this
+  prevents.
+
+## P6 — cost awareness is a product requirement
+
+See the new deploy-cost rule in `CLAUDE.md`. Vercel billed per build harshly,
+which is why web runs on Cloudflare Workers — and **Cloudflare is cheaper, not
+cheap**. Every deploy is metered somewhere.
+
+- A deploy result should report what it cost or consumed (builds, uploads,
+  minutes). `remote_cost` and `switch_cost` are the existing seams — follow their
+  shape rather than inventing one.
+- Coalesce: never deploy per-iteration, only per converged change (P4).
+
+## P7 — auto-deploy on by default (do this LAST)
+
+Only meaningful once P0–P2 make the gate real. Default-on over a layer that
+returns `OK` on spawn automates the *claim* that you deployed, not the deploy.
+
+- `deploy: auto` is the default when the key is absent.
+- Per-target defaults in `backend/convex/userSettings.ts` (which already has
+  `get`/`set`/`setByToken`/`seedDefaults` — this is a field, not a subsystem):
+  `web: auto`, `convex: auto`, `npm: ask`, `testflight: ask`, `play: ask`.
+  Rationale is reversibility + cost + quota, not taste.
+- `ask` is not a modal on someone's desk — it is `blocked` (P5), pushed, with one
+  confirm.
+- Precedence mirrors the seats rule: task front matter > userSettings > defaults.
+- Surface one three-state row per target in the web dashboard settings and the
+  mobile settings screen. One Convex row, both surfaces reading it — do not
+  create a second definition (that is the P3 mistake).
+
+## Out of scope
+
+Do not touch `tasks/ambient-slots.md`'s files (another loop owns `web/**` and
+`mobile/**` UI work — coordinate via git, not by editing its files):
+`mobile/src/lib/agentSlots.ts`, `agentStatus.ts`, `web/lib/agentStatus.ts`,
+`web/app/spatial/**`. Do not add dependencies. Do not perform a real deploy.
+
+## Definition of done
+
+Say DONE, alone, only when P0–P7 are complete and verified in the git log, the
+gate passes, and `ops deploy` can no longer report success for a deploy that did
+not happen.
