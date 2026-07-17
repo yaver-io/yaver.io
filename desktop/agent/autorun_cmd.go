@@ -195,8 +195,16 @@ func executeAutorun(ctx context.Context, opts autorunOptions) (autorunRunSummary
 			return summary, fmt.Errorf("master and doer are both %q; the split exists to put two different runners in the two seats", master.RunnerID)
 		}
 	}
-	if fetch := autorunExec(ctx, "git", []string{"fetch", "origin"}, opts.WorkDir); fetch.Err != nil {
-		return summary, fmt.Errorf("git fetch origin: %w: %s", fetch.Err, strings.TrimSpace(fetch.Output))
+	// Resolve the remote rather than assuming "origin": this repo's own
+	// convention is a single remote named `github` (CLAUDE.md), and assuming
+	// origin killed runs at iteration 0 with "'origin' does not appear to be a
+	// git repository" — a loop dying because the checkout followed the rules.
+	remote, remoteErr := autorunRemoteFor(ctx, opts.WorkDir)
+	if remoteErr != nil {
+		return summary, remoteErr
+	}
+	if fetch := autorunExec(ctx, "git", []string{"fetch", remote}, opts.WorkDir); fetch.Err != nil {
+		return summary, fmt.Errorf("git fetch %s: %w: %s", remote, fetch.Err, strings.TrimSpace(fetch.Output))
 	}
 
 	reason, runErr := autorunLoop(ctx, opts, runner, master, string(taskBytes), progressPath, &summary)

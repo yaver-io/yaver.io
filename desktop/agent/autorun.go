@@ -515,13 +515,18 @@ func autorunPrepareWorkspace(ctx context.Context, taskPath, sourceWorkDir, seat 
 	if err := os.MkdirAll(filepath.Dir(ws.WorkDir), 0700); err != nil {
 		return autorunWorkspace{}, fmt.Errorf("create autorun worktree parent: %w", err)
 	}
-	_ = autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "fetch", "origin"}, ws.SourceWorkDir)
+	_ = autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "fetch", autorunRemoteOrOrigin(ctx, ws.SourceWorkDir)}, ws.SourceWorkDir)
 	branchExists := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "show-ref", "--verify", "--quiet", "refs/heads/" + ws.Branch}, ws.SourceWorkDir)
 	var args []string
 	if branchExists.Err == nil {
 		args = []string{"-C", ws.SourceWorkDir, "worktree", "add", ws.WorkDir, ws.Branch}
 	} else {
-		base := "origin/main"
+		// Base the new branch on the REMOTE's main, resolved by name. Assuming
+		// "origin/main" here did not crash — the probe below fell through to a
+		// local "main" — which is worse: on a checkout whose remote is `github`
+		// (this repo's own convention) every autorun branch silently started
+		// from a possibly-stale local main instead of what's on the server.
+		base := autorunRemoteOrOrigin(ctx, ws.SourceWorkDir) + "/main"
 		if probe := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "show-ref", "--verify", "--quiet", "refs/remotes/" + base}, ws.SourceWorkDir); probe.Err != nil {
 			base = "main"
 		}
@@ -672,9 +677,10 @@ func autorunPushBranch(ctx context.Context, workDir string) error {
 	if name == "" || name == "HEAD" {
 		return fmt.Errorf("push requires a named branch, got %q", name)
 	}
-	push := autorunExec(ctx, "git", []string{"push", "--set-upstream", "origin", name}, workDir)
+	pushRemote := autorunRemoteOrOrigin(ctx, workDir)
+	push := autorunExec(ctx, "git", []string{"push", "--set-upstream", pushRemote, name}, workDir)
 	if push.Err != nil {
-		return fmt.Errorf("git push origin %s: %w: %s", name, push.Err, strings.TrimSpace(push.Output))
+		return fmt.Errorf("git push %s %s: %w: %s", pushRemote, name, push.Err, strings.TrimSpace(push.Output))
 	}
 	return nil
 }
@@ -775,19 +781,20 @@ func autorunLandOntoMain(ctx context.Context, ws autorunWorkspace, push bool) er
 			return fmt.Errorf("landing cancelled: %w", ctx.Err())
 		}
 
-		fetch := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "fetch", "origin"}, ws.SourceWorkDir)
+		landRemote := autorunRemoteOrOrigin(ctx, ws.SourceWorkDir)
+		fetch := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "fetch", landRemote}, ws.SourceWorkDir)
 		if fetch.Err != nil {
-			return fmt.Errorf("git fetch origin: %w: %s", fetch.Err, strings.TrimSpace(fetch.Output))
+			return fmt.Errorf("git fetch %s: %w: %s", landRemote, fetch.Err, strings.TrimSpace(fetch.Output))
 		}
 
 		// Take whatever landed while we waited. --rebase (not --ff-only) because
 		// on a retry our own merge is already on local main; see above.
-		sync := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "pull", "--rebase", "origin", "main"}, ws.SourceWorkDir)
+		sync := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "pull", "--rebase", landRemote, "main"}, ws.SourceWorkDir)
 		if sync.Err != nil {
 			// A rebase that stops mid-way leaves the checkout in a rebasing state,
 			// which would strand the clone for every future run. Put it back.
 			autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "rebase", "--abort"}, ws.SourceWorkDir)
-			return fmt.Errorf("git pull --rebase origin main: %w: %s", sync.Err, strings.TrimSpace(sync.Output))
+			return fmt.Errorf("git pull --rebase %s main: %w: %s", landRemote, sync.Err, strings.TrimSpace(sync.Output))
 		}
 
 		// Idempotent across attempts: once merged, this reports "Already up to date".
@@ -796,11 +803,11 @@ func autorunLandOntoMain(ctx context.Context, ws autorunWorkspace, push bool) er
 			return fmt.Errorf("git merge --ff-only %s into main: %w: %s", ws.Branch, merge.Err, strings.TrimSpace(merge.Output))
 		}
 
-		pushMain := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", "origin", "main"}, ws.SourceWorkDir)
+		pushMain := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", landRemote, "main"}, ws.SourceWorkDir)
 		if pushMain.Err == nil {
 			return nil
 		}
-		lastErr = fmt.Errorf("git push origin main: %w: %s", pushMain.Err, strings.TrimSpace(pushMain.Output))
+		lastErr = fmt.Errorf("git push %s main: %w: %s", landRemote, pushMain.Err, strings.TrimSpace(pushMain.Output))
 		if !autorunPushWasRejected(pushMain.Output) {
 			// Auth, network, a protected branch — retrying just repeats it.
 			return lastErr
@@ -857,9 +864,10 @@ func autorunReleaseWorkspace(ctx context.Context, ws autorunWorkspace, push, lan
 		return fmt.Errorf("git branch -D %s: %w: %s", ws.Branch, deleteBranch.Err, strings.TrimSpace(deleteBranch.Output))
 	}
 	if push {
-		deleteRemote := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", "origin", "--delete", ws.Branch}, ws.SourceWorkDir)
+		cleanupRemote := autorunRemoteOrOrigin(ctx, ws.SourceWorkDir)
+		deleteRemote := autorunExec(ctx, "git", []string{"-C", ws.SourceWorkDir, "push", cleanupRemote, "--delete", ws.Branch}, ws.SourceWorkDir)
 		if deleteRemote.Err != nil && !strings.Contains(deleteRemote.Output, "remote ref does not exist") {
-			return fmt.Errorf("git push origin --delete %s: %w: %s", ws.Branch, deleteRemote.Err, strings.TrimSpace(deleteRemote.Output))
+			return fmt.Errorf("git push %s --delete %s: %w: %s", cleanupRemote, ws.Branch, deleteRemote.Err, strings.TrimSpace(deleteRemote.Output))
 		}
 	}
 	return nil
