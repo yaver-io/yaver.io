@@ -212,10 +212,11 @@ export function collapseDevices(devices: CoreDevice[]): CoreDevice[] {
 // ── Freshness + target pick ───────────────────────────────────────────
 
 /**
- * "Fresh" matches the mobile app: online + heartbeat < 90 s. Clients
- * read Convex's `isOnline` first (backend already applies its own 90 s
- * gate from the server clock), then use this helper when they need the
- * phone-side freshness opinion too — e.g. for auto-connect picks.
+ * "Fresh" matches the mobile app: online + heartbeat within
+ * HEARTBEAT_STALE_MS. Clients read Convex's `isOnline` first (the backend
+ * applies the same gate from the server clock), then use this helper when
+ * they need the phone-side freshness opinion too — e.g. for auto-connect
+ * picks.
  */
 export function isDeviceFresh(d: CoreDevice, now = Date.now()): boolean {
   if (!d.isOnline) return false;
@@ -224,11 +225,20 @@ export function isDeviceFresh(d: CoreDevice, now = Date.now()): boolean {
 }
 
 /**
- * Choose the best candidate for an auto-connect attempt. Preference:
- *   1. explicit `preferredDeviceId` that's still fresh
- *   2. fresh (online + recent heartbeat) + has a quicHost
- *   3. online + has a quicHost
- *   4. first with a quicHost
+ * Choose the best candidate for an auto-connect attempt.
+ *
+ * An explicit `preferredDeviceId` is honoured by id ALONE, or not at all:
+ *   - A missing `quicHost` is not grounds to reroute. Relay transport
+ *     addresses a device by id (`<relay>/d/<deviceId>`), so the entry is
+ *     still reachable off-LAN — which is precisely when quicHost is absent.
+ *   - If the id is not in the list, return null. Falling through to another
+ *     machine silently lands the user's fix on the wrong host: they pick the
+ *     Mac mini, the commit shows up on the laptop, and nothing reports an
+ *     error. Not connecting is the better failure — the caller surfaces
+ *     "selected machine missing, re-select it".
+ *
+ * With no preference, fall back: fresh + quicHost → online + quicHost →
+ * first with a quicHost.
  */
 export function pickTargetDevice(
   devices: CoreDevice[],
@@ -236,11 +246,7 @@ export function pickTargetDevice(
 ): CoreDevice | null {
   if (!devices.length) return null;
   if (preferredDeviceId) {
-    const preferred = devices.find(
-      (d) => d.deviceId === preferredDeviceId && d.quicHost,
-    );
-    if (preferred && isDeviceFresh(preferred)) return preferred;
-    if (preferred) return preferred;
+    return devices.find((d) => d.deviceId === preferredDeviceId) ?? null;
   }
   const fresh = devices.find((d) => isDeviceFresh(d) && d.quicHost);
   if (fresh) return fresh;
