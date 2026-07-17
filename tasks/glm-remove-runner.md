@@ -173,14 +173,28 @@ then make mobile follow in the same change.**
 the glm runner is gone that copy is a lie. Fix the Go lane first, then make the
 copy match what actually runs. Do not rewrite the label alone.
 
-## Gate
+## DO NOT BUILD. DO NOT RUN TESTS.
 
-```
-cd desktop/agent && go build ./... && go test -count=1 -run 'TestRunner|TestLoadRunners|TestAutorun|TestTasks|TestGLM|TestSandbox' .
-```
+Owner's instruction: **do the coding, commit, push to main. That is all.**
 
-**NEVER run a bare `go test ./...` in `desktop/agent`** — `TestAuthLogout` hits
-the real `~/.yaver` and signs the box out. Always scope with `-run`.
+Do NOT run `go build`, `go test`, `xcodebuild`, `gradle`, `tsc`, `npm run
+build`, or any compile/test step — not to check your work, not once. This box is
+running other autoruns concurrently and a Go build cache is what filled its disk
+to 1.1 GB free before (`reclaimAutorunDisk` exists for that reason).
+
+This means **nothing verifies your edits** — the gate is a no-op, so an
+`autorun: verified iteration N` commit here means only "codex changed files",
+NOT "it compiles". Compensate by editing conservatively:
+
+- Prefer deletions and list/union trims you can reason about locally.
+- Re-apply the recorded web/ + mobile/ edits verbatim — they already
+  typechecked clean before being lost; re-deriving them risks new breakage you
+  cannot detect.
+- If a change needs a compiler to know whether it is right, **do not make it** —
+  write it down under "Needs verification" in the progress file and move on.
+- **NEVER** run a bare `go test ./...` in `desktop/agent` — `TestAuthLogout`
+  hits the real `~/.yaver` and signs the box out. (Restated in case you ignore
+  the above: it is the one that costs the owner their session.)
 
 ## Done means
 
