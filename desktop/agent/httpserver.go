@@ -3922,22 +3922,62 @@ func (s *HTTPServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// listTasksDefaultLimit bounds the response when the caller does not ask for a
+// size. It is a DEFAULT, not an option, because an opt-in cap is not a cap:
+// `?limit=` was already supported here and every client that forgot it got the
+// entire history. On a real box that reached ~4000 tasks the response was ~8 MB,
+// which the relay answered with a 502 after 15s — and the phone rendered that as
+// "the machine accepted the connection but never answered", i.e. a CONNECTION
+// failure. Transport was perfectly healthy the whole time (/health 53 bytes in
+// 0.33s over the same relay); only this one endpoint was unusable, which is why
+// it read as an intermittent, un-debuggable connection problem for so long.
+const listTasksDefaultLimit = 50
+
+// listTasksMaxLimit caps even an explicit ?limit=. A client asking for
+// everything must still not be able to produce a response no transport can
+// carry.
+const listTasksMaxLimit = 500
+
 func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := s.taskMgr.ListTasks()
-	for i := range tasks {
-		s.enrichTaskInfoVideo(&tasks[i], r)
+	total := len(tasks)
+
+	// Newest first. ListTasks ranges over a MAP, so without this the order is
+	// randomised by Go on every call — which meant the pre-existing ?limit=N
+	// returned an arbitrary N tasks rather than the N most recent, and a
+	// paging client could see the same task twice and never see another.
+	sort.SliceStable(tasks, func(i, j int) bool {
+		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+	})
+
+	limit := listTasksDefaultLimit
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > listTasksMaxLimit {
+		limit = listTasksMaxLimit
+	}
+	if limit < len(tasks) {
+		tasks = tasks[:limit]
 	}
 
-	// Support ?limit=N to reduce payload size for web dashboard polling
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 && limit < len(tasks) {
-			tasks = tasks[:limit]
-		}
+	// Enrich AFTER limiting. Doing it first did per-task work for every task on
+	// the box to build rows that were then thrown away.
+	for i := range tasks {
+		s.enrichTaskInfoVideo(&tasks[i], r)
 	}
 
 	resp := map[string]interface{}{
 		"ok":    true,
 		"tasks": tasks,
+		// total vs returned, so a client can tell "you have 4000 tasks, here are
+		// the newest 50" from "you have 50 tasks". Without it, a truncated list
+		// is indistinguishable from a complete one.
+		"total":     total,
+		"returned":  len(tasks),
+		"truncated": len(tasks) < total,
 	}
 	// Include project context so mobile can display project chips
 	project := DetectProjectInfo(s.taskMgr.workDir)
