@@ -442,16 +442,69 @@ func removeOpenCodeMCPConfig() (bool, error) {
 	return true, nil
 }
 
+// stableYaverBinaryDir is the version-independent install path npm maintains.
+// ~/.yaver/bin/current/<platform>/yaver is a symlink that auto-update repoints;
+// the versioned siblings (bin/1.99.311/...) are what it points AT.
+const stableYaverBinaryDir = "/.yaver/bin/current/"
+
+// findYaverBinary returns the path to write into a runner's MCP config.
+//
+// It must be the STABLE path, not the resolved one. This function used to call
+// filepath.EvalSymlinks unconditionally, which turns
+// ~/.yaver/bin/current/darwin-arm64/yaver into ~/.yaver/bin/1.99.311/... —
+// pinning the config to whichever version happened to be live at setup time.
+// Auto-update then installs 1.99.312 and repoints `current`, the pinned
+// directory eventually gets cleaned up, and the runner reports:
+//
+//	MCP client for `yaver` failed to start: handshaking with MCP server
+//	failed: connection closed
+//
+// Observed on a real box the same day its agent updated 1.99.311 -> 1.99.312.
+// The symlink exists precisely so callers do not have to care about versions;
+// resolving it discards the only thing that made it useful.
+//
+// EvalSymlinks is still the right fallback everywhere else: for a dev build or
+// a $PATH shim, the resolved location is the honest answer.
 func findYaverBinary() string {
 	exe, err := os.Executable()
 	if err != nil {
 		return "yaver"
 	}
+	// Already the stable path — keep it exactly as-is.
+	if strings.Contains(filepath.ToSlash(exe), stableYaverBinaryDir) {
+		return exe
+	}
 	resolved, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		return exe
 	}
+	// Resolved into a versioned install: rewrite back onto `current` when that
+	// stable path exists and points somewhere real.
+	if stable := stableCounterpart(resolved); stable != "" {
+		return stable
+	}
 	return resolved
+}
+
+// stableCounterpart maps ~/.yaver/bin/<version>/<platform>/yaver back onto
+// ~/.yaver/bin/current/<platform>/yaver, returning "" when that is not what
+// this path is or the stable path does not exist.
+func stableCounterpart(resolved string) string {
+	slash := filepath.ToSlash(resolved)
+	i := strings.Index(slash, "/.yaver/bin/")
+	if i < 0 {
+		return ""
+	}
+	rest := slash[i+len("/.yaver/bin/"):] // "<version>/<platform>/yaver"
+	parts := strings.Split(rest, "/")
+	if len(parts) < 2 || parts[0] == "current" {
+		return ""
+	}
+	candidate := filepath.Join(slash[:i], ".yaver", "bin", "current", filepath.Join(parts[1:]...))
+	if _, err := os.Stat(candidate); err != nil {
+		return "" // no stable path — the versioned one is all we have
+	}
+	return candidate
 }
 
 func mcpServerEntry(yaverPath string) map[string]interface{} {
