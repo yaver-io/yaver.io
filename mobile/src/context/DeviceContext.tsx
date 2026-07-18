@@ -19,6 +19,7 @@ import { connectionManager } from "../lib/connectionManager";
 import { useAuth } from "./AuthContext";
 import { getConvexSiteUrl, getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS, UserSettingsUnavailableError } from "../lib/auth";
 import { appLog } from "../lib/logger";
+import { sameDeviceList } from "../lib/deviceListEquality";
 import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
 import { submitEncryptedPair } from "../lib/encryptedPair";
@@ -1345,7 +1346,28 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const withLocalBox = localBox
           ? [localBox, ...finalDevices.filter((d) => d.id !== LOCAL_BOX_DEVICE_ID)]
           : finalDevices;
-        setDevices(withLocalBox);
+        // Keep the PREVIOUS array when nothing material changed.
+        //
+        // refreshDevices runs every 30s and used to hand setDevices a freshly
+        // built array every time, so `devices` got a new identity on every tick
+        // even when the fleet was byte-identical. Every effect keyed on
+        // `devices` therefore re-ran on a 30s metronome — including the one
+        // that re-enters setFocused/clientFor/setConnectionStatus, which
+        // re-triggers the direct-candidate race for every known box.
+        //
+        // Measured consequence: ~15 candidate probes per cycle across 6
+        // devices, each with a 2.5s timeout, plus four concurrent reconnect
+        // ladders whose backoff never escaped 1s->2.1s->4.1s->8.4s because the
+        // 30s tick kept restarting them. That storm starved the connection that
+        // WAS working — relay connected at 19:07:11 and by 19:09:07 even relay
+        // failed, while another machine on the same relay saw HTTP 200
+        // throughout. The app then cold-launched, killing an in-progress
+        // sign-in.
+        //
+        // Fixed at the source rather than by re-keying one effect: any effect
+        // depending on `devices` gets the same protection, including ones added
+        // later that would otherwise reintroduce this quietly.
+        setDevices((prev) => (sameDeviceList(prev, withLocalBox) ? prev : withLocalBox));
         if (withLocalBox.length > 0) {
           setEverHadDevices((prev) => {
             if (!prev) AsyncStorage.setItem("@yaver/ever_had_devices", "1").catch(() => {});
