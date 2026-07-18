@@ -44,44 +44,19 @@ import (
 	"strings"
 )
 
-// codexHomeDir resolves Codex's state directory, honouring CODEX_HOME the way
-// the CLI does, falling back to ~/.codex.
-func codexHomeDir(home string) string {
+// codexStateDirFor is the home-injectable form of codexHomeDir (transfer.go),
+// which resolves against the process's own $HOME and so cannot be pointed at a
+// t.TempDir(). Same rule: $CODEX_HOME wins, else <home>/.codex.
+func codexStateDirFor(home string) string {
 	if dir := strings.TrimSpace(os.Getenv("CODEX_HOME")); dir != "" {
 		return dir
 	}
 	return filepath.Join(home, ".codex")
 }
 
-// writeFileAtomic replaces path in one rename. A live codex process may be
-// reading these files, and a truncated config.toml loses every project's trust
-// level — a worse outcome than the prompt we are suppressing.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".yaver-*")
-	if err != nil {
-		return fmt.Errorf("temp file in %s: %w", dir, err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op once the rename succeeds
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write %s: %w", tmpPath, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", tmpPath, err)
-	}
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		return fmt.Errorf("chmod %s: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename onto %s: %w", path, err)
-	}
-	return nil
-}
+// Writes go through writeFileAtomic (self_heal.go) — a live codex process may
+// be reading these files, and a truncated config.toml loses every project's
+// trust level, which is worse than the prompt being suppressed here.
 
 // ensureCodexUpdatePromptDismissed pre-answers Codex's "Update available"
 // prompt so a TUI runner opens on its normal input line.
@@ -92,7 +67,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 // version — writing a guess here would suppress a future prompt we have not
 // seen.
 func ensureCodexUpdatePromptDismissed(home string) error {
-	path := filepath.Join(codexHomeDir(home), "version.json")
+	path := filepath.Join(codexStateDirFor(home), "version.json")
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -153,7 +128,7 @@ func ensureCodexFolderTrusted(home, workDir string) error {
 		return fmt.Errorf("resolve %s: %w", workDir, err)
 	}
 
-	path := filepath.Join(codexHomeDir(home), "config.toml")
+	path := filepath.Join(codexStateDirFor(home), "config.toml")
 	existing := ""
 	switch data, rerr := os.ReadFile(path); {
 	case rerr == nil:
@@ -180,6 +155,12 @@ func ensureCodexFolderTrusted(home, workDir string) error {
 	b.WriteString(header)
 	b.WriteString("\ntrust_level = \"trusted\"\n")
 
+	// writeFileAtomic creates its temp file beside the target and does NOT
+	// create the directory, so on a box where codex has never run this is the
+	// difference between a trusted worktree and an ENOENT.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
 	if err := writeFileAtomic(path, []byte(b.String()), 0o600); err != nil {
 		return err
 	}

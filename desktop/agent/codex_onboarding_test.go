@@ -141,7 +141,7 @@ func TestCodexFolderTrustedAppendsWorktree(t *testing.T) {
 	if !strings.Contains(got, existing) {
 		t.Fatalf("pre-existing project entry was lost:\n%s", got)
 	}
-	if !strings.Contains(got, "[projects."+strconvQuote(work)+"]") {
+	if !strings.Contains(got, "[projects."+codexTOMLKeyQuote(work)+"]") {
 		t.Fatalf("worktree not trusted:\n%s", got)
 	}
 	if !strings.Contains(got, "trust_level = \"trusted\"") {
@@ -165,12 +165,12 @@ func TestCodexFolderTrustedIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if n := strings.Count(string(data), "[projects."+strconvQuote(work)+"]"); n != 1 {
+	if n := strings.Count(string(data), "[projects."+codexTOMLKeyQuote(work)+"]"); n != 1 {
 		t.Fatalf("entry written %d times, want 1:\n%s", n, data)
 	}
 }
 
-func strconvQuote(s string) string {
+func codexTOMLKeyQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
