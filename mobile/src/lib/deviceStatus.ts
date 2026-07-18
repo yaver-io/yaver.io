@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { quicClient } from "./quic";
-import { buildDirectProbeTargets } from "./probeTargets";
+import { buildDirectProbeTargets, isCredentialSafeBase } from "./probeTargets";
 
 export type MobileDeviceStatusProbe = {
   reachable: boolean;
@@ -216,7 +216,6 @@ export async function probeMobileDeviceStatus(
       attempts.push({ base: `${relay.httpUrl}/d/${device.id}`, headers, path: "relay" });
     }
   }
-  const directHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
   // Direct-leg selection (including the `.local` exclusion and why) lives in
   // lib/probeTargets.ts so it can be unit-tested without React Native.
   for (const target of buildDirectProbeTargets({
@@ -224,7 +223,15 @@ export async function probeMobileDeviceStatus(
     port: device.port,
     lanIps: device.lanIps,
   })) {
-    attempts.push({ base: target, headers: directHeaders, path: "direct" });
+    // Attach the session bearer ONLY where it cannot be read off the wire.
+    // These legs are plaintext http://, and for a Yaver-managed cloud box the
+    // host is a PUBLIC address — so the previous unconditional header shipped
+    // the user's session token in cleartext across the internet every 8s. A
+    // reachability probe does not need the caller's identity; /info answers
+    // unauthenticated with less detail, which is enough to decide "up or not".
+    const headers: Record<string, string> =
+      token && isCredentialSafeBase(target) ? { Authorization: `Bearer ${token}` } : {};
+    attempts.push({ base: target, headers, path: "direct" });
   }
 
   const winner = attempts.length
