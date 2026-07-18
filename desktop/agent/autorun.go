@@ -51,6 +51,19 @@ const autorunFinalCommitMarker = "final autorun commit"
 const (
 	autorunReasonDone      = "task marked DONE"
 	autorunReasonConverged = "converged: runner stopped making changes"
+	// autorunReasonNoEdits is "it never started", which `converged` used to
+	// swallow. Both look like two no-op iterations from inside the loop, and
+	// they mean opposite things:
+	//
+	//	converged  — the runner made changes, then stopped. Work happened.
+	//	no_edits   — the runner never changed anything at all.
+	//
+	// The measured cost of conflating them: on 2026-07-17 the mini reported
+	// runs as "converged" that had produced nothing, and a merged 4-objective
+	// task was killed after two turns spent legitimately reading its task files
+	// — orienting, which is what a good runner does first. Reported as success,
+	// it is indistinguishable from a task that was genuinely complete.
+	autorunReasonNoEdits   = "no edits: runner never changed anything"
 	autorunReasonMaxIters  = "reached --max-iters"
 	autorunReasonGate      = "gate failed"
 	autorunReasonRunner    = "runner failed"
@@ -754,7 +767,12 @@ func autorunWorkSucceeded(reason string) bool {
 
 func autorunReleasesSlot(reason string) bool {
 	switch reason {
-	case autorunReasonConverged, autorunReasonDone:
+	// no-edits releases too: a run that produced zero commits has nothing in
+	// its worktree worth preserving for a restart, and keeping it would add to
+	// the orphaned-worktree pile that already accumulates unreaped (seven were
+	// found on one box). Distinguishing the REASON is what matters for honesty;
+	// the slot should still be cleaned up.
+	case autorunReasonConverged, autorunReasonDone, autorunReasonNoEdits:
 		return true
 	default:
 		return false

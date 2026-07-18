@@ -281,8 +281,12 @@ func TestAutorunClosedLoopConvergesWhenTheRunnerHasNothingToDo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.FinishReason != autorunReasonConverged {
-		t.Fatalf("finish reason = %q, want %q — an idle runner was kicked to the iteration cap", summary.FinishReason, autorunReasonConverged)
+	// no-edits, NOT converged. The loop cannot tell "this task was already
+	// finished" from "the runner never got started", and reporting the second
+	// as convergence is how a night of zero-output runs read as successes. The
+	// honest signal for a genuinely complete task is the runner writing DONE.
+	if summary.FinishReason != autorunReasonNoEdits {
+		t.Fatalf("finish reason = %q, want %q — zero commits is not convergence", summary.FinishReason, autorunReasonNoEdits)
 	}
 	// Two no-ops is the convergence rule; anything more is tokens burned on a
 	// task that was already finished.

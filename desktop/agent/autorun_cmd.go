@@ -432,8 +432,25 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			noops++
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: runner `%s` made no changes (%d consecutive no-op).", iteration, runner.RunnerID, noops))
 			if noops >= 2 {
-				publishAutorunState(ctx, opts, runner.RunnerID, "converged", "completed", autorunReasonConverged, *summary)
-				return autorunReasonConverged, nil
+				// Two no-ops end the run either way, but they mean opposite
+				// things and must not be reported identically.
+				//
+				// A run that committed something and then went quiet has
+				// converged — the work is done. A run that never committed
+				// anything never started: it was killed while still reading its
+				// task, which is what a good runner does first on a large brief.
+				// Calling that "converged" is how a night of zero-output runs
+				// looked like a night of successes.
+				reason := autorunReasonConverged
+				event := "converged"
+				if summary.Commits == 0 {
+					reason = autorunReasonNoEdits
+					event = "no_edits"
+					_ = appendAutorunProgress(progressPath, fmt.Sprintf(
+						"Iteration %d: ending with NO commits. This is not convergence — the runner never changed anything. If the task is large, its first turns go on reading and planning; consider --max-iters or a narrower brief.", iteration))
+				}
+				publishAutorunState(ctx, opts, runner.RunnerID, event, "completed", reason, *summary)
+				return reason, nil
 			}
 		} else {
 			noops = 0

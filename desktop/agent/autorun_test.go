@@ -88,6 +88,11 @@ func TestAutorunReleasesSlot(t *testing.T) {
 	if !autorunReleasesSlot(autorunReasonDone) {
 		t.Fatal("DONE run should release its slot")
 	}
+	// A no-edits run releases its slot: nothing was produced, so there is
+	// nothing in the worktree to restart into, and keeping it would orphan one.
+	if !autorunReleasesSlot(autorunReasonNoEdits) {
+		t.Fatal("a no-edits run should release its slot — an empty worktree is an orphan, not saved state")
+	}
 	for _, reason := range []string{autorunReasonGate, autorunReasonRunner, autorunReasonScope, autorunReasonStopped, autorunReasonMaxIters} {
 		if autorunReleasesSlot(reason) {
 			t.Fatalf("%q should keep its slot for restart", reason)
@@ -370,5 +375,36 @@ func TestReclaimAutorunDiskOnlyTouchesCaches(t *testing.T) {
 	}
 	if !strings.Contains(note, "GB free") {
 		t.Fatalf("reclaim must report the space delta: %q", note)
+	}
+}
+
+// `converged` and `no_edits` both end a run after two quiet iterations and mean
+// opposite things. Conflating them is how a night of zero-output runs read as a
+// night of successes.
+func TestNoEditsIsNotConvergence(t *testing.T) {
+	if autorunReasonNoEdits == autorunReasonConverged {
+		t.Fatal("no-edits must be its own reason, or the distinction cannot reach any surface")
+	}
+	if autorunWorkSucceeded(autorunReasonNoEdits) {
+		t.Error("a run that never changed anything did not succeed — reporting it as success is what made the mortality table untrustworthy")
+	}
+	if !autorunWorkSucceeded(autorunReasonConverged) {
+		t.Error("genuine convergence is still success")
+	}
+	if !autorunReleasesSlot(autorunReasonNoEdits) {
+		t.Error("a no-edits run should still release its slot — the honesty fix is about the REASON, not about leaving an empty worktree behind")
+	}
+}
+
+// The loop must choose between them on evidence — commits — not on the no-op
+// counter, which cannot tell orienting from finished.
+func TestLoopPicksNoEditsOnZeroCommits(t *testing.T) {
+	src := readSourceFile(t, "autorun_cmd.go")
+	fn := sliceFunc(t, src, "func autorunLoop(")
+	if !strings.Contains(fn, "summary.Commits == 0") {
+		t.Error("the loop does not distinguish a run that committed nothing; both endings would report as converged")
+	}
+	if !strings.Contains(fn, "autorunReasonNoEdits") {
+		t.Error("autorunReasonNoEdits is never used by the loop")
 	}
 }
