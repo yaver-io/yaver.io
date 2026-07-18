@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,25 @@ func (s *autorunScopes) Set(value string) error {
 }
 
 func runAutorun(args []string) {
+	// Subcommands come first so `yaver autorun stop` cannot be mistaken for a
+	// flag. The bare flag form ('yaver autorun --task=...') is unchanged — it
+	// predates these and is what every existing script calls.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "list", "ls", "status":
+			runAutorunList(args[1:])
+			return
+		case "stop", "kill":
+			runAutorunStop(args[1:])
+			return
+		case "wrapup", "toparla":
+			runAutorunWrapup(args[1:])
+			return
+		case "help":
+			printAutorunHelp()
+			return
+		}
+	}
 	fs := flag.NewFlagSet("autorun", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	task := fs.String("task", "", "task Markdown file")
@@ -573,4 +593,175 @@ func mustRel(base, path string) string {
 		return path
 	}
 	return rel
+}
+
+// --- subcommands ----------------------------------------------------------
+//
+// `yaver autorun stop` exists because the ops verb was not enough. On
+// 2026-07-18 `ops autorun_stop_all` reported zero sessions while two autoruns
+// were demonstrably running on the box: both had been started as raw tmux by a
+// sibling session, so the in-process manager had no record of them. A stop
+// command that can only stop runs it started is not a stop command.
+//
+// These subcommands therefore work off tmux discovery as well as the manager,
+// and wrap up (commit + push) before killing anything.
+
+func printAutorunHelp() {
+	fmt.Println(`yaver autorun — supervised repo loops
+
+  yaver autorun --task=FILE [--runner=…] [--gate=…] [--tmux]
+      Start a loop in this repo (unchanged; see --help on the flags).
+
+  yaver autorun list
+      Every autorun loop running on this machine, including ones this daemon
+      did not start. "unregistered" marks a loop that 'ops autorun_stop_all'
+      cannot see.
+
+  yaver autorun wrapup [--session=NAME] [--dir=PATH] [--no-push]
+      "Toparla" — commit whatever a run left uncommitted onto its own
+      autorun/wrapup/… branch and push it. Never touches main. Does not stop
+      anything.
+
+  yaver autorun stop [--session=NAME] [--all] [--no-wrapup] [--no-push]
+      Wrap up first, then stop. --no-wrapup kills without saving (destructive).`)
+}
+
+func runAutorunList(args []string) {
+	fs := flag.NewFlagSet("autorun list", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	asJSON := fs.Bool("json", false, "machine-readable output")
+	if err := fs.Parse(args); err != nil {
+		return
+	}
+	sessions, err := discoverAutorunTmuxSessions(registeredAutorunSessionNames())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "autorun list:", err)
+		os.Exit(1)
+	}
+	if *asJSON {
+		b, _ := json.MarshalIndent(map[string]any{"sessions": sessions}, "", "  ")
+		fmt.Println(string(b))
+		return
+	}
+	if len(sessions) == 0 {
+		fmt.Println("autorun: no loops running on this machine.")
+		return
+	}
+	for _, s := range sessions {
+		tag := ""
+		if !s.Registered {
+			// The condition that made two runs unstoppable via ops. Say it out loud.
+			tag = "  [unregistered — ops autorun_stop_all cannot see this one]"
+		}
+		fmt.Printf("%-42s %s%s\n", s.Name, s.WorkDir, tag)
+	}
+}
+
+func runAutorunWrapup(args []string) {
+	fs := flag.NewFlagSet("autorun wrapup", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	session := fs.String("session", "", "tmux session to wrap up (default: all autorun loops)")
+	dir := fs.String("dir", "", "wrap up this directory instead of discovering runs")
+	noPush := fs.Bool("no-push", false, "commit but do not push the wrapup branch")
+	if err := fs.Parse(args); err != nil {
+		return
+	}
+	results := wrapupAutoruns(*session, *dir, !*noPush)
+	printWrapupResults(results)
+}
+
+func runAutorunStop(args []string) {
+	fs := flag.NewFlagSet("autorun stop", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	session := fs.String("session", "", "tmux session to stop (default: all autorun loops)")
+	all := fs.Bool("all", false, "stop every autorun loop on this machine")
+	noWrapup := fs.Bool("no-wrapup", false, "DESTRUCTIVE: kill without saving uncommitted work")
+	noPush := fs.Bool("no-push", false, "wrap up locally but do not push")
+	if err := fs.Parse(args); err != nil {
+		return
+	}
+	if strings.TrimSpace(*session) == "" && !*all {
+		fmt.Fprintln(os.Stderr, "autorun stop: pass --session=NAME or --all")
+		os.Exit(2)
+	}
+
+	// Save before killing. A stop that destroys the run's output is a data-loss
+	// bug wearing a feature's clothes.
+	if !*noWrapup {
+		printWrapupResults(wrapupAutoruns(*session, "", !*noPush))
+	}
+
+	sessions, err := discoverAutorunTmuxSessions(registeredAutorunSessionNames())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "autorun stop:", err)
+		os.Exit(1)
+	}
+	stopped := 0
+	for _, s := range sessions {
+		if *session != "" && s.Name != *session {
+			continue
+		}
+		if out, killErr := exec.Command(tmuxCmdName(), "kill-session", "-t", s.Name).CombinedOutput(); killErr != nil {
+			fmt.Fprintf(os.Stderr, "autorun stop: %s: %v: %s\n", s.Name, killErr, strings.TrimSpace(string(out)))
+			continue
+		}
+		fmt.Printf("autorun: stopped %s\n", s.Name)
+		stopped++
+	}
+
+	// Also cancel anything the in-process manager owns, so a loop started via
+	// ops on this daemon is not left running by a tmux-only sweep.
+	for _, v := range autorunSessions.stopAll() {
+		fmt.Printf("autorun: cancelled session %s\n", v.ID)
+		stopped++
+	}
+	if stopped == 0 {
+		fmt.Println("autorun: nothing to stop.")
+	}
+}
+
+// wrapupAutoruns resolves what to wrap up and does it.
+func wrapupAutoruns(session, dir string, push bool) []WrapupResult {
+	if strings.TrimSpace(dir) != "" {
+		return []WrapupResult{wrapupWorkDir(dir, session, push)}
+	}
+	sessions, err := discoverAutorunTmuxSessions(registeredAutorunSessionNames())
+	if err != nil {
+		return []WrapupResult{{Error: err.Error()}}
+	}
+	var out []WrapupResult
+	for _, s := range sessions {
+		if session != "" && s.Name != session {
+			continue
+		}
+		if strings.TrimSpace(s.WorkDir) == "" {
+			continue
+		}
+		out = append(out, wrapupWorkDir(s.WorkDir, s.Name, push))
+	}
+	return out
+}
+
+func printWrapupResults(results []WrapupResult) {
+	for _, r := range results {
+		switch {
+		case r.Error != "":
+			fmt.Fprintf(os.Stderr, "autorun wrapup: %s: %s\n", r.WorkDir, r.Error)
+		case r.Clean:
+			fmt.Printf("autorun wrapup: %s — nothing uncommitted\n", displayWrapupTarget(r))
+		case r.Pushed:
+			fmt.Printf("autorun wrapup: %s — %d file(s) saved to %s (%s), pushed\n",
+				displayWrapupTarget(r), r.FileCount, r.Branch, r.Commit)
+		default:
+			fmt.Printf("autorun wrapup: %s — %d file(s) committed to %s (%s), NOT pushed\n",
+				displayWrapupTarget(r), r.FileCount, r.Branch, r.Commit)
+		}
+	}
+}
+
+func displayWrapupTarget(r WrapupResult) string {
+	if r.Session != "" {
+		return r.Session
+	}
+	return r.WorkDir
 }
