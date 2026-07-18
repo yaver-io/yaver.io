@@ -24,15 +24,21 @@ func TestLoopHandsBackTheSeatAroundTheGate(t *testing.T) {
 
 	// The seat must be released BEFORE the compiler runs. This is the whole
 	// point: while this loop waits on a build, its runner belongs to a sibling.
-	if !strings.Contains(before, "autorunLeases.Release(opts.SessionID, seatLease(runner.RunnerID))") {
+	if !strings.Contains(before, "fleet.Release(ctx, opts.SessionID, seatLease(runner.RunnerID))") {
 		t.Error("the seat is not handed back before the gate — a build would keep holding the runner it is not using, and unrelated work would queue behind a compiler")
 	}
 	if !strings.Contains(before, `autorunPhaseLeases("build"`) {
 		t.Error("the build phase leases are not taken before the gate")
 	}
+	// Through the FLEET coordinator, not the local singleton. Local-only claims
+	// were the gap between cross-machine exclusion existing and being in effect:
+	// two boxes could each be locally certain they held the same toolchain.
+	if !strings.Contains(before, "autorunFleetLeases(ctx, opts.WorkDir)") {
+		t.Error("the loop claims leases locally only — a sibling MACHINE would not see them")
+	}
 
 	// ...and the toolchain must be released after it, whatever the verdict.
-	if !strings.Contains(after, "autorunLeases.Release(opts.SessionID, buildLease(t))") {
+	if !strings.Contains(after, "fleet.Release(ctx, opts.SessionID, buildLease(t))") {
 		t.Error("the build target is not released after the gate — a failed gate would strand the toolchain until TTL and block every sibling")
 	}
 	if !strings.Contains(after, `autorunPhaseLeases("edit"`) {
@@ -47,7 +53,7 @@ func TestLoopReleasesBuildLeaseBeforeGateErrorReturns(t *testing.T) {
 	src := readSourceFile(t, "autorun_cmd.go")
 	fn := sliceFunc(t, src, "func autorunLoop(")
 
-	release := strings.Index(fn, "autorunLeases.Release(opts.SessionID, buildLease(t))")
+	release := strings.Index(fn, "fleet.Release(ctx, opts.SessionID, buildLease(t))")
 	if release < 0 {
 		t.Fatal("build lease release not found")
 	}

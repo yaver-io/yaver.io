@@ -163,9 +163,20 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 	// Best-effort: admission already proved there is no conflict, so a refusal
 	// here would mean the two models disagree — worth a log line, never worth
 	// refusing a run admission just approved.
-	if err := autorunLeases.Acquire(id, workspace.Slot, "edit",
-		autorunPhaseLeases("edit", opts.Runner, areas, nil, "main")...); err != nil {
-		log.Printf("[autorun] lease acquire for %s disagreed with admission: %v", id, err)
+	//
+	// Through the FLEET coordinator, not the local singleton. Taking these
+	// locally only was the gap between cross-machine exclusion existing and
+	// being in effect: two boxes could each be locally certain they held
+	// build/ios, because their local managers cannot see each other.
+	fleet := autorunFleetLeases(ctx, workspace.WorkDir)
+	for _, k := range autorunPhaseLeases("edit", opts.Runner, areas, nil, "main") {
+		if r := fleet.Acquire(ctx, id, workspace.Slot, "edit", k); !r.OK {
+			log.Printf("[autorun] %s could not claim %s (%s tier): %v", id, k, r.Tier, r.Conflict)
+		} else if r.Degraded {
+			// Local-only: real on this box, unverified across the fleet. Worth
+			// a line so a cross-machine collision later is explicable.
+			log.Printf("[autorun] %s holds %s locally; fleet tier unavailable", id, k)
+		}
 	}
 	go func() {
 		summary, err := executeAutorun(ctx, opts)
@@ -201,7 +212,8 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 		// backstop for an agent that dies without reaching this line; it is not
 		// the mechanism. A run that finishes and keeps its leases blocks every
 		// sibling for 45 minutes for no reason.
-		autorunLeases.ReleaseAll(finished.ID)
+		autorunFleetLeases(context.WithoutCancel(ctx), finished.WorkDir).ReleaseAll(
+			context.WithoutCancel(ctx), finished.ID)
 		onAutorunFinished(&finished)
 	}()
 	return m.view(s), nil

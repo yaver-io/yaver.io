@@ -30,6 +30,7 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -198,4 +199,28 @@ func (f *fleetLeaseCoordinator) Renew(ctx context.Context, holder, slot, phase s
 			log.Printf("[autorun-lease] renewed %s locally; publish deferred: %v", holder, err)
 		}
 	}
+}
+
+// autorunFleetLeases returns the coordinator the autorun session path uses.
+//
+// This exists because the two tiers were built and then not connected to the
+// thing that needed them: the session path called the local `autorunLeases`
+// singleton directly, so cross-machine exclusion was implemented and inert. Two
+// boxes could each be locally certain they held build/ios.
+//
+// Constructed per work directory because the git tier IS the repository — the
+// lease namespace lives in the same clone the run edits, which is what makes a
+// claim publishable without any new service. Falls back to local-only when the
+// directory has no resolvable remote, and says so through the result's Tier,
+// rather than pretending an unverified claim is fleet-wide.
+func autorunFleetLeases(ctx context.Context, workDir string) *fleetLeaseCoordinator {
+	if strings.TrimSpace(workDir) == "" {
+		return newFleetLeaseCoordinator(autorunLeases, nil, "", localDeviceID())
+	}
+	return newFleetLeaseCoordinator(
+		autorunLeases,
+		newGitLeaseClient(workDir),
+		autorunRemoteOrOrigin(ctx, workDir),
+		localDeviceID(),
+	)
 }

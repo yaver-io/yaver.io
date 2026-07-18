@@ -489,7 +489,11 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			// gate is the correctness oracle. See autorun_leases.go.
 			buildAreas := autorunOwnedAreas(opts.Scopes)
 			buildTargets := autorunBuildTargetsForAreas(buildAreas)
-			autorunLeases.Release(opts.SessionID, seatLease(runner.RunnerID))
+			// Through the fleet coordinator: a toolchain is contended across the
+			// whole fleet, not just this box. Two machines compiling iOS from one
+			// repo thrash the same caches as surely as two processes do.
+			fleet := autorunFleetLeases(ctx, opts.WorkDir)
+			fleet.Release(ctx, opts.SessionID, seatLease(runner.RunnerID))
 			if err := autorunLeases.Acquire(opts.SessionID, opts.Slot, "build",
 				autorunPhaseLeases("build", runner.RunnerID, buildAreas, buildTargets, "main")...); err != nil {
 				// Another run holds this toolchain. Proceed anyway rather than
@@ -505,7 +509,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			// turn. Done before the error branches below so a failed gate cannot
 			// leak a build lease and strand every sibling until TTL.
 			for _, t := range buildTargets {
-				autorunLeases.Release(opts.SessionID, buildLease(t))
+				fleet.Release(ctx, opts.SessionID, buildLease(t))
 			}
 			_ = autorunLeases.Acquire(opts.SessionID, opts.Slot, "edit",
 				autorunPhaseLeases("edit", runner.RunnerID, buildAreas, nil, "main")...)

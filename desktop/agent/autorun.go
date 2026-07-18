@@ -823,6 +823,24 @@ func autorunLandOntoMain(ctx context.Context, ws autorunWorkspace, push bool) er
 	autorunLandMu.Lock()
 	defer autorunLandMu.Unlock()
 
+	// autorunLandMu serializes landings inside THIS process. The land lease
+	// extends that across machines, which is where the races actually came from:
+	// the mutex's own docs say it "cannot touch the developer's laptop, another
+	// session, or CI", and the mini's logs showed final commits failing with
+	// `fetch first` because another actor moved main first.
+	//
+	// Advisory on purpose. The rebase-retry below already recovers from a lost
+	// race, so a lease we cannot take is a reason to expect contention, not a
+	// reason to refuse to land verified work — refusing would strand commits the
+	// gate already passed.
+	landHolder := fmt.Sprintf("land-%d", time.Now().UTC().UnixNano())
+	landFleet := autorunFleetLeases(ctx, ws.SourceWorkDir)
+	if r := landFleet.Acquire(ctx, landHolder, "land", "land", landLease("main")); !r.OK {
+		log.Printf("[autorun] landing while %s holds land/main — the rebase retry covers this", r.Conflict)
+	} else {
+		defer landFleet.Release(ctx, landHolder, landLease("main"))
+	}
+
 	var lastErr error
 	for attempt := 1; attempt <= autorunLandAttempts; attempt++ {
 		if ctx.Err() != nil {
