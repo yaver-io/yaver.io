@@ -53,6 +53,12 @@ export default function AutorunsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastSeenMs, setLastSeenMs] = useState<number | undefined>(undefined);
+  // Claims held on the box right now — what a slot_busy / area_owned refusal
+  // refers to. Kept deliberately terse on a phone: the contended thing and who
+  // has it, nothing else.
+  const [holds, setHolds] = useState<
+    { key?: { Class?: string; Name?: string }; slot?: string; holder?: string; phase?: string }[]
+  >([]);
 
   const load = useCallback(async () => {
     if (!connected) {
@@ -71,6 +77,15 @@ export default function AutorunsScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+    // Claims are a separate, optional read. Failure is swallowed on purpose: an
+    // agent too old to know the verb should show one less line, never break the
+    // run list above it.
+    try {
+      const res = await quicClient.callOps("autorun_leases", {});
+      setHolds(res?.ok && Array.isArray(res?.initial?.holds) ? res.initial.holds : []);
+    } catch {
+      setHolds([]);
     }
   }, [connected]);
 
@@ -107,6 +122,26 @@ export default function AutorunsScreen() {
             <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Refresh</Text>
           </Pressable>
         </View>
+
+        {holds.length > 0 ? (
+          <View style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
+            <Text style={{ color: c.textMuted, fontSize: 11 }} numberOfLines={2}>
+              {/* One line, because this is a phone. The contended thing and who
+                  has it is the whole answer to "why won't my run start?" — the
+                  reasoning lives on web, which has room for it. */}
+              Claimed: {holds
+                .map((h) => `${h.key?.Name ?? "?"} (${h.slot || h.holder || "?"})`)
+                .slice(0, 3)
+                .join(" · ")}
+              {holds.length > 3 ? ` +${holds.length - 3}` : ""}
+            </Text>
+            {holds.some((h) => h.phase === "build") && !holds.some((h) => h.key?.Class === "seat") ? (
+              <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={2}>
+                A build holds no seat — handed back so other work can run.
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {!connected ? (
           <View style={styles.center}>
