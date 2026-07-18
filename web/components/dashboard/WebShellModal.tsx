@@ -5,21 +5,68 @@
 // over relay) so the device's shell opens directly in the dashboard
 // without needing a local SSH or terminal app.
 //
-// Three states:
+// States:
 //   - needs-reauth: device is online but the agent's Convex session
 //     expired. Convex will reject the WebSocket session-token issue,
 //     so we route the user to Rescue → Reset Auth or `yaver auth` on
 //     the box instead of presenting a dead terminal.
 //   - not-connected: agentClient is pointed elsewhere (or nowhere).
 //     We show a "Connect & open shell" CTA.
+//   - connecting: a connect attempt is in flight. BOUNDED — see below.
+//   - failed: the connect attempt is over and it did not work. This
+//     state exists because without it the modal hung on "Connecting to
+//     @linux-2…" forever: page.tsx sets connectedDevice *before* it
+//     probes and never clears it on failure, so isCurrentDeviceSelected
+//     stays true while agentClient sits in "error" with a backoff
+//     reconnect pending. The user saw a spinner-shaped lie for a box
+//     that had already returned "Could not reach agent (direct, tunnel,
+//     or relay)". We now read agentClient's own connectionState (plus a
+//     hard timeout, so a wedged attempt can't stall us either) and show
+//     the real reason with a retry.
 //   - ready: mount TerminalView. WebSocket is created/torn down with
 //     the modal lifecycle (mount on open, dispose on close).
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import TerminalView from "./TerminalView";
+import { agentClient, type ConnectAttemptDiagnostic } from "@/lib/agent-client";
+import { getLastFailure, subscribeLastFailure } from "@/lib/probe-backoff";
+import { deriveBrowserReach, type BrowserReach } from "@/lib/device-lifecycle";
 import type { Device } from "@/lib/use-devices";
+
+// A connect attempt that hasn't resolved by now is not going to. attemptConnect
+// budgets 8s per relay candidate, 8s per tunnel candidate and 5s direct, then
+// page.tsx may run one auto-reauth + a second full pass. 90s covers the whole
+// worst case with headroom; past that we stop claiming progress.
+const CONNECT_STALL_MS = 90_000;
+function useAgentConnectionState(): string {
+  const [state, setState] = useState<string>(() => agentClient.connectionState);
+  useEffect(() => {
+    const unsubscribe = agentClient.on("connectionState", (s) => setState(s));
+    setState(agentClient.connectionState);
+    return unsubscribe;
+  }, []);
+  return state;
+}
+
+/** Same reachability signal the device card badge and CTAs use. */
+function useBrowserReach(device: Device): BrowserReach {
+  const [failure, setFailure] = useState(() => getLastFailure(device.id));
+  useEffect(() => {
+    setFailure(getLastFailure(device.id));
+    return subscribeLastFailure(() => setFailure(getLastFailure(device.id)));
+  }, [device.id]);
+  return deriveBrowserReach(device, failure);
+}
+
+function describeDiagnostic(d: ConnectAttemptDiagnostic): string {
+  const where = d.path === "relay" ? `relay${d.relayId ? ` (${d.relayId})` : ""}` : d.path;
+  const why = d.authExpired
+    ? "agent session expired"
+    : d.error || (d.status ? `HTTP ${d.status}` : "failed");
+  return `${where}: ${why}`;
+}
 
 export default function WebShellModal({
   device,
@@ -37,14 +84,44 @@ export default function WebShellModal({
   onOpenRescue?: () => void;
 }) {
   const [maximized, setMaximized] = useState(false);
+  const connState = useAgentConnectionState();
+  const reach = useBrowserReach(device);
+  const hasRelay = agentClient.configuredRelayServers.length > 0;
+
+  // Bounded "connecting": if the attempt neither succeeds nor flips
+  // agentClient to "error" within CONNECT_STALL_MS, we call it failed
+  // ourselves rather than spinning forever.
+  const [stalled, setStalled] = useState(false);
+  const attemptActive = isCurrentDeviceSelected && !isCurrentDeviceConnected && connState !== "error";
+  useEffect(() => {
+    if (!attemptActive) {
+      setStalled(false);
+      return;
+    }
+    setStalled(false);
+    const t = setTimeout(() => setStalled(true), CONNECT_STALL_MS);
+    return () => clearTimeout(t);
+  }, [attemptActive, device.id]);
+
   const reauthRequired = Boolean(device.needsAuth) && !device.isGuest;
-  const state: "needs-reauth" | "not-connected" | "connecting" | "ready" = reauthRequired
+  const state: "needs-reauth" | "not-connected" | "connecting" | "failed" | "ready" = reauthRequired
     ? "needs-reauth"
     : isCurrentDeviceConnected
       ? "ready"
-      : isCurrentDeviceSelected
-        ? "connecting"
-        : "not-connected";
+      : !isCurrentDeviceSelected
+        ? "not-connected"
+        : connState === "error" || stalled
+          ? "failed"
+          : "connecting";
+
+  const failureDiagnostics = state === "failed" ? agentClient.lastConnectDiagnostics.filter((d) => !d.ok) : [];
+  const failureHeadline = stalled && connState !== "error"
+    ? "The connect attempt didn't finish."
+    : failureDiagnostics.some((d) => d.authExpired)
+      ? "The agent answered, but its Yaver session is expired."
+      : reach.label
+        ? reach.label
+        : "Could not reach the agent (direct, tunnel, or relay).";
 
   return (
     <div
@@ -59,7 +136,7 @@ export default function WebShellModal({
       >
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/95 px-4 py-2.5 dark:border-surface-800 dark:bg-surface-900/80">
           <div className="flex items-center gap-2 min-w-0">
-            <span className={`inline-flex h-2 w-2 rounded-full ${state === "ready" ? "bg-emerald-400" : state === "needs-reauth" ? "bg-amber-400" : state === "connecting" ? "bg-cyan-400" : "bg-slate-400 dark:bg-surface-500"}`} />
+            <span className={`inline-flex h-2 w-2 rounded-full ${state === "ready" ? "bg-emerald-400" : state === "needs-reauth" ? "bg-amber-400" : state === "failed" ? "bg-rose-400" : state === "connecting" ? "bg-cyan-400" : "bg-slate-400 dark:bg-surface-500"}`} />
             <span className="truncate text-[13px] font-semibold text-slate-900 dark:text-surface-100">
               Shell · {device.alias ? `@${device.alias}` : device.name}
             </span>
@@ -69,7 +146,7 @@ export default function WebShellModal({
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden sm:inline rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 dark:border-surface-700 dark:bg-surface-950/60 dark:text-surface-400">
-              {state === "needs-reauth" ? "agent auth required" : state === "connecting" ? "connecting…" : "via relay · PTY"}
+              {state === "needs-reauth" ? "agent auth required" : state === "failed" ? "unreachable" : state === "connecting" ? "connecting…" : "via relay · PTY"}
             </span>
             <button
               onClick={() => setMaximized((m) => !m)}
@@ -161,6 +238,50 @@ export default function WebShellModal({
                 Remote machines such as relay-only boxes need the dashboard connection to finish first.
               </p>
             </div>
+          ) : state === "failed" ? (
+            <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center text-slate-700 dark:text-surface-300">
+              <div className="rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                Can&apos;t open shell
+              </div>
+              <p className="max-w-md text-[13px] leading-5">
+                {failureHeadline}{" "}
+                <span className="font-mono text-rose-700 dark:text-rose-200">
+                  {device.alias ? `@${device.alias}` : device.name}
+                </span>{" "}
+                heartbeats to Convex, but this browser has no working path to it,
+                so there is no PTY to attach to.
+              </p>
+              {failureDiagnostics.length ? (
+                <ul className="w-full max-w-md space-y-1 rounded-md border border-slate-200 bg-white p-3 text-left font-mono text-[11px] text-slate-600 dark:border-surface-700 dark:bg-surface-900/60 dark:text-surface-400">
+                  {failureDiagnostics.map((d, i) => (
+                    <li key={`${d.path}-${i}`} className="truncate">· {describeDiagnostic(d)}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <p className="max-w-md text-[11px] leading-4 text-slate-500 dark:text-surface-500">
+                {failureDiagnostics.some((d) => d.authExpired) || reach.reason === "unauthorized"
+                  ? "The box refused our token — run `yaver auth` on it (or use Rescue → Reset Auth), then retry."
+                  : hasRelay
+                    ? "Its QUIC tunnel to the relay is most likely down. Restart the agent with `yaver serve` on the box, then retry."
+                    : "No relay server is configured for this dashboard, so a box that isn't reachable on your LAN can't be reached at all from the browser."}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  onClick={onConnect}
+                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-[12px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-surface-600 dark:bg-surface-900 dark:text-surface-200 dark:hover:bg-surface-800"
+                >
+                  Retry
+                </button>
+                {onOpenRescue ? (
+                  <button
+                    onClick={() => { onClose(); onOpenRescue(); }}
+                    className="rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-[12px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/15"
+                  >
+                    Open Rescue
+                  </button>
+                ) : null}
+              </div>
+            </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-slate-700 dark:text-surface-300">
               <p className="text-[13px]">
@@ -170,15 +291,28 @@ export default function WebShellModal({
                 </span>
                 .
               </p>
+              {/* Don't promise a connection we already know is failing. The
+                  device card downgrades its own badge off this same record
+                  ("Ready to Connect (Unauthorized)"); the shell CTA used to
+                  ignore it and invite a click that could only end in a hang. */}
+              {reach.unreachable ? (
+                <p className="max-w-md rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                  Last browser probe of this box failed: <span className="font-semibold">{reach.label}</span>.{" "}
+                  {reach.detail} Connecting will probably fail too.
+                </p>
+              ) : null}
               <button
                 onClick={onConnect}
-                className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"
+                className={reach.unreachable
+                  ? "rounded-md border border-slate-300 bg-white px-4 py-2 text-[12px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-surface-600 dark:bg-surface-900 dark:text-surface-200 dark:hover:bg-surface-800"
+                  : "rounded-md border border-emerald-300 bg-emerald-50 px-4 py-2 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/15"}
               >
-                Connect &amp; open shell
+                {reach.unreachable ? "Try connecting anyway" : "Connect & open shell"}
               </button>
               <p className="text-[11px] text-slate-500 dark:text-surface-500">
-                Once connected the PTY opens through the relay — works even when
-                direct LAN is unreachable.
+                {hasRelay
+                  ? "Once connected the PTY opens through the relay — works even when direct LAN is unreachable."
+                  : "No relay server is configured, so this needs the box to be reachable directly from your browser."}
               </p>
             </div>
           )}

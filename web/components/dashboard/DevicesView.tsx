@@ -8,9 +8,21 @@ import { DeviceStorageFold } from "./DeviceStorageFold";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
+import WakeProgress from "@/components/dashboard/WakeProgress";
 import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, requestAgentUpdateViaConvex, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
+import {
+  lastSeenAgeMs,
+  formatAgeShort,
+  hasRecentLiveSignal,
+  deriveDeviceLifecycleState,
+  deriveBrowserReach,
+  deviceStatusLabel,
+  canBrowserActOnDevice,
+  type BrowserReach,
+  type DeviceLifecycleState,
+} from "@/lib/device-lifecycle";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
 import {
   describeMachineState,
@@ -317,39 +329,6 @@ function formatBytes(n: number): string {
   return `${(n / (k * k * k)).toFixed(2)} GB`;
 }
 
-function lastSeenAgeMs(value: string | undefined): number | null {
-  if (!value) return null;
-  const ts = Date.parse(value);
-  if (Number.isNaN(ts)) return null;
-  return Math.max(0, Date.now() - ts);
-}
-
-function formatAgeShort(ms: number | null): string | null {
-  if (ms == null) return null;
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  return `${day}d`;
-}
-
-function hasRecentLiveSignal(
-  device: Pick<Device, "lastTunnelEvent" | "peerState" | "workspaceLive">,
-  maxAgeMs = 360_000,
-): boolean {
-  if (device.workspaceLive) return true;
-  if (device.peerState === "online") return true;
-  return Boolean(
-    device.lastTunnelEvent &&
-    device.lastTunnelEvent.online &&
-    device.lastTunnelEvent.at > 0 &&
-    (Date.now() - device.lastTunnelEvent.at) < maxAgeMs,
-  );
-}
-
 function deviceReachabilitySummary(
   device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError" | "probeInfo">,
 ): string {
@@ -375,39 +354,6 @@ function deviceReachabilitySummary(
   if (device.probeError) return device.probeError;
   if (device.host) return "No recent agent signal; direct browser access usually needs relay";
   return "No recent agent signal";
-}
-
-type DeviceLifecycleState =
-  | "offline"
-  | "bootstrap"
-  | "yaver-auth-expired"
-  | "ready-to-connect"
-  | "connected";
-
-function deriveDeviceLifecycleState(
-  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent" | "probeInfo">,
-): DeviceLifecycleState {
-  if (device.workspaceLive) return "connected";
-  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
-  if (
-    lifecycleState === "bootstrap" ||
-    lifecycleState === "yaver-auth-expired" ||
-    lifecycleState === "ready-to-connect"
-  ) {
-    return lifecycleState as DeviceLifecycleState;
-  }
-  if (device.needsAuth && (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))) return "bootstrap";
-  if (device.probeState === "auth-expired") return "yaver-auth-expired";
-  if (
-    device.probeState === "ok" ||
-    device.peerState === "online" ||
-    device.peerState === "stale" ||
-    device.online ||
-    hasRecentLiveSignal(device)
-  ) {
-    return "ready-to-connect";
-  }
-  return "offline";
 }
 
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
@@ -1277,11 +1223,9 @@ function classifyPingFailure(pingState: { error?: string; authExpired?: boolean 
 function DeviceLifecycleBadge({ device }: { device: Device }) {
   const lastFailure = useLastFailure(device.id);
   const lifecycle = deriveDeviceLifecycleState(device);
-  const recentBrowserFailure =
-    lastFailure && Date.now() - lastFailure.at < 60_000 ? lastFailure : null;
+  const reach = deriveBrowserReach(device, lastFailure);
   const probeContradicts =
-    (lifecycle === "ready-to-connect" || lifecycle === "connected") &&
-    (device.probeState === "unreachable" || !!recentBrowserFailure);
+    (lifecycle === "ready-to-connect" || lifecycle === "connected") && reach.unreachable;
   const dotClass = probeContradicts
     ? "bg-warning"
     : lifecycle === "connected"
@@ -1293,27 +1237,13 @@ function DeviceLifecycleBadge({ device }: { device: Device }) {
           : lifecycle === "ready-to-connect"
             ? "bg-info/70"
             : "bg-surface-600";
-  const baseLabel =
-    lifecycle === "connected"
-      ? "Connected"
-      : lifecycle === "bootstrap"
-        ? "Bootstrap"
-        : lifecycle === "yaver-auth-expired"
-          ? "Yaver Auth Expired"
-          : lifecycle === "ready-to-connect"
-            ? "Ready to Connect"
-            : "Offline";
-  const suffix = recentBrowserFailure
-    ? ` (${recentBrowserFailure.label})`
-    : probeContradicts
-      ? " (browser can't reach)"
-      : "";
-  const label = `${baseLabel}${suffix}`;
-  const title = recentBrowserFailure
-    ? `Heartbeat says reachable, but our last browser probe failed: ${recentBrowserFailure.detail}`
-    : probeContradicts && device.probeError
-      ? `Heartbeat says reachable, but our last probe failed: ${device.probeError}`
-      : undefined;
+  // The label used to read "Ready to Connect (Unauthorized)" — a contradiction
+  // in one line, and the leading word is the one users act on. deviceStatusLabel
+  // leads with the truth instead: "Alive · can't reach (Unauthorized)".
+  const label = deviceStatusLabel(lifecycle, reach);
+  const title = reach.detail
+    ? `Heartbeat says the agent is alive, but our last browser probe failed: ${reach.detail}`
+    : undefined;
   return (
     <>
       <span className={`inline-flex h-2 w-2 rounded-full ${dotClass}`} />
@@ -1325,6 +1255,17 @@ function DeviceLifecycleBadge({ device }: { device: Device }) {
       </span>
     </>
   );
+}
+
+/**
+ * Bumps whenever ANY device's probe failure record changes. Card rendering
+ * happens inside a `.map`, where per-device hooks are illegal — so the list
+ * subscribes once and re-derives every card's reachability from the registry.
+ */
+function useFailureRegistryVersion(): number {
+  const [version, setVersion] = useState(0);
+  useEffect(() => subscribeLastFailure(() => setVersion((v) => v + 1)), []);
+  return version;
 }
 
 function useLastFailure(deviceId: string) {
@@ -2544,6 +2485,13 @@ export interface ManagedMachineSummary {
    * the box would connect "automatically". It could not.
    */
   errorMessage: string | null;
+  /** When the CURRENT phase began — the anchor for the in-phase timer. */
+  provisionPhaseAt: number | null;
+  /** When this wake was requested — the anchor for the total wake clock. */
+  lastWokeAt: number | null;
+  /** Provider's own word for the server state during a wake. */
+  providerStatus: string | null;
+  providerStatusAt: number | null;
   runnersAuthorized: boolean;
 }
 
@@ -2581,6 +2529,21 @@ function useManagedMachines(token: string | null | undefined): ManagedMachineSum
               typeof m?.provisionProgress === "number" ? m.provisionProgress : null,
             provisionError:
               typeof m?.provisionError === "string" ? m.provisionError : null,
+            // errorMessage was DECLARED on the summary and RENDERED by the
+            // awaiting-auth branch, but never mapped — the source array is
+            // `any`, so TS could not catch the gap. The control plane's exact
+            // recovery sentence ("its Yaver agent session expired…") has been
+            // sent on /subscription the whole time and silently dropped here,
+            // leaving the generic fallback as the only thing users ever saw.
+            errorMessage:
+              typeof m?.errorMessage === "string" ? m.errorMessage : null,
+            provisionPhaseAt:
+              typeof m?.provisionPhaseAt === "number" ? m.provisionPhaseAt : null,
+            lastWokeAt: typeof m?.lastWokeAt === "number" ? m.lastWokeAt : null,
+            providerStatus:
+              typeof m?.providerStatus === "string" ? m.providerStatus : null,
+            providerStatusAt:
+              typeof m?.providerStatusAt === "number" ? m.providerStatusAt : null,
             runnersAuthorized: Boolean(m?.runnersAuthorized),
           }));
           if (cancelled) return;
@@ -2594,9 +2557,17 @@ function useManagedMachines(token: string | null | undefined): ManagedMachineSum
               m.status !== "active",
           );
           if (anyPending) timer = setTimeout(tick, 10_000);
+          return;
         }
+        // A non-ok response used to fall straight through to the end of the
+        // function WITHOUT rescheduling, so a single 502 or expired-token
+        // blip killed the poll for the lifetime of the mount: the wake UI
+        // froze on whatever it had last seen and never recovered, which is
+        // itself one of the ways "Resuming…" appeared to hang. Same for the
+        // catch below. Retry instead — a slower poll is not a dead one.
+        if (!cancelled) timer = setTimeout(tick, 15_000);
       } catch {
-        /* non-fatal — section just stays empty */
+        if (!cancelled) timer = setTimeout(tick, 15_000);
       }
     };
     void tick();
@@ -2741,6 +2712,7 @@ export default function DevicesView({
   onNavigateCloud,
 }: DevicesViewProps) {
   const agentConnectionState = useAgentConnectionState();
+  const failureRegistryVersion = useFailureRegistryVersion();
   const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
   const managedDeviceIds = useManagedDeviceIds(token);
   const managedMachines = useManagedMachines(token);
@@ -3081,6 +3053,16 @@ export default function DevicesView({
             const directSSHHost = directSSHHostForDevice(device);
             const sshHref = directSSHHost ? `ssh://${directSSHHost}` : null;
             const managedMachine = managedByDeviceId.get(device.id);
+            // Heartbeat-alive and browser-reachable are different questions —
+            // see lib/device-lifecycle.ts. Every CTA below that performs
+            // browser→agent I/O gates on `canAct`, not on device.online alone.
+            // `failureRegistryVersion` is read at component scope so this
+            // re-derives when a background probe records a failure (we can't
+            // call the subscribe hook per-iteration inside this map).
+            void failureRegistryVersion;
+            const lifecycle = deriveDeviceLifecycleState(device);
+            const reach = deriveBrowserReach(device, getLastFailure(device.id));
+            const canAct = canBrowserActOnDevice(lifecycle, reach);
             return (
             <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
@@ -3152,10 +3134,25 @@ export default function DevicesView({
                           ⏸ Paused
                         </span>
                       ) : null}
+                      {/* A box blocked on sign-in is still status="resuming"
+                          server-side (the control plane holds it there for a
+                          bounded recovery window), so a chip keyed only on
+                          status printed "Resuming…" for a wake that had
+                          already stopped making progress and never would
+                          again. Key the chip on the phase, not the status. */}
                       {managedMachine && managedMachine.status === "resuming" ? (
-                        <span className="rounded border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300">
-                          Resuming…
-                        </span>
+                        isAwaitingYaverAuth(managedMachine) ? (
+                          <span
+                            className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+                            title="The box is awake but its Yaver session expired — it needs signing in."
+                          >
+                            Sign-in needed
+                          </span>
+                        ) : (
+                          <span className="rounded border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300">
+                            Waking…
+                          </span>
+                        )
                       ) : null}
                       {/* Primary / Secondary are now set from the "⋯"
                           menu, so the card has to carry the state itself. */}
@@ -3205,6 +3202,23 @@ export default function DevicesView({
                           nothing when neither action would succeed. */}
                       <ManagedPowerButton device={device} token={token} />
                     </div>
+                    {/* The wake itself: which step, how long it has been on
+                        it, what the provider sees, and — when the box is only
+                        blocked on sign-in — what to actually do. A managed box
+                        takes minutes to wake, and until now the card said
+                        nothing for the whole of it. */}
+                    {managedMachine &&
+                    (managedMachine.status === "resuming" ||
+                      managedMachine.status === "stopping" ||
+                      managedMachine.status === "grace") ? (
+                      <WakeProgress
+                        machine={managedMachine}
+                        deviceReachable={(() => {
+                          const lc = deriveDeviceLifecycleState(device);
+                          return lc === "connected" || lc === "ready-to-connect";
+                        })()}
+                      />
+                    ) : null}
                     {/* Signal · version · update all on ONE line — the update
                         affordance used to sit on its own row under the identity
                         line and pushed the card taller for a chip most devices
@@ -3232,8 +3246,13 @@ export default function DevicesView({
                         ) : null}
                       </span>
                       {device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0 ? (() => {
-                            const lc = deriveDeviceLifecycleState(device);
-                            const reachable = lc === "connected" || lc === "ready-to-connect";
+                            const lc = lifecycle;
+                            // Gate on browser reachability too, not just on the
+                            // heartbeat-derived lifecycle. A box that heartbeats
+                            // but has no relay path used to get the confident
+                            // amber button; clicking it always ended in "Update
+                            // queued · Couldn't connect: Could not reach agent".
+                            const reachable = canAct;
                             const cur = String(device.agentVersion).replace(/^v/i, "");
                             if (reachable) {
                               return (
@@ -3252,11 +3271,24 @@ export default function DevicesView({
                             // Show a muted chip that explains why instead of an
                             // amber button that throws "AgentClient is not
                             // connected" on click.
-                            const hint =
-                              lc === "yaver-auth-expired" || lc === "bootstrap"
+                            const hint = reach.unreachable
+                              ? `v${cur} → v${latestAgentVersion} available — the agent is alive but this browser can't reach it (${reach.label}). Queue it and it installs on the device's next check-in.`
+                              : lc === "yaver-auth-expired" || lc === "bootstrap"
                                 ? `v${cur} → v${latestAgentVersion} available — re-auth from CLI first (yaver primary auth, or yaver auth on the box)`
                                 : `v${cur} → v${latestAgentVersion} available — device is offline, bring it back online first`;
-                            return (
+                            // Still clickable when the box is merely unreachable:
+                            // the update modal falls back to a Convex-queued
+                            // desired-version that installs on next check-in.
+                            // Muted styling so it doesn't promise an instant apply.
+                            return reach.unreachable ? (
+                              <button
+                                onClick={() => setUpdateModalDevice(device)}
+                                title={hint}
+                                className="rounded-full border border-slate-300 bg-slate-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-slate-500 hover:bg-slate-100 dark:border-surface-700 dark:bg-surface-800/40 dark:text-surface-400 dark:hover:bg-surface-800"
+                              >
+                                queue update → v{latestAgentVersion}
+                              </button>
+                            ) : (
                               <span
                                 title={hint}
                                 className="rounded-full border border-slate-300 bg-slate-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:border-surface-700 dark:bg-surface-800/40 dark:text-surface-400"
@@ -3579,16 +3611,22 @@ export default function DevicesView({
                     <button
                       onClick={() => onOpen(device)}
                       className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold shadow-sm ${
-                        device.online
+                        canAct
                           ? "bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
                           : "border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
                       }`}
-                      title={device.online
+                      // "Open Workspace" is a promise. Only make it when a
+                      // connect can actually succeed — device.online alone is
+                      // just a Convex heartbeat and says nothing about whether
+                      // this browser has a path to the box.
+                      title={canAct
                         ? "Connect to this machine and start working on it"
-                        : "Probe this machine anyway and show relay/direct diagnostics"}
+                        : reach.unreachable
+                          ? `The agent is alive but this browser can't reach it (${reach.label}). Probe anyway and show relay/direct diagnostics.`
+                          : "Probe this machine anyway and show relay/direct diagnostics"}
                     >
                       <span aria-hidden>⌨️</span>
-                      {device.online ? "Open Workspace" : "Try Connect"}
+                      {canAct ? "Open Workspace" : "Try Connect"}
                     </button>
                   ) : null}
                 </div>

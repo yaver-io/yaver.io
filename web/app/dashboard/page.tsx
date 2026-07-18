@@ -2,6 +2,13 @@
 
 import { useAuth } from "@/lib/use-auth";
 import { useDevices, usePendingClaims, setDeviceAlias, type Device } from "@/lib/use-devices";
+import {
+  lastSeenAgeMs,
+  formatAgeShort,
+  hasRecentLiveSignal,
+  deriveDeviceLifecycleState,
+  type DeviceLifecycleState,
+} from "@/lib/device-lifecycle";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import RemoteDesktopModal from "@/components/dashboard/RemoteDesktopModal";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
@@ -154,39 +161,6 @@ function formatHeartbeatAge(lastSeen?: string): string {
   return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function lastSeenAgeMs(lastSeen?: string): number | null {
-  if (!lastSeen) return null;
-  const ts = Date.parse(lastSeen);
-  if (Number.isNaN(ts)) return null;
-  return Math.max(0, Date.now() - ts);
-}
-
-function formatAgeShort(ms: number | null): string | null {
-  if (ms == null) return null;
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  return `${day}d`;
-}
-
-function hasRecentLiveSignal(
-  device: Pick<Device, "lastTunnelEvent" | "peerState" | "workspaceLive">,
-  maxAgeMs = 360_000,
-): boolean {
-  if (device.workspaceLive) return true;
-  if (device.peerState === "online") return true;
-  return Boolean(
-    device.lastTunnelEvent &&
-    device.lastTunnelEvent.online &&
-    device.lastTunnelEvent.at > 0 &&
-    (Date.now() - device.lastTunnelEvent.at) < maxAgeMs,
-  );
-}
-
 function deviceReachabilitySummary(
   device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError" | "probeInfo">,
 ): string {
@@ -212,39 +186,6 @@ function deviceReachabilitySummary(
   if (device.probeError) return device.probeError;
   if (device.host) return "No recent agent signal; direct browser access usually needs relay";
   return "No recent agent signal";
-}
-
-type DeviceLifecycleState =
-  | "offline"
-  | "bootstrap"
-  | "yaver-auth-expired"
-  | "ready-to-connect"
-  | "connected";
-
-function deriveDeviceLifecycleState(
-  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent" | "probeInfo">,
-): DeviceLifecycleState {
-  if (device.workspaceLive) return "connected";
-  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
-  if (
-    lifecycleState === "bootstrap" ||
-    lifecycleState === "yaver-auth-expired" ||
-    lifecycleState === "ready-to-connect"
-  ) {
-    return lifecycleState as DeviceLifecycleState;
-  }
-  if (device.needsAuth && (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))) return "bootstrap";
-  if (device.probeState === "auth-expired") return "yaver-auth-expired";
-  if (
-    device.probeState === "ok" ||
-    device.peerState === "online" ||
-    device.peerState === "stale" ||
-    device.online ||
-    hasRecentLiveSignal(device)
-  ) {
-    return "ready-to-connect";
-  }
-  return "offline";
 }
 
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
