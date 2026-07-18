@@ -71,7 +71,16 @@ jobs:
     # Publish Yaver's server.json to the official MCP Registry
     # (registry.modelcontextprotocol.io). Uses GitHub's OIDC token so we
     # don't need a stored secret — the registry verifies the token proves
-    # ownership of the io.github.kivanccakmak/* namespace.
+    # ownership of the io.github.yaver-io/* namespace.
+    #
+    # That namespace MUST track the repo owner. After the move to the
+    # yaver-io org, OIDC began granting io.github.yaver-io/* while
+    # server.json still said io.github.kivanccakmak/yaver, so every release
+    # 403'd here — three retries, then a non-fatal exit. Since the step is
+    # allowed to fail, the run stayed green and the registry silently went
+    # stale for release after release. If this 403s again, the first thing
+    # to check is that server.json's name matches the org that owns THIS
+    # repository.
     # Depends on publish-npm so the package + version are live on npm
     # before the registry tries to verify them.
     needs: [validate, publish-npm]

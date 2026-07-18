@@ -7,7 +7,7 @@ Last checked: 2026-07-05.
 Yaver is ready for MCP ecosystem discovery as a local stdio MCP server:
 
 - Official MCP Registry package file: `server.json`
-- Registry name: `io.github.kivanccakmak/yaver`
+- Registry name: `io.github.yaver-io/yaver`
 - NPM package: `yaver-cli`
 - Transport: `stdio`
 - Install command: `npx -y yaver-cli yaver-mcp`
@@ -86,7 +86,7 @@ scripts/mcp-discoverability-audit.sh
 Expected successful checks:
 
 - Local well-known files are synced.
-- NPM `mcpName` is `io.github.kivanccakmak/yaver`.
+- NPM `mcpName` is `io.github.yaver-io/yaver`.
 - Official MCP Registry lists the current package version.
 - Public metadata URLs are reachable.
 

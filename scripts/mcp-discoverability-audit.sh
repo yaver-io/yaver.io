@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER_NAME="${MCP_SERVER_NAME:-io.github.kivanccakmak/yaver}"
+SERVER_NAME="${MCP_SERVER_NAME:-io.github.yaver-io/yaver}"
 NPM_PACKAGE="${MCP_NPM_PACKAGE:-yaver-cli}"
 
 need() {

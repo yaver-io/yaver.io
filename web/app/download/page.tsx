@@ -305,7 +305,7 @@ export default function DownloadPage() {
           <p className="mt-4 text-xs text-surface-500">
             Already installed globally? <code>yaver mcp setup claude-code</code> writes the same entry,
             and <code>yaver auth</code> auto-registers every installed runner on first sign-in.
-            Published to the official MCP registry as <code>io.github.kivanccakmak/yaver</code>. Full
+            Published to the official MCP registry as <code>io.github.yaver-io/yaver</code>. Full
             tool list and HTTP/remote setup:{" "}
             <Link href="/docs/mcp" className="underline hover:text-surface-300">
               MCP guide
