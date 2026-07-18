@@ -1418,7 +1418,7 @@ export default defineSchema({
     // Lets the fleet/policy layer route work to a box that has the right
     // runner ready without waking it first.
     runnersAvailable: v.optional(v.array(v.object({
-      id: v.string(),                 // "claude" | "codex" | "opencode" | "glm"
+      id: v.string(),                 // "claude" | "codex" | "opencode"
       name: v.optional(v.string()),
       installed: v.optional(v.boolean()),
       authed: v.optional(v.boolean()),

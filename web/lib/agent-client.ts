@@ -8008,7 +8008,10 @@ export async function requestAgentUpdateViaConvex(
   deviceId: string,
   version?: string,
 ): Promise<{ requestedVersion: string }> {
-  const res = await fetch(`${CONVEX_URL}/devices/request-update`, {
+  // Use the same-origin route first so browser CORS/preflight drift on the
+  // Convex HTTP endpoint cannot strand web-only remote updates. The route
+  // forwards server-side to the same Convex mutation.
+  const res = await fetch(`/api/devices/request-update`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

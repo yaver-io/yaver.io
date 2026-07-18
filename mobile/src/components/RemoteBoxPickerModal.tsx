@@ -1010,8 +1010,8 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                             {(() => {
                               // Browser OAuth only covers claude/codex; opencode
                               // authenticates through provider config, and offering
-                              // it a "Sign in" button that opens an OAuth page it
-                              // cannot complete is worse than offering nothing.
+                              // it a "Sign in" button that opens an OAuth page the
+                              // user cannot complete is worse than offering nothing.
                               const signInTarget = codingRunners.find(
                                 (r) =>
                                   r.installed &&

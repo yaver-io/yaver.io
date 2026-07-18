@@ -649,7 +649,7 @@ for (const path of [
   "/auth/passkey/signup/start", "/auth/passkey/signup/finish",
   "/auth/passkey/list", "/auth/passkey/remove", "/auth/passkey/check",
   "/auth/email-providers", "/auth/verify-email/request", "/auth/verify-email/confirm",
-  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/devices/tags", "/devices/select", "/config", "/settings", "/settings/repair-relay", "/packages",
+  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/devices/tags", "/devices/select", "/devices/request-update", "/devices/claim-update", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/mesh/peers", "/mesh/acls", "/mesh/acls/set", "/mesh/tags", "/mesh/tags/set", "/mesh/node/config", "/mesh/join", "/mesh/leave",
   "/support/invite", "/support/invite/info", "/support/connections", "/support/grant/revoke", "/support/deny-all",
   "/shortcuts", "/shortcuts/delete",
