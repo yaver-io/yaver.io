@@ -1097,32 +1097,36 @@ type TaskInfo struct {
 	// leaked into every label and a task that ran on a sibling box
 	// looked like it ran on whichever device the phone was focused
 	// on at view time.
-	DeviceName     string             `json:"deviceName,omitempty"`
-	SessionID      string             `json:"sessionId,omitempty"`
-	Output         string             `json:"output,omitempty"`
-	ResultText     string             `json:"resultText,omitempty"`
-	CostUSD        float64            `json:"costUsd,omitempty"`
-	InputTokens    int                `json:"inputTokens,omitempty"`
-	OutputTokens   int                `json:"outputTokens,omitempty"`
-	Turns          []ConversationTurn `json:"turns,omitempty"`
-	Source         string             `json:"source,omitempty"`
-	TmuxSession    string             `json:"tmuxSession,omitempty"`
-	IsAdopted      bool               `json:"isAdopted,omitempty"`
-	CreatedAt      time.Time          `json:"createdAt"`
-	StartedAt      *time.Time         `json:"startedAt,omitempty"`
-	FinishedAt     *time.Time         `json:"finishedAt,omitempty"`
-	ChainID        string             `json:"chainId,omitempty"`
-	ChainOrder     int                `json:"chainOrder,omitempty"`
-	AutoRetry      bool               `json:"autoRetry,omitempty"`
-	AutoRetryCount int                `json:"autoRetryCount,omitempty"`
-	AutoRetryMax   int                `json:"autoRetryMax,omitempty"`
-	VideoEnabled   bool               `json:"videoEnabled,omitempty"`
-	VideoSource    string             `json:"videoSource,omitempty"`
-	VideoClipID    string             `json:"videoClipId,omitempty"`
-	VideoStatus    string             `json:"videoStatus,omitempty"`
-	VideoClipURL   string             `json:"videoClipUrl,omitempty"`
-	VideoPosterURL string             `json:"videoPosterUrl,omitempty"`
-	AskFreely      bool               `json:"askFreely,omitempty"`
+	DeviceName   string             `json:"deviceName,omitempty"`
+	SessionID    string             `json:"sessionId,omitempty"`
+	Output       string             `json:"output,omitempty"`
+	ResultText   string             `json:"resultText,omitempty"`
+	CostUSD      float64            `json:"costUsd,omitempty"`
+	InputTokens  int                `json:"inputTokens,omitempty"`
+	OutputTokens int                `json:"outputTokens,omitempty"`
+	Turns        []ConversationTurn `json:"turns,omitempty"`
+	// TurnCount lets a list view show "12 turns" without shipping the
+	// transcript to render a number. The list handler nils Turns and sets this;
+	// the detail endpoint leaves Turns intact and this stays 0.
+	TurnCount      int        `json:"turnCount,omitempty"`
+	Source         string     `json:"source,omitempty"`
+	TmuxSession    string     `json:"tmuxSession,omitempty"`
+	IsAdopted      bool       `json:"isAdopted,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
+	ChainID        string     `json:"chainId,omitempty"`
+	ChainOrder     int        `json:"chainOrder,omitempty"`
+	AutoRetry      bool       `json:"autoRetry,omitempty"`
+	AutoRetryCount int        `json:"autoRetryCount,omitempty"`
+	AutoRetryMax   int        `json:"autoRetryMax,omitempty"`
+	VideoEnabled   bool       `json:"videoEnabled,omitempty"`
+	VideoSource    string     `json:"videoSource,omitempty"`
+	VideoClipID    string     `json:"videoClipId,omitempty"`
+	VideoStatus    string     `json:"videoStatus,omitempty"`
+	VideoClipURL   string     `json:"videoClipUrl,omitempty"`
+	VideoPosterURL string     `json:"videoPosterUrl,omitempty"`
+	AskFreely      bool       `json:"askFreely,omitempty"`
 }
 
 // TaskManager manages the lifecycle of tasks.

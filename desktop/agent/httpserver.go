@@ -3974,6 +3974,18 @@ func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	// the box to build rows that were then thrown away.
 	for i := range tasks {
 		s.enrichTaskInfoVideo(&tasks[i], r)
+		// Drop the full conversation transcript from the LIST. ListTasks copies
+		// Turns verbatim, so every row carried its entire exchange — ~12 KB per
+		// task on a real box, which meant the 500-row ceiling still permitted a
+		// ~6 MB response: most of the original 8 MB bug, just harder to trigger.
+		// Output is already capped at 2000 chars for the same reason.
+		//
+		// Safe because detail does NOT come through here: getTask() calls
+		// taskMgr.GetTask() directly and still returns everything. Trimmed in
+		// the handler rather than in ListTasks because five other callers share
+		// that function and some legitimately read turns.
+		tasks[i].TurnCount = len(tasks[i].Turns)
+		tasks[i].Turns = nil
 	}
 
 	resp := map[string]interface{}{
