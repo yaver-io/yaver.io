@@ -1456,6 +1456,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional owned Yaver agent device id/name/alias that should run the diagnosis. Hermes doctoring inspects a CHECKOUT, so the honest answer comes from the machine holding the project — use this to diagnose a remote worker's copy instead of this one. Omitted = diagnose locally.",
+					},
 					"directory": map[string]interface{}{"type": "string", "description": "Project or monorepo directory (default: agent work dir)"},
 					"availableModules": map[string]interface{}{
 						"type":        "array",

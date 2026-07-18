@@ -1103,6 +1103,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Mobile project prep/build endpoints used by MCP cross-device proxying.
 	mux.HandleFunc("/mobile/project/status", s.auth(s.handleMobileProjectStatus))
 	mux.HandleFunc("/mobile/project/prepare", s.auth(s.handleMobileProjectPrepare))
+	mux.HandleFunc("/mobile/hermes/doctor", s.auth(s.handleMobileHermesDoctor))
 	mux.HandleFunc("/mobile/project/build", s.auth(s.handleMobileProjectBuild))
 
 	// Phone-driven dependency installer — `yaver install <tool>` over HTTP.
@@ -8176,6 +8177,22 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	case "mobile_hermes_doctor":
 		var args mobileHermesDoctorInput
 		json.Unmarshal(call.Arguments, &args)
+		if dev := strings.TrimSpace(args.DeviceID); dev != "" {
+			// Diagnose on the box that HOLDS the project. The directory is
+			// deliberately passed through unresolved: it names a path on the
+			// remote checkout, and defaulting it here would bake this laptop's
+			// working directory into a question about another machine.
+			out, err := proxyToDeviceJSON(context.Background(), "mobile_hermes_doctor", dev, http.MethodPost, "/mobile/hermes/doctor", map[string]any{
+				"directory":                args.Directory,
+				"availableModules":         args.AvailableModules,
+				"availableModuleMap":       args.AvailableModuleMap,
+				"supportedRuntimeFamilies": args.SupportedRuntimeSets,
+			})
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("mobile_hermes_doctor: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
 		if strings.TrimSpace(args.Directory) == "" {
 			args.Directory = s.taskMgr.workDir
 		}

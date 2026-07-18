@@ -9,6 +9,11 @@ import (
 )
 
 type mobileHermesDoctorInput struct {
+	// DeviceID routes the diagnosis to the box that HOLDS the project. Hermes
+	// doctoring inspects a checkout — which native modules it needs, and whether
+	// the Yaver container can host them — so the honest answer comes from the
+	// machine with the code, not the one asking. See REMOTE_WORKER.md §A.
+	DeviceID             string            `json:"device_id,omitempty"`
 	Directory            string            `json:"directory"`
 	AvailableModules     []string          `json:"availableModules"`
 	AvailableModuleMap   map[string]string `json:"availableModuleMap"`

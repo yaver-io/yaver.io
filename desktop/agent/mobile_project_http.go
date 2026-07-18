@@ -105,3 +105,31 @@ func (s *HTTPServer) handleMobileProjectBuild(w http.ResponseWriter, r *http.Req
 	}
 	jsonReply(w, http.StatusOK, out)
 }
+
+// handleMobileHermesDoctor is the receiving half of remote Hermes diagnosis.
+//
+// REMOTE_WORKER.md §A ships the dev loop first, and this was the one Layer 1
+// verb with nowhere to land: mobile_hermes_doctor could not be proxied because
+// no route existed to proxy TO. Adding the device_id flag alone would have
+// advertised a capability that then 404s — worse than not offering it.
+//
+// The diagnosis is pure inspection of a checkout: which native modules the
+// project needs, and whether the Yaver container can host them. That is
+// intrinsically a question about the machine holding the code, which is exactly
+// why it has to be answerable remotely — the laptop asking is usually not the
+// box with the project on it.
+func (s *HTTPServer) handleMobileHermesDoctor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req mobileHermesDoctorInput
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if strings.TrimSpace(req.Directory) == "" && s.taskMgr != nil {
+		// Same default as the local MCP path: an omitted directory means "the
+		// project this agent is working in", which on a remote worker is the
+		// whole point of asking it rather than asking here.
+		req.Directory = s.taskMgr.workDir
+	}
+	jsonReply(w, http.StatusOK, mobileHermesDoctor(req))
+}
