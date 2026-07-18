@@ -11592,10 +11592,20 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		json.Unmarshal(call.Arguments, &a)
 		// The /git/* routes already exist on every agent, which is what makes
 		// these cheap to route: the receiving half was built long ago and only
-		// the MCP verb was local-only. `directory` is passed through unresolved
-		// — it names a path in the REMOTE checkout.
+		// the MCP verb was local-only.
+		//
+		// GET with ?workDir=, NOT POST with {"directory"}. handleGitBranches
+		// answers 405 "use GET" and reads getGitWorkDir(r) — which looks at the
+		// `workDir` QUERY param. The first version of this shipped a POST/JSON
+		// proxy that would have 405'd on every call: a device_id that is
+		// advertised and always fails is worse than one that is absent, which is
+		// the same trap mobile_hermes_doctor had to avoid. Match the route's
+		// actual contract, not the shape of a neighbouring tool's.
+		//
+		// The path is passed through unresolved — it names a directory in the
+		// REMOTE checkout.
 		if dev := strings.TrimSpace(a.DeviceID); dev != "" {
-			out, err := proxyToDeviceJSON(context.Background(), "git_branches", dev, http.MethodPost, "/git/branches", map[string]any{"directory": a.Dir})
+			out, err := proxyToDeviceJSON(context.Background(), "git_branches", dev, http.MethodGet, "/git/branches?workDir="+url.QueryEscape(a.Dir), nil)
 			if err != nil {
 				return mcpToolError(fmt.Sprintf("git_branches: %v", err))
 			}
