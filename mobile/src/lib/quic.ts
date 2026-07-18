@@ -28,6 +28,7 @@ import { cacheTaskList, cacheTaskOutput, getCachedTaskList, getDeletedTaskIds } 
 // the banner counted "reconnect 1/5". logger.ts is dependency-free and lazily
 // loads AsyncStorage, so importing it here is import-safe.
 import { appLog } from "./logger";
+import { describeDirectProbeFailure } from "./directProbeFailure";
 import { beaconListener } from "./beacon";
 import NetInfo from "@react-native-community/netinfo";
 import type { BuildInfo, BuildSummary } from "./builds";
@@ -387,6 +388,9 @@ export interface Task {
   /** 0-based position in the chain. */
   chainOrder?: number;
   /** Whether auto-retry is enabled for this task. */
+  placementId?: string;
+  placementLane?: string;
+  placementReason?: string;
   autoRetry?: boolean;
   /** Number of auto-retries so far. */
   autoRetryCount?: number;
@@ -6076,8 +6080,12 @@ export class QuicClient {
     }
 
     if (candidates.length === 0) return null;
-    console.log(`[QUIC] Racing ${candidates.length} direct candidate(s):`,
-      candidates.map((c) => `${c.path}=${c.ip}:${c.port}`).join(", "));
+    // appLog, not console.log: this is the line that answers "why did my phone
+    // not reach my Mac?", and the in-app Connection Logs is where a user
+    // actually looks. Kept on console too for `npx react-native log-ios`.
+    const candidateSummary = candidates.map((c) => `${c.path}=${c.ip}:${c.port}`).join(", ");
+    console.log(`[QUIC] Racing ${candidates.length} direct candidate(s):`, candidateSummary);
+    appLog("info", `[direct] racing ${candidates.length} candidate(s): ${candidateSummary}`);
 
     const controllers: AbortController[] = [];
     const probe = (cand: Candidate, idx: number): Promise<{
@@ -6096,6 +6104,12 @@ export class QuicClient {
         })
         .catch((e) => {
           clearTimeout(timer);
+          // Say WHY this leg failed, per candidate. Promise.any below collapses
+          // every rejection into a single null, so without this the user sees
+          // "probe found no route" with no cause — which is exactly how an
+          // overlay leg that could NEVER work (blocked before it reached the
+          // network) looked identical to a box that was merely asleep.
+          appLog("warn", `[direct] ${cand.path} ${cand.ip}:${cand.port} failed — ${describeDirectProbeFailure(e)}`);
           throw e;
         });
     };
