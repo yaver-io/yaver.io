@@ -25,7 +25,7 @@ import { RemoteWindow3D } from "./RemoteWindow3D";
 import { DataPane3D } from "./DataPane3D";
 import { summarizeFleet } from "../lib/fleetStats";
 import { agentSignalFromTaskStatus, agentStateHex, slotKeyForTask } from "../../../lib/agentStatus";
-import { useAgentSlots } from "../../../../mobile/src/lib/agentSlots";
+import { useAgentSlots } from "../../../lib/agentSlots";
 
 // Single XR store shared across the page so the "Enter VR" button
 // in page.tsx can trigger session entry without prop-drilling.
