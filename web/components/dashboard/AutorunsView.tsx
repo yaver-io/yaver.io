@@ -126,12 +126,36 @@ function duration(s: AutorunSession): string {
   return `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}`;
 }
 
+/** One claim held on this machine. Mirrors leaseHold (autorun_leases.go). */
+type LeaseHold = {
+  key: { Class: string; Name: string };
+  holder: string;
+  slot: string;
+  phase: string;
+  acquired: string;
+  expires: string;
+};
+
+/**
+ * What each class of claim means, in the reader's terms rather than the code's.
+ * Shown inline because "area" and "seat" are not self-explanatory, and a panel
+ * that lists contention without explaining it just relocates the confusion.
+ */
+const LEASE_CLASS_LABEL: Record<string, { label: string; hint: string }> = {
+  path: { label: "source area", hint: "one writer at a time — a second run editing here would have its work stashed" },
+  build: { label: "build target", hint: "one build per toolchain — concurrent builds thrash the same caches" },
+  seat: { label: "runner seat", hint: "one conversation per runner" },
+  land: { label: "landing", hint: "serializes pushes onto the base branch" },
+};
+
 export default function AutorunsView() {
   const [sessions, setSessions] = useState<AutorunSession[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  const [holds, setHolds] = useState<LeaseHold[]>([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -144,6 +168,15 @@ export default function AutorunsView() {
       setErr(e?.message || String(e));
     } finally {
       setLoading(false);
+    }
+    // Leases are fetched separately and failure is swallowed on purpose: this
+    // panel explains contention, and an agent too old to know the verb should
+    // show one less panel rather than break the run list above it.
+    try {
+      const res = await agentClient.callOps("autorun_leases", {});
+      setHolds(res.ok && Array.isArray(res.initial?.holds) ? (res.initial.holds as LeaseHold[]) : []);
+    } catch {
+      setHolds([]);
     }
   }, []);
 
@@ -204,6 +237,49 @@ export default function AutorunsView() {
 
       {err ? (
         <div className="card border border-red-500/30 p-3 text-xs text-red-700 dark:text-red-300">{err}</div>
+      ) : null}
+
+      {holds.length > 0 ? (
+        <div className="card p-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-sm font-medium text-surface-200">What is claimed here</h3>
+            <span className="text-[11px] text-surface-500">{holds.length} held</span>
+          </div>
+          <p className="mt-0.5 text-[11px] text-surface-500">
+            A run refused as <code className="text-surface-400">slot_busy</code> or{" "}
+            <code className="text-surface-400">area_owned</code> is explained by this list.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {holds.map((h) => {
+              const meta = LEASE_CLASS_LABEL[h.key?.Class] ?? { label: h.key?.Class ?? "claim", hint: "" };
+              return (
+                <li
+                  key={`${h.key?.Class}/${h.key?.Name}/${h.holder}`}
+                  className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-t border-surface-800 pt-1 text-xs first:border-t-0 first:pt-0"
+                >
+                  <span className="rounded bg-surface-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-surface-400">
+                    {meta.label}
+                  </span>
+                  <code className="text-surface-200">{h.key?.Name}</code>
+                  <span className="text-surface-500">held by</span>
+                  <span className="text-surface-300">{h.slot || h.holder}</span>
+                  {h.phase ? <span className="text-surface-500">in {h.phase}</span> : null}
+                  {meta.hint ? <span className="w-full text-[11px] text-surface-600">{meta.hint}</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+          {/* A seat absent from this list is FREE, and that is the system working:
+              a run in its build phase hands its seat back so unrelated work can
+              use it while something compiles. Without saying so, an empty seat
+              row reads as a bug. */}
+          {holds.some((h) => h.phase === "build") && !holds.some((h) => h.key?.Class === "seat") ? (
+            <p className="mt-2 border-t border-surface-800 pt-2 text-[11px] text-surface-500">
+              A build is running and no seat is held — the runner was handed back on purpose, so unrelated work can
+              proceed while this compiles.
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {ordered.length === 0 ? (
