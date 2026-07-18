@@ -1514,7 +1514,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Manage user-registered external MCP servers (mcp_external.go).
 	mux.HandleFunc("/mcp/servers", s.auth(s.handleMCPServers))
 
-	handler := s.ipAllowlist(withCORS(mux))
+	// Every request converges here, which makes it the one place that can answer
+	// the first question worth asking when a phone cannot reach this box: DID
+	// THE REQUEST ARRIVE? Without it, the box's side of a connection failure was
+	// simply unrecorded — ~/.yaver/agent.log existed and was 0 bytes — so
+	// diagnosis had to be done from phone screenshots, which show one end of the
+	// wire. That is how an 8 MB /tasks response spent a long time being
+	// misread as a dead network.
+	handler := withRequestLog(s.ipAllowlist(withCORS(mux)))
 	// Stash the wrapped handler + serve context so a later mesh bring-up can add
 	// an additive listener on the overlay IP (addOverlayListener).
 	s.rootHandler = handler
