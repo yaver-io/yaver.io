@@ -524,7 +524,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// but capability-scoped SDK tokens (e.g. scopes:["circuit"]) are also accepted
 	// — validated, CIDR-checked, then demoted to a scoped guest so the per-verb
 	// gate in dispatchOps restricts them to their verb family. This is what lets
-	// an external product drive ONLY its circuit cell over /ops.
+	// an external product (Talos/OCPP) drive ONLY the circuit cell over /ops.
 	mux.HandleFunc("/ops", s.authSDKOrGuest(s.handleOps))
 	mux.HandleFunc("/ops/plan", s.authSDKOrGuest(s.handleOpsPlan))
 	// Remote-view (RustDesk/AnyDesk/VNC) management — first-class in the agent.
@@ -532,7 +532,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/remoteview/status", s.auth(s.handleRemoteViewStatus))
 	mux.HandleFunc("/remoteview/connect", s.auth(s.handleRemoteViewConnect))
 	mux.HandleFunc("/remoteview/disconnect", s.auth(s.handleRemoteViewDisconnect))
-	// Live ghost screen stream (Bambu-camera style) — proxied by an owning web UI.
+	// Live ghost screen stream (Bambu-camera style) — proxied by the Talos web UI.
 	mux.HandleFunc("/ghost/stream", s.auth(s.handleGhostStream))
 	mux.HandleFunc("/ghost/frame.jpg", s.auth(s.handleGhostFrame))
 	// Capture card (home A/V source) — MJPEG stream + latest frame. Own
@@ -1724,7 +1724,7 @@ var scopePathPrefixes = map[string][]string{
 	"todolist":     {"/todolist"},
 	"guest-reload": {"/dev/reload", "/dev/reload-app", "/dev/status", "/dev/target", "/dev/events", "/dev/compatibility", "/unity/test", "/unity/build", "/unity/relaunch"},
 	"guest-vibing": {"/vibing"},
-	// circuit: isolated circuit-simulator service credential.
+	// circuit: isolated circuit-simulator service credential (Talos/OCPP).
 	// Opens only the ops endpoint + discovery; the verb-level gate in ops.go
 	// (capabilityScopeVerbPrefix) then restricts /ops to circuit_* verbs. Pair
 	// with delegatedGuestScope:"circuit" on the token so the caller is treated
@@ -1736,9 +1736,9 @@ var scopePathPrefixes = map[string][]string{
 	// snapshot-polling (stream_snapshot returns base64) so no browser-session /
 	// MJPEG escalation is needed — the token reaches frames and NOTHING else.
 	"stream": {"/ops", "/info", "/health"},
-	// runner-auth: lets constrained SDK surfaces inspect runner state and
-	// complete non-subscription runner setup. Claude/Codex subscription OAuth
-	// remains owner-machine only; handlers reject scoped credential writes.
+	// runner-auth: lets the embedded Feedback SDK inspect runner state
+	// and complete either browser-style auth (codex / claude) or
+	// token-based setup (opencode) without a separate full-session UI.
 	"runner-auth": {"/runner-auth/browser/start", "/runner-auth/browser/status", "/runner-auth/browser/cancel", "/runner-auth/status", "/runner-auth/setup", "/agent/runners", "/agent/runner/switch"},
 }
 
@@ -1762,7 +1762,7 @@ func (s *HTTPServer) applyDelegatedGuestSDKHeaders(w http.ResponseWriter, r *htt
 		return true
 	}
 	// Capability tokens (scopes like "circuit") are isolated single-resource
-	// service credentials minted for another product. They carry
+	// service credentials minted for another product (Talos, OCPP). They carry
 	// no delegatedGuest binding, but MUST still be demoted to a scoped guest so
 	// the per-verb gate (capabilityScopeVerbPrefix) applies — otherwise a valid
 	// SDK token would reach /ops AS THE OWNER and bypass the circuit allowlist.
@@ -3974,24 +3974,6 @@ func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	// the box to build rows that were then thrown away.
 	for i := range tasks {
 		s.enrichTaskInfoVideo(&tasks[i], r)
-		// Drop the full conversation transcript from the LIST.
-		//
-		// ListTasks copies Turns verbatim, so every row carried its entire
-		// exchange. Measured on a real box: ~12 KB per task, which meant the
-		// 500-row ceiling above still permitted a ~6 MB response — most of the
-		// original 8 MB bug, just harder to trigger. Output is already capped
-		// at 2000 chars for exactly this reason; Turns was the remaining leak.
-		//
-		// Safe because the detail endpoint does NOT come through here:
-		// getTask() calls taskMgr.GetTask() directly and still returns
-		// everything. Trimmed in the handler rather than in ListTasks because
-		// five other callers (chatbot, ops_session, the aggregate views) share
-		// that function and some do read turns.
-		//
-		// TurnCount is kept so a client can still show "12 turns" without
-		// shipping the transcript to render a number.
-		tasks[i].TurnCount = len(tasks[i].Turns)
-		tasks[i].Turns = nil
 	}
 
 	resp := map[string]interface{}{
@@ -4055,7 +4037,6 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 		VideoClipID:    task.VideoClipID,
 		VideoStatus:    task.VideoStatus,
 		AskFreely:      task.AskFreely,
-		Placement:      task.Placement,
 	}
 	s.enrichTaskInfoVideo(&info, r)
 	return info
@@ -4100,24 +4081,20 @@ func (s *HTTPServer) enrichTaskInfoVideo(info *TaskInfo, r *http.Request) {
 
 func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title              string             `json:"title"`
-		Description        string             `json:"description"`
-		UserPrompt         string             `json:"userPrompt,omitempty"`
-		Model              string             `json:"model"`
-		Runner             string             `json:"runner"`         // runner ID: "claude", "codex", "opencode" — empty uses default
-		Mode               string             `json:"mode,omitempty"` // runner-specific subcommand: opencode "build" / "plan" / custom agent
-		CustomCommand      string             `json:"customCommand"`  // arbitrary command — runs via sh -c
-		ProjectName        string             `json:"projectName,omitempty"`
-		BundleID           string             `json:"bundleId,omitempty"` // mobile-app bundle id (e.g. io.example.sfmg) — used to resolve project for feedback-source tasks
-		Source             string             `json:"source"`             // client type: "mobile", "desktop-app", "web", "cli"
-		Verbosity          *int               `json:"verbosity,omitempty"`
-		Images             []ImageAttachment  `json:"images,omitempty"`
-		WorkDir            string             `json:"workDir,omitempty"`
-		SliceContract      *TaskSliceContract `json:"sliceContract,omitempty"`
-		PlacementKind      string             `json:"placementKind,omitempty"`
-		ForceCloud         bool               `json:"forceCloud,omitempty"`
-		ForceRelaySource   bool               `json:"forceRelaySource,omitempty"`
-		AllowLocalFallback bool               `json:"allowLocalFallback,omitempty"`
+		Title         string             `json:"title"`
+		Description   string             `json:"description"`
+		UserPrompt    string             `json:"userPrompt,omitempty"`
+		Model         string             `json:"model"`
+		Runner        string             `json:"runner"`         // runner ID: "claude", "codex", "opencode" — empty uses default
+		Mode          string             `json:"mode,omitempty"` // runner-specific subcommand: opencode "build" / "plan" / custom agent
+		CustomCommand string             `json:"customCommand"`  // arbitrary command — runs via sh -c
+		ProjectName   string             `json:"projectName,omitempty"`
+		BundleID      string             `json:"bundleId,omitempty"` // mobile-app bundle id (e.g. io.example.sfmg) — used to resolve project for feedback-source tasks
+		Source        string             `json:"source"`             // client type: "mobile", "desktop-app", "web", "cli"
+		Verbosity     *int               `json:"verbosity,omitempty"`
+		Images        []ImageAttachment  `json:"images,omitempty"`
+		WorkDir       string             `json:"workDir,omitempty"`
+		SliceContract *TaskSliceContract `json:"sliceContract,omitempty"`
 		// Video summary toggle. When videoEnabled is true, after the
 		// task finishes the agent auto-records a short MP4 of the
 		// running result via vibe-preview. videoSource picks the
@@ -4359,58 +4336,6 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// runtime scrubs PII/secrets from the prompt before the runner sees them.
 	taskOpts.RedactPII = r.Header.Get("X-Yaver-RedactPII") == "1"
 
-	placementMeta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
-		KindHint:         body.PlacementKind,
-		Title:            body.Title,
-		Description:      body.Description,
-		CustomCommand:    body.CustomCommand,
-		Source:           source,
-		Runner:           body.Runner,
-		ProjectName:      body.ProjectName,
-		WorkDir:          firstNonEmpty(taskOpts.WorkDir, s.taskMgr.workDir),
-		TargetDeviceID:   s.deviceID,
-		ForceCloud:       body.ForceCloud,
-		ForceRelaySource: body.ForceRelaySource,
-	})
-	var previewPlacement *TaskPlacementMetadata
-	if guestUID == "" {
-		if placement, perr := s.previewTaskPlacement(r.Context(), placementMeta); perr != nil {
-			log.Printf("[placement] preview skipped before task create: %v", perr)
-		} else {
-			previewPlacement = placement
-			taskOpts.Placement = placement
-		}
-	}
-	if !body.AllowLocalFallback && shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
-		pendingTaskID := newPendingCloudTaskID()
-		recordedPlacement := previewPlacement
-		if placement, perr := s.recordTaskPlacement(r.Context(), pendingTaskID, placementMeta); perr != nil {
-			log.Printf("[placement] pending record skipped for %s: %v", pendingTaskID, perr)
-		} else if placement != nil {
-			recordedPlacement = placement
-		}
-		var activation map[string]any
-		if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
-			if result, aerr := s.activateTaskPlacement(r.Context(), recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
-				log.Printf("[placement] activation skipped for %s: %v", pendingTaskID, aerr)
-			} else {
-				activation = result
-			}
-		}
-		resp := map[string]interface{}{
-			"ok":            false,
-			"action":        "cloud_workspace_required",
-			"pendingTaskId": pendingTaskID,
-			"placement":     recordedPlacement,
-			"reason":        "placement selected a Cloud Workspace that is not ready on this agent; keep the prompt client-side, wait for activation, then dispatch to the assigned workspace",
-		}
-		if activation != nil {
-			resp["activation"] = activation
-		}
-		jsonReply(w, http.StatusConflict, resp)
-		return
-	}
-
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
 	if err != nil {
 		// Preflight failures (workDir not writable, runner not authed,
@@ -4431,14 +4356,6 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("[HTTP] Task %s preflight-failed: %v (surfacing as failed bubble)", task.ID, err)
 	}
-	if placement, perr := s.recordTaskPlacement(r.Context(), task.ID, placementMeta); perr != nil {
-		log.Printf("[placement] record skipped for task %s: %v", task.ID, perr)
-	} else if placement != nil {
-		s.taskMgr.mu.Lock()
-		task.Placement = placement
-		s.taskMgr.persist()
-		s.taskMgr.mu.Unlock()
-	}
 
 	log.Printf("[HTTP] Task created: %s — %s (status: %s, model: %s, runner: %s)", task.ID, task.Title, task.Status, body.Model, task.RunnerID)
 	projectWorkDir := s.taskMgr.workDir
@@ -4455,9 +4372,6 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		"model":      task.Model,
 		"deviceName": hostname,
 		"project":    project.Name,
-	}
-	if task.Placement != nil {
-		resp["placement"] = task.Placement
 	}
 	log.Printf("[HTTP] Sending create response for task %s", task.ID)
 	jsonReply(w, http.StatusCreated, resp)
