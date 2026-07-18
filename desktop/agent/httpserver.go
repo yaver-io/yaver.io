@@ -226,6 +226,14 @@ type HTTPServer struct {
 	meshMgr            *mesh.Manager
 	meshMu             sync.Mutex
 	meshDesiredStarted bool
+	// meshAutoWarn is the last reason default-on could NOT bring the overlay
+	// up, guarded by meshMu. It exists because mesh is default-on: when the
+	// overlay is off, "off" is almost never a choice the user made, so
+	// reporting a bare `disabled (opt-in with 'yaver mesh up')` actively
+	// misleads — it tells the user to run a command that already ran and
+	// failed. Observed on a box with an unrecoverable v2 vault, where mesh
+	// retried, gave up, and still advertised itself as merely opt-out.
+	meshAutoWarn string
 	// Additive overlay HTTP listeners (mesh-as-security-fabric): on relay-only
 	// (loopback-bound) boxes, once the mesh overlay IP exists we ALSO listen on
 	// it so the agent API is reachable over the encrypted overlay without ever
