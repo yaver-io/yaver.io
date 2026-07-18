@@ -305,8 +305,12 @@ dialog twice and then wrote `converged`. Nothing in the repo knows what any
 runner's update prompt, trust prompt, model-picker, rate-limit notice, or
 approval dialog looks like. A grep for Claude's own working vocabulary —
 Pondering, Cogitating, Deciphering, Wrangling, Billowing, Crunching, Boogieing,
-Pouncing, Gusting, Noodling, Simmering — returns **zero hits** across
-`desktop/agent/`.
+Pouncing, Gusting, Schlepping, Forging, Noodling, Simmering — returns **zero
+hits** across `desktop/agent/`.
+
+That sample grew twice while this document was being written, from watching real
+sessions. It is the argument, not a gap in the list: the vocabulary is open-ended
+and nobody outside upstream knows its size.
 
 **Do not enumerate the gerunds.** That vocabulary is decorative, randomised per
 turn, and expanded by upstream whenever they feel like it — the sample above was
