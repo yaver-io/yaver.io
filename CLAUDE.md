@@ -25,6 +25,32 @@ changing those.
 ## Hard rules
 
 - **Never push or commit without explicit user permission.**
+- **Committed and pushed work is IMMUTABLE unless the user says otherwise.**
+  Once a change is committed — and certainly once pushed — nobody reverts it,
+  force-pushes over it, `git checkout --`s it away, or drops it in a rebase
+  without the user explicitly asking. This is not a style preference: work has
+  already been lost this way. On 2026-07-18 a session's `backend/convex/`
+  changes were reverted off disk *after they had been deployed to Convex prod*,
+  leaving prod carrying a schema the source tree no longer contained — the next
+  deploy from that tree would have dropped live fields. If you believe a
+  committed change is wrong, say so and propose a NEW commit that fixes it.
+  Never quietly un-land someone's work.
+- **Many sessions are always running. Assume concurrency; isolate for it.**
+  Multiple Claude/autorun threads share this machine and this repo at all times.
+  - **Work on a branch, then merge.** This supersedes the older "always work
+    directly on main" habit. A branch per unit of work (`wake-ux`, `forge-seam`)
+    keeps concurrent threads from interleaving half-finished edits in one tree.
+    Finish → rebase onto latest `main` → merge → push. Conflicts get resolved,
+    never bulldozed (see the immutability rule above).
+  - **`git commit -- <paths>` ALWAYS.** Never `-a`, never `add -A`. The index is
+    shared and goes stale between two consecutive commands, so a bare commit
+    sweeps a sibling's staged files. Pathspec commits are the only atomic form.
+  - **Autorun gets its own clone, never a shared checkout.** A dirty shared tree
+    kills a run at iteration 0. Clone to `~/Workspace/yaver-<topic>-autorun`,
+    give it its own branch, and pass task paths as ABSOLUTE paths.
+  - After any deploy from a shared checkout, `grep` the source for a symbol you
+    added to confirm it is still there. A green deploy is not evidence the code
+    survived the next five minutes.
 - **Hetzner = metered, NEVER monthly. Never leave a server running.** Hetzner
   bills servers hourly (metered) up to the monthly cap, and bills even
   **stopped** servers — only **deleting** a server stops the meter. NEVER launch
