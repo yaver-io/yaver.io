@@ -6159,11 +6159,23 @@ export class QuicClient {
    *  when it decides to use this result. Never rejects — records the last
    *  non-200 as _lastTransportError and resolves null. */
   private async probeRelayServers(): Promise<{ relay: RelayServer; authExpired: boolean } | null> {
-    if (!this.deviceId || this.relayServers.length === 0) return null;
+    // Relay is Yaver's OWN always-available path — it does not care whether
+    // either end is on a tailnet — so when a box is unreachable this is the leg
+    // that matters most, and it was the only one with no user-visible logging
+    // at all. The direct race appLogs every candidate; relay used console.log,
+    // which never reaches the in-app Connection Logs. The result was a log that
+    // showed direct legs failing and said NOTHING about relay, making a
+    // relay-connected session and a relay-dead session look identical.
+    if (!this.deviceId) return null;
+    if (this.relayServers.length === 0) {
+      appLog("warn", "[relay] no relay servers configured — the only always-available path is unavailable");
+      return null;
+    }
     for (const relay of this.relayServers) {
       try {
         const relayDeviceUrl = `${relay.httpUrl}/d/${this.deviceId}`;
         console.log("[QUIC] Trying relay:", relay.id, relayDeviceUrl);
+        appLog("info", `[relay] trying ${relay.id}`);
         const probeHeaders: Record<string, string> = { Authorization: `Bearer ${this.token}` };
         if (relay.password) {
           probeHeaders['X-Relay-Password'] = relay.password;
@@ -6173,13 +6185,24 @@ export class QuicClient {
         }, 8000);
         if (res.ok) {
           const healthData = await res.json().catch(() => ({}));
+          appLog("info", `[relay] ${relay.id} reachable — agent answered via relay`);
           return { relay, authExpired: !!healthData.authExpired };
         }
         this._lastTransportError = await responseErrorMessage(res, `Relay ${relay.id} returned HTTP ${res.status}`);
+        // relayStatusHint already turns the common codes into something
+        // actionable (rate limited / overloaded / auth failed) — surface it
+        // rather than a bare status number.
+        appLog("warn", `[relay] ${relay.id} refused — ${this._lastTransportError}`);
       } catch (e) {
         console.log("[QUIC] Relay", relay.id, "failed:", e);
+        appLog("warn", `[relay] ${relay.id} unreachable — ${describeDirectProbeFailure(e)}`);
       }
     }
+    // Every relay failed. Said explicitly because this is the moment the box
+    // becomes genuinely unreachable: direct legs may be structurally
+    // impossible (no tailnet, different LAN), and relay is what was supposed
+    // to work regardless.
+    appLog("warn", `[relay] all ${this.relayServers.length} relay(s) failed — no path left to this device`);
     return null;
   }
 
