@@ -31,7 +31,7 @@ came from reasoning ahead of evidence.** Measure first.
 
 ## 2. Open, with evidence
 
-### 2.1 Probe storm starves the working connection  ← highest value
+### 2.1 Probe storm starves the working connection — FIXED (215f2edc8), NOT device-verified
 
 The phone races direct candidates for **6 devices** continuously (~15 candidates
 per cycle, 2.5s timeout each) plus **four concurrent reconnect ladders**. Backoff
@@ -72,8 +72,18 @@ structurally-unreachable candidates for non-focused devices. `quic.ts:6598`'s
 forever-retry for "previously-reachable" hosts is the amplifier — it was judged
 cosmetic earlier in the session and is not.
 
-This is connection-lifecycle code. Verify before shipping: an unverified edit
-here yields a build that cannot connect at all.
+**Shipped in `215f2edc8`**, fixed at the source: `refreshDevices` now keeps the
+previous array when nothing material changed (`mobile/src/lib/deviceListEquality.ts`),
+so EVERY effect keyed on `devices` is protected — not just the one at 2177.
+
+`lastSeen` is deliberately excluded from the comparison: it advances on every
+heartbeat, so including it would make two lists never compare equal and silently
+restore this bug while looking like a tightening in review. Mutation-tested —
+adding it fails a test named for the storm.
+
+STILL TO DO: verify on device. Install the build, open Connection Logs, and
+confirm the 30s `[direct] racing …` re-entry stops when the fleet is unchanged.
+Unit tests prove the comparator; only the phone proves the storm is gone.
 
 ### 2.2 The mini cannot take agent updates
 
