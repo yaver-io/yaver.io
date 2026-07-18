@@ -1,11 +1,11 @@
 {
   "schema_version": "2026-05-19",
-  "name": "io.github.kivanccakmak/yaver",
+  "name": "io.github.yaver-io/yaver",
   "title": "Yaver",
   "description": "Phone-first local dev MCP for Claude Code and Codex: install Yaver, pair mobile, run, build, deploy.",
   "website_url": "https://yaver.io/docs/mcp",
   "repository": "https://github.com/kivanccakmak/yaver.io",
-  "registry_name": "io.github.kivanccakmak/yaver",
+  "registry_name": "io.github.yaver-io/yaver",
   "official_registry_manifest": "https://yaver.io/.well-known/mcp/server.json",
   "llms_txt": "https://yaver.io/llms.txt",
   "install": {

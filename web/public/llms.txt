@@ -14,7 +14,7 @@ copy on https://yaver.io itself.
 
 Discovery metadata for crawlers and MCP installers:
 
-- Official MCP Registry name: `io.github.kivanccakmak/yaver`
+- Official MCP Registry name: `io.github.yaver-io/yaver`
 - MCP server manifest: `https://yaver.io/.well-known/mcp/server.json`
 - MCP server card: `https://yaver.io/.well-known/mcp.json`
 - MCP server card alias: `https://yaver.io/.well-known/mcp/server-card.json`

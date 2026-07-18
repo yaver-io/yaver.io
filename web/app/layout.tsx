@@ -77,7 +77,7 @@ export const metadata: Metadata = {
     // Explicit pointer for agents that look at arbitrary <meta> tags.
     "ai:install-guide": "https://yaver.io/llms.txt",
     "ai:install-command": "npm install -g yaver-cli && yaver auth",
-    "mcp:server": "io.github.kivanccakmak/yaver",
+    "mcp:server": "io.github.yaver-io/yaver",
     "mcp:manifest": "https://yaver.io/.well-known/mcp/server.json",
     "mcp:config": "https://yaver.io/.mcp.json",
   },

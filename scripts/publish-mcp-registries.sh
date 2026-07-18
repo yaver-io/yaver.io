@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER_NAME="${MCP_SERVER_NAME:-io.github.kivanccakmak/yaver}"
+SERVER_NAME="${MCP_SERVER_NAME:-io.github.yaver-io/yaver}"
 NPM_PACKAGE="${MCP_NPM_PACKAGE:-yaver-cli}"
 MODE="dry-run"
 
@@ -21,7 +21,7 @@ Modes:
 
 Environment:
   MCP_VERSION       Override npm latest as the version to write into server.json.
-  MCP_SERVER_NAME   Default: io.github.kivanccakmak/yaver
+  MCP_SERVER_NAME   Default: io.github.yaver-io/yaver
   MCP_NPM_PACKAGE   Default: yaver-cli
 USAGE
 }

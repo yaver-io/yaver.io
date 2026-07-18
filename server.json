@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.kivanccakmak/yaver",
+  "name": "io.github.yaver-io/yaver",
   "title": "Yaver",
   "description": "Phone-first local dev MCP for Claude Code and Codex: install Yaver, pair mobile, run, build, deploy.",
   "websiteUrl": "https://yaver.io/docs/mcp",

@@ -43,7 +43,7 @@ Public discovery now exists at:
 
 Official MCP Registry:
 
-- `io.github.kivanccakmak/yaver@1.99.219` is active.
+- `io.github.yaver-io/yaver@1.99.219` is active.
 - `scripts/publish-mcp-registries.sh --official` was made idempotent for duplicate active versions.
 
 Glama:
@@ -278,7 +278,7 @@ Expected:
 ```json
 {
   "version": "1.99.220",
-  "mcpName": "io.github.kivanccakmak/yaver"
+  "mcpName": "io.github.yaver-io/yaver"
 }
 ```
 
@@ -295,7 +295,7 @@ MCP_VERSION=1.99.220 ./scripts/publish-mcp-registries.sh --official
 Then verify registry status:
 
 ```bash
-mcp-publisher status --status active io.github.kivanccakmak/yaver 1.99.220
+mcp-publisher status --status active io.github.yaver-io/yaver 1.99.220
 ```
 
 ### 4. Deploy web discovery for `1.99.220`

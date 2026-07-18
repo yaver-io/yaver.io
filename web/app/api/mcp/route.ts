@@ -250,7 +250,7 @@ export async function GET(request: NextRequest) {
     description: "Review-safe hosted MCP endpoint for Yaver setup guidance. Local machine control runs through the user's local Yaver MCP server.",
     tools: tools.map((tool) => tool.name),
     localMcp: {
-      registryName: "io.github.kivanccakmak/yaver",
+      registryName: "io.github.yaver-io/yaver",
       npmPackage: "yaver-cli",
       command: "npx -y yaver-cli yaver-mcp",
       docs: `${base}/docs/mcp`,
@@ -268,7 +268,7 @@ function callTool(id: JsonRpcId, params: any) {
     case "yaver_mcp_package_info":
       return jsonRpc(id, textResult([
         "Yaver MCP package:",
-        "- Registry name: io.github.kivanccakmak/yaver",
+        "- Registry name: io.github.yaver-io/yaver",
         "- npm package: yaver-cli",
         "- Local stdio command: npx -y yaver-cli yaver-mcp",
         "- Docs: https://yaver.io/docs/mcp",
