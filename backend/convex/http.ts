@@ -5620,6 +5620,15 @@ http.route({
               typeof machine.provisionProgress === "number"
                 ? machine.provisionProgress
                 : null,
+            // When the CURRENT phase started. Without it a client can only
+            // time a wake from lastWokeAt, so it cannot tell "booting for 20s"
+            // from "booting for 9 minutes" — which is the whole difference
+            // between a normal wake and a stuck one.
+            provisionPhaseAt: machine.provisionPhaseAt ?? null,
+            // Provider's own view of the server during a wake, so the UI can
+            // say "Hetzner: initializing" instead of an unexplained spinner.
+            providerStatus: machine.providerStatus ?? null,
+            providerStatusAt: machine.providerStatusAt ?? null,
             // Short curated failure label the box itself beaconed
             // (phase="error"); drives the synthetic "Setting up" card's
             // failure state + recovery hint in web/mobile.

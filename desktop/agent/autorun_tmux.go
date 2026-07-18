@@ -138,6 +138,14 @@ func ensureAutorunTmuxSession(ctx context.Context, session string, runner Runner
 	if err := ensureClaudeFolderTrustedForLocalHome(workDir); err != nil {
 		log.Printf("[autorun] could not pre-accept folder trust for %s: %v", workDir, err)
 	}
+	// Codex blocks on a different first screen, and it cost a live run on
+	// 2026-07-18: the pane sat on "Update available! 0.128.0 -> 0.144.5 /
+	// 1. Update now 2. Skip 3. Skip until next version" until a human pressed a
+	// key, while autorun reported the session as running. Same failure shape as
+	// the trust dialog above — a blocking prompt eats the instruction
+	// autorunTmuxKick types — so it gets the same pre-answer. Codex also keeps
+	// its own per-directory trust list, which never contains a fresh worktree.
+	prepareCodexForHeadlessRun(workDir)
 	parts := append([]string{resolveRunnerBinary(runner.Command)}, autorunTmuxArgs(runner)...)
 	quoted := make([]string, 0, len(parts)+4)
 	// The TUI inherits the tmux SERVER's environment, which autorun does not

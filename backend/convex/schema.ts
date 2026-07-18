@@ -1350,6 +1350,15 @@ export default defineSchema({
     // debug key, not Convex, is how real logs are read). Cleared the
     // moment the box ticks a healthy phase. project_managed_cloud_onboarding_gap.
     provisionError: v.optional(v.string()),
+    // What the PROVIDER says the server is doing right now ("initializing",
+    // "starting", "running", "off"), refreshed while a wake is in flight.
+    // Between "we asked Hetzner to create a server" and "the agent answered"
+    // there is a multi-minute window where Yaver knows nothing — the box is
+    // not ours yet and not reachable yet. Without this the only honest thing
+    // a surface can show is a spinner, which is precisely what reads as
+    // "stuck". Provider vocabulary, not ours; label only, never IDs or logs.
+    providerStatus: v.optional(v.string()),
+    providerStatusAt: v.optional(v.number()),
     // Which base image the box booted from: "golden" = a prebuilt Yaver
     // snapshot (YAVER_CLOUD_IMAGE_ID_*, everything pre-installed, ~seconds
     // to ready) vs "vanilla" = ubuntu-24.04 with a 3–5 min first-boot

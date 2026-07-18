@@ -1606,7 +1606,29 @@ export const touchActivityForUser = internalMutation({
 export const PROVISION_PHASES = [
   "creating", "booting", "installing-docker", "pulling-image",
   "starting-agent", "registering", "awaiting-yaver-auth", "authorizing-runners", "ready", "error",
+  // Wake-only steps. A resume does not "create" a box from nothing — it finds
+  // the park snapshot, frees the volume, then restores onto a new server, and
+  // each of those can be where a wake stalls. Clients map all three onto the
+  // single "Restoring" rung of the wake ladder; the slug is what tells the
+  // user WHICH part is slow.
+  "checking-snapshot", "preparing-volume", "restoring-snapshot",
 ] as const;
+
+/**
+ * setProviderStatus — record what the cloud provider says the server is doing.
+ * Separate from setPhase because it is THEIR vocabulary on THEIR schedule;
+ * folding it into our phase ladder would let a provider string move our bar.
+ */
+export const setProviderStatus = internalMutation({
+  args: { machineId: v.id("cloudMachines"), status: v.string() },
+  handler: async (ctx, { machineId, status }) => {
+    await ctx.db.patch(machineId, {
+      providerStatus: status.slice(0, 40),
+      providerStatusAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  },
+});
 
 export const setPhase = internalMutation({
   args: {
@@ -2275,6 +2297,24 @@ export const resumeHealthCheck = internalAction({
         attempt: attempt + 1,
       });
       return;
+    }
+    // Not reachable yet: ask the PROVIDER what it sees. This is the only
+    // signal that exists in the create→agent-answers window, and it is the
+    // difference between "Hetzner is still initializing the server" and "the
+    // server has been running for six minutes and the agent never came up" —
+    // two situations that looked identical (a spinner) before.
+    if (!reachable) {
+      await ctx.runAction(internal.cloudLifecycle.probeProviderStatus, { machineId });
+    }
+
+    // The agent ANSWERED but isn't usable yet and isn't signed out — it is
+    // mid-startup, dialing the relay. That is a real, observed signal, not a
+    // timer, so it is the one honest moment to claim "registering". Before
+    // this the box is still booting and the ladder must say so.
+    if (reachable && machine.provisionPhase !== "registering") {
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "registering", progress: 72,
+      });
     }
     if (signedOut || attempt >= 10) {
       const reason = signedOut

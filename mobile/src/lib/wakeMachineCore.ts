@@ -321,6 +321,14 @@ export function deriveServerPhase(
       case "authorizing-runners":
       case "ready":
         return "registering";
+      // Wake-only steps: finding the snapshot, freeing the volume, restoring
+      // onto a new server. All three happen BEFORE any server is booting, so
+      // they belong on the "Restoring" rung — the default below would have
+      // shown "Booting the machine…" for a machine that does not exist yet.
+      case "checking-snapshot":
+      case "preparing-volume":
+      case "restoring-snapshot":
+        return "resuming";
       case "creating":
       case "booting":
       case "installing-docker":

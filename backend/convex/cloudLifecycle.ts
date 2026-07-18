@@ -651,6 +651,47 @@ async function hetznerVolumeInfo(
   };
 }
 
+/**
+ * What the provider says about a server right now. Hetzner reports
+ * "initializing" → "starting" → "running" (or "off"/"unknown"), which is the
+ * only visibility that exists during the window between create and the
+ * agent's first answer. Best-effort: a provider hiccup must never fail a wake.
+ */
+async function hetznerServerStatus(token: string, serverId: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${HETZNER_API}/servers/${serverId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { server?: { status?: string } };
+    const s = j.server?.status;
+    return typeof s === "string" && s ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * probeProviderStatus — refresh the provider-reported server state on a row.
+ * Called from resumeHealthCheck while a wake has not yet been answered by the
+ * agent, so the user is told "Hetzner: initializing" instead of nothing.
+ */
+export const probeProviderStatus = internalAction({
+  args: { machineId: v.id("cloudMachines") },
+  handler: async (ctx, { machineId }): Promise<string | null> => {
+    const token = process.env.HCLOUD_TOKEN;
+    if (!token) return null;
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    const serverId = machine?.hetznerServerId ?? machine?.cloudResourceId;
+    if (!serverId) return null;
+    const status = await hetznerServerStatus(token, String(serverId));
+    if (!status) return null;
+    await ctx.runMutation(internal.cloudMachines.setProviderStatus, { machineId, status });
+    return status;
+  },
+});
+
 /** Permanently delete a volume (must be detached first). Best-effort. */
 async function hetznerDeleteVolume(token: string, volumeId: string): Promise<void> {
   const r = await fetch(`${HETZNER_API}/volumes/${volumeId}`, {
@@ -1342,8 +1383,15 @@ export const resumeMachine = internalAction({
     await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "resuming" });
     // Clear any stale "ready" left from before the park so no surface
     // briefly shows 100% while the box is still cold.
+    //
+    // A wake used to emit exactly two ticks — booting/20 here and
+    // registering/85 after the create — so every surface sat on one frozen
+    // label across the whole long pole. The steps below are not decoration:
+    // each one is written immediately before the call that can actually hang
+    // there (snapshot lookup, volume detach, provider create), so a stuck wake
+    // now names the step it is stuck on.
     await ctx.runMutation(internal.cloudMachines.setPhase, {
-      machineId, phase: "booting", progress: 20,
+      machineId, phase: "checking-snapshot", progress: 8,
     });
     try {
       // Recreate on the SAME server type the box was originally created on.
@@ -1372,6 +1420,12 @@ export const resumeMachine = internalAction({
         // now-gone server, and create-with-volumes then 422s "volume already
         // attached". Detach it first so wake self-heals instead of dead-ending.
         if (vol.serverId) {
+          // The detach poll below can burn 20s in silence. Name it, or the
+          // bar sits on "checking snapshot" while we're actually waiting on
+          // Hetzner to release a volume.
+          await ctx.runMutation(internal.cloudMachines.setPhase, {
+            machineId, phase: "preparing-volume", progress: 14,
+          });
           try {
             await hetznerDetachVolume(token!, machine.volumeId);
             // Detach is async; give Hetzner a moment to release it.
@@ -1397,6 +1451,9 @@ export const resumeMachine = internalAction({
       // never be verified or addressable by name. Mint the canonical hostname
       // the provision path uses instead of leaving the row nameless.
       const hostname = machine.hostname || `${String(machineId).substring(0, 8)}.cloud.yaver.io`;
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "restoring-snapshot", progress: 25,
+      });
       const { serverId, ip } = await hetznerCreateFromImage(
         token!,
         hostname,
@@ -1424,8 +1481,15 @@ export const resumeMachine = internalAction({
       // resumeHealthCheck (which verifies the agent answers AND is not
       // signed-out) is allowed to set it. It also gates the meter: we never
       // bill for a box the user cannot reach.
+      // "registering"/85 was a lie for the same reason "active" was: a Hetzner
+      // create returns when the server RECORD exists, so nothing is
+      // registering yet — the OS has not finished booting and the agent has
+      // not started. Parking the bar at 85% for the eight minutes that
+      // followed is exactly what made a healthy wake read as a hang. Only
+      // resumeHealthCheck, which has actually heard from the agent, may
+      // promote this to "registering".
       await ctx.runMutation(internal.cloudMachines.setPhase, {
-        machineId, phase: "registering", progress: 85,
+        machineId, phase: "booting", progress: 45,
       });
       await ctx.scheduler.runAfter(20_000, internal.cloudMachines.resumeHealthCheck, {
         machineId, attempt: 1,
