@@ -793,16 +793,25 @@ function deriveRunnerBannerState(
   // `agentStatus.runner` (the agent's default, Codex), so the header said
   // "OpenAI Codex not installed" while the task ran fine on Claude Code.
   selectedRunnerId?: string,
-): { text: string; tone: string; kind: RunnerBannerKind } | null {
+): { text: string; tone: string; kind: RunnerBannerKind; runnerId?: string } | null {
   if (runners.length === 0 && !agentStatus) return null;
 
   const installed = runners.filter((runner) => runner.installed);
   const runnable = installed.filter((runner) => !runner.error);
   const authed = installed.filter((runner) => runner.authConfigured);
-  const make = (kind: RunnerBannerKind, text: string) => ({
+  // runnerId rides along so the banner can OFFER THE FIX, not just name the
+  // problem. Without it the "needs sign-in" state had no id to hand
+  // openRunnerAuthModal, so it was the one banner state with no action at all:
+  // it told the user their runner was signed out and left them to find the
+  // sign-in flow themselves, on a remote machine they may not have shell
+  // access to. Verified against a real box whose Claude Code reported
+  // authConfigured=false while codex ran fine — the sign-in flow existed and
+  // worked, it just was not reachable from the message announcing it.
+  const make = (kind: RunnerBannerKind, text: string, runnerId?: string) => ({
     text,
     tone: RUNNER_BANNER_TONES[kind],
     kind,
+    runnerId,
   });
 
   // Selected-runner-first: the header must describe the runner the user
@@ -824,7 +833,7 @@ function deriveRunnerBannerState(
       return make("notInstalled", `${label} not installed`);
     }
     if (selectedRow.authConfigured === false) {
-      return make("authNeeded", `${label} needs sign-in`);
+      return make("authNeeded", `${label} needs sign-in`, selectedRow.id);
     }
     if (selectedRow.error) {
       // OpenCode's "error" is almost always a provider/model config gap (the
@@ -865,14 +874,14 @@ function deriveRunnerBannerState(
     return make("notInstalled", `${current.name} not installed`);
   }
   if (current?.error && !current?.authConfigured) {
-    return make("authNeeded", `${current.name} needs sign-in`);
+    return make("authNeeded", `${current.name} needs sign-in`, current.id);
   }
   if (current?.error) {
     return make("blocked", `${current.name} blocked`);
   }
   if (current?.name) {
     if (current.authConfigured === false) {
-      return make("authNeeded", `${current.name} needs sign-in`);
+      return make("authNeeded", `${current.name} needs sign-in`, current.id);
     }
     if (current.ready === false) {
       return make("blocked", `${current.name} not ready`);
@@ -3817,9 +3826,28 @@ export default function TasksScreen() {
                         <Ionicons name="settings-outline" size={13} color={c.accent} />
                         <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>Configure</Text>
                       </Pressable>
+                    ) : runnerBannerState?.kind === "authNeeded" ? (
+                      // "X needs sign-in" used to be the ONE banner state with
+                      // no action — it named the problem and left the user to
+                      // find the remote sign-in flow on their own, on a machine
+                      // they may have no shell access to. Restart was correctly
+                      // excluded here (restarting a signed-out runner just
+                      // reproduces the same state); the mistake was excluding
+                      // it without putting anything in its place.
+                      <Pressable
+                        onPress={() =>
+                          openRunnerAuthModal(
+                            runnerBannerState.runnerId || selectedRunnerRow?.id || "claude",
+                            activeDevice?.id || null,
+                          )
+                        }
+                        style={[s.bannerInlineBtn, { backgroundColor: c.accentSoft, flexDirection: "row", alignItems: "center", gap: 5 }]}
+                      >
+                        <Ionicons name="log-in-outline" size={13} color={c.accent} />
+                        <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>Sign in</Text>
+                      </Pressable>
                     ) : runnerBannerState &&
                       runnerBannerState.kind !== "ok" &&
-                      runnerBannerState.kind !== "authNeeded" &&
                       (availableRunners.length > 0 || agentStatus) ? (
                       <Pressable
                         onPress={handleRestartRunner}
