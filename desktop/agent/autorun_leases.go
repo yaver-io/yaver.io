@@ -30,6 +30,7 @@ package main
 // See docs/architecture/AUTORUN_TASK_GRAPH.md.
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -303,6 +304,37 @@ func (m *leaseManager) Snapshot() []leaseHold {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key.String() < out[j].Key.String() })
 	return out
+}
+
+// opsAutorunLeasesHandler answers "what is claimed on this machine, and by
+// whom?" — the question that had no answer while six runs fought over one box
+// and the logs blamed four different runners for one shared tmux server.
+//
+// Read-only and cheap on purpose: it is meant to be polled by every surface and
+// to be the first thing a human looks at when a run will not start.
+func opsAutorunLeasesHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	holds := autorunLeases.Snapshot()
+	byClass := map[string][]leaseHold{}
+	for _, h := range holds {
+		byClass[string(h.Key.Class)] = append(byClass[string(h.Key.Class)], h)
+	}
+	return OpsResult{OK: true, Initial: map[string]any{
+		"holds":   holds,
+		"byClass": byClass,
+		"count":   len(holds),
+		// The seat is the interesting one: a build phase releases it, so a free
+		// seat while builds are running is the system working as intended.
+		"freeSeatsHint": "a seat absent from `holds` is available — a run in its build phase has handed it back",
+	}}
+}
+
+func init() {
+	registerOpsVerb(opsVerbSpec{
+		Name:        "autorun_leases",
+		Description: "Show what autoruns currently claim on this machine: source areas (one writer each), build targets (one build per toolchain), runner seats, and the landing lease. A run refused with slot_busy/area_owned is explained here. Seats are released during a build phase on purpose, so unrelated work can proceed while something compiles.",
+		Schema:      map[string]interface{}{"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false},
+		Handler:     opsAutorunLeasesHandler,
+	})
 }
 
 // autorunPhaseLeases is the contract between a phase and what it may hold.

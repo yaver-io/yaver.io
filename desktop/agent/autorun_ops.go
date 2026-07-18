@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -152,6 +153,20 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 	}
 	m.sessions[id] = s
 	m.mu.Unlock()
+
+	// Take the run's typed claims now that admission has cleared it. Source
+	// areas plus the runner seat — the `edit` shape — because that is what a run
+	// holds between kicks. The build target is taken later, by the phase that
+	// actually compiles, and the seat is handed back there so a sibling can
+	// think while this one builds (autorun_leases.go).
+	//
+	// Best-effort: admission already proved there is no conflict, so a refusal
+	// here would mean the two models disagree — worth a log line, never worth
+	// refusing a run admission just approved.
+	if err := autorunLeases.Acquire(id, workspace.Slot, "edit",
+		autorunPhaseLeases("edit", opts.Runner, areas, nil, "main")...); err != nil {
+		log.Printf("[autorun] lease acquire for %s disagreed with admission: %v", id, err)
+	}
 	go func() {
 		summary, err := executeAutorun(ctx, opts)
 		m.mu.Lock()
@@ -182,6 +197,11 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 		// hold the manager's write lock.
 		finished := *s
 		m.mu.Unlock()
+		// Drop every claim the moment the run ends, however it ended. TTL is the
+		// backstop for an agent that dies without reaching this line; it is not
+		// the mechanism. A run that finishes and keeps its leases blocks every
+		// sibling for 45 minutes for no reason.
+		autorunLeases.ReleaseAll(finished.ID)
 		onAutorunFinished(&finished)
 	}()
 	return m.view(s), nil
