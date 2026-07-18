@@ -60,6 +60,32 @@ Verified by reading the code:
 
 ## What's missing (the actual work)
 
+> **Measured 2026-07-18 — read this before scoping Layers 2 and 3.**
+>
+> Layer 1 is **done**: all six dev-loop verbs route to a remote worker. The audit
+> that produced this note found Layer 1 was already 5 of 6 wired, not 0 of 6 —
+> `proxyToDevice` exists and 57 tools already accept `device_id`. Only
+> `mobile_hermes_doctor` was missing, and it needed a new
+> `/mobile/hermes/doctor` route rather than just a flag: advertising `device_id`
+> with nothing to proxy to would have shipped a capability that 404s.
+>
+> Layers 2 and 3 measure at **3/16** and **1/11** typed verbs wired — but that
+> understates what works. **`exec_command` already accepts `device_id` and
+> proxies**, and every Layer 2/3 verb is a shell command underneath:
+> `gradle build`, `cmake --build`, `npm run …`, `git status`. So remote build,
+> deploy and git are **possible today**; what is missing is the typed verb, not
+> the capability.
+>
+> That makes Layers 2–3 an **ergonomics and discoverability** job — structured
+> output, schema-level discovery, no hand-written shell — rather than an
+> enabling one. Worth doing, and worth not being scoped as a blocker.
+>
+> Each remaining verb costs three things, and the third is the one that bites:
+> a `device_id` in the schema, a `proxyToDevice` branch in the dispatcher, and
+> **an HTTP route on the receiving side**. Most of these verbs have no route
+> today, which is why the count is not a one-line-per-tool job.
+
+
 ### A. `device_id` on existing tools
 
 Touch only `mcp_tools.go` (the tool schemas) and each tool's dispatcher
