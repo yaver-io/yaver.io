@@ -164,6 +164,9 @@ let shakeDetector: ShakeDetector | null = null;
 let commandUnsubscribe: (() => void) | null = null;
 let p2pAuthToken: string | null = null;
 let p2pRelayPassword: string = '';
+/** Pending BlackBox auto-start retry. Held so destroy()/re-init can cancel it
+ *  instead of leaving a timer chain running against a torn-down config. */
+let autoStartTimer: ReturnType<typeof setTimeout> | null = null;
 let reportLaunchInFlight = false;
 let crashReportInFlight = false;
 
@@ -466,21 +469,24 @@ export class YaverFeedback {
       // SFMG used to call BlackBox.start() inside YaverFeedbackWidget
       // after auth — that path still works (start() is idempotent), so
       // upgrading SDK without removing the manual call is safe.
+      //   4. RETRY, rather than checking once. This was a single 500ms
+      //      timeout, and on a cold start it could not succeed: an app that
+      //      passes neither agentUrl nor authToken to init() (the normal
+      //      case — they're restored from storage) gets its session from
+      //      `void hydrateSession()`, which reads two AsyncStorage keys and
+      //      then awaits discoverAgent(), a Convex round trip plus LAN
+      //      probing. That does not finish in 500ms, so the check found no
+      //      agentUrl, gave up, and BlackBox never started — meaning no SSE
+      //      channel, so the agent's `reload_bundle` command had nowhere to
+      //      land and Hermes hot reload silently did nothing until the user
+      //      shook the device and drove discovery by hand.
+      //
+      //      The both-conditions guard is what keeps the 401 retry storm
+      //      from coming back, so it is preserved exactly; we only re-check
+      //      it over time instead of once. Bounded so a device that never
+      //      signs in doesn't poll forever.
       if (cfg.autoStartBlackBox !== false) {
-        const autoStartTimer = setTimeout(() => {
-          if (config?.agentUrl && (config?.authToken || p2pAuthToken)) {
-            try {
-              // Pass the host's BlackBox config through. This used to call
-              // start() bare, so a host that configured the flight recorder
-              // — as the README itself shows — had it silently replaced by
-              // defaults, and appName came out ''.
-              BlackBox.start(config?.blackBox);
-            } catch (err) {
-              console.warn('[YaverFeedback] BlackBox auto-start failed:', err);
-            }
-          }
-        }, 500);
-        unrefTimer(autoStartTimer);
+        YaverFeedback.scheduleBlackBoxAutoStart();
       }
     }
 
@@ -621,6 +627,12 @@ export class YaverFeedback {
       await YaverFeedback.rebuildP2PClient(config.agentUrl);
     } else {
       await YaverFeedback.discoverAgent();
+    }
+    // Signing in is the event the auto-start was waiting for. If its bounded
+    // retry already gave up (device left signed out past the window), this is
+    // what brings the command channel up without requiring an app restart.
+    if (config.autoStartBlackBox !== false && !BlackBox.isStreaming) {
+      YaverFeedback.scheduleBlackBoxAutoStart();
     }
   }
 
@@ -954,6 +966,79 @@ export class YaverFeedback {
       shakeDetector.stop();
       shakeDetector = null;
     }
+  }
+
+  /** Cancel a pending BlackBox auto-start retry chain. */
+  private static cancelBlackBoxAutoStart(): void {
+    if (autoStartTimer) {
+      clearTimeout(autoStartTimer);
+      autoStartTimer = null;
+    }
+  }
+
+  /**
+   * Start BlackBox as soon as we have BOTH an agentUrl and a token, polling
+   * until then.
+   *
+   * Both conditions are mandatory and deliberate: starting without a token
+   * makes the SSE channel 401 and retry with backoff, which is the tight
+   * string-concat + JSON-parse loop that used to SIGSEGV Hermes on iOS 18.3.1
+   * during Screenshot & Fix. This only re-checks that same guard over time.
+   *
+   * Bounded at ~60s: long enough for AsyncStorage hydration plus a Convex
+   * discovery round trip on a cold, off-LAN start, short enough that a device
+   * whose user never signs in stops polling. Giving up here costs nothing —
+   * setAuthToken() and startReport() both reschedule, so signing in later
+   * still brings the channel up.
+   */
+  private static scheduleBlackBoxAutoStart(attempt = 0): void {
+    const MAX_ATTEMPTS = 60;
+    const FIRST_DELAY_MS = 500;
+    const RETRY_DELAY_MS = 1000;
+    // Re-run discovery every Nth tick rather than every tick: it is a Convex
+    // round trip plus LAN probing, so once a second would hammer both. Every
+    // 3s is responsive enough that waking the dev machine reconnects the phone
+    // on its own, without the user wondering whether to restart the app.
+    const REDISCOVER_EVERY = 3;
+
+    YaverFeedback.cancelBlackBoxAutoStart();
+    if (!enabled || attempt >= MAX_ATTEMPTS) return;
+
+    const timer = setTimeout(() => {
+      autoStartTimer = null;
+      // A destroy() or setEnabled(false) between scheduling and firing.
+      if (!enabled || !config) return;
+      if (BlackBox.isStreaming) return;
+
+      if (config.agentUrl && (config.authToken || p2pAuthToken)) {
+        try {
+          // Pass the host's BlackBox config through. This used to call
+          // start() bare, so a host that configured the flight recorder
+          // — as the README itself shows — had it silently replaced by
+          // defaults, and appName came out ''.
+          BlackBox.start(config.blackBox);
+        } catch (err) {
+          console.warn('[YaverFeedback] BlackBox auto-start failed:', err);
+        }
+        return;
+      }
+
+      // No agent yet. Re-attempt discovery instead of only re-reading the
+      // flag: hydrateSession() runs discoverAgent() exactly once at init, so
+      // if the dev machine was unreachable at that moment — asleep, phone
+      // still on cellular before the relay came up, agent not yet serving —
+      // agentUrl stayed null for the whole process lifetime and only an app
+      // restart could recover it. discoverAgent() self-guards on "already
+      // have a URL" and "no token", so calling it again is cheap and safe.
+      if (!config.agentUrl && attempt > 0 && attempt % REDISCOVER_EVERY === 0) {
+        void YaverFeedback.discoverAgent();
+      }
+
+      YaverFeedback.scheduleBlackBoxAutoStart(attempt + 1);
+    }, attempt === 0 ? FIRST_DELAY_MS : RETRY_DELAY_MS);
+
+    autoStartTimer = timer;
+    unrefTimer(timer);
   }
 
   /** Returns whether the SDK is currently enabled. */
@@ -1471,6 +1556,9 @@ export class YaverFeedback {
     // init() stacked a second one on top.
     commandUnsubscribe?.();
     commandUnsubscribe = null;
+    // Before `enabled = false` / `config = null` below, so an in-flight retry
+    // can't fire against a torn-down config.
+    YaverFeedback.cancelBlackBoxAutoStart();
     BlackBox.stop();
     BlackBox.unwrapConsole();
     firstShakeFired = false;
