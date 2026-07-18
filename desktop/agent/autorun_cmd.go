@@ -437,7 +437,41 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			}
 		} else {
 			noops = 0
+			// PHASE: edit -> build.
+			//
+			// The gate is the build phase, and during it this loop is waiting on
+			// a compiler, not thinking. Hand the runner seat back so a sibling
+			// task can use it — that is the difference between "building tvOS
+			// blocks web development" and the two overlapping. Keep the source
+			// areas: releasing those would let a sibling edit the very tree
+			// being compiled, and the gate result would then describe a tree
+			// that no longer exists.
+			//
+			// Best-effort throughout. A lease hiccup must never turn into a
+			// failed gate: the claims are an optimisation for the fleet, and the
+			// gate is the correctness oracle. See autorun_leases.go.
+			buildAreas := autorunOwnedAreas(opts.Scopes)
+			buildTargets := autorunBuildTargetsForAreas(buildAreas)
+			autorunLeases.Release(opts.SessionID, seatLease(runner.RunnerID))
+			if err := autorunLeases.Acquire(opts.SessionID, opts.Slot, "build",
+				autorunPhaseLeases("build", runner.RunnerID, buildAreas, buildTargets, "main")...); err != nil {
+				// Another run holds this toolchain. Proceed anyway rather than
+				// stalling: serialising builds is a throughput optimisation,
+				// while refusing to gate verified work would lose it.
+				_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: build target contended (%v) — gating anyway.", iteration, err))
+			}
+
 			gateResult := autorunExec(ctx, "sh", []string{"-lc", opts.Gate}, opts.WorkDir)
+
+			// PHASE: build -> edit. Drop the toolchain the moment the compiler
+			// is done, whatever the verdict, and take the seat back for the next
+			// turn. Done before the error branches below so a failed gate cannot
+			// leak a build lease and strand every sibling until TTL.
+			for _, t := range buildTargets {
+				autorunLeases.Release(opts.SessionID, buildLease(t))
+			}
+			_ = autorunLeases.Acquire(opts.SessionID, opts.Slot, "edit",
+				autorunPhaseLeases("edit", runner.RunnerID, buildAreas, nil, "main")...)
 			if gateResult.Err != nil {
 				if _, rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
 					publishAutorunState(ctx, opts, runner.RunnerID, "gate_fail", "failed", autorunReasonGate, *summary)
