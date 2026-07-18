@@ -269,6 +269,12 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 
 // Pinch is meaningless for a raw stream source: it is a one-way capture (a
 // capture card, a screen, a camera) with no input surface to inject into.
+// Navigate is meaningless for a capture/stream source: it is a one-way video
+// feed (capture card, screen, camera), not something with an address bar.
+func (streamSourceTarget) Navigate(context.Context, string, string) error {
+	return fmt.Errorf("%w: a stream source is a one-way capture feed with no URL entry point", errNavigateUnsupported)
+}
+
 func (streamSourceTarget) Pinch(context.Context, string, int, int, float64, int) error {
 	return fmt.Errorf("%w: a stream source is capture-only, there is nothing to touch", errPinchUnsupported)
 }

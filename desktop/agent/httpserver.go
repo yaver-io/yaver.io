@@ -13228,6 +13228,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Scale      float64 `json:"scale"`
 			Text       string  `json:"text"`
 			Key        string  `json:"key"`
+			URL        string  `json:"url"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if strings.TrimSpace(args.SessionID) == "" || strings.TrimSpace(args.Action) == "" {
@@ -13247,6 +13248,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			"scale": args.Scale,
 			"text":  args.Text,
 			"key":   args.Key,
+			"url":   args.URL,
 		}
 		body, status, err := remoteRuntimeHTTPMCP("POST", "/remote-runtime/sessions/"+args.SessionID+"/control", payload)
 		if err != nil {

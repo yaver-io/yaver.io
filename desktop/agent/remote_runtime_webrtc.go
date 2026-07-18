@@ -95,6 +95,9 @@ type remoteRuntimeControlRequest struct {
 	// out. Centred on X,Y. Separate from the swipe end-point because a pinch
 	// is two pointers moving symmetrically, not one pointer travelling.
 	Scale float64 `json:"scale,omitempty"`
+
+	// URL drives Action == "navigate".
+	URL string `json:"url,omitempty"`
 	Text  string  `json:"text,omitempty"`
 	Key   string  `json:"key,omitempty"`
 	// ClientID is the stable identifier of the surface making the
@@ -640,6 +643,8 @@ func (m *RemoteRuntimeManager) ExecuteControl(sessionID string, req remoteRuntim
 		// "zoom" is accepted as an alias because that is what the gesture is
 		// called in every UI that will send it; the mechanism is a pinch.
 		err = live.pinch(ctx, req.X, req.Y, req.Scale, req.DurationMs)
+	case "navigate":
+		err = live.navigate(ctx, req.URL)
 	case "text":
 		err = live.text(ctx, req.Text)
 	case "back":
@@ -737,6 +742,23 @@ func (live *remoteRuntimeLiveState) pinch(ctx context.Context, x, y int, scale f
 		return fmt.Errorf("unsupported target %q", targetID)
 	}
 	return tgt.Pinch(ctx, deviceID, x, y, scale, durationMs)
+}
+
+// navigate points the session's target at a URL. Scheme validation lives in
+// validateNavigateURL, on the target side, so every entry point gets it.
+func (live *remoteRuntimeLiveState) navigate(ctx context.Context, url string) error {
+	if strings.TrimSpace(url) == "" {
+		return fmt.Errorf("navigate requires a url")
+	}
+	live.mu.Lock()
+	targetID := live.targetID
+	deviceID := live.deviceID
+	live.mu.Unlock()
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
+		return fmt.Errorf("unsupported target %q", targetID)
+	}
+	return tgt.Navigate(ctx, deviceID, url)
 }
 
 func (live *remoteRuntimeLiveState) text(ctx context.Context, text string) error {

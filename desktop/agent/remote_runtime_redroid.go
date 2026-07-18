@@ -138,6 +138,12 @@ func probeRedroidTarget() RemoteRuntimeTarget {
 // the container boundary changes nothing about how touches are injected.
 // Passing an empty deviceID lets the helper target the single attached
 // container, matching how Tap/Swipe already behave here.
+// Navigate in redroid is the same ACTION_VIEW intent as any other Android
+// target — the container boundary changes nothing about intent delivery.
+func (redroidRuntimeTarget) Navigate(ctx context.Context, deviceID, rawURL string) error {
+	return androidNavigateViaIntent(ctx, deviceID, rawURL)
+}
+
 func (redroidRuntimeTarget) Pinch(ctx context.Context, deviceID string, x, y int, scale float64, durationMs int) error {
 	return androidPinchViaUiautomator(ctx, deviceID, x, y, scale, durationMs)
 }

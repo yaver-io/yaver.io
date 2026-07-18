@@ -408,6 +408,29 @@ func browserGetTitle(deviceID string) (string, error) {
 // Note this dispatches TOUCH, not mouse: Swipe above uses mouseWheel because
 // scrolling is what a swipe means on a desktop page, but a pinch has no mouse
 // analogue and pages listen for touchstart/touchmove to zoom.
+// Navigate is what makes a browser-window session useful at all.
+//
+// chromedp opens about:blank and, until this existed, nothing in the
+// remote-runtime API could change that: runtime_create took no url and the
+// control verbs were tap/swipe/text/key. A session could therefore be created,
+// streamed and clicked while every frame stayed blank — and because input
+// returned 200, the lane looked healthy. The gap was found by pinching a
+// session and getting a byte-identical frame back.
+//
+// browserPool.navigate already existed for the glass/AR-VR surface
+// (ops_glass_pc.go); this exposes the same primitive to the runtime session
+// that is being streamed, rather than adding a second mechanism.
+func (browserWindowTarget) Navigate(_ context.Context, deviceID, rawURL string) error {
+	target, err := validateNavigateURL(rawURL)
+	if err != nil {
+		return err
+	}
+	if _, ok := browserPool.get(deviceID); !ok {
+		return fmt.Errorf("browser-window %q not found", deviceID)
+	}
+	return browserPool.navigate(deviceID, target)
+}
+
 func (browserWindowTarget) Pinch(ctx context.Context, deviceID string, x, y int, scale float64, durationMs int) error {
 	if scale <= 0 {
 		return fmt.Errorf("pinch scale must be > 0, got %v", scale)

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -39,6 +40,9 @@ import (
 // indistinguishable from a frozen stream, which is exactly the class of "the UI
 // lied to me" bug this codebase keeps paying for.
 var errPinchUnsupported = errors.New("this target cannot pinch: no multi-touch primitive available")
+
+// errNavigateUnsupported is returned by targets that cannot be pointed at a URL.
+var errNavigateUnsupported = errors.New("this target cannot navigate: no URL entry point available")
 
 type runtimeTarget interface {
 	// Attach boots (emulator/sim) or resolves (physical) the device
@@ -65,6 +69,19 @@ type runtimeTarget interface {
 	// caller can say so plainly instead of silently doing nothing — a gesture
 	// that no-ops looks identical to a broken stream.
 	Pinch(ctx context.Context, deviceID string, x, y int, scale float64, durationMs int) error
+
+	// Navigate points the target at a URL. For browser-window this is the ONLY
+	// way to show anything: chromedp opens about:blank and there was previously
+	// no route to change that, so a browser session could be streamed and
+	// clicked but never given content — every frame was a blank page, and input
+	// that "succeeded" provably changed nothing.
+	//
+	// On the device targets this is deep-link entry (simctl openurl / am start
+	// -a VIEW), which is the same primitive users already reach for when
+	// testing a link into an app.
+	//
+	// Targets with no URL entry point return errNavigateUnsupported.
+	Navigate(ctx context.Context, deviceID, url string) error
 
 	// Screenshot writes a PNG (JPEG data-channel path).
 	Screenshot(ctx context.Context, deviceID, pngPath string) error
@@ -264,6 +281,59 @@ func (androidDeviceTarget) Attach(ctx context.Context) (string, error) {
 // stream was dead.
 func (iosSimulatorTarget) Pinch(_ context.Context, _ string, _, _ int, _ float64, _ int) error {
 	return fmt.Errorf("%w: iOS Simulator needs an XCUITest bundle for pinch (simctl has no gesture API)", errPinchUnsupported)
+}
+
+// validateNavigateURL constrains navigation to http/https.
+//
+// This is a security boundary, not tidiness. The URL arrives over MCP/HTTP and
+// is handed to a browser the operator is watching but not driving: `javascript:`
+// would execute attacker-chosen script in that page's origin, and `file://`
+// would turn a "show me a page" verb into an arbitrary local-file reader whose
+// contents are then streamed back as video frames. Both are exfiltration
+// primitives, so the scheme is allow-listed rather than deny-listed.
+func validateNavigateURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("url is required")
+	}
+	u, err := neturl.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("url is not parseable: %w", err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return "", fmt.Errorf("url scheme %q is not allowed: only http and https can be navigated to "+
+			"(javascript: and file: would run script or read local files in the streamed page)", u.Scheme)
+	}
+	if strings.TrimSpace(u.Host) == "" {
+		return "", fmt.Errorf("url has no host: %q", trimmed)
+	}
+	return u.String(), nil
+}
+
+// Navigate on the iOS Simulator is `simctl openurl` — the same deep-link entry
+// point Xcode uses. Unlike Pinch this genuinely exists in simctl, so it is
+// implemented rather than refused.
+func (iosSimulatorTarget) Navigate(ctx context.Context, deviceID, rawURL string) error {
+	target, err := validateNavigateURL(rawURL)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(deviceID) == "" {
+		return fmt.Errorf("navigate needs a booted simulator udid")
+	}
+	out, err := exec.CommandContext(ctx, "xcrun", "simctl", "openurl", deviceID, target).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("simctl openurl failed: %v — %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Navigate on Android is an ACTION_VIEW intent, which is how a link into an app
+// is delivered on-device.
+func (androidTarget) Navigate(ctx context.Context, deviceID, rawURL string) error {
+	return androidNavigateViaIntent(ctx, deviceID, rawURL)
 }
 
 // Pinch on Android via uiautomator's own gesture engine.

@@ -230,6 +230,13 @@ func (iosDeviceTarget) CanEncodeRTPH264() bool {
 //
 // Until that decision is made, refuse honestly. Silently doing nothing would
 // present as a frozen stream.
+// Navigate is refused on a physical iOS device: simctl openurl is
+// simulator-only, and the WDA bridge here exposes input, not URL entry.
+// Refusing beats a silent no-op, which would look like a frozen stream.
+func (t iosDeviceTarget) Navigate(_ context.Context, _, _ string) error {
+	return fmt.Errorf("%w: physical iOS devices have no simctl openurl equivalent here (simctl is simulator-only)", errNavigateUnsupported)
+}
+
 func (t iosDeviceTarget) Pinch(_ context.Context, _ string, _, _ int, _ float64, _ int) error {
 	return fmt.Errorf("%w: physical iOS needs WebDriverAgent/XCUITest for pinch", errPinchUnsupported)
 }
