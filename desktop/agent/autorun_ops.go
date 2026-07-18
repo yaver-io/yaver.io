@@ -20,6 +20,7 @@ type autorunSession struct {
 	Slot         string    `json:"slot"`
 	Task         string    `json:"task"`
 	Runner       string    `json:"runner"`
+	MaxIters     int       `json:"maxIters"`
 	WorkDir      string    `json:"workDir"`
 	ProgressPath string    `json:"progressPath"`
 	Status       string    `json:"status"`
@@ -49,6 +50,7 @@ type autorunSessionView struct {
 	Slot         string    `json:"slot"`
 	Task         string    `json:"task"`
 	Runner       string    `json:"runner"`
+	MaxIters     int       `json:"maxIters"`
 	WorkDir      string    `json:"workDir"`
 	ProgressPath string    `json:"progressPath"`
 	Status       string    `json:"status"`
@@ -126,9 +128,14 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 	ctx, cancel := autorunSessionContext(parent)
 	s := &autorunSession{
 		ID: id, Slot: workspace.Slot, Task: taskPath, Runner: opts.Runner, WorkDir: workspace.WorkDir,
-		ProgressPath: workspace.ProgressPath, Status: "running", Scopes: opts.Scopes,
+		MaxIters: opts.MaxIters, ProgressPath: workspace.ProgressPath, Status: "running", Scopes: opts.Scopes,
 		StartedAt: time.Now().UTC(), cancel: cancel,
 	}
+	// The bus channel publishes on the slot topic, so the loop needs its slot.
+	// RunID is deliberately not carried: it held the same `id` as SessionID (set
+	// just above), and one identity under two names is how two subsystems begin
+	// to disagree about which run they mean.
+	opts.Slot = workspace.Slot
 	// Admission BEFORE the goroutine. Checked and inserted under one lock so two
 	// simultaneous starts cannot both observe a free slot and both proceed —
 	// the check is worthless if it is not atomic with the claim.
@@ -181,7 +188,7 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 }
 
 func (m *autorunSessionManager) view(s *autorunSession) autorunSessionView {
-	v := autorunSessionView{ID: s.ID, Slot: s.Slot, Task: s.Task, Runner: s.Runner, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error, LandingError: s.LandingError,
+	v := autorunSessionView{ID: s.ID, Slot: s.Slot, Task: s.Task, Runner: s.Runner, MaxIters: s.MaxIters, WorkDir: s.WorkDir, ProgressPath: s.ProgressPath, Status: s.Status, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Error: s.Error, LandingError: s.LandingError,
 		Iterations: s.Summary.Iterations, Commits: s.Summary.Commits, FinishReason: s.Summary.FinishReason,
 		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject,
 		ActiveRunner: s.Summary.Runner, Master: s.Summary.Master, Heals: s.Summary.Heals, Resources: s.Summary.Resources,
@@ -212,6 +219,35 @@ func (m *autorunSessionManager) status(id string) ([]autorunSessionView, error) 
 	}
 	sortAutorunViewsBySlot(views)
 	return views, nil
+}
+
+func (m *autorunSessionManager) refreshViews() []autorunRefreshView {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	views := make([]autorunRefreshView, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		views = append(views, autorunRefreshView{
+			ID:           s.ID,
+			Slot:         s.Slot,
+			Task:         s.Task,
+			Runner:       s.Runner,
+			MaxIters:     s.MaxIters,
+			Status:       s.Status,
+			Iterations:   s.Summary.Iterations,
+			Commits:      s.Summary.Commits,
+			FinishReason: s.Summary.FinishReason,
+			ActiveRunner: s.Summary.Runner,
+			Master:       s.Summary.Master,
+			Heals:        make([]struct{}, len(s.Summary.Heals)),
+		})
+	}
+	sort.Slice(views, func(i, j int) bool {
+		if views[i].Slot != views[j].Slot {
+			return views[i].Slot < views[j].Slot
+		}
+		return views[i].ID < views[j].ID
+	})
+	return views
 }
 
 // sortAutorunViewsBySlot orders sessions by their stable address, NOT by recency.
@@ -284,6 +320,7 @@ func init() {
 	registerOpsVerb(opsVerbSpec{Name: "autorun_stop_all", Description: "Cancel every running autorun session on a machine. Pass machine:<deviceId|alias|primary> to stop a remote device's autoruns; each stopped loop still records its final autorun commit.", Schema: autorunStopAllSchema(), Handler: opsAutorunStopAllHandler})
 	registerOpsVerb(opsVerbSpec{Name: "autorun_pause_all", Description: "Freeze every autorun on a machine at its iteration boundary WITHOUT ending any run — the loops park with nothing uncommitted and resume on autorun_resume_all. Use before a deploy so N loops cannot cause N deploys. Loops that start while frozen park too. Freezing is instant but draining is not: a loop already inside a runner kick takes up to 30m to reach the gate and may still commit until it does. Pass waitFor (e.g. 30m) to block until every loop parks; read drained to know whether it did. Pass machine:<deviceId|alias|primary> for a remote device.", Schema: autorunPauseAllSchema(), Handler: opsAutorunPauseAllHandler})
 	registerOpsVerb(opsVerbSpec{Name: "autorun_resume_all", Description: "Lift the freeze on a machine and wake every parked autorun. Loops continue from their next iteration; nothing was lost while they were held. Pass machine:<deviceId|alias|primary> for a remote device.", Schema: autorunStopAllSchema(), Handler: opsAutorunResumeAllHandler})
+	registerOpsVerb(opsVerbSpec{Name: "autorun_runs", Description: "Return the retained current-state view of autoruns from the local bus cache. Reads bus().Retained(\"autorun/\") first and returns immediately with per-row ageMs; refresh:true triggers best-effort live autorun_status refreshes in the background to top up a cold or stale cache without blocking the cached answer. Payload machine defaults to all and may be a specific deviceId or local.", Schema: autorunRunsSchema(), Handler: opsAutorunRunsHandler})
 }
 
 func autorunPauseAllSchema() map[string]interface{} {
@@ -317,6 +354,13 @@ func autorunIDSchema(required bool) map[string]interface{} {
 		s["required"] = []string{"id"}
 	}
 	return s
+}
+
+func autorunRunsSchema() map[string]interface{} {
+	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+		"machine": map[string]interface{}{"type": "string", "description": `Device filter. "all" or empty = every cached device; "local" = this device; otherwise a specific deviceId.`},
+		"refresh": map[string]interface{}{"type": "boolean", "description": "Start a best-effort live autorun_status refresh for the matching devices without blocking the cached response."},
+	}, "additionalProperties": false}
 }
 
 func opsAutorunStartHandler(c OpsContext, payload json.RawMessage) OpsResult {

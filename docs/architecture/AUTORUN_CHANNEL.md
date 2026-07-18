@@ -1,7 +1,8 @@
 # Remote autorun state, ambient in a host coding session
 
-Status: **design, not built.** Audited 2026-07-17 against the code, not the
-docs. Every claim cites `file:line`.
+Status: **built.** Updated 2026-07-17 against the code, not memory. The bus
+view, the autorun producer, and the cache-first `autorun_runs` read path now
+exist in `desktop/agent/**`.
 
 Goal: kick an autorun on another box and keep vibing. Its state is simply
 **already here** when you ask — kept current by the bus, read locally, nothing
@@ -64,7 +65,7 @@ and tested.
 fanout… an Ethernet-switch analogue for our wire format", HTTP/SSE so that
 clients consume the same stream with no custom logic and `curl -N` can tail it.
 
-### 2.2 Nothing publishes. This is stated in the code.
+### 2.2 The producer now exists
 
 `recap_autorun.go:4-6`:
 
@@ -72,31 +73,23 @@ clients consume the same stream with no custom logic and `curl -N` can tail it.
 > publish. The ONLY place in the codebase that knows a run just ended is the
 > completion goroutine in `autorunSessionManager.start`."
 
-That hook — `onAutorunFinished` (`recap_autorun.go:29`, fired at
-`autorun_ops.go:149`) — is **terminal-only**. There is no per-iteration signal.
+That comment is now stale. The producer lives in `autorun_channel.go`, and
+`autorunLoop` / `finalizeAutorun` publish retained state transitions at the
+loop head, heals, gate pass/fail, commit, convergence, stop, failure, done, and
+final terminal close-out (`autorun_cmd.go`).
 
-**So the entire missing piece is a producer.** Everything downstream is on the
-shelf.
+### 2.3 The substrate bugs are fixed
 
-### 2.3 Two bugs that make the shelf inert
+**B1 — the cross-device bus now uses the validated owner user ID.**
 
-**B1 — the cross-device bus is disabled by an empty string.** `main.go:3310`:
+`main.go` threads `ownerUserID` into both `InitBus` and `NewLANBusTransport`.
+The old comment claiming the relay derived `userId` from the relay password was
+wrong; `bus_relay.go` never did that. The relay scopes by bearer/password on the
+relay side, and the LAN transport fingerprints the explicit user ID locally.
 
-```go
-b := InitBus(ctx, cfg.DeviceID, "")
-```
-
-`bus.go:456` documents the consequence: *"the bus still works for local pub/sub
-but **transports will refuse to publish cross-device events**."* The comment at
-`main.go:3306-3309` claims the relay transport resolves userId from the relay
-password; that claim needs verifying against `bus_relay.go` before it is
-trusted. Built, wired, inert — the `yaver diagnose` class of bug CLAUDE.md opens
-with.
-
-**B2 — the view has no denominator.** `maxIters` is on `autorunOptions`
-(`autorun.go:186`) but not on `autorunSessionView` (`autorun_ops.go:38`). `5/9`
-is unrenderable on every surface. Three lines. Also noted in
-`AUTORUN_SURFACES.md` §4.
+**B2 — `autorunSessionView` now carries `MaxIters`.** The run options already
+had it; the session and session view now do too, so `5/9` and `5/∞` are both
+renderable from `autorun_status`.
 
 ### 2.4 What a remote session can do today
 
@@ -118,8 +111,9 @@ status` and **not implemented** (`runner_keeper_mcp.go:58`).
 
 Three pieces. That is the whole thing.
 
-**1. Publish retained state from the loop.** One publish per state change, to
-`autorun/<deviceId>/<slot>`, with `retainSec > 0`.
+**1. Publish retained state from the loop.** The payload is
+`autorunStateEvent` (`autorun.go` / `autorun_channel.go`), published to
+`autorun/<deviceId>/<slot>` with a 7-day retain TTL (`autorunStateRetainSec`).
 
 Keyed on the **slot**, not the runId — `autorun_ops.go:18-20`: the slot is the
 stable address a UI pins to; the ID is new every run (`:90`). Last-value-wins on
@@ -128,24 +122,34 @@ field.
 
 The `deviceId` in the topic is what makes the **fleet view free**:
 `Retained("autorun/")` returns every run on every box the bus can see. No
-fan-out code, no registry, no orchestration layer.
+fan-out code, no registry, no orchestration layer. `topicMatches` now trims a
+trailing slash, so `prefix=autorun/` and `prefix=autorun` are equivalent on the
+existing bus surfaces.
 
+`Kind` is a closed enum in practice: `started`, `iteration`, `gate_pass`,
+`gate_fail`, `commit`, `heal`, `converged`, `done`, `failed`, `stopped`.
 Payload is enums, counts and integers only — never text an LLM wrote (§5).
 
 **2. The transport is already there.** `bus_relay.go` carries it, per-user, over
-the relay. Fix B1 and this hop works. Nothing polls the remote box.
+the relay. With B1 fixed, this hop works. Nothing polls the remote box for the
+steady-state path.
 
 **3. Read locally, cache first.**
 
 ```
 autorun_runs { machine?: "all", refresh?: false }
-  → { runs: [...], fromCache: true, ages: {...} }
+  → { runs: [...], fromCache: true, ages: {...}, refreshed: [...] }
 ```
 
 `bus().Retained("autorun/")` first — local, instant, no network. Every row
 carries `ageMs`, because a cache that cannot say how stale it is, is a cache
-that lies. `refresh: true` additionally fires live `autorun_status` calls and
-merges — opt-in, never blocking the cached answer.
+that lies. `refresh: true` is stale-while-revalidate: it returns the cached
+answer immediately, then kicks best-effort live `autorun_status` refreshes for
+the matching devices and merges those results back into the local retained view
+without blocking the response. The merge path decodes those replies into the
+strict `autorunRefreshView` whitelist (`autorun_channel.go`) rather than a full
+`autorunSessionView`, so `progressTail`, heal `detail`, paths and other
+free-text fields are ignored even during refresh.
 
 **Cold-start hole, named:** `retained` is in-memory per subscriber and the relay
 holds no state (`bus_relay.go:1-21` — "not a broker"). A freshly restarted host
@@ -209,6 +213,15 @@ So the payload is **enums, counts, and integers**. Never runner output. Never
 vulnerability wearing a respectable name — `AUTORUN_SURFACES.md` §2.3 makes the
 same point about `deviceFlightEvents.detail`.
 
+That rule is enforced twice in code:
+
+- the producer only publishes `autorunStateEvent` (`autorun_channel.go`), whose
+  fields are closed enums, counters and timestamps;
+- the `refresh:true` path decodes remote `autorun_status` results into
+  `autorunRefreshView` (`autorun_channel.go`), a whitelist that omits
+  `progressTail`, heal `detail`, `workDir`, `progressPath`, and other free-text
+  fields before merging anything back into retained state.
+
 **Paths:** `autorunSlotKey` (`autorun.go:312`) is `<taskPath>:<seat>`, an
 absolute path. `recapSlotLabel` (`recap_autorun.go:160`) and `autorunTaskName`
 (`autorun.go:139`) exist to strip it; `recap_autorun.go:62` already states the
@@ -223,13 +236,12 @@ device registry. Given B1, **verify this holds rather than assuming it.**
 
 ## 6. Phases
 
-1. **Substrate.** B1 (`main.go:3310` userID) and B2 (`MaxIters` on the view).
-   Standalone bugs; worth landing regardless of the rest.
-2. **The producer.** Retained publish at the seven state changes in
-   `autorunLoop` (`autorun_cmd.go:269`), each beside the existing
-   `appendAutorunProgress` call. This is the half that does not exist.
-3. **The local read.** `autorun_runs`, cache-first, `ageMs` per row, opt-in
-   `refresh`.
+1. **Substrate.** `ownerUserID` threads into the bus and `MaxIters` is on the
+   session view.
+2. **The producer.** Retained publish now happens in `autorunLoop` and
+   `finalizeAutorun`.
+3. **The local read.** `autorun_runs` is cache-first, reports `ageMs` per row,
+   and supports opt-in background refresh.
 
 That's it. If a fourth phase appears, re-read §4.
 

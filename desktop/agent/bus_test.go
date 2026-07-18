@@ -139,6 +139,7 @@ func TestBus_TopicMatchRespectsSegments(t *testing.T) {
 		want          bool
 	}{
 		{"peer/abc/online", "peer", true},
+		{"peer/abc/online", "peer/", true},
 		{"peer/abc/online", "peer/abc", true},
 		{"peering/abc", "peer", false},
 		{"peer", "peer", true},

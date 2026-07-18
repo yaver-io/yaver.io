@@ -71,6 +71,57 @@ Individual pathologies worth naming:
   the run repaired itself into a wall.
 - 6 of 6 scope violations were **iteration 1**. None survived first contact.
 
+### The concurrency, measured — and the specific mechanism of harm
+
+Reconstructed from the first→last timestamps in every handoff file. On
+2026-07-17 between **12:03 and 12:40 UTC at least six runs were live at once**:
+
+```
+webrtc-vibe-loop-parity     11:34 ──────────────────────────────► 14:07
+recap-ops-and-honesty              12:03 ──────► 12:38
+mail-surfaces-wiring               12:08 ─────► 12:37
+forge-parity                       12:11 ────────────► 12:54
+guest-access-parity-tv-watch       12:12 ─────► 12:37
+user-authored-routine-agents       12:16 ●
+                                   ▲
+                        six concurrent runs, one 8-core box
+```
+
+then a second wave — `glm-remove-runner` 12:53, `autorun-identity-heal-surfaces`
+12:55, `ci-review-gate` 13:08, `autorun-digest-query` 13:11, `ci-one-bus` 13:19
+— each dying at iteration 1. Machine at one finish: **load 17.40 (2.17/core)**.
+
+**The mechanism is visible in the heal log**, and it is not what the run
+recorded. `webrtc-vibe-loop-parity` self-healed 15 times and kept 0 commits:
+
+```
+iteration 1 [runner_failover] runner codex    failed (runner TUI session … vanished mid-turn); failing over to claude
+iteration 2 [runner_failover] runner claude   failed (runner TUI session … vanished mid-turn); failing over to opencode
+iteration 3 [runner_failover] runner opencode failed (runner TUI session … vanished mid-turn); failing over to glm
+```
+
+Four different runners, one identical symptom: **"runner TUI session vanished
+mid-turn."** Four independent coding agents did not simultaneously break. They
+shared one tmux server — there is no `-L`/`-S` socket separation anywhere
+(`tmux.go:95-100`, and every autorun tmux call), so all six concurrent runs,
+every keeper session, and any human's tmux live on the default server. When it
+dies or a session is reaped, every run loses its TUI at once.
+
+Two conclusions, both load-bearing:
+
+1. **This is the concrete answer to "they harm each other."** Not an abstract
+   risk: one shared server took down four runners across three iterations of a
+   single run, and the same signature appears in the neighbouring runs' heals.
+2. **Failover turned one infrastructure failure into four runner failures.** The
+   heal machinery is working exactly as designed and is describing the wrong
+   thing — it names the runner because the runner is what it can see. A reader
+   of that log concludes "codex, claude and opencode are all flaky" and goes
+   looking in the wrong place. Self-healing without a shared-cause check is a
+   very effective way to hide a single root cause behind N plausible ones.
+
+Per-run tmux sockets (`tmux -L autorun-<slot>`) would have isolated all of it,
+and cost one flag.
+
 ### Orphans (nothing reaps these)
 
 Seven worktrees in `~/.yaver/worktrees/` survive their runs, several from the

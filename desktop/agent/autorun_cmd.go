@@ -274,6 +274,7 @@ func finalizeAutorun(ctx context.Context, opts autorunOptions, runnerID, progres
 			return fmt.Errorf("push final commit: %w", err)
 		}
 	}
+	publishAutorunState(ctx, opts, runnerID, autorunKindForFinish(summary.FinishReason), autorunStatusForFinish(summary.FinishReason), summary.FinishReason, *summary)
 	return nil
 }
 
@@ -290,9 +291,15 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 		logResult := autorunExec(ctx, "git", []string{"log", "--oneline", "-10"}, opts.WorkDir)
 		progressBytes, _ := os.ReadFile(progressPath)
 		if autorunMarksDone(string(progressBytes)) {
+			publishAutorunState(ctx, opts, runner.RunnerID, "done", "completed", autorunReasonDone, *summary)
 			return autorunReasonDone, nil
 		}
 		summary.Iterations = iteration
+		if iteration == 1 {
+			publishAutorunState(ctx, opts, runner.RunnerID, "started", "running", "", *summary)
+		} else {
+			publishAutorunState(ctx, opts, runner.RunnerID, "iteration", "running", "", *summary)
+		}
 
 		// Park if the machine is frozen for a deploy. This sits before the probe
 		// and the kick so a held loop spends nothing, and after the previous
@@ -311,6 +318,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 		summary.Resources = res
 
 		if res.TotalRAMGB > 0 && res.TotalRAMGB < autorunMinRAMGB {
+			publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonResources, *summary)
 			return autorunReasonResources, fmt.Errorf("machine has %.1f GB RAM (floor %.1f GB); build/test toolchains will be OOM-killed rather than fail cleanly", res.TotalRAMGB, autorunMinRAMGB)
 		}
 
@@ -320,7 +328,9 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			note := reclaimAutorunDisk(ctx, opts.WorkDir)
 			summary.Heals = append(summary.Heals, autorunHealEvent{Iteration: iteration, Kind: autorunHealDiskReclaim, Detail: note})
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SELF-HEAL disk below %.1f GB — %s", iteration, autorunDiskFloorGB, note))
+			publishAutorunState(ctx, opts, runner.RunnerID, "heal", "running", "", *summary)
 			if after, ok := autorunFreeDiskGB(opts.WorkDir); ok && after < autorunDiskFloorGB {
+				publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonResources, *summary)
 				return autorunReasonResources, fmt.Errorf("only %.1f GB free after reclaiming caches (floor %.1f GB); refusing to kick a runner that cannot finish — %s", after, autorunDiskFloorGB, res.Summary())
 			}
 			res = probeAutorunResources(ctx, opts.WorkDir)
@@ -333,8 +343,10 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			detail := fmt.Sprintf("load %.2f/core exceeds %.1f — waiting one interval before kicking (%s)", res.LoadPerCPU, autorunCPUBackoffPerCore, res.Summary())
 			summary.Heals = append(summary.Heals, autorunHealEvent{Iteration: iteration, Kind: autorunHealCPUBackoff, Detail: detail})
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SELF-HEAL %s", iteration, detail))
+			publishAutorunState(ctx, opts, runner.RunnerID, "heal", "running", "", *summary)
 			select {
 			case <-ctx.Done():
+				publishAutorunState(ctx, opts, runner.RunnerID, "stopped", "stopped", autorunReasonStopped, *summary)
 				return autorunReasonStopped, ctx.Err()
 			case <-time.After(opts.Interval):
 			}
@@ -348,6 +360,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 		if master.RunnerID != "" {
 			instruction, masterErr := autorunPlan(ctx, opts, master, task, string(progressBytes), logResult.Output, progressPath, iteration)
 			if masterErr != nil {
+				publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonRunner, *summary)
 				return autorunReasonRunner, masterErr
 			}
 			// The length guard was doing all the real work here — the substring
@@ -355,6 +368,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			// marker. Say what is meant: the master signals completion by
 			// answering DONE and nothing else.
 			if autorunMarksDone(instruction) && len(strings.TrimSpace(instruction)) < 16 {
+				publishAutorunState(ctx, opts, runner.RunnerID, "done", "completed", autorunReasonDone, *summary)
 				return autorunReasonDone, nil
 			}
 			prompt = autorunDoerContext(task, string(progressBytes), logResult.Output, instruction, iteration)
@@ -365,13 +379,16 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 		}
 		changes, statusErr := autorunGitChanges(ctx, opts.WorkDir)
 		if statusErr != nil {
+			publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonRunner, *summary)
 			return autorunReasonRunner, statusErr
 		}
 		if err := validateAutorunScope(changes, opts.Scopes, progressPath, opts.WorkDir); err != nil {
 			if _, rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
+				publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonScope, *summary)
 				return autorunReasonScope, fmt.Errorf("iteration %d violated scope (%v) and rollback failed: %w", iteration, err, rollbackErr)
 			}
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SCOPE FAILED. Runner changes were removed from the worktree and preserved in a diagnostic git stash.\n\n%s", iteration, err))
+			publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonScope, *summary)
 			return autorunReasonScope, fmt.Errorf("iteration %d violated scope; changes were preserved in a diagnostic git stash: %w", iteration, err)
 		}
 		if result.Err != nil {
@@ -400,6 +417,7 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			failedRunners[runner.RunnerID] = true
 			alternates := readyAutorunRunners(opts.WorkDir, failedRunners)
 			if len(alternates) == 0 {
+				publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonRunner, *summary)
 				return autorunReasonRunner, fmt.Errorf("runner %s failed in iteration %d and no other runner is ready: %w", runner.RunnerID, iteration, result.Err)
 			}
 			detail := fmt.Sprintf("runner %s failed (%v); failing over to %s", runner.RunnerID, result.Err, alternates[0].RunnerID)
@@ -407,12 +425,14 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: SELF-HEAL %s", iteration, detail))
 			runner = alternates[0]
 			summary.Runner = runner.RunnerID
+			publishAutorunState(ctx, opts, runner.RunnerID, "heal", "running", "", *summary)
 			continue
 		}
 		if len(autorunRunnerWork(changes, progressPath, opts.WorkDir)) == 0 {
 			noops++
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: runner `%s` made no changes (%d consecutive no-op).", iteration, runner.RunnerID, noops))
 			if noops >= 2 {
+				publishAutorunState(ctx, opts, runner.RunnerID, "converged", "completed", autorunReasonConverged, *summary)
 				return autorunReasonConverged, nil
 			}
 		} else {
@@ -420,22 +440,29 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 			gateResult := autorunExec(ctx, "sh", []string{"-lc", opts.Gate}, opts.WorkDir)
 			if gateResult.Err != nil {
 				if _, rollbackErr := rollbackAutorunChanges(ctx, opts.WorkDir, iteration); rollbackErr != nil {
+					publishAutorunState(ctx, opts, runner.RunnerID, "gate_fail", "failed", autorunReasonGate, *summary)
 					return autorunReasonGate, fmt.Errorf("gate failed and rollback failed: %w", rollbackErr)
 				}
 				_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: GATE FAILED (`%s`). Changes were removed from the worktree and preserved in a diagnostic git stash.\n\n```text\n%s\n```", iteration, opts.Gate, strings.TrimSpace(gateResult.Output)))
+				publishAutorunState(ctx, opts, runner.RunnerID, "gate_fail", "failed", autorunReasonGate, *summary)
 				return autorunReasonGate, fmt.Errorf("gate failed; changes were not committed and were preserved in a diagnostic git stash: %w", gateResult.Err)
 			}
 			_ = appendAutorunProgress(progressPath, fmt.Sprintf("Iteration %d: gate passed (`%s`) with runner `%s`.\n\nChanged: `%s`", iteration, opts.Gate, runner.RunnerID, strings.Join(changes, "`, `")))
+			publishAutorunState(ctx, opts, runner.RunnerID, "gate_pass", "running", "", *summary)
 			if add := autorunExec(ctx, "git", append([]string{"add", "--"}, append(changes, filepath.ToSlash(mustRel(opts.WorkDir, progressPath)))...), opts.WorkDir); add.Err != nil {
+				publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonGate, *summary)
 				return autorunReasonGate, fmt.Errorf("git add: %w: %s", add.Err, strings.TrimSpace(add.Output))
 			}
 			message := fmt.Sprintf("autorun: verified iteration %d for %s", iteration, autorunTaskName(taskPath))
 			if commit := autorunExec(ctx, "git", []string{"commit", "-S", "-m", message}, opts.WorkDir); commit.Err != nil {
+				publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonGate, *summary)
 				return autorunReasonGate, fmt.Errorf("signed commit: %w: %s", commit.Err, strings.TrimSpace(commit.Output))
 			}
 			summary.Commits++
+			publishAutorunState(ctx, opts, runner.RunnerID, "commit", "running", "", *summary)
 			if opts.Push {
 				if err := autorunPushBranch(ctx, opts.WorkDir); err != nil {
+					publishAutorunState(ctx, opts, runner.RunnerID, "failed", "failed", autorunReasonGate, *summary)
 					return autorunReasonGate, fmt.Errorf("push: %w", err)
 				}
 			}
@@ -443,11 +470,13 @@ func autorunLoop(ctx context.Context, opts autorunOptions, runner, master Runner
 		if opts.Interval > 0 {
 			select {
 			case <-ctx.Done():
+				publishAutorunState(ctx, opts, runner.RunnerID, "stopped", "stopped", autorunReasonStopped, *summary)
 				return autorunReasonStopped, ctx.Err()
 			case <-time.After(opts.Interval):
 			}
 		}
 	}
+	publishAutorunState(ctx, opts, runner.RunnerID, autorunKindForFinish(autorunReasonMaxIters), autorunStatusForFinish(autorunReasonMaxIters), autorunReasonMaxIters, *summary)
 	return autorunReasonMaxIters, nil
 }
 

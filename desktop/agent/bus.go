@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -378,6 +379,10 @@ func (b *Bus) gcOnce(now time.Time) {
 // topicMatches — prefix match with segment boundary. "peer" matches
 // "peer/abc/online" but NOT "peering". Empty prefix matches everything.
 func topicMatches(topic, prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
 	if prefix == "" {
 		return true
 	}

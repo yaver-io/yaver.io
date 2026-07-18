@@ -83,3 +83,16 @@ func TestAutorunStatusAndStopUnknownSession(t *testing.T) {
 		t.Fatalf("unexpected stop result: %#v", stop)
 	}
 }
+
+func TestAutorunSessionViewCarriesMaxIters(t *testing.T) {
+	m := &autorunSessionManager{sessions: make(map[string]*autorunSession)}
+	s := &autorunSession{
+		ID:       "autorun-1",
+		Slot:     "widget:codex",
+		Task:     "/repo/tasks/widget.md",
+		MaxIters: 9,
+	}
+	if got := m.view(s); got.MaxIters != 9 {
+		t.Fatalf("view MaxIters = %d, want 9", got.MaxIters)
+	}
+}

@@ -255,7 +255,14 @@ func TestAutorunReleaseWorkspaceLandsMainAndCleansUp(t *testing.T) {
 		"git -C /repo branch --show-current",
 		"git -C /repo checkout main",
 		"git -C /repo fetch origin",
-		"git -C /repo pull --ff-only origin main",
+		// --rebase, not --ff-only. A rejected push leaves our merge on local
+		// main while the remote has moved, so the branches have genuinely
+		// diverged and --ff-only is RIGHT to refuse — which poisoned the clone
+		// and killed the NEXT run before it started. This line asserted the bug
+		// itself, directly contradicting
+		// TestAutorunLandUsesRebaseNotFfOnlyAndCleansUp; both were failing on
+		// main at once, from opposite directions.
+		"git -C /repo pull --rebase origin main",
 		"git -C /repo merge --ff-only autorun/task/codex",
 		"git -C /repo push origin main",
 		"git -C /repo worktree remove --force /slot",

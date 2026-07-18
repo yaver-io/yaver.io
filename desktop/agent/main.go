@@ -3305,11 +3305,10 @@ func runServe(args []string) {
 	StartRelayPasswordSmoke()
 
 	// P2P bus — distributed pub/sub for peer presence + live state.
-	// Initialised without the user's Convex userId for now; the
-	// relay-transport resolver looks up userId from the relay
-	// password. Subscribers that need strict user scoping check
-	// Publisher against the local device registry.
-	b := InitBus(ctx, cfg.DeviceID, "")
+	// Scope transports to the validated owner user. The relay forwards
+	// within one user account and the LAN transport fingerprints this
+	// user ID, but neither transport derives it from the relay password.
+	b := InitBus(ctx, cfg.DeviceID, ownerUserID)
 	globalLeader = NewLeaderTracker(cfg.DeviceID)
 	globalLeader.WireTo(b)
 
@@ -3335,11 +3334,7 @@ func runServe(args []string) {
 	// YAVER_DISABLE_LAN_BUS=1 skips the listen entirely for hosts
 	// that don't want stray UDP chatter.
 	if os.Getenv("YAVER_DISABLE_LAN_BUS") != "1" {
-		// Single-tenant mode — we don't have userID locally on the
-		// agent (it's derived per-request from the bearer). Accept
-		// all same-LAN Yaver traffic for now; tighten later when
-		// we thread userID through config.
-		lt := NewLANBusTransport(b, cfg.DeviceID, "")
+		lt := NewLANBusTransport(b, cfg.DeviceID, ownerUserID)
 		if err := lt.Start(ctx); err != nil {
 			log.Printf("[bus-lan] skip: %v", err)
 		} else {

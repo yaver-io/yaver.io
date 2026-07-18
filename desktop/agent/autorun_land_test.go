@@ -109,8 +109,16 @@ func TestAutorunLandUsesRebaseNotFfOnlyAndCleansUp(t *testing.T) {
 	src := readSourceFile(t, "autorun.go")
 	fn := sliceFunc(t, src, "func autorunLandOntoMain(")
 
-	if !strings.Contains(fn, `"pull", "--rebase", "origin", "main"`) {
+	// The remote is resolved at runtime (autorunRemoteOrOrigin), not hardcoded:
+	// this repo's only remote is named `github`, so a literal "origin" here
+	// would land nowhere. Assert the rebase and the dynamic remote, never the
+	// remote's name — pinning the name is what made this test fail against
+	// correct code.
+	if !strings.Contains(fn, `"pull", "--rebase", landRemote, "main"`) {
 		t.Error("the retry must rebase onto whatever landed; --ff-only cannot resolve a diverged main and re-creates the bug")
+	}
+	if !strings.Contains(fn, "landRemote := autorunRemoteOrOrigin(") {
+		t.Error("the landing remote must be resolved, not hardcoded: this repo's remote is `github`, and `origin` does not exist here")
 	}
 	if strings.Contains(fn, `"pull", "--ff-only"`) {
 		t.Error("--ff-only inside the landing retry: this is exactly what poisoned the clone for the next run")

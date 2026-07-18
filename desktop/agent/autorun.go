@@ -186,9 +186,19 @@ type autorunOptions struct {
 	// parked loops against autorun_status. A CLI run has no session, so
 	// executeAutorun mints one — every loop on the machine has to be holdable,
 	// including the ones nothing is tracking.
+	//
+	// The bus channel publishes under this same value. It arrived on its own
+	// branch as a second field called RunID, set from the identical `id` — one
+	// identity with two names is how two subsystems start disagreeing about
+	// which run they mean, so the channel reads SessionID instead.
 	SessionID string
-	TaskPath  string
-	Runner    string
+	// Slot is the run's stable address (task:seat). Distinct from SessionID on
+	// purpose: SessionID identifies THIS run, Slot identifies the agent across
+	// runs, and the bus topic is keyed on Slot so a restarted run publishes to
+	// the topic a subscriber is already watching.
+	Slot     string
+	TaskPath string
+	Runner   string
 	Interval time.Duration
 	MaxIters int
 	Gate     string
@@ -218,6 +228,26 @@ type autorunOptions struct {
 	// particular one as the natural planner. The roles carry the behavior; the
 	// runners are interchangeable.
 	Master string
+}
+
+const autorunStateRetainSec int64 = 7 * 24 * 60 * 60
+
+// autorunStateEvent is the current state of one autorun slot. The retained bus
+// topic is the view: last-value-wins on autorun/<device>/<slot>.
+type autorunStateEvent struct {
+	RunID     string `json:"runId"`
+	Slot      string `json:"slot"`
+	Task      string `json:"task"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	Iteration int    `json:"iteration"`
+	MaxIters  int    `json:"maxIters"`
+	Runner    string `json:"runner"`
+	Master    string `json:"master,omitempty"`
+	Commits   int    `json:"commits"`
+	Heals     int    `json:"heals"`
+	Finish    string `json:"finishReason,omitempty"`
+	At        int64  `json:"at"`
 }
 
 // autorunSeats is the runner assignment a task file asks for in its front
