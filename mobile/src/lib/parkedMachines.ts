@@ -14,6 +14,10 @@
 // the presentation + polling driver.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+// The ONE wake ladder. parkedMachines used to hold a second, less correct
+// opinion of the same machine; it now derives from this one so the two cannot
+// drift apart again. See deriveWakeView.
+import { deriveServerPhase, PHASE_META } from "./wakeMachineCore";
 import {
   getManagedSubscription,
   startManagedCloudMachine,
@@ -38,131 +42,16 @@ export function isWakingStatus(status?: string | null): boolean {
   return status === "resuming" || status === "provisioning";
 }
 
-// The four honest stages of a wake, in order. The active stage is derived from
-// the box's real status/phase so the ladder reflects the server, not a timer.
-export const WAKE_STAGES: { key: string; label: string }[] = [
-  { key: "creating", label: "Creating server" },
-  { key: "restoring", label: "Restoring snapshot" },
-  { key: "booting", label: "Booting" },
-  { key: "online", label: "Agent reachable" },
-];
-
-export type WakeTone = "parked" | "waking" | "online" | "error";
-
-export interface WakeView {
-  tone: WakeTone;
-  /** Headline for the card, e.g. "Waking up…" / "Yaver-managed · Parked". */
-  title: string;
-  /** Index into WAKE_STAGES of the CURRENT stage (0..3), or -1 when parked. */
-  stageIndex: number;
-  /** 0-100 progress for the bar. */
-  percent: number;
-  /** True while a wake is in flight (disable the button, show the ladder). */
-  inFlight: boolean;
-  /** A short curated failure label when the box reported an error. */
-  error: string | null;
-}
-
-// Map a box's provisionPhase to one of our 4 stages. The box emits a finer
-// phase vocabulary (creating|booting|installing-docker|…|registering|ready);
-// we fold it onto the coarse ladder the card renders.
-function phaseToStageIndex(phase: string | null | undefined): number {
-  switch (phase) {
-    case "creating":
-      return 0;
-    case "restoring":
-    case "pulling-image":
-      return 1;
-    case "booting":
-    case "installing-docker":
-    case "starting-agent":
-    // "registering" / "authorizing-runners" are still coming-up phases — the box
-    // is NOT reachable yet, so they belong in the "Booting" stage, not the final
-    // "Agent reachable" stage. Mapping them to stage 3 made the bar leap to ~88%
-    // while the box was genuinely still booting (the "reachable ≠ usable" trap).
-    case "registering":
-    case "authorizing-runners":
-      return 2;
-    // Only a truly-ready agent is the final "Agent reachable" stage.
-    case "ready":
-      return 3;
-    default:
-      return -1;
-  }
-}
-
-// deriveWakeView turns a machine summary (+ an optional local "just tapped"
-// flag) into everything the card needs. Progress is deliberately monotone-ish
-// per stage so the bar reads as forward motion even between server polls.
-export function deriveWakeView(
-  m: ManagedCloudMachineSummary,
-  optimisticWaking: boolean,
-): WakeView {
-  const status = m.status ?? "";
-  if (status === "error" || m.provisionPhase === "error" || m.provisionPhase === "awaiting-yaver-auth") {
-    return {
-      tone: "error",
-      title: m.provisionPhase === "awaiting-yaver-auth" ? "Sign-in needed" : "Wake failed",
-      stageIndex: -1,
-      percent: 0,
-      inFlight: false,
-      error: (m as any).provisionError ?? m.errorMessage ?? "The box could not be recreated.",
-    };
-  }
-
-  if (status === "active") {
-    // "active" means the AGENT PROCESS is up — NOT that the box is usable. The
-    // backend flips status→active the instant /health passes, while runner OAuth
-    // is still being pushed (runnersAuthorized stays false; see cloudMachines.ts
-    // ~2098 "NOT 'ready' yet"). Declaring 100% "Online" here is the "the bar's
-    // already full but it isn't actually" bug. Only a box with runners authorized
-    // is truly done; until then hold it at "Finishing up…" with the ladder +
-    // timer still running so it reads as forward motion, not a frozen 100%.
-    const ready = m.runnersAuthorized !== false;
-    return {
-      tone: ready ? "online" : "waking",
-      title: ready ? "Online" : "Finishing up…",
-      stageIndex: WAKE_STAGES.length - 1,
-      percent: ready ? 100 : 92,
-      inFlight: !ready,
-      error: null,
-    };
-  }
-
-  if (isWakingStatus(status) || optimisticWaking) {
-    // Prefer the phase-derived stage; fall back to a status default so we never
-    // sit at stage 0 with no motion.
-    let stageIndex = phaseToStageIndex(m.provisionPhase);
-    // Phase unknown: start LOW ("Restoring", ~35%) rather than mid-way ("Booting",
-    // ~60%) — a wake that just began must not read as already-two-thirds-done.
-    if (stageIndex < 0) stageIndex = status === "provisioning" ? 1 : 0;
-    // Percent: use the box's reported progress when present, else a per-stage
-    // floor so each stage shows a distinct, forward position.
-    const stageFloor = [10, 35, 60, 88][stageIndex] ?? 10;
-    const percent =
-      typeof m.provisionProgress === "number"
-        ? Math.max(stageFloor - 5, Math.min(97, m.provisionProgress))
-        : stageFloor;
-    return {
-      tone: "waking",
-      title: "Waking up…",
-      stageIndex,
-      percent,
-      inFlight: true,
-      error: null,
-    };
-  }
-
-  // Parked (paused/stopped/suspended) — the resting state with a Wake button.
-  return {
-    tone: "parked",
-    title: "Yaver-managed · Parked",
-    stageIndex: -1,
-    percent: 0,
-    inFlight: false,
-    error: null,
-  };
-}
+// The wake ladder lives in wakeMachineCore — the React-free module — so it can
+// be unit-tested without React Native, and so there is exactly ONE answer to
+// "how far along is this wake?". This module used to hold a second, less correct
+// copy; re-exporting keeps every existing import working.
+export {
+  WAKE_STAGES,
+  deriveWakeView,
+  type WakeTone,
+  type WakeView,
+} from "./wakeMachineCore";
 
 // Human "3h ago" / "2m ago" from an epoch-ms timestamp.
 export function timeAgo(ts?: number | null): string | null {

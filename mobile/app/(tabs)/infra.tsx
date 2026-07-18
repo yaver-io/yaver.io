@@ -1115,6 +1115,7 @@ function ParkedMachineCard({
   error,
   onWake,
   onPark,
+  deviceReachable = false,
 }: {
   c: any;
   m: ManagedCloudMachineSummary;
@@ -1123,8 +1124,14 @@ function ParkedMachineCard({
   error?: string;
   onWake: () => void;
   onPark?: () => void;
+  // Whether THIS client can currently reach the box. deriveWakeView needs it to
+  // refuse a confident 100% for a machine the control plane calls active but
+  // nobody can actually talk to. Defaults false — the honest default is "we have
+  // not established that we can reach it", which holds the ladder one rung short
+  // rather than claiming done.
+  deviceReachable?: boolean;
 }) {
-  const view = deriveWakeView(m, waking);
+  const view = deriveWakeView(m, waking, deviceReachable);
   const parked = view.tone === "parked";
   const online = view.tone === "online";
   const failed = view.tone === "error";

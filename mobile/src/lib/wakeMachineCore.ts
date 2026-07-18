@@ -469,3 +469,184 @@ export function deriveServerPhase(
 
   return "asleep";
 }
+
+/**
+ * The shape deriveWakeView needs, structural on purpose.
+ *
+ * This module is deliberately free of React and React Native so the wake model
+ * can be unit-tested in plain node — importing ManagedCloudMachineSummary would
+ * drag ./subscription and the RN runtime in behind it and undo that. Callers
+ * pass their summary directly; it structurally satisfies this.
+ */
+export interface WakeViewInput {
+  status?: string | null;
+  provisionPhase?: string | null;
+  provisionProgress?: number | null;
+  runnersAuthorized?: boolean | null;
+  errorMessage?: string | null;
+  provisionError?: string | null;
+}
+
+// The four honest stages of a wake, in order. The active stage is derived from
+// the box's real status/phase so the ladder reflects the server, not a timer.
+export const WAKE_STAGES: { key: string; label: string }[] = [
+  { key: "creating", label: "Creating server" },
+  { key: "restoring", label: "Restoring snapshot" },
+  { key: "booting", label: "Booting" },
+  { key: "online", label: "Agent reachable" },
+];
+
+export type WakeTone = "parked" | "waking" | "online" | "error";
+
+export interface WakeView {
+  tone: WakeTone;
+  /** Headline for the card, e.g. "Waking up…" / "Yaver-managed · Parked". */
+  title: string;
+  /** Index into WAKE_STAGES of the CURRENT stage (0..3), or -1 when parked. */
+  stageIndex: number;
+  /** 0-100 progress for the bar. */
+  percent: number;
+  /** True while a wake is in flight (disable the button, show the ladder). */
+  inFlight: boolean;
+  /** A short curated failure label when the box reported an error. */
+  error: string | null;
+}
+
+// Map a box's provisionPhase to one of our 4 stages. The box emits a finer
+// phase vocabulary (creating|booting|installing-docker|…|registering|ready);
+// we fold it onto the coarse ladder the card renders.
+function phaseToStageIndex(phase: string | null | undefined): number {
+  switch (phase) {
+    case "creating":
+      return 0;
+    case "restoring":
+    case "pulling-image":
+      return 1;
+    case "booting":
+    case "installing-docker":
+    case "starting-agent":
+    // "registering" / "authorizing-runners" are still coming-up phases — the box
+    // is NOT reachable yet, so they belong in the "Booting" stage, not the final
+    // "Agent reachable" stage. Mapping them to stage 3 made the bar leap to ~88%
+    // while the box was genuinely still booting (the "reachable ≠ usable" trap).
+    case "registering":
+    case "authorizing-runners":
+      return 2;
+    // Only a truly-ready agent is the final "Agent reachable" stage.
+    case "ready":
+      return 3;
+    default:
+      return -1;
+  }
+}
+
+// deriveWakeView turns a machine summary (+ an optional local "just tapped"
+// flag) into everything the card needs. Progress is deliberately monotone-ish
+// per stage so the bar reads as forward motion even between server polls.
+/**
+ * The picker's wake view, now DERIVED from the one ladder rather than being a
+ * third opinion about the same machine.
+ *
+ * There used to be three, and this was the least correct of them — same machine,
+ * same instant, three different answers:
+ *
+ *   `active` + ready, box NOT reachable  → this said 100% "Online". It took no
+ *       reachability argument at all, so it could not know. A bar reading 100%
+ *       on a box you cannot reach is the "already full but it isn't" complaint.
+ *   snapshot restore phases              → this had no case for them, so the
+ *       longest part of a wake displayed as stage 0, "Creating server", 10%.
+ *   `awaiting-yaver-auth`                → this said error / 0% / not-in-flight.
+ *       It is not an error: the box is UP and needs a human to sign it in, which
+ *       is why the core calls it `needs-auth` at the 65% it honestly reached.
+ *
+ * deriveServerPhase already answers all three correctly, so this maps its phase
+ * onto the picker's four-stage ladder instead of re-deciding. Divergence is now
+ * a compile-time impossibility rather than a thing to keep in sync by hand.
+ *
+ * `deviceReachable` is required, not optional: making it optional would let a
+ * caller silently reintroduce the exact bug — a confident 100% from a function
+ * that was never told whether the box answers.
+ */
+export function deriveWakeView(
+  m: WakeViewInput,
+  optimisticWaking: boolean,
+  deviceReachable: boolean,
+): WakeView {
+  const status = m.status ?? "";
+
+  // A real provisioning error is still an error — but `awaiting-yaver-auth` is
+  // NOT one, and is handled below as the terminal needs-auth state.
+  if (status === "error" || m.provisionPhase === "error") {
+    return {
+      tone: "error",
+      title: "Wake failed",
+      stageIndex: -1,
+      percent: 0,
+      inFlight: false,
+      error: (m as any).provisionError ?? m.errorMessage ?? "The box could not be recreated.",
+    };
+  }
+
+  const phase = deriveServerPhase(
+    { status: m.status, provisionPhase: m.provisionPhase, runnersAuthorized: m.runnersAuthorized },
+    deviceReachable,
+    "cloud",
+  );
+  const meta = PHASE_META[phase];
+
+  if (phase === "needs-auth") {
+    // Terminal on purpose: nothing changes until a human signs the box in, so a
+    // creeping bar would be a promise the system cannot keep.
+    return {
+      tone: "error",
+      title: meta.short,
+      stageIndex: -1,
+      percent: meta.percent,
+      inFlight: false,
+      error: (m as any).provisionError ?? m.errorMessage ?? "This machine needs to be signed in to finish waking.",
+    };
+  }
+
+  if (phase === "ready") {
+    return {
+      tone: "online",
+      title: "Online",
+      stageIndex: WAKE_STAGES.length - 1,
+      percent: 100,
+      inFlight: false,
+      error: null,
+    };
+  }
+
+  if (phase === "asleep" && !optimisticWaking) {
+    return {
+      tone: "parked",
+      title: "Yaver-managed · Parked",
+      stageIndex: -1,
+      percent: 0,
+      inFlight: false,
+      error: null,
+    };
+  }
+
+  // Everything else is a wake in flight. The stage still comes from the phase
+  // map so the four-step ladder animates, but the PERCENT comes from the core —
+  // which is what stops the snapshot-restore long pole reading as 10%.
+  let stageIndex = phaseToStageIndex(m.provisionPhase);
+  if (stageIndex < 0) stageIndex = status === "provisioning" ? 1 : 0;
+  const percent =
+    typeof m.provisionProgress === "number"
+      ? Math.max(meta.percent - 5, Math.min(97, m.provisionProgress))
+      : meta.percent;
+  return {
+    tone: "waking",
+    // `online` means network is up and runner auth is still landing — the
+    // honest "finishing up", not a frozen 100%.
+    title: phase === "online" ? "Finishing up…" : "Waking up…",
+    stageIndex,
+    percent,
+    inFlight: true,
+    error: null,
+  };
+}
+

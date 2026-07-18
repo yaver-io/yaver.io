@@ -117,6 +117,7 @@ function SleepingMachineRow({
   signingIn,
   onWake,
   onSignIn,
+  deviceReachable = false,
 }: {
   c: any;
   machine: ManagedCloudMachineSummary;
@@ -125,8 +126,12 @@ function SleepingMachineRow({
   signingIn?: boolean;
   onWake: () => void;
   onSignIn?: () => void;
+  // See the same prop on infra.tsx: deriveWakeView refuses a confident 100% for
+  // a box nobody has established they can reach. Defaults false, which holds the
+  // ladder one rung short rather than claiming done.
+  deviceReachable?: boolean;
 }) {
-  const view = deriveWakeView(machine, waking);
+  const view = deriveWakeView(machine, waking, deviceReachable);
   const parked = view.tone === "parked";
   const failed = view.tone === "error";
   // Prefer the STRUCTURED signal over prose. lastWakeOutcome is written
@@ -448,7 +453,10 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
   const sleepingMachines = React.useMemo(
     () =>
       managedMachines.filter(
-        (m) => deriveWakeView(m, managedWakingId === m.id).tone !== "online",
+        // Reachability is unknown for a bare list filter, and false is the
+        // honest answer: a box we have not probed must not be filtered out as
+        // already-online.
+        (m) => deriveWakeView(m, managedWakingId === m.id, false).tone !== "online",
       ),
     [managedMachines, managedWakingId],
   );
