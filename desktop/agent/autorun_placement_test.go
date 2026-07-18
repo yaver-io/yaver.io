@@ -151,3 +151,77 @@ func TestDocsOnlyRunNeedsNoPlacement(t *testing.T) {
 		t.Fatalf("docs-only run implied %d build targets, want 0", len(plan))
 	}
 }
+
+// ship names the STEP it runs ("testflight-ios"); placement names the
+// CAPABILITY needed ("ios"). The audit found the two vocabularies had drifted
+// with nothing bridging them, so ship spent a whole barrier — freeze, drain,
+// pin — before discovering a step could not run.
+func TestShipPlacementBridgesBothVocabularies(t *testing.T) {
+	checks := checkShipPlacement(
+		[]string{"convex", "web-cloudflare", "cli-npm", "testflight-ios"},
+		testFleet(), nil,
+	)
+	byStep := map[string]shipPlacementCheck{}
+	for _, c := range checks {
+		byStep[c.Step] = c
+	}
+
+	// Local credential: runs on a machine.
+	if byStep["convex"].Route != routeMachine {
+		t.Errorf("convex route = %s, want machine", byStep["convex"].Route)
+	}
+	// CI-only credentials: routed, NOT failed.
+	for _, step := range []string{"web-cloudflare", "cli-npm"} {
+		c := byStep[step]
+		if c.Route != routeCI {
+			t.Errorf("%s route = %s, want ci", step, c.Route)
+		}
+		if c.Blocking {
+			t.Errorf("%s is marked blocking — a CI route is a routing decision, not a failure", step)
+		}
+		if c.CIWorkflow == "" {
+			t.Errorf("%s routed to CI without naming the workflow", step)
+		}
+	}
+	// The Mac has ASC credentials, so TestFlight can run here.
+	if byStep["testflight-ios"].Route != routeMachine {
+		t.Errorf("testflight route = %s, want machine", byStep["testflight-ios"].Route)
+	}
+}
+
+// The expensive discovery this avoids: freeze the fleet, drain it, pin a SHA,
+// then die at the upload because the day's quota was already spent.
+func TestShipPlacementBlocksOnExhaustedQuota(t *testing.T) {
+	checks := checkShipPlacement([]string{"testflight-ios"}, testFleet(), map[string]bool{"ios": true})
+	if len(checks) != 1 {
+		t.Fatalf("got %d checks", len(checks))
+	}
+	if checks[0].Route != routeParked {
+		t.Fatalf("route = %s, want parked", checks[0].Route)
+	}
+	if !checks[0].Blocking {
+		t.Fatal("an exhausted quota must block the ship — TestFlight has no rollback, so a retry spends tomorrow's slot")
+	}
+}
+
+// An unmapped step must be visible, never silently allowed: silence would let a
+// new deploy step bypass capability and quota checks entirely.
+func TestShipPlacementReportsAnUnmappedStep(t *testing.T) {
+	checks := checkShipPlacement([]string{"some-new-target"}, testFleet(), nil)
+	if len(checks) != 1 || checks[0].Target != "" {
+		t.Fatalf("unmapped step should carry no target: %+v", checks)
+	}
+	if !strings.Contains(checks[0].Reason, "NOT checked") {
+		t.Fatalf("an unmapped step must say its checks were skipped, got %q", checks[0].Reason)
+	}
+}
+
+// iOS with no Mac cannot fall back to CI — release-mobile.yml is `if: false`
+// because GitHub runners lack the registered device UDIDs.
+func TestShipPlacementBlocksTestFlightWithNoMac(t *testing.T) {
+	noMac := []MachineInfo{{DeviceID: "linux", IsOnline: true, Capabilities: &MachineCapabilities{}}}
+	checks := checkShipPlacement([]string{"testflight-ios"}, noMac, nil)
+	if !checks[0].Blocking || checks[0].Route != routeImpossible {
+		t.Fatalf("route=%s blocking=%v — nothing can run TestFlight without a Mac", checks[0].Route, checks[0].Blocking)
+	}
+}

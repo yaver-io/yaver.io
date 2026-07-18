@@ -265,3 +265,69 @@ func autorunPlacementPlan(areas []string, kind autorunPlacementKind, machines []
 	}
 	return out
 }
+
+// shipTargetPlacementTarget maps a ship DEPLOY STEP name onto the placement
+// target vocabulary.
+//
+// The two are deliberately different words for different questions — ship names
+// the step it runs ("testflight-ios"), placement names the capability it needs
+// ("ios") — and the audit noted they had drifted apart with nothing bridging
+// them. This is that bridge, kept explicit so an unmapped step is a visible
+// gap rather than a silent skip.
+var shipTargetPlacementTarget = map[string]string{
+	"convex":            "convex",
+	"web-cloudflare":    "web",
+	"cli-npm":           "agent",
+	"testflight-ios":    "ios",
+	"playstore-android": "android",
+}
+
+// shipPlacementCheck is one deploy step's routability, as ship should report it.
+type shipPlacementCheck struct {
+	Step       string                `json:"step"`
+	Target     string                `json:"target,omitempty"`
+	Route      autorunPlacementRoute `json:"route"`
+	Reason     string                `json:"reason"`
+	CIWorkflow string                `json:"ciWorkflow,omitempty"`
+	// Blocking is true when this step cannot proceed at all: nothing can run it,
+	// or its quota is spent. A CI route is NOT blocking — it is a routing
+	// decision, and treating it as failure sends someone to debug a healthy
+	// fleet.
+	Blocking bool `json:"blocking"`
+}
+
+// checkShipPlacement answers "can each of these steps actually run, and where?"
+// BEFORE the barrier spends a deploy on finding out.
+//
+// The expensive discovery this avoids: a ship that freezes the fleet, drains it,
+// pins a SHA and then dies at an App Store upload because the day's quota was
+// already spent — having held every autorun still for the duration. Quota
+// exhaustion parks rather than retries, because TestFlight has no rollback and a
+// retry spends tomorrow's slot on the same mistake.
+func checkShipPlacement(steps []string, machines []MachineInfo, quotaExhausted map[string]bool) []shipPlacementCheck {
+	out := make([]shipPlacementCheck, 0, len(steps))
+	for _, step := range steps {
+		target, ok := shipTargetPlacementTarget[step]
+		if !ok {
+			// An unmapped step is reported, never silently allowed: silence here
+			// would let a new deploy step bypass capability and quota checks
+			// entirely.
+			out = append(out, shipPlacementCheck{
+				Step:   step,
+				Route:  routeMachine,
+				Reason: "no placement mapping for this step — capability and quota were NOT checked",
+			})
+			continue
+		}
+		p := placeAutorunTarget(target, placementDeploy, machines, quotaExhausted[target])
+		out = append(out, shipPlacementCheck{
+			Step:       step,
+			Target:     target,
+			Route:      p.Route,
+			Reason:     p.Reason,
+			CIWorkflow: p.CIWorkflow,
+			Blocking:   p.Route == routeParked || p.Route == routeImpossible,
+		})
+	}
+	return out
+}

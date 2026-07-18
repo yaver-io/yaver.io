@@ -42,7 +42,7 @@ import (
 // bash -lc so ~/… + env sourcing work; the timeout is enforced.
 type DeployStep struct {
 	Name     string        `json:"name"`
-	Channel  string        `json:"channel"`  // beta / internal / infra
+	Channel  string        `json:"channel"` // beta / internal / infra
 	WorkDir  string        `json:"workDir"`
 	Command  string        `json:"command"`
 	Timeout  time.Duration `json:"-"`
@@ -51,13 +51,13 @@ type DeployStep struct {
 
 // DeployStepResult is what each step produces.
 type DeployStepResult struct {
-	Name       string    `json:"name"`
-	Channel    string    `json:"channel"`
-	Status     string    `json:"status"` // deployed | skipped | blocked | failed
-	StartedAt  string    `json:"startedAt"`
-	FinishedAt string    `json:"finishedAt"`
-	DurationS  float64   `json:"durationSeconds"`
-	Detail     string    `json:"detail,omitempty"`
+	Name       string  `json:"name"`
+	Channel    string  `json:"channel"`
+	Status     string  `json:"status"` // deployed | skipped | blocked | failed
+	StartedAt  string  `json:"startedAt"`
+	FinishedAt string  `json:"finishedAt"`
+	DurationS  float64 `json:"durationSeconds"`
+	Detail     string  `json:"detail,omitempty"`
 }
 
 // DeployAllRequest is the MCP verb payload.
@@ -66,6 +66,19 @@ type DeployAllRequest struct {
 	Only    []string `json:"only,omitempty"`
 	Exclude []string `json:"exclude,omitempty"`
 	Force   bool     `json:"force,omitempty"`
+	// PinnedSHA is the commit the caller GATED. Every deploy step shells from
+	// the working tree, so if the tree has moved since the pin, the artifacts
+	// shipped are not the ones that passed the gate — a green ship that
+	// published something nobody verified.
+	//
+	// `ship` pins a SHA precisely so the fleet stops moving underneath it, but
+	// nothing enforced that the tree still matched at deploy time. Empty means
+	// "no pin, do not check", which keeps every existing caller working.
+	//
+	// Verified rather than forced: checking out the SHA here could clobber a
+	// working tree we do not own, and refusing to ship the wrong thing is the
+	// safe half of the guarantee.
+	PinnedSHA string `json:"pinnedSha,omitempty"`
 }
 
 // DeployAllResult is the composed response.
@@ -160,6 +173,18 @@ var deployRunCommand = func(ctx context.Context, workDir, command string, timeou
 func RunDeployAll(ctx context.Context, req DeployAllRequest) DeployAllResult {
 	result := DeployAllResult{}
 	repoRoot := repoRootFromCWD()
+
+	// Refuse before the preflight: shipping the wrong commit is worse than
+	// shipping nothing, and the preflight would otherwise spend minutes proving
+	// a tree we are about to reject builds fine.
+	if err := verifyDeployPin(ctx, repoRoot, req.PinnedSHA); err != nil {
+		result.OK = false
+		result.GateStatus = "red"
+		result.Note = err.Error()
+		result.Steps = nil
+		_ = writeDeployReport(result)
+		return result
+	}
 
 	if err := deployPreflight(ctx, repoRoot); err != nil {
 		if !req.Force {
@@ -328,4 +353,41 @@ func composeDeployReportMarkdown(result DeployAllResult) (string, error) {
 
 func (s *HTTPServer) mcpDeployAll(req DeployAllRequest) interface{} {
 	return RunDeployAll(context.Background(), req)
+}
+
+// verifyDeployPin refuses a deploy whose working tree has drifted from the
+// commit the caller gated.
+//
+// `ship` freezes the fleet, drains it, and pins a SHA so the thing it verified
+// is the thing it publishes. Every deploy step then shells from the working
+// tree — so without this check the pin was bookkeeping, not a guarantee: an
+// autorun landing mid-ship, or a human on the box, moves HEAD and the deploy
+// silently ships a different commit than the one that passed the gate.
+//
+// A dirty tree fails for the same reason. Uncommitted edits are, by definition,
+// not in the pinned commit.
+func verifyDeployPin(ctx context.Context, repoRoot, pinnedSHA string) error {
+	pinnedSHA = strings.TrimSpace(pinnedSHA)
+	if pinnedSHA == "" {
+		return nil // no pin requested — every pre-existing caller
+	}
+	head := autorunExec(ctx, "git", []string{"-C", repoRoot, "rev-parse", "HEAD"}, repoRoot)
+	if head.Err != nil {
+		return fmt.Errorf("cannot verify the deploy pin (git rev-parse HEAD failed): %w", head.Err)
+	}
+	got := strings.TrimSpace(head.Output)
+	// Accept an abbreviated pin against a full HEAD, since callers pass whatever
+	// their own `rev-parse` gave them.
+	if !strings.HasPrefix(got, pinnedSHA) && !strings.HasPrefix(pinnedSHA, got) {
+		return fmt.Errorf(
+			"refusing to deploy: the working tree is at %s but the gated commit was %s — the artifacts would not be the ones that passed the gate",
+			got, pinnedSHA)
+	}
+	dirty := autorunExec(ctx, "git", []string{"-C", repoRoot, "status", "--porcelain"}, repoRoot)
+	if dirty.Err == nil && strings.TrimSpace(dirty.Output) != "" {
+		return fmt.Errorf(
+			"refusing to deploy: the working tree at %s has uncommitted changes, which are by definition not in the gated commit",
+			pinnedSHA)
+	}
+	return nil
 }

@@ -74,11 +74,11 @@ type shipResult struct {
 	// a moving main, which is exactly what makes a toparla timeout safe: a runner
 	// landing work mid-deploy is not a race, its commit simply is not in this
 	// build and ships on the next one.
-	PinnedSHA string          `json:"pinnedSha,omitempty"`
-	Plan      shipTargetPlan  `json:"plan"`
-	Deploy    DeployAllResult `json:"deploy"`
-	Toparla   shipPromptResult `json:"toparla"`
-	Devam     shipPromptResult `json:"devam"`
+	PinnedSHA string            `json:"pinnedSha,omitempty"`
+	Plan      shipTargetPlan    `json:"plan"`
+	Deploy    DeployAllResult   `json:"deploy"`
+	Toparla   shipPromptResult  `json:"toparla"`
+	Devam     shipPromptResult  `json:"devam"`
 	Drain     autorunDrainState `json:"drain"`
 	// Frozen/Thawed track fan-out per machine so a partial freeze is never
 	// mistaken for a whole one.
@@ -237,7 +237,9 @@ func runShip(ctx context.Context, s *HTTPServer, opts shipOptions) shipResult {
 		res.OK = true
 		return res
 	}
-	res.Deploy = RunDeployAll(ctx, DeployAllRequest{Only: plan.Targets})
+	// Pass the pinned SHA so the deploy refuses if the tree moved after the
+	// gate. Pinning without enforcing it is bookkeeping, not a guarantee.
+	res.Deploy = RunDeployAll(ctx, DeployAllRequest{Only: plan.Targets, PinnedSHA: res.PinnedSHA})
 	if !res.Deploy.OK {
 		res.phase("deploy", "failed", res.Deploy.Note, t)
 		res.Error = "deploy failed: " + res.Deploy.Note
