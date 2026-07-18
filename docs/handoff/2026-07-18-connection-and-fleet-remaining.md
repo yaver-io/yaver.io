@@ -39,8 +39,28 @@ never escapes: `1s → 2.1s → 4.1s → 8.4s` then **resets to attempt 1**.
 
 The reset cadence matches `refreshDevices` exactly — every 30s (observed
 19:07:23, 19:07:53, 19:08:23, 19:09:22). Both in-code resets are legitimate
-(`quic.ts:1707` explicit disconnect, `quic.ts:6437` successful connect), so
-something in the **device-refresh path** resets them externally. Find that.
+(`quic.ts:1707` explicit disconnect, `quic.ts:6437` successful connect), so the
+re-entry comes from the **device-refresh path**. Located:
+
+- `DeviceContext.tsx:1348` — `refreshDevices` calls `setDevices(withLocalBox)`
+  every 30s with a **freshly built array**. New identity every tick, even when
+  nothing about the fleet changed.
+- `DeviceContext.tsx:2177` — an effect keyed on **`devices`** (the array, not a
+  stable key) therefore re-runs on every tick, re-entering
+  `connectionManager.setFocused()` / `clientFor()` / `setConnectionStatus()`.
+- `DeviceContext.tsx:2188` — `deviceIdsKey` bumps `autoConnectNonce` whenever
+  the ID SET changes, which fires a **full auto-connect sweep**. The logs show
+  the count genuinely moving (`Found 8 device(s)` → `Found 6 device(s)`), so
+  this fires for real, not just on identity churn.
+
+Note the asymmetry that makes this subtle: `deviceIdsKey` was written precisely
+to avoid identity churn — it is a sorted, joined string. The effect one block
+above it was not given the same treatment and still depends on `devices`.
+
+Cheapest first move: key the `2177` effect on `deviceIdsKey` (or a targeted
+subset) rather than `devices`, and confirm against the Connection Logs that the
+30s re-entry stops. That is a small, checkable change — unlike touching the
+backoff itself.
 
 Consequence, from one log: relay connected at 19:07:11, and by 19:09:07 even
 relay failed — *while a Mac on the same relay got HTTP 200s throughout*. At
