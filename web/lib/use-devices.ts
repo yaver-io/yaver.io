@@ -169,11 +169,35 @@ export interface Device {
 interface DevicesState {
   devices: Device[];
   refreshDevices: () => Promise<void>;
+  /** True until the first fetch settles. Distinct from "no devices". */
+  loading: boolean;
+  /** Set when the last fetch failed. Distinct from "no devices". */
+  error: string | null;
+  /** When the last SUCCESSFUL fetch landed (ms epoch), or null. */
+  lastFetchedAt: number | null;
 }
 
-// Mirrors backend/convex/devices.ts and mobile/_core/constants.ts.
-// Agent beats every 5 min; 6 min = one missed beat + jitter buffer.
+// Mirrors backend/convex/devices.ts:112 and mobile/_core/constants.ts.
+// 15 min. The agent beats every 2 min with runners attached, every 10 min idle
+// (desktop/agent/main.go:9898), so one missed idle beat leaves ~5 min of margin.
+// Several comments in this repo still say "5 min" — they are wrong; see
+// docs/architecture/DEVICE_TRUTH.md §1.
 const HEARTBEAT_STALE_MS = 900_000;
+/**
+ * Does this device need the user to DO something? These sort to the top.
+ *
+ * Deliberately not "is it broken" — an offline laptop is not a task. What
+ * qualifies is a device that is reporting in (so the user is likely to want it)
+ * but cannot be used until they act: it needs pairing, its session expired, or
+ * it is a managed box parked mid-lifecycle.
+ */
+function needsAttention(d: Pick<Device, "needsAuth" | "online" | "peerState" | "machineStatus">): boolean {
+  if (d.needsAuth && (d.online || d.peerState === "online")) return true;
+  const ms = String(d.machineStatus || "");
+  if (ms === "error" || ms === "resuming" || ms === "stopping") return true;
+  return false;
+}
+
 let relayPresenceUrlPromise: Promise<string | null> | null = null;
 
 async function getPrimaryRelayPresenceUrl(): Promise<string | null> {
@@ -479,6 +503,14 @@ export function unhideAll(): void {
 
 export function useDevices(token: string | null): DevicesState & { hiddenIds: Set<string> } {
   const [devices, setDevices] = useState<Device[]>([]);
+  // `devices === []` used to mean any of: still loading, network down, backend
+  // 500, token rejected, or genuinely zero devices — and the UI rendered "No
+  // devices registered. Install the Yaver CLI…" for all five, telling a user
+  // whose backend was erroring that their machines don't exist. These three
+  // fields exist to keep those cases apart. See DEVICE_TRUTH.md F1.
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => readHiddenIds());
 
   // Re-read hidden set whenever hide/unhide fires (same tab) or the user hit
@@ -500,7 +532,15 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setError(
+          res.status === 401
+            ? "Your session expired. Sign in again to see your machines."
+            : `Couldn't load your machines (server said ${res.status}).`,
+        );
+        setLoading(false);
+        return;
+      }
       const raw = await res.json();
       const arr = Array.isArray(raw) ? raw : (raw.devices ?? []);
 
@@ -597,15 +637,27 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
       // of device IDs hasn't changed. Devices only re-sort when one
       // appears or disappears — not every 10s poll, which would shuffle
       // the sidebar under the user's cursor as lastSeen timestamps tick.
+      //
+      // EXCEPT when a device starts or stops needing the user's attention.
+      // The old rule froze order on membership alone, and the only sort key
+      // was `online` — so every device that needs action (signed out, needs
+      // pairing, asleep) sorted BENEATH every healthy one and then stayed
+      // there. With >10 devices the sidebar slices to 10 and the broken box
+      // was invisible in both places. Attention is now the primary sort key,
+      // and a change in attention is allowed to re-sort. See DEVICE_TRUTH.md F15.
       setDevices((prev) => {
         const prevIds = prev.map((d) => d.id);
         const nextIds = withRelayPresence.map((d) => d.id);
         const nextSet = new Set(nextIds);
+        const prevAttention = new Map(prev.map((d) => [d.id, needsAttention(d)] as const));
+        const attentionChanged = withRelayPresence.some(
+          (d) => prevAttention.has(d.id) && prevAttention.get(d.id) !== needsAttention(d),
+        );
         const sameMembership =
           prevIds.length === nextIds.length &&
           prevIds.every((id) => nextSet.has(id));
 
-        if (sameMembership && prevIds.length > 0) {
+        if (sameMembership && prevIds.length > 0 && !attentionChanged) {
           // Membership unchanged → keep the existing order, just merge
           // the fresh fields (online, lastSeen, peerState, …).
           const byId = new Map(withRelayPresence.map((d) => [d.id, d]));
@@ -619,6 +671,11 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         // new devices land at the top of their online/offline bucket.
         const indexBefore = new Map(prevIds.map((id, i) => [id, i] as const));
         return [...withRelayPresence].sort((a, b) => {
+          // Devices needing action first — they are the reason you opened this
+          // page. Then online, then the previous position, then recency.
+          const aAttn = needsAttention(a);
+          const bAttn = needsAttention(b);
+          if (aAttn !== bAttn) return aAttn ? -1 : 1;
           if (a.online !== b.online) return a.online ? -1 : 1;
           const ai = indexBefore.has(a.id) ? indexBefore.get(a.id)! : -1;
           const bi = indexBefore.has(b.id) ? indexBefore.get(b.id)! : -1;
@@ -628,8 +685,17 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
           return b.lastSeen.localeCompare(a.lastSeen);
         });
       });
-    } catch {
-      // Silently fail
+      setError(null);
+      setLastFetchedAt(Date.now());
+    } catch (e: any) {
+      // Never swallow: a silent failure here renders as "you have no devices".
+      setError(
+        typeof navigator !== "undefined" && navigator.onLine === false
+          ? "You're offline — showing the last known state of your machines."
+          : `Couldn't reach Yaver to load your machines${e?.message ? `: ${e.message}` : "."}`,
+      );
+    } finally {
+      setLoading(false);
     }
   }, [token]);
 
@@ -644,7 +710,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
   // without waiting for the next poll.
   const visible = devices.filter((d) => !hiddenIds.has(d.id));
 
-  return { devices: visible, refreshDevices, hiddenIds };
+  return { devices: visible, refreshDevices, hiddenIds, loading, error, lastFetchedAt };
 }
 
 // useVisiblePolling calls `fn` every `intervalMs` while the tab is visible,

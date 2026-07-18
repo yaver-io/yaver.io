@@ -20,6 +20,7 @@ import {
   deriveBrowserReach,
   deviceStatusLabel,
   canBrowserActOnDevice,
+  deviceCtaLabel,
   type BrowserReach,
   type DeviceLifecycleState,
 } from "@/lib/device-lifecycle";
@@ -1039,6 +1040,12 @@ function deviceShareSummary(device: Pick<Device, "isGuest" | "hostName" | "share
 interface DevicesViewProps {
   devices: Device[];
   onRefresh: () => Promise<void>;
+  /** True until the first device fetch settles — NOT the same as "no devices". */
+  devicesLoading?: boolean;
+  /** Set when the last device fetch failed — NOT the same as "no devices". */
+  devicesError?: string | null;
+  /** When the last successful fetch landed, for the "as of" stamp. */
+  devicesFetchedAt?: number | null;
   signedInEmail?: string;
   signedInProvider?: string;
   token?: string | null;
@@ -2732,6 +2739,9 @@ function ManagedPowerButton({
 export default function DevicesView({
   devices,
   onRefresh,
+  devicesLoading = false,
+  devicesError = null,
+  devicesFetchedAt = null,
   signedInEmail,
   signedInProvider,
   token,
@@ -2747,6 +2757,27 @@ export default function DevicesView({
   const managedDeviceIds = useManagedDeviceIds(token);
   const { machines: managedMachines, refresh: refreshManagedMachines } =
     useManagedMachines(token);
+  const [refreshing, setRefreshing] = useState(false);
+  // Refresh must mean "re-check everything", not "re-fetch the device list".
+  // It previously fired a single GET /devices/list and left probe backoff,
+  // recorded failures, and managed-machine state untouched — so a user staring
+  // at a wrong card could click it forever and nothing would re-verify.
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      // Drop stale verdicts first so the probes re-run instead of sitting in a
+      // 2-minute backoff, and so cards fall back to "not verified" rather than
+      // showing a failure we are actively re-testing.
+      for (const d of devices) {
+        probeReset(d.id);
+        clearLastFailure(d.id);
+      }
+      await onRefresh();
+      await refreshManagedMachines();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [devices, onRefresh, refreshManagedMachines]);
   // Wake/park the user just asked for, keyed by machineId, so the card can show
   // the request the instant it's made rather than after the next poll.
   const [pendingPower, setPendingPower] = useState<
@@ -2881,12 +2912,33 @@ export default function DevicesView({
             </button>
           ) : null}
           <button
-            onClick={() => onRefresh()}
-            className="btn-secondary px-3 py-1.5 text-xs"
+            onClick={() => { void handleRefresh(); }}
+            disabled={refreshing}
+            className="btn-secondary px-3 py-1.5 text-xs disabled:opacity-60"
+            title="Re-fetch the device list and re-check reachability from this browser"
           >
-            Refresh
+            {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
+      </div>
+
+      {/* Freshness. Without this the page silently showed minute-old state:
+          the list polls every 30s (paused when the tab is hidden), probes back
+          off to one attempt per 2 min, and Refresh used to re-fetch exactly one
+          of six data sources while swallowing every error — so a click with an
+          expired token looked identical to success. See DEVICE_TRUTH.md F14. */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-surface-500">
+        {devicesError ? (
+          <span className="text-amber-700 dark:text-amber-300">{devicesError}</span>
+        ) : devicesLoading ? (
+          <span>Loading your machines…</span>
+        ) : devicesFetchedAt ? (
+          <span>
+            Device list as of{" "}
+            <span className="font-mono">{new Date(devicesFetchedAt).toLocaleTimeString()}</span>
+            {" · "}reachability is only verified for machines you open or refresh
+          </span>
+        ) : null}
       </div>
 
       {pendingManagedBoxes.length > 0 ? (
@@ -3039,8 +3091,46 @@ export default function DevicesView({
       {renderedDevices.length === 0 &&
       pendingManagedBoxes.length === 0 &&
       parkedManagedBoxes.length === 0 ? (
+        devicesLoading ? (
+        /* Loading, failed, and genuinely-empty used to render the SAME screen —
+           "No devices registered. Install the Yaver CLI…" — because the devices
+           hook swallowed every error and exposed no loading flag. A user whose
+           backend was 500ing was told their machines didn't exist and advised to
+           reinstall. Three states, three screens. See DEVICE_TRUTH.md F1. */
+        <div className="card p-8 text-center">
+          <p className="text-sm text-surface-400">Loading your machines…</p>
+        </div>
+      ) : devicesError ? (
+        <div className="card p-8 text-center">
+          <p className="mb-2 text-sm font-medium text-amber-700 dark:text-amber-300">
+            Couldn&apos;t load your machines
+          </p>
+          <p className="mb-4 text-xs text-surface-500">{devicesError}</p>
+          <button
+            onClick={() => { void handleRefresh(); }}
+            disabled={refreshing}
+            className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
+          >
+            {refreshing ? "Retrying…" : "Retry"}
+          </button>
+          <p className="mt-3 text-[11px] text-surface-600">
+            Your machines are still registered — this is a problem loading the list, not a problem with them.
+          </p>
+        </div>
+      ) : (
         <div className="card p-8 text-center">
           <p className="mb-2 text-sm text-surface-400">No devices registered.</p>
+          {hiddenCount > 0 ? (
+            /* This recovery used to render only in the non-empty branch, so a
+               user who had hidden every device landed on "No devices
+               registered" with no way back to them. */
+            <p className="mb-3 text-xs text-surface-400">
+              {hiddenCount} device{hiddenCount === 1 ? " is" : "s are"} hidden in this browser.{" "}
+              <button onClick={() => unhideAll()} className="text-indigo-400 underline hover:text-indigo-300">
+                Show {hiddenCount === 1 ? "it" : "them"}
+              </button>
+            </p>
+          ) : null}
           {dormantDevices.length > 0 ? (
             <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
               {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden by default because they have no recent agent signal and no public path.
@@ -3060,6 +3150,7 @@ export default function DevicesView({
             Download Yaver
           </Link>
         </div>
+      )
       ) : (
         <div className="space-y-2">
           {hiddenCount > 0 ? (
@@ -3099,6 +3190,7 @@ export default function DevicesView({
             const lifecycle = deriveDeviceLifecycleState(device);
             const reach = deriveBrowserReach(device, getLastFailure(device.id));
             const canAct = canBrowserActOnDevice(lifecycle, reach);
+            const cta = deviceCtaLabel(lifecycle, reach);
             return (
             <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
@@ -3669,23 +3761,24 @@ export default function DevicesView({
                   ) : onOpen ? (
                     <button
                       onClick={() => onOpen(device)}
+                      // "Open Workspace" is a promise that it will open. It is
+                      // reserved for devices we have actually PROVED we can
+                      // reach — a Convex heartbeat is not proof (the agent's
+                      // beat is outbound-only and survives NAT, a dead relay
+                      // tunnel, and a 15-min staleness window). Unverified
+                      // devices get a neutral "Connect", which is an honest
+                      // description of an attempt. See DEVICE_TRUTH.md F2.
                       className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold shadow-sm ${
-                        canAct
+                        cta.confident
                           ? "bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
-                          : "border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
+                          : reach.unreachable || lifecycle === "offline"
+                            ? "border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
+                            : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-surface-600 dark:bg-surface-900 dark:text-surface-200 dark:hover:bg-surface-800"
                       }`}
-                      // "Open Workspace" is a promise. Only make it when a
-                      // connect can actually succeed — device.online alone is
-                      // just a Convex heartbeat and says nothing about whether
-                      // this browser has a path to the box.
-                      title={canAct
-                        ? "Connect to this machine and start working on it"
-                        : reach.unreachable
-                          ? `The agent is alive but this browser can't reach it (${reach.label}). Probe anyway and show relay/direct diagnostics.`
-                          : "Probe this machine anyway and show relay/direct diagnostics"}
+                      title={cta.title}
                     >
                       <span aria-hidden>⌨️</span>
-                      {canAct ? "Open Workspace" : "Try Connect"}
+                      {cta.label}
                     </button>
                   ) : null}
                 </div>

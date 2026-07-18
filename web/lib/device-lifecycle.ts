@@ -23,6 +23,7 @@
  */
 
 import type { Device } from "@/lib/use-devices";
+import { MAX_DELAY_MS as PROBE_MAX_BACKOFF_MS } from "@/lib/probe-backoff";
 
 export type DeviceLifecycleState =
   | "offline"
@@ -103,11 +104,17 @@ export function deriveDeviceLifecycleState(device: DeviceLifecycleInput): Device
 
 /**
  * How stale a classified probe failure may be and still count as evidence that
- * this browser can't reach the box. Probes back off exponentially (up to 2 min
- * in probe-backoff.ts), so a window shorter than that would flap back to
- * "reachable" purely because we stopped asking.
+ * this browser can't reach the box.
+ *
+ * This MUST exceed probe-backoff's MAX_DELAY_MS, or the evidence expires before
+ * the next probe can re-record it and the card flaps back to a confident
+ * "reachable" on a box that has been failing for minutes. That is not
+ * hypothetical: this constant was 90s against a 120s backoff cap, so from the
+ * 6th consecutive failure onward `magara` cycled back to "Ready to Connect".
+ * Derived from the cap rather than hand-tuned so the two cannot drift apart —
+ * see the assertion in device-lifecycle.test.ts.
  */
-export const BROWSER_FAILURE_WINDOW_MS = 90_000;
+export const BROWSER_FAILURE_WINDOW_MS = PROBE_MAX_BACKOFF_MS + 60_000;
 
 export interface LastFailureLike {
   reason: string;
@@ -116,18 +123,38 @@ export interface LastFailureLike {
   at: number;
 }
 
-export interface BrowserReach {
-  /** True when we have positive evidence this browser cannot reach the agent. */
-  unreachable: boolean;
-  /** Short label for badges/CTAs, e.g. "Unauthorized". Null when reachable. */
-  label: string | null;
-  /** Sentence-length explanation for tooltips. Null when reachable. */
-  detail: string | null;
-  /** Classified reason, e.g. "unauthorized" | "relay-stale". Null when reachable. */
-  reason: string | null;
-}
+/**
+ * What we actually know about getting from THIS client to the agent.
+ *
+ * The critical distinction is `claimed` vs `reachable`. Convex telling us the
+ * agent heartbeats is not evidence that we have a path to it — the agent's
+ * heartbeat is outbound-only and survives NAT, a dead relay tunnel, and a
+ * 15-minute staleness window (see docs/architecture/DEVICE_TRUTH.md §1).
+ *
+ * Absence of evidence is not evidence of reachability. An unprobed device is
+ * `claimed`, never `reachable`, and must not get a confident CTA.
+ */
+export type BrowserReachState =
+  | "reachable"    // we completed a request to this agent
+  | "claimed"      // heartbeat says alive; we have not proven a path from here
+  | "unreachable"  // we tried and failed
+  | "offline";     // no recent heartbeat; nothing claims it is alive
 
-const REACHABLE: BrowserReach = { unreachable: false, label: null, detail: null, reason: null };
+export interface BrowserReach {
+  state: BrowserReachState;
+  /** True only for `unreachable` — kept as the single "do not promise" gate. */
+  unreachable: boolean;
+  /** True only for `reachable` — we have positive proof, not just a claim. */
+  verified: boolean;
+  /** Short label for badges/CTAs, e.g. "Unauthorized". Null when nothing to say. */
+  label: string | null;
+  /** Sentence-length explanation for tooltips. */
+  detail: string | null;
+  /** Classified reason, e.g. "unauthorized" | "relay-stale". */
+  reason: string | null;
+  /** When the evidence was gathered (ms epoch), or null if we have none. */
+  checkedAt: number | null;
+}
 
 /**
  * Combine every signal we have about browser→agent reachability.
@@ -137,23 +164,68 @@ const REACHABLE: BrowserReach = { unreachable: false, label: null, detail: null,
  * map directly, so this stays a pure function React can re-render off.
  */
 export function deriveBrowserReach(
-  device: Pick<Device, "probeState" | "probeError">,
+  device: Pick<Device, "probeState" | "probeError" | "online" | "peerState" | "workspaceLive" | "lastTunnelEvent">,
   lastFailure: LastFailureLike | null | undefined,
   now: number = Date.now(),
 ): BrowserReach {
   const fresh = lastFailure && now - lastFailure.at < BROWSER_FAILURE_WINDOW_MS ? lastFailure : null;
   if (fresh) {
-    return { unreachable: true, label: fresh.label, detail: fresh.detail, reason: fresh.reason };
+    return {
+      state: "unreachable",
+      unreachable: true,
+      verified: false,
+      label: fresh.label,
+      detail: fresh.detail,
+      reason: fresh.reason,
+      checkedAt: fresh.at,
+    };
   }
   if (device.probeState === "unreachable") {
     return {
+      state: "unreachable",
       unreachable: true,
-      label: "Browser can't reach",
+      verified: false,
+      label: "Can't reach",
       detail: device.probeError || "The last reachability probe of this device failed.",
       reason: "probe-unreachable",
+      checkedAt: null,
     };
   }
-  return REACHABLE;
+  // Positive proof: a successful probe, or a live workspace connection we are
+  // currently holding open. Both mean a request completed end to end.
+  if (device.probeState === "ok" || device.workspaceLive) {
+    return {
+      state: "reachable",
+      unreachable: false,
+      verified: true,
+      label: null,
+      detail: null,
+      reason: null,
+      checkedAt: null,
+    };
+  }
+  // Heartbeat-only. The agent says it is alive; we have not proven we can get
+  // there. This is the honest resting state for a card nobody has probed.
+  if (device.online || device.peerState === "online" || hasRecentLiveSignal(device)) {
+    return {
+      state: "claimed",
+      unreachable: false,
+      verified: false,
+      label: "Not verified from here",
+      detail: "This device reports in to Yaver, but this browser hasn't confirmed a working connection to it yet.",
+      reason: "unverified",
+      checkedAt: null,
+    };
+  }
+  return {
+    state: "offline",
+    unreachable: false,
+    verified: false,
+    label: null,
+    detail: null,
+    reason: null,
+    checkedAt: null,
+  };
 }
 
 /**
@@ -171,9 +243,15 @@ export function deviceStatusLabel(lifecycle: DeviceLifecycleState, reach: Browse
   }
   switch (lifecycle) {
     case "connected": return "Connected";
-    case "bootstrap": return "Bootstrap";
-    case "yaver-auth-expired": return "Yaver Auth Expired";
-    case "ready-to-connect": return "Ready to Connect";
+    // "Bootstrap" and "Yaver Auth Expired" are internal enum names. Say what the
+    // user must DO instead — see docs/architecture/DEVICE_TRUTH.md §6.
+    case "bootstrap": return "Needs pairing";
+    case "yaver-auth-expired": return "Signed out";
+    case "ready-to-connect":
+      // The heart of the model: only claim readiness when something actually
+      // proved a path. Unprobed devices say what we know (a recent check-in),
+      // not what we hope (that connecting will work).
+      return reach.verified ? "Ready to Connect" : "Reporting in · not verified";
     default: return "Offline";
   }
 }
@@ -182,8 +260,65 @@ export function deviceStatusLabel(lifecycle: DeviceLifecycleState, reach: Browse
  * Can a browser→agent action (connect, update, open shell) plausibly succeed?
  * False means: offer it as a diagnostic ("Try Connect") or queue it, never as
  * a confident CTA.
+ *
+ * NOTE this stays true for `claimed` — a heartbeating box is worth attempting,
+ * and refusing to try would be its own kind of lie. What must change with
+ * `claimed` is the CONFIDENCE of the CTA, not its availability. Use
+ * `deviceCtaLabel` for that.
  */
 export function canBrowserActOnDevice(lifecycle: DeviceLifecycleState, reach: BrowserReach): boolean {
   if (reach.unreachable) return false;
   return lifecycle === "connected" || lifecycle === "ready-to-connect";
+}
+
+export interface DeviceCta {
+  label: string;
+  /** Render the confident/primary style only when we have proof. */
+  confident: boolean;
+  title: string;
+}
+
+/**
+ * The single place that decides what the primary button on a device says.
+ *
+ * "Open Workspace" is a promise that it will open. We may only make it when a
+ * probe succeeded or a workspace is already live. Everything else is an attempt,
+ * and is labelled as one.
+ */
+export function deviceCtaLabel(lifecycle: DeviceLifecycleState, reach: BrowserReach): DeviceCta {
+  if (reach.unreachable) {
+    return {
+      label: "Try Connect",
+      confident: false,
+      title: reach.label
+        ? `Last attempt from this browser failed (${reach.label}). Try anyway and show relay/direct diagnostics.`
+        : "Probe this machine anyway and show relay/direct diagnostics.",
+    };
+  }
+  if (lifecycle === "offline") {
+    return {
+      label: "Try Connect",
+      confident: false,
+      title: "No recent check-in from this machine. Probe it anyway and show diagnostics.",
+    };
+  }
+  if (lifecycle === "bootstrap" || lifecycle === "yaver-auth-expired") {
+    return {
+      label: "Try Connect",
+      confident: false,
+      title: "This machine needs to be paired or signed in before a workspace can open.",
+    };
+  }
+  if (reach.verified) {
+    return {
+      label: "Open Workspace",
+      confident: true,
+      title: "Connect to this machine and start working on it",
+    };
+  }
+  return {
+    label: "Connect",
+    confident: false,
+    title: "This machine reports in to Yaver, but this browser hasn't confirmed a connection yet. Connecting will verify it.",
+  };
 }

@@ -686,7 +686,7 @@ const CONNECTION_REQUIRED_TABS = new Set<string>([
 export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, sessionExpired, logout } = useAuth();
-  const { devices, refreshDevices, hiddenIds } = useDevices(token);
+  const { devices, refreshDevices, hiddenIds, loading: devicesLoading, error: devicesError, lastFetchedAt: devicesFetchedAt } = useDevices(token);
   // Bootstrap-pending claims — boxes that joined the user's relay but
   // don't have a Convex devices row yet. Surfaced to the user so a
   // freshly-installed remote box becomes claimable from the dashboard
@@ -928,10 +928,15 @@ export default function DashboardPage() {
   useEffect(() => {
     if (isLoading) return;
     if (!isAuthenticated) return;
+    // `devices.length === 0` is ALSO the pre-fetch state, so this used to bounce
+    // an existing user with machines to the survey before the first fetch
+    // landed. Wait for the fetch to settle, and never redirect on an error —
+    // a failed load is not evidence of a new user. See DEVICE_TRUTH.md F20.
+    if (devicesLoading || devicesError) return;
     if (user?.surveyCompleted === false && devices.length === 0) {
       router.replace("/survey");
     }
-  }, [devices.length, isAuthenticated, isLoading, router, user?.surveyCompleted]);
+  }, [devices.length, devicesLoading, devicesError, isAuthenticated, isLoading, router, user?.surveyCompleted]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1865,14 +1870,21 @@ export default function DashboardPage() {
   const displayDevices = devices.map((device) => {
     const peer = peerStates[device.id];
     const probe = probeStates[device.id];
-    const workspaceLive =
-      connectedDevice?.id === device.id &&
-      (connState === "connected" || connState === "connecting");
+    // `workspaceLive` means we are HOLDING A LIVE CONNECTION — nothing weaker.
+    // It used to include `connState === "connecting"`, and every field below
+    // keyed off it, so a device we were merely *attempting* got stamped
+    // probeState:"ok" + online:true + lastSeen:now. During the background
+    // reconnect ladder (8 attempts over ~4 min, each flipping the state back to
+    // "connecting") that meant a demonstrably failing box was continuously
+    // re-marked healthy, overriding real probe data that said unreachable.
+    // See docs/architecture/DEVICE_TRUTH.md F4.
+    const workspaceLive = connectedDevice?.id === device.id && connState === "connected";
     const next = {
       ...device,
       workspaceLive,
       peerState: peer?.state ?? device.peerState,
       peerLastSeen: peer?.lastSeen ?? device.peerLastSeen,
+      // Only a real probe result (or a live connection) may set probeState.
       probeState: workspaceLive ? "ok" : probe?.ok ? "ok" : probe?.authExpired ? "auth-expired" : probe ? "unreachable" : device.probeState,
       probePath: workspaceLive ? device.probePath : probe?.path ?? device.probePath,
       probeCheckedAt: probe?.checkedAt ?? device.probeCheckedAt,
@@ -1880,6 +1892,9 @@ export default function DashboardPage() {
       probeInfo: probe?.info ?? device.probeInfo,
       online: workspaceLive || probe?.ok === true || (peer?.state === "online" ? true : device.online),
       lastSeen: (() => {
+        // Every entry here must be a timestamp of something that ACTUALLY
+        // happened: a live connection, a peer sighting, a completed probe.
+        // Never a synthetic "now" for an attempt in flight.
         const workspaceSeen = workspaceLive ? new Date().toISOString() : "";
         const peerSeen = peer?.lastSeen || "";
         const probeSeen = probe?.checkedAt || "";
@@ -2840,6 +2855,9 @@ export default function DashboardPage() {
               />
               <DevicesView
                 devices={displayDevices}
+                devicesLoading={devicesLoading}
+                devicesError={devicesError}
+                devicesFetchedAt={devicesFetchedAt}
                 onRefresh={refreshDevices}
                 signedInEmail={user?.email}
                 signedInProvider={undefined}

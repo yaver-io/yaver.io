@@ -75,7 +75,12 @@ export function subscribeLastFailure(fn: FailureSubscriber): () => void {
 
 
 const BASE_DELAY_MS = 4_000;
-const MAX_DELAY_MS = 120_000;
+/**
+ * Exported because device-lifecycle.ts derives its failure-evidence window from
+ * this. If evidence expires faster than we re-probe, a failing device flaps back
+ * to looking healthy. Keep them coupled, not hand-tuned.
+ */
+export const MAX_DELAY_MS = 120_000;
 
 function key(deviceId: string, kind: BackoffKind): string {
   return `${deviceId}::${kind}`;
