@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Ionicons } from "@expo/vector-icons";
 import { agentSignalFromTask, agentStateBg, agentStateColor } from "../../src/lib/agentStatus";
 import { clipUrl } from "../../src/lib/vibePreview";
+import { planFollowUp } from "../../src/lib/followUpPlan";
 import { isBundleLoaderAvailable } from "../../src/lib/bundleLoader";
 import { AuthenticatedVideoPlayer } from "../../src/components/AuthenticatedVideoPlayer";
 import {
@@ -3252,6 +3253,53 @@ export default function TasksScreen() {
       return;
     }
 
+    // Show the user's own message IMMEDIATELY, before any network call.
+    //
+    // Only the yaver-agent branch above did this, so on every runner path
+    // (codex, claude, opencode — what people actually use) the text vanished
+    // from the input and appeared NOWHERE until fetchTasks() came back. When
+    // the follow-up also forks (see parentFinished below) the view swaps to a
+    // fresh child task, so the message was invisible in a chat that had itself
+    // just been replaced by an empty one. That is the "I wrote a message and
+    // cannot see it at all, then it shows a new task" report.
+    //
+    // The optimistic turn is carried across the fork so the conversation reads
+    // continuously, the way a chat app is expected to behave.
+    const optimisticText = followUpText.trim();
+    const optimisticTurn = {
+      role: "user" as const,
+      content: optimisticText,
+      timestamp: new Date().toISOString(),
+    };
+    const optimisticParentId = selectedTask.id;
+    if (optimisticText) {
+      const withTurn = (t: Task): Task => ({
+        ...t,
+        turns: [...(t.turns ?? []), optimisticTurn],
+        updatedAt: Date.now(),
+      });
+      setTasks((prev) => prev.map((t) => (t.id === optimisticParentId ? withTurn(t) : t)));
+      setSelectedTask((prev) => (prev && prev.id === optimisticParentId ? withTurn(prev) : prev));
+    }
+
+    // Undo the optimistic turn when the send does not happen. Leaving it would
+    // show the user a message that was never sent — the same "UI states
+    // something it does not know" failure this screen has been bitten by
+    // before, just inverted.
+    const rollbackOptimisticTurn = () => {
+      if (!optimisticText) return;
+      const dropTurn = (t: Task): Task => {
+        const turns = t.turns ?? [];
+        const last = turns[turns.length - 1];
+        if (last && last.role === "user" && last.content === optimisticTurn.content && last.timestamp === optimisticTurn.timestamp) {
+          return { ...t, turns: turns.slice(0, -1) };
+        }
+        return t;
+      };
+      setTasks((prev) => prev.map((t) => (t.id === optimisticParentId ? dropTurn(t) : t)));
+      setSelectedTask((prev) => (prev && prev.id === optimisticParentId ? dropTurn(prev) : prev));
+    };
+
     try {
       if (selectedTask.isAdopted) {
         // For adopted tmux sessions, send input directly via tmux send-keys
@@ -3267,13 +3315,18 @@ export default function TasksScreen() {
         //     semantics. See task_fork.go on the agent side.
         const parentRunner = (selectedTask.runnerId || "").trim();
         const desiredRunner = (selectedRunner || "").trim();
-        const runnerChanged = !!desiredRunner && !!parentRunner && desiredRunner !== parentRunner;
-        const parentFinished =
-          selectedTask.status === "completed" ||
-          selectedTask.status === "review" ||
-          selectedTask.status === "failed" ||
-          selectedTask.status === "stopped";
-        const switching = runnerChanged || parentFinished;
+        // planFollowUp owns this decision so it can be tested without React
+        // Native — see mobile/src/lib/followUpPlan.test.ts. It is the reason
+        // follow-ups appeared to "create a new task": a finished parent always
+        // forks, and finished is the normal state by the time a reply is typed.
+        const plan = planFollowUp({
+          isAdopted: selectedTask.isAdopted,
+          parentRunner,
+          desiredRunner,
+          status: selectedTask.status,
+        });
+        const runnerChanged = plan.action === "fork-confirm";
+        const switching = plan.action === "fork-confirm" || plan.action === "fork-silent";
 
         if (switching) {
           // Two flavors of fork:
@@ -3302,6 +3355,7 @@ export default function TasksScreen() {
             if (!confirmed) {
               // user backed out — drop the throw so the catch below
               // doesn't double-handle, then leave the input in place.
+              rollbackOptimisticTurn();
               return;
             }
             try {
@@ -3321,17 +3375,24 @@ export default function TasksScreen() {
           // runner so the fork uses the same one. Fork requires a
           // non-empty runner; legacy tasks without a recorded runnerId
           // fall back to claude.
-          const forkRunner = runnerChanged
-            ? desiredRunner
-            : (parentRunner || desiredRunner || "claude");
+          const forkRunner = plan.forkRunner;
           const result = await quicClient.forkTask(selectedTask.id, {
             runner: forkRunner,
             input: followUpText.trim(),
           });
           // Switch the chat to the new child so subsequent follow-ups
           // continue against the forked task.
+          // Carry the conversation (including the turn we just optimistically
+          // appended) into the child. Without this the fork presents as an
+          // empty chat and the message the user just sent is gone from view.
           setSelectedTask((prev) => prev && prev.id === selectedTask.id
-            ? { ...prev, id: result.taskId, runnerId: result.runnerId, status: "queued" as TaskStatus }
+            ? {
+                ...prev,
+                id: result.taskId,
+                runnerId: result.runnerId,
+                status: "queued" as TaskStatus,
+                turns: prev.turns ?? [],
+              }
             : prev);
           if (runnerChanged) {
             try {
@@ -3356,6 +3417,9 @@ export default function TasksScreen() {
       setFollowUpImages([]);
       await fetchTasks();
     } catch (err) {
+      // The send failed, so the message never reached the runner. Take the
+      // optimistic turn back out rather than leaving a phantom message.
+      rollbackOptimisticTurn();
       // Best-effort analytics for runtime-switch failures. Other
       // continue-task failures don't have analytics yet; if we add
       // them later, gate this on an explicit "was a switch" flag.
