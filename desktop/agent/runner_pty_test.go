@@ -91,6 +91,17 @@ func TestRunnerPTYSpawnsStubRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", stubDir)
+	// A restricted PATH no longer hides tmux. Since "find tmux where it is
+	// installed, not only where $PATH says" (9d1eed683), DiscoverBinary falls
+	// back to commonInstallPrefixes(), so tmuxAvailable() finds /opt/homebrew/bin
+	// /tmux regardless of PATH — and the handler took the tmux branch instead of
+	// the direct PTY spawn this test exists to exercise, closing the socket
+	// before any ready frame. That change is correct; the test's premise was the
+	// stale part.
+	//
+	// Declare "no tmux" explicitly by seeding the discovery cache, rather than
+	// implying it through the environment.
+	forceNoTmux(t)
 
 	srv := &HTTPServer{token: "owner-token", ownerUserID: "owner-user"}
 	server := httptest.NewServer(http.HandlerFunc(srv.auth(srv.handleRunnerPTYWS)))
@@ -320,11 +331,11 @@ func TestClaudeCredentialFileHasOAuth(t *testing.T) {
 		body string
 		want bool
 	}{
-		"mcp plugin tokens only":     {`{"mcpOAuth":{"vercel":{"accessToken":"tok"}}}`, false},
-		"empty object":               {`{}`, false},
-		"not json":                   {`nope`, false},
-		"blank access token":         {`{"claudeAiOauth":{"accessToken":""}}`, false},
-		"live access token": {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
+		"mcp plugin tokens only": {`{"mcpOAuth":{"vercel":{"accessToken":"tok"}}}`, false},
+		"empty object":           {`{}`, false},
+		"not json":               {`nope`, false},
+		"blank access token":     {`{"claudeAiOauth":{"accessToken":""}}`, false},
+		"live access token":      {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
 		// An expired accessToken WITH a refresh token is still signed in — Claude
 		// mints a new one. I briefly changed this to false after finding a Mac
 		// mini whose token expired 2026-05-11, and the machine itself proved me
@@ -333,9 +344,9 @@ func TestClaudeCredentialFileHasOAuth(t *testing.T) {
 		// FILE is not the store — the Keychain is — so a months-stale file sits
 		// happily beside a valid session. This file is a POSITIVE-only hint; only
 		// probeClaudeAuthStatus() may answer "signed out".
-		"expired but refreshable": {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":%d}}`, past), true},
-		"expired without refresh": {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, past), false},
-		"no expiry recorded":      {`{"claudeAiOauth":{"accessToken":"a"}}`, true},
+		"expired but refreshable":    {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":%d}}`, past), true},
+		"expired without refresh":    {fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, past), false},
+		"no expiry recorded":         {`{"claudeAiOauth":{"accessToken":"a"}}`, true},
 		"mcp tokens plus real oauth": {fmt.Sprintf(`{"mcpOAuth":{"v":{"accessToken":"t"}},"claudeAiOauth":{"accessToken":"a","expiresAt":%d}}`, future), true},
 	}
 	for name, tc := range cases {
@@ -683,4 +694,25 @@ func TestNormalizeGitURLToHTTPS(t *testing.T) {
 			t.Errorf("normalizeGitURLToHTTPS(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// forceNoTmux makes tmuxAvailable() report false for the duration of a test, so
+// a case can exercise the direct-PTY path deterministically. Seeds the same
+// cache DiscoverBinary reads and restores it afterwards, so neighbouring tests
+// still see the real machine.
+func forceNoTmux(t *testing.T) {
+	t.Helper()
+	discoveryMu.Lock()
+	prev, had := discoveryCache["tmux"]
+	discoveryCache["tmux"] = discoveryEntry{path: "", when: time.Now()}
+	discoveryMu.Unlock()
+	t.Cleanup(func() {
+		discoveryMu.Lock()
+		if had {
+			discoveryCache["tmux"] = prev
+		} else {
+			delete(discoveryCache, "tmux")
+		}
+		discoveryMu.Unlock()
+	})
 }
