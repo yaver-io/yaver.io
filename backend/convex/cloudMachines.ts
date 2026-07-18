@@ -1667,6 +1667,28 @@ export const setProviderStatus = internalMutation({
   },
 });
 
+/**
+ * Record ONLY the runner-authorization fact, without touching the provision
+ * phase. setPhase requires a phase and has side effects (it re-stamps
+ * provisionPhaseAt and clears provisionError), so it is the wrong tool when a
+ * caller knows about runners but must not claim anything about where the wake
+ * is. The runners-authorized route uses this while a box is still climbing —
+ * writing "ready" there disarms resumeHealthCheck's watchdog (it early-returns
+ * on phase "ready") and leaves the box billing in "resuming" forever.
+ */
+export const setRunnersAuthorized = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    runnersAuthorized: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.machineId, {
+      runnersAuthorized: args.runnersAuthorized,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const setPhase = internalMutation({
   args: {
     machineId: v.id("cloudMachines"),
@@ -2371,7 +2393,17 @@ export const resumeHealthCheck = internalAction({
         machineId, phase: "registering", progress: 72,
       });
     }
-    if (signedOut || attempt >= 10) {
+    // How long a box that has NOT answered yet is given before we delete it.
+    // The old cap was `attempt >= 10` — with the first check at +20s and 15s
+    // between ticks that is ~2.6 minutes, which is SHORTER than this codebase's
+    // own documented boot times (a vanilla first boot is "~3-5 min", see
+    // subscription.ts; a snapshot restore is longer still). So a perfectly
+    // healthy slow wake was deleted mid-boot and reported to the user as "never
+    // became reachable" — and because abandonWake re-parks, the next attempt
+    // hit the same wall. Scale the budget to what this box actually has to do.
+    const bootBudgetAttempts =
+      machine.bootImageSource === "vanilla" ? 40 : machine.volumeId ? 20 : 32; // ~10 / ~5 / ~8 min
+    if (signedOut || attempt >= bootBudgetAttempts) {
       const reason = signedOut
         ? "The box stayed awake waiting for Yaver sign-in, but was not authorized in time. Parked again to stop the meter — sign it in, then wake."
         : "The box never became reachable after waking. Parked again to stop the meter — try waking it again.";

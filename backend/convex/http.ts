@@ -4780,12 +4780,27 @@ http.route({
       return errorResponse("Not your machine", 403);
     }
     const authorized = body.authorized === false ? false : true;
-    await ctx.runMutation(internal.cloudMachines.setPhase, {
-      machineId: machineId as any,
-      phase: authorized ? "ready" : "authorizing-runners",
-      progress: authorized ? 100 : 90,
-      runnersAuthorized: authorized,
-    });
+    // Record the runner fact, but do NOT let it declare the box "ready" while a
+    // wake is still climbing. resumeHealthCheck early-returns on
+    // provisionPhase === "ready" (cloudMachines.ts:2257), so a "ready" written
+    // mid-wake permanently disarms the watchdog: the row never gets promoted to
+    // active, never gets abandoned, and keeps billing while stuck in "resuming".
+    // Only a box the lifecycle has already settled may be moved to "ready" here.
+    const settled = machine.status === "active";
+    if (settled) {
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId: machineId as any,
+        phase: authorized ? "ready" : "authorizing-runners",
+        progress: authorized ? 100 : 90,
+        runnersAuthorized: authorized,
+      });
+    } else {
+      // Mid-wake: keep the fact, leave the ladder to resumeHealthCheck.
+      await ctx.runMutation(internal.cloudMachines.setRunnersAuthorized, {
+        machineId: machineId as any,
+        runnersAuthorized: authorized,
+      });
+    }
     return jsonResponse({ ok: true, runnersAuthorized: authorized });
   }),
 });
@@ -5649,7 +5664,17 @@ http.route({
             // ubuntu-24.04 with a 3–5 min first-boot build. Lets the card
             // show the right "setting up" expectation.
             bootImageSource: machine.bootImageSource ?? null,
-            runnersAuthorized: machine.runnersAuthorized ?? false,
+            // Preserve UNSET as null — never coerce it to false. The readiness
+            // gate everywhere else is strict `=== false` (cloudMachines.ts:2316
+            // writes phase "ready"/100 when the field is undefined), so
+            // flattening undefined→false told every client "runners are NOT
+            // authorized" about a box the backend had just declared ready.
+            // Mobile's ladders all test `runnersAuthorized !== false`, so they
+            // pinned a fully-woken box at 92% "Finishing up…" forever and the
+            // picker kept it filed under "Sleeping machines" — i.e. a
+            // successful wake was unusable from the UI. null passes `!== false`
+            // and matches the backend's own semantics.
+            runnersAuthorized: machine.runnersAuthorized ?? null,
           }))
         : [],
     });

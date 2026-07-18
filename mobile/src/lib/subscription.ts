@@ -40,6 +40,15 @@ export interface ManagedCloudMachineSummary {
   lastParkedAt?: number | null;
   /** When the last wake was requested — "woke 2m ago" once active again. */
   lastWokeAt?: number | null;
+  /** When the CURRENT wake run started, authored by the server (cloudLifecycle
+   *  stamps it on every wake). This is the ONLY honest anchor for an elapsed
+   *  clock: a component-local `Date.now()` restarts at 0:00 every time the card
+   *  remounts, so browsing away and back made a 6-minute wake claim it had just
+   *  begun — and reset the ETA with it. Cleared when the run ends. */
+  wakeStartedAt?: number | null;
+  /** When the current wake run finished. Paired with wakeStartedAt so a client
+   *  can tell "still running" from "ended N ago" without inferring it. */
+  wakeCompletedAt?: number | null;
   /** When the CURRENT provision phase began — the anchor for the in-phase timer. */
   provisionPhaseAt?: number | null;
   /** Provider's own word for the server state during a wake ("initializing"). */
@@ -152,7 +161,12 @@ async function managedCloudPost<T>(
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error || `HTTP ${res.status}`);
+    // The wake routes report their refusal in `reason`, not `error` (e.g. the
+    // 409 "snapshot still finalizing, retrying automatically"). Reading only
+    // `error` turned an explained, self-retrying condition into a bare
+    // "HTTP 409" — the user saw a failure where the system was in fact already
+    // handling it. Take whichever the server actually sent.
+    throw new Error(data?.error || data?.reason || `HTTP ${res.status}`);
   }
   return data as T;
 }
