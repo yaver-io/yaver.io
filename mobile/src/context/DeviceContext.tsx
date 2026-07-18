@@ -23,6 +23,14 @@ import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
 import { submitEncryptedPair } from "../lib/encryptedPair";
 import { probeMobileDeviceStatus, type MobileDeviceStatusProbe } from "../lib/deviceStatus";
+import { probeDeviceWithRepair } from "../lib/probeWithRepair";
+import { resolveSweepOutcome } from "../lib/autoConnectStatus";
+
+// Auto-connect probe budget. Matches the manual switch modal (4000ms) — the
+// automatic path used to run at 3000ms, so the path the user lands on by
+// default gave every box LESS time to answer than the one they reach by
+// tapping. Same ladder, same budget, both directions.
+const AUTO_CONNECT_PROBE_MS = 4000;
 import { localBoxDeviceIfRunning } from "../lib/sandboxControl";
 import { LOCAL_BOX_DEVICE_ID } from "../lib/localBox";
 import {
@@ -886,6 +894,8 @@ export interface DeviceState {
   /** The box the auto-connect is currently reaching for, with its role, so the
    *  banner can name it. Null when idle or between attempts. */
   autoConnectTarget: { id: string; name: string; role: "primary" | "secondary" | "sticky" } | null;
+  /** Per-rung narration for the in-flight auto-connect ("Pinging X…"). */
+  autoConnectStage: string | null;
   /** Interrupt the auto-connect so the user can pick a box themselves. */
   cancelAutoConnect: () => void;
   /** Last-ditch connectivity recovery: re-sync this account's per-user relay
@@ -1099,6 +1109,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   } | null>(null);
   // Lets the user interrupt an in-flight auto-connect ("let me pick myself").
   const autoConnectCancelRef = useRef(false);
+  // Per-rung narration for the auto path ("Pinging X…", "Repaired — re-checking
+  // X…"). The manual switch modal has always narrated these; the automatic path
+  // showed one static sentence for its whole multi-second sweep, so a stall was
+  // indistinguishable from a hang.
+  const [autoConnectStage, setAutoConnectStage] = useState<string | null>(null);
 
   const setMultiTargetMode = useCallback(async (enabled: boolean) => {
     setMultiTargetModeState(enabled);
@@ -2325,6 +2340,25 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
   fetchRelayServersRef.current = fetchRelayServers;
 
+  // "Latest value" refs for the auto-connect sweep. These exist so the sweep's
+  // dep array can hold only its semantic triggers — see the dependency
+  // discipline note on the effect. Assigned during render, matching the
+  // `fetchRelayServersRef` pattern directly above.
+  const devicesRef = useRef<Device[]>(devices);
+  devicesRef.current = devices;
+  const connectedDeviceIdsRef = useRef<string[]>(connectedDeviceIds);
+  connectedDeviceIdsRef.current = connectedDeviceIds;
+  const activeDeviceRef = useRef<Device | null>(activeDevice);
+  activeDeviceRef.current = activeDevice;
+  const primaryDeviceIdRef = useRef<string | null>(primaryDeviceId);
+  primaryDeviceIdRef.current = primaryDeviceId;
+  const secondaryDeviceIdRef = useRef<string | null>(secondaryDeviceId);
+  secondaryDeviceIdRef.current = secondaryDeviceId;
+  const selectDeviceRef = useRef(selectDevice);
+  selectDeviceRef.current = selectDevice;
+  const setPrimaryDeviceRef = useRef(setPrimaryDevice);
+  setPrimaryDeviceRef.current = setPrimaryDevice;
+
   // Last-ditch connectivity recovery. When every box reads "no reachable
   // transport", the usual cause is a stale per-user relay password (the phone's
   // credential drifted from what the relay expects). /settings/repair-relay
@@ -2357,6 +2391,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, relays: 0, error: e instanceof Error ? e.message : "Repair failed." };
     }
   }, [token, RELAY_CACHE_KEY, fetchRelayServers]);
+
+  // Read by the auto-connect sweep, which no longer lists callbacks as deps.
+  const repairRelayRef = useRef(repairRelay);
+  repairRelayRef.current = repairRelay;
 
   // Seamless relay self-heal. When connections fail with a relay-auth-shaped
   // error — the stale per-user-password symptom where every box reads "no
@@ -3469,16 +3507,39 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // the picker/empty-state handles the "no remote device added" case. One
   // attempt per nonce (bumped on device-set change + manual Retry) so a
   // failing connect can't loop. The user-disconnect flag always wins.
+  //
+  // DEPENDENCY DISCIPLINE — this effect used to list `devices`,
+  // `connectedDeviceIds` and `activeDevice?.id` as deps. All three change
+  // identity constantly: `devices` is a fresh array on every 30s poll, and
+  // `connectedDeviceIds` mutates whenever the pool-warming effect below opens a
+  // background connection. React runs the PREVIOUS cleanup before re-running an
+  // effect, so each of those churns fired `cancelled = true` and killed the
+  // in-flight sweep mid-probe. The nonce had already been marked attempted on
+  // ENTRY, so the re-run then early-returned and no new sweep ever started —
+  // leaving the banner stuck on "No machine selected" until the user picked a
+  // box by hand. Observed live 2026-07-18: 23 seconds of flapping between
+  // "Connecting" and "No machine selected" with ZERO connect attempts in the
+  // log, then a manual pick that connected via relay in 1.0s.
+  //
+  // The fix is two-part and both halves are load-bearing:
+  //   1. Churny values are read through refs, so the dep array holds only the
+  //      semantic triggers (nonce, auth/settings readiness, user-disconnect).
+  //      `deviceIdsKey` already bumps the nonce when the device SET genuinely
+  //      changes, which is the real "re-sweep" signal.
+  //   2. The nonce is marked attempted on COMPLETION, not on entry, so a sweep
+  //      that IS legitimately cancelled re-arms instead of wedging.
   useEffect(() => {
     if (!settingsReady || !token || !relaysReady || userDisconnected) return;
+    const devicesNow = devicesRef.current;
+    const connectedNow = connectedDeviceIdsRef.current;
+    const activeNow = activeDeviceRef.current;
     // Already genuinely connected to the focused device → nothing to do.
-    if (activeDevice && connectedDeviceIds.includes(activeDevice.id)) return;
+    if (activeNow && connectedNow.includes(activeNow.id)) return;
     if (autoConnectInFlightRef.current) return;
     if (autoConnectAttemptedNonceRef.current === autoConnectNonce) return;
-    const candidates = devices.filter((d) => !d.isGuest);
+    const candidates = devicesNow.filter((d) => !d.isGuest);
     if (candidates.length === 0) return; // no devices → empty-state UI handles it
 
-    autoConnectAttemptedNonceRef.current = autoConnectNonce;
     autoConnectInFlightRef.current = true;
     autoConnectCancelRef.current = false;
     let cancelled = false;
@@ -3505,8 +3566,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           }
         };
         pushPriority(userSelectedDeviceIdRef.current, "sticky");
-        pushPriority(primaryDeviceId, "primary");
-        pushPriority(secondaryDeviceId, "secondary");
+        pushPriority(primaryDeviceIdRef.current, "primary");
+        pushPriority(secondaryDeviceIdRef.current, "secondary");
 
         if (ordered.length > 0) {
           for (const { device, role } of ordered) {
@@ -3514,14 +3575,63 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             // Narrate the attempt BEFORE probing so the UI shows which box and
             // role we're reaching for.
             setAutoConnectTarget({ id: device.id, name: device.name, role });
-            const probe = await probeMobileDeviceStatus(device, token, 3000).catch(() => null);
+            // Same probe+repair ladder the manual switch modal uses. Previously
+            // this was a bare `probeMobileDeviceStatus` that never inspected
+            // `errorCode`, so a stale per-user relay password failed every
+            // auto-connect while the picker silently repaired it — the default
+            // path was strictly weaker than the manual one.
+            const { probe } = await probeDeviceWithRepair(
+              { id: device.id, name: device.name, host: device.host, port: device.port, lanIps: device.lanIps },
+              {
+                token,
+                timeoutMs: AUTO_CONNECT_PROBE_MS,
+                onStage: setAutoConnectStage,
+                repairRelay: repairRelayRef.current,
+                isCancelled,
+              },
+            );
             if (isCancelled()) return;
             if (!probe?.reachable) continue; // offline → fall through to the next priority
             console.log(`[DeviceContext] Auto-connecting (${role}) to`, device.name);
+            appLog("info", `[auto-connect] ${role} ${device.name} reachable via ${probe.path} — connecting`);
             sendTelemetry(token, "auto-connect", `${role}: ${device.name}`, "{}");
-            await selectDevice(device);
+            setAutoConnectStage(`Reachable via ${probe.path === "relay" ? "relay" : "direct"} — connecting…`);
+            await selectDeviceRef.current(device);
             return; // connected — done
           }
+
+          // No priority box answered the PROBE. That is not the same as "no
+          // priority box is reachable": `probeMobileDeviceStatus` only knows
+          // about relay + `host` + `lanIps`, while the real connector
+          // (quic.ts raceDirectCandidates) additionally tries the UDP-beacon
+          // IP, Cloudflare tunnels and the connection cache. A box reachable
+          // ONLY by one of those legs failed the gate and never got a connect
+          // attempt — even though tapping it by hand connected fine, because
+          // the inline picker calls selectDevice with no probe at all.
+          //
+          // So: give the highest-priority box that Convex still considers
+          // online ONE real connect attempt before dropping to the list. It is
+          // bounded by selectDevice's own 20s timeout and the user can Cancel.
+          // A box that is genuinely down is `online: false` here and skips this
+          // entirely, so a dead machine still fails fast.
+          const lastResort = ordered.find(({ device }) => device.online);
+          if (lastResort && !isCancelled()) {
+            const { device, role } = lastResort;
+            appLog(
+              "info",
+              `[auto-connect] probe found no route to ${device.name}; attempting direct connect anyway (beacon/tunnel/cache legs are probe-invisible)`,
+            );
+            setAutoConnectTarget({ id: device.id, name: device.name, role });
+            setAutoConnectStage(`No ping response — trying a direct connect to ${device.name}…`);
+            try {
+              await selectDeviceRef.current(device);
+              if (connectionManager.clientFor(device.id).isConnected) return; // connected — done
+            } catch (e) {
+              appLog("warn", `[auto-connect] last-resort connect to ${device.name} failed: ${e}`);
+            }
+            if (isCancelled()) return;
+          }
+
           // Neither primary nor secondary was reachable → show the machine list
           // (NOT a scary error; the boxes may just be asleep).
           setAutoConnectTarget(null);
@@ -3535,7 +3645,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const probes = new Map<string, MobileDeviceStatusProbe>();
         await Promise.all(
           candidates.map(async (d) => {
-            const probe = await probeMobileDeviceStatus(d, token, 3000).catch(() => null);
+            const probe = await probeMobileDeviceStatus(d, token, AUTO_CONNECT_PROBE_MS).catch(() => null);
             if (probe) probes.set(d.id, probe);
           }),
         );
@@ -3554,22 +3664,52 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
         setAutoConnectTarget({ id: target.id, name: target.name, role: "primary" });
         console.log("[DeviceContext] Auto-connecting (best-reachable) to", target.name);
-        await selectDevice(target);
+        await selectDeviceRef.current(target);
         if (primaryDeviceId === null) {
-          setPrimaryDevice(target.id).catch((e) => {
+          setPrimaryDeviceRef.current(target.id).catch((e) => {
             appLog("warn", `[DeviceContext] Auto-set primaryDevice failed: ${e}`);
           });
         }
       } finally {
+        // Mark the nonce attempted only when the sweep actually RAN TO
+        // COMPLETION. Burning it on entry (the old behaviour) meant a sweep
+        // cancelled mid-probe could never be retried: the re-entry saw
+        // `attemptedNonce === nonce` and returned, so the user sat on "No
+        // machine selected" with no attempt ever having been made.
+        //
+        // Two kinds of cancellation, and they must NOT be treated alike:
+        //   • the user tapped "Choose a machine myself" (autoConnectCancelRef).
+        //     They asked us to stop — burn the nonce so we don't immediately
+        //     restart the sweep they just dismissed.
+        //   • effect cleanup fired because a real dep changed (`cancelled`).
+        //     Nobody asked to stop. Re-arm — and bump the nonce to actually
+        //     SCHEDULE the re-run, because the re-entrant effect already ran
+        //     synchronously and bailed on `autoConnectInFlightRef` while this
+        //     sweep was still unwinding. Without the bump the sweep re-arms but
+        //     nothing ever triggers it.
         autoConnectInFlightRef.current = false;
+        const outcome = resolveSweepOutcome({
+          interrupted: isCancelled(),
+          userCancelled: autoConnectCancelRef.current,
+        });
+        if (outcome === "burn") {
+          autoConnectAttemptedNonceRef.current = autoConnectNonce;
+        } else {
+          appLog("warn", "[auto-connect] sweep interrupted mid-flight — re-running");
+          setAutoConnectNonce((n) => n + 1);
+        }
         setAutoConnecting(false);
         setAutoConnectTarget(null);
+        setAutoConnectStage(null);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [autoConnectNonce, devices, token, relaysReady, settingsReady, activeDevice?.id, connectedDeviceIds, userDisconnected, primaryDeviceId, secondaryDeviceId, selectDevice, setPrimaryDevice]);
+    // Intentionally NOT depending on devices/connectedDeviceIds/activeDevice —
+    // see the dependency-discipline note above. Those are read via refs; the
+    // nonce is the re-sweep signal.
+  }, [autoConnectNonce, token, relaysReady, settingsReady, userDisconnected]);
 
   // Background "warm the pool" pass. After the focused auto-connect
   // above settles, this effect quietly opens additional connections
@@ -3756,6 +3896,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setSecondaryDevice,
       autoConnecting,
       autoConnectTarget,
+      autoConnectStage,
       cancelAutoConnect,
       repairRelay,
       primaryRunnerByDevice,
@@ -3769,7 +3910,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       connectedDeviceIds,
       disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleLeaveSharedAccess, hiddenDeviceCount, handleUnhideAllDevices, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, activeHosts, handleLeaveHost, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, everHadDevices, userDisconnected, lastError, deviceListError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleLeaveSharedAccess, hiddenDeviceCount, handleUnhideAllDevices, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, activeHosts, handleLeaveHost, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, autoConnecting, autoConnectTarget, autoConnectStage, cancelAutoConnect, repairRelay, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice, retryConnection]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

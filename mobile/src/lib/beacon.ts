@@ -8,6 +8,7 @@
  * All discovery events are logged via telemetry (peer-seen, peer-matched, etc.)
  * but are invisible to the user — silent roaming.
  */
+import { Platform } from "react-native";
 import dgram from "react-native-udp";
 import { appLog } from "./logger";
 
@@ -104,7 +105,21 @@ class BeaconListener {
 
       this.socket = socket;
     } catch (err) {
-      appLog("error", `[beacon] Failed to start: ${err}`);
+      // On iOS this bind is what implicitly triggers the Local Network
+      // permission dialog (NSBonjourServices/NSLocalNetworkUsageDescription are
+      // declared, but nothing requests the permission deliberately). A DENIAL
+      // lands here and used to be indistinguishable from "no agent is
+      // broadcasting" — the LAN discovery rung silently vanished and the user
+      // was never told why their box only ever connected over relay. Name it.
+      const denied =
+        Platform.OS === "ios" && /not permitted|denied|EPERM|no permission/i.test(String(err));
+      appLog(
+        "error",
+        denied
+          ? `[beacon] LAN discovery unavailable — iOS Local Network permission is denied. ` +
+              `Settings → Yaver → Local Network. Relay still works; direct LAN will not. (${err})`
+          : `[beacon] Failed to start: ${err}`,
+      );
       this.running = false;
       return;
     }

@@ -122,18 +122,35 @@ final class YaverStore: ObservableObject {
 
     /// Kick the launch auto-connect once. No-op if signed out, a box is already
     /// picked (a sticky choice always wins), or it already ran this launch.
+    ///
+    /// `autoConnectStarted` is set here but cleared again by `cancelAutoConnect`
+    /// and by every early return in `runAutoConnect` — see the note there. It
+    /// marks "a sweep COMPLETED", not "a sweep was attempted".
     func autoConnectOnLaunch() {
-        guard isAuthenticated, selectedBox == nil, !autoConnectStarted else { return }
+        // `!autoConnecting` is the in-flight guard. It used to be implicit in
+        // `autoConnectStarted` (which was never cleared); now that the flag
+        // re-arms on failure, concurrent `.onAppear` calls need their own guard
+        // or a re-arm could start a second overlapping sweep.
+        guard isAuthenticated, selectedBox == nil, !autoConnectStarted, !autoConnecting else { return }
         autoConnectStarted = true
         autoConnectCancelled = false
         Task { await runAutoConnect() }
     }
 
     /// User bailed out of the sweep to pick a machine themselves.
+    ///
+    /// Re-arms the launch sweep. Previously this left `autoConnectStarted` true,
+    /// so bailing out and then dismissing the picker WITHOUT choosing a machine
+    /// left the surface permanently unconnected: `selectedBox` was still nil, so
+    /// `.onAppear` kept firing, but the flag made every call a no-op until the
+    /// app was relaunched. Same class of bug as the mobile auto-connect sweep
+    /// (see mobile/src/context/DeviceContext.tsx) — a retry token burned on
+    /// entry can never distinguish "already succeeded" from "was interrupted".
     func cancelAutoConnect() {
         autoConnectCancelled = true
         autoConnecting = false
         autoConnectTarget = nil
+        autoConnectStarted = false
     }
 
     /// Fetch the account's machines, pick the best LIVE one (live-first, then by
@@ -142,9 +159,15 @@ final class YaverStore: ObservableObject {
     /// yield to the picker prompt (NOT an error — the boxes may just be asleep).
     private func runAutoConnect() async {
         autoConnecting = true
+        // Re-arm unless we actually selected a box. A sweep that was cancelled,
+        // found nothing live, or failed to resolve an address must leave the
+        // launch trigger available — otherwise the surface sits disconnected
+        // with no way back short of a relaunch. `select(_:)` sets `selectedBox`,
+        // which is the honest "we're done" signal.
         defer {
             autoConnecting = false
             autoConnectTarget = nil
+            if selectedBox == nil { autoConnectStarted = false }
         }
         let list = (try? await MachineRegistry.fetch(token: token)) ?? []
         if autoConnectCancelled { return }

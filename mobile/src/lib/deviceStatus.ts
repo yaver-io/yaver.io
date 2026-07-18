@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { quicClient } from "./quic";
+import { buildDirectProbeTargets } from "./probeTargets";
 
 export type MobileDeviceStatusProbe = {
   reachable: boolean;
@@ -180,7 +181,11 @@ function codingReady(runners: CodingRunnerProbe[]): boolean {
 }
 
 export async function probeMobileDeviceStatus(
-  device: Pick<DeviceLike, "id" | "host" | "port" | "lanIps">,
+  // host/port/lanIps are genuinely optional — the body already handles each
+  // being absent (no host legs, default port 18080, empty LAN list). The old
+  // signature demanded them and callers papered over it with `as any`, which
+  // hid the fact that a device row can legitimately arrive without a host.
+  device: { id: string } & Partial<Pick<DeviceLike, "host" | "port" | "lanIps">>,
   token?: string | null,
   timeoutMs = 3500,
 ): Promise<MobileDeviceStatusProbe> {
@@ -212,15 +217,13 @@ export async function probeMobileDeviceStatus(
     }
   }
   const directHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-  for (const target of Array.from(
-    new Set([
-      `http://${device.host}:${port}`,
-      // Probe the agent's real HTTP port (18080) too — a stale/mismatched
-      // Convex quicPort shouldn't hide a reachable box.
-      ...(device.host ? [`http://${device.host}:18080`] : []),
-      ...(device.lanIps || []).filter(Boolean).flatMap((ip) => [`http://${ip}:${port}`, `http://${ip}:18080`]),
-    ]),
-  )) {
+  // Direct-leg selection (including the `.local` exclusion and why) lives in
+  // lib/probeTargets.ts so it can be unit-tested without React Native.
+  for (const target of buildDirectProbeTargets({
+    host: device.host,
+    port: device.port,
+    lanIps: device.lanIps,
+  })) {
     attempts.push({ base: target, headers: directHeaders, path: "direct" });
   }
 

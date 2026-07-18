@@ -40,6 +40,7 @@ export default function NoMachineEmpty({ noun, onDeviceChange }: NoMachineEmptyP
     secondaryDeviceId,
     autoConnecting,
     autoConnectTarget,
+    autoConnectStage,
     cancelAutoConnect,
     selectDevice,
   } = useDevice();
@@ -68,7 +69,11 @@ export default function NoMachineEmpty({ noun, onDeviceChange }: NoMachineEmptyP
           {autoConnectSentence(autoConnectTarget)}
         </Text>
         <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 6, textAlign: "center" }}>
-          Connecting automatically. This tab opens the moment it's ready.
+          {/* Prefer the live per-rung stage ("Pinging X…", "Repaired — re-checking
+              X…") over the static reassurance. The manual switch modal has always
+              narrated these; showing one frozen sentence for a multi-second sweep
+              made a stall look identical to a hang. */}
+          {autoConnectStage ?? "Connecting automatically. This tab opens the moment it's ready."}
         </Text>
         <Pressable
           onPress={cancelAutoConnect}
