@@ -35,9 +35,19 @@ func TestBrowserPoolBootsFromChromedpContext(t *testing.T) {
 		t.Error("boot context derives from the request ctx again — chromedp.Run will " +
 			"return ErrInvalidContext and no browser will ever start")
 	}
-	if !strings.Contains(code, "context.WithTimeout(browserCtx,") {
-		t.Error("boot must descend from browserCtx (the chromedp.NewContext result), " +
-			"or chromedp.Run cannot drive it")
+	// And it must not be a timeout CHILD of browserCtx either. chromedp binds
+	// the browser process to whichever context first calls Run, so a child with
+	// `defer cancel()` kills the browser the instant open() returns — the
+	// session is created and then every frame/control call fails with
+	// "context canceled". Only the parent survives.
+	if strings.Contains(code, "context.WithTimeout(browserCtx,") {
+		t.Error("boot uses a timeout CHILD of browserCtx — chromedp binds the browser " +
+			"to that child, so `defer cancel()` kills it and the session dies with " +
+			"\"context canceled\". Boot on browserCtx itself and use a watchdog.")
+	}
+	if !strings.Contains(code, "chromedp.Run(browserCtx)") {
+		t.Error("boot must Run on browserCtx itself, so the browser's lifetime is " +
+			"owned by the pool rather than by a context that is about to be cancelled")
 	}
 }
 

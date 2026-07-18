@@ -95,9 +95,32 @@ func (p *browserWindowPool) open(ctx context.Context, width, height int) (*brows
 	// The request deadline still applies: browserCtx descends from allocCtx,
 	// and the caller's cancellation is honoured via the timeout below plus the
 	// pool's own lifecycle.
-	bootCtx, bootCancel := context.WithTimeout(browserCtx, 25*time.Second)
-	defer bootCancel()
-	if err := chromedp.Run(bootCtx); err != nil {
+	// Boot on browserCtx ITSELF — not a timeout child.
+	//
+	// chromedp allocates the browser against whichever context you first Run
+	// with. Passing a `context.WithTimeout(browserCtx, …)` child therefore ties
+	// the browser process to that child, and the `defer cancel()` kills it the
+	// moment this function returns: the session is created, then every frame
+	// and control call fails with "context canceled".
+	//
+	// That is the second half of this bug. The first version passed the inbound
+	// request ctx (never launched, ErrInvalidContext); the naive fix passed a
+	// timeout child (launched, died immediately). Only the parent works, and
+	// its lifetime is owned by the pool via browserCancel.
+	//
+	// The boot deadline is enforced with a watchdog instead of a context, so
+	// nothing the browser is bound to ever gets cancelled.
+	bootErr := make(chan error, 1)
+	go func() { bootErr <- chromedp.Run(browserCtx) }()
+	var bootFailure error
+	select {
+	case bootFailure = <-bootErr:
+	case <-time.After(25 * time.Second):
+		bootFailure = fmt.Errorf("timed out after 25s waiting for the browser to start")
+	case <-ctx.Done():
+		bootFailure = ctx.Err()
+	}
+	if err := bootFailure; err != nil {
 		browserCancel()
 		allocCancel()
 		// Only claim the browser is missing when it actually is — otherwise
