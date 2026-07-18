@@ -11586,9 +11586,21 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(mcpGitLogAdvanced(a.Dir, a.Author, a.Since, a.Until, a.Path, a.Count))
 	case "git_branches":
 		var a struct {
-			Dir string `json:"directory"`
+			DeviceID string `json:"device_id"`
+			Dir      string `json:"directory"`
 		}
 		json.Unmarshal(call.Arguments, &a)
+		// The /git/* routes already exist on every agent, which is what makes
+		// these cheap to route: the receiving half was built long ago and only
+		// the MCP verb was local-only. `directory` is passed through unresolved
+		// — it names a path in the REMOTE checkout.
+		if dev := strings.TrimSpace(a.DeviceID); dev != "" {
+			out, err := proxyToDeviceJSON(context.Background(), "git_branches", dev, http.MethodPost, "/git/branches", map[string]any{"directory": a.Dir})
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("git_branches: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
 		return mcpToolJSON(mcpGitBranches(a.Dir))
 	case "git_tags":
 		var a struct {
