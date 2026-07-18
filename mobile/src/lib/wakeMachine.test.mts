@@ -242,3 +242,35 @@ test("formatDuration reads naturally at both scales", () => {
   assert.equal(formatDuration(240_000), "4 min");
   assert.equal(formatDuration(0), "0s");
 });
+
+// `runnersAuthorized: null` means UNKNOWN — nobody has reported either way yet.
+// It is not "unauthorized", and conflating the two is what made a successful
+// wake unable to render as finished: the backend sent `?? false`, coercing
+// unknown into a hard false, while every readiness gate tests strict `=== false`.
+// A box that had genuinely finished waking therefore sat at "online" forever.
+// The backend now sends `?? null`; these pin the client half of that contract.
+test("unknown runner authorization is not the same as unauthorized", () => {
+  // Explicitly false — the runners really are not authorized yet.
+  assert.equal(deriveServerPhase({ runnersAuthorized: false }, true, "lan"), "online");
+
+  // null / undefined — nobody has said. A reachable box is ready; holding it at
+  // "online" on the strength of a missing field is the bug this guards.
+  assert.equal(deriveServerPhase({ runnersAuthorized: null }, true, "lan"), "ready");
+  assert.equal(deriveServerPhase({ runnersAuthorized: undefined }, true, "lan"), "ready");
+  assert.equal(deriveServerPhase({}, true, "lan"), "ready");
+
+  // Authorized is unambiguous.
+  assert.equal(deriveServerPhase({ runnersAuthorized: true }, true, "lan"), "ready");
+});
+
+// Reachability still decides the asleep end regardless of what the field says —
+// an unreachable box is asleep whether or not its runners were authorized.
+test("an unreachable box is asleep whatever runnersAuthorized holds", () => {
+  for (const runnersAuthorized of [true, false, null, undefined]) {
+    assert.equal(
+      deriveServerPhase({ runnersAuthorized }, false, "lan"),
+      "asleep",
+      `runnersAuthorized=${String(runnersAuthorized)}`,
+    );
+  }
+});
