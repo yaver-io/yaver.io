@@ -85,18 +85,33 @@ STILL TO DO: verify on device. Install the build, open Connection Logs, and
 confirm the 30s `[direct] racing …` re-entry stops when the fleet is unchanged.
 Unit tests prove the comparator; only the phone proves the storm is gone.
 
-### 2.2 The mini cannot take agent updates
+### 2.2 Remote agent update — RESOLVED (was operator error)
 
-`POST /devices/request-update` → `{"ok":true,"requestedVersion":"1.99.312"}`.
-The device **claimed** it (`desiredAgentVersion` cleared) and never applied it —
-still `1.99.311` twelve minutes and several heartbeats later.
+`POST /devices/request-update` with a PINNED version is accepted by Convex and
+then deliberately refused by the agent. `agent_update_request.go`:
 
-Per `backend/convex/devices.ts:894`, a failed update deliberately does not
-re-fire, so the failure is invisible on every surface and the 6-12h auto-update
-cycle is the only backstop. Look at `claimAgentUpdateRequest` and whatever
-consumes it agent-side.
+```go
+if !strings.EqualFold(requested, "latest") && requested != "" {
+    // checkAutoUpdate only ever resolves GitHub's `latest` and refuses to
+    // move backwards, so it cannot honour a pin.
+    ... ignoring
+}
+```
 
-Circular: the diagnostic log that would explain this ships **in** `1.99.312`.
+So `{"version":"1.99.312"}` was claimed, refused, and cleared — which from the
+outside looked exactly like a broken update path. It is not: the agent can only
+track `latest`, and it says so rather than silently installing something other
+than what was asked, which is the right call.
+
+`{"version":"latest"}` worked: the mini went unreachable ~60-90s for the binary
+swap and restart, then came back on **1.99.312**. Confirmed by polling
+`/health` over relay.
+
+Lesson for the next reader: the refusal is only visible in the BOX's log
+(`emitAgentUpdate("error", ...)`), never on the surface that made the request —
+`/devices/request-update` returns `{"ok":true}` either way. If a requested
+update seems not to land, check whether a pin was passed before suspecting the
+mechanism.
 
 ### 2.3 Claude Code is signed out on the mini
 
