@@ -51,7 +51,10 @@ enum WakePhase: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 0-100 for the progress bar (matches PHASE_META.percent exactly).
+    /// 0-100 for the progress bar. This is the WATCH's own scale — it does not
+    /// match PHASE_META.percent in mobile/src/lib/wakeMachineCore.ts (booting 40
+    /// / registering 65 / online 86 there vs 52/80/94 here), despite what this
+    /// comment claimed for a long time. Fine while each surface owns its bar.
     var percent: Int {
         switch self {
         case .asleep:     return 0

@@ -19,8 +19,14 @@
 import Foundation
 import SwiftUI
 
-/// The canonical wake ladder. `short`/`percent` MUST match PHASE_META in
-/// mobile/src/lib/wakeMachine.ts so the TV reads the same as phone/web/watch.
+/// The wake ladder. `short` labels and their ORDER match every other surface,
+/// so the TV reads the same as phone/web/watch.
+///
+/// `percent` does NOT match mobile/web — this comment used to claim it MUST,
+/// and it never did (PHASE_META in mobile/src/lib/wakeMachineCore.ts has
+/// booting 40 / registering 65 / online 86; the native surfaces use 52/80/94).
+/// Harmless while each surface draws its own bar, but don't propagate the old
+/// claim: aligning means changing tvos/, watch/ and wear/ together.
 enum BoxPhase: String, CaseIterable, Equatable {
     case asleep       // parked, at rest — where a Wake starts
     case waking       // user asked; resume request in flight

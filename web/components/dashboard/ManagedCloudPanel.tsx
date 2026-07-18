@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient } from "@/lib/agent-client";
+import WakeProgress from "@/components/dashboard/WakeProgress";
 
 interface ManagedMachine {
   id: string;            // /subscription returns the machine id as `id` (NOT _id)
@@ -36,6 +37,14 @@ interface ManagedMachine {
   // drives the "setting up your box" progress bar + Authorize state.
   provisionPhase?: string | null;
   provisionProgress?: number | null;
+  // Timers + provider state behind the wake ladder. Without provisionPhaseAt a
+  // surface can only time the whole wake, so it cannot tell "booting for 20s"
+  // from "booting for 9 minutes" — the difference between a normal wake and a
+  // stuck one.
+  provisionPhaseAt?: number | null;
+  lastWokeAt?: number | null;
+  providerStatus?: string | null;
+  providerStatusAt?: number | null;
   runnersAuthorized?: boolean;
 }
 
@@ -991,12 +1000,14 @@ export function ManagedCloudPanel({
                         </div>
                       );
                     }
-                    if (m.status === "resuming") {
-                      return (
-                        <div className="mt-1.5 text-[11px] text-sky-600 dark:text-sky-300">
-                          Resuming from snapshot — recreating the server (~2-3 min)…
-                        </div>
-                      );
+                    // A wake gets the real ladder: which step, how long it has
+                    // been on it, what the provider sees, and — when the box is
+                    // merely blocked on sign-in — that fact instead of a bar.
+                    // The old branch was a static sentence promising "~2-3 min"
+                    // for something that routinely takes eight, with no bar and
+                    // no way to tell progress from a hang.
+                    if (m.status === "resuming" || m.status === "stopping" || m.status === "grace") {
+                      return <WakeProgress machine={m} deviceReachable={false} />;
                     }
                     const phase = m.provisionPhase ?? null;
                     const pct =
@@ -1022,13 +1033,29 @@ export function ManagedCloudPanel({
                       "authorizing-runners": "Almost there — finishing setup…",
                       ready: "Ready",
                       error: "Setup failed",
+                      // Wake-only steps. Absent here, they fell through the
+                      // `?? phase` fallback below and printed the raw
+                      // control-plane slug at the user.
+                      "checking-snapshot": "Finding your snapshot…",
+                      "preparing-volume": "Freeing your data volume…",
+                      "restoring-snapshot": "Restoring from your snapshot…",
                     };
+                    // Not progress: the box is up and nothing will change until
+                    // the user signs it in. This slug was missing from LABEL, so
+                    // it rendered as "Setting up your box — awaiting-yaver-auth"
+                    // above a bar creeping toward a flip that could never come.
+                    if (phase === "awaiting-yaver-auth") {
+                      return <WakeProgress machine={m} deviceReachable={false} />;
+                    }
                     if (initializing) {
                       return (
                         <div className="mt-1.5">
                           <div className="mb-1 text-[11px] text-slate-500 dark:text-surface-400">
                             Setting up your box —{" "}
-                            {phase ? LABEL[phase] ?? phase : "initializing…"}
+                            {/* Never print a raw slug: an unmapped phase is our
+                                bug, and the user cannot act on "pulling-image"
+                                spelled with a hyphen. */}
+                            {phase ? LABEL[phase] ?? "working on it…" : "initializing…"}
                           </div>
                           <div className="h-1.5 w-full overflow-hidden rounded bg-slate-200 dark:bg-surface-800">
                             <div

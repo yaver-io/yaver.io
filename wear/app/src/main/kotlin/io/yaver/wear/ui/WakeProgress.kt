@@ -50,6 +50,7 @@ fun WakeProgress(
             is BoxLifecycle.WakeStatus.Asleep -> AsleepView(onWake = onWake, onDismiss = onDismiss)
             is BoxLifecycle.WakeStatus.Waking -> WakingView(phase = status.phase)
             is BoxLifecycle.WakeStatus.PhoneNeeded -> PhoneNeededView(onDismiss = onDismiss)
+            is BoxLifecycle.WakeStatus.NeedsAuth -> NeedsAuthView(onDismiss = onDismiss)
             is BoxLifecycle.WakeStatus.None -> Unit // caller shouldn't render this
         }
     }
@@ -84,6 +85,40 @@ private fun AsleepView(onWake: () -> Unit, onDismiss: () -> Unit) {
         Spacer(modifier = Modifier.height(6.dp))
         Chip(
             label = { Text("Later") },
+            onClick = onDismiss,
+            colors = ChipDefaults.secondaryChipColors(),
+        )
+    }
+}
+
+/**
+ * The box is awake but signed out. No spinner and no progress: nothing is
+ * happening, and nothing will, until the user signs it in from the phone —
+ * which is the only surface that holds a control-plane token.
+ */
+@Composable
+private fun NeedsAuthView(onDismiss: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = "Sign-in needed",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.title3,
+            maxLines = 2,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "The box woke up, but its Yaver session expired. Sign it in from your phone.",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.caption2,
+            color = MaterialTheme.colors.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Chip(
+            label = { Text("OK") },
             onClick = onDismiss,
             colors = ChipDefaults.secondaryChipColors(),
         )

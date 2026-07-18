@@ -22,10 +22,16 @@ import java.util.concurrent.TimeUnit
  * relay with its persisted token — no re-auth. This file gives the watch a
  * first-class "asleep → waking → … → ready" notion instead of a bare error.
  *
- * CANONICAL PHASE LADDER — identical short labels + percents on EVERY surface
- * (mobile `mobile/src/lib/wakeMachine.ts` PHASE_META is the source of truth;
- * this mirrors it by string so "waking up" reads the same on the wrist):
+ * PHASE LADDER — the same ORDER and the same short LABELS as every other
+ * surface, so "waking up" reads the same on the wrist:
  *   Asleep 0 → Waking 8 → Restoring 22 → Booting 52 → Connecting 80 → Online 94 → Ready 100
+ *
+ * The PERCENTS are the watch's own and do NOT match mobile/web
+ * (`mobile/src/lib/wakeMachineCore.ts` PHASE_META: Booting 40, Connecting 65,
+ * Online 86). This comment used to claim they were identical; they never were.
+ * The divergence is survivable because the bar is per-surface and nothing
+ * compares the two, but do not trust the old claim: if you want them aligned,
+ * align the numbers here AND in tvos/ and watch/ — don't just edit the prose.
  *
  * What the WATCH can observe by itself: the box answering
  *   GET http://<box.host>:18080/health  → 200 + {"ok":true}
@@ -49,6 +55,11 @@ object BoxLifecycle {
         CONNECTING("Connecting", 80),
         ONLINE("Online", 94),
         READY("Ready", 100),
+        // NOTE: there is deliberately no NEEDS_AUTH rung here. "The box is up
+        // but signed out" is not a step on the way to Ready — it is a terminal
+        // state that only the user can clear — so it lives on [WakeStatus] next
+        // to PhoneNeeded, which has exactly the same shape. tvOS and watchOS
+        // model it as a phase only because their state IS a single phase enum.
     }
 
     /** The moving steps shown as dots (excludes the resting ASLEEP start). */
@@ -68,6 +79,18 @@ object BoxLifecycle {
 
         /** Phone unreachable, so we can't route the wake — tell the user. */
         object PhoneNeeded : WakeStatus()
+
+        /**
+         * The box came back but its Yaver session expired, so it cannot finish
+         * connecting on its own. A task for the user, not a step to wait on.
+         *
+         * This gap was a real bug, not a cosmetic one. [probeHealth] used to
+         * read only `ok`, which the agent returns as `true` even when signed
+         * out (it still serves the pairing routes), so a wake against an expired
+         * box marched ONLINE → READY → None and re-sent the pending turn to a
+         * box that could not run it. Both Swift surfaces already guarded this.
+         */
+        object NeedsAuth : WakeStatus()
     }
 
     private val _status = MutableStateFlow<WakeStatus>(WakeStatus.None)
@@ -140,14 +163,24 @@ object BoxLifecycle {
 
             val start = System.currentTimeMillis()
             while (System.currentTimeMillis() - start < timeoutMs) {
-                if (boxBaseUrl != null && probeHealth(boxBaseUrl)) {
-                    setPhase(WakePhase.ONLINE)
-                    delay(800)
-                    setPhase(WakePhase.READY)
-                    delay(1_200) // brief hold on 100% before clearing
-                    _status.value = WakeStatus.None
-                    onReady()
-                    return@launch
+                when (if (boxBaseUrl != null) probeHealth(boxBaseUrl) else HealthResult.UNREACHABLE) {
+                    HealthResult.USABLE -> {
+                        setPhase(WakePhase.ONLINE)
+                        delay(800)
+                        setPhase(WakePhase.READY)
+                        delay(1_200) // brief hold on 100% before clearing
+                        _status.value = WakeStatus.None
+                        onReady()
+                        return@launch
+                    }
+                    // Answering, but signed out. Waiting cannot fix this, and
+                    // re-sending the pending turn would just fail — so stop the
+                    // ladder here and say so. Deliberately NOT onReady().
+                    HealthResult.SIGNED_OUT -> {
+                        _status.value = WakeStatus.NeedsAuth
+                        return@launch
+                    }
+                    HealthResult.UNREACHABLE -> Unit // keep waiting
                 }
                 // No confirmation yet — escalate Booting → Connecting by elapsed
                 // time so the ladder keeps advancing while the box comes up.
@@ -172,25 +205,46 @@ object BoxLifecycle {
         }
     }
 
-    /** GET /health → true iff 200 and body reports ok. Never throws. */
-    suspend fun probeHealth(boxBaseUrl: String): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * What a /health probe actually told us. Reachable is NOT usable: the agent
+     * answers `{"ok":true}` even when signed out, serving nothing but the
+     * pairing routes. Collapsing the two into a Boolean is what let a wake
+     * declare Ready on a box that could not run a single turn.
+     */
+    enum class HealthResult { UNREACHABLE, SIGNED_OUT, USABLE }
+
+    /** GET /health, classified. Never throws. */
+    suspend fun probeHealth(boxBaseUrl: String): HealthResult = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder()
                 .url(boxBaseUrl.trimEnd('/') + "/health")
                 .get()
                 .build()
             http.newCall(req).execute().use { resp ->
-                if (resp.code != 200) return@use false
+                if (resp.code != 200) return@use HealthResult.UNREACHABLE
                 val body = resp.body?.string().orEmpty()
-                if (body.isBlank()) return@use true // 200 with empty body = up
+                // 200 with an empty or non-JSON body: reachable, and we have no
+                // evidence of a session problem. Treat as usable rather than
+                // stranding a healthy box on a sign-in screen it doesn't need.
+                if (body.isBlank()) return@use HealthResult.USABLE
                 try {
-                    JSONObject(body).optBoolean("ok", true)
+                    val json = JSONObject(body)
+                    if (!json.optBoolean("ok", true)) return@use HealthResult.UNREACHABLE
+                    val lifecycle = json.optJSONObject("lifecycle")
+                    val state = lifecycle?.optString("state").orEmpty()
+                    val signedOut =
+                        json.optBoolean("authExpired", false) ||
+                            json.optBoolean("needsAuth", false) ||
+                            lifecycle?.optBoolean("usable", true) == false ||
+                            state == "yaver-auth-expired" ||
+                            state == "bootstrap"
+                    if (signedOut) HealthResult.SIGNED_OUT else HealthResult.USABLE
                 } catch (_: Throwable) {
-                    true // 200 but non-JSON — still reachable
+                    HealthResult.USABLE // 200 but non-JSON — still reachable
                 }
             }
         } catch (_: Throwable) {
-            false
+            HealthResult.UNREACHABLE
         }
     }
 
