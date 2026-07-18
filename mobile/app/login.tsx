@@ -28,6 +28,7 @@ import {
   type OAuthProvider,
   getConvexSiteUrl,
   getOAuthUrl,
+  getAuthConfig,
   signupWithEmail,
   loginWithEmail,
 } from "../src/lib/auth";
@@ -97,6 +98,7 @@ export default function LoginScreen() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [emailError, setEmailError] = useState("");
   const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [emailPasswordEnabled, setEmailPasswordEnabled] = useState(false);
   const passkeySupported = isPasskeySupported();
   const isTabletPortrait = isTablet && !isTabletLandscape;
   const loginWordmark = isDark ? YAVER_LOGIN_WORDMARK_LIGHT : YAVER_LOGIN_WORDMARK_DARK;
@@ -134,6 +136,21 @@ export default function LoginScreen() {
   // LoginScreen is still mounted (cold-start race winner), consume
   // the token here. The canonical handler is app/oauth-callback.tsx,
   // which expo-router routes to whether or not this listener fires.
+  useEffect(() => {
+    void getAuthConfig().then((config) => {
+      setEmailPasswordEnabled(config.emailPasswordEnabled);
+      if (!config.emailPasswordEnabled) {
+        setShowEmailForm(false);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!emailPasswordEnabled) {
+      setShowEmailForm(false);
+    }
+  }, [emailPasswordEnabled]);
+
   useEffect(() => {
     const subscription = Linking.addEventListener("url", async (event) => {
       const url = event.url;
@@ -383,6 +400,10 @@ export default function LoginScreen() {
 
   const handleEmailSubmit = async () => {
     setEmailError("");
+    if (!emailPasswordEnabled) {
+      setEmailError("Email/password sign-in is disabled on this deployment.");
+      return;
+    }
     if (isSignUp) {
       if (!fullName.trim()) {
         setEmailError("Full name is required");
@@ -602,154 +623,156 @@ export default function LoginScreen() {
                   </Pressable>
                 </View>
 
-                {!showEmailForm ? (
-                  <>
-                    <View style={styles.divider}>
-                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                      <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
-                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                    </View>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.button,
-                        { backgroundColor: c.bgCard, borderColor: providerBorderColor },
-                        pressed && styles.buttonPressed,
-                      ]}
-                      onPress={() => setShowEmailForm(true)}
-                    >
-                      <View style={styles.buttonContent}>
-                        <Ionicons name="mail-outline" size={17} color={c.textPrimary} style={styles.buttonIcon} />
-                        <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Email</Text>
+                {emailPasswordEnabled ? (
+                  !showEmailForm ? (
+                    <>
+                      <View style={styles.divider}>
+                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
+                        <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
+                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
                       </View>
-                    </Pressable>
-                  </>
-                ) : (
-                  <>
-                    <View style={styles.divider}>
-                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                      <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
-                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
-                    </View>
-                    <View style={styles.emailForm}>
-                      {isSignUp && (
-                        <TextInput
-                          style={[
-                            styles.input,
-                            { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
-                          ]}
-                          placeholder="Full Name"
-                          placeholderTextColor={c.textMuted}
-                          value={fullName}
-                          onChangeText={setFullName}
-                          autoCapitalize="words"
-                          autoCorrect={false}
-                        />
-                      )}
-                      <TextInput
-                        style={[
-                          styles.input,
-                          { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
-                        ]}
-                        placeholder="Email"
-                        placeholderTextColor={c.textMuted}
-                        value={email}
-                        onChangeText={setEmail}
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
-                      <TextInput
-                        style={[
-                          styles.input,
-                          { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
-                        ]}
-                        placeholder="Password"
-                        placeholderTextColor={c.textMuted}
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry
-                      />
-                      {isSignUp && (
-                        <TextInput
-                          style={[
-                            styles.input,
-                            { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
-                          ]}
-                          placeholder="Confirm Password"
-                          placeholderTextColor={c.textMuted}
-                          value={confirmPassword}
-                          onChangeText={setConfirmPassword}
-                          secureTextEntry
-                        />
-                      )}
-
-                      {emailError ? (
-                        <Text style={[styles.errorText, { color: c.error }]}>{emailError}</Text>
-                      ) : null}
-
                       <Pressable
                         style={({ pressed }) => [
-                          styles.submitButton,
-                          { backgroundColor: c.accent },
+                          styles.button,
+                          { backgroundColor: c.bgCard, borderColor: providerBorderColor },
                           pressed && styles.buttonPressed,
-                          isLoading && { opacity: 0.6 },
                         ]}
-                        onPress={handleEmailSubmit}
-                        disabled={isLoading}
+                        onPress={() => setShowEmailForm(true)}
                       >
-                        {isLoading ? (
-                          <ActivityIndicator size="small" color="#fff" />
-                        ) : (
-                          <Text style={styles.submitButtonText}>
-                            {isSignUp ? "Create Account" : "Sign In"}
-                          </Text>
-                        )}
+                        <View style={styles.buttonContent}>
+                          <Ionicons name="mail-outline" size={17} color={c.textPrimary} style={styles.buttonIcon} />
+                          <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Email</Text>
+                        </View>
                       </Pressable>
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.divider}>
+                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
+                        <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
+                        <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
+                      </View>
+                      <View style={styles.emailForm}>
+                        {isSignUp && (
+                          <TextInput
+                            style={[
+                              styles.input,
+                              { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                            ]}
+                            placeholder="Full Name"
+                            placeholderTextColor={c.textMuted}
+                            value={fullName}
+                            onChangeText={setFullName}
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                          />
+                        )}
+                        <TextInput
+                          style={[
+                            styles.input,
+                            { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                          ]}
+                          placeholder="Email"
+                          placeholderTextColor={c.textMuted}
+                          value={email}
+                          onChangeText={setEmail}
+                          keyboardType="email-address"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                        <TextInput
+                          style={[
+                            styles.input,
+                            { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                          ]}
+                          placeholder="Password"
+                          placeholderTextColor={c.textMuted}
+                          value={password}
+                          onChangeText={setPassword}
+                          secureTextEntry
+                        />
+                        {isSignUp && (
+                          <TextInput
+                            style={[
+                              styles.input,
+                              { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                            ]}
+                            placeholder="Confirm Password"
+                            placeholderTextColor={c.textMuted}
+                            value={confirmPassword}
+                            onChangeText={setConfirmPassword}
+                            secureTextEntry
+                          />
+                        )}
 
-                      {isSignUp && passkeySupported && (
+                        {emailError ? (
+                          <Text style={[styles.errorText, { color: c.error }]}>{emailError}</Text>
+                        ) : null}
+
                         <Pressable
                           style={({ pressed }) => [
-                            styles.passkeySignupButton,
-                            {
-                              backgroundColor: isDark ? c.accent + "1F" : c.accentSoft,
-                              borderColor: c.accent + "55",
-                            },
+                            styles.submitButton,
+                            { backgroundColor: c.accent },
                             pressed && styles.buttonPressed,
-                            passkeyLoading && { opacity: 0.6 },
+                            isLoading && { opacity: 0.6 },
                           ]}
-                          onPress={handlePasskeySignup}
-                          disabled={passkeyLoading || !email.trim() || !fullName.trim()}
+                          onPress={handleEmailSubmit}
+                          disabled={isLoading}
                         >
-                          {passkeyLoading ? (
-                            <ActivityIndicator size="small" color={c.accent} />
+                          {isLoading ? (
+                            <ActivityIndicator size="small" color="#fff" />
                           ) : (
-                            <View style={styles.buttonContent}>
-                              <Ionicons name="key-outline" size={18} color={c.accent} style={styles.buttonIcon} />
-                              <Text style={[styles.passkeySignupText, { color: c.accent }]}>Sign up with passkey</Text>
-                            </View>
+                            <Text style={styles.submitButtonText}>
+                              {isSignUp ? "Create Account" : "Sign In"}
+                            </Text>
                           )}
                         </Pressable>
-                      )}
 
-                      {!isSignUp && (
-                        <Pressable onPress={() => Linking.openURL("https://yaver.io/auth/reset-password")}>
-                          <Text style={[styles.forgotText, { color: c.textMuted }]}>
-                            Forgot password?
+                        {isSignUp && passkeySupported && (
+                          <Pressable
+                            style={({ pressed }) => [
+                              styles.passkeySignupButton,
+                              {
+                                backgroundColor: isDark ? c.accent + "1F" : c.accentSoft,
+                                borderColor: c.accent + "55",
+                              },
+                              pressed && styles.buttonPressed,
+                              passkeyLoading && { opacity: 0.6 },
+                            ]}
+                            onPress={handlePasskeySignup}
+                            disabled={passkeyLoading || !email.trim() || !fullName.trim()}
+                          >
+                            {passkeyLoading ? (
+                              <ActivityIndicator size="small" color={c.accent} />
+                            ) : (
+                              <View style={styles.buttonContent}>
+                                <Ionicons name="key-outline" size={18} color={c.accent} style={styles.buttonIcon} />
+                                <Text style={[styles.passkeySignupText, { color: c.accent }]}>Sign up with passkey</Text>
+                              </View>
+                            )}
+                          </Pressable>
+                        )}
+
+                        {!isSignUp && (
+                          <Pressable onPress={() => Linking.openURL("https://yaver.io/auth/reset-password")}>
+                            <Text style={[styles.forgotText, { color: c.textMuted }]}>
+                              Forgot password?
+                            </Text>
+                          </Pressable>
+                        )}
+
+                        <Pressable onPress={() => { setIsSignUp(!isSignUp); setEmailError(""); }}>
+                          <Text style={[styles.toggleText, { color: c.textMuted }]}>
+                            {isSignUp ? "Already have an account? " : "Don't have an account? "}
+                            <Text style={{ color: c.accent }}>
+                              {isSignUp ? "Sign In" : "Sign Up"}
+                            </Text>
                           </Text>
                         </Pressable>
-                      )}
-
-                      <Pressable onPress={() => { setIsSignUp(!isSignUp); setEmailError(""); }}>
-                        <Text style={[styles.toggleText, { color: c.textMuted }]}>
-                          {isSignUp ? "Already have an account? " : "Don't have an account? "}
-                          <Text style={{ color: c.accent }}>
-                            {isSignUp ? "Sign In" : "Sign Up"}
-                          </Text>
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </>
-                )}
+                      </View>
+                    </>
+                  )
+                ) : null}
               </View>
             </View>
           </View>

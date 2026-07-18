@@ -23,18 +23,25 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { isOwnerUserId } from "./ownerAllowlist";
 
-// Markup over raw provider COGS, per SKU, env-overridable. Defaults:
-// cpu 2x (100% margin), gpu 3x (GPU COGS is lumpier + pricier). Set
-// YAVER_CLOUD_MARKUP_CPU / _GPU (a number like "2.5") to retune without
-// a redeploy. User pays markup x raw in every state (live + stopped).
-const MARKUP_BY_TYPE: Record<string, number> = { cpu: 2, gpu: 3 };
-export function markup(machineType: string): number {
-  const env = Number(process.env[`YAVER_CLOUD_MARKUP_${(machineType || "cpu").toUpperCase()}`]);
-  if (Number.isFinite(env) && env > 0) return env;
-  return MARKUP_BY_TYPE[machineType] ?? 2;
+function normalizeMachineType(value: string | undefined | null): string {
+  const t = String(value || "").trim().toLowerCase();
+  if (t === "standard" || t === "heavy" || t === "build" || t === "cpu" || t === "gpu") return t;
+  return "standard";
 }
-// Back-compat default (cpu) for any external reference. Prefer markup().
-export const MARKUP_X = MARKUP_BY_TYPE.cpu;
+
+// Markup over raw provider COGS, per internal SKU, env-overridable. Defaults
+// keep at least 40% margin for the flat plan if included-hour grants are tuned
+// conservatively. Set YAVER_CLOUD_MARKUP_STANDARD / _HEAVY / _BUILD / _CPU /
+// _GPU to retune without a redeploy.
+const MARKUP_BY_TYPE: Record<string, number> = { standard: 2, heavy: 2.3, build: 2.5, cpu: 2, gpu: 3 };
+export function markup(machineType: string): number {
+  const type = normalizeMachineType(machineType);
+  const env = Number(process.env[`YAVER_CLOUD_MARKUP_${type.toUpperCase()}`]);
+  if (Number.isFinite(env) && env > 0) return env;
+  return MARKUP_BY_TYPE[type] ?? 2;
+}
+// Back-compat default for any external reference. Prefer markup().
+export const MARKUP_X = MARKUP_BY_TYPE.standard;
 
 // Raw Hetzner COGS basis. Managed SKU = cpx51 €54.90/mo (16 vCPU/32 GB,
 // the Talos-grade monorepo box — see MACHINE_SPECS in cloudMachines.ts).
@@ -44,7 +51,10 @@ export const MARKUP_X = MARKUP_BY_TYPE.cpu;
 // GET /v1/server_types before HCLOUD_TOKEN goes live. Region/type
 // variance can be passed as an explicit rate later — conservative
 // defaults here.
-const HETZNER_COST_CENTS_PER_HOUR: Record<string, { live: number; stopped: number }> = {
+const DEFAULT_HETZNER_COST_CENTS_PER_HOUR: Record<string, { live: number; stopped: number }> = {
+  standard: { live: 2, stopped: Math.round((40 / 730)) },  // CX32-ish 8GB profile
+  heavy: { live: 4, stopped: Math.round((60 / 730)) },     // CX42-ish 16GB profile
+  build: { live: 8, stopped: Math.round((80 / 730)) },     // CX52-ish 32GB profile
   // €54.90/mo ≈ 752 c/mo ... (USD ~ ; we bill USD-cents, treat €≈$ for
   // the wallet — exact FX is a P6/top-up concern, not the meter).
   cpu: { live: Math.round((5490 / 730)), stopped: Math.round((80 / 730)) },    // ~7.5c/h live, ~0c/h stopped
@@ -52,7 +62,10 @@ const HETZNER_COST_CENTS_PER_HOUR: Record<string, { live: number; stopped: numbe
 };
 
 function rawRate(machineType: string, state: "live" | "stopped"): number {
-  const r = HETZNER_COST_CENTS_PER_HOUR[machineType] ?? HETZNER_COST_CENTS_PER_HOUR.cpu;
+  const type = normalizeMachineType(machineType);
+  const env = Number(process.env[`YAVER_CLOUD_COST_${type.toUpperCase()}_${state.toUpperCase()}_CPH`]);
+  if (Number.isFinite(env) && env >= 0) return env;
+  const r = DEFAULT_HETZNER_COST_CENTS_PER_HOUR[type] ?? DEFAULT_HETZNER_COST_CENTS_PER_HOUR.standard;
   return state === "stopped" ? r.stopped : r.live;
 }
 
@@ -97,12 +110,12 @@ function billingPeriodUTC(now: number): string {
 //   YAVER_CLOUD_INCLUDED_HOURS_CLOUD_AGENT_CPU=40
 //   YAVER_CLOUD_INCLUDED_HOURS_CLOUD_WORKSPACE_GPU=2
 // 0 / unknown plan ⇒ pure pay-as-you-go (legacy behaviour, unchanged).
-const INCLUDED_HOURS: Record<string, { cpu: number; gpu: number }> = {
-  "cloud-agent": { cpu: 40, gpu: 0 },
-  "cloud-workspace": { cpu: 40, gpu: 0 },
+const INCLUDED_HOURS: Record<string, Record<string, number>> = {
+  "cloud-agent": { cpu: 40, standard: 40, heavy: 20, build: 10, gpu: 0 },
+  "cloud-workspace": { standard: 40, heavy: 20, build: 10, cpu: 40, gpu: 0 },
 };
 export function includedHoursForPlan(plan: string, machineType: string): number {
-  const t = machineType === "gpu" ? "gpu" : "cpu";
+  const t = normalizeMachineType(machineType);
   const envKey = `YAVER_CLOUD_INCLUDED_HOURS_${(plan || "").toUpperCase().replace(/-/g, "_")}_${t.toUpperCase()}`;
   const env = Number(process.env[envKey]);
   if (Number.isFinite(env) && env >= 0) return env;
@@ -298,7 +311,7 @@ export const grantIncludedHours = internalMutation({
   },
   handler: async (ctx, { userId, plan, machineType, period, hours, source }) => {
     const now = Date.now();
-    const type = machineType === "gpu" ? "gpu" : "cpu";
+    const type = normalizeMachineType(machineType);
     const p = period || billingPeriodUTC(now);
     const h = hours ?? includedHoursForPlan(plan, type);
     const includedSeconds = Math.max(0, Math.round(h * 3600));
@@ -330,7 +343,7 @@ export const grantIncludedHours = internalMutation({
 export const getAllowance = internalQuery({
   args: { userId: v.id("users"), machineType: v.optional(v.string()), period: v.optional(v.string()) },
   handler: async (ctx, { userId, machineType, period }) => {
-    const type = machineType === "gpu" ? "gpu" : "cpu";
+    const type = normalizeMachineType(machineType);
     const p = period || billingPeriodUTC(Date.now());
     const row = await ctx.db
       .query("includedAllowance")
@@ -408,7 +421,7 @@ export const recordUsageAndDeduct = internalMutation({
     let remainingIncluded = 0;
     if (state === "live") {
       const period = billingPeriodUTC(now);
-      const type = machineType === "gpu" ? "gpu" : "cpu";
+      const type = normalizeMachineType(machineType);
       const allow = await ctx.db
         .query("includedAllowance")
         .withIndex("by_user_period_type", (q: any) =>
@@ -527,6 +540,7 @@ type LifecycleResult = {
   retryable?: boolean;
   snapshotId?: string;
   serverId?: string;
+  providerActionId?: string;
   ip?: string;
   balanceCents?: number;
   requiredCents?: number;
@@ -537,10 +551,14 @@ type IdleSweepResult = { checked: number; paused: number; enabled: boolean; dryR
 const HETZNER_API = "https://api.hetzner.cloud/v1";
 
 function hetznerServerType(machineType: string): string {
-  if (machineType === "cpu") {
-    return process.env.YAVER_CLOUD_CPU_TYPE || "cpx51"; // 32GB Talos-grade monorepo SKU
-  }
-  return process.env.YAVER_CLOUD_GPU_TYPE || "cpx51";
+  const type = normalizeMachineType(machineType);
+  const env = process.env[`YAVER_CLOUD_${type.toUpperCase()}_TYPE`];
+  if (env) return env;
+  if (type === "standard") return "cx32";
+  if (type === "heavy") return "cx42";
+  if (type === "build") return "cx52";
+  if (type === "cpu") return process.env.YAVER_CLOUD_CPU_TYPE || "cpx51"; // legacy 32GB monorepo SKU
+  return process.env.YAVER_CLOUD_GPU_TYPE || "gex44";
 }
 
 // Smallest Hetzner CPX type whose disk can hold a snapshot of `diskGb`. Used
@@ -586,16 +604,20 @@ function resolveBootSshKeys(machine: { userId?: unknown }): string[] {
 // Snapshot a server, returning the created image id. Throws on
 // failure so the caller can ABORT the delete (fail-closed: never
 // delete a box without a recoverable snapshot).
-async function hetznerSnapshot(token: string, serverId: string, desc: string): Promise<string> {
+async function hetznerSnapshot(
+  token: string,
+  serverId: string,
+  desc: string,
+): Promise<{ snapshotId: string; actionId?: string }> {
   const r = await fetch(`${HETZNER_API}/servers/${serverId}/actions/create_image`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ type: "snapshot", description: desc }),
   });
   if (!r.ok) throw new Error(`snapshot HTTP ${r.status}`);
-  const j = (await r.json()) as { image?: { id?: number } };
+  const j = (await r.json()) as { image?: { id?: number }; action?: { id?: number } };
   if (!j.image?.id) throw new Error("snapshot returned no image id");
-  return String(j.image.id);
+  return { snapshotId: String(j.image.id), actionId: j.action?.id ? String(j.action.id) : undefined };
 }
 /**
  * ---------------------------------------------------------------------------
@@ -786,7 +808,7 @@ async function hetznerCreateFromImage(
   imageId: string,
   sshKeys: string[] = [],
   volumeIds: string[] = [],
-): Promise<{ serverId: string; ip: string; location: string }> {
+): Promise<{ serverId: string; ip: string; location: string; actionId?: string }> {
   const imageVal: string | number = /^\d+$/.test(imageId) ? Number(imageId) : imageId;
   // Try each candidate location, moving on when a location can't serve this
   // type or is out of capacity — a snapshot restore must land SOMEWHERE, and
@@ -822,11 +844,12 @@ async function hetznerCreateFromImage(
     if (r.ok) {
       const j = (await r.json()) as {
         server?: { id?: number; public_net?: { ipv4?: { ip?: string } } };
+        action?: { id?: number };
       };
       const id = j.server?.id;
       const ip = j.server?.public_net?.ipv4?.ip;
       if (!id || !ip) throw new Error("create-from-snapshot returned no id/ip");
-      return { serverId: String(id), ip, location };
+      return { serverId: String(id), ip, location, actionId: j.action?.id ? String(j.action.id) : undefined };
     }
     const body = await r.text();
     lastErr = `HTTP ${r.status}: ${body}`;
@@ -952,9 +975,26 @@ export const pauseMachine = internalAction({
     const token = process.env.HCLOUD_TOKEN;
     const live = !!token && dryRun !== true;
     if (!live || !machine.hetznerServerId) {
-      await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "paused" });
-      return { ok: true, status: "paused", dryRun: true,
-        reason: token ? undefined : "HCLOUD_TOKEN unset — fail-closed dry-run (no real spend)" };
+      const reason = !machine.hetznerServerId
+        ? "No provider server id recorded — park skipped"
+        : token
+          ? "Dry-run park requested — provider server was not deleted"
+          : "HCLOUD_TOKEN unset — fail-closed dry-run (provider server was not deleted)";
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "error", progress: 0, error: reason,
+      });
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "park",
+        status: "failed",
+        phase: "dry-run",
+        progress: 0,
+        error: reason,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: machine.cloudResourceId ?? machine.hetznerServerId,
+        dryRun: true,
+      }).catch(() => {});
+      return { ok: false, status: machine.status, dryRun: true, reason };
     }
     // Flip to "stopping" + "snapshotting" phase up front so EVERY surface
     // (not just the one that tapped Park) can render the close-down ladder
@@ -979,6 +1019,16 @@ export const pauseMachine = internalAction({
       });
       try {
         await hetznerDelete(token!, machine.hetznerServerId);
+        await ctx.runMutation(internal.wakeRuns.markProgress, {
+          machineId,
+          kind: "park",
+          status: "running",
+          phase: "provider-delete-accepted",
+          progress: 86,
+          provider: machine.provider ?? "hetzner",
+          providerResourceId: machine.cloudResourceId ?? machine.hetznerServerId,
+          dryRun: false,
+        }).catch(() => {});
       } catch (e) {
         await ctx.runMutation(internal.cloudMachines.setStatus, {
           machineId, status: "error",
@@ -1011,10 +1061,23 @@ export const pauseMachine = internalAction({
     // delete an unrecoverable box) — mirrors cloudMachines.ts destroy invariant.
     let snapId: string;
     try {
-      snapId = await hetznerSnapshot(
+      const snapshot = await hetznerSnapshot(
         token!, machine.hetznerServerId,
         `yaver-pause-machine-${machineId}-${Date.now()}`,
       );
+      snapId = snapshot.snapshotId;
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "park",
+        status: "running",
+        phase: "snapshot-accepted",
+        progress: 55,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: snapId,
+        providerActionId: snapshot.actionId,
+        providerStatus: "creating",
+        dryRun: false,
+      }).catch(() => {});
     } catch (e) {
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId, status: "error",
@@ -1177,6 +1240,17 @@ export const finalizePause = internalAction({
     let status: string;
     try {
       status = await hetznerImageStatus(token, snapshotId);
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "park",
+        status: status === "available" ? "running" : "retrying",
+        phase: "snapshot-finalizing",
+        progress: status === "available" ? 70 : 60,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: snapshotId,
+        providerStatus: status,
+        dryRun: false,
+      }).catch(() => {});
     } catch (e) {
       // Transient API blip — retry rather than risk anything.
       if (attempt < 60) {
@@ -1214,6 +1288,16 @@ export const finalizePause = internalAction({
     // Image is durable. Now it is safe to stop the meter.
     try {
       await hetznerDelete(token, machine.hetznerServerId);
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "park",
+        status: "running",
+        phase: "provider-delete-accepted",
+        progress: 86,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: machine.cloudResourceId ?? machine.hetznerServerId,
+        dryRun: false,
+      }).catch(() => {});
     } catch (e) {
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId, status: "error", lastSnapshotId: snapshotId,
@@ -1431,9 +1515,24 @@ export const resumeMachine = internalAction({
     const token = process.env.HCLOUD_TOKEN;
     const live = !!token && dryRun !== true;
     if (!live) {
-      await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "active" });
-      return { ok: true, status: "active", dryRun: true,
-        reason: token ? undefined : "HCLOUD_TOKEN unset — fail-closed dry-run (no real spend)" };
+      const reason = token
+        ? "Dry-run wake requested — provider server was not created"
+        : "HCLOUD_TOKEN unset — fail-closed dry-run (provider server was not created)";
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId, phase: "error", progress: 0, error: reason,
+      });
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "wake",
+        status: "failed",
+        phase: "dry-run",
+        progress: 0,
+        error: reason,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: machine.cloudResourceId ?? machine.hetznerServerId ?? machine.lastSnapshotId ?? machine.baseImageId,
+        dryRun: true,
+      }).catch(() => {});
+      return { ok: false, status: machine.status, dryRun: true, reason };
     }
     if (!machine.lastSnapshotId) {
       await ctx.runMutation(internal.cloudMachines.setStatus, {
@@ -1522,7 +1621,7 @@ export const resumeMachine = internalAction({
       await ctx.runMutation(internal.cloudMachines.setPhase, {
         machineId, phase: "restoring-snapshot", progress: 25,
       });
-      const { serverId, ip } = await hetznerCreateFromImage(
+      const { serverId, ip, actionId } = await hetznerCreateFromImage(
         token!,
         hostname,
         serverType,
@@ -1531,6 +1630,18 @@ export const resumeMachine = internalAction({
         resolveBootSshKeys(machine),
         volumeIds,
       );
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "wake",
+        status: "running",
+        phase: "provider-create-accepted",
+        progress: 35,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: serverId,
+        providerActionId: actionId,
+        providerStatus: "creating",
+        dryRun: false,
+      }).catch(() => {});
       await ctx.runMutation(internal.cloudMachines.setProvisioned, {
         machineId, hetznerServerId: serverId, serverIp: ip,
         hostname, serverType,

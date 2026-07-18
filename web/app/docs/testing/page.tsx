@@ -56,12 +56,42 @@ gh workflow run 'Feedback SDK Relay Smoke'`}</pre>
 ./scripts/test-suite.sh --unit         # Go unit tests only (~30 s)
 ./scripts/test-suite.sh --lan          # localhost direct connect (~1 min)
 ./scripts/test-suite.sh --relay        # local relay + agent task flow (~2 min)
-./scripts/test-suite.sh --tailscale    # cross-machine via Tailscale
-./scripts/test-suite.sh --cloudflare   # Cloudflare tunnel`}</pre>
+./scripts/test-suite.sh --relay-docker # remote relay via Docker
+./scripts/test-suite.sh --relay-binary # remote relay as native binary`}</pre>
         <p className="mt-3 text-[13px] text-surface-400">
           No credentials needed for <Code>--unit</Code>, <Code>--lan</Code>,{" "}
           <Code>--relay</Code>. Remote modes need <Code>REMOTE_SERVER_IP</Code> + SSH key
           via env vars or <Code>.env.test</Code> (gitignored).
+        </p>
+      </Section>
+
+      <Section title="Automated account auth">
+        <p className="mb-3 text-[14px] text-surface-300">
+          OAuth and passkeys stay the default. Email/password sign-in is an
+          owner/test-only path for Playwright, redroid, and simulator runs where
+          provider approval is not automatable.
+        </p>
+        <pre className="overflow-x-auto rounded-md border border-surface-800 bg-surface-950 p-4 font-mono text-[12px] text-surface-300">{`# Open the gated auth window from an operator machine
+yaver set emailOauth enable --allowed-emails owner@example.com
+
+# GitHub Secrets or local secret store used by tests
+YAVER_TEST_EMAIL=owner@example.com
+YAVER_TEST_PASSWORD=<generated-password>
+
+# Local runner login for Playwright/redroid/simulator wrappers
+yaver set emailOauth --email "$YAVER_TEST_EMAIL" --password-env YAVER_TEST_PASSWORD --require-owner
+
+# Or trigger the same token setup on an owned remote machine
+yaver set emailOauth --machine magara --email "$YAVER_TEST_EMAIL" --password-env YAVER_TEST_PASSWORD --require-owner
+
+# Close the window after tests
+yaver set emailOauth disable`}</pre>
+        <p className="mt-3 text-[13px] text-surface-400">
+          Set the password from Dashboard Settings or mobile Settings after
+          signing in with the owner OAuth account. Convex stores only a salted
+          PBKDF2-SHA256 hash on that same user. Turn{" "}
+          <Code>YAVER_EMAIL_PASSWORD_AUTH_ENABLED</Code> off after the test
+          window.
         </p>
       </Section>
 

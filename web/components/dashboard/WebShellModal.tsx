@@ -70,6 +70,7 @@ function describeDiagnostic(d: ConnectAttemptDiagnostic): string {
 
 export default function WebShellModal({
   device,
+  launch,
   isCurrentDeviceSelected,
   isCurrentDeviceConnected,
   onClose,
@@ -77,6 +78,7 @@ export default function WebShellModal({
   onOpenRescue,
 }: {
   device: Device;
+  launch?: "claude" | "codex" | "opencode";
   isCurrentDeviceSelected: boolean;
   isCurrentDeviceConnected: boolean;
   onClose: () => void;
@@ -122,6 +124,13 @@ export default function WebShellModal({
       : reach.label
         ? reach.label
         : "Could not reach the agent (direct, tunnel, or relay).";
+  const title = launch === "claude"
+    ? "Claude"
+    : launch === "codex"
+      ? "Codex"
+      : launch === "opencode"
+        ? "OpenCode"
+        : "Shell";
 
   return (
     <div
@@ -138,7 +147,7 @@ export default function WebShellModal({
           <div className="flex items-center gap-2 min-w-0">
             <span className={`inline-flex h-2 w-2 rounded-full ${state === "ready" ? "bg-emerald-400" : state === "needs-reauth" ? "bg-amber-400" : state === "failed" ? "bg-rose-400" : state === "connecting" ? "bg-cyan-400" : "bg-slate-400 dark:bg-surface-500"}`} />
             <span className="truncate text-[13px] font-semibold text-slate-900 dark:text-surface-100">
-              Shell · {device.alias ? `@${device.alias}` : device.name}
+              {title} · {device.alias ? `@${device.alias}` : device.name}
             </span>
             <span className="hidden sm:inline truncate text-[11px] text-slate-500 dark:text-surface-500">
               {device.host}:{device.port}
@@ -166,7 +175,7 @@ export default function WebShellModal({
         </div>
         <div className={`flex-1 overflow-hidden ${state === "ready" ? "bg-[#0b0d10]" : "bg-slate-50/70 dark:bg-transparent p-2"}`}>
           {state === "ready" ? (
-            <TerminalView />
+            <TerminalView launch={launch} />
           ) : state === "needs-reauth" ? (
             <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center text-slate-700 dark:text-surface-300">
               <div className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">

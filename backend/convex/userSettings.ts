@@ -1,6 +1,7 @@
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { validateSessionInternal, randomHex } from "./auth";
+import { isOwner } from "./ownerAllowlist";
 
 // Shared validator for the per-subsystem managed toggle. Each field
 // accepts boolean (true=Yaver-managed, false=self-hosted) or null
@@ -25,6 +26,34 @@ const deployPreferencePatchValidator = v.object({
   testflight: v.optional(v.union(v.string(), v.null())),
   play: v.optional(v.union(v.string(), v.null())),
 });
+
+async function relayEntitlementForUser(ctx: any, userId: any): Promise<{
+  plan: "free" | "relay-pro" | "cloud-workspace" | "owner-dev";
+  isPaid: boolean;
+}> {
+  const user = await ctx.db.get(userId);
+  if (user && isOwner((user as any).email, String(userId))) {
+    return { plan: "owner-dev", isPaid: true };
+  }
+  const subscriptions = await ctx.db
+    .query("subscriptions")
+    .withIndex("by_user", (q: any) => q.eq("userId", userId))
+    .collect();
+  const active = subscriptions
+    .filter((s: any) => s.status === "active" || s.status === "past_due")
+    .sort((a: any, b: any) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
+  const cloud = active.find((s: any) => {
+    const plan = String(s.plan || "");
+    return plan === "cloud-workspace" || plan === "cloud-agent" || plan.startsWith("yaver-cloud");
+  });
+  if (cloud) return { plan: "cloud-workspace", isPaid: true };
+  const relay = active.find((s: any) => {
+    const plan = String(s.plan || "");
+    return plan === "relay-pro" || plan === "relay-monthly" || plan === "relay-yearly" || plan === "managed-relay";
+  });
+  if (relay) return { plan: "relay-pro", isPaid: true };
+  return { plan: "free", isPaid: false };
+}
 
 // mergeManagedPatch applies a caller's patch to the existing managed
 // object. Booleans win; nulls clear; undefined keeps the previous
@@ -701,7 +730,7 @@ export const validateRelayPassword = internalQuery({
           if (node && node.userId !== match.userId) return null;
         }
       }
-      return { userId: match.userId };
+      return { userId: match.userId, ...(await relayEntitlementForUser(ctx, match.userId)) };
     }
 
     if (action === "proxy") {
@@ -711,10 +740,10 @@ export const validateRelayPassword = internalQuery({
         .withIndex("by_deviceId", (q) => q.eq("deviceId", deviceId))
         .first();
       if (!device || device.userId !== match.userId) return null;
-      return { userId: match.userId };
+      return { userId: match.userId, ...(await relayEntitlementForUser(ctx, match.userId)) };
     }
 
-    return { userId: match.userId };
+    return { userId: match.userId, ...(await relayEntitlementForUser(ctx, match.userId)) };
   },
 });
 

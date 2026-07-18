@@ -506,6 +506,8 @@ func main() {
 		runSSHWrap(os.Args[2:])
 	case "config":
 		runConfig(os.Args[2:])
+	case "set":
+		runSet(os.Args[2:])
 	case "auto-update":
 		runAutoUpdate(os.Args[2:])
 	case "relay":

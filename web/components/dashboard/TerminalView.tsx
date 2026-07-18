@@ -9,12 +9,27 @@ type ConnState = "connecting" | "open" | "closed" | "error";
 // One-tap coding-agent launchers — kept in sync with the mobile app's
 // src/lib/agentLaunch.ts. Typed straight into the remote PTY in yolo mode.
 const AGENT_LAUNCHERS: ReadonlyArray<{ id: string; label: string; command: string; hint: string }> = [
-  { id: "claude", label: "Claude", command: "claude --dangerously-skip-permissions", hint: "Launch Claude Code with permission prompts skipped" },
-  { id: "codex", label: "Codex", command: "codex --dangerously-bypass-approvals-and-sandbox", hint: "Launch Codex with approvals + sandbox bypassed" },
-  { id: "opencode", label: "OpenCode", command: "opencode", hint: "Launch OpenCode (bring-your-own-provider TUI)" },
+  {
+    id: "claude",
+    label: "Claude",
+    command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-claude 'claude --dangerously-skip-permissions'; else exec claude --dangerously-skip-permissions; fi",
+    hint: "Launch Claude Code in tmux with permission prompts skipped",
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-codex 'codex --dangerously-bypass-approvals-and-sandbox'; else exec codex --dangerously-bypass-approvals-and-sandbox; fi",
+    hint: "Launch Codex in tmux with approvals + sandbox bypassed",
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    command: "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-opencode 'opencode --auto'; else exec opencode --auto; fi",
+    hint: "Launch OpenCode in tmux with auto approvals",
+  },
 ];
 
-export default function TerminalView({ cwd }: { cwd?: string }) {
+export default function TerminalView({ cwd, launch }: { cwd?: string; launch?: "claude" | "codex" | "opencode" }) {
   const ref = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<any>(null);
@@ -121,7 +136,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
       const term = termRef.current;
       const fit = fitRef.current;
 
-      const url = await agentClient.terminalWsUrl(cwd);
+      const url = await agentClient.terminalWsUrl(cwd, { launch });
       if (disposed) return;
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
@@ -211,7 +226,7 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
       // reconnect attempts so scrollback survives. Component unmount
       // disposes via the second effect below.
     };
-  }, [cwd, attempt]);
+  }, [cwd, launch, attempt]);
 
   // Dispose the terminal only on full component unmount.
   useEffect(() => {

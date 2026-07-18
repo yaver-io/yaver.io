@@ -76,6 +76,10 @@ export interface Task {
   videoSource?: "browser" | "sim-ios" | "sim-android" | "phone";
   videoClipId?: string;
   videoStatus?: "queued" | "recording" | "ready" | "failed" | "stale";
+  placementId?: string;
+  placementLane?: string;
+  placementReason?: string;
+  placementCreditLabel?: string;
 }
 
 export interface EnvironmentProjectSummary {
@@ -6012,10 +6016,11 @@ export class AgentClient {
     const token = await this.issueBrowserSession("/ws/logs");
     return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/logs?id=${encodeURIComponent(id)}&browser_session=${encodeURIComponent(token)}`);
   }
-  async terminalWsUrl(cwd?: string): Promise<string> {
+  async terminalWsUrl(cwd?: string, opts?: { launch?: "claude" | "codex" | "opencode" }): Promise<string> {
     const token = await this.issueBrowserSession("/ws/terminal");
     const c = cwd ? `&cwd=${encodeURIComponent(cwd)}` : "";
-    return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?browser_session=${encodeURIComponent(token)}${c}`);
+    const launch = opts?.launch ? `&launch=${encodeURIComponent(opts.launch)}` : "";
+    return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?browser_session=${encodeURIComponent(token)}${c}${launch}`);
   }
 
   private appendRelayPwToWs(url: string): string {

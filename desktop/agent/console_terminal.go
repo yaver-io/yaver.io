@@ -16,6 +16,19 @@ import (
 
 var sudoPromptPattern = regexp.MustCompile(`(?i)(?:\[(?:sudo|SUDO)\]\s*)?password(?:\s+for\s+[^:\r\n]+)?\s*:`)
 
+func terminalLaunchCommand(runner string) string {
+	switch strings.ToLower(strings.TrimSpace(runner)) {
+	case "claude", "claude-code":
+		return `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-claude 'claude --dangerously-skip-permissions'; else exec claude --dangerously-skip-permissions; fi`
+	case "codex":
+		return `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-codex 'codex --dangerously-bypass-approvals-and-sandbox'; else exec codex --dangerously-bypass-approvals-and-sandbox; fi`
+	case "opencode":
+		return `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s yaver-opencode 'opencode --auto'; else exec opencode --auto; fi`
+	default:
+		return ""
+	}
+}
+
 // handleTerminalWS: WS /ws/terminal — starts or resumes a PTY-backed shell.
 // Protocol:
 //   - binary frames: stdin bytes → pty
@@ -191,6 +204,12 @@ func (s *HTTPServer) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	if err := ts.attach(conn, resumed); err != nil {
 		_ = conn.Close()
 		return
+	}
+	if launchCommand := terminalLaunchCommand(r.URL.Query().Get("launch")); launchCommand != "" && !resumed {
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			_ = ts.writeInput([]byte(launchCommand + "\n"))
+		}()
 	}
 	defer ts.detach(conn)
 

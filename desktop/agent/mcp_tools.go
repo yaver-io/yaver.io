@@ -1451,6 +1451,34 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "mobile_project_status", "description": "Inspect whether a React Native / Expo project on this machine or an owned remote Yaver device is ready for Yaver iPhone/Android testing. Reports package manager, missing local tools, dependency-install state, Hermes compiler availability, and whether Hermes has been built before.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"device_id": map[string]interface{}{"type": "string", "description": "Optional owned Yaver device id/name/alias to inspect."}, "directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}}}},
 		{"name": "mobile_project_prepare", "description": "Prepare a fresh React Native / Expo clone on this machine or an owned remote Yaver device by auto-installing project dependencies when the machine has the right package manager available. Returns readiness fields after the install attempt.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"device_id": map[string]interface{}{"type": "string", "description": "Optional owned Yaver device id/name/alias to prepare."}, "directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}}}},
 		{
+			"name":        "sandbox_run",
+			"description": "Run the Mobile Sandbox edit loop from a headless MCP client. Ships a phone-style React Native / Expo source tree to this machine or an owned remote Yaver device, runs OpenCode with GLM there, and returns an EditPlan-shaped diff. The GLM key stays on the machine that runs the tool; configure it with runner_auth_set/runner_auth_setup or ZAI_API_KEY/GLM_API_KEY.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"prompt", "files"},
+				"properties": map[string]interface{}{
+					"device_id": map[string]interface{}{"type": "string", "description": "Optional owned Yaver device id/name/alias to run OpenCode/GLM on. Empty = this machine."},
+					"prompt":    map[string]interface{}{"type": "string", "description": "Requested change to make in the sandbox source tree."},
+					"files": map[string]interface{}{
+						"type":        "array",
+						"description": "Phone sandbox files as {path, content}. Paths are posix-relative and may not escape the project root.",
+						"items": map[string]interface{}{
+							"type":     "object",
+							"required": []string{"path", "content"},
+							"properties": map[string]interface{}{
+								"path":    map[string]interface{}{"type": "string"},
+								"content": map[string]interface{}{"type": "string"},
+							},
+						},
+					},
+					"framework": map[string]interface{}{"type": "string", "description": "Framework label for prompting, default React Native (Expo)."},
+					"schema":    map[string]interface{}{"type": "object", "description": "Optional phone-project backend schema context."},
+					"runner":    map[string]interface{}{"type": "string", "description": "Only opencode is currently supported."},
+					"timeoutMs": map[string]interface{}{"type": "integer", "description": "Runner timeout in milliseconds, default 180000, max 600000."},
+				},
+			},
+		},
+		{
 			"name":        "mobile_hermes_doctor",
 			"description": "Agent-friendly doctor for the common React Native / Expo phone reload path. Resolves the mobile project inside a monorepo, checks local tools, dependency install state, Hermes compiler readiness, prior bundle state, and native-module compatibility, then returns the exact MCP next actions to prepare/build before reloading in Yaver mobile.",
 			"inputSchema": map[string]interface{}{
@@ -1908,14 +1936,15 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		// Cursor, Windsurf, Zed) sign the user into Yaver itself — not a
 		// cloud provider. The flow is device-code / browserless: start →
 		// user opens URL on any device → poll/wait until authorized.
-		{"name": "yaver_auth_status", "description": "Report Yaver's own sign-in state on this machine: whether a valid Apple/GitHub/Google/Microsoft OAuth token is present, which user it belongs to, and whether the environment looks headless. Safe to call before signing in.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
-		{"name": "yaver_auth_start", "description": "Start a headless device-code sign-in for Yaver (Apple / GitHub / Google / Microsoft OAuth). Returns {url, user_code, device_code, qr_ascii, expires_at_ms}. Render the URL + QR to the user; they open it on their phone or laptop browser, sign in, and confirm the code. Then call yaver_auth_wait (or loop yaver_auth_poll) with the device_code to finish. Non-blocking — this tool does not wait for the user.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"convex_url": map[string]interface{}{"type": "string", "description": "Optional override for the Convex backend URL (defaults to the stored or hosted endpoint)."}}}},
+		{"name": "yaver_auth_status", "description": "Report Yaver's own sign-in state on this machine: whether a valid Apple/GitHub/Google/Microsoft/email-password Yaver token is present, which user it belongs to, and whether the environment looks headless. Safe to call before signing in.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "yaver_auth_capabilities", "description": "Report deployment auth capabilities, including whether owner/test email-password sign-in is currently enabled. Does not accept or expose passwords; raw automation passwords belong in local keychain/.env or GitHub Secrets.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"convex_url": map[string]interface{}{"type": "string", "description": "Optional override for the Convex backend URL (defaults to the stored or hosted endpoint)."}}}},
+		{"name": "yaver_auth_start", "description": "Start a headless device-code sign-in for Yaver (Apple / GitHub / Google / Microsoft OAuth, passkey, or email-password if enabled on the deployment). Returns {url, user_code, device_code, qr_ascii, expires_at_ms}. Render the URL + QR to the user; they open it on their phone or laptop browser, sign in, and confirm the code. Then call yaver_auth_wait (or loop yaver_auth_poll) with the device_code to finish. Non-blocking — this tool does not wait for the user.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"convex_url": map[string]interface{}{"type": "string", "description": "Optional override for the Convex backend URL (defaults to the stored or hosted endpoint)."}}}},
 		{"name": "yaver_auth_poll", "description": "Run one poll of the device-code authorization. Returns status = pending | authorized | expired. On authorized, the token is saved to ~/.yaver/config.json, the daemon is started in the background, and Yaver is auto-registered as an MCP server in every installed editor. Use this when you want full control over polling cadence.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"device_code"}, "properties": map[string]interface{}{"device_code": map[string]interface{}{"type": "string", "description": "Opaque device code returned by yaver_auth_start."}, "convex_url": map[string]interface{}{"type": "string"}}}},
 		{"name": "yaver_auth_wait", "description": "Block until the device code is authorized, expires, or the timeout fires. Preferred over yaver_auth_poll for coding agents that can accept a ~2-minute tool call. On authorized: saves token, starts daemon, registers MCP in editors. Default timeout 120s, poll interval 3s — both tunable.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"device_code"}, "properties": map[string]interface{}{"device_code": map[string]interface{}{"type": "string"}, "convex_url": map[string]interface{}{"type": "string"}, "timeout_seconds": map[string]interface{}{"type": "integer", "description": "Max seconds to block (default 120, max 300)."}, "poll_interval_seconds": map[string]interface{}{"type": "integer", "description": "Seconds between polls (default 3)."}}}},
 		{"name": "yaver_auth_logout", "description": "Clear the saved Yaver auth token from ~/.yaver/config.json on this machine. Daemon is left running — call agent_shutdown separately if you want to stop it.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 		{"name": "yaver_lazy_setup", "description": "One-shot install + auth + mobile-app handoff for a non-developer user being walked through setup by an AI agent. Call this FIRST instead of wiring up auth_status/start/wait manually. Returns a structured plan: whether yaver-cli is installed, whether the user is signed in, a sign-in URL (if needed) the AI should surface to the human, mobile app install links (TestFlight + Play), and a single `next_action` string the AI can speak verbatim. Idempotent: safe to call repeatedly while the user finishes steps on their phone — on each call it picks up where the last one left off. The ideal orchestration loop for a coding agent: (1) call yaver_lazy_setup → show the returned url to the human; (2) wait a bit; (3) call yaver_lazy_setup again — if status is now \"signed_in\", you're done.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"wait_seconds": map[string]interface{}{"type": "integer", "description": "If >0, block up to this many seconds (max 180) waiting for sign-in to complete in-call. Default 0 = return immediately. 120 is a reasonable value for agents that can afford a 2-minute tool call."}}}},
 		// --- Account linking (connect additional OAuth providers, unlink, merge two accounts) ---
-		{"name": "yaver_auth_list_identities", "description": "List every OAuth provider (Apple / GitHub / GitLab / Google / Microsoft / email) linked to the currently signed-in Yaver account. Returns each provider's email and which one is primary. Safe to call any time.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
+		{"name": "yaver_auth_list_identities", "description": "List every sign-in identity (Apple / GitHub / GitLab / Google / Microsoft / email-password) linked to the currently signed-in Yaver account. Returns each provider's email and which one is primary. Safe to call any time.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}},
 		{"name": "yaver_auth_link_start", "description": "Connect an ADDITIONAL OAuth provider to the currently signed-in account — e.g., user signed up with Apple but wants to also sign in with GitHub, GitLab, Google, or Microsoft. Returns {url, qr_ascii, link_token, expires_at_ms}. Render the URL + QR; the user opens it, signs in with that provider, and Yaver binds the provider to the existing account. Call yaver_auth_link_wait afterwards to confirm.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"provider"}, "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string", "description": "Provider to link: apple | github | gitlab | google | microsoft"}}}},
 		{"name": "yaver_auth_link_wait", "description": "Poll the account's linked identities until the requested provider appears (or timeout). Preferred over manual polling after yaver_auth_link_start. Default timeout 120s.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"provider"}, "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string", "description": "The provider passed to yaver_auth_link_start"}, "timeout_seconds": map[string]interface{}{"type": "integer"}, "poll_interval_seconds": map[string]interface{}{"type": "integer"}}}},
 		{"name": "yaver_auth_unlink", "description": "Remove an OAuth provider from the currently signed-in account. Refuses if it is the ONLY sign-in method (would lock the user out). If the unlinked provider was the primary one, another linked provider is promoted automatically. If 2FA is enabled, pass totp_code.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"provider"}, "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string", "description": "apple | github | gitlab | google | microsoft | email"}, "totp_code": map[string]interface{}{"type": "string", "description": "Optional 6-digit TOTP code for 2FA-protected accounts"}}}},
@@ -4266,6 +4295,14 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	tools = append(tools, autodevTools...)
 
 	agentTools := []map[string]interface{}{
+		{
+			"name":        "list_machines",
+			"description": "List Yaver mesh machines with online state, hardware slots, runner readiness, and machine profile signatures. Compatibility alias for agent_machine_inventory.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 		{
 			"name":        "agent_machine_inventory",
 			"description": "List Yaver mesh machines with online state, hardware slots, runner readiness, and machine profile signatures so an MCP client can choose a machine pool.",

@@ -8,6 +8,12 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
 import { decryptStoredOidcSecret } from "./admin";
 import { estimatedHourlyCents, minimumReserveCents } from "./cloudLifecycle";
+import {
+  emailPasswordAuthEnabled,
+  emailPasswordEmailAllowed,
+  hashPassword,
+  verifyPassword,
+} from "./authPasswordPolicy";
 
 // Apple Sign-In identity-token verification (audit 2026-07-13). JWKS is fetched
 // + cached by jose. Audience = the native app bundle id; override via env if the
@@ -33,6 +39,18 @@ function jsonResponse(data: unknown, status = 200): Response {
 
 function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
+}
+
+function denyNonYaverManagedMachine(machine: any): Response | null {
+  if (!machine) return errorResponse("Machine not found", 404);
+  if ((machine.origin ?? "managed") !== "managed") {
+    return errorResponse("Refusing to mutate a non-Yaver-managed machine", 403);
+  }
+  const provider = String(machine.provider || "hetzner").trim().toLowerCase();
+  if (provider && provider !== "hetzner") {
+    return errorResponse("Refusing to mutate an unsupported provider resource", 403);
+  }
+  return null;
 }
 
 function errorMessageIncludes(err: any, code: string): boolean {
@@ -70,6 +88,16 @@ function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean 
   if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
   if (normalized === "false" || normalized === "0" || normalized === "no") return false;
   return fallback;
+}
+
+function requireEmailPasswordAuthEnabled(): Response | null {
+  if (emailPasswordAuthEnabled()) return null;
+  return errorResponse("Email/password sign-in is disabled on this deployment", 403);
+}
+
+function requireEmailPasswordEmailAllowed(email: unknown): Response | null {
+  if (emailPasswordEmailAllowed(email)) return null;
+  return errorResponse("Email/password sign-in is not enabled for this email", 403);
 }
 
 // LemonSqueezy docs use LEMONSQUEEZY_* (no underscore between LEMON+SQUEEZY),
@@ -247,11 +275,81 @@ function creditPackVariantEnvName(id: string): string {
 }
 
 type CloudPurchasePlanId = "cloud-agent" | "cloud-workspace";
+type BillingProductId = "relay-pro" | "cloud-workspace";
 
 function normalizeCloudPurchasePlan(value: unknown): CloudPurchasePlanId {
   const normalized = String(value || "").trim();
   if (normalized === "cloud-workspace") return "cloud-workspace";
   return "cloud-agent";
+}
+
+function normalizeBillingProduct(value: unknown): BillingProductId {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (
+    normalized === "cloud-workspace" ||
+    normalized === "yaver-cloud" ||
+    normalized === "cloud-agent" ||
+    normalized === "cpu" ||
+    normalized === "gpu"
+  ) {
+    return "cloud-workspace";
+  }
+  return "relay-pro";
+}
+
+function variantForBillingProduct(productId: BillingProductId): { variantId?: string; envName: string } {
+  if (productId === "cloud-workspace") {
+    return {
+      variantId:
+        lsEnv("YAVER_CLOUD_WORKSPACE_VARIANT_ID") ??
+        lsEnv("YAVER_CLOUD_BYOK_VARIANT_ID") ??
+        lsEnv("YAVER_CLOUD_VARIANT_ID"),
+      envName: "YAVER_CLOUD_WORKSPACE_VARIANT_ID",
+    };
+  }
+  return {
+    variantId:
+      lsEnv("YAVER_RELAY_PRO_VARIANT_ID") ??
+      lsEnv("MANAGED_RELAY_VARIANT_ID") ??
+      lsEnv("YAVER_RELAY_VARIANT_ID"),
+    envName: "YAVER_RELAY_PRO_VARIANT_ID",
+  };
+}
+
+function productForSubscriptionPlan(plan: unknown): BillingProductId | "free" {
+  const value = String(plan || "").trim();
+  if (!value) return "free";
+  if (value === "cloud-workspace" || value === "cloud-agent" || value.startsWith("yaver-cloud")) {
+    return "cloud-workspace";
+  }
+  if (value === "relay-pro" || value === "relay-monthly" || value === "relay-yearly" || value === "managed-relay") {
+    return "relay-pro";
+  }
+  return "free";
+}
+
+function cloudMachineTypeForPlacement(resourceClass: unknown): "standard" | "heavy" | "build" {
+  const value = String(resourceClass || "").trim();
+  if (value === "build") return "build";
+  if (value === "heavy") return "heavy";
+  return "standard";
+}
+
+function normalizeCloudMachineType(value: unknown): "standard" | "heavy" | "build" | "cpu" | "gpu" {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "standard" || normalized === "heavy" || normalized === "build" || normalized === "cpu" || normalized === "gpu") {
+    return normalized;
+  }
+  return "standard";
+}
+
+function cloudMachineMeetsPlacement(machine: any, resourceClass: unknown): boolean {
+  const ramGb = Number(machine?.specs?.ramGb ?? 0);
+  const type = String(machine?.machineType || "").trim();
+  const resource = String(resourceClass || "").trim();
+  if (resource === "build") return type === "build" || type === "cpu" || type === "gpu" || ramGb >= 24;
+  if (resource === "heavy") return type === "heavy" || type === "build" || type === "cpu" || type === "gpu" || ramGb >= 16;
+  return true;
 }
 
 // Resolve a pack from the LemonSqueezy variant id that was ACTUALLY
@@ -316,12 +414,9 @@ export const cancelLemonSqueezySubscription = internalAction({
   },
 });
 
-// Swap the billed variant of an existing LemonSqueezy subscription so a
-// future renewal charges the new plan's price (Cloud Agent ⇄ Workspace).
-// Target variant id comes from env (YAVER_CLOUD_HOSTED_VARIANT_ID /
-// YAVER_CLOUD_BYOK_VARIANT_ID) so prices retune without a redeploy.
-// Returns {ok}. Best-effort + non-numeric/test ids skipped (mirrors the
-// cancel action). Used by plans.changePlan.
+// Legacy LemonSqueezy variant swap helper. The public catalog no longer
+// exposes Cloud Agent; keep this only so old operational paths can be migrated
+// without reintroducing a third sellable product.
 export const updateLemonSqueezyVariant = internalAction({
   args: { lemonSqueezyId: v.string(), tier: v.union(v.literal("hosted"), v.literal("byok")) },
   handler: async (_ctx, { lemonSqueezyId, tier }): Promise<{ ok: boolean; reason?: string }> => {
@@ -399,7 +494,7 @@ async function ensurePreviewCloudMachine(
 ) {
   const machines = await ctx.runQuery(internal.cloudMachines.listForUser, { userId: userDocId });
   const existing = Array.isArray(machines)
-    ? machines.find((machine) => machine.machineType === "cpu" && machine.status !== "stopped")
+    ? machines.find((machine) => (machine.machineType === "standard" || machine.machineType === "cpu") && machine.status !== "stopped")
     : null;
   if (existing?._id) {
     await attachPreviewMachineToSharedServer(ctx, existing._id, region);
@@ -408,7 +503,7 @@ async function ensurePreviewCloudMachine(
 
   const machineId = await ctx.runMutation(internal.cloudMachines.create, {
     userId: userDocId,
-    machineType: "cpu",
+    machineType: "standard",
     region,
   });
   await attachPreviewMachineToSharedServer(ctx, machineId, region);
@@ -513,49 +608,6 @@ async function requireServerSecret(request: Request): Promise<Response | null> {
   return null;
 }
 
-// ── Password Hashing Helpers (PBKDF2-SHA256) ────────────────────────
-
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
-    keyMaterial,
-    256
-  );
-  const saltB64 = btoa(String.fromCharCode(...salt));
-  const hashB64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
-  return `${saltB64}:${hashB64}`;
-}
-
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltB64, hashB64] = stored.split(":");
-  if (!saltB64 || !hashB64) return false;
-  const encoder = new TextEncoder();
-  const salt = Uint8Array.from(atob(saltB64), (c) => c.charCodeAt(0));
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" },
-    keyMaterial,
-    256
-  );
-  const computedB64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
-  return computedB64 === hashB64;
-}
-
 async function createSessionToken(
   ctx: { runMutation: (m: any, args: any) => Promise<any> },
   userId: any,
@@ -638,9 +690,9 @@ function corsPreflightResponse(): Response {
 }
 
 for (const path of [
-  "/auth/validate", "/auth/signup", "/auth/login", "/auth/refresh",
+  "/auth/config", "/auth/validate", "/auth/signup", "/auth/login", "/auth/refresh",
   "/auth/logout", "/auth/update-profile", "/auth/delete-account",
-  "/auth/forgot-password", "/auth/reset-password", "/auth/change-password",
+  "/auth/forgot-password", "/auth/reset-password", "/auth/change-password", "/auth/set-password",
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/test/oauth-signin",
   "/auth/device-code/authorize", "/auth/device-code/broker",
@@ -654,6 +706,7 @@ for (const path of [
   "/support/invite", "/support/invite/info", "/support/connections", "/support/grant/revoke", "/support/deny-all",
   "/shortcuts", "/shortcuts/delete",
   "/subscription",
+  "/billing/checkout",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/balance",
   "/billing/yaver-cloud/provision",
@@ -670,6 +723,7 @@ for (const path of [
   "/billing/credits/packs",
   "/billing/status",
   "/billing/portal",
+  "/billing/cancel",
   "/managed/cockpit",
   "/managed/burn",
   "/managed/services",
@@ -693,6 +747,12 @@ for (const path of [
   "/agent-rescue/queue", "/agent-rescue/list",
   "/publish-jobs/queue", "/publish-jobs/list",
   "/packages/allocation", "/packages/accept", "/packages/shared",
+  "/tasks/placement/preview", "/tasks/placement/record",
+  "/tasks/placement/recent", "/tasks/placement/status",
+  "/tasks/placement/activate", "/tasks/placement/rebind",
+  "/tasks/dispatch-intents", "/tasks/dispatch-intents/status",
+  "/tasks/project-profile",
+  "/cloud/wake-runs/recent",
 ]) {
   http.route({
     path,
@@ -703,17 +763,35 @@ for (const path of [
 
 // ── Email/Password Auth Endpoints ───────────────────────────────────
 
+/** GET /auth/config — public auth capability flags for every surface. */
+http.route({
+  path: "/auth/config",
+  method: "GET",
+  handler: httpAction(async () => {
+    return jsonResponse({
+      emailPasswordEnabled: emailPasswordAuthEnabled(),
+      emailPasswordRequiresAllowlist: true,
+      passwordMinLength: 8,
+      passwordStorage: "pbkdf2-sha256:100000",
+    });
+  }),
+});
+
 /** POST /auth/signup — Email/password signup. */
 http.route({
   path: "/auth/signup",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const disabled = requireEmailPasswordAuthEnabled();
+    if (disabled) return disabled;
     const body = await request.json();
     const { email, fullName, password } = body;
 
     if (!email || !fullName || !password) {
       return errorResponse("Missing required fields", 400);
     }
+    const notAllowed = requireEmailPasswordEmailAllowed(email);
+    if (notAllowed) return notAllowed;
     if (password.length < 8) {
       return errorResponse("Password must be at least 8 characters", 400);
     }
@@ -751,6 +829,8 @@ http.route({
   path: "/auth/login",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const disabled = requireEmailPasswordAuthEnabled();
+    if (disabled) return disabled;
     const body = await request.json();
     const { email, password } = body;
 
@@ -759,6 +839,8 @@ http.route({
     }
 
     const normEmail = email.toLowerCase().trim();
+    const notAllowed = requireEmailPasswordEmailAllowed(normEmail);
+    if (notAllowed) return notAllowed;
     const attemptKey = loginAttemptKey(request, normEmail);
     if (loginLocked(attemptKey)) {
       return errorResponse("Too many failed attempts. Try again later.", 429);
@@ -945,10 +1027,28 @@ http.route({
   path: "/auth/email-providers",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
+    const disabled = requireEmailPasswordAuthEnabled();
+    if (disabled) {
+      return jsonResponse({
+        exists: false,
+        providers: [] as string[],
+        hasPasskey: false,
+        emailPasswordEnabled: false,
+      });
+    }
     const url = new URL(request.url);
     const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+    const notAllowed = requireEmailPasswordEmailAllowed(email);
+    if (notAllowed) {
+      return jsonResponse({
+        exists: false,
+        providers: [] as string[],
+        hasPasskey: false,
+        emailPasswordEnabled: true,
+      });
+    }
     const data = await ctx.runQuery(internal.auth.lookupExistingProvidersByEmail, { email });
-    return jsonResponse(data);
+    return jsonResponse({ ...data, emailPasswordEnabled: true });
   }),
 });
 
@@ -1068,10 +1168,14 @@ http.route({
   path: "/auth/forgot-password",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const disabled = requireEmailPasswordAuthEnabled();
+    if (disabled) return disabled;
     const body = await request.json();
     const { email } = body;
 
     if (!email) return errorResponse("Email is required", 400);
+    const notAllowed = requireEmailPasswordEmailAllowed(email);
+    if (notAllowed) return notAllowed;
 
     // Generate a random reset token
     const tokenBytes = new Uint8Array(32);
@@ -1108,6 +1212,8 @@ http.route({
   path: "/auth/reset-password",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const disabled = requireEmailPasswordAuthEnabled();
+    if (disabled) return disabled;
     const body = await request.json();
     const { token, password } = body;
 
@@ -1119,6 +1225,10 @@ http.route({
     }
 
     const tokenHash = await sha256Hex(token);
+    const resetTarget = await ctx.runQuery(internal.auth.lookupPasswordResetTarget, { tokenHash });
+    if (!resetTarget) return errorResponse("Invalid or expired reset link", 400);
+    const notAllowed = requireEmailPasswordEmailAllowed(resetTarget.email);
+    if (notAllowed) return notAllowed;
     const newPasswordHash = await hashPassword(password);
 
     try {
@@ -1148,6 +1258,8 @@ http.route({
   path: "/auth/change-password",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    const disabled = requireEmailPasswordAuthEnabled();
+    if (disabled) return disabled;
     const authHeader = request.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return errorResponse("Unauthorized", 401);
@@ -1160,6 +1272,8 @@ http.route({
 
     const body = await request.json();
     const { currentPassword, newPassword } = body;
+    const notAllowed = requireEmailPasswordEmailAllowed(user.email);
+    if (notAllowed) return notAllowed;
 
     if (!currentPassword || !newPassword) {
       return errorResponse("Current password and new password are required", 400);
@@ -1187,6 +1301,48 @@ http.route({
     });
 
     return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /auth/set-password — Add first email/password credential to the signed-in account. */
+http.route({
+  path: "/auth/set-password",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const disabled = requireEmailPasswordAuthEnabled();
+    if (disabled) return disabled;
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const user = await ctx.runQuery(api.auth.validateSession, { tokenHash });
+    if (!user) return errorResponse("Unauthorized", 401);
+
+    const body = await request.json();
+    const { password } = body;
+    if (!password) return errorResponse("Password is required", 400);
+    if (password.length < 8) return errorResponse("Password must be at least 8 characters", 400);
+    if (!user.email) return errorResponse("This account has no email address", 400);
+    const notAllowed = requireEmailPasswordEmailAllowed(user.email);
+    if (notAllowed) return notAllowed;
+
+    const existing = await ctx.runQuery(internal.auth.lookupEmailUser, {
+      email: user.email.toLowerCase().trim(),
+    });
+    if (existing?.passwordHash) {
+      return errorResponse("This account already has an email/password credential. Use change password.", 409);
+    }
+
+    const passwordHash = await hashPassword(password);
+    try {
+      await ctx.runMutation(api.auth.setOwnPassword, { tokenHash, passwordHash });
+      return jsonResponse({ ok: true });
+    } catch (e: any) {
+      const msg = e?.message || "";
+      if (msg === "Unauthorized") return errorResponse("Unauthorized", 401);
+      return errorResponse(msg || "Failed to set password", 400);
+    }
   }),
 });
 
@@ -3430,6 +3586,608 @@ http.route({
   }),
 });
 
+/** POST /tasks/placement/preview — Decide where a task should run without storing it. */
+http.route({
+  path: "/tasks/placement/preview",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    try {
+      const result = await ctx.runQuery(api.taskPlacement.preview, {
+        tokenHash,
+        kind: body.kind ?? "unknown",
+        projectSlug: body.projectSlug,
+        requestedRunner: body.requestedRunner,
+        targetDeviceId: body.targetDeviceId,
+        forceCloud: body.forceCloud,
+        forceRelaySource: body.forceRelaySource,
+        sourceSurface: body.sourceSurface,
+        appCount: body.appCount,
+        repoSizeMb: body.repoSizeMb,
+        fileCount: body.fileCount,
+        hasNativeMobile: body.hasNativeMobile,
+        hasDocker: body.hasDocker,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to preview task placement", 500);
+    }
+  }),
+});
+
+/** POST /tasks/placement/record — Store the placement decision for a task. */
+http.route({
+  path: "/tasks/placement/record",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    try {
+      const result = await ctx.runMutation(api.taskPlacement.record, {
+        tokenHash,
+        taskId: body.taskId,
+        kind: body.kind ?? "unknown",
+        sourceSurface: body.sourceSurface,
+        projectSlug: body.projectSlug,
+        requestedRunner: body.requestedRunner,
+        targetDeviceId: body.targetDeviceId,
+        forceCloud: body.forceCloud,
+        forceRelaySource: body.forceRelaySource,
+        appCount: body.appCount,
+        repoSizeMb: body.repoSizeMb,
+        fileCount: body.fileCount,
+        hasNativeMobile: body.hasNativeMobile,
+        hasDocker: body.hasDocker,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to record task placement", 500);
+    }
+  }),
+});
+
+/** GET /tasks/placement/recent — Recent placement decisions for the caller. */
+http.route({
+  path: "/tasks/placement/recent",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const url = new URL(request.url);
+    try {
+      const result = await ctx.runQuery(api.taskPlacement.listRecent, {
+        tokenHash,
+        projectSlug: url.searchParams.get("projectSlug") || undefined,
+        limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to list task placements", 500);
+    }
+  }),
+});
+
+/** POST /tasks/placement/status — Update a stored placement's lifecycle state. */
+http.route({
+  path: "/tasks/placement/status",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json();
+    try {
+      const result = await ctx.runMutation(api.taskPlacement.markStatus, {
+        tokenHash,
+        placementId: body.placementId,
+        status: body.status,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to update task placement", 500);
+    }
+  }),
+});
+
+/** POST /tasks/placement/rebind — Replace a local pending task id with the
+ *  real agent task id after a client-held Cloud Workspace dispatch fires.
+ *  This keeps Convex metadata linked to the actual task without storing the
+ *  prompt/body centrally while the workspace wakes. */
+http.route({
+  path: "/tasks/placement/rebind",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      const result = await ctx.runMutation(api.taskPlacement.rebindTask, {
+        tokenHash,
+        placementId: body.placementId,
+        taskId: body.taskId,
+        status: body.status,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to rebind task placement", 500);
+    }
+  }),
+});
+
+/** POST /tasks/dispatch-intents — prompt-free durable dispatch metadata.
+ *  The body MUST NOT contain prompt, description, workDir, files, image data,
+ *  stdout, or secrets. It only records ids/target/status so a cloud-bound local
+ *  task can survive refresh while the actual task body stays client-held. */
+http.route({
+  path: "/tasks/dispatch-intents",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      const result = await ctx.runMutation(api.taskDispatchIntents.create, {
+        tokenHash,
+        localTaskId: body.localTaskId,
+        placementId: body.placementId || undefined,
+        sourceSurface: body.sourceSurface,
+        lane: body.lane,
+        targetDeviceId: body.targetDeviceId || undefined,
+        cloudMachineId: body.cloudMachineId || undefined,
+        requestedRunner: body.requestedRunner,
+        projectSlug: body.projectSlug,
+        reason: body.reason,
+        ttlMs: body.ttlMs,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to create dispatch intent", 500);
+    }
+  }),
+});
+
+/** POST /tasks/dispatch-intents/status — update prompt-free dispatch state. */
+http.route({
+  path: "/tasks/dispatch-intents/status",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    try {
+      const result = await ctx.runMutation(api.taskDispatchIntents.update, {
+        tokenHash,
+        intentId: body.intentId,
+        localTaskId: body.localTaskId,
+        status: body.status,
+        taskId: body.taskId,
+        targetDeviceId: body.targetDeviceId,
+        lastError: body.lastError,
+        reason: body.reason,
+        bumpAttempt: body.bumpAttempt,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to update dispatch intent", 500);
+    }
+  }),
+});
+
+/** GET /tasks/dispatch-intents — recent prompt-free dispatch metadata. */
+http.route({
+  path: "/tasks/dispatch-intents",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const url = new URL(request.url);
+    try {
+      const result = await ctx.runQuery(api.taskDispatchIntents.listRecent, {
+        tokenHash,
+        limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        includeTerminal: url.searchParams.get("includeTerminal") === "1",
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to list dispatch intents", 500);
+    }
+  }),
+});
+
+/** POST /tasks/placement/activate — Ensure a recorded cloud placement has
+ *  backing capacity. Cloud lanes wake an existing managed workspace or schedule
+ *  one from the caller's active Cloud Workspace subscription. Relay/owned/manual
+ *  lanes are idempotent no-ops. */
+http.route({
+  path: "/tasks/placement/activate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
+
+    const body = await request.json().catch(() => ({}));
+    const placementId = String(body.placementId ?? "").trim();
+    const taskId = String(body.taskId ?? "").trim();
+    if (!placementId && !taskId) return errorResponse("placementId or taskId is required", 400);
+
+    const placement = await ctx.runQuery(internal.taskPlacement.getForActivation, {
+      userId: session.userDocId as any,
+      placementId: placementId ? placementId as any : undefined,
+      taskId: taskId || undefined,
+    });
+    if (!placement) return errorResponse("Placement not found", 404);
+
+    const lane = String(placement.lane || "");
+    if (!lane.startsWith("cloud_")) {
+      return jsonResponse({
+        ok: true,
+        action: "none",
+        lane,
+        status: placement.status,
+        reason: "placement does not require managed cloud activation",
+      });
+    }
+
+    const sub = await ctx.runQuery(internal.subscriptions.getByUser, {
+      userId: session.userDocId as any,
+    });
+    const hasActiveCloudWorkspace =
+      sub?.status === "active" && productForSubscriptionPlan(sub.plan) === "cloud-workspace";
+    const ownerDev = isOwner(session.email, String(session.userDocId));
+    if (!hasActiveCloudWorkspace && !ownerDev) {
+      return jsonResponse({
+        ok: false,
+        action: "billing_required",
+        productId: "cloud-workspace",
+        reason: "Cloud Workspace activation requires an active Cloud Workspace subscription",
+      }, 402);
+    }
+
+    const existingMachinesRaw = await ctx.runQuery(internal.cloudMachines.listForUser, {
+      userId: session.userDocId as any,
+    });
+    const existingMachines = Array.isArray(existingMachinesRaw)
+      ? existingMachinesRaw.filter((machine: any) =>
+          String(machine.userId) === String(session.userDocId) &&
+          (machine.origin ?? "managed") === "managed" &&
+          [
+            "active",
+            "provisioning",
+            "resuming",
+            "paused",
+            "stopped",
+            "suspended",
+          ].includes(String(machine.status || ""))
+        )
+      : [];
+    const placementMachine = placement.cloudMachineId
+      ? existingMachines.find((machine: any) => String(machine._id) === String(placement.cloudMachineId))
+      : null;
+    const sortedMachines = existingMachines.sort(
+      (a: any, b: any) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0),
+    );
+    const machine = placementMachine ??
+      sortedMachines.find((candidate: any) => cloudMachineMeetsPlacement(candidate, placement.resourceClass)) ??
+      sortedMachines[0];
+
+    if (machine) {
+      const managedDenied = denyNonYaverManagedMachine(machine);
+      if (managedDenied) return managedDenied;
+      const targetDeviceId = machine.deviceId ?? managedDeviceIdFor(String(machine._id));
+      const profileMatched = cloudMachineMeetsPlacement(machine, placement.resourceClass);
+      await ctx.runMutation(internal.taskPlacement.attachCloudMachine, {
+        userId: session.userDocId as any,
+        placementId: placement._id,
+        cloudMachineId: machine._id,
+        targetDeviceId,
+        status: machine.status === "active" && machine.runnersAuthorized !== false ? "running" : "queued",
+      });
+      if (machine.provisionPhase === "awaiting-yaver-auth") {
+        const wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+          userId: session.userDocId as any,
+          machineId: machine._id,
+          placementId: placement._id,
+          taskId: placement.taskId,
+          kind: machine.status === "provisioning" ? "provision" : "wake",
+          status: "blocked",
+          phase: "awaiting-yaver-auth",
+          progress: typeof machine.provisionProgress === "number" ? machine.provisionProgress : 88,
+          resourceClass: placement.resourceClass,
+          machineType: machine.machineType,
+          targetDeviceId,
+          reason: "machine is awake but the Yaver agent needs sign-in",
+        });
+        return jsonResponse({
+          ok: false,
+          action: "yaver_auth_required",
+          machineId: machine._id,
+          targetDeviceId,
+          machineStatus: machine.status,
+          phase: "awaiting-yaver-auth",
+          profileMatched,
+          wakeRunId,
+          reason: "Cloud Workspace is awake but its Yaver agent needs sign-in before tasks can run.",
+        }, 409);
+      }
+      if (machine.status === "active" && machine.runnersAuthorized === false) {
+        const wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+          userId: session.userDocId as any,
+          machineId: machine._id,
+          placementId: placement._id,
+          taskId: placement.taskId,
+          kind: "wake",
+          status: "blocked",
+          phase: "authorizing-runners",
+          progress: 90,
+          resourceClass: placement.resourceClass,
+          machineType: machine.machineType,
+          targetDeviceId,
+          reason: "machine is awake but coding runners need subscription sign-in",
+        });
+        return jsonResponse({
+          ok: false,
+          action: "runner_auth_required",
+          machineId: machine._id,
+          targetDeviceId,
+          machineStatus: machine.status,
+          phase: "authorizing-runners",
+          profileMatched,
+          wakeRunId,
+          reason: "Cloud Workspace is awake but Claude Code/Codex/OpenCode needs sign-in before tasks can run.",
+        }, 409);
+      }
+      if (machine.status === "active" || machine.status === "provisioning" || machine.status === "resuming") {
+        let wakeRunId: any = null;
+        if (machine.status !== "active") {
+          wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+            userId: session.userDocId as any,
+            machineId: machine._id,
+            placementId: placement._id,
+            taskId: placement.taskId,
+            kind: machine.status === "provisioning" ? "provision" : "wake",
+            status: "running",
+            phase: machine.provisionPhase ?? machine.status,
+            progress: typeof machine.provisionProgress === "number" ? machine.provisionProgress : undefined,
+            resourceClass: placement.resourceClass,
+            machineType: machine.machineType,
+            targetDeviceId,
+            reason: placement.reason,
+          });
+        }
+        return jsonResponse({
+          ok: true,
+          action: machine.status === "active" ? "already_active" : "already_in_flight",
+          machineId: machine._id,
+          targetDeviceId,
+          machineStatus: machine.status,
+          profileMatched,
+          wakeRunId,
+        });
+      }
+      const wake = await ctx.runMutation(internal.cloudMachines.wake, {
+        userId: session.userDocId as any,
+        machineId: machine._id,
+      });
+      const wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+        userId: session.userDocId as any,
+        machineId: machine._id,
+        placementId: placement._id,
+        taskId: placement.taskId,
+        kind: "wake",
+        status: wake.ok === false ? "failed" : "queued",
+        phase: wake.ok === false ? "error" : "queued",
+        resourceClass: placement.resourceClass,
+        machineType: machine.machineType,
+        targetDeviceId,
+        reason: placement.reason,
+      });
+      return jsonResponse({
+        ok: wake.ok !== false,
+        action: wake.ok === false ? "wake_failed" : "wake_scheduled",
+        machineId: machine._id,
+        targetDeviceId,
+        machineStatus: wake.status ?? machine.status,
+        profileMatched,
+        wakeRunId,
+        error: wake.error,
+      }, wake.ok === false ? 409 : 200);
+    }
+
+    if (ownerDev && !hasActiveCloudWorkspace) {
+      const machineType = cloudMachineTypeForPlacement(placement.resourceClass);
+      const machineId = await ctx.runMutation(internal.cloudMachines.create, {
+        userId: session.userDocId as any,
+        machineType,
+        region: "eu",
+        tier: "byok",
+      });
+      const targetDeviceId = managedDeviceIdFor(String(machineId));
+      await ctx.runMutation(internal.taskPlacement.attachCloudMachine, {
+        userId: session.userDocId as any,
+        placementId: placement._id,
+        cloudMachineId: machineId,
+        targetDeviceId,
+        status: "queued",
+      });
+      const wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+        userId: session.userDocId as any,
+        machineId,
+        placementId: placement._id,
+        taskId: placement.taskId,
+        kind: "provision",
+        status: "queued",
+        phase: "creating",
+        progress: 5,
+        resourceClass: placement.resourceClass,
+        machineType,
+        targetDeviceId,
+        reason: placement.reason,
+      });
+      return jsonResponse({
+        ok: true,
+        action: "provision_scheduled",
+        machineId,
+        targetDeviceId,
+        wakeRunId,
+      }, 202);
+    }
+
+    if (hasActiveCloudWorkspace && sub?._id) {
+      const machineType = cloudMachineTypeForPlacement(placement.resourceClass);
+      const machineId = await ctx.runMutation(internal.cloudMachines.ensureForSubscription, {
+        userId: session.userDocId as any,
+        machineType,
+        region: "eu",
+        subscriptionId: sub._id,
+        tier: "byok",
+      });
+      const targetDeviceId = managedDeviceIdFor(String(machineId));
+      await ctx.runMutation(internal.taskPlacement.attachCloudMachine, {
+        userId: session.userDocId as any,
+        placementId: placement._id,
+        cloudMachineId: machineId,
+        targetDeviceId,
+        status: "queued",
+      });
+      const wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+        userId: session.userDocId as any,
+        machineId,
+        placementId: placement._id,
+        taskId: placement.taskId,
+        kind: "provision",
+        status: "queued",
+        phase: "creating",
+        progress: 5,
+        resourceClass: placement.resourceClass,
+        machineType,
+        targetDeviceId,
+        reason: placement.reason,
+      });
+      return jsonResponse({
+        ok: true,
+        action: "provision_scheduled",
+        productId: "cloud-workspace",
+        machineId,
+        machineType,
+        targetDeviceId,
+        wakeRunId,
+      }, 202);
+    }
+
+    await ctx.scheduler.runAfter(0, internal.cloudMachines.reconcileSubscriptions, {
+      onlyUserId: session.userDocId as any,
+    });
+    const authHeader = request.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      await ctx.runMutation(api.taskPlacement.markStatus, {
+        tokenHash: await sha256Hex(authHeader.slice(7)),
+        placementId: placement._id,
+        status: "queued",
+      });
+    }
+    return jsonResponse({
+      ok: true,
+      action: "reconcile_scheduled",
+      productId: "cloud-workspace",
+      reason: "No existing managed workspace row; subscription reconcile will provision one",
+    }, 202);
+  }),
+});
+
+/** POST /tasks/project-profile — Persist privacy-safe project classification
+ *  hints for later placement decisions. This stores only a basename slug,
+ *  coarse stack label, counts/buckets, and resource class. No absolute path,
+ *  prompt, dependency list, file content, or secret is accepted. */
+http.route({
+  path: "/tasks/project-profile",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const body = await request.json().catch(() => ({}));
+    const projectSlug = String(body.projectSlug ?? "").trim();
+    if (!projectSlug) return errorResponse("projectSlug required", 400);
+    const resourceClass = String(body.resourceClass ?? "").trim();
+    const allowedResourceClass = ["phone", "relay-source", "standard", "heavy", "build"].includes(resourceClass)
+      ? resourceClass
+      : undefined;
+    try {
+      const result = await ctx.runMutation(api.taskPlacement.upsertProjectProfile, {
+        tokenHash,
+        projectSlug,
+        sourceDeviceId: typeof body.sourceDeviceId === "string" ? body.sourceDeviceId : undefined,
+        stack: typeof body.stack === "string" ? body.stack.slice(0, 80) : undefined,
+        appCount: typeof body.appCount === "number" ? body.appCount : undefined,
+        repoSizeMb: typeof body.repoSizeMb === "number" ? body.repoSizeMb : undefined,
+        fileCount: typeof body.fileCount === "number" ? body.fileCount : undefined,
+        hasNativeMobile: typeof body.hasNativeMobile === "boolean" ? body.hasNativeMobile : undefined,
+        hasDocker: typeof body.hasDocker === "boolean" ? body.hasDocker : undefined,
+        resourceClass: allowedResourceClass as any,
+        confidence: typeof body.confidence === "number" ? body.confidence : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to update project profile", 500);
+    }
+  }),
+});
+
+/** GET /cloud/wake-runs/recent — Recent Cloud Workspace wake/provision/park
+ *  attempts for the caller. Metadata only; no provider IPs, hostnames, logs, or
+ *  task content. */
+http.route({
+  path: "/cloud/wake-runs/recent",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    const url = new URL(request.url);
+    try {
+      const result = await ctx.runQuery(api.wakeRuns.listRecent, {
+        tokenHash,
+        limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e.message || "Failed to list wake runs", 500);
+    }
+  }),
+});
+
 /** POST /devices/runner-down — Set runner down/up flag (authed). */
 http.route({
   path: "/devices/runner-down",
@@ -3707,7 +4465,12 @@ http.route({
       if (!result) {
         return jsonResponse({ ok: false }, 401);
       }
-      return jsonResponse({ ok: true, userId: result.userId });
+      return jsonResponse({
+        ok: true,
+        userId: result.userId,
+        plan: result.plan ?? "free",
+        isPaid: result.isPaid === true,
+      });
     } catch {
       return jsonResponse({ ok: false, error: "internal error" }, 500);
     }
@@ -4320,15 +5083,19 @@ http.route({
       case "subscription_created":
       case "subscription_updated":
       case "subscription_resumed": {
-        const productType = payload.meta?.custom_data?.product_type || "relay";
-        const machineType = payload.meta?.custom_data?.machine_type === "gpu" ? "gpu" : "cpu";
-        const cloudPlanId = normalizeCloudPurchasePlan(payload.meta?.custom_data?.plan_id);
-        const isCloudPreviewProduct = productType === "yaver-cloud";
-        const plan = isCloudPreviewProduct
-          ? cloudPlanId
+        const rawProductType = payload.meta?.custom_data?.product_type || "relay-pro";
+        const billingProductId = normalizeBillingProduct(rawProductType);
+        const productType = billingProductId === "cloud-workspace" ? "cloud-workspace" : "relay-pro";
+        const machineType =
+          rawProductType === "gpu" || payload.meta?.custom_data?.machine_type === "gpu"
+            ? "gpu"
+            : cloudMachineTypeForPlacement(payload.meta?.custom_data?.machine_profile);
+        const isCloudWorkspaceProduct = billingProductId === "cloud-workspace";
+        const plan = isCloudWorkspaceProduct
+          ? "cloud-workspace"
           : data.variant_name?.includes("yearly")
             ? "relay-yearly"
-            : "relay-monthly";
+            : "relay-pro";
         const status = data.status === "active" ? "active" : data.status === "past_due" ? "past_due" : "active";
         const periodEnd = new Date(data.renews_at || data.ends_at).getTime();
 
@@ -4348,8 +5115,7 @@ http.route({
         // re-delivered webhook never double-credits. Relay subs are
         // unaffected. tier mirrors the provision branch below
         // (custom_data.tier="hosted" ⇒ managed AI on; absent ⇒ byok).
-        const isManagedProduct =
-          productType === "cpu" || productType === "gpu" || isCloudPreviewProduct;
+        const isManagedProduct = isCloudWorkspaceProduct;
         if (isManagedProduct && status === "active") {
           const tier = payload.meta?.custom_data?.tier === "hosted" ? "hosted" : "byok";
           await ctx.scheduler.runAfter(0, internal.plans.applyPlanEntitlements, {
@@ -4364,12 +5130,12 @@ http.route({
         if (eventName === "subscription_created") {
           const region = payload.meta?.custom_data?.region || "eu";
 
-          if (productType === "cpu" || productType === "gpu" || isCloudPreviewProduct) {
+          if (isCloudWorkspaceProduct) {
             // Cloud dev machine — create and provision
             const teamId = payload.meta?.custom_data?.team_id;
             await ctx.runMutation(internal.cloudMachines.ensureForSubscription, {
               userId: user._id,
-              machineType: productType === "gpu" ? "gpu" : machineType,
+              machineType,
               teamId,
               region,
               subscriptionId: subId,
@@ -4395,7 +5161,7 @@ http.route({
             // owner-gated, no-Hetzner-spend /billing/yaver-cloud/
             // dev-activate path (ensurePreviewCloudMachine). Never
             // re-add a shared-server attach on this paid webhook path.
-            // isCloudPreviewProduct still selects the `plan` label above.
+            // isCloudWorkspaceProduct still selects the `plan` label above.
           } else {
             // Managed relay (default)
             const password = generateRelayPassword();
@@ -4464,14 +5230,16 @@ http.route({
       }
 
       case "subscription_payment_failed": {
-        const productType = payload.meta?.custom_data?.product_type || "relay";
-        const machineType = payload.meta?.custom_data?.machine_type === "gpu" ? "gpu" : "cpu";
-        const cloudPlanId = normalizeCloudPurchasePlan(payload.meta?.custom_data?.plan_id);
+        const rawProductType = payload.meta?.custom_data?.product_type || "relay-pro";
+        const billingProductId = normalizeBillingProduct(rawProductType);
         await ctx.runMutation(internal.subscriptions.upsertFromWebhook, {
           lemonSqueezyId,
           lemonSqueezyCustomerId: customerId,
           userId: user._id,
-          plan: productType === "relay" ? "relay-monthly" : productType === "yaver-cloud" ? cloudPlanId : `yaver-cloud-${machineType}`,
+          plan:
+            billingProductId === "relay-pro"
+              ? "relay-pro"
+              : "cloud-workspace",
           status: "past_due",
           currentPeriodEnd: Date.now(),
         });
@@ -4533,63 +5301,95 @@ http.route({
   }),
 });
 
-/** POST /billing/yaver-cloud/checkout — create authenticated Lemon Squeezy sandbox checkout. */
+/** POST /billing/checkout — create authenticated Lemon Squeezy checkout for
+ *  the two paid products: Relay Pro or Cloud Workspace. Free has no checkout. */
+http.route({
+  path: "/billing/checkout",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+
+    let body: { productId?: string; region?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      // allow empty body
+    }
+    const productId = normalizeBillingProduct(body.productId);
+    const region = (body.region ?? "eu").trim() || "eu";
+    const variant = variantForBillingProduct(productId);
+    if (!variant.variantId) {
+      return errorResponse(
+        `${productId === "relay-pro" ? "Relay Pro" : "Cloud Workspace"} checkout is not configured (set LEMONSQUEEZY_${variant.envName})`,
+        503,
+      );
+    }
+
+    try {
+      const url = await createLemonSqueezyCheckout({
+        email: session.email,
+        variantId: variant.variantId,
+        variantEnvName: variant.envName,
+        custom: {
+          user_email: session.email,
+          product_type: productId,
+          plan_id: productId,
+          tier: "byok",
+          machine_type: "cpu",
+          region,
+        },
+      });
+      return jsonResponse({
+        url,
+        productId,
+        mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 500);
+    }
+  }),
+});
+
+/** POST /billing/yaver-cloud/checkout — legacy alias for Cloud Workspace checkout. */
 http.route({
   path: "/billing/yaver-cloud/checkout",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email, session.userDocId)) {
-      return errorResponse("Yaver Cloud is private-preview only on this account", 403);
-    }
 
-    let body: { region?: string; machineType?: string; planId?: string } = {};
+    let body: { region?: string } = {};
     try {
       body = await request.json();
     } catch {
       // allow empty body
     }
     const region = (body.region ?? "eu").trim() || "eu";
-    const planId = normalizeCloudPurchasePlan(body.planId);
-
-    // Map the purchased plan to its entitlement tier AND the LS variant to
-    // charge. cloud-agent = $19 included-model = hosted; cloud-workspace =
-    // $9 BYO = byok. The webhook grants hosted entitlements ONLY when
-    // custom_data.tier === "hosted", so the tier MUST be passed here — without
-    // it every purchase silently fell back to byok regardless of plan.
-    const tier: "hosted" | "byok" = planId === "cloud-agent" ? "hosted" : "byok";
-    // hosted MUST have its own variant — never fall back to the byok-priced
-    // default, or a $19 plan would be sold for $9 (silent mis-bill). byok may
-    // fall back to the legacy single SKU (which is byok-priced).
-    let variantId: string | undefined;
-    if (tier === "hosted") {
-      variantId = lsEnv("YAVER_CLOUD_HOSTED_VARIANT_ID");
-      if (!variantId) {
-        return errorResponse(
-          "The Cloud Agent ($19) plan isn't available yet — its LemonSqueezy variant is not configured (set LEMONSQUEEZY_YAVER_CLOUD_HOSTED_VARIANT_ID). Use Cloud Workspace ($9) for now.",
-          503,
-        );
-      }
-    } else {
-      variantId = lsEnv("YAVER_CLOUD_BYOK_VARIANT_ID") ?? lsEnv("YAVER_CLOUD_VARIANT_ID");
+    const variant = variantForBillingProduct("cloud-workspace");
+    if (!variant.variantId) {
+      return errorResponse(
+        `Cloud Workspace checkout is not configured (set LEMONSQUEEZY_${variant.envName})`,
+        503,
+      );
     }
 
     try {
       const url = await createLemonSqueezyCheckout({
         email: session.email,
-        variantId,
-        variantEnvName: tier === "hosted" ? "YAVER_CLOUD_HOSTED_VARIANT_ID" : "YAVER_CLOUD_BYOK_VARIANT_ID",
+        variantId: variant.variantId,
+        variantEnvName: variant.envName,
         custom: {
           user_email: session.email,
-          product_type: "yaver-cloud",
-          plan_id: planId,
-          tier,
-          machine_type: body.machineType === "gpu" ? "gpu" : "cpu",
+          product_type: "cloud-workspace",
+          plan_id: "cloud-workspace",
+          tier: "byok",
+          machine_type: "cpu",
           region,
         },
       });
-      return jsonResponse({ url, planId, tier, mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
+      return jsonResponse({ url, productId: "cloud-workspace", mode: parseBooleanEnv(lsEnv("SANDBOX"), true) ? "sandbox" : "live" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(message, 500);
@@ -4852,6 +5652,8 @@ http.route({
     if (String(machine.userId) !== String(session.userDocId)) {
       return errorResponse("Not your machine", 403);
     }
+    const managedDenied = denyNonYaverManagedMachine(machine);
+    if (managedDenied) return managedDenied;
     await ctx.runMutation(internal.cloudMachines.deprovision, { machineId: machineId as any });
     return jsonResponse({ ok: true, machineId, mode: "dev-deprovision", note: "snapshot+delete scheduled" });
   }),
@@ -4871,17 +5673,16 @@ http.route({
     const wallet = await ctx.runQuery(internal.cloudLifecycle.getWallet, {
       userId: session.userDocId as any,
     });
-    // Surface the per-SKU running rate + low-balance flag the wallet UI
-    // shows ("~$X/hr running", "Add credit" nudge). cpu is the default
-    // SKU; the floor is the safe minimum reserve for it.
-    const hourlyCents = estimatedHourlyCents("cpu");
-    const reservedCents = minimumReserveCents("cpu");
+    // Surface the default Cloud Workspace profile rate + low-balance flag the
+    // wallet UI shows ("~$X/hr running", "Add credit" nudge).
+    const hourlyCents = estimatedHourlyCents("standard");
+    const reservedCents = minimumReserveCents("standard");
     // Included-this-month fuel gauges: the plan's included active-hours
     // (X of 40h left) and the managed-AI day's spend vs cap. Lets the UI
     // show what the flat price already covers before the wallet is touched.
     const allowance = await ctx.runQuery(internal.cloudLifecycle.getAllowance, {
       userId: session.userDocId as any,
-      machineType: "cpu",
+      machineType: "standard",
     });
     const pol = await ctx.runQuery(internal.gatewayPolicy.getAuthContext, {
       userId: session.userDocId as any,
@@ -4923,11 +5724,9 @@ http.route({
   }),
 });
 
-/** GET /billing/status — buyer-side plan snapshot for the yaver_billing_status
- *  MCP tool (and any client): subscribed? which tier? active-hours + wallet
- *  left? Combines the subscription row with the included-allowance, wallet, and
- *  managed-inference gauges. Available to any authed user (no preview gate) so
- *  a prospective buyer can always see "no plan yet". */
+/** GET /billing/status — buyer-side product snapshot for web/MCP clients.
+ *  Public catalog is Free, Relay Pro, Cloud Workspace; legacy subscription
+ *  plan labels are normalized before returning. */
 http.route({
   path: "/billing/status",
   method: "GET",
@@ -4939,7 +5738,7 @@ http.route({
     });
     const allowance = await ctx.runQuery(internal.cloudLifecycle.getAllowance, {
       userId: session.userDocId as any,
-      machineType: "cpu",
+      machineType: "standard",
     });
     const wallet = await ctx.runQuery(internal.cloudLifecycle.getWallet, {
       userId: session.userDocId as any,
@@ -4948,13 +5747,15 @@ http.route({
       userId: session.userDocId as any,
     });
     const subscribed = !!sub && (sub.status === "active" || sub.status === "past_due");
-    // Managed inference on ⇒ hosted ($19 Agent); else the allowance plan
-    // (byok/beta) or byok when subscribed without a recorded plan.
-    const tier = pol.enabled ? "hosted" : (allowance.plan || (subscribed ? "byok" : null));
+    const productId = subscribed ? productForSubscriptionPlan(sub?.plan) : "free";
+    const runnerMode = pol.enabled ? "managed" : "byok";
     return jsonResponse({
       ok: true,
       subscribed,
-      tier,
+      productId,
+      tier: productId === "cloud-workspace" ? "cloud-workspace" : productId === "relay-pro" ? "relay-pro" : null,
+      runnerMode,
+      plan: sub?.plan ?? null,
       subscriptionStatus: sub?.status ?? null,
       currentPeriodEnd: sub?.currentPeriodEnd ?? null,
       cancelledAt: sub?.cancelledAt ?? null,
@@ -5004,11 +5805,85 @@ http.route({
   }),
 });
 
-/** POST /billing/yaver-cloud/change-plan — in-app Cloud Agent ⇄ Cloud
- *  Workspace switch. Body: {plan:"cloud-agent"|"cloud-workspace"}. Scoped
- *  to the caller's OWN active managed subscription (a user can never move
- *  another account). Downgrade applies immediately (managed AI off now);
- *  upgrade requires the LemonSqueezy variant swap to succeed first. */
+/** POST /billing/cancel — user-initiated unsubscribe for Relay Pro or Cloud
+ *  Workspace. Cancels the caller's current LemonSqueezy subscription through
+ *  the existing internal cancel path and immediately schedules teardown for
+ *  linked Yaver-managed resources. */
+http.route({
+  path: "/billing/cancel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const scopeDenied = requireFullScope(session);
+    if (scopeDenied) return scopeDenied;
+
+    const body = await request.json().catch(() => ({}));
+    if (body.confirm !== true && body.confirm !== "cancel") {
+      return errorResponse("confirm=true is required", 400);
+    }
+
+    const sub = await ctx.runQuery(internal.subscriptions.getByUser, {
+      userId: session.userDocId as any,
+    });
+    if (!sub || (sub.status !== "active" && sub.status !== "past_due")) {
+      return errorResponse("No active subscription to cancel", 400);
+    }
+    if (String(sub.userId) !== String(session.userDocId)) {
+      return errorResponse("Not your subscription", 403);
+    }
+
+    const productId = productForSubscriptionPlan(sub.plan);
+    if (productId !== "relay-pro" && productId !== "cloud-workspace") {
+      return errorResponse("Current subscription is not Relay Pro or Cloud Workspace", 400);
+    }
+
+    const [relays, machines] = await Promise.all([
+      ctx.runQuery(internal.managedRelays.listBySubscription, { subscriptionId: sub._id }),
+      ctx.runQuery(internal.cloudMachines.listBySubscription, { subscriptionId: sub._id }),
+    ]);
+
+    await ctx.runMutation(internal.subscriptions.cancelById, {
+      subscriptionId: sub._id,
+    });
+
+    for (const relay of relays) {
+      if (relay.hetznerServerId && relay.domain) {
+        await ctx.scheduler.runAfter(0, internal.provisionRelay.deprovision, {
+          relayId: relay._id,
+          hetznerServerId: relay.hetznerServerId,
+          domain: relay.domain,
+        });
+      }
+    }
+
+    for (const machine of machines) {
+      if (String(machine.userId) !== String(session.userDocId)) continue;
+      const managedDenied = denyNonYaverManagedMachine(machine);
+      if (managedDenied) continue;
+      if (machine.status !== "stopped" && machine.status !== "stopping" && machine.status !== "removed") {
+        await ctx.runMutation(internal.cloudMachines.deprovision, {
+          machineId: machine._id,
+        });
+      }
+    }
+
+    await ctx.scheduler.runAfter(0, internal.plans.revokePlanEntitlements, {
+      userId: session.userDocId as any,
+    });
+
+    return jsonResponse({
+      ok: true,
+      productId,
+      relaysScheduled: relays.length,
+      machinesScheduled: machines.length,
+    });
+  }),
+});
+
+/** POST /billing/yaver-cloud/change-plan — legacy compatibility endpoint.
+ *  There are only two paid products now: Relay Pro and Cloud Workspace. This
+ *  route accepts Cloud Workspace only and normalizes old managed-cloud rows. */
 http.route({
   path: "/billing/yaver-cloud/change-plan",
   method: "POST",
@@ -5022,8 +5897,8 @@ http.route({
       return errorResponse("Bad JSON", 400);
     }
     const targetPlan = body?.plan;
-    if (targetPlan !== "cloud-agent" && targetPlan !== "cloud-workspace") {
-      return errorResponse("plan must be 'cloud-agent' or 'cloud-workspace'", 400);
+    if (targetPlan !== "cloud-workspace") {
+      return errorResponse("plan must be 'cloud-workspace'; Cloud Agent is retired", 400);
     }
     const sub = await ctx.runQuery(internal.subscriptions.getByUser, {
       userId: session.userDocId as any,
@@ -5031,7 +5906,7 @@ http.route({
     if (!sub || sub.status !== "active") {
       return errorResponse("No active managed subscription to change", 400);
     }
-    if (sub.plan !== "cloud-agent" && sub.plan !== "cloud-workspace") {
+    if (sub.plan !== "cloud-agent" && sub.plan !== "cloud-workspace" && !String(sub.plan || "").startsWith("yaver-cloud")) {
       return errorResponse("Current subscription is not a managed Cloud plan", 400);
     }
     if (sub.plan === targetPlan) {
@@ -5214,7 +6089,7 @@ http.route({
     } catch {
       /* defaults below */
     }
-    const machineType = body.machineType === "gpu" ? "gpu" : "cpu";
+    const machineType = normalizeCloudMachineType(body.machineType);
     const region = (body.region ?? "eu").trim() === "us" ? "us" : "eu";
     // Anti-fan-out: cap BYO rows per user the same way managed does.
     const MAX = Number(process.env.YAVER_CLOUD_MAX_MACHINES_PER_USER) || 10;
@@ -5274,7 +6149,7 @@ http.route({
  *  402 if the wallet can't cover the safe reserve for this SKU. The
  *  real Hetzner create is still gated on HCLOUD_TOKEN inside
  *  cloudMachines.provision (fail-closed in prod). Body:
- *  { machineType?: "cpu"|"gpu", region?: "eu"|"us", planId?: "cloud-agent"|"cloud-workspace" }. */
+ *  { machineType?: "standard"|"heavy"|"build"|"cpu"|"gpu", region?: "eu"|"us", planId?: "cloud-agent"|"cloud-workspace" }. */
 http.route({
   path: "/billing/yaver-cloud/provision",
   method: "POST",
@@ -5292,7 +6167,7 @@ http.route({
     } catch {
       // allow empty body — defaults below
     }
-    const machineType = body.machineType === "gpu" ? "gpu" : "cpu";
+    const machineType = normalizeCloudMachineType(body.machineType);
     const region = (body.region ?? "eu").trim() === "us" ? "us" : "eu";
     const planId = normalizeCloudPurchasePlan(body.planId);
 
@@ -5430,10 +6305,23 @@ http.route({
     if (String(machine.userId) !== String(session.userDocId)) {
       return errorResponse("Not your machine", 403);
     }
+    const managedDenied = denyNonYaverManagedMachine(machine);
+    if (managedDenied) return managedDenied;
     // Idempotent: already parked.
     if (machine.status === "paused" || machine.status === "stopped" || machine.status === "stopping") {
       return jsonResponse({ ok: true, machineId, status: machine.status, dryRun: true });
     }
+    const wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+      userId: session.userDocId as any,
+      machineId: machine._id,
+      kind: "park",
+      status: "queued",
+      phase: "queued",
+      progress: 1,
+      machineType: String(machine.machineType || "standard"),
+      targetDeviceId: machine.deviceId ?? managedDeviceIdFor(String(machine._id)),
+      reason: "user requested Cloud Workspace park",
+    });
     // P3: delegate to the real, Hetzner-integrated lifecycle (P2).
     // It is FAIL-CLOSED dry-run when HCLOUD_TOKEN is unset (prod
     // default — no real spend); real snapshot+delete only when an
@@ -5441,7 +6329,16 @@ http.route({
     const r = await ctx.runAction(internal.cloudLifecycle.pauseMachine, {
       machineId: machineId as any,
     });
-    return jsonResponse({ machineId, ...r }, r.ok ? 200 : 409);
+    if (r.ok === false) {
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId: machine._id,
+        kind: "park",
+        status: "failed",
+        phase: "error",
+        error: String(r.reason || "park failed"),
+      }).catch(() => {});
+    }
+    return jsonResponse({ machineId, wakeRunId, ...r }, r.ok ? 200 : 409);
   }),
 });
 
@@ -5470,20 +6367,41 @@ http.route({
     if (String(machine.userId) !== String(session.userDocId)) {
       return errorResponse("Not your machine", 403);
     }
+    const managedDenied = denyNonYaverManagedMachine(machine);
+    if (managedDenied) return managedDenied;
     if (machine.status === "active") {
       return jsonResponse({ ok: true, machineId, status: "active", dryRun: true });
     }
+    const wakeRunId = await ctx.runMutation(internal.wakeRuns.start, {
+      userId: session.userDocId as any,
+      machineId: machine._id,
+      kind: "wake",
+      status: "queued",
+      phase: "queued",
+      progress: 1,
+      machineType: String(machine.machineType || "standard"),
+      targetDeviceId: machine.deviceId ?? managedDeviceIdFor(String(machine._id)),
+      reason: "user requested Cloud Workspace wake",
+    });
     // Keep the explicit 402 balance contract mobile/web depend on.
     const gate = await ctx.runQuery(internal.cloudLifecycle.canStart, {
       userId: session.userDocId as any,
       machineType: String(machine.machineType || "cpu"),
     });
     if (!gate.ok) {
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId: machine._id,
+        kind: "wake",
+        status: "failed",
+        phase: "billing-required",
+        error: "Insufficient prepaid balance",
+      }).catch(() => {});
       return jsonResponse({
         ok: false,
         error: "Insufficient prepaid balance",
         balanceCents: gate.balanceCents,
         requiredCents: gate.requiredCents,
+        wakeRunId,
       }, 402);
     }
     // P3: delegate to the real, Hetzner-integrated lifecycle (P2) —
@@ -5492,13 +6410,22 @@ http.route({
     const r = await ctx.runAction(internal.cloudLifecycle.resumeMachine, {
       machineId: machineId as any,
     });
+    if (r.ok === false) {
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId: machine._id,
+        kind: "wake",
+        status: r.retryable ? "retrying" : "failed",
+        phase: r.retryable ? "provider-retry" : "error",
+        error: String(r.reason || "wake failed"),
+      }).catch(() => {});
+    }
     // NOTE: resumeMachine owns the wake phase ladder now (booting →
     // registering, then resumeHealthCheck → ready once /health answers).
     // We deliberately do NOT pin phase="ready" here — doing so used to
     // paint 100% the instant the server record was created, long before
     // the box was reachable.
     return jsonResponse(
-      { machineId, balanceCents: gate.balanceCents, requiredCents: gate.requiredCents, ...r },
+      { machineId, wakeRunId, balanceCents: gate.balanceCents, requiredCents: gate.requiredCents, ...r },
       r.ok ? 200 : 409,
     );
   }),
@@ -5938,7 +6865,7 @@ http.route({
     const body = await request.json();
     const machineId = await ctx.runMutation(internal.cloudMachines.create, {
       userId: userDocId,
-      machineType: body.machineType || "cpu",
+      machineType: normalizeCloudMachineType(body.machineType),
       teamId: body.teamId,
       region: body.region || "eu",
       repoUrl: body.repoUrl,

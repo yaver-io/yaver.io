@@ -132,6 +132,8 @@ function sshCommandForDevice(device: Pick<Device, "alias" | "id">): string {
   return `yaver ssh ${sshSelectorForDevice(device)}`;
 }
 
+type TerminalLaunchRunner = "claude" | "codex" | "opencode";
+
 function TransportBadge({ device }: { device: Device }) {
   const t = transportFor(device);
   return (
@@ -2891,7 +2893,7 @@ export default function DevicesView({
   // Shell item in each card's "⋯" menu opens the same modal as the
   // home tab, including the reauth-required guidance when the agent's
   // session has expired.
-  const [shellDevice, setShellDevice] = useState<Device | null>(null);
+  const [shellSession, setShellSession] = useState<{ device: Device; launch?: TerminalLaunchRunner } | null>(null);
   const [rescueStatus, setRescueStatus] = useState<Record<string, { msg: string; tone: "info" | "ok" | "err" } | undefined>>({});
   const [showDormantDevices, setShowDormantDevices] = useState(false);
   const actionableDevices = devices.filter((device) => !isDormantUnreachableDevice(device));
@@ -3527,7 +3529,8 @@ export default function DevicesView({
                       }}
                       onRecycle={() => setRecycleFor({ id: device.id, name: device.alias || device.name || device.id })}
                       onRescue={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
-                      onShell={() => setShellDevice(device)}
+                      onShell={() => setShellSession({ device })}
+                      onLaunchRunner={(launch) => setShellSession({ device, launch })}
                       onCodingAgent={() => setCodingAgentModalDeviceId(device.id)}
                       onToggleDetails={() => setExpandedId(expandedId === device.id ? null : device.id)}
                       onLeftShare={() => { void onRefresh(); }}
@@ -3793,16 +3796,17 @@ export default function DevicesView({
           })}
         </div>
       )}
-      {shellDevice ? (
+      {shellSession ? (
         <WebShellModal
-          device={shellDevice}
-          isCurrentDeviceSelected={activeWorkspaceDeviceId === shellDevice.id}
-          isCurrentDeviceConnected={activeWorkspaceDeviceId === shellDevice.id && agentConnectionState === "connected"}
+          device={shellSession.device}
+          launch={shellSession.launch}
+          isCurrentDeviceSelected={activeWorkspaceDeviceId === shellSession.device.id}
+          isCurrentDeviceConnected={activeWorkspaceDeviceId === shellSession.device.id && agentConnectionState === "connected"}
           onConnect={() => {
-            onOpen?.(shellDevice);
+            onOpen?.(shellSession.device);
           }}
-          onOpenRescue={() => setRescueOpenDeviceId(shellDevice.id)}
-          onClose={() => setShellDevice(null)}
+          onOpenRescue={() => setRescueOpenDeviceId(shellSession.device.id)}
+          onClose={() => setShellSession(null)}
         />
       ) : null}
       {authModal && token ? (
@@ -4412,6 +4416,7 @@ function DeviceActionsMenu({
   onRecycle,
   onRescue,
   onShell,
+  onLaunchRunner,
   onCodingAgent,
   onToggleDetails,
   onLeftShare,
@@ -4429,6 +4434,7 @@ function DeviceActionsMenu({
   onRecycle: () => void;
   onRescue: () => void;
   onShell: () => void;
+  onLaunchRunner: (runner: TerminalLaunchRunner) => void;
   onCodingAgent: () => void;
   onToggleDetails: () => void;
   onLeftShare: () => void;
@@ -4493,6 +4499,19 @@ function DeviceActionsMenu({
             role="menu"
             className="absolute right-0 top-full z-40 mt-1 min-w-[228px] overflow-hidden rounded-md border border-slate-200 bg-white py-1 shadow-lg dark:border-surface-700 dark:bg-surface-900"
           >
+            <button className={itemClass} onClick={() => { onLaunchRunner("claude"); setOpen(false); }}>
+              <span>› Claude</span>
+              <span className={hintClass}>tmux · yolo</span>
+            </button>
+            <button className={itemClass} onClick={() => { onLaunchRunner("codex"); setOpen(false); }}>
+              <span>› Codex</span>
+              <span className={hintClass}>tmux · yolo</span>
+            </button>
+            <button className={itemClass} onClick={() => { onLaunchRunner("opencode"); setOpen(false); }}>
+              <span>› OpenCode</span>
+              <span className={hintClass}>tmux · auto</span>
+            </button>
+            <div className="my-1 border-t border-slate-200 dark:border-surface-800" />
             <button className={itemClass} onClick={() => { onToggleDetails(); setOpen(false); }}>
               <span>{detailsOpen ? "Hide details" : "Details"}</span>
               <span className={hintClass}>runtime · network</span>

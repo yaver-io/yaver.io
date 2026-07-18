@@ -2041,6 +2041,161 @@ export default defineSchema({
     .index("by_device", ["deviceId"])
     .index("by_user_slug", ["userId", "slug"]),
 
+  // Coarse project profile for machine placement. Written by agents/mobile when
+  // they can classify a repo/app without uploading source. Privacy contract:
+  // projectSlug is the same basename already allowed in userProjects; counts,
+  // stack labels, and resource classes are bookkeeping only. Never absolute
+  // paths, file contents, prompts, logs, package names, or dependency lists.
+  projectProfiles: defineTable({
+    userId: v.id("users"),
+    projectSlug: v.string(),
+    sourceDeviceId: v.optional(v.string()),
+    stack: v.optional(v.string()),
+    appCount: v.optional(v.number()),
+    repoSizeMb: v.optional(v.number()),
+    fileCount: v.optional(v.number()),
+    hasNativeMobile: v.optional(v.boolean()),
+    hasDocker: v.optional(v.boolean()),
+    resourceClass: v.union(
+      v.literal("phone"),
+      v.literal("relay-source"),
+      v.literal("standard"),
+      v.literal("heavy"),
+      v.literal("build"),
+    ),
+    confidence: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_user_slug", ["userId", "projectSlug"])
+    .index("by_user", ["userId", "updatedAt"]),
+
+  // Durable task-placement decisions. This is the central ledger for "where
+  // should this work run?" across phone sandbox, relay source runner, owned
+  // machines, and managed cloud. It deliberately stores decision metadata only:
+  // no prompt, stdout, repo path, branch diff, generated artifact, or secret.
+  taskPlacements: defineTable({
+    userId: v.id("users"),
+    taskId: v.string(),
+    sourceSurface: v.optional(v.string()), // mobile | web | cli | sdk | autorun
+    projectSlug: v.optional(v.string()),
+    requestedRunner: v.optional(v.string()),
+    kind: v.string(), // vibe | build | deploy | test | source | autorun | unknown
+    lane: v.union(
+      v.literal("phone_sandbox"),
+      v.literal("relay_source"),
+      v.literal("owned_machine"),
+      v.literal("cloud_standard"),
+      v.literal("cloud_heavy"),
+      v.literal("cloud_build"),
+      v.literal("external_deploy"),
+      v.literal("manual"),
+    ),
+    resourceClass: v.union(
+      v.literal("phone"),
+      v.literal("relay-source"),
+      v.literal("standard"),
+      v.literal("heavy"),
+      v.literal("build"),
+    ),
+    targetDeviceId: v.optional(v.string()),
+    cloudMachineId: v.optional(v.id("cloudMachines")),
+    subscriptionPlan: v.optional(v.string()),
+    entitlement: v.optional(v.string()), // free | relay-pro | cloud-workspace | owner-dev
+    status: v.union(
+      v.literal("planned"),
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("superseded"),
+    ),
+    reason: v.string(),
+    wakeRequired: v.boolean(),
+    wakeTargetMs: v.optional(v.number()),
+    estimatedCreditCost: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_created", ["userId", "createdAt"])
+    .index("by_task", ["taskId"])
+    .index("by_project", ["userId", "projectSlug", "createdAt"])
+    .index("by_cloud_machine", ["cloudMachineId", "createdAt"]),
+
+  // Prompt-free durable dispatch intent. This records that a client is holding
+  // a local task body while cloud/owned compute wakes, so another session can
+  // show/coordinate the pending state without Convex storing prompts, repo
+  // paths, command bodies, stdout, generated artifacts, or secrets.
+  taskDispatchIntents: defineTable({
+    userId: v.id("users"),
+    localTaskId: v.string(),
+    placementId: v.optional(v.id("taskPlacements")),
+    taskId: v.optional(v.string()),
+    sourceSurface: v.optional(v.string()),
+    lane: v.optional(v.string()),
+    targetDeviceId: v.optional(v.string()),
+    cloudMachineId: v.optional(v.id("cloudMachines")),
+    requestedRunner: v.optional(v.string()),
+    projectSlug: v.optional(v.string()),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("dispatching"),
+      v.literal("dispatched"),
+      v.literal("blocked"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+      v.literal("expired"),
+    ),
+    reason: v.optional(v.string()),
+    lastError: v.optional(v.string()),
+    attempts: v.number(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_user_created", ["userId", "createdAt"])
+    .index("by_local_task", ["localTaskId"])
+    .index("by_placement", ["placementId"])
+    .index("by_status_expires", ["status", "expiresAt"]),
+
+  // Durable Cloud Workspace wake/provision/park attempts. This is the honest
+  // progress ledger behind "machine is coming up" UX and postmortems. Privacy
+  // contract: stores only control-plane ids, coarse phase/status strings,
+  // timings, profile labels, non-secret provider action/resource ids, dry-run
+  // flags, and short curated error/reason text. No prompts, logs, repo paths,
+  // provider IPs, hostnames, tokens, or file data.
+  wakeRuns: defineTable({
+    userId: v.id("users"),
+    machineId: v.id("cloudMachines"),
+    placementId: v.optional(v.id("taskPlacements")),
+    taskId: v.optional(v.string()),
+    kind: v.union(v.literal("provision"), v.literal("wake"), v.literal("park")),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+      v.literal("retrying"),
+      v.literal("blocked"),
+      v.literal("cancelled"),
+    ),
+    phase: v.optional(v.string()),
+    progress: v.optional(v.number()),
+    resourceClass: v.optional(v.string()),
+    machineType: v.optional(v.string()),
+    targetDeviceId: v.optional(v.string()),
+    reason: v.optional(v.string()),
+    error: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    providerResourceId: v.optional(v.string()),
+    providerActionId: v.optional(v.string()),
+    providerStatus: v.optional(v.string()),
+    dryRun: v.optional(v.boolean()),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_user_started", ["userId", "startedAt"])
+    .index("by_machine_started", ["machineId", "startedAt"])
+    .index("by_placement", ["placementId"])
+    .index("by_status", ["status", "updatedAt"]),
+
   // User-defined one-tap shortcuts (mobile Shortcuts tab). Each shortcut
   // is an ordered chain of deterministic actions — connect to a device,
   // open a project, push a Hermes reload, start a dev server, open/debug a

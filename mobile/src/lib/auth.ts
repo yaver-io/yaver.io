@@ -348,6 +348,27 @@ export function getOAuthUrl(provider: OAuthProvider): string {
   return `${base}/api/auth/oauth/${provider}?client=mobile`;
 }
 
+export async function getAuthConfig(): Promise<{
+  emailPasswordEnabled: boolean;
+  emailPasswordRequiresAllowlist: boolean;
+  passwordMinLength: number;
+  passwordStorage?: string;
+}> {
+  try {
+    const response = await fetch(`${getConvexSiteUrl()}/auth/config`);
+    if (!response.ok) return { emailPasswordEnabled: false, emailPasswordRequiresAllowlist: true, passwordMinLength: 8 };
+    const data = await response.json();
+    return {
+      emailPasswordEnabled: data?.emailPasswordEnabled === true,
+      emailPasswordRequiresAllowlist: data?.emailPasswordRequiresAllowlist !== false,
+      passwordMinLength: Number(data?.passwordMinLength ?? 8),
+      passwordStorage: data?.passwordStorage,
+    };
+  } catch {
+    return { emailPasswordEnabled: false, emailPasswordRequiresAllowlist: true, passwordMinLength: 8 };
+  }
+}
+
 export async function signupWithEmail(
   fullName: string,
   email: string,
@@ -363,6 +384,24 @@ export async function signupWithEmail(
     throw new Error(data.error ?? "Signup failed");
   }
   return response.json();
+}
+
+export async function setAccountPassword(
+  token: string,
+  password: string
+): Promise<void> {
+  const response = await fetch(`${getConvexSiteUrl()}/auth/set-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ password }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? "Set password failed");
+  }
 }
 
 /**

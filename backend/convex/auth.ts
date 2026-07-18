@@ -2068,11 +2068,36 @@ export const changePassword = mutation({
     const result = await validateSessionInternal(ctx, args.tokenHash);
     if (!result) throw new Error("Unauthorized");
 
-    if (result.user.provider !== "email") {
-      throw new Error("Password change is only available for email accounts");
+    if (!result.user.passwordHash) {
+      throw new Error("This account has no email/password credential");
     }
 
     await ctx.db.patch(result.user._id, { passwordHash: args.newPasswordHash });
+    return { ok: true };
+  },
+});
+
+/**
+ * Add the first email/password credential to the authenticated user's existing
+ * account. Used for OAuth-primary users who want a test-friendly password login
+ * on the SAME email/account, not a duplicate user row.
+ */
+export const setOwnPassword = mutation({
+  args: {
+    tokenHash: v.string(),
+    passwordHash: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) throw new Error("Unauthorized");
+    const email = result.user.email?.trim().toLowerCase();
+    if (!email) throw new Error("This account has no email address");
+    if (result.user.passwordHash) {
+      throw new Error("This account already has an email/password credential");
+    }
+
+    await ctx.db.patch(result.user._id, { passwordHash: args.passwordHash });
+    await ensureAuthIdentity(ctx, result.user._id, "email", email, email);
     return { ok: true };
   },
 });
@@ -2142,6 +2167,27 @@ export const createPasswordReset = mutation({
     });
 
     return { ok: true, sent: true, userId: user._id, fullName: user.fullName };
+  },
+});
+
+/**
+ * Read the target email for a password reset token before the HTTP action
+ * accepts a new password. This lets deployment-level email/password gates
+ * apply to reset-token consumption as well as token creation.
+ */
+export const lookupPasswordResetTarget = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, args) => {
+    const reset = await ctx.db
+      .query("passwordResets")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+    if (!reset) return null;
+    return {
+      email: reset.email,
+      usedAt: reset.usedAt,
+      expiresAt: reset.expiresAt,
+    };
   },
 });
 
