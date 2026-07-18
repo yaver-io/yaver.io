@@ -46,11 +46,13 @@ Environment:
                       "release-testing"; Xcode 17 rejects app-store-connect
                       for standalone watchOS archives.
   WATCHOS_EXPORT_DESTINATION
-                      Export destination. Defaults to "export"; standalone
-                      watchOS archives are uploaded with altool after export.
+                      Export destination. Defaults to "export".
 
 Options:
-  --upload            Export and upload the archive to App Store Connect.
+  --upload            Archive and export a signed build. Does NOT upload:
+                      YaverWatch is a companion with no App Store record of
+                      its own and ships inside the iPhone build. Use
+                      scripts/deploy-testflight.sh to get it to users.
 EOF
 }
 
@@ -189,18 +191,26 @@ if [ -z "$IPA_PATH" ]; then
   exit 1
 fi
 
-ALTOOL_OUTPUT="$(mktemp /tmp/YaverWatchAltool.XXXXXX.log)"
-if ! xcrun altool --upload-app \
-  -f "$IPA_PATH" \
-  --api-key "$AUTH_KEY_ID" \
-  --api-issuer "$AUTH_KEY_ISSUER" \
-  --p8-file-path "$AUTH_KEY" \
-  --show-progress 2>&1 | tee "$ALTOOL_OUTPUT"; then
-  exit 1
-fi
-if grep -q " ERROR: " "$ALTOOL_OUTPUT"; then
-  echo "ERROR: altool reported a watchOS upload error; see $ALTOOL_OUTPUT" >&2
-  exit 1
-fi
+# There is no watch-only channel for this app, so there is nothing for altool
+# to upload to. YaverWatch is a COMPANION: scripts/add-watch-ios-target.js
+# embeds it in the iPhone app and it ships inside the TestFlight build at
+# Yaver.app/Watch/Yaver.app (bundle io.yaver.mobile.watch, nested under
+# io.yaver.mobile). See watch/README.md.
+#
+# altool only accepts {macos | ios | appletvos | visionos} — there is no
+# "watchos" — which is the tool telling us the same thing. Forcing
+# --platform ios here would push a companion binary as a standalone app.
+#
+# This used to archive for ~5 minutes and then die on "Cannot determine the
+# platform", which reads like a flag that needs fixing rather than a channel
+# that does not exist. Say so before the archive instead.
+cat >&2 <<EOF
+watchOS build + export succeeded: $IPA_PATH
 
-echo "watchOS upload submitted from $IPA_PATH"
+NOT uploading: the watch app has no App Store record of its own. It reaches
+users embedded in the iPhone build — run scripts/deploy-testflight.sh, which
+invokes add-watch-ios-target.js and archives the companion inside Yaver.app.
+
+Verify a TestFlight build carried it with:
+  ls /tmp/Yaver.xcarchive/Products/Applications/Yaver.app/Watch/
+EOF
