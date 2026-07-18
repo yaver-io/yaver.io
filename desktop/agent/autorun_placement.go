@@ -296,6 +296,35 @@ type shipPlacementCheck struct {
 	Blocking bool `json:"blocking"`
 }
 
+// shipPlacementSummary renders one line for the ship phase log: how many steps
+// run on a machine here, how many route to CI, and which.
+//
+// The CI count is the part worth surfacing. "ship succeeded" while two targets
+// were actually handed to GitHub Actions is true but misleading — the user has
+// not deployed those yet, a workflow has, and it can still fail after ship
+// returns green.
+func shipPlacementSummary(checks []shipPlacementCheck) string {
+	if len(checks) == 0 {
+		return "no steps to place"
+	}
+	var here, ci []string
+	for _, c := range checks {
+		if c.Route == routeCI {
+			ci = append(ci, c.Step)
+			continue
+		}
+		here = append(here, c.Step)
+	}
+	switch {
+	case len(ci) == 0:
+		return fmt.Sprintf("%d step(s) run on this fleet", len(here))
+	case len(here) == 0:
+		return fmt.Sprintf("all %d step(s) route to CI: %s", len(ci), strings.Join(ci, ", "))
+	default:
+		return fmt.Sprintf("%d on this fleet, %d via CI (%s)", len(here), len(ci), strings.Join(ci, ", "))
+	}
+}
+
 // checkShipPlacement answers "can each of these steps actually run, and where?"
 // BEFORE the barrier spends a deploy on finding out.
 //

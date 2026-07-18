@@ -74,12 +74,16 @@ type shipResult struct {
 	// a moving main, which is exactly what makes a toparla timeout safe: a runner
 	// landing work mid-deploy is not a race, its commit simply is not in this
 	// build and ships on the next one.
-	PinnedSHA string            `json:"pinnedSha,omitempty"`
-	Plan      shipTargetPlan    `json:"plan"`
-	Deploy    DeployAllResult   `json:"deploy"`
-	Toparla   shipPromptResult  `json:"toparla"`
-	Devam     shipPromptResult  `json:"devam"`
-	Drain     autorunDrainState `json:"drain"`
+	PinnedSHA string         `json:"pinnedSha,omitempty"`
+	Plan      shipTargetPlan `json:"plan"`
+	// Placement records where each detected step can run, and why. Kept on the
+	// result even when nothing blocks, so a ship that routed a step to CI says
+	// so rather than leaving the user to infer it from a silent success.
+	Placement []shipPlacementCheck `json:"placement,omitempty"`
+	Deploy    DeployAllResult      `json:"deploy"`
+	Toparla   shipPromptResult     `json:"toparla"`
+	Devam     shipPromptResult     `json:"devam"`
+	Drain     autorunDrainState    `json:"drain"`
 	// Frozen/Thawed track fan-out per machine so a partial freeze is never
 	// mistaken for a whole one.
 	Frozen []shipMachineState `json:"frozen"`
@@ -229,6 +233,50 @@ func runShip(ctx context.Context, s *HTTPServer, opts shipOptions) shipResult {
 		return res
 	}
 	res.phase("detect", "ok", strings.Join(plan.Targets, ", "), t)
+
+	// Phase 6.5 — placement. Ask whether each detected step CAN run, and where,
+	// before spending the deploy on finding out.
+	//
+	// checkShipPlacement was written for exactly this and then shipped with no
+	// call site, so every capability and quota check it performs has been dead
+	// since it landed. The failure it exists to prevent is expensive and
+	// asymmetric: freeze the whole fleet, drain it, pin a SHA, then die at an
+	// App Store upload because the day's quota was already spent — having held
+	// every autorun still for the duration, and, because TestFlight has no
+	// rollback, with a retry that spends tomorrow's slot on the same mistake.
+	//
+	// Blocking is deliberately narrow. A CI route is NOT a failure, it is a
+	// routing decision (web and npm deploy from CI because their tokens are
+	// GitHub secrets); treating it as one would send someone to debug a healthy
+	// fleet. Only "nothing can run this" and "quota spent" stop the barrier.
+	//
+	// quotaExhausted is nil because NO quota tracking exists in the agent today
+	// — grep found no producer. Passing nil rather than inventing one keeps the
+	// capability half honest (it works now) and leaves the quota half wired but
+	// inert until something real feeds it. A fabricated "not exhausted" would be
+	// worse than nil: it would read as a check that passed.
+	t = time.Now()
+	placementChecks := checkShipPlacement(plan.Targets, listAllMachines(ctx), nil)
+	res.Placement = placementChecks
+	var blocked []string
+	for _, c := range placementChecks {
+		if c.Blocking {
+			blocked = append(blocked, fmt.Sprintf("%s: %s", c.Step, c.Reason))
+		}
+	}
+	if len(blocked) > 0 {
+		detail := strings.Join(blocked, "; ")
+		res.phase("placement", "failed", detail, t)
+		res.Error = "placement: " + detail
+		// Thaw before returning — the fleet is frozen at this point and a
+		// blocked placement is a decision, not a crash. Leaving loops parked
+		// because we declined to deploy would be a worse outcome than the
+		// deploy we skipped.
+		res.Thawed = shipThawAll(context.WithoutCancel(ctx), s, opts, frozen)
+		shipNotify(s, "ship aborted before deploying — "+detail)
+		return res
+	}
+	res.phase("placement", "ok", shipPlacementSummary(placementChecks), t)
 
 	// Phase 7 — deploy, once, coalesced. This is the whole point of the barrier.
 	t = time.Now()
