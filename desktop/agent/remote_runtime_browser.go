@@ -31,6 +31,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,12 +79,33 @@ func (p *browserWindowPool) open(ctx context.Context, width, height int) (*brows
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
 	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
 
-	bootCtx, bootCancel := context.WithTimeout(ctx, 25*time.Second)
+	// Boot off browserCtx, NOT the request ctx.
+	//
+	// chromedp.Run only accepts a context created by chromedp.NewContext; give
+	// it anything else and it returns ErrInvalidContext without ever launching
+	// a browser. This previously derived from `ctx` (the inbound request), so
+	// every browser-window session failed with:
+	//
+	//   launch headless chromium: invalid context (install Chrome or Chromium)
+	//
+	// — on a machine with Chrome installed at the standard macOS path. The
+	// "install Chrome" hint sent you looking for a missing dependency that was
+	// never missing.
+	//
+	// The request deadline still applies: browserCtx descends from allocCtx,
+	// and the caller's cancellation is honoured via the timeout below plus the
+	// pool's own lifecycle.
+	bootCtx, bootCancel := context.WithTimeout(browserCtx, 25*time.Second)
 	defer bootCancel()
 	if err := chromedp.Run(bootCtx); err != nil {
 		browserCancel()
 		allocCancel()
-		return nil, fmt.Errorf("launch headless chromium: %w (install Chrome or Chromium)", err)
+		// Only claim the browser is missing when it actually is — otherwise
+		// report what failed. Misattributing this cost real debugging time.
+		if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "executable file not found") {
+			return nil, fmt.Errorf("launch headless chromium: %w (install Chrome or Chromium)", err)
+		}
+		return nil, fmt.Errorf("launch headless chromium: %w", err)
 	}
 
 	now := time.Now()
