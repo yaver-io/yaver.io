@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   creepPercent,
+  describeRest,
   deriveServerPhase,
+  expectedWakeMs,
+  formatDuration,
   isDeviceAsleep,
   isPhaseInFlight,
   isPhaseSettled,
@@ -182,4 +185,60 @@ test("the genuine relay-connection phases are untouched", () => {
   assert.equal(phase("active", "starting-agent", false), "registering");
   // A box that IS reachable is still ready/online regardless.
   assert.equal(phase("active", "ready", true), "ready");
+});
+
+// --- wake-only phase slugs map onto the Restoring rung -----------------------
+// Mirrored in web/lib/wakeProgress.test.ts — the slugs come from the control
+// plane (backend/convex/cloudMachines.ts PROVISION_PHASES), so a new one needs
+// a home in BOTH mappers or it silently falls through to the default.
+test("wake-only slugs sit on Restoring, not Booting", () => {
+  // These all run BEFORE any server is booting; the default rung would have
+  // claimed "Booting the machine…" for a machine that does not exist yet.
+  assert.equal(phase("resuming", "checking-snapshot", false), "resuming");
+  assert.equal(phase("resuming", "preparing-volume", false), "resuming");
+  assert.equal(phase("resuming", "restoring-snapshot", false), "resuming");
+});
+
+// --- a measured wake beats the built-in constants ---------------------------
+test("expectedWakeMs prefers this box's own measurement", () => {
+  assert.equal(expectedWakeMs({ lastWakeDurationMs: 120_000 }), 120_000);
+  // A volume-backed box has no fat disk to restore, so the snapshot-era
+  // default would overstate its wake by minutes.
+  assert.ok(expectedWakeMs({ hasVolume: true }) < expectedWakeMs({}));
+  // One freak run must not poison every future wake.
+  assert.equal(expectedWakeMs({ lastWakeDurationMs: 900 }), expectedWakeMs({}));
+  assert.equal(expectedWakeMs({ lastWakeDurationMs: 3 * 3600_000 }), expectedWakeMs({}));
+});
+
+test("phase estimates scale to the box's measured pace", () => {
+  const base = phaseTypicalMs("booting", "cloud") ?? 0;
+  assert.ok((phaseTypicalMs("booting", "cloud", 0.25) ?? 0) < base);
+  assert.ok((phaseTypicalMs("booting", "cloud", 2) ?? 0) > base);
+  // A fast box must stop claiming a stall on the SLOW box's schedule.
+  assert.equal(isPhaseStalled("booting", 200_000, "cloud", 1), false);
+  assert.equal(isPhaseStalled("booting", 200_000, "cloud", 0.2), true);
+});
+
+// --- a parked box explains its last wake ------------------------------------
+test("describeRest reports the last wake outcome", () => {
+  const now = 9_000_000;
+  assert.equal(describeRest({ snapshotSizeGb: 42 }, now).warning, null);
+  assert.ok(describeRest({ snapshotSizeGb: 42 }, now).storage?.includes("42 GB"));
+
+  const blocked = describeRest({ lastWakeOutcome: "needs-auth" }, now);
+  assert.ok(blocked.warning && blocked.warning.includes("signed in"));
+
+  const abandoned = describeRest({ lastWakeOutcome: "abandoned" }, now);
+  assert.ok(abandoned.warning && abandoned.warning !== blocked.warning);
+
+  // Volume-backed: nothing was snapshotted, so never claim a snapshot.
+  const vol = describeRest({ hasVolume: true, snapshotSizeGb: 0 }, now);
+  assert.ok(vol.storage?.includes("volume"));
+  assert.ok(!vol.storage?.includes("Snapshot"));
+});
+
+test("formatDuration reads naturally at both scales", () => {
+  assert.equal(formatDuration(45_000), "45s");
+  assert.equal(formatDuration(240_000), "4 min");
+  assert.equal(formatDuration(0), "0s");
 });

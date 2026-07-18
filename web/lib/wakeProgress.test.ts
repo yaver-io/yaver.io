@@ -18,7 +18,10 @@ import {
   computeWakeView,
   creepPercent,
   deriveServerPhase,
+  describeRest,
+  expectedWakeMs,
   formatClock,
+  formatDuration,
   isPhaseInFlight,
   isPhaseSettled,
   providerLine,
@@ -182,7 +185,93 @@ eq(creepPercent("ready", 60_000, WAKE_STEPS), 0, "terminal phases do not creep")
   );
 }
 
+// --- measured ETA beats the constants -------------------------------------
+{
+  // A volume-backed box genuinely wakes in ~1-2 min. Promising it the
+  // snapshot-era default (~11 min) was wrong for every box but the one the
+  // constants were measured on.
+  const fast = expectedWakeMs({ hasVolume: true });
+  const dflt = expectedWakeMs({});
+  ok(fast < dflt, "volume-backed box gets a shorter default than a snapshot box");
+
+  eq(expectedWakeMs({ lastWakeDurationMs: 120_000 }), 120_000, "measured duration wins");
+  // Implausible measurements must not poison future wakes.
+  eq(expectedWakeMs({ lastWakeDurationMs: 900 }), dflt, "a 0.9s 'wake' is ignored");
+  eq(expectedWakeMs({ lastWakeDurationMs: 3 * 3600_000 }), dflt, "a 3h 'wake' is ignored");
+}
+
+{
+  // The bar's pace follows the measurement, so a fast box isn't told
+  // "~8 min left in this step".
+  const now = 5_000_000;
+  const fast = computeWakeView(
+    { status: "resuming", provisionPhase: "booting", provisionPhaseAt: now - 10_000, lastWakeDurationMs: 90_000 },
+    false, now,
+  );
+  const slow = computeWakeView(
+    { status: "resuming", provisionPhase: "booting", provisionPhaseAt: now - 10_000, lastWakeDurationMs: 900_000 },
+    false, now,
+  );
+  ok(fast.scale < slow.scale, "a faster box gets a smaller scale");
+  ok(fast.percent > slow.percent, "a faster box's bar is further along at the same elapsed time");
+}
+
+// --- a parked box explains its last wake ----------------------------------
+{
+  const now = 9_000_000;
+  const peaceful = describeRest({ status: "paused", snapshotSizeGb: 42, snapshotCreatedAt: now - 3600_000 }, now);
+  eq(peaceful.warning, null, "a clean park carries no warning");
+  ok(peaceful.storage?.includes("42 GB") === true, "snapshot size is stated");
+
+  const blocked = describeRest({ status: "paused", lastWakeOutcome: "needs-auth" }, now);
+  ok(blocked.warning !== null, "a needs-auth park explains itself");
+  ok(blocked.warning!.includes("signed in"), "and says what to do about it");
+
+  const abandoned = describeRest({ status: "paused", lastWakeOutcome: "abandoned" }, now);
+  ok(abandoned.warning !== null, "an abandoned wake explains itself");
+  ok(abandoned.warning !== blocked.warning, "the two failure modes read differently");
+
+  // Volume-backed: nothing was snapshotted, so don't claim a snapshot.
+  const vol = describeRest({ status: "paused", hasVolume: true, snapshotSizeGb: 0 }, now);
+  ok(vol.storage?.includes("volume") === true, "volume-backed says volume, not snapshot");
+  ok(vol.storage?.includes("Snapshot") !== true, "and never claims a snapshot it doesn't have");
+}
+
+// --- optimistic wake feedback ---------------------------------------------
+{
+  const now = 7_000_000;
+  const parked = { status: "paused" };
+  eq(computeWakeView(parked, false, now).phase, "asleep", "parked with no request is asleep");
+  eq(
+    computeWakeView(parked, false, now, { kind: "wake", at: now - 1_000 }).phase,
+    "requested",
+    "a just-pressed Wake shows immediately, before the server catches up",
+  );
+  // A request the control plane never accepted must not creep forever.
+  eq(
+    computeWakeView(parked, false, now, { kind: "wake", at: now - 120_000 }).phase,
+    "asleep",
+    "a stale optimistic request falls back to the truth",
+  );
+  // Once the server HAS moved, the real phase wins over the optimistic one.
+  eq(
+    computeWakeView(
+      { status: "resuming", provisionPhase: "booting" }, false, now, { kind: "wake", at: now - 1_000 },
+    ).phase,
+    "booting",
+    "server truth outranks the optimistic rung",
+  );
+  // The optimistic clock times from the click, not a stale phase stamp.
+  const v = computeWakeView(
+    { status: "paused", provisionPhaseAt: now - 999_000 }, false, now, { kind: "wake", at: now - 3_000 },
+  );
+  eq(v.elapsedInPhaseMs, 3_000, "optimistic elapsed times from the click");
+}
+
 // --- misc -----------------------------------------------------------------
+eq(formatDuration(45_000), "45s", "sub-90s durations read in seconds");
+eq(formatDuration(240_000), "4 min", "longer durations read in minutes");
+eq(formatDuration(0), "0s", "zero duration");
 eq(formatClock(0), "0:00", "clock at zero");
 eq(formatClock(65_000), "1:05", "clock pads seconds");
 eq(formatClock(-5), "0:00", "clock never goes negative");

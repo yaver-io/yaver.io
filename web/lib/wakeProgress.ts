@@ -90,6 +90,17 @@ export const PHASE_TYPICAL_MS: Partial<Record<LifecyclePhase, number>> = {
   "powering-down": 60_000,
 };
 
+/**
+ * Typical duration for a phase, scaled to this box's measured pace. A
+ * volume-backed box that genuinely wakes in ~2 min must not be told "~8 min
+ * left in this step" from a constant measured on a 160 GB snapshot restore.
+ */
+export function phaseTypicalMs(phase: LifecyclePhase, scale = 1): number | undefined {
+  const base = PHASE_TYPICAL_MS[phase];
+  if (!base) return undefined;
+  return base * (scale > 0 ? scale : 1);
+}
+
 /** Ordered rungs for the wake stepper (excludes the resting end). */
 export const WAKE_STEPS: LifecyclePhase[] = ["resuming", "booting", "registering", "online", "ready"];
 /** Ordered rungs for the park stepper. */
@@ -112,8 +123,14 @@ export function isPhaseSettled(p: LifecyclePhase): boolean {
  * creepPercent — extra progress to add INSIDE the current phase, so the bar
  * keeps inching toward (but never reaches) the next rung while we wait.
  */
-export function creepPercent(phase: LifecyclePhase, elapsedMs: number, steps: LifecyclePhase[]): number {
-  const typical = PHASE_TYPICAL_MS[phase];
+export function creepPercent(
+  phase: LifecyclePhase,
+  elapsedMs: number,
+  steps: LifecyclePhase[],
+  /** Scales the built-in estimates to this box's measured pace (see computeWakeView). */
+  scale = 1,
+): number {
+  const typical = phaseTypicalMs(phase, scale);
   if (!typical || !isPhaseInFlight(phase)) return 0;
   const idx = steps.indexOf(phase);
   const here = PHASE_META[phase].percent;
@@ -126,8 +143,8 @@ export function creepPercent(phase: LifecyclePhase, elapsedMs: number, steps: Li
 }
 
 /** True when a phase has run well past its typical duration. */
-export function isPhaseStalled(phase: LifecyclePhase, elapsedMs: number): boolean {
-  const typical = PHASE_TYPICAL_MS[phase];
+export function isPhaseStalled(phase: LifecyclePhase, elapsedMs: number, scale = 1): boolean {
+  const typical = phaseTypicalMs(phase, scale);
   if (!typical || !isPhaseInFlight(phase)) return false;
   return elapsedMs > typical * 2;
 }
@@ -136,8 +153,8 @@ export function isPhaseStalled(phase: LifecyclePhase, elapsedMs: number): boolea
  * stallHint — an HONEST explanation when a phase overruns. These are the
  * sentences the user needed while the bar sat silently at 85%.
  */
-export function stallHint(phase: LifecyclePhase, elapsedMs: number): string | null {
-  if (!isPhaseStalled(phase, elapsedMs)) return null;
+export function stallHint(phase: LifecyclePhase, elapsedMs: number, scale = 1): string | null {
+  if (!isPhaseStalled(phase, elapsedMs, scale)) return null;
   switch (phase) {
     case "resuming":
       return "Still recreating the server from your snapshot. Large disks take a few minutes.";
@@ -167,6 +184,101 @@ export interface WakeMachineLike {
   /** Provider's own word for the server state ("initializing", "running"). */
   providerStatus?: string | null;
   providerStatusAt?: number | null;
+  /** How long this box's LAST successful wake actually took. */
+  lastWakeDurationMs?: number | null;
+  /** "ready" | "needs-auth" | "abandoned" | "error" — how the last wake ended. */
+  lastWakeOutcome?: string | null;
+  lastParkedAt?: number | null;
+  /** Stored snapshot size in GB. 0 means "volume-backed, no snapshot". */
+  snapshotSizeGb?: number | null;
+  snapshotCreatedAt?: number | null;
+  /** Volume-backed boxes wake in ~1-2 min instead of restoring a fat disk. */
+  hasVolume?: boolean | null;
+}
+
+/** Sum of the default per-phase estimates — the fallback total for a box we've never timed. */
+const DEFAULT_WAKE_TOTAL_MS =
+  (PHASE_TYPICAL_MS.resuming ?? 0) +
+  (PHASE_TYPICAL_MS.booting ?? 0) +
+  (PHASE_TYPICAL_MS.registering ?? 0) +
+  (PHASE_TYPICAL_MS.online ?? 0);
+
+/**
+ * expectedWakeMs — how long THIS box's wake should take.
+ *
+ * Prefers the measured duration of its last successful wake over the built-in
+ * constants, which were measured on one cx43 with a 160 GB disk and are wrong
+ * for every box that isn't that one — a volume-backed box wakes in ~1-2 min
+ * and was being promised eight.
+ *
+ * Ignores implausible measurements (under 20s, over 30 min): a wake that raced
+ * its health check, or one that sat in a retry loop, would otherwise poison the
+ * estimate for every future wake.
+ */
+export function expectedWakeMs(machine: WakeMachineLike | null | undefined): number {
+  const measured = machine?.lastWakeDurationMs;
+  if (typeof measured === "number" && measured >= 20_000 && measured <= 1_800_000) {
+    return measured;
+  }
+  // No usable history. A volume-backed box has no fat disk to restore, so the
+  // snapshot-era default would overstate its wake by minutes.
+  if (machine?.hasVolume) return 150_000;
+  return DEFAULT_WAKE_TOTAL_MS;
+}
+
+/** Human "~4 min" / "~45s" for a duration. */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return "0s";
+  if (ms < 90_000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.max(1, Math.round(ms / 60_000))} min`;
+}
+
+export interface RestSummary {
+  /** What is being kept while parked. */
+  storage: string | null;
+  /** Why the last wake didn't stick, when it didn't. */
+  warning: string | null;
+  /** How long a wake should take from here. */
+  eta: string;
+}
+
+/**
+ * describeRest — what a PARKED box should say about itself.
+ *
+ * A parked box rendered as "⏸ Paused · snapshot kept" regardless of history, so
+ * one that woke, sat signed-out for ten minutes and re-parked itself looked
+ * exactly like one that had slept peacefully all week. Since the user had just
+ * watched that wake apparently do nothing, this is precisely where the answer
+ * needed to be.
+ */
+export function describeRest(machine: WakeMachineLike | null | undefined, now: number): RestSummary {
+  const sizeGb = machine?.snapshotSizeGb;
+  const hasVolume = !!machine?.hasVolume;
+  let storage: string | null = null;
+  if (hasVolume) {
+    storage = "Data kept on its volume — nothing to restore, so it wakes fast.";
+  } else if (typeof sizeGb === "number" && sizeGb > 0) {
+    const at = machine?.snapshotCreatedAt ?? machine?.lastParkedAt ?? null;
+    const age = at ? ` taken ${formatDuration(Math.max(0, now - at))} ago` : "";
+    storage = `Snapshot kept — ${sizeGb} GB${age}.`;
+  }
+
+  let warning: string | null = null;
+  switch (String(machine?.lastWakeOutcome ?? "")) {
+    case "needs-auth":
+      warning =
+        "Its last wake got the box running but stopped there — the Yaver session had expired, so it parked again. Waking now will hit the same wall until it's signed in from your phone.";
+      break;
+    case "abandoned":
+      warning =
+        "Its last wake never became reachable and it parked again to stop the meter. Worth another try.";
+      break;
+    case "error":
+      warning = "Its last wake failed outright.";
+      break;
+  }
+
+  return { storage, warning, eta: formatDuration(expectedWakeMs(machine)) };
 }
 
 /** Provider vocabulary → a sentence, so we never print a raw API enum. */
@@ -273,6 +385,8 @@ export interface WakeView {
   percent: number;
   /** Rungs to render for this direction. */
   steps: LifecyclePhase[];
+  /** This box's pace vs the built-in estimates (1 = as expected). */
+  scale: number;
   /** ms since the CURRENT phase began. */
   elapsedInPhaseMs: number;
   /** ms since the wake was requested, or null when unknown. */
@@ -294,8 +408,26 @@ export function computeWakeView(
   machine: WakeMachineLike | null | undefined,
   deviceReachable: boolean,
   now: number,
+  /**
+   * A wake/park the user just asked for, before the control plane has caught
+   * up. Pressing Wake used to produce nothing at all until the next poll — up
+   * to ten seconds of a card that looked like it had ignored the click.
+   */
+  optimistic?: { kind: "wake" | "park"; at: number } | null,
 ): WakeView {
-  const phase = deriveServerPhase(machine, deviceReachable);
+  let phase = deriveServerPhase(machine, deviceReachable);
+
+  // Show the optimistic rung only while the server genuinely hasn't moved yet,
+  // and only briefly: if the request failed, the row will never leave `asleep`,
+  // and a bar that keeps creeping on a dead request is the exact lie this
+  // module exists to prevent. After the grace window we fall back to the truth.
+  const OPTIMISTIC_GRACE_MS = 45_000;
+  if (optimistic && now - optimistic.at < OPTIMISTIC_GRACE_MS) {
+    if (optimistic.kind === "wake" && phase === "asleep") phase = "requested";
+    else if (optimistic.kind === "park" && (phase === "ready" || phase === "online")) {
+      phase = "snapshotting";
+    }
+  }
   const meta = PHASE_META[phase];
   const steps = meta.kind === "park" ? PARK_STEPS : WAKE_STEPS;
 
@@ -304,20 +436,31 @@ export function computeWakeView(
   // wake and would suppress every stall hint until the run was long dead.
   const phaseAt = typeof machine?.provisionPhaseAt === "number" ? machine.provisionPhaseAt : null;
   const wokeAt = typeof machine?.lastWokeAt === "number" ? machine.lastWokeAt : null;
-  const elapsedInPhaseMs = Math.max(0, now - (phaseAt ?? wokeAt ?? now));
+  // An optimistic rung is timed from the click, not from a phase stamp that
+  // belongs to the previous run.
+  const optimisticActive = phase === "requested" || (optimistic?.kind === "park" && phase === "snapshotting" && !phaseAt);
+  const elapsedInPhaseMs = optimisticActive && optimistic
+    ? Math.max(0, now - optimistic.at)
+    : Math.max(0, now - (phaseAt ?? wokeAt ?? now));
   const elapsedTotalMs = wokeAt !== null ? Math.max(0, now - wokeAt) : null;
 
-  const percent = Math.min(100, meta.percent + creepPercent(phase, elapsedInPhaseMs, steps));
+  // How this box's pace compares to the built-in estimates. Clamped so one
+  // freak measurement (a wake that raced the health check, or one that sat in
+  // a retry loop) can't make the bar crawl or sprint on every future wake.
+  const scale = Math.min(3, Math.max(0.2, expectedWakeMs(machine) / DEFAULT_WAKE_TOTAL_MS));
+
+  const percent = Math.min(100, meta.percent + creepPercent(phase, elapsedInPhaseMs, steps, scale));
 
   return {
     phase,
     meta,
     percent,
     steps,
+    scale,
     elapsedInPhaseMs,
     elapsedTotalMs,
     direction: meta.kind === "terminal" ? null : meta.kind,
-    stallHint: stallHint(phase, elapsedInPhaseMs),
+    stallHint: stallHint(phase, elapsedInPhaseMs, scale),
     error: machine?.errorMessage?.trim() ? machine.errorMessage.trim() : null,
     provider: providerLine(machine, phase, now),
   };
@@ -332,10 +475,10 @@ export function formatClock(ms: number): string {
 }
 
 /** "~N min" remaining in this phase, or null when it's nearly done / unknown. */
-export function etaLabel(phase: LifecyclePhase, elapsedMs: number): string | null {
-  const typical = PHASE_TYPICAL_MS[phase];
+export function etaLabel(phase: LifecyclePhase, elapsedMs: number, scale = 1): string | null {
+  const typical = phaseTypicalMs(phase, scale);
   if (!typical) return null;
   const remaining = Math.max(0, typical - elapsedMs);
   if (remaining <= 15_000) return null;
-  return `~${Math.max(1, Math.round(remaining / 60_000))} min`;
+  return `~${formatDuration(remaining)}`;
 }

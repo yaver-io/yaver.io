@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   PHASE_META,
   computeWakeView,
+  describeRest,
   etaLabel,
   formatClock,
   isPhaseSettled,
@@ -29,6 +30,37 @@ import {
 
 const NETWORK_PHASES: LifecyclePhase[] = ["registering", "online", "ready"];
 
+/**
+ * ParkedSummary — what a box at rest should say about itself.
+ *
+ * A parked box rendered as "⏸ Paused · snapshot kept" regardless of history,
+ * so one that woke, sat signed-out for ten minutes and re-parked itself looked
+ * exactly like one that had slept peacefully all week. Since the user had just
+ * watched that wake apparently do nothing, this is precisely where the answer
+ * needed to be.
+ *
+ * Also quotes the wake time measured on THIS box rather than a constant, and
+ * says what is actually being kept (snapshot size, or a volume).
+ */
+export function ParkedSummary({ machine }: { machine: WakeMachineLike | null | undefined }) {
+  const rest = describeRest(machine, Date.now());
+  if (!rest.storage && !rest.warning) {
+    return (
+      <p className="mt-1 text-[11px] text-surface-500">Wakes in about {rest.eta}.</p>
+    );
+  }
+  return (
+    <div className="mt-1.5 space-y-1">
+      {rest.warning ? (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">{rest.warning}</p>
+      ) : null}
+      <p className="text-[11px] text-surface-500">
+        {rest.storage ? `${rest.storage} ` : ""}Wakes in about {rest.eta}.
+      </p>
+    </div>
+  );
+}
+
 export interface WakeProgressProps {
   machine: WakeMachineLike | null | undefined;
   /** Live reachability (relay presence) — flips later than status=active. */
@@ -37,6 +69,8 @@ export interface WakeProgressProps {
   compact?: boolean;
   /** Rendered under a `needs-auth` state, where waiting cannot help. */
   onSignIn?: () => void;
+  /** A wake/park the user just requested, before the control plane catches up. */
+  optimistic?: { kind: "wake" | "park"; at: number } | null;
 }
 
 export default function WakeProgress({
@@ -44,12 +78,13 @@ export default function WakeProgress({
   deviceReachable,
   compact,
   onSignIn,
+  optimistic,
 }: WakeProgressProps) {
   // A local clock, not a data fetch: the elapsed timer and the in-phase creep
   // both have to advance between the 10s /subscription polls, or the bar would
   // visibly jump once every ten seconds and sit frozen in between.
   const [now, setNow] = useState(() => Date.now());
-  const view = computeWakeView(machine, deviceReachable, now);
+  const view = computeWakeView(machine, deviceReachable, now, optimistic);
   const settled = isPhaseSettled(view.phase);
 
   useEffect(() => {
@@ -118,7 +153,7 @@ export default function WakeProgress({
       : NETWORK_PHASES.includes(view.phase)
         ? "bg-emerald-500"
         : "bg-sky-500";
-  const eta = etaLabel(view.phase, view.elapsedInPhaseMs);
+  const eta = etaLabel(view.phase, view.elapsedInPhaseMs, view.scale);
 
   return (
     <div className="mt-2">

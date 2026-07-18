@@ -8,7 +8,7 @@ import { DeviceStorageFold } from "./DeviceStorageFold";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
-import WakeProgress from "@/components/dashboard/WakeProgress";
+import WakeProgress, { ParkedSummary } from "@/components/dashboard/WakeProgress";
 import { HIDE_PAID_UI } from "@/lib/launchFlags";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, requestAgentUpdateViaConvex, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
@@ -2492,6 +2492,14 @@ export interface ManagedMachineSummary {
   /** Provider's own word for the server state during a wake. */
   providerStatus: string | null;
   providerStatusAt: number | null;
+  /** Measured on THIS box — drives a real ETA instead of a constant. */
+  lastWakeDurationMs: number | null;
+  /** How the last wake ended, so a parked box can explain itself. */
+  lastWakeOutcome: string | null;
+  lastParkedAt: number | null;
+  snapshotSizeGb: number | null;
+  snapshotCreatedAt: number | null;
+  hasVolume: boolean;
   runnersAuthorized: boolean;
 }
 
@@ -2500,8 +2508,15 @@ export interface ManagedMachineSummary {
 // a tiny Set. Self-polls every 10s while any box is still setting up so
 // the "Setting up" cards animate without a manual Refresh, then stops.
 // project_managed_cloud_onboarding_gap.
-function useManagedMachines(token: string | null | undefined): ManagedMachineSummary[] {
+// Returns a `refresh` alongside the list: after the user presses Wake or Pause
+// the row changes server-side within a second, but the 10s poll meant the card
+// sat unchanged long enough to read as an ignored click.
+function useManagedMachines(
+  token: string | null | undefined,
+): { machines: ManagedMachineSummary[]; refresh: () => void } {
   const [machines, setMachines] = useState<ManagedMachineSummary[]>([]);
+  const [nonce, setNonce] = useState(0);
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -2544,6 +2559,16 @@ function useManagedMachines(token: string | null | undefined): ManagedMachineSum
               typeof m?.providerStatus === "string" ? m.providerStatus : null,
             providerStatusAt:
               typeof m?.providerStatusAt === "number" ? m.providerStatusAt : null,
+            lastWakeDurationMs:
+              typeof m?.lastWakeDurationMs === "number" ? m.lastWakeDurationMs : null,
+            lastWakeOutcome:
+              typeof m?.lastWakeOutcome === "string" ? m.lastWakeOutcome : null,
+            lastParkedAt: typeof m?.lastParkedAt === "number" ? m.lastParkedAt : null,
+            snapshotSizeGb:
+              typeof m?.snapshotSizeGb === "number" ? m.snapshotSizeGb : null,
+            snapshotCreatedAt:
+              typeof m?.snapshotCreatedAt === "number" ? m.snapshotCreatedAt : null,
+            hasVolume: Boolean(m?.hasVolume),
             runnersAuthorized: Boolean(m?.runnersAuthorized),
           }));
           if (cancelled) return;
@@ -2575,8 +2600,10 @@ function useManagedMachines(token: string | null | undefined): ManagedMachineSum
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [token]);
-  return machines;
+    // `nonce` re-runs the effect, which cancels the pending timer and fires a
+    // fresh tick immediately — that IS the refresh.
+  }, [token, nonce]);
+  return { machines, refresh };
 }
 
 /**
@@ -2623,7 +2650,8 @@ function ManagedPowerButton({
 }: {
   device: Device;
   token: string | null | undefined;
-  onDone?: () => void;
+  /** Called with what was requested, the moment the control plane accepts it. */
+  onDone?: (kind: "wake" | "park") => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -2666,7 +2694,9 @@ function ManagedPowerButton({
     try {
       if (paused) await startManagedCloudMachine(token, device.machineId);
       else await stopManagedCloudMachine(token, device.machineId);
-      onDone?.();
+      // Only after the POST resolves: an optimistic bar started on click would
+      // keep creeping even when the request was refused.
+      onDone?.(paused ? "wake" : "park");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -2715,7 +2745,13 @@ export default function DevicesView({
   const failureRegistryVersion = useFailureRegistryVersion();
   const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
   const managedDeviceIds = useManagedDeviceIds(token);
-  const managedMachines = useManagedMachines(token);
+  const { machines: managedMachines, refresh: refreshManagedMachines } =
+    useManagedMachines(token);
+  // Wake/park the user just asked for, keyed by machineId, so the card can show
+  // the request the instant it's made rather than after the next poll.
+  const [pendingPower, setPendingPower] = useState<
+    Record<string, { kind: "wake" | "park"; at: number }>
+  >({});
   const deviceIdSet = useMemo(() => new Set(devices.map((d) => d.id)), [devices]);
   // deviceId → managed-machine summary, so a device card can show its
   // cloud lifecycle state (paused/resuming) and a Pause/Resume action.
@@ -3200,7 +3236,19 @@ export default function DevicesView({
                       {/* Yaver-managed box → Pause (snapshot+delete, meter stops)
                           / Wake, same control the mobile Devices tab has. Renders
                           nothing when neither action would succeed. */}
-                      <ManagedPowerButton device={device} token={token} />
+                      <ManagedPowerButton
+                        device={device}
+                        token={token}
+                        onDone={(kind) => {
+                          if (device.machineId) {
+                            setPendingPower((p) => ({
+                              ...p,
+                              [device.machineId as string]: { kind, at: Date.now() },
+                            }));
+                          }
+                          refreshManagedMachines();
+                        }}
+                      />
                     </div>
                     {/* The wake itself: which step, how long it has been on
                         it, what the provider sees, and — when the box is only
@@ -3210,14 +3258,25 @@ export default function DevicesView({
                     {managedMachine &&
                     (managedMachine.status === "resuming" ||
                       managedMachine.status === "stopping" ||
-                      managedMachine.status === "grace") ? (
+                      managedMachine.status === "grace" ||
+                      // Requested but not yet reflected server-side — the bar
+                      // has to appear on click, not on the next poll.
+                      !!pendingPower[managedMachine.id]) ? (
                       <WakeProgress
                         machine={managedMachine}
+                        optimistic={pendingPower[managedMachine.id] ?? null}
                         deviceReachable={(() => {
                           const lc = deriveDeviceLifecycleState(device);
                           return lc === "connected" || lc === "ready-to-connect";
                         })()}
                       />
+                    ) : managedMachine &&
+                      (managedMachine.status === "paused" ||
+                        managedMachine.status === "suspended") ? (
+                      // At rest: say what's kept, how long a wake takes on THIS
+                      // box, and — the part that was missing entirely — why the
+                      // last wake didn't stick, if it didn't.
+                      <ParkedSummary machine={managedMachine} />
                     ) : null}
                     {/* Signal · version · update all on ONE line — the update
                         affordance used to sit on its own row under the identity

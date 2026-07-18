@@ -161,10 +161,110 @@ export const PHASE_TYPICAL_MS_LAN: Partial<Record<LifecyclePhase, number>> = {
   online: 10_000,
 };
 
-/** Typical duration for a phase, honouring the wake kind. */
-export function phaseTypicalMs(phase: LifecyclePhase, kind: WakeKind = "cloud"): number | undefined {
-  if (kind === "lan") return PHASE_TYPICAL_MS_LAN[phase];
-  return PHASE_TYPICAL_MS[phase];
+/** Typical duration for a phase, honouring the wake kind and this box's pace. */
+export function phaseTypicalMs(
+  phase: LifecyclePhase,
+  kind: WakeKind = "cloud",
+  /** Scales the built-in estimates to a box's MEASURED pace (see expectedWakeMs). */
+  scale = 1,
+): number | undefined {
+  const base = kind === "lan" ? PHASE_TYPICAL_MS_LAN[phase] : PHASE_TYPICAL_MS[phase];
+  if (!base) return undefined;
+  return base * (scale > 0 ? scale : 1);
+}
+
+/** Sum of the default cloud per-phase estimates — the fallback total. */
+const DEFAULT_WAKE_TOTAL_MS =
+  (PHASE_TYPICAL_MS.resuming ?? 0) +
+  (PHASE_TYPICAL_MS.booting ?? 0) +
+  (PHASE_TYPICAL_MS.registering ?? 0) +
+  (PHASE_TYPICAL_MS.online ?? 0);
+
+/** The subset of a managed machine the timing/rest helpers reason about. */
+export interface WakeTimingLike {
+  lastWakeDurationMs?: number | null;
+  lastWakeOutcome?: string | null;
+  lastParkedAt?: number | null;
+  snapshotSizeGb?: number | null;
+  snapshotCreatedAt?: number | null;
+  hasVolume?: boolean | null;
+}
+
+/**
+ * expectedWakeMs — how long THIS box's wake should take.
+ *
+ * Prefers the measured duration of its last successful wake over the constants
+ * above, which were measured on one cx43 with a 160 GB disk and are wrong for
+ * every box that isn't that one — a volume-backed box wakes in ~1-2 min and was
+ * being promised eight. Implausible measurements (<20s, >30min) are ignored so
+ * one freak run can't poison every future wake.
+ */
+export function expectedWakeMs(machine: WakeTimingLike | null | undefined): number {
+  const measured = machine?.lastWakeDurationMs;
+  if (typeof measured === "number" && measured >= 20_000 && measured <= 1_800_000) {
+    return measured;
+  }
+  if (machine?.hasVolume) return 150_000;
+  return DEFAULT_WAKE_TOTAL_MS;
+}
+
+/** This box's pace vs the built-in estimates, clamped against freak measurements. */
+export function wakeScaleFor(machine: WakeTimingLike | null | undefined): number {
+  return Math.min(3, Math.max(0.2, expectedWakeMs(machine) / DEFAULT_WAKE_TOTAL_MS));
+}
+
+/** Human "~4 min" / "~45s" for a duration. */
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return "0s";
+  if (ms < 90_000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.max(1, Math.round(ms / 60_000))} min`;
+}
+
+export interface RestSummary {
+  storage: string | null;
+  warning: string | null;
+  eta: string;
+}
+
+/**
+ * describeRest — what a PARKED box should say about itself.
+ *
+ * A parked box rendered the same "data kept, meter stopped" line regardless of
+ * history, so one that woke, sat signed-out for ten minutes and re-parked
+ * itself looked exactly like one that had slept peacefully all week — with the
+ * user having just watched that wake apparently do nothing.
+ */
+export function describeRest(
+  machine: WakeTimingLike | null | undefined,
+  now: number,
+): RestSummary {
+  const sizeGb = machine?.snapshotSizeGb;
+  const hasVolume = !!machine?.hasVolume;
+  let storage: string | null = null;
+  if (hasVolume) {
+    storage = "Data kept on its volume — nothing to restore, so it wakes fast.";
+  } else if (typeof sizeGb === "number" && sizeGb > 0) {
+    const at = machine?.snapshotCreatedAt ?? machine?.lastParkedAt ?? null;
+    const age = at ? ` taken ${formatDuration(Math.max(0, now - at))} ago` : "";
+    storage = `Snapshot kept — ${sizeGb} GB${age}.`;
+  }
+
+  let warning: string | null = null;
+  switch (String(machine?.lastWakeOutcome ?? "")) {
+    case "needs-auth":
+      warning =
+        "Its last wake got the box running but stopped there — the Yaver session had expired, so it parked again. Waking now will hit the same wall until it's signed in.";
+      break;
+    case "abandoned":
+      warning =
+        "Its last wake never became reachable and it parked again to stop the meter. Worth another try.";
+      break;
+    case "error":
+      warning = "Its last wake failed outright.";
+      break;
+  }
+
+  return { storage, warning, eta: formatDuration(expectedWakeMs(machine)) };
 }
 
 /**
@@ -176,8 +276,9 @@ export function creepPercent(
   elapsedMs: number,
   steps: LifecyclePhase[],
   kind: WakeKind = "cloud",
+  scale = 1,
 ): number {
-  const typical = phaseTypicalMs(phase, kind);
+  const typical = phaseTypicalMs(phase, kind, scale);
   if (!typical || !isPhaseInFlight(phase)) return 0;
   const idx = steps.indexOf(phase);
   const here = PHASE_META[phase].percent;
@@ -190,8 +291,8 @@ export function creepPercent(
 }
 
 /** True when a phase has run well past its typical duration. */
-export function isPhaseStalled(phase: LifecyclePhase, elapsedMs: number, kind: WakeKind = "cloud"): boolean {
-  const typical = phaseTypicalMs(phase, kind);
+export function isPhaseStalled(phase: LifecyclePhase, elapsedMs: number, kind: WakeKind = "cloud", scale = 1): boolean {
+  const typical = phaseTypicalMs(phase, kind, scale);
   if (!typical || !isPhaseInFlight(phase)) return false;
   return elapsedMs > typical * 2;
 }
@@ -200,8 +301,8 @@ export function isPhaseStalled(phase: LifecyclePhase, elapsedMs: number, kind: W
  * stallHint — an HONEST explanation of what's happening when a phase overruns.
  * These are the sentences the user needed when the bar sat silently at 80%.
  */
-export function stallHint(phase: LifecyclePhase, elapsedMs: number, kind: WakeKind = "cloud"): string | null {
-  if (!isPhaseStalled(phase, elapsedMs, kind)) return null;
+export function stallHint(phase: LifecyclePhase, elapsedMs: number, kind: WakeKind = "cloud", scale = 1): string | null {
+  if (!isPhaseStalled(phase, elapsedMs, kind, scale)) return null;
 
   // A magic packet is fire-and-forget: nothing ever reports that it was
   // dropped, ignored, or sent to a MAC that no longer exists. The box simply

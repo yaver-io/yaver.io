@@ -40,6 +40,19 @@ export interface ManagedCloudMachineSummary {
   lastParkedAt?: number | null;
   /** When the last wake was requested — "woke 2m ago" once active again. */
   lastWokeAt?: number | null;
+  /** When the CURRENT provision phase began — the anchor for the in-phase timer. */
+  provisionPhaseAt?: number | null;
+  /** Provider's own word for the server state during a wake ("initializing"). */
+  providerStatus?: string | null;
+  providerStatusAt?: number | null;
+  /** How long THIS box's last successful wake took — a real ETA, not a constant. */
+  lastWakeDurationMs?: number | null;
+  /** "ready" | "needs-auth" | "abandoned" | "error" — how the last wake ended. */
+  lastWakeOutcome?: string | null;
+  lastParkDurationMs?: number | null;
+  /** Stored snapshot size in GB. 0 ⇒ volume-backed, nothing snapshotted. */
+  snapshotSizeGb?: number | null;
+  snapshotCreatedAt?: number | null;
   prepaidBalanceCents?: number | null;
   estimatedHourlyCents?: number | null;
   /** Auto-park (auto-close) when idle. Undefined === ON (the default), so a

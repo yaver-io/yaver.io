@@ -701,6 +701,28 @@ async function hetznerDeleteVolume(token: string, volumeId: string): Promise<voi
   if (!r.ok && r.status !== 404) throw new Error(`delete volume HTTP ${r.status}`);
 }
 
+/**
+ * Size of a snapshot image in GB, as Hetzner reports it. `image_size` is the
+ * compressed stored size (what idle storage is billed on and what a restore
+ * has to stream); `disk_size` is the uncompressed disk it unpacks to. We keep
+ * the stored size — it's the one that explains both the bill and the wait.
+ * Best-effort: null on any hiccup, since this is a nice-to-have fact.
+ */
+async function hetznerImageSizeGb(token: string, imageId: string): Promise<number | null> {
+  try {
+    const r = await fetch(`${HETZNER_API}/images/${imageId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { image?: { image_size?: number | null; disk_size?: number | null } };
+    const size = j.image?.image_size ?? j.image?.disk_size;
+    return typeof size === "number" && size > 0 ? Math.round(size * 10) / 10 : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Permanently delete a snapshot image. Best-effort. */
 async function hetznerDeleteImage(token: string, imageId: string): Promise<void> {
   const r = await fetch(`${HETZNER_API}/images/${imageId}`, {
@@ -939,6 +961,13 @@ export const pauseMachine = internalAction({
     // while the snapshot — the slow part — runs. "stopping" is in the
     // healthy/in-flight status set, so this doesn't read as an outage.
     await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "stopping" });
+    // Held locally as well as persisted: `machine` was read at the top of this
+    // handler, so machine.parkStartedAt is the PREVIOUS park's stamp and would
+    // measure this park against a run that finished days ago.
+    const parkStartedAt = Date.now();
+    await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+      machineId, parkStartedAt,
+    });
 
     // FAST PATH — the box keeps its state on a persistent Volume, so there is
     // NOTHING to snapshot: just delete the server. The volume survives and
@@ -961,6 +990,17 @@ export const pauseMachine = internalAction({
       await ctx.runMutation(internal.cloudMachines.setPhase, {
         machineId, phase: "parked", progress: 100,
       });
+      {
+        const now = Date.now();
+        await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+          machineId,
+          parkCompletedAt: now,
+          lastParkDurationMs: Math.max(0, now - parkStartedAt),
+          // Volume path keeps no snapshot — the data never left. Zero it so a
+          // surface can't show a stale size from an older snapshot-era park.
+          snapshotSizeGb: 0,
+        });
+      }
       return { ok: true, status: "paused", dryRun: false };
     }
 
@@ -1192,6 +1232,21 @@ export const finalizePause = internalAction({
     await ctx.runMutation(internal.cloudMachines.setPhase, {
       machineId, phase: "parked", progress: 100,
     });
+    // Record what was actually kept. Size is read only now, once the image is
+    // `available` — Hetzner reports it as 0/absent while the snapshot is still
+    // being written, so asking earlier would have persisted a confident zero.
+    {
+      const now = Date.now();
+      const sizeGb = await hetznerImageSizeGb(token, snapshotId);
+      const startedAt = machine.parkStartedAt ?? null;
+      await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+        machineId,
+        parkCompletedAt: now,
+        snapshotCreatedAt: now,
+        ...(sizeGb !== null ? { snapshotSizeGb: sizeGb } : {}),
+        ...(startedAt ? { lastParkDurationMs: Math.max(0, now - startedAt) } : {}),
+      });
+    }
     return { ok: true, status: "paused", snapshotId };
   },
 });
@@ -1339,6 +1394,13 @@ export const abandonWake = internalAction({
     await ctx.runMutation(internal.cloudMachines.setPhase, {
       machineId, phase: "error", progress: 0, error: reason,
     });
+    // The run ended, just not well. Recording HOW is what lets a parked box
+    // explain its last wake instead of looking like it slept peacefully.
+    await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+      machineId,
+      wakeCompletedAt: Date.now(),
+      lastWakeOutcome: machine.provisionPhase === "awaiting-yaver-auth" ? "needs-auth" : "abandoned",
+    });
     return { ok: true, status: "paused", reason };
   },
 });
@@ -1392,6 +1454,12 @@ export const resumeMachine = internalAction({
     // now names the step it is stuck on.
     await ctx.runMutation(internal.cloudMachines.setPhase, {
       machineId, phase: "checking-snapshot", progress: 8,
+    });
+    // Start the run clock and clear the PREVIOUS run's outcome — leaving a
+    // stale "needs-auth" on a fresh wake would have every surface explaining
+    // a failure that hasn't happened yet.
+    await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+      machineId, wakeStartedAt: Date.now(), clearWakeOutcome: true,
     });
     try {
       // Recreate on the SAME server type the box was originally created on.

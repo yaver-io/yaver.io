@@ -5629,6 +5629,18 @@ http.route({
             // say "Hetzner: initializing" instead of an unexplained spinner.
             providerStatus: machine.providerStatus ?? null,
             providerStatusAt: machine.providerStatusAt ?? null,
+            // Wake/park run telemetry. lastWakeDurationMs lets a surface quote
+            // an ETA measured on THIS box instead of a constant; lastWakeOutcome
+            // lets a parked box explain why its last wake didn't stick.
+            wakeStartedAt: machine.wakeStartedAt ?? null,
+            wakeCompletedAt: machine.wakeCompletedAt ?? null,
+            lastWakeDurationMs: machine.lastWakeDurationMs ?? null,
+            lastWakeOutcome: machine.lastWakeOutcome ?? null,
+            parkStartedAt: machine.parkStartedAt ?? null,
+            parkCompletedAt: machine.parkCompletedAt ?? null,
+            lastParkDurationMs: machine.lastParkDurationMs ?? null,
+            snapshotSizeGb: machine.snapshotSizeGb ?? null,
+            snapshotCreatedAt: machine.snapshotCreatedAt ?? null,
             // Short curated failure label the box itself beaconed
             // (phase="error"); drives the synthetic "Setting up" card's
             // failure state + recovery hint in web/mobile.

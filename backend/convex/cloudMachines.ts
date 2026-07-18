@@ -1615,6 +1615,43 @@ export const PROVISION_PHASES = [
 ] as const;
 
 /**
+ * setLifecycleTiming — record how a wake/park run went.
+ *
+ * Deliberately a dumb patch of whatever the caller passes: the lifecycle
+ * actions know the semantics (a wake started, a park finished, a snapshot
+ * turned out to be 42 GB) and this just persists it. Every field is optional
+ * so a caller can stamp one moment without clobbering the others.
+ */
+export const setLifecycleTiming = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    wakeStartedAt: v.optional(v.number()),
+    wakeCompletedAt: v.optional(v.number()),
+    lastWakeDurationMs: v.optional(v.number()),
+    lastWakeOutcome: v.optional(v.string()),
+    parkStartedAt: v.optional(v.number()),
+    parkCompletedAt: v.optional(v.number()),
+    lastParkDurationMs: v.optional(v.number()),
+    snapshotSizeGb: v.optional(v.number()),
+    snapshotCreatedAt: v.optional(v.number()),
+    /** Clear the previous run's outcome when a fresh wake starts. */
+    clearWakeOutcome: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const { machineId, clearWakeOutcome, ...fields } = args;
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    for (const [k, val] of Object.entries(fields)) {
+      if (val !== undefined) patch[k] = val;
+    }
+    if (clearWakeOutcome) {
+      patch.lastWakeOutcome = undefined;
+      patch.wakeCompletedAt = undefined;
+    }
+    await ctx.db.patch(machineId, patch);
+  },
+});
+
+/**
  * setProviderStatus — record what the cloud provider says the server is doing.
  * Separate from setPhase because it is THEIR vocabulary on THEIR schedule;
  * folding it into our phase ladder would let a provider string move our bar.
@@ -2261,6 +2298,19 @@ export const resumeHealthCheck = internalAction({
 
     if (reachable && usable) {
       await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "active" });
+      // Close the run clock. The measured duration becomes the ETA every
+      // surface shows on the NEXT wake — this box's own disk and region,
+      // rather than a constant that is wrong for every box but one.
+      {
+        const startedAt = machine.wakeStartedAt ?? machine.lastWokeAt ?? null;
+        const now = Date.now();
+        await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+          machineId,
+          wakeCompletedAt: now,
+          lastWakeOutcome: "ready",
+          ...(startedAt ? { lastWakeDurationMs: Math.max(0, now - startedAt) } : {}),
+        });
+      }
       await ctx.runMutation(internal.cloudMachines.setPhase, {
         machineId,
         phase: machine.runnersAuthorized === false ? "authorizing-runners" : "ready",
@@ -2291,6 +2341,11 @@ export const resumeHealthCheck = internalAction({
         machineId,
         status: "resuming",
         errorMessage: reason,
+      });
+      // Outcome, not duration: the run has not ended, it has stopped making
+      // progress. Surfaces use this to stop pretending a bar is moving.
+      await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+        machineId, lastWakeOutcome: "needs-auth",
       });
       await ctx.scheduler.runAfter(15_000, internal.cloudMachines.resumeHealthCheck, {
         machineId,

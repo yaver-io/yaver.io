@@ -1359,6 +1359,28 @@ export default defineSchema({
     // "stuck". Provider vocabulary, not ours; label only, never IDs or logs.
     providerStatus: v.optional(v.string()),
     providerStatusAt: v.optional(v.number()),
+    // ── Wake / park run telemetry ────────────────────────────────────────
+    // How long THIS box's last wake and park actually took, and how the wake
+    // ended. Two things this buys that constants cannot:
+    //   1. an honest ETA — "usually ~4 min" measured on this machine's own
+    //      disk and region, instead of a hardcoded guess that is wrong for
+    //      every box that isn't the one we measured,
+    //   2. a parked box that can explain its LAST wake. Without an outcome, a
+    //      box that woke, sat signed-out for ten minutes and re-parked looks
+    //      identical to one that has been peacefully asleep all week.
+    // Durations only — never what ran on the box (privacy contract).
+    wakeStartedAt: v.optional(v.number()),
+    wakeCompletedAt: v.optional(v.number()),
+    lastWakeDurationMs: v.optional(v.number()),
+    /** "ready" | "needs-auth" | "abandoned" | "error" — how the last wake ended. */
+    lastWakeOutcome: v.optional(v.string()),
+    parkStartedAt: v.optional(v.number()),
+    parkCompletedAt: v.optional(v.number()),
+    lastParkDurationMs: v.optional(v.number()),
+    // Snapshot facts, so "Snapshot kept" can say WHAT is kept. Size explains
+    // the wake time (a 160 GB restore is minutes) and the idle storage cost.
+    snapshotSizeGb: v.optional(v.number()),
+    snapshotCreatedAt: v.optional(v.number()),
     // Which base image the box booted from: "golden" = a prebuilt Yaver
     // snapshot (YAVER_CLOUD_IMAGE_ID_*, everything pre-installed, ~seconds
     // to ready) vs "vanilla" = ubuntu-24.04 with a 3–5 min first-boot

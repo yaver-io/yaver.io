@@ -30,6 +30,7 @@ export {
 } from "./wakeMachineCore";
 import {
   creepPercent,
+  wakeScaleFor,
   deriveServerPhase,
   isDeviceAsleep,
   PARK_STEPS,
@@ -301,7 +302,12 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
 
   // Monotonic progress within a run, plus a continuous creep inside the phase.
   const steps = direction === "park" ? PARK_STEPS : wakeStepsFor(kind);
-  const creep = direction ? creepPercent(phase, elapsedInPhaseMs, steps, kind) : 0;
+  // Pace the bar and the stall hints to THIS box's measured wake, not to the
+  // constants — those were timed on one cx43 with a 160 GB disk, so a
+  // volume-backed box that wakes in ~2 min was being crawled through an
+  // 8-minute animation and told "~7 min left".
+  const paceScale = kind === "lan" ? 1 : wakeScaleFor(machine);
+  const creep = direction ? creepPercent(phase, elapsedInPhaseMs, steps, kind, paceScale) : 0;
   let percent = PHASE_META[phase].percent + creep;
   if (direction) {
     percent = Math.max(floorRef.current, percent);
@@ -309,7 +315,7 @@ export function useMachineLifecycle(opts: UseMachineLifecycleOpts): MachineLifec
   }
   percent = Math.min(100, percent);
   const meta = PHASE_META[phase];
-  const hint = direction ? stallHint(phase, elapsedInPhaseMs, kind) : null;
+  const hint = direction ? stallHint(phase, elapsedInPhaseMs, kind, paceScale) : null;
 
   // A managed box that is UP but never registered (deviceId null) is
   // invisible to every device-health path — yet its agent is running and

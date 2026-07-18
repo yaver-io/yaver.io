@@ -19,6 +19,7 @@ import {
   type ManagedCloudUsageSummary,
   type ManagedSubscriptionSummary,
 } from "../lib/subscription";
+import { describeRest } from "../lib/wakeMachineCore";
 
 const PHASE_LABEL: Record<string, string> = {
   creating: "Reserving your box…",
@@ -32,6 +33,13 @@ const PHASE_LABEL: Record<string, string> = {
   "powering-down": "Powering down…",
   ready: "Ready",
   error: "Setup failed",
+  // Wake-only steps. Without entries these fell through the `?? phase`
+  // fallback below and printed the raw control-plane slug at the user.
+  "checking-snapshot": "Finding your snapshot…",
+  "preparing-volume": "Freeing your data volume…",
+  "restoring-snapshot": "Restoring from your snapshot…",
+  // Not progress — the box is up and waiting on the user.
+  "awaiting-yaver-auth": "Waiting for you to sign this box in",
 };
 
 export default function ManagedCloudCard({
@@ -331,7 +339,10 @@ export default function ManagedCloudCard({
                       : m.status === "resuming"
                         ? "Waking your box"
                         : "Setting up your box"}{" "}
-                    — {phase ? PHASE_LABEL[phase] ?? phase : "initializing…"}
+                    {/* Never print a raw slug: an unmapped phase is our bug,
+                        and "pulling-image" spelled with a hyphen is not
+                        something the user can act on. */}
+                    — {phase ? PHASE_LABEL[phase] ?? "working on it…" : "initializing…"}
                   </Text>
                   {m.bootImageSource === "golden" ? (
                     <Text style={{ color: "#059669", fontSize: 10 }}>⚡ Fast boot from a prebuilt image</Text>
@@ -354,9 +365,27 @@ export default function ManagedCloudCard({
                   ⚠ Unauthorized — sign your coding agents in from the web dashboard.
                 </Text>
               ) : m.status === "paused" || m.status === "suspended" ? (
-                <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                  ⏸ Paused — data kept, meter stopped (~€0.50/mo vs ~€30/mo running).
-                </Text>
+                // A parked box used to say only "data kept, meter stopped" — the
+                // same line whether it had slept peacefully all week or woken,
+                // sat signed-out for ten minutes and re-parked itself. The
+                // second case is exactly the one the user needs explained, since
+                // they just watched that wake apparently do nothing.
+                (() => {
+                  const rest = describeRest(m, Date.now());
+                  return (
+                    <View style={{ gap: 3 }}>
+                      <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                        ⏸ Paused — data kept, meter stopped (~€0.50/mo vs ~€30/mo running).
+                      </Text>
+                      {rest.warning ? (
+                        <Text style={{ color: c.warn, fontSize: 11 }}>{rest.warning}</Text>
+                      ) : null}
+                      <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                        {rest.storage ? `${rest.storage} ` : ""}Wakes in about {rest.eta}.
+                      </Text>
+                    </View>
+                  );
+                })()
               ) : null}
 
               {/* Auto-close (auto-park). ON by default so a forgotten box always
