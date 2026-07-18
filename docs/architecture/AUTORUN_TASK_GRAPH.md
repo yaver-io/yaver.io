@@ -177,6 +177,62 @@ shared; the tree is not.
 
 ---
 
+## The end state: a sentence on a phone, work on the right boxes
+
+The target is: say *"make autorun use available resources"* into the mobile app,
+and the fleet allocates itself — runners, boxes, toolchains, and **deploy
+credentials** — with fallbacks, without being told where anything lives.
+
+Everything above handles *build* capability. The missing axis is **deploy
+capability, which is per-device and credential-shaped**, not just toolchain-shaped.
+This is not hypothetical; it was hit by hand during today's deploy:
+
+| Target | Needs | Where that exists today |
+|---|---|---|
+| TestFlight / tvOS | macOS + Xcode + ASC key | this Mac only (`~/.appstoreconnect/yaver.env`; CI runners lack the registered UDIDs — `release-mobile.yml` is `if: false` on purpose) |
+| Play Store | keystore + service-account JSON | this Mac, or CI with the secrets |
+| Convex | deploy key **or** a logged-in CLI | this Mac (logged-in CLI; the vault key is dead here) |
+| Cloudflare web | `CLOUDFLARE_API_TOKEN` | **CI only** — the token is a GitHub secret and cannot be read back |
+| npm CLI | `NPM_TOKEN` + signed 5-platform matrix | **CI only** |
+
+So on one machine, in one deploy, Convex went local and web went to CI —
+*because of where a credential lives*, decided by a human reading a memory file.
+That decision is mechanical and belongs in the scheduler.
+
+**Capability is discoverable, and mostly already discovered.**
+`console_machines.go` detects machine capabilities and exposes `MaxTaskSlots`;
+`agent_mesh.go` scores runner readiness, platform, affinity and cost lane. What
+neither models is *"can this box actually publish to this target?"* — which is a
+three-part question:
+
+1. **platform** — tvOS/iOS archive demands macOS + Xcode; Go builds anywhere.
+2. **credential** — present in this box's vault/env, absent, or CI-only.
+3. **quota** — TestFlight's ~15–20/day, counted, with no rollback.
+
+A deploy step should therefore be *placed*, not assumed local: pick a machine
+whose capability set covers the target, and when none does, fall back to CI and
+**say so** rather than failing at the credential.
+
+**Fallback order, and why it is not "just retry":**
+
+- toolchain missing → place on a machine that has it (a Linux box keeps
+  developing while a Mac archives — the whole point of §"a run is not one thing")
+- credential missing locally but present in CI → dispatch CI, and record that
+  this was a *routing* decision, not a failure
+- quota exhausted → **park**, do not retry; TestFlight has no rollback and a
+  retry burns the next slot
+- machine offline → re-place; the mesh scorer already penalises offline (−5000)
+
+Two properties make this safe to run unattended, and both already exist:
+placement is **work-stealing via CAS**, so no scheduler node exists to die; and
+state rides the **bus**, single-writer per topic, so a dead box's rows age
+visibly instead of lying.
+
+The same path serves "new product from the mobile sandbox": a task whose areas
+are a fresh directory has no build target, no deploy capability requirement, and
+therefore no contention — it is the *easiest* thing to schedule, and today it
+queues behind a tvOS compiler for no reason at all.
+
 ## Increments, in dependency order
 
 1. **Split the loop's phases and release between them.** No scheduler yet — just
