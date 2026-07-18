@@ -9,10 +9,20 @@ import (
 // /goal is a claude-binary feature. Sending it to codex or opencode would land
 // as literal prompt text at the top of the task, silently corrupting it.
 func TestAutorunGoalOnlyForClaudeFamily(t *testing.T) {
-	for _, id := range []string{"claude", "glm"} {
+	// `glm` was in this list because it drove the claude binary against z.ai —
+	// which is exactly why it was retired: subscription-OAuth tooling pointed at
+	// an API key. It is no longer a runner, so it is no longer claude-family.
+	// GLM itself remains available through opencode's zai-coding-plan provider,
+	// and opencode has no /goal, which the second loop already asserts.
+	for _, id := range []string{"claude"} {
 		if !autorunRunsClaudeBinary(GetRunnerConfig(id)) {
 			t.Errorf("%s drives the claude binary and must accept /goal", id)
 		}
+	}
+	// A retired runner must not resolve to a config that quietly behaves like
+	// claude. Failing loudly at the boundary is the whole point of retiring it.
+	if autorunRunsClaudeBinary(GetRunnerConfig("glm")) {
+		t.Error("glm is retired: it must not resolve to a claude-binary config, or the compliance boundary it was retired for is still crossable")
 	}
 	for _, id := range []string{"codex", "opencode"} {
 		if autorunRunsClaudeBinary(GetRunnerConfig(id)) {

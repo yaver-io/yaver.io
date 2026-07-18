@@ -3490,10 +3490,6 @@ func fallbackRunnerModels(runnerID string) []runnerModelInfo {
 			{ID: "openai/gpt-5.4", Name: "GPT-5.4", Provider: "openai", Source: "builtin", IsDefault: false},
 			{ID: "anthropic/claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Provider: "anthropic", Source: "builtin", IsDefault: false},
 		}
-	case "glm":
-		return []runnerModelInfo{
-			{ID: "glm-4.7", Name: "GLM 4.7", Provider: "z.ai", Source: "builtin", IsDefault: true},
-		}
 	default:
 		return nil
 	}
@@ -3537,7 +3533,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, runnerID := range []string{"claude", "codex", "opencode", "glm"} {
+	for _, runnerID := range []string{"claude", "codex", "opencode"} {
 		if len(modelsByRunner[runnerID]) == 0 {
 			if fallback := fallbackRunnerModels(runnerID); len(fallback) > 0 {
 				modelsByRunner[runnerID] = fallback
@@ -3607,7 +3603,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		addRunner(r)
 	}
 	// Then rest in stable order
-	for _, id := range []string{"opencode", "glm", "claude", "codex"} {
+	for _, id := range []string{"opencode", "claude", "codex"} {
 		if r, ok := builtinRunners[id]; ok {
 			addRunner(r)
 		}
@@ -3779,6 +3775,10 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 	}
 
 	runnerID := normalizeRunnerID(body.RunnerID)
+	if reason, retired := retiredRunnerReason(runnerID); retired {
+		jsonError(w, http.StatusBadRequest, reason)
+		return
+	}
 	newRunner, known := builtinRunners[runnerID]
 	if !known {
 		jsonError(w, http.StatusBadRequest, fmt.Sprintf("unknown runner: %s", body.RunnerID))

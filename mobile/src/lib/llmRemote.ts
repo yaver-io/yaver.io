@@ -1,8 +1,8 @@
 // llmRemote.ts — "remote runner" implementation of the LlmProvider contract
 // (llmClient.ts). Unlike the on-device / BYO-key cloud backends, this one does
 // NOT call a model API from the phone: it ships the sandbox's files + prompt to
-// a connected Yaver box, which runs the GLM runner (the claude binary pointed at
-// z.ai) agentically over them and returns an EditPlan-shaped diff. The phone
+// a connected Yaver box, which runs OpenCode against z.ai's coding-plan GLM
+// model over them and returns an EditPlan-shaped diff. The phone
 // then previews + applies that plan against its local sandbox tree, exactly like
 // every other backend.
 //
@@ -10,7 +10,7 @@
 // the usual remote-coding paths (sendTask / agent graphs) — which edit a repo on
 // the machine — don't apply. The agent's POST /sandbox/run closes that gap.
 //
-// GLM-only for now. The box holds the z.ai credential; the phone never does.
+// OpenCode-only for now. The box holds the z.ai credential; the phone never does.
 //
 // PURE + RN-free (tsx-tested): the network call is injected as `dispatch`, so
 // codingBackendStore wires it to quicClient.sandboxRun and tests pass a fake.
@@ -57,16 +57,16 @@ export type RemoteSandboxDispatch = (
 
 export interface RemoteProviderOptions {
   dispatch: RemoteSandboxDispatch;
-  /** Label for the UI ("glm-4.7"). Default "glm". */
+  /** Label for the UI ("zai-coding-plan/glm-4.7"). */
   model?: string;
 }
 
-/** Build an LlmProvider that runs the remote GLM runner on a connected box. */
+/** Build an LlmProvider that runs the remote OpenCode runner on a connected box. */
 export function createRemoteProvider(opts: RemoteProviderOptions): LlmProvider {
   if (typeof opts.dispatch !== "function") {
     throw new Error("createRemoteProvider: dispatch is required (the box round-trip).");
   }
-  const model = opts.model ?? "glm";
+  const model = opts.model ?? "zai-coding-plan/glm-4.7";
 
   return {
     id: "remote",
@@ -80,7 +80,7 @@ export function createRemoteProvider(opts: RemoteProviderOptions): LlmProvider {
         files: req.files.map((f) => ({ path: f.path, content: f.content })),
         framework: req.framework,
         schema: req.schema,
-        runner: "glm",
+        runner: "opencode",
         timeoutMs: req.timeoutMs,
       });
 

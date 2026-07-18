@@ -129,7 +129,6 @@ var exitCommands = map[string]string{
 	"claude":   "/exit",
 	"codex":    "exit",
 	"opencode": "/quit",
-	"glm":      "/exit", // claude binary
 }
 
 var activeTaskManager *TaskManager
@@ -207,34 +206,15 @@ var builtinRunners = map[string]RunnerConfig{
 		OutputMode:  "raw",
 		ExitCommand: "/quit",
 	},
-	// GLM (z.ai) is NOT a separate CLI — it is the `claude` binary pointed
-	// at z.ai's Anthropic-compatible endpoint (https://api.z.ai/api/anthropic)
-	// via ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN, which provider_keys.go
-	// injects per-runner from the runtime vault (BASE_URL__glm / API_KEY__glm,
-	// or a bare ZAI_API_KEY with the default z.ai base URL). Because it reuses
-	// the claude binary, stream-json parsing, --model, --resume / warm
-	// sessions, and --session-id all work unchanged — full parity for free.
-	// It is a DISTINCT runner id (not aliased to "claude") so a user can run
-	// real-Anthropic Claude and GLM side by side and pin either to a routine.
-	"glm": {
-		RunnerID: "glm",
-		Name:     "GLM (z.ai)",
-		Command:  "claude",
-		// Same Args as the claude builtin. --model is intentionally NOT here;
-		// yaver-managed spawn prepends RunnerConfig.Model so per-task overrides
-		// win (CLI last-flag-wins). The model id is forwarded verbatim to
-		// z.ai's Anthropic endpoint.
-		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--dangerously-skip-permissions"},
-		Model:       "glm-4.7",
-		OutputMode:  "stream-json",
-		ExitCommand: "/exit",
-	},
 }
 
 // GetRunnerConfig returns the RunnerConfig for a given runner ID.
 // Falls back to defaultRunner if not found.
 func GetRunnerConfig(runnerID string) RunnerConfig {
 	runnerID = normalizeRunnerID(runnerID)
+	if reason, retired := retiredRunnerReason(runnerID); retired {
+		return RunnerConfig{RunnerID: runnerID, Name: reason}
+	}
 	if r, ok := builtinRunners[runnerID]; ok {
 		return r
 	}
@@ -264,7 +244,7 @@ func firstInstalledBuiltinRunner() (RunnerConfig, bool) {
 // /autodev/options, hybrid implementer pick). These are the only
 // runners yaver ships first-class support for. Order is the preference
 // order for "default installed runner" fallbacks.
-var supportedRunnerIDs = []string{"claude", "codex", "opencode", "glm"}
+var supportedRunnerIDs = []string{"claude", "codex", "opencode"}
 
 // IsSupportedRunner reports whether a runner ID is in the canonical
 // user-facing set. Use this anywhere you'd otherwise enumerate the
@@ -295,10 +275,6 @@ func runnerModelCompatible(runnerID, model string) bool {
 	switch r {
 	case "claude":
 		return strings.HasPrefix(m, "claude") || m == "opus" || m == "sonnet" || m == "haiku" || m == "claude-opus-4-7"
-	case "glm":
-		// GLM runs on the claude binary against z.ai. Accept glm-* ids and,
-		// since z.ai also maps Anthropic model names, the claude aliases too.
-		return strings.HasPrefix(m, "glm") || strings.HasPrefix(m, "claude") || m == "opus" || m == "sonnet" || m == "haiku"
 	case "codex":
 		return strings.HasPrefix(m, "gpt") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4")
 	case "opencode":
@@ -491,7 +467,7 @@ func isSoftRunnerFailure(runnerID, output string, runErr error) bool {
 	switch normalizeRunnerID(runnerID) {
 	case "codex":
 		return strings.Contains(output, "OpenAI Codex")
-	case "claude", "glm":
+	case "claude":
 		// Claude Code's `--print` mode is well-behaved on success but
 		// occasionally exits 1 after a successful response. Banner
 		// looks like "Claude Code" or "Anthropic Claude" depending on
@@ -2453,7 +2429,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			args = append(args, strings.ReplaceAll(ra, "{sessionId}", warmSID))
 		}
 		// Claude Code 2.1.80+ requires --fork-session with --session-id when resuming
-		if runner.RunnerID == "claude" || runner.RunnerID == "glm" {
+		if runner.RunnerID == "claude" {
 			args = append(args, "--fork-session", "--session-id", uuid.New().String())
 		}
 		log.Printf("[task %s] Resuming warm session %s (age=%v)", task.ID, warmSID, warmAge.Round(time.Second))
@@ -3023,7 +2999,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 func runnerRequiresHostRuntime(runnerID string) bool {
 	switch normalizeRunnerID(runnerID) {
-	case "claude", "codex", "opencode", "glm":
+	case "claude", "codex", "opencode":
 		return true
 	default:
 		return false
@@ -3756,14 +3732,14 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	args := buildRunnerArgsWithWorkDir(runner, prompt, resumeWorkDir)
 
 	// Resume the prior conversation (this is always a follow-up). resumeTransform
-	// handles claude/glm (--resume <id>), opencode (--continue), codex (exec
+	// handles claude (--resume <id>), opencode (--continue), codex (exec
 	// resume <id>), and generic ResumeArgs runners; it falls back (ok=false)
 	// when the runner can't resume with what we captured, so we spawn fresh.
 	if newArgs, ok := resumeTransform(runner, args, prompt, resumeWorkDir, task.SessionID); ok {
 		args = newArgs
 		log.Printf("[task %s] Resuming %s session (id=%q)", task.ID, runner.RunnerID, task.SessionID)
-	} else if runner.RunnerID == "claude" || runner.RunnerID == "glm" {
-		// New claude/glm session — give it a unique id so future follow-ups
+	} else if runner.RunnerID == "claude" {
+		// New claude session — give it a unique id so future follow-ups
 		// can resume it.
 		args = append(args, "--session-id", uuid.New().String())
 	}

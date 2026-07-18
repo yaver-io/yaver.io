@@ -60,7 +60,7 @@ func RunnerPreflightByID(runnerID, workDir string) RunnerPreflightResult {
 // pre-flighted.
 func runnerHasAuthModel(id string) bool {
 	switch normalizeRunnerID(id) {
-	case "codex", "claude", "glm", "opencode":
+	case "codex", "claude", "opencode":
 		return true
 	}
 	return false
@@ -73,8 +73,6 @@ func runnerReauthCommand(id string) string {
 		return "codex login"
 	case "claude":
 		return "claude setup-token"
-	case "glm":
-		return "yaver runner auth glm"
 	case "opencode":
 		return "opencode auth login"
 	default:

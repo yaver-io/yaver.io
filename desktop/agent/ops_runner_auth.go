@@ -38,7 +38,7 @@ func init() {
 					},
 				},
 				"deviceId":        map[string]interface{}{"type": "string", "description": "Target owned device id (the managed box). Omit for local."},
-				"runner":          map[string]interface{}{"type": "string", "enum": []string{"claude", "claude-code", "codex", "opencode", "glm"}},
+				"runner":          map[string]interface{}{"type": "string", "enum": []string{"claude", "claude-code", "codex", "opencode"}},
 				"sessionId":       map[string]interface{}{"type": "string", "description": "From browser_start; for browser_status/submit_code/cancel."},
 				"code":            map[string]interface{}{"type": "string", "description": "Auth code/token for submit_code."},
 				"credentialsJson": map[string]interface{}{"type": "string", "description": "Subscription credentials blob for credentials_import."},

@@ -125,9 +125,6 @@ func runnerAuthValueProvided(req runnerAuthSetupRequest) bool {
 			strings.TrimSpace(req.AnthropicAPIKey) != "" ||
 			strings.TrimSpace(req.GLMAPIKey) != "" ||
 			strings.TrimSpace(req.ZAIAPIKey) != ""
-	case "glm":
-		return strings.TrimSpace(req.GLMAPIKey) != "" ||
-			strings.TrimSpace(req.ZAIAPIKey) != ""
 	default:
 		return false
 	}
@@ -192,7 +189,7 @@ func ensureRunnerInstalled(ctx context.Context, runner string) error {
 		return nil
 	}
 	switch normalizeRunnerAuthName(runner) {
-	case "claude", "glm":
+	case "claude":
 		return installNodeGlobalPackage(ctx, "@anthropic-ai/claude-code")
 	case "codex":
 		return installNodeGlobalPackage(ctx, "@openai/codex")
@@ -206,9 +203,7 @@ func ensureRunnerInstalled(ctx context.Context, runner string) error {
 func setupRunnerMCP(runner string) ([]string, error) {
 	yaverPath := findYaverBinary()
 	switch normalizeRunnerAuthName(runner) {
-	case "claude", "glm":
-		// glm runs the `claude` binary (pointed at a gateway), so its MCP
-		// config is the same Claude Code user config.
+	case "claude":
 		if _, err := ensureClaudeCodeMCPConfig(yaverPath); err != nil {
 			return nil, err
 		}
@@ -234,8 +229,11 @@ func setupRunnerMCP(runner string) ([]string, error) {
 func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) (runnerAuthSetupResult, error) {
 	req.Runner = normalizeRunnerAuthName(req.Runner)
 	result := runnerAuthSetupResult{OK: true, Runner: req.Runner}
-	if req.Runner != "claude" && req.Runner != "codex" && req.Runner != "opencode" && req.Runner != "glm" {
-		return result, fmt.Errorf("unsupported runner %q (want claude, codex, opencode, or glm)", req.Runner)
+	if reason, retired := retiredRunnerReason(req.Runner); retired {
+		return result, fmt.Errorf("%s", reason)
+	}
+	if req.Runner != "claude" && req.Runner != "codex" && req.Runner != "opencode" {
+		return result, fmt.Errorf("unsupported runner %q (want claude, codex, or opencode)", req.Runner)
 	}
 
 	installIfMissing := boolOrDefault(req.InstallIfMissing, true)

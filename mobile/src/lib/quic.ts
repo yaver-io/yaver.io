@@ -9377,7 +9377,7 @@ export class QuicClient {
         ok: false,
         edits: data?.edits ?? [],
         error: data?.error || `HTTP ${res.status}`,
-        runner: "glm",
+        runner: "opencode",
       };
     }
     return data;

@@ -11,11 +11,12 @@ import (
 )
 
 func TestAutorunRunnerArgsAlwaysAutoApproves(t *testing.T) {
+	// glm is deliberately absent: it was retired for driving the claude binary
+	// against z.ai. supportedRunnerIDs is now {claude, codex, opencode}.
 	tests := []struct{ id, want string }{
 		{"claude", "--dangerously-skip-permissions"},
 		{"codex", "--dangerously-bypass-approvals-and-sandbox"},
 		{"opencode", "--dangerously-skip-permissions"},
-		{"glm", "--dangerously-skip-permissions"},
 	}
 	for _, tt := range tests {
 		args := autorunRunnerArgs(GetRunnerConfig(tt.id), "do work")

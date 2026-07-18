@@ -20,9 +20,9 @@ import (
 // fresh.
 //
 // Per-runner contract:
-//   - claude / glm: append `--resume <id>` (needs a captured session id);
+//   - claude: append `--resume <id>` (needs a captured session id);
 //     `--no-session-persistence` is stripped since a non-persisted session
-//     can't be resumed. (glm is the claude binary against z.ai.)
+//     can't be resumed.
 //   - opencode: append `--continue` — resumes the most recent session in the
 //     working dir, no id needed. Robust for the sequential follow-up /
 //     recurring-schedule case.
@@ -34,7 +34,7 @@ import (
 //   - any other runner with ResumeArgs: append the template (needs an id).
 func resumeTransform(runner RunnerConfig, baseArgs []string, prompt, workDir, sessionID string) ([]string, bool) {
 	switch normalizeRunnerID(runner.RunnerID) {
-	case "claude", "glm":
+	case "claude":
 		if sessionID == "" {
 			return baseArgs, false
 		}
@@ -93,7 +93,7 @@ var (
 )
 
 // parseRawSessionID returns a session id found in a raw output chunk for codex
-// or opencode, or "" if none. claude/glm capture their id from stream-json and
+// or opencode, or "" if none. claude captures its id from stream-json and
 // never reach here.
 func parseRawSessionID(runnerID, text string) string {
 	if text == "" {

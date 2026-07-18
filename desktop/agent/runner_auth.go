@@ -330,10 +330,6 @@ func runnerCapabilityReason(runnerID string, status RunnerRuntimeStatus) (code, 
 		if !status.AuthConfigured {
 			return ReasonRunnerClaudeAuthRequired, "Claude Code is installed but no usable auth was detected yet.", "Run the Claude browser login flow or import subscription credentials from an already-signed-in user-owned device.", true
 		}
-	case "glm":
-		if !status.AuthConfigured {
-			return "runner.glm.auth_required", "GLM (z.ai) needs a z.ai API key.", "Save a ZAI_API_KEY in the vault (or runner-provider/API_KEY__glm) before using GLM remotely.", true
-		}
 	case "opencode":
 		if strings.TrimSpace(status.Error) != "" {
 			return ReasonRunnerOpenCodeUnusable, strings.TrimSpace(status.Error), "Update the OpenCode provider/auth configuration on the host before using it remotely.", true
@@ -382,11 +378,22 @@ func normalizeRunnerID(id string) string {
 	case "claude-code":
 		return "claude"
 	case "zai", "z.ai", "z-ai", "glm-4.6", "glm-4.7":
-		// GLM/z.ai user-facing aliases collapse onto the internal "glm" id.
+		// Retired GLM/z.ai runner aliases still collapse onto "glm" so user
+		// requests fail loudly at the retirement boundary instead of silently
+		// falling through to another runner.
 		return "glm"
 	default:
 		return strings.ToLower(strings.TrimSpace(id))
 	}
+}
+
+var retiredRunners = map[string]string{
+	"glm": "the `glm` runner ran the `claude` binary against z.ai, which mixes subscription-OAuth tooling with an API key. Use runner `opencode` with model `zai-coding-plan/glm-4.7` instead (opencode is the API-key runner).",
+}
+
+func retiredRunnerReason(id string) (string, bool) {
+	reason, ok := retiredRunners[normalizeRunnerID(id)]
+	return reason, ok
 }
 
 func detectClaudeStatus() RunnerRuntimeStatus {

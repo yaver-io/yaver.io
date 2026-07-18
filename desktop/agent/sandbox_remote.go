@@ -1,6 +1,6 @@
 package main
 
-// sandbox_remote.go — Mobile Sandbox → remote runner (GLM).
+// sandbox_remote.go — Mobile Sandbox → remote runner (OpenCode + z.ai GLM).
 //
 // The phone-only Mobile Sandbox (see mobile/src/lib/phoneSandbox*.ts) edits a
 // project whose source lives in the phone's local filesystem/SQLite — there is
@@ -9,19 +9,18 @@ package main
 // exists on the agent. This endpoint closes that gap.
 //
 // Flow: the mobile client ships the sandbox's source files + a natural-language
-// prompt → we materialize them into a throwaway workdir → run the `glm` runner
-// (the claude binary pointed at z.ai, see tasks.go + provider_keys.go)
-// agentically over them → diff the workdir against the input → return an
+// prompt → we materialize them into a throwaway workdir → run OpenCode against
+// z.ai's coding-plan GLM model → diff the workdir against the input → return an
 // EditPlan-shaped result the phone applies to its local project (apply-with-
 // preview, reversible — identical to the on-device / BYO-key backends).
 //
-// GLM-only by design for now: the runner is fixed to "glm" and the request is
-// rejected for any other runner id. The GLM credential lives only on this box
-// (runner-provider vault / ZAI_API_KEY) — the phone never has to hold it.
+// OpenCode-only by design for now: the runner is fixed to "opencode" and the
+// request is rejected for any other runner id. The GLM credential lives only on
+// this box (ZAI_API_KEY / GLM_API_KEY) — the phone never has to hold it.
 //
 // The GLM exec is isolated behind sandboxRunnerFn so the file-write / snapshot /
 // diff logic (where the real correctness risk is) is fully unit-tested without a
-// network or the claude binary. See sandbox_remote_test.go.
+// network or the runner binary. See sandbox_remote_test.go.
 
 import (
 	"bufio"
@@ -51,7 +50,7 @@ type sandboxRunRequest struct {
 	Files     []sandboxFile   `json:"files"`
 	Framework string          `json:"framework,omitempty"`
 	Schema    json.RawMessage `json:"schema,omitempty"` // phone-project backend schema, forwarded into the prompt
-	Runner    string          `json:"runner,omitempty"` // only "glm" (or empty → glm) is accepted
+	Runner    string          `json:"runner,omitempty"` // only "opencode" (or empty → opencode) is accepted
 	TimeoutMs int             `json:"timeoutMs,omitempty"`
 }
 
@@ -256,7 +255,7 @@ func buildSandboxRemotePrompt(req sandboxRunRequest) string {
 // processSandboxRun is the testable core: materialize files, run the agent, diff
 // the result. runFn is injected so tests can substitute a fake editor.
 func processSandboxRun(ctx context.Context, req sandboxRunRequest, runFn sandboxRunnerFn) sandboxRunResponse {
-	resp := sandboxRunResponse{Runner: "glm", Edits: []sandboxEdit{}}
+	resp := sandboxRunResponse{Runner: "opencode", Edits: []sandboxEdit{}}
 
 	before := make(map[string]string, len(req.Files))
 	for _, f := range req.Files {
@@ -301,45 +300,33 @@ func processSandboxRun(ctx context.Context, req sandboxRunRequest, runFn sandbox
 	return resp
 }
 
-// runGLMSandbox is the default sandboxRunnerFn: it runs the `glm` runner (the
-// claude binary pointed at z.ai via runnerProviderEnv) agentically over workDir.
+// runGLMSandbox is the default sandboxRunnerFn: it runs OpenCode against
+// z.ai's bundled coding-plan provider over workDir.
 func runGLMSandbox(ctx context.Context, workDir, prompt string) (sandboxRunMeta, error) {
-	rc := GetRunnerConfig("glm")
-	meta := sandboxRunMeta{model: rc.Model}
+	rc := GetRunnerConfig("opencode")
+	meta := sandboxRunMeta{model: "zai-coding-plan/glm-4.7"}
 
-	cfg := runnerProviderConfigFor("glm")
-	if cfg.baseURL == "" || cfg.apiKey == "" {
-		return meta, fmt.Errorf("GLM is not configured on this box — add ZAI_API_KEY (or API_KEY__glm in the runner-provider vault) so the remote runner can reach z.ai")
+	if value, _ := hostSecretValue("ZAI_API_KEY"); strings.TrimSpace(value) == "" {
+		return meta, fmt.Errorf("GLM via OpenCode is not configured on this box — add ZAI_API_KEY (or GLM_API_KEY) so OpenCode can use zai-coding-plan/glm-4.7")
 	}
 
 	bin, err := exec.LookPath(rc.Command)
 	if err != nil {
 		if bin = findInExpandedPath(rc.Command); bin == "" {
-			return meta, fmt.Errorf("%s binary not found (the glm runner reuses the claude CLI) — install it on this box", rc.Command)
+			return meta, fmt.Errorf("%s binary not found — install OpenCode on this box", rc.Command)
 		}
 	}
 
-	// --dangerously-skip-permissions enables the default tool set (Read / Edit /
-	// Write / Bash) so the agent can edit files non-interactively. We omit
-	// --tools (the glm runner default restricts to Bash) because sandbox edits
-	// need the file-editing tools.
 	args := []string{
-		"-p", prompt,
-		"--output-format", "stream-json",
-		"--verbose",
-		"--include-partial-messages",
-		"--model", rc.Model,
+		"run",
+		"--model", meta.model,
 		"--dangerously-skip-permissions",
+		prompt,
 	}
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = workDir
-	// runnerProviderEnv is appended last so the z.ai ANTHROPIC_BASE_URL /
-	// ANTHROPIC_AUTH_TOKEN win over any ambient values; PATH is widened so the
-	// daemon-launched process finds node/claude in the usual install locations.
 	env := append(os.Environ(), "PATH="+expandedPath())
-	env = append(env, runnerProviderEnv("glm")...)
-	// claude refuses --dangerously-skip-permissions as root without IS_SANDBOX=1.
 	if isRootProcess() {
 		env = append(env, "IS_SANDBOX=1")
 	}
@@ -360,17 +347,17 @@ func runGLMSandbox(ctx context.Context, workDir, prompt string) (sandboxRunMeta,
 			detail = detail[:600] + "…"
 		}
 		if ctx.Err() == context.DeadlineExceeded {
-			return meta, fmt.Errorf("glm runner timed out")
+			return meta, fmt.Errorf("opencode runner timed out")
 		}
-		return meta, fmt.Errorf("glm runner failed: %v: %s", runErr, detail)
+		return meta, fmt.Errorf("opencode runner failed: %v: %s", runErr, detail)
 	}
 	return meta, nil
 }
 
-// parseStreamJSONResult extracts a human-readable rationale from claude's
-// stream-json output: prefer the final {"type":"result"} event's text, else the
-// last assistant text. Best-effort — the diff is the source of truth for edits,
-// so an empty rationale is fine.
+// parseStreamJSONResult extracts a human-readable rationale from stream-json-ish
+// output: prefer the final {"type":"result"} event's text, else the last
+// assistant text. Best-effort — the diff is the source of truth for edits, so
+// an empty rationale is fine.
 func parseStreamJSONResult(out []byte) string {
 	var resultText, lastAssistant string
 	sc := bufio.NewScanner(bytes.NewReader(out))
@@ -440,8 +427,8 @@ func (s *HTTPServer) handleSandboxRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, sandboxRunResponse{Error: fmt.Sprintf("too many files (%d > %d)", len(req.Files), maxSandboxFiles), Edits: []sandboxEdit{}})
 		return
 	}
-	if req.Runner != "" && normalizeRunnerID(req.Runner) != "glm" {
-		writeJSON(w, http.StatusBadRequest, sandboxRunResponse{Error: "only the glm runner is supported for sandbox remote runs", Edits: []sandboxEdit{}})
+	if req.Runner != "" && normalizeRunnerID(req.Runner) != "opencode" {
+		writeJSON(w, http.StatusBadRequest, sandboxRunResponse{Error: "only the opencode runner is supported for sandbox remote runs", Edits: []sandboxEdit{}})
 		return
 	}
 	total := 0

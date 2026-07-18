@@ -575,22 +575,16 @@ func autorunPrepareWorkspace(ctx context.Context, taskPath, sourceWorkDir, seat 
 }
 
 // autorunRunsClaudeBinary reports whether the runner drives the `claude` binary.
-// Both "claude" and "glm" do — glm is the same binary pointed at z.ai's
-// Anthropic-compatible endpoint — so binary-level features like `/goal` apply to
-// both, and to neither codex nor opencode.
+// Only the first-party Claude runner does; Codex and OpenCode do not.
 func autorunRunsClaudeBinary(runner RunnerConfig) bool {
-	switch normalizeRunnerID(runner.RunnerID) {
-	case "claude", "glm":
-		return true
-	}
-	return false
+	return normalizeRunnerID(runner.RunnerID) == "claude"
 }
 
 // autorunUsesTmux reports whether this runner must be driven as a TUI. claude's
 // headless `-p` reports "OAuth session expired" while its TUI works, so driving
 // it any other way cannot succeed.
 func autorunUsesTmux(opts autorunOptions, runner RunnerConfig) bool {
-	return opts.Tmux || normalizeRunnerID(runner.RunnerID) == "claude"
+	return opts.Tmux || autorunRunsClaudeBinary(runner)
 }
 
 // autorunKick runs one iteration against a runner, via tmux PTY when that
