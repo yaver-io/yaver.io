@@ -17,11 +17,16 @@ package main
 // ships for the iOS-simulator viewer.
 //
 // URL is NOT taken via Attach — chromedp opens about:blank and
-// the navigation happens through ops "glass_pc_navigate". This
-// matches how a real browser window works (open → then go) and
-// avoids the awkwardness of trying to pass extra args through
-// the runtimeTarget.Attach(ctx) signature, which is shared with
-// every other target.
+// navigation is a separate step. This matches how a real browser
+// window works (open → then go) and avoids passing extra args
+// through the runtimeTarget.Attach(ctx) signature, which is shared
+// with every other target.
+//
+// That second step used to exist ONLY as ops "glass_pc_navigate",
+// so a runtime session streaming this browser had no way to show
+// anything: it rendered about:blank forever while tap/pinch cheerfully
+// returned 200. runtimeTarget.Navigate now exposes the same
+// browserPool.navigate primitive to the session itself.
 
 import (
 	"context"
@@ -29,12 +34,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -129,6 +137,29 @@ func (p *browserWindowPool) open(ctx context.Context, width, height int) (*brows
 			return nil, fmt.Errorf("launch headless chromium: %w (install Chrome or Chromium)", err)
 		}
 		return nil, fmt.Errorf("launch headless chromium: %w", err)
+	}
+
+	// Turn on touch emulation, or Pinch dispatches events that never become a
+	// gesture.
+	//
+	// Input.dispatchTouchEvent DELIVERS touches to the page regardless, which is
+	// why pinch appeared to work: the call returned 200 and the frame changed.
+	// But Chrome only synthesises pinch-ZOOM from those touches when the target
+	// is emulating a touch device — otherwise the page just handles them as
+	// stray pointer input and the content shifts instead of scaling. Verified by
+	// pinching a loaded page and watching the text disappear rather than grow.
+	//
+	// mobile:true is what enables viewport pinch-zoom semantics; touch points
+	// must be >0 for the page to report touch support at all.
+	if err := chromedp.Run(browserCtx,
+		emulation.SetTouchEmulationEnabled(true).WithMaxTouchPoints(5),
+		emulation.SetDeviceMetricsOverride(int64(width), int64(height), 1, true),
+	); err != nil {
+		// Non-fatal: a browser that streams and taps is still useful, and
+		// failing the whole session over a gesture nicety would be worse. But
+		// say so, because the symptom (pinch silently not zooming) is otherwise
+		// indistinguishable from the bug this replaced.
+		log.Printf("[browser-window] touch emulation unavailable — pinch will not zoom: %v", err)
 	}
 
 	now := time.Now()
@@ -439,38 +470,41 @@ func (browserWindowTarget) Pinch(ctx context.Context, deviceID string, x, y int,
 	if !ok {
 		return fmt.Errorf("browser-window %q not found", deviceID)
 	}
+
+	// Input.synthesizePinchGesture, NOT a hand-rolled pair of touch points.
+	//
+	// The first version of this dispatched two TouchPoints moving apart over 10
+	// steps. Chrome delivered every one of those events to the page and NOTHING
+	// ZOOMED: pinch-zoom is a compositor-level gesture, not something a page
+	// derives from touch coordinates, so the events were consumed as ordinary
+	// touch input and the content shifted instead of scaling. The call returned
+	// 200 and the frame changed, which is exactly why it looked like it worked
+	// — verified by pinching a loaded page and watching the text vanish rather
+	// than grow. Enabling touch emulation did not fix it either.
+	//
+	// CDP already implements this gesture correctly, including the pointer
+	// interleaving and compositor hand-off. Using it is the whole point of not
+	// re-deriving a pinch from scratch.
+	//
+	// relativeSpeed converts the caller's duration into CDP's pixels/second:
+	// the gesture travels roughly baseRadius*|scale-1| pixels, so speed =
+	// distance/seconds keeps a longer durationMs meaning a slower pinch.
 	if durationMs <= 0 {
 		durationMs = 300
 	}
-
 	const baseRadius = 150.0
-	startR := baseRadius
-	endR := baseRadius * scale
-	if endR < 5 {
-		endR = 5
+	distance := baseRadius * math.Abs(scale-1)
+	if distance < 1 {
+		distance = 1
+	}
+	speed := int64(distance / (float64(durationMs) / 1000.0))
+	if speed < 50 {
+		speed = 50
 	}
 
-	pts := func(r float64) []*input.TouchPoint {
-		return []*input.TouchPoint{
-			{X: float64(x) - r, Y: float64(y)},
-			{X: float64(x) + r, Y: float64(y)},
-		}
-	}
-
-	const steps = 10
 	return chromedp.Run(e.browserCtx, chromedp.ActionFunc(func(c context.Context) error {
-		if err := input.DispatchTouchEvent(input.TouchStart, pts(startR)).Do(c); err != nil {
-			return err
-		}
-		for i := 1; i <= steps; i++ {
-			t := float64(i) / float64(steps)
-			r := startR + (endR-startR)*t
-			if err := input.DispatchTouchEvent(input.TouchMove, pts(r)).Do(c); err != nil {
-				// Always lift, or the page keeps thinking a finger is down.
-				_ = input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}).Do(c)
-				return err
-			}
-		}
-		return input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}).Do(c)
+		return input.SynthesizePinchGesture(float64(x), float64(y), scale).
+			WithRelativeSpeed(speed).
+			Do(c)
 	}))
 }
