@@ -33,7 +33,7 @@ import BoxInitSection from "../../src/components/BoxInitSection";
 import CloudProvidersSection from "../../src/components/CloudProvidersSection";
 import HetznerSection from "../../src/components/HetznerSection";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
-import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, loadLocalSpeechConfig, saveLocalSpeechConfig, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
+import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, loadLocalSpeechConfig, saveLocalSpeechConfig, getAuthConfig, setAccountPassword as setAccountPasswordApi, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS, TTS_PROVIDERS, STT_MODELS, TTS_MODELS, TTS_VOICES, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL, DEFAULT_TTS_VOICE } from "../../src/lib/speech";
 import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
@@ -190,6 +190,12 @@ export default function SettingsScreen() {
   const [linkingProvider, setLinkingProvider] = useState<OAuthProvider | null>(null);
   const [unlinkingProvider, setUnlinkingProvider] = useState<AuthIdentity["provider"] | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [emailPasswordEnabled, setEmailPasswordEnabled] = useState(false);
+  const [newAccountPassword, setNewAccountPassword] = useState("");
+  const [confirmAccountPassword, setConfirmAccountPassword] = useState("");
+  const [settingAccountPassword, setSettingAccountPassword] = useState(false);
+  const [accountPasswordMessage, setAccountPasswordMessage] = useState<string | null>(null);
+  const [accountPasswordError, setAccountPasswordError] = useState<string | null>(null);
   const [mergeIntent, setMergeIntent] = useState<MergeIntent | null>(null);
   const [mergeStarting, setMergeStarting] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
@@ -1737,6 +1743,40 @@ export default function SettingsScreen() {
     refreshIdentities();
   }, [user?.id]);
 
+  useEffect(() => {
+    void getAuthConfig()
+      .then((config) => setEmailPasswordEnabled(config.emailPasswordEnabled))
+      .catch(() => setEmailPasswordEnabled(false));
+  }, []);
+
+  const hasEmailPassword = identities.some((identity) => identity.provider === "email");
+
+  const handleSetAccountPassword = async () => {
+    if (!token) return;
+    setAccountPasswordError(null);
+    setAccountPasswordMessage(null);
+    if (newAccountPassword.length < 8) {
+      setAccountPasswordError("Password must be at least 8 characters.");
+      return;
+    }
+    if (newAccountPassword !== confirmAccountPassword) {
+      setAccountPasswordError("Passwords do not match.");
+      return;
+    }
+    setSettingAccountPassword(true);
+    try {
+      await setAccountPasswordApi(token, newAccountPassword);
+      setNewAccountPassword("");
+      setConfirmAccountPassword("");
+      setAccountPasswordMessage("Email/password is linked to this account.");
+      await refreshIdentities();
+    } catch (e: any) {
+      setAccountPasswordError(e?.message || "Could not set password.");
+    } finally {
+      setSettingAccountPassword(false);
+    }
+  };
+
   // Cold-launch OAuth-link success. When the user taps a provider
   // button in the web UI, the callback redirects to
   // `yaver://oauth-callback?linkedProvider=…&linked=1`. That opens
@@ -2860,6 +2900,87 @@ export default function SettingsScreen() {
                 })}
               </View>
             )}
+            <View style={{ marginTop: 14, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 14 }}>
+              <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "700" }}>Email / Password</Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 6, lineHeight: 18 }}>
+                Add a password credential to this same account for automated web, redroid, and simulator tests. Keep the raw password in the local keychain or GitHub Secrets; Yaver stores only a password hash.
+              </Text>
+              {!emailPasswordEnabled ? (
+                <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 10, lineHeight: 18 }}>
+                  Email/password sign-in is closed on this deployment. Open it only for a test window with yaver set emailOauth enable and an allowed-email list. Convex env stores only the gate and allowlist, never the raw password.
+                </Text>
+              ) : hasEmailPassword ? (
+                <Text style={{ color: c.success, fontSize: 12, marginTop: 10, lineHeight: 18 }}>
+                  Email/password is linked to this account. Tests can sign in with {user?.email || "this email"} while the flag stays enabled.
+                </Text>
+              ) : (
+                <View style={{ gap: 10, marginTop: 12 }}>
+                  <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
+                    This links email/password to the same account. Other users and runners cannot fetch the credential; the server stores only a salted hash.
+                  </Text>
+                  <TextInput
+                    value={newAccountPassword}
+                    onChangeText={setNewAccountPassword}
+                    placeholder="New automation password"
+                    placeholderTextColor={c.textMuted}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingVertical: 11,
+                      color: c.textPrimary,
+                      backgroundColor: c.bgCardElevated,
+                    }}
+                  />
+                  <TextInput
+                    value={confirmAccountPassword}
+                    onChangeText={setConfirmAccountPassword}
+                    placeholder="Confirm password"
+                    placeholderTextColor={c.textMuted}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingVertical: 11,
+                      color: c.textPrimary,
+                      backgroundColor: c.bgCardElevated,
+                    }}
+                  />
+                  {accountPasswordError ? (
+                    <Text style={{ color: c.error, fontSize: 12 }}>{accountPasswordError}</Text>
+                  ) : null}
+                  {accountPasswordMessage ? (
+                    <Text style={{ color: c.success, fontSize: 12 }}>{accountPasswordMessage}</Text>
+                  ) : null}
+                  <Pressable
+                    onPress={handleSetAccountPassword}
+                    disabled={settingAccountPassword}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      borderRadius: 10,
+                      paddingVertical: 11,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      opacity: settingAccountPassword ? 0.6 : 1,
+                      backgroundColor: c.bgCardElevated,
+                    }}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "700" }}>
+                      {settingAccountPassword ? "Saving..." : "Enable email/password on this account"}
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
             <View style={{ marginTop: 14, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {(["apple", "github", "gitlab", "google", "microsoft"] as const).map((provider) => {
                 const already = identities.some((i) => i.provider === provider);
@@ -5497,8 +5618,8 @@ export default function SettingsScreen() {
           </View>
         </View>}
 
-        {/* Change Password (email users only) */}
-        {user?.provider === "email" && (
+        {/* Change Password (email/password identity only) */}
+        {emailPasswordEnabled && hasEmailPassword && (
           <View style={styles.section}>
             <Pressable
               style={({ pressed }) => [

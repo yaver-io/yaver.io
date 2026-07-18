@@ -46,7 +46,7 @@ test("buildManagedCloudInit writes managed agent config and service", () => {
   assert.doesNotMatch(cloudInit, /NOPASSWD:ALL/);
   assert.match(cloudInit, /cat > \/usr\/local\/bin\/yaver-bootstrap-workspace/);
   assert.match(cloudInit, /clone_one https:\/\/github\.com\/kivanccakmak\/yaver\.io\.git yaver\.io/);
-  assert.match(cloudInit, /clone_one https:\/\/github\.com\/kivanccakmak\/talos\.git talos/);
+  assert.doesNotMatch(cloudInit, /clone_one https:\/\/github\.com\/kivanccakmak\/(?!yaver\.io\.git)/);
   assert.match(cloudInit, /clone_one 'https:\/\/github\.com\/example\/repo\.git' starter/);
   assert.match(cloudInit, /command -v claude >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @anthropic-ai\/claude-code"/);
   assert.match(cloudInit, /command -v codex >\/dev\/null 2>&1 \|\| missing_pkgs="\$missing_pkgs @openai\/codex"/);
@@ -191,7 +191,7 @@ test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self
   assert.match(byok, /"default_agent": "build"/);
   assert.match(byok, /"command": \[\n\s+"\/usr\/local\/bin\/yaver",\n\s+"mcp"\n\s+\]/);
   assert.match(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/yaver\.io\.git yaver\.io/);
-  assert.match(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/talos\.git talos/);
+  assert.doesNotMatch(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/(?!yaver\.io\.git)/);
   assert.match(byok, /-v \/srv\/yaver\/state\/Workspace:\/srv\/yaver\/workspace/);
   assert.doesNotMatch(byok, /ghcr\.io\/get-convex\/convex-backend/);
   assert.doesNotMatch(byok, /docker run -d --name yaver-convex/);

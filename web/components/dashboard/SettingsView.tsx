@@ -133,6 +133,12 @@ function platformLabel(platform: string): string {
 
 export default function SettingsView({ user, onLogout }: SettingsViewProps) {
   const [identities, setIdentities] = useState<Array<{ provider: string; email: string | null; isPrimary: boolean }>>([]);
+  const [emailPasswordEnabled, setEmailPasswordEnabled] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [linkingProvider, setLinkingProvider] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [unlinkingProvider, setUnlinkingProvider] = useState<string | null>(null);
@@ -358,6 +364,53 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  useEffect(() => {
+    fetch(`${CONVEX_URL}/auth/config`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => setEmailPasswordEnabled(json?.emailPasswordEnabled === true))
+      .catch(() => setEmailPasswordEnabled(false));
+  }, []);
+
+  const hasEmailPassword = identities.some((identity) => identity.provider === "email");
+
+  const setAccountPassword = async () => {
+    if (!token) return;
+    setPasswordError(null);
+    setPasswordMessage(null);
+    if (newPassword.length < 8) {
+      setPasswordError("Password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError("Passwords do not match.");
+      return;
+    }
+    setPasswordBusy(true);
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/set-password`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password: newPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPasswordError(data?.error || "Could not set password.");
+        return;
+      }
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setPasswordMessage("Email/password sign-in is now linked to this account.");
+      await refreshIdentities(token);
+    } catch {
+      setPasswordError("Network error — try again.");
+    } finally {
+      setPasswordBusy(false);
+    }
+  };
+
   const startLink = async (provider: "apple" | "github" | "google" | "microsoft" | "gitlab") => {
     if (!token) return;
     setLinkError(null);
@@ -387,8 +440,6 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
       setLinkingProvider(null);
     }
   };
-
-  const isEmailUser = user?.provider === "email" || user?.provider === "password";
 
   return (
     <>
@@ -475,6 +526,67 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
             </div>
           );
         })()}
+      </div>
+
+      <div className="card mb-6">
+        <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">
+          Email / Password
+        </h3>
+        <p className="mb-4 text-xs text-surface-500">
+          Add a password credential to this same account for automation on web,
+          redroid, and iOS simulators. The raw password belongs in your local
+          keychain or GitHub Secrets; Yaver stores only a PBKDF2 password hash.
+        </p>
+        {!emailPasswordEnabled ? (
+          <div className="rounded-lg border border-surface-800 bg-surface-900/60 px-3 py-3 text-sm text-surface-400">
+            Email/password sign-in is closed on this deployment. Open it only
+            for a test window with <code className="rounded bg-surface-950 px-1 py-0.5 text-surface-200">yaver set emailOauth enable</code>{" "}
+            and an allowed-email list. Convex env stores only the gate and
+            allowlist, never the raw password.
+          </div>
+        ) : hasEmailPassword ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-3 text-sm text-emerald-700 dark:text-emerald-300">
+            Email/password is linked to this account. Automated tests can sign
+            in with <span className="font-mono">{user?.email}</span> while the
+            deployment flag stays enabled.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-xs text-amber-700 dark:text-amber-200">
+              This adds an <span className="font-mono">email</span> sign-in
+              identity to your existing {user?.provider || "OAuth"} account. It
+              does not create a second Yaver user. Other users and runners
+              cannot fetch this credential; the server stores only a salted
+              hash.
+            </div>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="New automation password"
+              autoComplete="new-password"
+              className="w-full rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500"
+            />
+            <input
+              type="password"
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
+              placeholder="Confirm password"
+              autoComplete="new-password"
+              className="w-full rounded-lg border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500"
+            />
+            {passwordError ? <p className="text-xs text-red-400">{passwordError}</p> : null}
+            {passwordMessage ? <p className="text-xs text-emerald-700 dark:text-emerald-300">{passwordMessage}</p> : null}
+            <button
+              type="button"
+              onClick={() => void setAccountPassword()}
+              disabled={passwordBusy}
+              className="w-full rounded-lg border border-surface-700 px-4 py-3 text-sm text-surface-300 transition-colors hover:bg-surface-800/50 hover:text-surface-50 disabled:opacity-50"
+            >
+              {passwordBusy ? "Saving..." : "Enable email/password on this account"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Merge another account into this one */}

@@ -61,12 +61,20 @@ function AuthContent() {
   const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [emailPasswordEnabled, setEmailPasswordEnabled] = useState(false);
   // Hide the passkey button on browsers that don't speak WebAuthn (very
   // old / privacy-mode locked configs). Existing OAuth + email flows are
   // unaffected — passkey is purely additive.
   const [passkeySupported, setPasskeySupported] = useState(false);
   useEffect(() => {
     setPasskeySupported(browserSupportsWebAuthn());
+  }, []);
+
+  useEffect(() => {
+    fetch(`${CONVEX_URL}/auth/config`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => setEmailPasswordEnabled(json?.emailPasswordEnabled === true))
+      .catch(() => setEmailPasswordEnabled(false));
   }, []);
 
   // OIDC: render the company-SSO button only when the deployment has
@@ -373,6 +381,10 @@ function AuthContent() {
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    if (!emailPasswordEnabled) {
+      setFormError("Email/password sign-in is disabled on this deployment.");
+      return;
+    }
 
     if (mode === "signup" && password !== rePassword) {
       setFormError("Passwords do not match.");
@@ -640,112 +652,116 @@ function AuthContent() {
 
         </div>
 
-        {/* Divider */}
-        <div className={`${isSdkPopup ? "my-5" : "my-6"} flex items-center gap-3`}>
-          <div className="h-px flex-1 bg-surface-700" />
-          <span className="text-xs text-surface-500">or</span>
-          <div className="h-px flex-1 bg-surface-700" />
-        </div>
+        {emailPasswordEnabled ? (
+          <>
+            {/* Divider */}
+            <div className={`${isSdkPopup ? "my-5" : "my-6"} flex items-center gap-3`}>
+              <div className="h-px flex-1 bg-surface-700" />
+              <span className="text-xs text-surface-500">or</span>
+              <div className="h-px flex-1 bg-surface-700" />
+            </div>
 
-        {/* Email/Password Form */}
-        <form onSubmit={handleEmailSubmit} className="space-y-3">
-          {mode === "signup" && (
-            <input
-              type="text"
-              placeholder="Full name"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
-              className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
-            />
-          )}
-          <input
-            type="email"
-            placeholder="Email address"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
-          />
-          {mode === "signup" && (
-            <input
-              type="password"
-              placeholder="Confirm password"
-              value={rePassword}
-              onChange={(e) => setRePassword(e.target.value)}
-              required
-              className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
-            />
-          )}
-          {mode === "signup" && (
-            <label className={`flex items-start gap-3 border border-surface-800 bg-surface-900/70 text-left ${isSdkPopup ? "rounded-xl px-4 py-3" : "rounded-lg px-4 py-3"}`}>
+            {/* Email/Password Form */}
+            <form onSubmit={handleEmailSubmit} className="space-y-3">
+              {mode === "signup" && (
+                <input
+                  type="text"
+                  placeholder="Full name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                  className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
+                />
+              )}
               <input
-                type="checkbox"
-                checked={setup2faAfterSignup}
-                onChange={(e) => setSetup2faAfterSignup(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-surface-700 bg-surface-950"
+                type="email"
+                placeholder="Email address"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
               />
-              <span>
-                <span className="block text-sm font-medium text-surface-200">Set up authenticator 2FA after signup</span>
-                <span className="mt-1 block text-xs leading-5 text-surface-500">
-                  Optional. Works with Microsoft Authenticator, Google Authenticator, 1Password, and other TOTP apps.
-                </span>
-              </span>
-            </label>
-          )}
-          <button
-            type="submit"
-            disabled={loading}
-            className={`w-full bg-surface-50 px-4 py-3 text-sm font-medium text-surface-950 transition-colors hover:bg-surface-200 disabled:opacity-50 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
-          >
-            {loading ? "Please wait..." : mode === "signin" ? "Sign In" : "Sign Up"}
-          </button>
-        </form>
-
-        {/* Forgot password (sign-in mode only) */}
-        {mode === "signin" && (
-          <p className="mt-2 text-right text-sm">
-            <Link
-              href="/auth/reset-password"
-              className="text-surface-500 hover:text-surface-300 transition-colors"
-            >
-              Forgot password?
-            </Link>
-          </p>
-        )}
-
-        {/* Toggle mode */}
-        <p className={`${isSdkPopup ? "mt-5" : "mt-4"} text-center text-sm text-surface-500`}>
-          {mode === "signin" ? (
-            <>
-              Don&apos;t have an account?{" "}
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
+              />
+              {mode === "signup" && (
+                <input
+                  type="password"
+                  placeholder="Confirm password"
+                  value={rePassword}
+                  onChange={(e) => setRePassword(e.target.value)}
+                  required
+                  className={`w-full border border-surface-700 bg-surface-900 px-4 py-3 text-sm text-surface-200 placeholder-surface-500 outline-none transition-colors focus:border-surface-500 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
+                />
+              )}
+              {mode === "signup" && (
+                <label className={`flex items-start gap-3 border border-surface-800 bg-surface-900/70 text-left ${isSdkPopup ? "rounded-xl px-4 py-3" : "rounded-lg px-4 py-3"}`}>
+                  <input
+                    type="checkbox"
+                    checked={setup2faAfterSignup}
+                    onChange={(e) => setSetup2faAfterSignup(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-surface-700 bg-surface-950"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-surface-200">Set up authenticator 2FA after signup</span>
+                    <span className="mt-1 block text-xs leading-5 text-surface-500">
+                      Optional. Works with Microsoft Authenticator, Google Authenticator, 1Password, and other TOTP apps.
+                    </span>
+                  </span>
+                </label>
+              )}
               <button
-                onClick={() => { setMode("signup"); setFormError(null); }}
-                className="text-surface-300 hover:text-surface-50 transition-colors"
+                type="submit"
+                disabled={loading}
+                className={`w-full bg-surface-50 px-4 py-3 text-sm font-medium text-surface-950 transition-colors hover:bg-surface-200 disabled:opacity-50 ${isSdkPopup ? "rounded-xl" : "rounded-lg"}`}
               >
-                Sign Up
+                {loading ? "Please wait..." : mode === "signin" ? "Sign In" : "Sign Up"}
               </button>
-            </>
-          ) : (
-            <>
-              Already have an account?{" "}
-              <button
-                onClick={() => { setMode("signin"); setFormError(null); }}
-                className="text-surface-300 hover:text-surface-50 transition-colors"
-              >
-                Sign In
-              </button>
-            </>
-          )}
-        </p>
+            </form>
+
+            {/* Forgot password (sign-in mode only) */}
+            {mode === "signin" && (
+              <p className="mt-2 text-right text-sm">
+                <Link
+                  href="/auth/reset-password"
+                  className="text-surface-500 hover:text-surface-300 transition-colors"
+                >
+                  Forgot password?
+                </Link>
+              </p>
+            )}
+
+            {/* Toggle mode */}
+            <p className={`${isSdkPopup ? "mt-5" : "mt-4"} text-center text-sm text-surface-500`}>
+              {mode === "signin" ? (
+                <>
+                  Don&apos;t have an account?{" "}
+                  <button
+                    onClick={() => { setMode("signup"); setFormError(null); }}
+                    className="text-surface-300 hover:text-surface-50 transition-colors"
+                  >
+                    Sign Up
+                  </button>
+                </>
+              ) : (
+                <>
+                  Already have an account?{" "}
+                  <button
+                    onClick={() => { setMode("signin"); setFormError(null); }}
+                    className="text-surface-300 hover:text-surface-50 transition-colors"
+                  >
+                    Sign In
+                  </button>
+                </>
+              )}
+            </p>
+          </>
+        ) : null}
 
         <p className={`${isSdkPopup ? "mt-5" : "mt-6"} text-center text-xs text-surface-600`}>
           By continuing, you agree to our{" "}

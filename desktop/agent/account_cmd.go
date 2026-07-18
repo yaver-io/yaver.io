@@ -4,12 +4,13 @@ package main
 //
 // Mirrors what the web SettingsView / mobile Settings / MCP auth-linking
 // tools expose. Useful when the user is at a terminal (no GUI handy) and
-// wants to inspect or modify which OAuth providers are linked to their
+// wants to inspect or modify which sign-in methods are linked to their
 // Yaver account, or fold two Yaver accounts together.
 //
 // Shape:
 //
 //   yaver account providers         # list linked providers + emails
+//   yaver account auth-config       # show deployment auth capabilities
 //   yaver account link <provider>   # connect Google/Apple/Microsoft
 //   yaver account unlink <provider> # disconnect, refusing if it's the only one
 //   yaver account merge start       # mint an approval URL for manual merge
@@ -38,6 +39,8 @@ func runAccount(args []string) {
 	switch args[0] {
 	case "providers", "list", "ls":
 		runAccountProviders(ctx)
+	case "auth-config", "capabilities", "config":
+		runAccountAuthConfig(ctx)
 	case "link":
 		runAccountLink(ctx, args[1:])
 	case "unlink":
@@ -54,10 +57,11 @@ func runAccount(args []string) {
 }
 
 func accountUsage() {
-	fmt.Print(`yaver account — manage OAuth sign-in methods and account merges
+	fmt.Print(`yaver account — manage sign-in methods and account merges
 
 Usage:
   yaver account providers                   List linked sign-in methods
+  yaver account auth-config                 Show enabled auth capabilities
   yaver account link <apple|google|microsoft|msft>
                                             Open browser to link another provider
   yaver account unlink <provider> [--totp <code>]
@@ -69,6 +73,23 @@ Usage:
 Signed in as the account in ~/.yaver/config.json. Run 'yaver auth' first
 if no signed-in session is present.
 `)
+}
+
+func runAccountAuthConfig(ctx context.Context) {
+	result, err := authCapabilities(ctx, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(result.Message)
+	fmt.Printf("password min length: %d\n", result.PasswordMinLength)
+	if result.PasswordStorage != "" {
+		fmt.Printf("password storage: %s\n", result.PasswordStorage)
+	}
+	fmt.Printf("raw password storage: %s\n", result.RawPasswordStorage)
+	if len(result.RecommendedSecrets) > 0 {
+		fmt.Printf("recommended CI secret names: %s\n", strings.Join(result.RecommendedSecrets, ", "))
+	}
 }
 
 func runAccountProviders(ctx context.Context) {

@@ -8,12 +8,41 @@ import { randomHex, sha256Hex } from "./auth";
 // Machine specs by type. The Hetzner server_type strings are what you pass
 // to POST https://api.hetzner.cloud/v1/servers.
 const MACHINE_SPECS = {
+  standard: {
+    // Normie Cloud Workspace default: enough for one app / Yaver serverless /
+    // Hermes iteration without burning the $29 plan margin. CX32 is the current
+    // 4 vCPU / 8 GB / 80 GB shared-vCPU shape in Hetzner's CX line. Keep the
+    // exact provider type env-overridable because regional availability changes.
+    hetznerType: "cx32",
+    vcpu: 4,
+    ramGb: 8,
+    diskGb: 80,
+    arch: "amd64" as const,
+  },
+  heavy: {
+    // Two apps, Docker-heavy dev servers, or larger monorepos. Internal only:
+    // users buy Cloud Workspace, placement picks this when needed.
+    hetznerType: "cx42",
+    vcpu: 8,
+    ramGb: 16,
+    diskGb: 160,
+    arch: "amd64" as const,
+  },
+  build: {
+    // Native mobile builds / large monorepo checks. Prefer this only when the
+    // placement layer has evidence; otherwise it will erase the flat-plan margin.
+    hetznerType: "cx52",
+    vcpu: 16,
+    ramGb: 32,
+    diskGb: 320,
+    arch: "amd64" as const,
+  },
   cpu: {
     // History: cx42 DEPRECATED (422 "server type 106 is deprecated");
     // cpx41 non-deprecated but US-only stock; ccx33 (dedicated) works
     // EU+US but costs €73.99/mo. cpx42 (8 vCPU/16 GB) was the prior
     // default — fine for a single RN/Hermes app, but TIGHT for a real
-    // monorepo (Talos-class: workspace install + monorepo-wide tsc +
+    // large monorepo (workspace install + monorepo-wide tsc +
     // a Metro instance can collectively exceed 16 GB and OOM-kill mid
     // build, which surfaces to the user as "the agent crashed"). So
     // the default is now the 32 GB tier: ONE box that comfortably
@@ -29,7 +58,7 @@ const MACHINE_SPECS = {
     // cloudLifecycle.hetznerServerType) so a region/stock swap needs no
     // redeploy. us-region still falls back to ash in the region→location
     // map — confirm the chosen type is orderable there too.
-    hetznerType: "cpx51",    // 16 vCPU, 32 GB RAM, 360 GB, amd64 (shared)
+    hetznerType: "cpx51",    // legacy 16 vCPU, 32 GB RAM, 360 GB, amd64 (shared)
     vcpu: 16,
     ramGb: 32,
     diskGb: 360,
@@ -45,6 +74,19 @@ const MACHINE_SPECS = {
     vram: 20,
   },
 };
+
+function normalizeMachineType(value: string | undefined | null): keyof typeof MACHINE_SPECS {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "standard" || normalized === "heavy" || normalized === "build" || normalized === "cpu" || normalized === "gpu") {
+    return normalized as keyof typeof MACHINE_SPECS;
+  }
+  return "standard";
+}
+
+function envServerTypeFor(machineType: string): string | undefined {
+  const key = `YAVER_CLOUD_${String(machineType || "standard").toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TYPE`;
+  return process.env[key] || undefined;
+}
 
 /**
  * The device id a managed box registers as. Derived, never invented: it is
@@ -184,7 +226,6 @@ export function buildManagedCloudInitContainer(
       git clone "$repo" "$dest" || echo "[workspace] clone skipped: $repo"
     }
     clone_one https://github.com/kivanccakmak/yaver.io.git yaver.io
-    clone_one https://github.com/kivanccakmak/talos.git talos
 ${optionalRepoClone}    SCRIPT
   - chmod +x /usr/local/bin/yaver-bootstrap-workspace
   - /usr/local/bin/yaver-bootstrap-workspace || true
@@ -512,9 +553,9 @@ export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
     ? `      clone_one ${shellSingleQuote(spec.repoUrl)} starter\n`
     : "";
   const repoCloneSnippet = `  # Managed source workspace — the mobile app's project scanner sees
-  # these as normal sibling repos under ~/Workspace. Talos may be private;
-  # the bootstrap is intentionally repeatable so it can succeed later after
-  # GitHub credentials are configured from mobile.
+  # these as normal sibling repos under ~/Workspace. The bootstrap is
+  # intentionally repeatable so optional user repo clones can succeed later
+  # after GitHub credentials are configured from mobile.
   - |
     cat > /usr/local/bin/yaver-bootstrap-workspace <<'SCRIPT'
     #!/usr/bin/env bash
@@ -528,7 +569,6 @@ export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
       sudo -u yaver git clone "$repo" "$dest" || echo "[workspace] clone skipped: $repo"
     }
     clone_one https://github.com/kivanccakmak/yaver.io.git yaver.io
-    clone_one https://github.com/kivanccakmak/talos.git talos
 ${optionalRepoCloneSnippet}    chown -R yaver:yaver "$root" || true
     SCRIPT
   - chmod +x /usr/local/bin/yaver-bootstrap-workspace
@@ -934,7 +974,8 @@ async function createCloudMachine(
   ctx: { db: any; scheduler: any },
   args: CreateCloudMachineArgs,
 ) {
-  const specDef = MACHINE_SPECS[args.machineType as keyof typeof MACHINE_SPECS];
+  const machineType = normalizeMachineType(args.machineType);
+  const specDef = MACHINE_SPECS[machineType];
   if (!specDef) throw new Error("Invalid machine type: " + args.machineType);
 
   const now = Date.now();
@@ -950,7 +991,7 @@ async function createCloudMachine(
     "codex",
     "opencode",
   ];
-  if (args.machineType === "gpu") {
+  if (machineType === "gpu") {
     tools.push("ollama", "personaplex", "whisper", "cuda");
   }
 
@@ -976,7 +1017,7 @@ async function createCloudMachine(
     userId: args.userId,
     teamId: args.teamId,
     subscriptionId: args.subscriptionId,
-    machineType: args.machineType,
+    machineType,
     origin: "managed", // every cloudMachines row is a Yaver-side box
     tier: args.tier ?? "byok",
     status: "provisioning",
@@ -1011,7 +1052,7 @@ async function createCloudMachine(
 export const create = internalMutation({
   args: {
     userId: v.id("users"),
-    machineType: v.string(),        // "cpu" | "gpu"
+    machineType: v.string(),        // "standard" | "heavy" | "build" | legacy "cpu" | "gpu"
     teamId: v.optional(v.string()), // if team-owned
     region: v.optional(v.string()), // "eu" | "us", default "eu"
     repoUrl: v.optional(v.string()),
@@ -1040,11 +1081,11 @@ export const adoptExisting = internalMutation({
     deviceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const spec = MACHINE_SPECS["cpu" as keyof typeof MACHINE_SPECS];
+    const spec = MACHINE_SPECS.standard;
     const now = Date.now();
     return await ctx.db.insert("cloudMachines", {
       userId: args.userId,
-      machineType: "cpu",
+      machineType: "standard",
       origin: "managed",
       status: "active",
       multiUser: false,
@@ -1216,7 +1257,8 @@ export const createByoRow = internalMutation({
     region: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const specDef = MACHINE_SPECS[args.machineType as keyof typeof MACHINE_SPECS];
+    const machineType = normalizeMachineType(args.machineType);
+    const specDef = MACHINE_SPECS[machineType];
     if (!specDef) throw new Error("Invalid machine type: " + args.machineType);
     const now = Date.now();
     const specs: { vcpu: number; ramGb: number; diskGb: number; arch: string; gpu?: string; vram?: number } = {
@@ -1231,7 +1273,7 @@ export const createByoRow = internalMutation({
     }
     return await ctx.db.insert("cloudMachines", {
       userId: args.userId,
-      machineType: args.machineType,
+      machineType,
       origin: "self-hosted", // user's own Hetzner account
       provider: "hetzner",
       tier: "byok",
@@ -1285,19 +1327,20 @@ export const mintByoBootstrap = internalAction({
     serverName: string;
     userData: string;
   }> => {
-    const specDef = MACHINE_SPECS[args.machineType as keyof typeof MACHINE_SPECS];
+    const machineType = normalizeMachineType(args.machineType);
+    const specDef = MACHINE_SPECS[machineType];
     if (!specDef) throw new Error("Invalid machine type: " + args.machineType);
 
     const machineId: any = await ctx.runMutation(internal.cloudMachines.createByoRow, {
       userId: args.userId,
-      machineType: args.machineType,
+      machineType,
       region: args.region,
     });
 
     const shortId = machineId.toString().substring(0, 8);
-    const serverName = `yaver-${args.machineType}-${shortId}`;
+    const serverName = `yaver-${machineType}-${shortId}`;
     const deviceId = `byo-${shortId}`;
-    const isGpu = args.machineType === "gpu";
+    const isGpu = machineType === "gpu";
     const yaverArch = specDef.arch === "amd64" ? "amd64" : "arm64";
     const yaverReleaseUrl = `https://github.com/kivanccakmak/yaver.io/releases/latest/download/yaver-linux-${yaverArch}.tar.gz`;
 
@@ -1455,7 +1498,7 @@ export const seedParkedMachine = internalMutation({
     const now = Date.now();
     const machineId = await ctx.db.insert("cloudMachines", {
       userId: args.userId,
-      machineType: args.machineType ?? "cpu",
+      machineType: normalizeMachineType(args.machineType),
       serverType: args.serverType,
       origin: "managed",
       status: "paused", // parked = wakeable-from-snapshot (resumable status)
@@ -1648,6 +1691,46 @@ export const setLifecycleTiming = internalMutation({
       patch.wakeCompletedAt = undefined;
     }
     await ctx.db.patch(machineId, patch);
+    if (args.wakeStartedAt) {
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "wake",
+        status: "running",
+        phase: "starting",
+        progress: 1,
+      }).catch(() => {});
+    }
+    if (args.wakeCompletedAt || args.lastWakeOutcome) {
+      const outcome = String(args.lastWakeOutcome || "");
+      const ok = !args.lastWakeOutcome || outcome === "ready";
+      const blocked = outcome === "needs-auth";
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "wake",
+        status: ok ? "succeeded" : blocked ? "blocked" : "failed",
+        phase: ok ? "ready" : String(args.lastWakeOutcome || "failed"),
+        progress: ok ? 100 : undefined,
+        error: ok ? undefined : String(args.lastWakeOutcome || "wake failed"),
+      }).catch(() => {});
+    }
+    if (args.parkStartedAt) {
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "park",
+        status: "running",
+        phase: "snapshotting",
+        progress: 10,
+      }).catch(() => {});
+    }
+    if (args.parkCompletedAt) {
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "park",
+        status: "succeeded",
+        phase: "parked",
+        progress: 100,
+      }).catch(() => {});
+    }
   },
 });
 
@@ -1659,11 +1742,19 @@ export const setLifecycleTiming = internalMutation({
 export const setProviderStatus = internalMutation({
   args: { machineId: v.id("cloudMachines"), status: v.string() },
   handler: async (ctx, { machineId, status }) => {
+    const machine = await ctx.db.get(machineId);
     await ctx.db.patch(machineId, {
       providerStatus: status.slice(0, 40),
       providerStatusAt: Date.now(),
       updatedAt: Date.now(),
     });
+    await ctx.runMutation(internal.wakeRuns.markProgress, {
+      machineId,
+      status: "running",
+      provider: (machine as any)?.provider ?? "hetzner",
+      providerResourceId: (machine as any)?.cloudResourceId ?? (machine as any)?.hetznerServerId,
+      providerStatus: status,
+    }).catch(() => {});
   },
 });
 
@@ -1700,6 +1791,10 @@ export const setPhase = internalMutation({
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const machine = await ctx.db.get(args.machineId);
+    if (args.phase === "ready" && machine?.status !== "active") {
+      return { ok: false, reason: "ready requires active machine status" };
+    }
     const patch: Record<string, unknown> = {
       provisionPhase: args.phase,
       provisionPhaseAt: Date.now(),
@@ -1720,6 +1815,19 @@ export const setPhase = internalMutation({
       patch.provisionError = undefined;
     }
     await ctx.db.patch(args.machineId, patch);
+    await ctx.runMutation(internal.wakeRuns.markProgress, {
+      machineId: args.machineId,
+      phase: args.phase,
+      progress: typeof args.progress === "number" ? args.progress : undefined,
+      status: args.phase === "ready"
+        ? "succeeded"
+        : args.phase === "error"
+          ? "failed"
+          : args.phase === "awaiting-yaver-auth" || args.phase === "authorizing-runners"
+            ? "blocked"
+            : "running",
+      error: args.phase === "error" || args.phase === "awaiting-yaver-auth" ? args.error : undefined,
+    }).catch(() => {});
   },
 });
 
@@ -1873,7 +1981,8 @@ export const provision = internalAction({
       }
     }
 
-    const specDef = MACHINE_SPECS[machine.machineType as keyof typeof MACHINE_SPECS];
+    const machineType = normalizeMachineType(machine.machineType);
+    const specDef = MACHINE_SPECS[machineType];
     if (!specDef) {
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId: args.machineId,
@@ -1884,11 +1993,11 @@ export const provision = internalAction({
     }
 
     const shortId = machine._id.toString().substring(0, 8);
-    const serverName = `yaver-${machine.machineType}-${shortId}`;
+    const serverName = `yaver-${machineType}-${shortId}`;
     const subdomain = `${shortId}.cloud`;
     const autoDomain = `${shortId}.cloud.yaver.io`;
     const location = (machine.region ?? "eu").startsWith("us") ? "ash" : "fsn1";
-    const isGpu = machine.machineType === "gpu";
+    const isGpu = machineType === "gpu";
 
     const yaverArch = specDef.arch === "amd64" ? "amd64" : "arm64";
     // Release asset is the gzipped tarball, not a raw binary (see the
@@ -2000,17 +2109,10 @@ export const provision = internalAction({
 
     try {
       // ── 1. Hetzner server ───────────────────────────────────────
-      // Test-only cost override: YAVER_CLOUD_CPU_TYPE swaps the cpu SKU's
-      // Hetzner type (e.g. cpx22 €9.49 vs cpx42 €29.99) so headless/e2e
-      // provisions are cheap throwaways. Unset ⇒ the real SKU type. Only
-      // applies to machineType "cpu". Must be a non-deprecated type orderable
-      // in the resolved location. Captured so we can RECORD it on the row and
-      // recreate on the exact same type at resume (a snapshot won't restore
-      // onto a smaller disk).
-      const createdServerType =
-        machine.machineType === "cpu" && process.env.YAVER_CLOUD_CPU_TYPE
-          ? process.env.YAVER_CLOUD_CPU_TYPE
-          : specDef.hetznerType;
+      // Cost/availability override per internal profile. Captured on the row so
+      // resume recreates the exact same type; snapshots cannot restore onto a
+      // smaller disk. Legacy "cpu" keeps YAVER_CLOUD_CPU_TYPE support.
+      const createdServerType = envServerTypeFor(machineType) ?? specDef.hetznerType;
       const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
         method: "POST",
         headers: {
@@ -2025,7 +2127,7 @@ export const provision = internalAction({
           ...(bootSshKeyNames.length ? { ssh_keys: bootSshKeyNames } : {}),
           labels: {
             service: "yaver-cloud-machine",
-            machine_type: machine.machineType,
+            machine_type: machineType,
             user: machine.userId.toString().substring(0, 10),
             managed: "true",
           },
@@ -2481,10 +2583,9 @@ export const reconcileSubscriptions = internalAction({
       }
 
       // Genuinely no box (the create never ran) or a failed "error"
-      // box → recovery: re-provision. machineType from the plan label
-      // ("yaver-cloud-gpu" ⇒ gpu). Tier defaults byok (a hosted sub
-      // still gets a working box; hosted Convex re-bootstraps).
-      const machineType = s.plan.includes("gpu") ? "gpu" : "cpu";
+      // box → recovery: re-provision. Flat Cloud Workspace repairs to the
+      // cost-friendly standard profile; explicit legacy GPU plans keep GPU.
+      const machineType = s.plan.includes("gpu") ? "gpu" : "standard";
       await ctx.runMutation(internal.cloudMachines.ensureForSubscription, {
         userId: s.userId,
         machineType,

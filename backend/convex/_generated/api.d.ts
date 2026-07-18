@@ -16,6 +16,7 @@ import type * as aiModels from "../aiModels.js";
 import type * as aiRunners from "../aiRunners.js";
 import type * as auth from "../auth.js";
 import type * as authLogs from "../authLogs.js";
+import type * as authPasswordPolicy from "../authPasswordPolicy.js";
 import type * as byoMachines from "../byoMachines.js";
 import type * as cleanup from "../cleanup.js";
 import type * as cloudLifecycle from "../cloudLifecycle.js";
@@ -67,11 +68,15 @@ import type * as shortcuts from "../shortcuts.js";
 import type * as subscriptions from "../subscriptions.js";
 import type * as support_link from "../support_link.js";
 import type * as survey from "../survey.js";
+import type * as taskDispatchIntents from "../taskDispatchIntents.js";
 import type * as taskPackages from "../taskPackages.js";
+import type * as taskPlacement from "../taskPlacement.js";
+import type * as taskPlacementClassifier from "../taskPlacementClassifier.js";
 import type * as teams from "../teams.js";
 import type * as totp from "../totp.js";
 import type * as userDomains from "../userDomains.js";
 import type * as userSettings from "../userSettings.js";
+import type * as wakeRuns from "../wakeRuns.js";
 import type * as whatsapp from "../whatsapp.js";
 
 import type {
@@ -89,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   aiRunners: typeof aiRunners;
   auth: typeof auth;
   authLogs: typeof authLogs;
+  authPasswordPolicy: typeof authPasswordPolicy;
   byoMachines: typeof byoMachines;
   cleanup: typeof cleanup;
   cloudLifecycle: typeof cloudLifecycle;
@@ -140,11 +146,15 @@ declare const fullApi: ApiFromModules<{
   subscriptions: typeof subscriptions;
   support_link: typeof support_link;
   survey: typeof survey;
+  taskDispatchIntents: typeof taskDispatchIntents;
   taskPackages: typeof taskPackages;
+  taskPlacement: typeof taskPlacement;
+  taskPlacementClassifier: typeof taskPlacementClassifier;
   teams: typeof teams;
   totp: typeof totp;
   userDomains: typeof userDomains;
   userSettings: typeof userSettings;
+  wakeRuns: typeof wakeRuns;
   whatsapp: typeof whatsapp;
 }>;
 

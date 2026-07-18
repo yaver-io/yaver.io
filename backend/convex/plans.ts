@@ -1,16 +1,14 @@
-// plans.ts — SINGLE SOURCE OF TRUTH for sellable plan entitlements, and
-// the activation orchestrator that turns a paid LemonSqueezy webhook into
-// real entitlements: included active-hours + gateway inference policy +
-// a monthly wallet budget.
+// plans.ts — Cloud Workspace entitlement activation.
 //
-// Two doors (mirrors the checkout custom_data.tier the webhook already
-// passes — http.ts subscription_created branch):
-//   • "hosted"  — the all-in bundle: managed inference ON (we supply the
-//                 model via the gateway), included hours + a monthly AI
-//                 wallet budget. Higher price.
-//   • "byok"    — bring-your-own-key: managed inference OFF (the user
-//                 routes to their own provider via `yaver code set byok`),
-//                 cloud box + included hours only. Cheaper.
+// The public catalog has only Free, Relay Pro, and Cloud Workspace. Free has no
+// checkout. Relay Pro provisions relay infrastructure only. Cloud Workspace is
+// the only compute subscription and currently runs in BYOK mode: Yaver provides
+// the workspace/relay/build machine, while the user brings Claude Code, Codex,
+// OpenRouter, or another runner account.
+//
+// The older "hosted"/"cloud-agent" terms remain in a few internal branches as
+// legacy aliases so old webhook data and old subscription rows can be read
+// safely, but no active web checkout or plan switch should advertise them.
 //
 // Everything is env-overridable so launch promos / margin retunes never
 // need a redeploy. Money is integer RETAIL cents end-to-end — the wallet
@@ -38,8 +36,12 @@ function num(envKey: string, dflt: number): number {
 
 export interface PlanEntitlements {
   tier: PlanTier;
-  // Included active-hours/month (CPU box). NOT wallet-charged.
-  includedHoursCpu: number;
+  // Included active-hours/month by internal Cloud Workspace profile. NOT
+  // wallet-charged. Standard is the everyday 8GB profile; heavy/build are
+  // smaller buckets so occasional native builds work while margin survives.
+  includedHoursStandard: number;
+  includedHoursHeavy: number;
+  includedHoursBuild: number;
   // Monthly wallet credit (RETAIL cents). For "hosted" this is the
   // included managed-AI budget; for both tiers it also covers any compute
   // overage past the included hours AND keeps the snapshot-reserve floor
@@ -56,15 +58,15 @@ export interface PlanEntitlements {
   };
 }
 
-// Defaults chosen so the MEDIAN user is profitable and the cap bounds the
-// whale (see the unit-economics table). Retune via env without a redeploy.
-//   $19 hosted ≈ 40h included (~$4 COGS) + $8 retail AI (~$5.3 COGS) ⇒ ~50% margin
-//   $9  byok   ≈ 40h included (~$4 COGS) only                       ⇒ ~55% margin
+// Defaults chosen for Cloud Workspace. Retune via env without a redeploy.
+// The active launch product uses BYOK; hosted is retained only for legacy data.
 export function planEntitlements(tier: PlanTier): PlanEntitlements {
   if (tier === "byok") {
     return {
       tier,
-      includedHoursCpu: num("YAVER_PLAN_BYOK_HOURS", 40),
+      includedHoursStandard: num("YAVER_PLAN_BYOK_HOURS_STANDARD", num("YAVER_PLAN_BYOK_HOURS", 40)),
+      includedHoursHeavy: num("YAVER_PLAN_BYOK_HOURS_HEAVY", 20),
+      includedHoursBuild: num("YAVER_PLAN_BYOK_HOURS_BUILD", 10),
       monthlyWalletCents: num("YAVER_PLAN_BYOK_WALLET_CENTS", 150),
       gateway: {
         enabled: false,
@@ -77,7 +79,9 @@ export function planEntitlements(tier: PlanTier): PlanEntitlements {
   }
   return {
     tier: "hosted",
-    includedHoursCpu: num("YAVER_PLAN_HOSTED_HOURS", 40),
+    includedHoursStandard: num("YAVER_PLAN_HOSTED_HOURS_STANDARD", num("YAVER_PLAN_HOSTED_HOURS", 40)),
+    includedHoursHeavy: num("YAVER_PLAN_HOSTED_HOURS_HEAVY", 20),
+    includedHoursBuild: num("YAVER_PLAN_HOSTED_HOURS_BUILD", 10),
     monthlyWalletCents: num("YAVER_PLAN_HOSTED_WALLET_CENTS", 800),
     gateway: {
       enabled: true,
@@ -116,14 +120,20 @@ export const applyPlanEntitlements = internalAction({
     // 1) Included active-hours. grantIncludedHours is idempotent per
     //    (user, period, type) and preserves usedSeconds on re-grant — a
     //    new calendar month auto-creates a fresh row (the monthly reset).
-    await ctx.runMutation(internal.cloudLifecycle.grantIncludedHours, {
-      userId,
-      plan,
-      machineType: "cpu",
-      period: p,
-      hours: e.includedHoursCpu,
-      source: `plan:${tier}`,
-    });
+    for (const [machineType, hours] of [
+      ["standard", e.includedHoursStandard],
+      ["heavy", e.includedHoursHeavy],
+      ["build", e.includedHoursBuild],
+    ] as const) {
+      await ctx.runMutation(internal.cloudLifecycle.grantIncludedHours, {
+        userId,
+        plan,
+        machineType,
+        period: p,
+        hours,
+        source: `plan:${tier}`,
+      });
+    }
 
     // 2) Gateway inference policy — operator-set, user-immutable. hosted ⇒
     //    enabled with anti-abuse ceilings; byok ⇒ disabled (the user must
@@ -200,60 +210,24 @@ export const revokePlanEntitlements = internalAction({
   },
 });
 
-// In-app plan switch (Cloud Agent ⇄ Cloud Workspace) initiated by the
-// user from the dashboard — NOT a webhook. Orchestrates three things:
-//   1. LemonSqueezy variant swap so the next renewal bills the new price.
-//   2. The local subscription `plan` label.
-//   3. Entitlements, applied IMMEDIATELY (the chosen UX: a downgrade cuts
-//      managed AI off now; an upgrade turns it on now).
-//
-// DIRECTION-ASYMMETRIC for safety (this orchestrator is reached only via
-// the authed /billing/change-plan route, which scopes to the caller's own
-// subscription):
-//   • DOWNGRADE (→byok): fail-SAFE. Apply byok entitlements immediately
-//     (disable gateway + OpenRouter key) even if the LemonSqueezy swap is
-//     unconfigured or fails — the user simply gets LESS, never free more.
-//     The prepaid wallet is preserved (we never claw back paid credit);
-//     the monthly allowance is idempotent per period so no double-grant.
-//   • UPGRADE (→hosted): fail-CLOSED. Grant managed AI ONLY if the
-//     LemonSqueezy variant swap succeeded (i.e. the user will actually be
-//     billed). If billing isn't wired, refuse — never hand out a paid
-//     OpenRouter key without a charge.
+// Legacy no-op plan normalizer. The old dashboard used this to switch Cloud
+// Agent ⇄ Cloud Workspace. The public product model no longer has Cloud Agent,
+// so this action only normalizes legacy managed-cloud rows to Cloud Workspace
+// and reapplies BYOK entitlements.
 export const changePlan = internalAction({
   args: {
     userId: v.id("users"),
     lemonSqueezyId: v.optional(v.string()),
-    targetPlan: v.union(v.literal("cloud-agent"), v.literal("cloud-workspace")),
+    targetPlan: v.union(v.literal("cloud-workspace")),
   },
   handler: async (
     ctx,
     { userId, lemonSqueezyId, targetPlan },
   ): Promise<{ ok: boolean; tier: PlanTier; billingSynced: boolean; reason?: string }> => {
-    const tier: PlanTier = targetPlan === "cloud-agent" ? "hosted" : "byok";
+    const tier: PlanTier = "byok";
 
-    // 1) Try to move billing first (matters for BOTH directions, but is a
-    //    hard precondition only for the upgrade).
-    let billingSynced = false;
-    if (lemonSqueezyId) {
-      const swap = await ctx.runAction(internal.http.updateLemonSqueezyVariant, {
-        lemonSqueezyId,
-        tier,
-      });
-      billingSynced = swap.ok;
-    }
-
-    if (tier === "hosted" && !billingSynced) {
-      // Refuse to grant paid managed inference without a billing change.
-      return { ok: false, tier, billingSynced, reason: "billing-not-synced" };
-    }
-
-    // 2) Local plan label (immediate; reconcile + entitlements read this).
     await ctx.runMutation(internal.subscriptions.setPlan, { userId, plan: targetPlan });
 
-    // 3) Entitlements now. applyPlanEntitlements is idempotent per period:
-    //    the monthly wallet grant dedupes on (subscription, period) so a
-    //    toggle can't farm credit, and byok ⇒ gateway off + OpenRouter key
-    //    disabled (the immediate cutoff), hosted ⇒ key ensured + gateway on.
     await ctx.runAction(internal.plans.applyPlanEntitlements, {
       userId,
       subscriptionId: lemonSqueezyId,
@@ -261,6 +235,6 @@ export const changePlan = internalAction({
       plan: targetPlan,
     });
 
-    return { ok: true, tier, billingSynced };
+    return { ok: true, tier, billingSynced: false };
   },
 });

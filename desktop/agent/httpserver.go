@@ -6073,7 +6073,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		log.Printf("[MCP] Runner switched to %s", args.RunnerID)
 		return mcpToolResult(fmt.Sprintf("Runner switched to %s (%s)", r.Name, args.RunnerID))
 
-	case "agent_machine_inventory":
+	case "list_machines", "agent_machine_inventory":
 		machines := listAllMachines(context.Background())
 		if len(machines) == 0 {
 			return mcpToolResult("No machines found.")
@@ -8229,6 +8229,63 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(out)
+	case "sandbox_run":
+		var args struct {
+			DeviceID  string          `json:"device_id"`
+			Prompt    string          `json:"prompt"`
+			Files     []sandboxFile   `json:"files"`
+			Framework string          `json:"framework"`
+			Schema    json.RawMessage `json:"schema"`
+			Runner    string          `json:"runner"`
+			TimeoutMs int             `json:"timeoutMs"`
+		}
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("sandbox_run: bad args: " + err.Error())
+		}
+		req := sandboxRunRequest{
+			Prompt:    args.Prompt,
+			Files:     args.Files,
+			Framework: args.Framework,
+			Schema:    args.Schema,
+			Runner:    args.Runner,
+			TimeoutMs: args.TimeoutMs,
+		}
+		if strings.TrimSpace(args.DeviceID) != "" {
+			out, err := proxyToDeviceJSON(context.Background(), "sandbox_run", strings.TrimSpace(args.DeviceID), http.MethodPost, "/sandbox/run", req)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("sandbox_run: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
+		if strings.TrimSpace(req.Prompt) == "" {
+			return mcpToolError("sandbox_run: prompt is required")
+		}
+		if len(req.Files) == 0 {
+			return mcpToolError("sandbox_run: files is required")
+		}
+		if len(req.Files) > maxSandboxFiles {
+			return mcpToolError(fmt.Sprintf("sandbox_run: too many files (%d > %d)", len(req.Files), maxSandboxFiles))
+		}
+		if req.Runner != "" && normalizeRunnerID(req.Runner) != "opencode" {
+			return mcpToolError("sandbox_run: only the opencode runner is supported")
+		}
+		total := 0
+		for _, f := range req.Files {
+			total += len(f.Content) + len(f.Path)
+		}
+		if total > maxSandboxTotalBytes {
+			return mcpToolError(fmt.Sprintf("sandbox_run: sandbox too large (%d > %d bytes)", total, maxSandboxTotalBytes))
+		}
+		timeout := defaultSandboxTimeout
+		if req.TimeoutMs > 0 {
+			timeout = time.Duration(req.TimeoutMs) * time.Millisecond
+			if timeout > maxSandboxTimeout {
+				timeout = maxSandboxTimeout
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		return mcpToolJSON(processSandboxRun(ctx, req, runGLMSandbox))
 	case "mobile_hermes_doctor":
 		var args mobileHermesDoctorInput
 		json.Unmarshal(call.Arguments, &args)
@@ -10202,6 +10259,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	// --- Yaver sign-in (headless OAuth) ---
 	case "yaver_auth_status":
 		return mcpToolJSON(authStatusSnapshot())
+	case "yaver_auth_capabilities":
+		var a struct {
+			ConvexURL string `json:"convex_url"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		result, err := authCapabilities(context.Background(), a.ConvexURL)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(result)
 	case "yaver_auth_start":
 		var a struct {
 			ConvexURL string `json:"convex_url"`

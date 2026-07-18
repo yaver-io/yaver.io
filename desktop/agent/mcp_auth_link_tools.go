@@ -8,6 +8,7 @@ package main
 // Flows covered:
 //
 //   yaver_auth_list_identities   GET  /auth/providers
+//   yaver_auth_capabilities      GET  /auth/config
 //   yaver_auth_link_start        POST /auth/oauth-link/start → returns URL + QR
 //   yaver_auth_link_wait         polls listAuthIdentities until the new provider appears
 //   yaver_auth_unlink            DELETE /auth/oauth-link/{provider}
@@ -112,6 +113,64 @@ func decodeAuthedJSONBody[T any](resp *http.Response) (T, string, error) {
 // ---------------------------------------------------------------------------
 // List identities
 // ---------------------------------------------------------------------------
+
+type AuthCapabilitiesResult struct {
+	EmailPasswordEnabled bool     `json:"email_password_enabled"`
+	RequiresAllowlist    bool     `json:"requires_allowlist"`
+	PasswordMinLength    int      `json:"password_min_length"`
+	PasswordStorage      string   `json:"password_storage,omitempty"`
+	RawPasswordStorage   string   `json:"raw_password_storage"`
+	RecommendedSecrets   []string `json:"recommended_secrets"`
+	Message              string   `json:"message"`
+}
+
+func authCapabilities(ctx context.Context, convexURLOverride string) (AuthCapabilitiesResult, error) {
+	convexURL := strings.TrimRight(strings.TrimSpace(convexURLOverride), "/")
+	if convexURL == "" {
+		cfg, err := LoadConfig()
+		if err == nil && cfg != nil {
+			convexURL = strings.TrimRight(strings.TrimSpace(cfg.ConvexSiteURL), "/")
+		}
+	}
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", convexURL+"/auth/config", nil)
+	if err != nil {
+		return AuthCapabilitiesResult{}, err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return AuthCapabilitiesResult{}, err
+	}
+	type payload struct {
+		EmailPasswordEnabled bool   `json:"emailPasswordEnabled"`
+		RequiresAllowlist    bool   `json:"emailPasswordRequiresAllowlist"`
+		PasswordMinLength    int    `json:"passwordMinLength"`
+		PasswordStorage      string `json:"passwordStorage"`
+	}
+	body, raw, err := decodeAuthedJSONBody[payload](resp)
+	if err != nil {
+		return AuthCapabilitiesResult{}, fmt.Errorf("auth capabilities: %v (%s)", err, raw)
+	}
+	minLength := body.PasswordMinLength
+	if minLength <= 0 {
+		minLength = 8
+	}
+	status := "closed"
+	if body.EmailPasswordEnabled {
+		status = "enabled"
+	}
+	return AuthCapabilitiesResult{
+		EmailPasswordEnabled: body.EmailPasswordEnabled,
+		RequiresAllowlist:    body.RequiresAllowlist,
+		PasswordMinLength:    minLength,
+		PasswordStorage:      body.PasswordStorage,
+		RawPasswordStorage:   "never in Convex or git; use local keychain/.env for local runs and GitHub Secrets for CI",
+		RecommendedSecrets:   []string{"YAVER_TEST_EMAIL", "YAVER_TEST_PASSWORD"},
+		Message:              fmt.Sprintf("Email/password sign-in is %s on this deployment and allowlist-gated.", status),
+	}, nil
+}
 
 type AuthIdentityEntry struct {
 	Provider   string `json:"provider"`
