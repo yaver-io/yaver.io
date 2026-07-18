@@ -83,10 +83,16 @@ Port, using the web implementations as the reference (mirror, never import
 across the surface boundary — a relative cross-surface import passes `tsc` and
 CI and then breaks the Turbopack build, see commit `964f142a4`):
 
-- **Optimistic rung on tap.** Web: `computeWakeView(machine, reachable, now,
-  {kind, at})`, expiring after 45s so a refused request can't creep forever, and
-  always losing to real server state. Mobile currently shows nothing until the
-  next poll.
+- **Optimistic rung on tap — CORRECTION, read this.** An earlier draft of this
+  task claimed mobile lacked this. **It does not.** `wakeMachine.ts:262`
+  (`setOptimistic`, applied at :287-290) already shows `requested` on tap and
+  `snapshotting` on park, and its rule is arguably BETTER than web's: the
+  optimistic rung wins only until the server's phase overtakes it by percent,
+  where web uses a 45s time grace. **Do not rewrite mobile to match web.** If
+  anything, port mobile's rule to web (`computeWakeView`'s `optimistic` param in
+  `web/lib/wakeProgress.ts`) and keep the time grace only as the expiry for a
+  request the server NEVER accepts, which is the one case percent-comparison
+  can't catch. Verify before changing either.
 - **Provider line** (`providerLine` in `web/lib/wakeProgress.ts`) — goes quiet
   once our own signal is better, drops data older than 2 min, never prints a raw
   provider enum.
