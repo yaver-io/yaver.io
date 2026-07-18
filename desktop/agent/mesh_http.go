@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/yaver-io/agent/mesh"
 )
 
 func (s *HTTPServer) registerMeshRoutes(mux *http.ServeMux) {
@@ -129,9 +131,20 @@ func (s *HTTPServer) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	s.meshMu.Lock()
 	mgr := s.meshMgr
+	autoWarn := s.meshAutoWarn
 	s.meshMu.Unlock()
 	if mgr != nil {
 		out["dataPlane"] = mgr.Status()
+	}
+	// Why the overlay is off, when it is off. Mesh is default-on, so "off" is
+	// usually a failure rather than a preference, and the two must not render
+	// identically. optedOut distinguishes the one case where the user really
+	// did choose it.
+	if cfg != nil && cfg.Mesh != nil && cfg.Mesh.Disabled {
+		out["optedOut"] = true
+	}
+	if autoWarn != "" {
+		out["autoEnableWarning"] = autoWarn
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -143,6 +156,32 @@ func (s *HTTPServer) handleMeshStatus(w http.ResponseWriter, r *http.Request) {
 // non-fatal reason string and the agent keeps serving over relay/direct. It
 // never brings the process down. Returns "" on full success.
 func (s *HTTPServer) autoEnableMesh(cfg *Config) (warning string) {
+	// Record whatever we return so `mesh status` can explain an off overlay
+	// instead of claiming the user opted out. Cleared on success.
+	defer func() {
+		s.meshMu.Lock()
+		s.meshAutoWarn = warning
+		s.meshMu.Unlock()
+	}()
+
+	// Never fight an existing VPN for routes. Yaver Mesh's 100.96.0.0/12 lives
+	// INSIDE Tailscale's 100.64.0.0/10 (see mesh.MeshSubnetCIDR — the old claim
+	// that it was "outside" was false), and a Tailscale host installs one route
+	// for the whole /10. Because mesh is DEFAULT-ON, claiming the overlay
+	// unconditionally would start that fight on every Tailscale user's machine
+	// at upgrade, breaking working connectivity to "enable" a feature they
+	// never asked for. Defer instead: the box keeps working over LAN/relay and
+	// `mesh status` says exactly why.
+	ifaceName := ""
+	s.meshMu.Lock()
+	if s.meshMgr != nil {
+		ifaceName = s.meshMgr.Status().IfaceName
+	}
+	s.meshMu.Unlock()
+	if conflict, cErr := mesh.SubnetRouteConflict(ifaceName); cErr == nil && conflict != nil {
+		return conflict.Reason()
+	}
+
 	if cfg.AuthToken == "" || cfg.ConvexSiteURL == "" || cfg.DeviceID == "" {
 		return "not signed in"
 	}

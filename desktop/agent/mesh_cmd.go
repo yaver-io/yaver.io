@@ -440,7 +440,23 @@ func printMeshDaemonStatus(res map[string]interface{}) {
 	fmt.Println("Yaver Mesh status")
 	enabled, _ := res["enabled"].(bool)
 	if !enabled {
-		fmt.Println("  state      : disabled (opt-in with `yaver mesh up`)")
+		// Mesh is DEFAULT-ON, so "not enabled" is usually a failure, not a
+		// choice. Telling the user to run `yaver mesh up` when that is exactly
+		// what already ran and failed sends them in a circle — say what
+		// actually happened instead.
+		optedOut, _ := res["optedOut"].(bool)
+		warn, _ := res["autoEnableWarning"].(string)
+		switch {
+		case optedOut:
+			fmt.Println("  state      : off (you opted out with `yaver mesh down`)")
+			fmt.Println("  turn on    : `yaver mesh up`")
+		case warn != "":
+			fmt.Println("  state      : off — default-on tried and could not start")
+			fmt.Printf("  reason     : %s\n", warn)
+		default:
+			fmt.Println("  state      : off (default-on has not completed yet — it retries on a backoff)")
+			fmt.Println("  detail     : re-run `yaver mesh status` shortly, or `yaver mesh up` to force an attempt")
+		}
 		return
 	}
 	ip, _ := res["meshIPv4"].(string)
