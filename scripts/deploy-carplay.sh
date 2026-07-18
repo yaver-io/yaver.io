@@ -66,10 +66,16 @@ if ! xcodebuild -showsdks | grep -q "iphoneos"; then
 fi
 
 if [ "$UPLOAD" != "1" ]; then
+  # -destination only, never -sdk. `-sdk iphonesimulator` is applied to EVERY
+  # target in the scheme, which overrides the embedded YaverWatch target's
+  # SDKROOT=watchos and rebuilds it as an iOS app. That target is
+  # PRODUCT_NAME=Yaver, so it then lands on the same
+  # Release-iphonesimulator/Yaver.app path as the real app and the build dies
+  # with "Multiple commands produce .../Yaver.app". -destination lets each
+  # target resolve its own SDK, which is what we wanted here all along.
   xcodebuild -workspace "$IOS_DIR/Yaver.xcworkspace" \
     -scheme Yaver \
     -configuration Release \
-    -sdk iphonesimulator \
     -destination "generic/platform=iOS Simulator" \
     -derivedDataPath /tmp/YaverCarPlayBuild \
     CODE_SIGNING_ALLOWED=NO \

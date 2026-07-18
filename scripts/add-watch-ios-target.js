@@ -42,6 +42,11 @@ const SOURCE_RELATIVE_TO_GROUP = [
   "Views/SignInView.swift",
   "Views/SettingsView.swift",
   "Views/WakeProgressView.swift",
+  // SettingsView links to GuestAccessView. The standalone watch/ project is
+  // XcodeGen and globs the directory, so a new view is picked up there for
+  // free — this list is hand-maintained and silently wasn't, which failed the
+  // embedded build with "cannot find 'GuestAccessView' in scope".
+  "Views/GuestAccessView.swift",
 ];
 const SOURCES = SOURCE_RELATIVE_TO_GROUP.map((f) => `../../watch/YaverWatch/${f}`);
 const settings = {

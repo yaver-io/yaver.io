@@ -65,6 +65,7 @@
 		D21643E74FD7470B8975CF39 /* YaverLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A180F91D4364C6F82AFB2D8 /* YaverLiveActivity.swift */; };
 		A2F5DA27D039407FB594F1BC /* YaverLiveActivity.m in Sources */ = {isa = PBXBuildFile; fileRef = D203874E4A01483A90757AEF /* YaverLiveActivity.m */; };
 		C663E379084C45F9BB9251D2 /* YaverActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B6D3B8CC79B4516BFB9D831 /* YaverActivityAttributes.swift */; };
+		F087E96891C04034A7EB0671 /* GuestAccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F36680197D47059569B2A8 /* GuestAccessView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -156,6 +157,7 @@
 		9B0B75DBE913487E82749716 /* Info.plist */ = {isa = PBXFileReference; name = "Info.plist"; path = "../native-liveactivity/widget/Info.plist"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = text.plist.xml; includeInIndex = 0; };
 		8A180F91D4364C6F82AFB2D8 /* YaverLiveActivity.swift */ = {isa = PBXFileReference; name = "YaverLiveActivity.swift"; path = "../native-liveactivity/ios/YaverLiveActivity.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; includeInIndex = 0; };
 		D203874E4A01483A90757AEF /* YaverLiveActivity.m */ = {isa = PBXFileReference; name = "YaverLiveActivity.m"; path = "../native-liveactivity/ios/YaverLiveActivity.m"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; includeInIndex = 0; };
+		81F36680197D47059569B2A8 /* GuestAccessView.swift */ = {isa = PBXFileReference; name = "GuestAccessView.swift"; path = "../../watch/YaverWatch/Views/GuestAccessView.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -323,6 +325,7 @@
 				A042BE27882E4C9D8FB1D5B1 /* Assets.xcassets */,
 				5ADAB851FD3541E49AADD291 /* BoxLifecycle.swift */,
 				47E06EDB37C2459087D39E09 /* WakeProgressView.swift */,
+				81F36680197D47059569B2A8 /* GuestAccessView.swift */,
 			);
 			name = YaverWatch;
 			sourceTree = "<group>";
@@ -743,6 +746,7 @@
 				1D5AB8C5762346A0B4B4541A /* SettingsView.swift in Sources */,
 				DDD2C5898B6F430A8D987B3D /* BoxLifecycle.swift in Sources */,
 				FCAA90D03B4E4E9F81DA0047 /* WakeProgressView.swift in Sources */,
+				F087E96891C04034A7EB0671 /* GuestAccessView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
