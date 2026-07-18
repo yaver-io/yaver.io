@@ -4550,13 +4550,24 @@ export default function TasksScreen() {
                         // a failed agent. Un-installed picks are marked so the
                         // choice stays honest.
                         const installed = availableRunners.filter((r) => r.installed);
+                        // The fallback list used to synthesise `installed: false` for any
+                        // runner it had no row for, turning MISSING DATA into a stated
+                        // fact: with availableRunners empty, every agent rendered
+                        // "(not installed)" — including ones the box reports installed
+                        // AND ready. Seen against a mini whose /runner-auth/status said
+                        // codex/opencode/glm were installed=true ready=true while the
+                        // picker declared all three absent and put a checkmark on one:
+                        // selected and non-existent in the same row.
                         const fallback = ["claude", "codex", "opencode"].map(
-                          (id) => availableRunners.find((r) => normalizeTaskRunnerId(r.id) === id) || ({ id, installed: false } as RunnerInfo),
+                          (id) => availableRunners.find((r) => normalizeTaskRunnerId(r.id) === id) || ({ id } as RunnerInfo),
                         );
+                        const haveRunnerData = availableRunners.length > 0;
                         const choices = installed.length > 0 ? installed : fallback;
                         Alert.alert(
                           "Coding agent",
-                          undefined,
+                          haveRunnerData
+                            ? undefined
+                            : "Still reading this machine's agents — the list may be incomplete.",
                           [
                             ...choices.map((r) => ({
                               text:
