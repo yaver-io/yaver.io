@@ -5616,6 +5616,11 @@ export default function TasksScreen() {
                       {isRunning && <ActivityIndicator size="small" color={c.accent} />}
                     </View>
                     <TextInput
+                      // testIDs on the composer exist so the follow-up loop can
+                      // be driven by maestro (mobile/maestro/followup-visible.yaml).
+                      // Without them the flow has to guess at text/index
+                      // selectors, which break on every copy change.
+                      testID="followup-input"
                       style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
                       placeholder={isRunning ? "Send follow-up while it works" : "Follow up — or send another command"}
                       placeholderTextColor={c.textMuted}
@@ -5682,6 +5687,7 @@ export default function TasksScreen() {
                           <Ionicons name={isRecording ? "stop" : "mic-outline"} size={20} color={isRecording ? "#fff" : c.textPrimary} />
                         </Pressable>
                         <Pressable
+                          testID="followup-send"
                           style={[s.submitButton, { backgroundColor: c.accent }, ((!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing) && s.submitButtonDisabled]}
                           onPress={() => { handleFollowUp(); setFollowUpExpanded(false); }}
                           disabled={(!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing}

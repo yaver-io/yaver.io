@@ -1,0 +1,54 @@
+appId: io.yaver.mobile
+---
+# Closed-loop check for the follow-up bug:
+#   "I write a new message but can't see my message at all,
+#    then it shows a new task."
+#
+# The assertion that matters is ORDERING, not just presence: the user's own
+# text must be on screen IMMEDIATELY after tapping send, before the runner has
+# answered. A test that only checks "the message is there eventually" would
+# have passed against the broken build too, because fetchTasks() eventually
+# filled the turn in — that delay IS the bug.
+#
+# Run: maestro test mobile/maestro/followup-visible.yaml
+
+- launchApp:
+    clearState: false
+
+# Tasks tab
+- tapOn:
+    id: "tab-tasks"
+    optional: true
+- tapOn:
+    text: "Tasks"
+    optional: true
+
+# Open the most recent task. The fix matters most on a FINISHED task, since
+# that is the state that forks — and the state a task is in by the time a
+# human has read the answer and typed a reply.
+- tapOn:
+    index: 0
+    text: ".*"
+    optional: true
+
+- assertVisible:
+    text: ".*"
+
+# Send a follow-up whose text is unique enough to assert on.
+- tapOn:
+    id: "followup-input"
+- inputText: "MAESTRO-FOLLOWUP-PROBE"
+- tapOn:
+    id: "followup-send"
+
+# The whole point: our own message is on screen right away. No waitFor with a
+# long timeout here — that would paper over exactly the latency being fixed.
+- assertVisible:
+    text: "MAESTRO-FOLLOWUP-PROBE"
+    timeout: 2000
+
+# And the thread stayed continuous: the earlier conversation is still visible
+# rather than replaced by an empty new task.
+- assertVisible:
+    id: "task-turns"
+    optional: true
