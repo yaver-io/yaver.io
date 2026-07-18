@@ -58,17 +58,130 @@ type FleetDeployOptions struct {
 	Warnings []string            `json:"warnings,omitempty"`
 }
 
-// validDeployTargetsForFleet is the subset of buildTargets that we surface
-// in the mobile Deploy picker. Cloudflare/convex deploys are valid targets
-// of /deploy/ship but the picker today is mobile-app focused.
-var validDeployTargetsForFleet = map[string]bool{
-	"testflight": true,
-	"playstore":  true,
+// validDeployTargetsForFleet is what the picker will accept in ?targets=.
+//
+// This used to be {testflight, playstore} with a note that "cloudflare/convex
+// deploys are valid targets of /deploy/ship but the picker today is
+// mobile-app focused". That made the shake-to-deploy surface structurally
+// unable to ship the two halves of a project that most often need shipping
+// together — a Next.js frontend and its Convex backend — even though the ship
+// endpoint had supported both all along. Asking for them got a 400.
+//
+// Derived from buildTargets rather than restated, so a target added to the
+// doctor is reachable here without a second edit. buildTargets IS the set
+// /deploy/ship knows how to run, which is exactly the right definition of
+// "valid".
+var validDeployTargetsForFleet = func() map[string]bool {
+	m := make(map[string]bool, len(buildTargets))
+	for name := range buildTargets {
+		m[name] = true
+	}
+	return m
+}()
+
+// fleetDeployTargetOrder enforces a stable target order in responses so the
+// mobile UI doesn't have to sort. Mobile first — it is still the surface a
+// phone-held picker is most often used for — then web, then backend.
+// Anything in buildTargets but missing here is appended alphabetically by
+// orderFleetTargets, so a new target degrades to "listed last" and never to
+// "silently dropped".
+var fleetDeployTargetOrder = []string{
+	"testflight",
+	"playstore",
+	"playstore-production",
+	"cloudflare",
+	"pages",
+	"vercel",
+	"netlify",
+	"convex",
+	"convex-selfhosted",
+	"supabase-db",
+	"supabase-functions",
+	"firebase",
+	"fly",
+	"railway",
 }
 
-// fleetDeployTargetOrder enforces a stable target order in responses so
-// the mobile UI doesn't have to sort.
-var fleetDeployTargetOrder = []string{"testflight", "playstore"}
+// fleetDefaultTargetsByStack is what the picker probes when ?targets= is
+// omitted.
+//
+// Curated, deliberately, even though the allowlist above is derived. The two
+// answer different questions: the allowlist is "what can /deploy/ship run"
+// (a capability, correctly read off buildTargets), while the default is "what
+// should we probe before the user has said anything" — a UX call about probe
+// cost and what a person actually means by "deploy this".
+//
+// Deriving the default from the stack instead looked tidier and was wrong in
+// a specific way: react-native-expo also owns playstore-production, so every
+// mobile app would have silently started probing a third target it had never
+// probed before. Widening web support shouldn't change the mobile path at
+// all. Targets left out here stay fully requestable via ?targets=.
+var fleetDefaultTargetsByStack = map[string][]string{
+	// Unchanged from before this file learned about web stacks.
+	"react-native-expo": {"testflight", "playstore"},
+	// talos-web. vercel included because the same nextjs stack deploys to
+	// either, and probing tells the user which one this machine can do.
+	"nextjs": {"cloudflare", "vercel"},
+	// talos-cloud. convex-selfhosted is a distinct deployment mode rather
+	// than an alternative to this one, so it is requestable, not default.
+	"convex":     {"convex"},
+	"cloudflare": {"pages", "cloudflare"},
+	"netlify":    {"netlify"},
+	"vercel":     {"vercel"},
+	"supabase":   {"supabase-db", "supabase-functions"},
+	"firebase":   {"firebase"},
+	"fly":        {"fly"},
+	"railway":    {"railway"},
+}
+
+// defaultFleetTargetsForStack picks what to probe when ?targets= is omitted.
+//
+// Defaulting to {testflight, playstore} for everything meant opening the
+// picker on a Next.js or Convex app probed two mobile targets that could
+// never apply, reported them blocked, and offered nothing that would ship.
+// The workspace manifest already declares each app's stack
+// (yaver.workspace.yaml: talos-web is nextjs, talos-cloud is convex), so the
+// stack is all we needed to answer this properly.
+//
+// An unknown or empty stack falls back to the mobile pair — the historical
+// behaviour, and the honest answer when we don't know what the project is.
+// Guessing web targets for an unrecognised stack would be worse than the
+// status quo, because a wrong default here costs a probe against every
+// machine in the fleet.
+func defaultFleetTargetsForStack(stack string) []string {
+	stack = strings.TrimSpace(stack)
+	for known, targets := range fleetDefaultTargetsByStack {
+		if strings.EqualFold(known, stack) {
+			return orderFleetTargets(append([]string(nil), targets...))
+		}
+	}
+	return []string{"testflight", "playstore"}
+}
+
+// orderFleetTargets sorts targets by fleetDeployTargetOrder, appending
+// anything unlisted alphabetically so it still appears.
+func orderFleetTargets(targets []string) []string {
+	rank := make(map[string]int, len(fleetDeployTargetOrder))
+	for i, name := range fleetDeployTargetOrder {
+		rank[name] = i
+	}
+	ordered := append([]string(nil), targets...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		ri, oki := rank[ordered[i]]
+		rj, okj := rank[ordered[j]]
+		switch {
+		case oki && okj:
+			return ri < rj
+		case oki:
+			return true
+		case okj:
+			return false
+		default:
+			return ordered[i] < ordered[j]
+		}
+	})
+	return ordered
+}
 
 // firstBlockerFromReport summarises a BuildDoctorReport into a one-line
 // reason. Empty string means OK. Order of priority — most user-actionable
@@ -275,30 +388,25 @@ func (s *HTTPServer) handleFleetDeployOptions(w http.ResponseWriter, r *http.Req
 			targets = append(targets, t)
 		}
 	}
-	if len(targets) == 0 {
-		targets = append(targets, fleetDeployTargetOrder...)
-	} else {
-		// stable order
-		ordered := make([]string, 0, len(targets))
-		for _, want := range fleetDeployTargetOrder {
-			for _, have := range targets {
-				if have == want {
-					ordered = append(ordered, want)
-					break
-				}
-			}
-		}
-		targets = ordered
-	}
-
 	// Resolve project ref locally for the stack hint + so the local doctor
 	// scopes vault lookups to the right project. Failure is non-fatal —
 	// the user may have the project on a remote machine but not here.
+	//
+	// Resolved BEFORE target defaulting, which is the whole point: the
+	// default set is now derived from the stack, so an explicitly declared
+	// nextjs app defaults to cloudflare/vercel instead of two mobile targets
+	// that could never apply to it.
 	stack := ""
 	{
 		if ref, err := resolveProjectRef(app, ""); err == nil {
 			stack = ref.Stack
 		}
+	}
+
+	if len(targets) == 0 {
+		targets = defaultFleetTargetsForStack(stack)
+	} else {
+		targets = orderFleetTargets(targets)
 	}
 
 	out := FleetDeployOptions{

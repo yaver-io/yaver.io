@@ -165,12 +165,18 @@ func TestFleetDeployOptions_TargetsFilter(t *testing.T) {
 // TestFleetDeployOptions_UnknownTarget rejects bad input with 400 and the
 // known-list, matching how /doctor/build behaves. Mobile clients use the
 // "known" array to render error toasts.
+//
+// This used to probe with "cloudflare" — chosen back when the picker was
+// mobile-only and cloudflare was the canonical example of something it would
+// not accept. The picker now accepts every target /deploy/ship can run, so
+// that input asserts the opposite of the intended contract. Uses a string
+// that is not a build target at all, which is what the test was always about.
 func TestFleetDeployOptions_UnknownTarget(t *testing.T) {
 	srv := &HTTPServer{token: "t", deviceID: "d", hostname: "h"}
 	ts := httptest.NewServer(http.HandlerFunc(srv.handleFleetDeployOptions))
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "?app=foo&targets=cloudflare")
+	resp, err := http.Get(ts.URL + "?app=foo&targets=not-a-real-target")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -261,5 +267,76 @@ func TestFirstBlockerFromReport(t *testing.T) {
 				t.Errorf("firstBlockerFromReport = %q; want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDefaultFleetTargetsForStack pins the join between the workspace
+// manifest's per-app stack and each buildTarget's declared stack.
+//
+// Before this, every app defaulted to {testflight, playstore}. Opening the
+// picker on a Next.js frontend or a Convex backend probed two mobile targets
+// that could not apply, reported them blocked, and offered nothing that would
+// actually ship — which is why the two halves of a web project could never be
+// deployed from the phone.
+func TestDefaultFleetTargetsForStack(t *testing.T) {
+	cases := []struct {
+		stack string
+		want  []string
+	}{
+		// yaver.workspace.yaml declares talos-web as nextjs.
+		{"nextjs", []string{"cloudflare", "vercel"}},
+		// ...talos-cloud as convex. convex-selfhosted is a different
+		// deployment mode, not an alternative — requestable, not default.
+		{"convex", []string{"convex"}},
+		// ...talos-mobile as react-native-expo. Unchanged by this work:
+		// adding web support must not start probing a third mobile target
+		// (playstore-production) that this path never probed before.
+		{"react-native-expo", []string{"testflight", "playstore"}},
+		// Unknown and empty both fall back to the historical mobile pair:
+		// when we don't know what the project is, guessing web targets would
+		// be worse than the status quo.
+		{"node", []string{"testflight", "playstore"}},
+		{"", []string{"testflight", "playstore"}},
+	}
+	for _, tc := range cases {
+		got := defaultFleetTargetsForStack(tc.stack)
+		if len(got) != len(tc.want) {
+			t.Errorf("stack %q: got %v; want %v", tc.stack, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("stack %q: got %v; want %v", tc.stack, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
+// TestOrderFleetTargets: unlisted targets must still appear. A target added
+// to buildTargets but forgotten in fleetDeployTargetOrder should degrade to
+// "sorted last", never to "silently dropped" — dropping it would make a
+// deployable target invisible with nothing reporting why, which is the
+// failure mode this whole area keeps producing.
+func TestOrderFleetTargets(t *testing.T) {
+	got := orderFleetTargets([]string{"zzz-unlisted", "convex", "testflight", "aaa-unlisted"})
+	want := []string{"testflight", "convex", "aaa-unlisted", "zzz-unlisted"}
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("got %v; want %v", got, want)
+		}
+	}
+}
+
+// TestValidDeployTargetsCoversShippableTargets: the picker's allowlist is
+// derived from buildTargets, so anything /deploy/ship can run is requestable.
+func TestValidDeployTargetsCoversShippableTargets(t *testing.T) {
+	for _, name := range []string{"cloudflare", "convex", "vercel", "testflight", "playstore"} {
+		if !validDeployTargetsForFleet[name] {
+			t.Errorf("%s is a build target but the picker rejects it", name)
+		}
+	}
+	if validDeployTargetsForFleet["not-a-real-target"] {
+		t.Error("allowlist must not accept a non-target")
 	}
 }
