@@ -173,9 +173,16 @@ func TestWebReload_DevStartFallbackSurfaceGating(t *testing.T) {
 		srv.devServerMgr = NewDevServerManager()
 	}
 
+	// A REAL directory. /dev/start now rejects a workDir that does not exist
+	// (404) before it reaches the surface gate, so the old "/tmp/whatever"
+	// fixture stopped exercising the thing this test is named for — it asserted
+	// 400 and got the 404. The existence check is correct and worth keeping;
+	// the fixture was the stale part.
+	workDir := root
+
 	// Pure react-native (mobile) requested from web-reload → 400.
 	status, body := doRequest(t, "POST", baseURL+"/dev/start", "tok",
-		`{"framework":"react-native","workDir":"/tmp/whatever","surface":"web-reload"}`)
+		`{"framework":"react-native","workDir":"`+workDir+`","surface":"web-reload"}`)
 	if status != 400 {
 		t.Fatalf("react-native + web-reload: expected 400, got %d (body=%v)", status, body)
 	}
@@ -185,7 +192,7 @@ func TestWebReload_DevStartFallbackSurfaceGating(t *testing.T) {
 
 	// Vite (web) requested from hot-reload → 400 (reverse gate).
 	status, _ = doRequest(t, "POST", baseURL+"/dev/start", "tok",
-		`{"framework":"vite","workDir":"/tmp/whatever","surface":"hot-reload"}`)
+		`{"framework":"vite","workDir":"`+workDir+`","surface":"hot-reload"}`)
 	if status != 400 {
 		t.Fatalf("vite + hot-reload: expected 400, got %d", status)
 	}
@@ -197,14 +204,14 @@ func TestWebReload_DevStartFallbackSurfaceGating(t *testing.T) {
 	// "expo-web" framework string routes to Web for projects whose
 	// primary target IS the browser.
 	status, body = doRequest(t, "POST", baseURL+"/dev/start", "tok",
-		`{"framework":"expo","workDir":"/tmp/whatever","surface":"web-reload"}`)
+		`{"framework":"expo","workDir":"`+workDir+`","surface":"web-reload"}`)
 	if status != 400 {
 		t.Fatalf("expo + web-reload: expected 400 (Expo is mobile-first), got %d (body=%v)", status, body)
 	}
 
 	// expo-web is the explicit web target — must pass the gate.
 	status, body = doRequest(t, "POST", baseURL+"/dev/start", "tok",
-		`{"framework":"expo-web","workDir":"/tmp/whatever","surface":"web-reload"}`)
+		`{"framework":"expo-web","workDir":"`+workDir+`","surface":"web-reload"}`)
 	if status == 400 {
 		if msg, _ := body["error"].(string); msg != "" &&
 			(containsCI(msg, "mobile-only") || containsCI(msg, "web-only")) {
