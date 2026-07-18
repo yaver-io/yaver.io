@@ -250,13 +250,14 @@ func runShip(ctx context.Context, s *HTTPServer, opts shipOptions) shipResult {
 	// GitHub secrets); treating it as one would send someone to debug a healthy
 	// fleet. Only "nothing can run this" and "quota spent" stop the barrier.
 	//
-	// quotaExhausted is nil because NO quota tracking exists in the agent today
-	// — grep found no producer. Passing nil rather than inventing one keeps the
-	// capability half honest (it works now) and leaves the quota half wired but
-	// inert until something real feeds it. A fabricated "not exhausted" would be
-	// worse than nil: it would read as a check that passed.
+	// quotaExhausted now has a real producer (deploy_quota.go), counting metered
+	// uploads in the trailing 24h from deploy history. Until this existed the
+	// argument was nil, so the quota half of placement silently answered "not
+	// exhausted" for every target and routeParked could never fire — which is
+	// the case it was written for.
 	t = time.Now()
-	placementChecks := checkShipPlacement(plan.Targets, listAllMachines(ctx), nil)
+	quota := deployQuotaExhausted(s.deployHistory, time.Now())
+	placementChecks := checkShipPlacement(plan.Targets, listAllMachines(ctx), quota)
 	res.Placement = placementChecks
 	var blocked []string
 	for _, c := range placementChecks {
