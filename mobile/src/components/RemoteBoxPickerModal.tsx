@@ -26,6 +26,7 @@ import {
   probeMobileDeviceStatus,
   type CodingRunnerProbe,
 } from "../lib/deviceStatus";
+import { probeDeviceWithRepair } from "../lib/probeWithRepair";
 import {
   useParkedMachines,
   deriveWakeView,
@@ -90,7 +91,15 @@ function isYaverAuthWakeBlocker(message?: string | null): boolean {
     text.includes("waiting to be claimed") ||
     text.includes("sign this machine in") ||
     text.includes("could never register") ||
-    text.includes("re-authorize")
+    text.includes("re-authorize") ||
+    // The string abandonWake actually writes (cloudMachines.ts:2376) is
+    // "…was not authorized in time. Parked again to stop the meter — sign it
+    // in, then wake." None of the phrases above appear in it, so the terminal
+    // card told the user to sign the box in while offering no button to do it.
+    // Matching prose is brittle by nature; lastWakeOutcome === "needs-auth" is
+    // the structured signal and is checked alongside this at the call site.
+    text.includes("waiting for yaver sign-in") ||
+    text.includes("sign it in, then wake")
   );
 }
 
@@ -120,7 +129,14 @@ function SleepingMachineRow({
   const view = deriveWakeView(machine, waking);
   const parked = view.tone === "parked";
   const failed = view.tone === "error";
-  const authBlocked = failed && isYaverAuthWakeBlocker(view.error || error || machine.errorMessage);
+  // Prefer the STRUCTURED signal over prose. lastWakeOutcome is written
+  // precisely for this ("needs-auth" at cloudMachines.ts:2348, preserved through
+  // abandonWake), so a reworded reason string can no longer silently remove the
+  // only button that fixes the box.
+  const authBlocked =
+    (failed || machine.status === "paused") &&
+    (machine.lastWakeOutcome === "needs-auth" ||
+      isYaverAuthWakeBlocker(view.error || error || machine.errorMessage));
   const accent = failed ? c.warn : c.accent;
   const slept = timeAgo(machine.lastParkedAt);
 
@@ -132,24 +148,46 @@ function SleepingMachineRow({
   const [wakeElapsedMs, setWakeElapsedMs] = React.useState(0);
   const wakeStartRef = React.useRef<number | null>(null);
   const stageStartRef = React.useRef<{ stage: number; at: number }>({ stage: -1, at: 0 });
+  // Anchor the clock to the SERVER's wakeStartedAt, not to first render. The
+  // local-ref version restarted at 0:00 (and reset "~3:00 left" with it) every
+  // time this card remounted — closing the picker and reopening it made a
+  // six-minute wake claim it had just begun. Fall back to lastWokeAt, then to
+  // local time, so a row from an older backend still shows motion.
+  const serverWakeStartedAt =
+    typeof machine.wakeStartedAt === "number" && machine.wakeStartedAt > 0
+      ? machine.wakeStartedAt
+      : typeof machine.lastWokeAt === "number" && machine.lastWokeAt > 0
+        ? machine.lastWokeAt
+        : null;
   React.useEffect(() => {
     if (!view.inFlight) {
       wakeStartRef.current = null;
       setWakeElapsedMs(0);
       return;
     }
-    if (wakeStartRef.current == null) wakeStartRef.current = Date.now();
-    const tick = () => setWakeElapsedMs(Date.now() - (wakeStartRef.current ?? Date.now()));
+    // Re-anchor whenever the server's start moves (a NEW wake run), otherwise
+    // keep the existing anchor so the clock is continuous across remounts.
+    if (serverWakeStartedAt != null) wakeStartRef.current = serverWakeStartedAt;
+    else if (wakeStartRef.current == null) wakeStartRef.current = Date.now();
+    const tick = () => setWakeElapsedMs(Math.max(0, Date.now() - (wakeStartRef.current ?? Date.now())));
     tick();
     const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
-  }, [view.inFlight]);
+  }, [view.inFlight, serverWakeStartedAt]);
   if (stageStartRef.current.stage !== view.stageIndex) {
     stageStartRef.current = { stage: view.stageIndex, at: Date.now() };
   }
   const NEXT_STAGE_FLOOR = [35, 60, 88, 100];
   const nextFloor = NEXT_STAGE_FLOOR[view.stageIndex] ?? view.percent;
-  const stageElapsedMs = view.inFlight ? Date.now() - stageStartRef.current.at : 0;
+  // Same remount trap as the elapsed clock: a locally-stamped stage start makes
+  // the creep restart from zero on every mount, so the bar visibly snaps
+  // BACKWARDS when you reopen the picker. provisionPhaseAt is the server's own
+  // "when did this phase begin", which survives remounts.
+  const stageAnchorAt =
+    typeof machine.provisionPhaseAt === "number" && machine.provisionPhaseAt > 0
+      ? machine.provisionPhaseAt
+      : stageStartRef.current.at;
+  const stageElapsedMs = view.inFlight ? Math.max(0, Date.now() - stageAnchorAt) : 0;
   const creepHeadroom = Math.max(0, nextFloor - 1 - view.percent);
   const wakeCreep = creepHeadroom * (1 - Math.exp(-stageElapsedMs / 60000));
   const shownPercent = Math.min(nextFloor - 1, view.percent + wakeCreep);
@@ -157,12 +195,35 @@ function SleepingMachineRow({
     const s = Math.max(0, Math.floor(ms / 1000));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
-  // Rough ESTIMATED time remaining so the user sees how long is left, not just
-  // elapsed. The long pole is snapshot-restore + boot; a persistent-volume box
-  // wakes fast (~1-2 min), a first vanilla boot is slowest (~3-5 min).
-  const wakeTotalEstMs = machine.hasVolume ? 120_000 : machine.bootImageSource === "vanilla" ? 300_000 : 180_000;
+  // ETA. Prefer THIS box's own measured last wake over a constant — a constant
+  // is wrong for every box but one. Only fall back to the class-based guess
+  // when the box has never completed a wake we timed.
+  const measuredWakeMs =
+    typeof machine.lastWakeDurationMs === "number" && machine.lastWakeDurationMs > 15_000
+      ? machine.lastWakeDurationMs
+      : null;
+  const wakeTotalEstMs =
+    measuredWakeMs ??
+    (machine.hasVolume ? 120_000 : machine.bootImageSource === "vanilla" ? 300_000 : 180_000);
   const wakeRemainMs = Math.max(0, wakeTotalEstMs - wakeElapsedMs);
-  const wakeEta = wakeRemainMs > 0 ? `~${wakeClock(wakeRemainMs)} left` : "almost there…";
+  // Once the estimate is blown, STOP PROMISING. The old code fell through to a
+  // permanent "almost there…", which is the one string guaranteed to be a lie:
+  // it kept implying imminent completion for a box that was blocked on the user
+  // (awaiting-yaver-auth) and would never finish on its own. Past the estimate
+  // we state the overrun and say nothing about when it will end.
+  const wakeOverdue = wakeRemainMs <= 0;
+  const wakeEta = wakeOverdue
+    ? `over ${wakeClock(wakeTotalEstMs)} — taking longer than usual`
+    : `~${wakeClock(wakeRemainMs)} left`;
+  // The box is blocked on a human, not on time. This is NOT a slow wake and must
+  // never be dressed as one.
+  const blockedOnSignIn = machine.provisionPhase === "awaiting-yaver-auth";
+  // Say what the box/provider actually reported, rather than a generic rung.
+  // "Hetzner: initializing" is a fact; "almost there" was a guess.
+  const providerNote =
+    typeof machine.providerStatus === "string" && machine.providerStatus.trim()
+      ? machine.providerStatus.trim()
+      : null;
 
   return (
     <View
@@ -198,8 +259,27 @@ function SleepingMachineRow({
         ) : null}
       </View>
 
+      {/* Blocked on a human, so it renders OUTSIDE the in-flight ladder below:
+          deriveWakeView returns inFlight:false for awaiting-yaver-auth, which
+          made an earlier version of this block dead code. No bar here on
+          purpose — there is no progress to show, only a fact and an action. */}
+      {blockedOnSignIn ? (
+        <View style={{ gap: 4, marginTop: 12 }}>
+          <Text style={{ color: c.warn, fontSize: 11, fontWeight: "700" }}>
+            Waiting for you to sign this box in · awake {wakeClock(wakeElapsedMs)}
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 10 }}>
+            The box is running and answering, but its Yaver agent session expired — it cannot
+            finish on its own. It stays billed until it is signed in or parks itself.
+          </Text>
+          {providerNote ? (
+            <Text style={{ color: c.textMuted, fontSize: 10 }}>Provider: {providerNote}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
       {/* Staged waking-up ladder — driven by the box's real status + phase. */}
-      {view.inFlight ? (
+      {view.inFlight && !blockedOnSignIn ? (
         <View style={{ gap: 6, marginTop: 12 }}>
           <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border, overflow: "hidden" }}>
             <View
@@ -211,10 +291,21 @@ function SleepingMachineRow({
               }}
             />
           </View>
-          <Text style={{ color: c.textMuted, fontSize: 11 }}>
-            {WAKE_STAGES[view.stageIndex]?.label ?? "Waking up"}… · {wakeClock(wakeElapsedMs)} · {wakeEta}
+          <Text style={{ color: blockedOnSignIn || wakeOverdue ? c.warn : c.textMuted, fontSize: 11 }}>
+            {blockedOnSignIn
+              ? `Waiting for you to sign this box in · ${wakeClock(wakeElapsedMs)}`
+              : `${WAKE_STAGES[view.stageIndex]?.label ?? "Waking up"}… · ${wakeClock(wakeElapsedMs)} · ${wakeEta}`}
           </Text>
-          {machine.hasVolume ? (
+          {/* The provider's own word for the server, so a long wake is explained
+              rather than just endured. */}
+          {providerNote && !blockedOnSignIn ? (
+            <Text style={{ color: c.textMuted, fontSize: 10 }}>Provider: {providerNote}</Text>
+          ) : null}
+          {blockedOnSignIn ? (
+            <Text style={{ color: c.textMuted, fontSize: 10 }}>
+              The box is awake, but its Yaver agent session expired — it cannot finish on its own.
+            </Text>
+          ) : machine.hasVolume ? (
             <Text style={{ color: c.success, fontSize: 10 }}>⚡ Fast wake — data on a persistent volume (~1-2 min).</Text>
           ) : machine.bootImageSource === "vanilla" ? (
             <Text style={{ color: c.textMuted, fontSize: 10 }}>First boot — building the image (~3-5 min).</Text>
@@ -227,7 +318,14 @@ function SleepingMachineRow({
       ) : null}
       {error ? <Text style={{ color: c.warn, fontSize: 11, marginTop: 6 }}>{error}</Text> : null}
 
-      {authBlocked && onSignIn ? (
+      {/* Offer sign-in while the box is AWAKE and blocked on it (blockedOnSignIn),
+          not only after it has already been re-parked. Gating this on the error
+          tone alone inverted the whole flow: during the one window where
+          recovery can actually reach a live agent, the button was hidden; by the
+          time it appeared, abandonWake had deleted the box, so `direct` recovery
+          had nothing to talk to and fell through to a device-code OAuth pointing
+          at a machine that no longer existed. */}
+      {(authBlocked || blockedOnSignIn) && onSignIn ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
           <Pressable
             onPress={onSignIn}
@@ -508,34 +606,28 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       // `yaver ping` uses) and SHOW the result, instead of spinning blindly for
       // up to 20s. If nothing answers, fail fast with an honest reason rather
       // than grinding through the full connect timeout.
-      const probeTarget = {
-        id: target.id,
-        host: (target as any).host,
-        port: (target as any).port,
-        lanIps: (target as any).lanIps,
-      };
-      let probe = await probeMobileDeviceStatus(probeTarget, token, 4000);
+      // Probe + relay-credential self-heal. This ladder now lives in
+      // lib/probeWithRepair so the AUTOMATIC connect path (DeviceContext) runs
+      // the identical sequence — it previously did a bare probe with no repair
+      // rung and a tighter timeout, which made the default path strictly weaker
+      // than this manual one. Same function, same stage strings, both surfaces.
+      const { probe } = await probeDeviceWithRepair(
+        {
+          id: target.id,
+          name: target.name,
+          host: (target as any).host,
+          port: (target as any).port,
+          lanIps: (target as any).lanIps,
+        },
+        {
+          token,
+          timeoutMs: 4000,
+          onStage: setProbeStage,
+          repairRelay: deviceCtx.repairRelay,
+        },
+      );
 
-      // Relay servers configured but not one of them carries a password. That
-      // is a stale/absent per-user credential, and repairRelay re-copies the
-      // platform value — so repair it and re-probe instead of telling the user
-      // to "sign in again" for something we can fix without them.
-      //
-      // The existing self-heal (DeviceContext) keys off connectionStatus and
-      // lastError, which a probe failure never sets, so this path had no
-      // recovery at all. Observed live: a box that was up and reachable over
-      // its tailnet reported "no transport answered" purely because every relay
-      // attempt was password-less. Once only — a genuine outage must not spin.
-      if (!probe.reachable && probe.errorCode === "relay-credentials-missing") {
-        setProbeStage("Relay credential looks stale — repairing…");
-        const repair = await deviceCtx.repairRelay();
-        if (repair.ok && repair.relays > 0) {
-          setProbeStage(`Repaired — re-checking ${target.name}…`);
-          probe = await probeMobileDeviceStatus(probeTarget, token, 4000);
-        }
-      }
-
-      if (probe.reachable) {
+      if (probe?.reachable) {
         if (probe.authExpired) {
           throw new Error(
             `${target.name} is reachable, but its Yaver session expired. Open Devices and run Re-auth Yaver, or use the sign-in action when this is a waking managed box.`,
@@ -550,7 +642,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       } else {
         // Online-but-unreachable: name it and stop, don't fake a 20s attempt.
         throw new Error(
-          `Couldn't reach ${target.name} — it's online but no transport answered (${probe.error || "no route"}). ` +
+          `Couldn't reach ${target.name} — it's online but no transport answered (${probe?.error || "no route"}). ` +
             `If it's a remote box, it may be heartbeating without a live relay tunnel.`,
         );
       }

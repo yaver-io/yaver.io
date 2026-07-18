@@ -23,6 +23,11 @@ import {
   type ConnectionMode as CacheConnectionMode,
 } from "./connectionCache";
 import { cacheTaskList, cacheTaskOutput, getCachedTaskList, getDeletedTaskIds } from "./storage";
+// The reconnect ladder logged only to console, so the in-app "Connection Logs"
+// panel — the one surface the UI points a stuck user at — showed nothing while
+// the banner counted "reconnect 1/5". logger.ts is dependency-free and lazily
+// loads AsyncStorage, so importing it here is import-safe.
+import { appLog } from "./logger";
 import { beaconListener } from "./beacon";
 import NetInfo from "@react-native-community/netinfo";
 import type { BuildInfo, BuildSummary } from "./builds";
@@ -6578,11 +6583,11 @@ export class QuicClient {
     //     their phone. The agent is almost certainly transient-down.
     if (this._reconnectAttempt >= this._maxReconnectAttempts) {
       if (!this._hadSuccessfulConnect) {
-        console.log("[QUIC] Max reconnect attempts reached for never-connected device, giving up");
+        appLog("error", `[reconnect] giving up on ${this.host} — ${this._maxReconnectAttempts} attempts, never connected`);
         this.setConnectionState("error");
         return;
       }
-      console.log(`[QUIC] Reconnect attempt ${this._reconnectAttempt} for previously-reachable device — keeping at it`);
+      appLog("info", `[reconnect] attempt ${this._reconnectAttempt} for previously-reachable ${this.host} — keeping at it`);
     }
 
     // Exponential backoff indexed by the attempt that just failed (1, 2, 4, 8… capped),
@@ -6593,6 +6598,10 @@ export class QuicClient {
     );
     const delay = baseDelay + Math.floor(Math.random() * 500);
 
+    appLog(
+      "warn",
+      `[reconnect] ${this.host} attempt ${this._reconnectAttempt} failed; retrying in ${Math.round(delay / 100) / 10}s`,
+    );
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this._reconnectStopped) return;
