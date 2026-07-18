@@ -157,7 +157,7 @@
 		9B0B75DBE913487E82749716 /* Info.plist */ = {isa = PBXFileReference; name = "Info.plist"; path = "../native-liveactivity/widget/Info.plist"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = text.plist.xml; includeInIndex = 0; };
 		8A180F91D4364C6F82AFB2D8 /* YaverLiveActivity.swift */ = {isa = PBXFileReference; name = "YaverLiveActivity.swift"; path = "../native-liveactivity/ios/YaverLiveActivity.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; includeInIndex = 0; };
 		D203874E4A01483A90757AEF /* YaverLiveActivity.m */ = {isa = PBXFileReference; name = "YaverLiveActivity.m"; path = "../native-liveactivity/ios/YaverLiveActivity.m"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; includeInIndex = 0; };
-		81F36680197D47059569B2A8 /* GuestAccessView.swift */ = {isa = PBXFileReference; name = "GuestAccessView.swift"; path = "../../watch/YaverWatch/Views/GuestAccessView.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
+		81F36680197D47059569B2A8 /* GuestAccessView.swift */ = {isa = PBXFileReference; name = "GuestAccessView.swift"; path = "../../watch/YaverWatch/Views/GuestAccessView.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
