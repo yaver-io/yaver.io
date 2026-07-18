@@ -3051,9 +3051,27 @@ export default function TasksScreen() {
     flushAfterDismiss();
   };
 
-  // Android fallback: onDismiss is iOS-only, so use effect to detect modal close
+  // Backstop for BOTH platforms — not Android-only.
+  //
+  // The compose sheet is a `transparent` Modal, and React Native does not fire
+  // onDismiss for transparent modals on iOS. So the onDismiss wiring above
+  // never ran on iPhone: pendingOpenTaskRef stayed set, setSelectedTask was
+  // never called, and Send landed the user back on the LIST — precisely the
+  // regression the staging comment in handleCreateTask says it fixed.
+  //
+  // The user-visible consequence is worse than "wrong screen". Back on the
+  // list, the only composer is "New task", so their next message — a follow-up
+  // in their head — creates a SECOND task and the first conversation scrolls
+  // away. Reported as "I write a new message and can't see my message again,
+  // then it shows a new task", identical on codex and claude because it is a
+  // modal-lifecycle bug, not a runner one.
+  //
+  // Keying off `showNewTask` flipping false works on every platform because it
+  // observes React state rather than a native callback. onDismiss stays as the
+  // fast path where it does fire; handleNewTaskModalDismiss nulls the ref
+  // before using it, so running twice is a no-op.
   useEffect(() => {
-    if (!showNewTask && pendingOpenTaskRef.current && Platform.OS === "android") {
+    if (!showNewTask && pendingOpenTaskRef.current) {
       const timer = setTimeout(handleNewTaskModalDismiss, 100);
       return () => clearTimeout(timer);
     }
