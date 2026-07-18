@@ -25,10 +25,41 @@ const (
 	DefaultMTU = 1420
 	// DefaultListenPort is the UDP port the userspace device binds.
 	DefaultListenPort = 51820
-	// MeshSubnetCIDR is Yaver's overlay address space — deliberately OUTSIDE
-	// Tailscale's 100.64.0.0/10 so both can run side by side. Must match the
-	// allocator in backend/convex/mesh.ts.
+	// MeshSubnetCIDR is Yaver's overlay address space. Must match the allocator
+	// in backend/convex/mesh.ts.
+	//
+	// CORRECTION (2026-07-18): this constant used to be documented as
+	// "deliberately OUTSIDE Tailscale's 100.64.0.0/10 so both can run side by
+	// side". That claim is arithmetically FALSE and it shaped the design for a
+	// long time, so the correction is recorded here rather than quietly edited:
+	//
+	//     Tailscale  100.64.0.0/10 = 100.64.0.0 .. 100.127.255.255
+	//     Yaver Mesh 100.96.0.0/12 = 100.96.0.0 .. 100.111.255.255
+	//
+	// 100.96/12 is entirely CONTAINED in 100.64/10 (both are RFC 6598 CGNAT
+	// space). Observed consequence on a real host running both: Tailscale
+	// installs a single route for the whole /10, so our /12 cannot be claimed
+	// without fighting it — verified in a routing table as
+	// `100.64/10 ... utun4`.
+	//
+	// Two things follow, and neither is optional:
+	//   1. Mesh must NOT assume it can coexist with Tailscale. Before claiming
+	//      the overlay it must check whether another interface already owns a
+	//      covering route, and defer if so (see SubnetRouteConflict).
+	//   2. Enabling mesh by default is only safe BEHIND that check — a blind
+	//      default-on would start a routing fight on every Tailscale user's
+	//      machine at upgrade.
+	//
+	// Relocating the range would be the real fix but is fleet-breaking (every
+	// node's allocated address changes, and it must stay in lockstep with the
+	// Convex allocator), so it is deliberately NOT done here.
 	MeshSubnetCIDR = "100.96.0.0/12"
+
+	// TailscaleCGNATCIDR is the range Tailscale/headscale allocate from. Named
+	// here so the containment relationship above is expressed in code and
+	// checkable by a test, not left as prose that can drift back to the old
+	// false claim.
+	TailscaleCGNATCIDR = "100.64.0.0/10"
 )
 
 // Device wraps a live wireguard-go device bound to a TUN interface.
