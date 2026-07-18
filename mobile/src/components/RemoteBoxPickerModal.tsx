@@ -508,11 +508,33 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       // `yaver ping` uses) and SHOW the result, instead of spinning blindly for
       // up to 20s. If nothing answers, fail fast with an honest reason rather
       // than grinding through the full connect timeout.
-      const probe = await probeMobileDeviceStatus(
-        { id: target.id, host: (target as any).host, port: (target as any).port, lanIps: (target as any).lanIps },
-        token,
-        4000,
-      );
+      const probeTarget = {
+        id: target.id,
+        host: (target as any).host,
+        port: (target as any).port,
+        lanIps: (target as any).lanIps,
+      };
+      let probe = await probeMobileDeviceStatus(probeTarget, token, 4000);
+
+      // Relay servers configured but not one of them carries a password. That
+      // is a stale/absent per-user credential, and repairRelay re-copies the
+      // platform value — so repair it and re-probe instead of telling the user
+      // to "sign in again" for something we can fix without them.
+      //
+      // The existing self-heal (DeviceContext) keys off connectionStatus and
+      // lastError, which a probe failure never sets, so this path had no
+      // recovery at all. Observed live: a box that was up and reachable over
+      // its tailnet reported "no transport answered" purely because every relay
+      // attempt was password-less. Once only — a genuine outage must not spin.
+      if (!probe.reachable && probe.errorCode === "relay-credentials-missing") {
+        setProbeStage("Relay credential looks stale — repairing…");
+        const repair = await deviceCtx.repairRelay();
+        if (repair.ok && repair.relays > 0) {
+          setProbeStage(`Repaired — re-checking ${target.name}…`);
+          probe = await probeMobileDeviceStatus(probeTarget, token, 4000);
+        }
+      }
+
       if (probe.reachable) {
         if (probe.authExpired) {
           throw new Error(
@@ -574,7 +596,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       // list, which made failures look identical to successes.
       setSwitchError(err?.message || "Failed to switch remote box.");
     }
-  }, [pickedDevice, selectDevice, activeDevice?.id, lastError, onSelected, onClose]);
+  }, [pickedDevice, selectDevice, activeDevice?.id, lastError, onSelected, onClose, deviceCtx]);
 
   const pickedDeviceIsCurrent = !!pickedDevice && activeDevice?.id === pickedDevice.id;
   const pickedDeviceIsConnected = !!pickedDevice && connectedSet.has(pickedDevice.id);

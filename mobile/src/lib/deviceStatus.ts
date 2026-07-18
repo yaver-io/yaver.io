@@ -12,6 +12,20 @@ export type MobileDeviceStatusProbe = {
   path?: "relay" | "direct";
   info?: Record<string, any> | null;
   error?: string;
+  /**
+   * Machine-readable form of `error`, so a caller can ACT on the reason instead
+   * of matching prose.
+   *
+   * `relay-credentials-missing` is the recoverable one: relay servers are
+   * configured but not one of them carries a password, which is the stale/absent
+   * per-user credential. DeviceContext.repairRelay fixes exactly this, and until
+   * this field existed the switch path could only tell the user to "sign in
+   * again" — the self-heal keys off connectionStatus/lastError and never sees a
+   * probe failure. Observed live: a mini that was up and reachable over its
+   * tailnet reported "no transport answered" because every relay attempt was
+   * password-less.
+   */
+  errorCode?: "relay-credentials-missing" | "no-transport" | "no-transport-configured";
 };
 
 export type CodingRunnerProbe = {
@@ -250,6 +264,12 @@ export async function probeMobileDeviceStatus(
         : attempts.length
           ? "No reachable transport (tried relay + direct)"
           : "No transport configured",
+    errorCode:
+      relayAttempts > 0 && passwordedRelayAttempts === 0
+        ? "relay-credentials-missing"
+        : attempts.length
+          ? "no-transport"
+          : "no-transport-configured",
   };
 }
 
