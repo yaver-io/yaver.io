@@ -287,11 +287,25 @@ export default function RunnerAuthModal({
     }
   };
 
-  const cancel = async () => {
-    if (session && !terminal) {
-      await callRunnerAuth("cancel", { method: "POST" }, session.id).catch(() => {});
-    }
+  // Close FIRST, tell the remote after.
+  //
+  // This used to await the cancel POST before calling onClose(), which meant
+  // the ✕ did nothing whenever the box was unreachable — and unreachable is
+  // exactly when a user wants out of this dialog. Observed live: the sign-in
+  // modal was open, the connection dropped to "reconnect 2/5", and the ✕ became
+  // inert because its first action was a request over the connection that had
+  // just died.
+  //
+  // The remote session is not leaked by closing early: it carries its own
+  // expiry, and a fresh Sign in supersedes it. A stale server-side session is a
+  // far smaller problem than a dialog the user cannot dismiss.
+  const cancel = () => {
+    const s = session;
+    const stillLive = s && !terminal;
     onClose();
+    if (stillLive) {
+      void callRunnerAuth("cancel", { method: "POST" }, s.id).catch(() => {});
+    }
   };
 
   return (
@@ -408,25 +422,33 @@ export default function RunnerAuthModal({
                     <Text style={styles.pasteHint}>
                       After clicking Authorize on platform.claude.com, copy the code from the callback page and paste it here.
                     </Text>
-                    <View style={styles.pasteRow}>
-                      <TextInput
-                        value={pasteCode}
-                        onChangeText={(t) => { setPasteCode(t); setSubmitError(null); }}
-                        placeholder="paste code here"
-                        placeholderTextColor="#64748b"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        spellCheck={false}
-                        style={styles.pasteInput}
-                      />
-                      <TouchableOpacity
-                        disabled={!pasteCode.trim() || submitting}
-                        onPress={submitCode}
-                        style={[styles.submitBtn, (!pasteCode.trim() || submitting) && styles.submitBtnDisabled]}
-                      >
-                        <Text style={styles.submitBtnText}>{submitting ? "…" : "Submit"}</Text>
-                      </TouchableOpacity>
-                    </View>
+                    {/* Input on its own line, Submit beneath it.
+                        These codes are long opaque strings, and the old
+                        side-by-side row left the field about half the card
+                        wide — so a pasted code showed only its tail and there
+                        was no way to see whether the paste landed whole.
+                        multiline + a taller box shows it wrapped, and a
+                        full-width Submit is a real tap target rather than a
+                        button squeezed against the edge. */}
+                    <TextInput
+                      value={pasteCode}
+                      onChangeText={(t) => { setPasteCode(t); setSubmitError(null); }}
+                      placeholder="paste code here"
+                      placeholderTextColor="#64748b"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      spellCheck={false}
+                      multiline
+                      textAlignVertical="top"
+                      style={styles.pasteInput}
+                    />
+                    <TouchableOpacity
+                      disabled={!pasteCode.trim() || submitting}
+                      onPress={submitCode}
+                      style={[styles.submitBtn, (!pasteCode.trim() || submitting) && styles.submitBtnDisabled]}
+                    >
+                      <Text style={styles.submitBtnText}>{submitting ? "Submitting…" : "Submit"}</Text>
+                    </TouchableOpacity>
                     {submitError ? (
                       <Text style={styles.submitError}>{submitError}</Text>
                     ) : null}
@@ -571,7 +593,8 @@ const styles = StyleSheet.create({
   pasteHint: { color: "#94a3b8", fontSize: 11, marginBottom: 10, lineHeight: 16 },
   pasteRow: { flexDirection: "row", gap: 8 },
   pasteInput: {
-    flex: 1,
+    minHeight: 76,
+    marginBottom: 10,
     backgroundColor: "#020617",
     borderColor: "#334155",
     borderWidth: 1,
@@ -588,6 +611,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 14,
+    paddingVertical: 12,
+    alignItems: "center",
     justifyContent: "center",
   },
   submitBtnDisabled: { opacity: 0.4 },
