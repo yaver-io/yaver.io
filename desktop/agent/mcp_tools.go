@@ -3391,18 +3391,19 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "runtime_control",
-			"description": "Send a control action (tap/swipe/text/key) to a remote-runtime session — the seam a runner uses to browse the app, not just the code.",
+			"description": "Send a control action (tap/swipe/pinch/text/key) to a remote-runtime session — the seam a runner uses to browse the app, not just the code.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"sessionId", "action"},
 				"properties": map[string]interface{}{
 					"sessionId":  map[string]interface{}{"type": "string"},
-					"action":     map[string]interface{}{"type": "string", "description": "tap | swipe | text | key"},
+					"action":     map[string]interface{}{"type": "string", "description": "tap | swipe | pinch | zoom | text | key"},
 					"x":          map[string]interface{}{"type": "integer"},
 					"y":          map[string]interface{}{"type": "integer"},
 					"x2":         map[string]interface{}{"type": "integer", "description": "Swipe end-point x."},
 					"y2":         map[string]interface{}{"type": "integer", "description": "Swipe end-point y."},
-					"durationMs": map[string]interface{}{"type": "integer", "description": "Swipe duration in ms."},
+					"durationMs": map[string]interface{}{"type": "integer", "description": "Swipe or pinch duration in ms."},
+					"scale":      map[string]interface{}{"type": "number", "description": "Pinch scale centred on x,y: >1 zooms in (fingers apart), <1 zooms out. Only used by action=pinch|zoom."},
 					"text":       map[string]interface{}{"type": "string"},
 					"key":        map[string]interface{}{"type": "string"},
 				},

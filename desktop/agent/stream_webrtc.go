@@ -266,3 +266,9 @@ func (s *HTTPServer) handleStreamWebRTCOffer(w http.ResponseWriter, r *http.Requ
 		"sdp":  pc.LocalDescription().SDP,
 	})
 }
+
+// Pinch is meaningless for a raw stream source: it is a one-way capture (a
+// capture card, a screen, a camera) with no input surface to inject into.
+func (streamSourceTarget) Pinch(context.Context, string, int, int, float64, int) error {
+	return fmt.Errorf("%w: a stream source is capture-only, there is nothing to touch", errPinchUnsupported)
+}

@@ -352,3 +352,57 @@ func browserGetTitle(deviceID string) (string, error) {
 	return title, nil
 }
 
+// Pinch in a browser window via CDP's real touch API.
+//
+// This is the one target where multi-touch is genuinely first-class:
+// Input.dispatchTouchEvent takes an ARRAY of touch points, so a pinch is just
+// two points moving in opposite directions — no synthesis, no per-device
+// quirks. chromedp is already a dependency and already drives Tap/Swipe here,
+// so nothing new is introduced.
+//
+// Note this dispatches TOUCH, not mouse: Swipe above uses mouseWheel because
+// scrolling is what a swipe means on a desktop page, but a pinch has no mouse
+// analogue and pages listen for touchstart/touchmove to zoom.
+func (browserWindowTarget) Pinch(ctx context.Context, deviceID string, x, y int, scale float64, durationMs int) error {
+	if scale <= 0 {
+		return fmt.Errorf("pinch scale must be > 0, got %v", scale)
+	}
+	e, ok := browserPool.get(deviceID)
+	if !ok {
+		return fmt.Errorf("browser-window %q not found", deviceID)
+	}
+	if durationMs <= 0 {
+		durationMs = 300
+	}
+
+	const baseRadius = 150.0
+	startR := baseRadius
+	endR := baseRadius * scale
+	if endR < 5 {
+		endR = 5
+	}
+
+	pts := func(r float64) []*input.TouchPoint {
+		return []*input.TouchPoint{
+			{X: float64(x) - r, Y: float64(y)},
+			{X: float64(x) + r, Y: float64(y)},
+		}
+	}
+
+	const steps = 10
+	return chromedp.Run(e.browserCtx, chromedp.ActionFunc(func(c context.Context) error {
+		if err := input.DispatchTouchEvent(input.TouchStart, pts(startR)).Do(c); err != nil {
+			return err
+		}
+		for i := 1; i <= steps; i++ {
+			t := float64(i) / float64(steps)
+			r := startR + (endR-startR)*t
+			if err := input.DispatchTouchEvent(input.TouchMove, pts(r)).Do(c); err != nil {
+				// Always lift, or the page keeps thinking a finger is down.
+				_ = input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}).Do(c)
+				return err
+			}
+		}
+		return input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}).Do(c)
+	}))
+}

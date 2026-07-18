@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -33,6 +34,12 @@ import (
 // runtimeTarget abstracts one streamable device kind (iOS simulator,
 // Android emulator, physical Android …). deviceID is the adb serial /
 // simulator UDID resolved by Attach.
+// errPinchUnsupported is returned by targets with no multi-touch primitive.
+// Explicit refusal beats a silent no-op: a gesture that quietly does nothing is
+// indistinguishable from a frozen stream, which is exactly the class of "the UI
+// lied to me" bug this codebase keeps paying for.
+var errPinchUnsupported = errors.New("this target cannot pinch: no multi-touch primitive available")
+
 type runtimeTarget interface {
 	// Attach boots (emulator/sim) or resolves (physical) the device
 	// and returns its id.
@@ -42,6 +49,22 @@ type runtimeTarget interface {
 	Swipe(ctx context.Context, deviceID string, x1, y1, x2, y2, durationMs int) error
 	Text(ctx context.Context, deviceID, text string) error
 	Key(ctx context.Context, deviceID, key string) error
+
+	// Pinch is the one gesture that cannot be expressed as a Swipe: it needs
+	// two contact points moving simultaneously. scale > 1 zooms in (fingers
+	// apart), scale < 1 zooms out (fingers together), centred on x,y.
+	//
+	// Kept as its own method rather than a generic multi-pointer event because
+	// every platform below already exposes pinch as a primitive — CDP
+	// Input.dispatchTouchEvent, uiautomator's pinchIn/pinchOut, XCUITest's
+	// pinch(withScale:velocity:). Modelling raw pointer streams would mean
+	// re-deriving each of those from scratch, which is the one thing worth
+	// avoiding here.
+	//
+	// A target that genuinely cannot pinch returns errPinchUnsupported so the
+	// caller can say so plainly instead of silently doing nothing — a gesture
+	// that no-ops looks identical to a broken stream.
+	Pinch(ctx context.Context, deviceID string, x, y int, scale float64, durationMs int) error
 
 	// Screenshot writes a PNG (JPEG data-channel path).
 	Screenshot(ctx context.Context, deviceID, pngPath string) error
@@ -226,4 +249,31 @@ type androidDeviceTarget struct{ androidTarget }
 
 func (androidDeviceTarget) Attach(ctx context.Context) (string, error) {
 	return resolveAttachedAndroidDeviceSerial(ctx)
+}
+
+// Pinch on an iOS SIMULATOR.
+//
+// simctl has no gesture injection at all — it can boot, install and screenshot,
+// but not touch. Real multi-touch on a simulator needs XCUITest
+// (XCUIElement.pinch(withScale:velocity:)) driven from a test bundle attached
+// to the app under test, which is a build-time relationship this streaming path
+// does not have.
+//
+// So this refuses rather than pretending. A wrong-but-silent gesture here would
+// be worse than none: the viewer would see a still frame and conclude the
+// stream was dead.
+func (iosSimulatorTarget) Pinch(_ context.Context, _ string, _, _ int, _ float64, _ int) error {
+	return fmt.Errorf("%w: iOS Simulator needs an XCUITest bundle for pinch (simctl has no gesture API)", errPinchUnsupported)
+}
+
+// Pinch on Android via uiautomator's own gesture engine.
+//
+// `adb shell input` deliberately has no multi-touch verb — two simultaneous
+// contacts need either raw `sendevent` (device-specific, fragile, needs exact
+// input-device nodes) or uiautomator, which ships on every Android image and
+// exposes pinchOpen/pinchClose as primitives. Using uiautomator is the whole
+// point of not reinventing this: the gesture math, timing and pointer
+// interleaving are already correct there.
+func (androidTarget) Pinch(ctx context.Context, deviceID string, x, y int, scale float64, durationMs int) error {
+	return androidPinchViaUiautomator(ctx, deviceID, x, y, scale, durationMs)
 }

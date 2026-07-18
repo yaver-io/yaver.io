@@ -88,11 +88,15 @@ type remoteRuntimeControlRequest struct {
 	X      int    `json:"x,omitempty"`
 	Y      int    `json:"y,omitempty"`
 	// Swipe end-point + duration. Used when Action == "swipe".
-	X2         int    `json:"x2,omitempty"`
-	Y2         int    `json:"y2,omitempty"`
-	DurationMs int    `json:"durationMs,omitempty"`
-	Text       string `json:"text,omitempty"`
-	Key        string `json:"key,omitempty"`
+	X2         int `json:"x2,omitempty"`
+	Y2         int `json:"y2,omitempty"`
+	DurationMs int `json:"durationMs,omitempty"`
+	// Scale drives Action == "pinch": >1 zooms in (fingers apart), <1 zooms
+	// out. Centred on X,Y. Separate from the swipe end-point because a pinch
+	// is two pointers moving symmetrically, not one pointer travelling.
+	Scale float64 `json:"scale,omitempty"`
+	Text  string  `json:"text,omitempty"`
+	Key   string  `json:"key,omitempty"`
 	// ClientID is the stable identifier of the surface making the
 	// call — used by the P5 control lease to enforce single-writer
 	// role split. Empty = anonymous (legacy web viewer). The lease
@@ -632,6 +636,10 @@ func (m *RemoteRuntimeManager) ExecuteControl(sessionID string, req remoteRuntim
 		err = live.tap(ctx, req.X, req.Y)
 	case "swipe":
 		err = live.swipe(ctx, req.X, req.Y, req.X2, req.Y2, req.DurationMs)
+	case "pinch", "zoom":
+		// "zoom" is accepted as an alias because that is what the gesture is
+		// called in every UI that will send it; the mechanism is a pinch.
+		err = live.pinch(ctx, req.X, req.Y, req.Scale, req.DurationMs)
 	case "text":
 		err = live.text(ctx, req.Text)
 	case "back":
@@ -711,6 +719,24 @@ func (live *remoteRuntimeLiveState) swipe(ctx context.Context, x1, y1, x2, y2, d
 		return fmt.Errorf("unsupported target %q", targetID)
 	}
 	return tgt.Swipe(ctx, deviceID, x1, y1, x2, y2, durationMs)
+}
+
+func (live *remoteRuntimeLiveState) pinch(ctx context.Context, x, y int, scale float64, durationMs int) error {
+	if x < 0 || y < 0 {
+		return fmt.Errorf("pinch centre must be non-negative")
+	}
+	if scale <= 0 {
+		return fmt.Errorf("pinch scale must be > 0 (>1 zooms in, <1 zooms out)")
+	}
+	live.mu.Lock()
+	targetID := live.targetID
+	deviceID := live.deviceID
+	live.mu.Unlock()
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
+		return fmt.Errorf("unsupported target %q", targetID)
+	}
+	return tgt.Pinch(ctx, deviceID, x, y, scale, durationMs)
 }
 
 func (live *remoteRuntimeLiveState) text(ctx context.Context, text string) error {

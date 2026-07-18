@@ -132,3 +132,12 @@ func probeRedroidTarget() RemoteRuntimeTarget {
 	target.Enabled = true
 	return target
 }
+
+// Pinch on redroid. redroid IS Android, so it uses the same
+// `input motionevent` multi-touch path as a physical device or emulator —
+// the container boundary changes nothing about how touches are injected.
+// Passing an empty deviceID lets the helper target the single attached
+// container, matching how Tap/Swipe already behave here.
+func (redroidRuntimeTarget) Pinch(ctx context.Context, deviceID string, x, y int, scale float64, durationMs int) error {
+	return androidPinchViaUiautomator(ctx, deviceID, x, y, scale, durationMs)
+}

@@ -13218,15 +13218,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "runtime_control":
 		var args struct {
-			SessionID  string `json:"sessionId"`
-			Action     string `json:"action"`
-			X          int    `json:"x"`
-			Y          int    `json:"y"`
-			X2         int    `json:"x2"`
-			Y2         int    `json:"y2"`
-			DurationMs int    `json:"durationMs"`
-			Text       string `json:"text"`
-			Key        string `json:"key"`
+			SessionID  string  `json:"sessionId"`
+			Action     string  `json:"action"`
+			X          int     `json:"x"`
+			Y          int     `json:"y"`
+			X2         int     `json:"x2"`
+			Y2         int     `json:"y2"`
+			DurationMs int     `json:"durationMs"`
+			Scale      float64 `json:"scale"`
+			Text       string  `json:"text"`
+			Key        string  `json:"key"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if strings.TrimSpace(args.SessionID) == "" || strings.TrimSpace(args.Action) == "" {
@@ -13239,8 +13240,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			"x2":         args.X2,
 			"y2":         args.Y2,
 			"durationMs": args.DurationMs,
-			"text":       args.Text,
-			"key":        args.Key,
+			// Scale must be forwarded explicitly: it is the only field a pinch
+			// depends on, and omitting it here would send action=pinch with
+			// scale 0 — rejected downstream, but presenting as "pinch is
+			// broken" rather than "the verb dropped an argument".
+			"scale": args.Scale,
+			"text":  args.Text,
+			"key":   args.Key,
 		}
 		body, status, err := remoteRuntimeHTTPMCP("POST", "/remote-runtime/sessions/"+args.SessionID+"/control", payload)
 		if err != nil {

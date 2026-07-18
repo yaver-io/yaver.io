@@ -219,3 +219,17 @@ func (iosDeviceTarget) CanEncodeRTPH264() bool {
 	_, err := exec.LookPath("ffmpeg")
 	return err == nil
 }
+
+// Pinch on a PHYSICAL iOS device.
+//
+// Same wall as the simulator, for the same reason: Apple exposes no public
+// gesture-injection API outside XCUITest, and XCUITest requires a test bundle
+// signed and installed alongside the app. WebDriverAgent (what Appium drives)
+// is exactly that bundle — so supporting pinch here means adopting WDA, which
+// is a real dependency decision rather than a few lines.
+//
+// Until that decision is made, refuse honestly. Silently doing nothing would
+// present as a frozen stream.
+func (t iosDeviceTarget) Pinch(_ context.Context, _ string, _, _ int, _ float64, _ int) error {
+	return fmt.Errorf("%w: physical iOS needs WebDriverAgent/XCUITest for pinch", errPinchUnsupported)
+}
