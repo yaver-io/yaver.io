@@ -31,8 +31,14 @@ type autorunSession struct {
 	// `completed`: its iterations ran and its commits exist. Kept separate from
 	// Error so no surface has to guess which half of a run went wrong.
 	LandingError string `json:"landingError,omitempty"`
-	Summary      autorunRunSummary
-	cancel       context.CancelFunc
+	// Scopes is the run's declared allowlist, retained so a STARTING run can ask
+	// whether it would collide with this one before spending a turn. Without it
+	// admission has nothing to compare and every run looks independent — which
+	// is how six runs died on scope violation in one night, each having done
+	// real work that was then stashed. See autorun_coordination.go.
+	Scopes  []string `json:"scopes,omitempty"`
+	Summary autorunRunSummary
+	cancel  context.CancelFunc
 }
 
 type autorunSessionView struct {
@@ -120,10 +126,23 @@ func (m *autorunSessionManager) start(parent context.Context, opts autorunOption
 	ctx, cancel := autorunSessionContext(parent)
 	s := &autorunSession{
 		ID: id, Slot: workspace.Slot, Task: taskPath, Runner: opts.Runner, WorkDir: workspace.WorkDir,
-		ProgressPath: workspace.ProgressPath, Status: "running",
+		ProgressPath: workspace.ProgressPath, Status: "running", Scopes: opts.Scopes,
 		StartedAt: time.Now().UTC(), cancel: cancel,
 	}
+	// Admission BEFORE the goroutine. Checked and inserted under one lock so two
+	// simultaneous starts cannot both observe a free slot and both proceed —
+	// the check is worthless if it is not atomic with the claim.
+	//
+	// Refusing here is the whole point: the alternative is not "no conflict", it
+	// is a conflict discovered after a runner turn has been spent, when the
+	// loser's iteration gets stashed and thrown away.
+	areas := autorunOwnedAreas(opts.Scopes)
 	m.mu.Lock()
+	if adm := m.admitLocked(workspace.Slot, areas); !adm.Allowed {
+		m.mu.Unlock()
+		cancel()
+		return autorunSessionView{}, &autorunAdmissionError{admission: adm}
+	}
 	m.sessions[id] = s
 	m.mu.Unlock()
 	go func() {
@@ -329,6 +348,17 @@ func opsAutorunStartHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	}
 	view, err := autorunSessions.start(c.Ctx, autorunOptions{TaskPath: p.Task, Runner: runner, Master: p.Master, Interval: interval, MaxIters: p.MaxIters, Gate: p.Gate, Push: p.Push, Scopes: p.Scopes, WorkDir: workDir})
 	if err != nil {
+		// "Something live already owns this" is not a failure — nothing is
+		// broken and the right move is to wait or pick another area. Reporting
+		// it as autorun_failed would tell a caller to give up on work that is
+		// merely early, and would tell a human to go debug a healthy fleet.
+		var adm *autorunAdmissionError
+		if errors.As(err, &adm) {
+			a := adm.Admission()
+			// Initial carries the holder so a caller can poll or stop the run
+			// in the way without a second round trip.
+			return OpsResult{OK: false, Code: a.Reason, Error: a.Detail, Initial: a}
+		}
 		return OpsResult{OK: false, Code: "autorun_failed", Error: err.Error()}
 	}
 	return OpsResult{OK: true, Initial: view}

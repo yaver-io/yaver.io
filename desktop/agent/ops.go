@@ -54,7 +54,13 @@ type OpsResult struct {
 	Error    string      `json:"error,omitempty"`
 	// Stable code for programmatic error branching by agents.
 	// Known codes: "unknown_verb", "bad_payload", "unauthorized",
-	// "remote_not_implemented", "not_found", "invalid_machine".
+	// "remote_not_implemented", "not_found", "invalid_machine",
+	// "slot_busy", "area_owned".
+	//
+	// "slot_busy" and "area_owned" are RETRYABLE refusals, not failures: a live
+	// autorun already owns the slot or the source area, and the same request
+	// will succeed once it finishes. Initial carries the holder. See
+	// autorun_coordination.go.
 	Code string `json:"code,omitempty"`
 }
 
