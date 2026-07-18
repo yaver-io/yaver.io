@@ -39,6 +39,10 @@
             "UIApplicationShortcutItemIconType": "UIApplicationShortcutIconTypeAudio"
           }
         ],
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        },
         "NSMicrophoneUsageDescription": "Yaver uses your microphone for voice input — send tasks by speaking instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Yaver uses speech recognition to transcribe your voice into task descriptions.",
         "NSCameraUsageDescription": "Yaver uses your camera for photos and running apps that need camera access.",

@@ -34,7 +34,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>441</string>
+	<string>442</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationQueriesSchemes</key>
@@ -66,10 +66,47 @@
 	<string>12.0</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Yaver connects to the user's OWN machines at addresses only the user
+	     knows: RFC1918 LAN, and tailnet/VPN overlays. NSAllowsLocalNetworking
+	     exempts RFC1918 + link-local + .local ONLY. It does NOT exempt
+	     100.64.0.0/10 — that is RFC 6598 shared address space (CGNAT), and it
+	     is where BOTH overlays live:
+	       • Tailscale/headscale — 100.64.0.0/10   (quic.ts isTailscaleIP)
+	       • Yaver Mesh          — 100.96.0.0/12   (quic.ts isMeshOverlayIP,
+	                                                mesh_agent.go meshOverlayPrefix)
+	     Mesh is a subrange of the tailnet range, so ONE exemption covers both
+	     the lan-tailscale and lan-mesh candidate paths.
+	     CAVEAT: being a subrange also means the two overlays can COLLIDE, and
+	     the two are NOT peers. Yaver Mesh ships ON by default with Yaver, so it
+	     is present on every box; Tailscale is the user's own, optional, and
+	     usually predates us. That asymmetry decides who must yield: Tailscale
+	     is the incumbent on the user's machine and we must never fight it for a
+	     route. Yaver classifies mesh-before-tailscale (isMeshOverlayIP wins),
+	     but that is only labelling — if Tailscale hands a node an address in
+	     100.96–100.111 while Yaver Mesh also routes 100.96.0.0/12, the conflict
+	     is in the host routing table and no client-side classification fixes it.
+	     KNOWN HAZARD: picking 100.96.0.0/12 for an always-on default overlay
+	     placed it inside the range of the one overlay users most commonly
+	     already run. Narrowing/relocating mesh's range is a fleet-breaking
+	     change, so it is not done here — but a mesh box that also runs Tailscale
+	     should be treated as unverified, and mesh should back off rather than
+	     claim the route.
+	     With arbitrary loads
+	     off, every plaintext probe to either overlay failed -1022 before
+	     reaching the network, so a phone and a Mac both on the same tailnet (or
+	     both on Yaver Mesh) could never connect directly and fell back to relay
+	     — and the reconnect ladder retried that permanently-impossible leg
+	     forever.
+	     ATS exceptions are per-domain and cannot express an IP range, so a
+	     scoped exception for 100.64/10 is not expressible. Same posture as SSH,
+	     VNC, and other clients that dial user-specified hosts.
+	     App Review justification: the app connects to user-specified servers on
+	     local networks and private VPN overlays at arbitrary addresses.
+	     Note this does NOT weaken relay: relay is https:// and stays TLS. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<false/>
+		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
