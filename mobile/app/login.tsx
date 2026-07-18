@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { OAUTH_REDIRECT } from "../src/_core/constants";
+import { appLog } from "../src/lib/logger";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors, useTheme } from "../src/context/ThemeContext";
 import { useResponsiveLayout } from "../src/hooks/useResponsiveLayout";
@@ -154,17 +155,32 @@ export default function LoginScreen() {
   useEffect(() => {
     const subscription = Linking.addEventListener("url", async (event) => {
       const url = event.url;
-      if (!isOAuthCallbackUrl(url)) return;
+      // Log EVERY inbound url, matched or not. A sign-in deep link that
+      // silently does nothing is indistinguishable from one that never
+      // arrived, and telling those two apart is the whole diagnosis when
+      // someone reports "I tapped sign in and nothing happened".
+      appLog("info", `[auth] deep link received: ${url.split("?")[0]}`);
+      if (!isOAuthCallbackUrl(url)) {
+        appLog("warn", `[auth] deep link ignored — does not match ${OAUTH_REDIRECT}`);
+        return;
+      }
 
       const parsed = Linking.parse(url);
       const token = parsed.queryParams?.token as string | undefined;
-      if (token) {
-        try {
-          await login(token);
-          void finishLogin();
-        } catch {
-          // Token validation failed
-        }
+      if (!token) {
+        appLog("warn", "[auth] callback deep link carried no token");
+        return;
+      }
+      try {
+        await login(token);
+        void finishLogin();
+      } catch (e) {
+        // Previously swallowed entirely. A rejected or unreachable-server
+        // token left the user on the sign-in screen with no error and no
+        // log — the failure mode this whole screen exists to report.
+        const msg = e instanceof Error ? e.message : String(e);
+        appLog("error", `[auth] deep-link sign-in failed: ${msg}`);
+        Alert.alert("Sign-in failed", msg);
       }
     });
 
