@@ -160,6 +160,9 @@ export interface AutorunSession {
   activeRunner?: string;
   /** Planning seat; absent on a single-runner loop. */
   master?: string;
+  /** tmux session driving this loop — `tmux attach -t <tmuxSession>` from a
+   *  terminal. Tagged by the agent (autorunTmuxSessionName, Epic 7). */
+  tmuxSession?: string;
   iterations?: number;
   commits?: number;
   finishReason?: string;

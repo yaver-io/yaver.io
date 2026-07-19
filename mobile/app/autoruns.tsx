@@ -202,6 +202,15 @@ export default function AutorunsScreen() {
                   <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
                     {session.slot}
                   </Text>
+                  {session.tmuxSession ? (
+                    <Text
+                      selectable
+                      style={{ color: c.textMuted, fontSize: 11, marginTop: 4, fontFamily: "Menlo" }}
+                      numberOfLines={1}
+                    >
+                      tmux: {session.tmuxSession}
+                    </Text>
+                  ) : null}
                   <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
                     {session.iterations ?? 0} iterations · {session.commits ?? 0} commits
                     {session.activeRunner ? ` · ${session.activeRunner}` : ""}

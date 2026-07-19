@@ -412,6 +412,8 @@ export interface AutorunSessionInfo {
   status: "running" | "completed" | "failed" | "stopped" | "stopping";
   activeRunner?: string;
   master?: string;
+  /** tmux session driving this loop (Epic 7): `tmux attach -t <tmuxSession>`. */
+  tmuxSession?: string;
   iterations?: number;
   commits?: number;
   finishReason?: string;
