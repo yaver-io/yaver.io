@@ -134,9 +134,9 @@ func checkPathSecret(value string) (string, error) {
 // Why this matters: `/usr/bin/xcodebuild` exists on every Mac as a
 // dispatcher. Without Xcode installed it prints
 //
-//   xcode-select: error: tool 'xcodebuild' requires Xcode, but active
-//   developer directory '/Library/Developer/CommandLineTools' is a
-//   command line tools instance
+//	xcode-select: error: tool 'xcodebuild' requires Xcode, but active
+//	developer directory '/Library/Developer/CommandLineTools' is a
+//	command line tools instance
 //
 // to stderr and exits non-zero. The basic probeTool sees a non-empty
 // version string (the error message) and reports Found=true Version=<garbage>.
@@ -328,6 +328,51 @@ func runDeepChecks(report *BuildDoctorReport, target, project string, vs *VaultS
 			report.OK = false
 			report.Notes = append(report.Notes,
 				fmt.Sprintf("%s is set but the file is missing — re-run yaver vault add %s with a valid path.", s.Name, s.Name))
+		}
+	}
+
+	t, known := buildTargets[target]
+	if !known {
+		return
+	}
+
+	// 4. Disk headroom. Checked BEFORE signing: it's the cheaper probe,
+	// and a full volume breaks the codesign probe too (it needs to stage a
+	// temp file), which would otherwise produce a confusing signing error
+	// for what is really a disk problem.
+	if t.MinFreeGB > 0 {
+		d := checkDiskHeadroom(t.MinFreeGB)
+		if d.Checked {
+			report.Disk = &d
+			if !d.OK {
+				report.OK = false
+				report.Notes = append(report.Notes,
+					fmt.Sprintf("Only %.1f GB free on %s — %s needs ~%d GB. The build will die partway through with \"No space left on device\". Free space first (Xcode DerivedData, ~/.gradle/caches, Docker images).",
+						d.FreeGB, d.Mount, target, d.RequiredGB))
+			}
+		}
+	}
+
+	// 5. Real signing capability. Must run last: it is the most expensive
+	// probe (spawns codesign) and is pointless if the disk is already full.
+	if t.NeedsCodesign {
+		s := probeSigningCapability(ctx)
+		if s.Checked {
+			report.Signing = &s
+			if !s.CanSign {
+				report.OK = false
+				note := "Cannot codesign on this machine"
+				if s.Identity != "" {
+					// Name the trap explicitly: the certificate IS present.
+					// Without this the reader assumes a missing cert and
+					// goes looking in the wrong place.
+					note += fmt.Sprintf(" even though %q is installed", s.Identity)
+				}
+				report.Notes = append(report.Notes, note+" — "+s.Remedy)
+			} else if s.Repaired {
+				report.Notes = append(report.Notes,
+					fmt.Sprintf("Signing keychain %s was locked and has been unlocked automatically.", s.Keychain))
+			}
 		}
 	}
 }

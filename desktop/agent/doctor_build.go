@@ -47,6 +47,14 @@ type buildTarget struct {
 	// read. Missing secrets are a warning, not a hard fail (the user
 	// may have them in env vars or CI).
 	Secrets []string `json:"secrets,omitempty"`
+	// NeedsCodesign marks targets that must produce a signed Apple binary.
+	// For these we run a real codesign probe — a present certificate does
+	// NOT mean the machine can sign. See doctor_build_signing.go.
+	NeedsCodesign bool `json:"needs_codesign,omitempty"`
+	// MinFreeGB is the disk headroom the build needs. 0 = don't check.
+	// Set it for anything that archives or runs Gradle; those die late and
+	// expensively when the volume fills.
+	MinFreeGB int `json:"min_free_gb,omitempty"`
 }
 
 // buildTargets is the master catalogue. Keep entries alphabetised.
@@ -200,6 +208,10 @@ var buildTargets = map[string]buildTarget{
 			"APP_STORE_KEY_ISSUER",
 			"APPLE_TEAM_ID",
 		},
+		NeedsCodesign: true,
+		// An iOS archive + export runs ~15-20 GB with derived data. 20 is
+		// the same floor `mobile-cache-cleanup.sh preflight` enforces.
+		MinFreeGB: 20,
 	},
 	"vercel": {
 		Name:        "vercel",
@@ -244,6 +256,12 @@ type BuildDoctorReport struct {
 	// MissingDeclarations lists the iOS usage strings / Android permissions
 	// the code requires but app.json doesn't declare (run `yaver caps generate`).
 	MissingDeclarations []string `json:"missingDeclarations,omitempty"`
+	// Signing is set for NeedsCodesign targets on macOS: the result of an
+	// actual codesign attempt, not a certificate inventory. nil ⇒ not
+	// applicable (non-Apple target, or not running on a Mac).
+	Signing *BuildSigningStatus `json:"signing,omitempty"`
+	// Disk is set for targets declaring MinFreeGB. nil ⇒ not checked.
+	Disk *BuildDiskStatus `json:"disk,omitempty"`
 }
 
 type BuildToolResult struct {

@@ -39,6 +39,44 @@ if [ -f "$HOME/.appstoreconnect/yaver.env" ]; then
   set -a; source "$HOME/.appstoreconnect/yaver.env"; set +a
 fi
 
+# Headless codesigning: unlock the signing keychain in THIS process.
+#
+# Why this exists: on a remote/SSH deploy (the Mac mini worker), codesign dies
+# with the useless error `errSecInternalComponent` even though
+# `security find-identity` happily lists the Distribution cert. Three separate
+# things cause it, and you have to fix all three:
+#   1. The identity lives in a keychain that is LOCKED. find-identity reads the
+#      certificate (public) fine, so it looks healthy — only the private-key
+#      access fails. The error names none of this.
+#   2. A keychain unlock does NOT reliably survive across SSH invocations, so
+#      unlocking in an earlier command and signing in a later one still fails.
+#      The unlock has to happen in the same run as the build — i.e. right here.
+#   3. Even unlocked, the private key's ACL blocks non-GUI callers unless
+#      `set-key-partition-list` has granted `codesign:` access (done once, at
+#      keychain-provisioning time).
+#
+# The GUI-session workarounds people reach for first do not work headlessly:
+# `launchctl asuser` needs root, and the login password does not help when the
+# cert sits in a *different* keychain with its own password.
+#
+# Set YAVER_SIGNING_KEYCHAIN (+ _PASSWORD) via the Yaver vault or the gitignored
+# ~/.appstoreconnect/yaver.env. Unset = no-op, so local GUI deploys, where the
+# login keychain is already unlocked, behave exactly as before.
+if [ -n "${YAVER_SIGNING_KEYCHAIN:-}" ]; then
+  echo "Unlocking signing keychain: $YAVER_SIGNING_KEYCHAIN"
+  if ! security unlock-keychain -p "${YAVER_SIGNING_KEYCHAIN_PASSWORD:?YAVER_SIGNING_KEYCHAIN set but YAVER_SIGNING_KEYCHAIN_PASSWORD is not}" "$YAVER_SIGNING_KEYCHAIN"; then
+    echo "ERROR: could not unlock $YAVER_SIGNING_KEYCHAIN — codesign would fail later with the opaque 'errSecInternalComponent'." >&2
+    exit 1
+  fi
+  # Search it first so xcodebuild resolves the Distribution identity from the
+  # keychain we just unlocked, not from some other (locked) one that happens to
+  # hold the same cert — that shadowing is failure mode #1 above.
+  security list-keychains -d user -s "$YAVER_SIGNING_KEYCHAIN" login.keychain
+  # No lock-on-sleep: a mini that naps mid-archive must not relock and fail the
+  # export an hour into the build.
+  security set-keychain-settings -t 100000 -u "$YAVER_SIGNING_KEYCHAIN" || true
+fi
+
 # App Store Connect API key — set these env vars or in the Yaver vault.
 AUTH_KEY="${APP_STORE_KEY_PATH:?APP_STORE_KEY_PATH unset. Likely cause: the Yaver vault is locked (auth token rotated >1x). Recover with ANY of: (1) pre-seed ~/.appstoreconnect/yaver.env (gitignored, 4 exports — see CLAUDE.md \"iOS — TestFlight\"); (2) YAVER_VAULT_PASSPHRASE=<old-token> before deploy; (3) re-add: yaver vault add APP_STORE_KEY_PATH --project mobile --value ...}"
 AUTH_KEY_ID="${APP_STORE_KEY_ID:?Set APP_STORE_KEY_ID (env or yaver vault)}"

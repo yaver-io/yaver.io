@@ -40,4 +40,15 @@ After reading the docs, **grep the code for the symbols the docs name** before r
 - **Never commit credentials, customer IPs, relay hostnames, or any secret** — the repo is public on GitHub.
 - **Never deploy mobile / publish npm / push a tag without confirming with the user first.**
 
+## Every incident must leave the product harder than it found it
+
+Fixing the symptom is half the job. Whenever you debug a real failure — yours, a user's, or a past session's — ask **"what would have told me this in ten seconds instead of an hour?"** and build that answer into Yaver before you call the task done. This is the deliverable, not cleanup.
+
+1. **Encode the diagnosis where the agent already looks** — a `doctor` probe (`desktop/agent/doctor_*.go`), an ops verb, a deploy preflight. If a check existed and was GREEN during the incident, it's a *false green*: fix that check, don't add a second one next to it.
+2. **Probe the real capability, never the proxy.** The recurring bug class here is "the inventory says yes, the operation says no" — a certificate that is present but cannot sign, a tool on PATH that is a stub, a device marked `online` that is unreachable, a deploy key that resolves to a deleted file. If the only way to know is to attempt the operation, attempt it.
+3. **Put the *why* in the error text.** Name the specific fix; "check your configuration" is worthless. Vague errors cost whole sessions — `errSecInternalComponent` (2026-07-19) reads as "keychain locked, need the login password", which was wrong, and the wrong reading burned a session before anyone tested it.
+4. **Ship it to every surface** — Go agent, MCP verb, CLI, web, mobile. A diagnosis only the CLI can see does not exist for a user on their phone. See "Cross-surface parity" in [`CLAUDE.md`](CLAUDE.md).
+5. **Self-heal only when the repair is unambiguous and idempotent.** Unlocking a keychain the operator explicitly configured: yes. Guessing passwords or mutating Apple account state: no.
+6. **Write the postmortem into the code.** `desktop/agent/doctor_build_deep.go` and `doctor_build_signing.go` are the model — every bullet in their file-top comments is a real incident, stated as the false green it produced.
+
 Every other rule, convention, and subsystem detail is in [`CLAUDE.md`](CLAUDE.md). When it disagrees with the code you're looking at, the code wins.

@@ -24,6 +24,36 @@ changing those.
 
 ## Hard rules
 
+- **Every incident must leave the product harder than it found it.** When you
+  debug a real failure — yours, a user's, or a past session's — fixing the
+  immediate symptom is only half the job. Before you call it done, ask: *"what
+  would have told me this in ten seconds instead of an hour?"* and then build
+  that into Yaver. This is not optional cleanup; it is the deliverable. The
+  standing pattern:
+  1. **Encode the diagnosis where the agent already looks.** A new `doctor`
+     probe (`desktop/agent/doctor_*.go`), an ops verb, a preflight in the
+     deploy script. If the check exists but was GREEN during the incident, it
+     was a *false green* — fix the check, don't add a second one beside it.
+  2. **Probe the real capability, never the proxy.** The whole class of bugs
+     here is "the inventory says yes, the operation says no": a certificate is
+     present but cannot sign, a tool is on PATH but is a stub, a device is
+     `online` but unreachable, a deploy key resolves but the file is gone. If
+     you can only learn the truth by attempting the operation, attempt it.
+  3. **Carry the *why* into the error text.** The remedy string should name the
+     specific fix, not "check your configuration". The cost of a vague error is
+     measured in whole sessions — see `errSecInternalComponent` (2026-07-19),
+     where the obvious reading ("keychain locked, need the login password") was
+     wrong in a way that wasted a session and would have wasted another.
+  4. **Ship it to every surface.** Go agent + MCP verb + CLI + web + mobile.
+     A diagnosis only the CLI can see doesn't exist for a user on their phone.
+     See "Cross-surface parity" below.
+  5. **Self-heal when the fix is unambiguous and idempotent**; ask when it
+     isn't. Unlocking a keychain the operator explicitly configured is a
+     no-brainer. Guessing at passwords or mutating account state is not.
+  6. **Write the postmortem into the code, not just the commit message.** The
+     file-top comment blocks in `doctor_build_deep.go` and
+     `doctor_build_signing.go` are the model: each bullet is a real incident,
+     stated as the false green it produced.
 - **Never push or commit without explicit user permission.**
 - **Committed and pushed work is IMMUTABLE unless the user says otherwise.**
   Once a change is committed — and certainly once pushed — nobody reverts it,
