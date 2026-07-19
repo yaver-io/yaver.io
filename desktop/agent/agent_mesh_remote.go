@@ -370,13 +370,22 @@ func buildRemoteAgentCandidates(cfg *Config, target *DeviceInfo) ([]RemoteAgentC
 		})
 	}
 
-	// Drop overlay candidates when our own mesh is down: a 100.96/12 URL is only
-	// reachable if THIS node is on the mesh. Mirrors the resolveSSHHost guard —
-	// otherwise we'd rank an unreachable overlay URL first and stall on connect.
-	if !localMeshUp() {
+	// Drop overlay candidates our own node can't actually reach. A 100.96/12 mesh
+	// URL needs THIS node on the mesh; a Tailscale (100.64/10) URL needs THIS node
+	// on Tailscale. The Tailscale guard is the Epic-4 fix: when the client is off
+	// Tailscale but the target advertises a 100.x IP, a tailscale-kind candidate
+	// (rank 2) used to rank ahead of relay (rank 6) and only lost by the parallel
+	// liveness probe — slower and flakier. Mirrors the resolveSSHHost / yaver ssh
+	// guards (localMeshUp / localTailscaleUp).
+	meshDown := !localMeshUp()
+	tsDown := !localTailscaleUp()
+	if meshDown || tsDown {
 		filtered := candidates[:0]
 		for _, c := range candidates {
-			if c.Kind == "mesh" {
+			if meshDown && c.Kind == "mesh" {
+				continue
+			}
+			if tsDown && c.Kind == "tailscale" {
 				continue
 			}
 			filtered = append(filtered, c)
@@ -1041,8 +1050,13 @@ func staleRelayPasswordHTTP(status int, raw []byte) bool {
 		return false
 	}
 	msg := strings.ToLower(strings.TrimSpace(string(raw)))
+	// "missing" catches the relay's "relay password missing — sign in again to
+	// fetch it" (relay/server.go), the one case that most needs auto-repair: a
+	// fresh/rotated user has no password, so re-pulling creds via repair-relay is
+	// exactly the fix. Without it that case was a dead end on every surface.
 	return strings.Contains(msg, "relay") && strings.Contains(msg, "password") &&
-		(strings.Contains(msg, "invalid") || strings.Contains(msg, "rejected") || strings.Contains(msg, "denied"))
+		(strings.Contains(msg, "invalid") || strings.Contains(msg, "rejected") ||
+			strings.Contains(msg, "denied") || strings.Contains(msg, "missing"))
 }
 
 func repairRelayPasswordForRemoteHTTP(ctx context.Context) bool {

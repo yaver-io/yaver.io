@@ -349,6 +349,35 @@ func TestDoRemoteAgentRequestPreservesYaverJSON404(t *testing.T) {
 	}
 }
 
+func TestStaleRelayPasswordHTTP(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		// The relay's actual missing-password message must self-heal — this is
+		// the regression: it used to be ignored, so repair-relay never fired.
+		{"missing (relay wording)", http.StatusUnauthorized, "relay password missing — sign in again to fetch it", true},
+		{"invalid", http.StatusUnauthorized, "invalid relay password", true},
+		{"forbidden rejected", http.StatusForbidden, "relay password rejected", true},
+		{"denied", http.StatusUnauthorized, "relay password denied", true},
+		// Non-relay auth failures must NOT trigger a relay repair.
+		{"generic 401", http.StatusUnauthorized, "unauthorized", false},
+		{"auth token expired", http.StatusUnauthorized, "session token expired", false},
+		// Right wording but wrong status — not a relay-password signal.
+		{"500 with wording", http.StatusInternalServerError, "relay password missing", false},
+		{"200", http.StatusOK, "relay password missing", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := staleRelayPasswordHTTP(tc.status, []byte(tc.body)); got != tc.want {
+				t.Fatalf("staleRelayPasswordHTTP(%d, %q) = %v, want %v", tc.status, tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTransportHeadersForBaseIncludesCloudflareAccessHeaders(t *testing.T) {
 	cfg := &Config{
 		CloudflareTunnels: []CloudflareTunnelConfig{
