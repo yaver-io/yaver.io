@@ -43,8 +43,37 @@ jobs:
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $TAG_VERSION"
 
+      # Fail in 10 seconds on a dead token instead of after a 3-minute build.
+      # On 2026-07-19 NPM_TOKEN expired and the run burned five build jobs
+      # before publish-npm died — and because `release` did not depend on
+      # publish-npm, it still cut GitHub release v1.99.318 for a version npm
+      # never received. Both halves of that are fixed here and below.
+      #
+      # THE TRAP: npm answers a publish-auth failure with 404, NOT 401/403 —
+      # it hides package existence from unauthorized callers. The error reads
+      # "'yaver-cli@x.y.z' is not in this registry", which looks like a missing
+      # package and is actually a dead token. Do not go hunting the package.
+      - name: Preflight npm auth
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          if ! WHO=$(npm whoami 2>&1); then
+            echo "::error::NPM_TOKEN is invalid or expired — npm whoami failed: $WHO"
+            echo "::error::REMEDY: mint a granular token with Read+Write on the 'yaver-cli' package at"
+            echo "::error::  https://www.npmjs.com/settings/kivanccakmak/tokens  then:"
+            echo "::error::  gh secret set NPM_TOKEN -R yaver-io/yaver.io"
+            echo "::error::Granular npm tokens expire (default 30/90 days) — this WILL recur; check the expiry you set."
+            exit 1
+          fi
+          echo "npm authenticated as: $WHO"
+
   publish-npm:
-    needs: validate
+    # Runs AFTER `release` on purpose. cli/src/postinstall.js downloads the
+    # platform tarballs from the GitHub Release with no retry, so a package
+    # that is live on npm before its release exists is an install that hard
+    # -fails for every user in that window. Tarballs first, npm last.
+    needs: [validate, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +95,39 @@ jobs:
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Probe the real capability, not the proxy: a green publish step is not
+      # evidence the registry serves the version. Ask the registry.
+      - name: Verify version is live on npm
+        run: |
+          WANT="${{ needs.validate.outputs.version }}"
+          for i in 1 2 3 4 5; do
+            GOT=$(npm view yaver-cli version 2>/dev/null || true)
+            if [ "$GOT" = "$WANT" ]; then
+              echo "npm serves yaver-cli@$GOT"
+              exit 0
+            fi
+            echo "attempt $i: npm serves '$GOT', want '$WANT' — retrying in 15s (registry propagation)"
+            sleep 15
+          done
+          echo "::error::npm does NOT serve yaver-cli@$WANT after publish reported success."
+          echo "::error::'npm install -g yaver-cli' is the ONLY supported install path — this release did not ship."
+          exit 1
+
+      # Without this, a failed publish leaves GitHub release v$VERSION standing
+      # for a version npm never got, and every surface that checks "was there a
+      # release" reads shipped. Mark it so nothing can misread it.
+      - name: Flag the GitHub release when npm did not ship
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
+          gh release edit "v${VERSION}" --repo "$REPO" \
+            --title "Yaver CLI v${VERSION} — NOT PUBLISHED TO NPM" \
+            --prerelease || true
+          echo "::error::Release v${VERSION} flagged: binaries exist, npm package does not."
 
   publish-mcp-registry:
     # Publish Yaver's server.json to the official MCP Registry
