@@ -4399,11 +4399,22 @@ export default function TasksScreen() {
           }}
         />
 
-        {/* FAB. Rendered as a bare Pressable, not wrapped in a full-screen
+        {/* Single FAB: voice. Texting a coding agent from a phone is a poor
+            vibing experience, so the mic is the one primary action here — it
+            drops you into the hands-free STT/TTS loop where you can also say
+            "load me the app with Hermes" mid-flow.
+
+            The compose "+" that used to sit below this was removed on the
+            user's ask (2026-07-19). Typing is NOT a dead end: the "All Clear"
+            empty state still offers "New task", and Vibe has a keyboard
+            affordance that falls back to this same composer. If you ever
+            remove one of those two, restore a text entry point here first.
+
+            Rendered as a bare Pressable, not wrapped in a full-screen
             absoluteFillObject layer: that wrapper (even with
-            pointerEvents="box-none") regressed the second-open path —
-            after a Cancel/backdrop dismiss, taps on the + would silently
-            fall through on Android. Keep this simple. */}
+            pointerEvents="box-none") regressed the second-open path — after a
+            Cancel/backdrop dismiss, taps would silently fall through on
+            Android. Keep this simple. */}
         {canComposeTask && (
           <Pressable
             hitSlop={12}
@@ -4416,39 +4427,11 @@ export default function TasksScreen() {
               },
               pressed && s.fabPressed,
             ]}
-            // The Alert.alert chooser ("Use this / Choose another / Cancel")
-            // was friction the user explicitly asked to remove — opening
-            // compose directly is the fast path, and the agent pill INSIDE
-            // compose launches the wizard for switching device + agent + model.
-            onPress={openCreateTask}
-          >
-            <Ionicons name="add" size={28} color="#ffffff" />
-          </Pressable>
-        )}
-
-        {/* Vibe FAB — voice-first "just talk to build". Stacked above the
-            compose +. Texting a coding agent from a phone is a poor vibing
-            experience; this drops you into the hands-free STT/TTS loop where
-            you can also say "load me the app with Hermes" mid-flow. */}
-        {canComposeTask && (
-          <Pressable
-            hitSlop={12}
-            style={({ pressed }) => [
-              s.fab,
-              {
-                backgroundColor: c.bgCard,
-                borderWidth: 1,
-                borderColor: c.accent,
-                bottom: Math.max(insets.bottom + 16, 24) + 68,
-                shadowColor: c.shadowMd,
-              },
-              pressed && s.fabPressed,
-            ]}
             accessibilityRole="button"
             accessibilityLabel="Vibe — talk to build"
             onPress={() => taskRouter.navigate("/vibe" as any)}
           >
-            <Ionicons name="mic" size={24} color={c.accent} />
+            <Ionicons name="mic" size={26} color="#ffffff" />
           </Pressable>
         )}
 

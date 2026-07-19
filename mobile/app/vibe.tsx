@@ -26,6 +26,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
@@ -66,6 +67,10 @@ export default function VibeScreen() {
   const [turns, setTurns] = useState<VibeTurn[]>([]);
   const [live, setLive] = useState(""); // in-progress transcript / status line
   const openTurnRef = useRef<string | null>(null); // id of the working task turn
+  // Last thing we actually HEARD the user say, as opposed to whatever is on the
+  // live line (which also carries spoken results and confirm prompts). Only the
+  // heard text is safe to hand to the composer when they switch to typing.
+  const lastHeardRef = useRef("");
   const liveMounted = useRef(true);
   useEffect(() => () => { liveMounted.current = false; }, []);
 
@@ -163,6 +168,9 @@ export default function VibeScreen() {
     } else if (ev.state === "idle") {
       setLive("");
     }
+    if ((ev.state === "listening" || ev.state === "judging") && ev.text) {
+      lastHeardRef.current = ev.text;
+    }
 
     // A committed coding instruction opens a "working" checklist row.
     if (ev.state === "dispatching" && ev.text) {
@@ -185,6 +193,26 @@ export default function VibeScreen() {
   }, [pushTurn, patchTurn]);
 
   const handsFree = useHandsFreeVoice(makeVoiceOptions, onVoiceEvent);
+
+  // "I'd rather type this." Voice is the wedge here, not a toll gate — a noisy
+  // room, a word the STT keeps mangling, or a long path/flag string are all
+  // perfectly good reasons to bail to the keyboard, and being stuck in a voice
+  // loop with no visible way out is the opposite of polite.
+  //
+  // Hand off rather than dead-end: stop the loop, then open the Tasks composer
+  // seeded with whatever we last HEARD, so a half-spoken thought survives the
+  // switch instead of making them start over. `openNew=1` + `prompt=` is the
+  // existing route seed the composer already honours (tasks.tsx route-seed
+  // effect), so this needs no new plumbing on the Tasks side.
+  const switchToTyping = useCallback(() => {
+    handsFree.stop();
+    const seed = lastHeardRef.current.trim();
+    lastHeardRef.current = "";
+    router.push({
+      pathname: "/(tabs)/tasks",
+      params: seed ? { openNew: "1", prompt: seed } : { openNew: "1" },
+    } as any);
+  }, [handsFree, router]);
 
   // ── derived UI state ──────────────────────────────────────────────────
   const state = handsFree.state;
@@ -276,6 +304,35 @@ export default function VibeScreen() {
               Connect a box to run coding tasks. You can still say “load me the app”.
             </Text>
           )}
+
+          {/* Escape hatch to the keyboard. Deliberately quiet — muted, no fill,
+              below the mic — so it reads as "also available" rather than
+              competing with the voice path. */}
+          <Pressable
+            onPress={switchToTyping}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 7,
+              marginTop: 18,
+              paddingVertical: 9,
+              paddingHorizontal: 14,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: c.border,
+              opacity: pressed ? 0.6 : 1,
+            })}
+            accessibilityRole="button"
+            accessibilityLabel="Type instead — opens the task composer"
+          >
+            {/* No keyboard glyph exists in this Ionicons set (checked the
+                glyphmap: only keypad-*), so the compose pencil carries it. */}
+            <Ionicons name="create-outline" size={16} color={c.textMuted} />
+            <Text style={{ color: c.textMuted, fontSize: 13, fontWeight: "600" }}>
+              Prefer to type?
+            </Text>
+          </Pressable>
         </View>
 
         {/* Checklist of turns — summarized, Codex/Claude-Code style */}
