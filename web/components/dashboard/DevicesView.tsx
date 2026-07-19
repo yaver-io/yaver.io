@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { type Device, type DeviceStorage, hideDevice, unhideAll } from "@/lib/use-devices";
 import { NetCaptureModal } from "./NetCaptureModal";
 import { DeviceStorageFold } from "./DeviceStorageFold";
+import { DeviceDeployCapabilities } from "./DeviceDeployCapabilities";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { ManagedCloudSummary } from "@/components/dashboard/ManagedCloudPanel";
@@ -5121,6 +5122,19 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
       {/* Collapsed by default and lazy — the scan shells out to `du` across the
           box's home dir, so it only runs when someone actually opens the fold. */}
       <DeviceStorageFold device={device} token={token} />
+      {/* What this box can actually ship. Probed by the agent, not inferred
+          from the OS — see DeviceDeployCapabilities for why that distinction
+          is the whole point. */}
+      <div className="mt-3">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+          Can Deploy
+        </div>
+        <DeviceDeployCapabilities
+          ready={device.deployCapabilities}
+          blocked={device.deployCapabilitiesBlocked}
+          probedAt={device.deployCapabilitiesAt}
+        />
+      </div>
       {(allRunners.length || allSharedRunners.length) ? (
         <div className="mt-3">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">

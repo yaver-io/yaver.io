@@ -121,6 +121,90 @@ function DetailRow({ label, value, mono }: { label: string; value: React.ReactNo
   );
 }
 
+// Deploy capability, probed by the agent rather than guessed from the OS.
+//
+// The distinction is the whole point: `publishCapabilities` is a GOOS switch
+// that claims any Mac ships iOS even with no Xcode and a keychain that cannot
+// unlock headlessly. These come from running the toolchain — which makes AGE
+// part of the meaning, so the probe time is always rendered. A green pill is
+// "true as of then", never "true now".
+const DEPLOY_TARGET_LABELS: Record<string, string> = {
+  npm: "npm",
+  testflight: "TestFlight",
+  playstore: "Play internal",
+  "playstore-production": "Play production",
+  convex: "Convex",
+  "convex-selfhosted": "Convex (self-hosted)",
+  cloudflare: "Cloudflare",
+  vercel: "Vercel",
+  netlify: "Netlify",
+  firebase: "Firebase",
+  fly: "Fly",
+  pages: "Pages",
+  railway: "Railway",
+  "supabase-db": "Supabase DB",
+  "supabase-functions": "Supabase Fns",
+};
+
+// Two refresh cycles. One missed is normal (the box slept); two means it
+// stopped reporting and the list must not be presented as current.
+const DEPLOY_PROBE_STALE_MS = 12 * 60 * 60 * 1000;
+
+function deployProbeAge(at: string | undefined): { text: string; stale: boolean } | null {
+  if (!at) return null;
+  const t = Date.parse(at);
+  if (Number.isNaN(t)) return null;
+  const ms = Date.now() - t;
+  const stale = ms > DEPLOY_PROBE_STALE_MS;
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return { text: "just now", stale };
+  if (mins < 60) return { text: `${mins}m ago`, stale };
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return { text: `${hrs}h ago`, stale };
+  return { text: `${Math.floor(hrs / 24)}d ago`, stale };
+}
+
+function DeployCapabilityRow({ device }: { device: Device }) {
+  const c = useColors();
+  const ready = device.deployCapabilities ?? [];
+  const blocked = device.deployCapabilitiesBlocked ?? [];
+  const age = deployProbeAge(device.deployCapabilitiesAt);
+
+  // "Never probed" and "probed, ships nothing" are different facts. Collapsing
+  // them would reintroduce exactly the ambiguity this field exists to remove.
+  if (ready.length === 0 && blocked.length === 0) {
+    return (
+      <DetailRow
+        label="Can deploy"
+        value={<Text style={{ color: c.textMuted, fontSize: 12 }}>not reported yet (needs agent 1.99.319+)</Text>}
+      />
+    );
+  }
+
+  return (
+    <View style={{ paddingVertical: 6 }}>
+      <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6 }}>Can deploy</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+        {ready.map((t) => (
+          <View key={t} style={{ backgroundColor: c.successBg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+            <Text style={{ color: c.success, fontSize: 12 }}>{DEPLOY_TARGET_LABELS[t] ?? t}</Text>
+          </View>
+        ))}
+        {blocked.map((t) => (
+          <View key={t} style={{ borderColor: c.border, borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+            <Text style={{ color: c.textMuted, fontSize: 12 }}>{DEPLOY_TARGET_LABELS[t] ?? t}</Text>
+          </View>
+        ))}
+      </View>
+      {age ? (
+        <Text style={{ color: age.stale ? c.warn : c.textMuted, fontSize: 11, marginTop: 6 }}>
+          {age.stale ? "\u26a0 probed " : "probed "}{age.text}{age.stale ? " \u2014 may be out of date" : ""}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function sshSelectorForDevice(device: Pick<Device, "alias" | "id">): string {
   const alias = String(device.alias || "").trim();
   if (alias) return `@${alias}`;
@@ -1930,6 +2014,7 @@ function HardwareCapabilitiesSection({ device }: { device: Device }) {
       <DetailRow label="VRAM" value={formatMemoryMb(hardware?.vramMb) || placeholder} />
       <DetailRow label="Cores" value={typeof hardware?.numCores === "number" && hardware.numCores > 0 ? String(hardware.numCores) : placeholder} />
       <DetailRow label="Arch" value={hardware?.arch || placeholder} mono={!!hardware?.arch} />
+      <DeployCapabilityRow device={device} />
       {iosSimulators ? <DetailRow label="iOS simulators" value={iosSimulators} mono /> : null}
       {androidEmulators ? <DetailRow label="Android emulators" value={androidEmulators} mono /> : null}
       {refreshState.phase === "error" ? (

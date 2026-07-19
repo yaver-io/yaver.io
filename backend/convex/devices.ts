@@ -238,6 +238,9 @@ type ListedDevice = {
   /** Coarse egress region (eu|us|ap|...) for the multi-vantage device picker. */
   geoRegion?: string;
   publishCapabilities?: string[];
+  deployCapabilities?: string[];
+  deployCapabilitiesBlocked?: string[];
+  deployCapabilitiesAt?: string;
   edgeProfile?: Doc<"devices">["edgeProfile"];
   recoveryPosture?: Doc<"devices">["recoveryPosture"];
   connectionPreferences?: Doc<"devices">["connectionPreferences"];
@@ -1065,6 +1068,10 @@ export const heartbeat = mutation({
     connectionPreferences: v.optional(v.array(connectionPreferenceValidator)),
     agentVersion: v.optional(v.string()),
     publishCapabilities: v.optional(v.array(v.string())),
+    // Probed deploy capability (see schema.ts). Names only.
+    deployCapabilities: v.optional(v.array(v.string())),
+    deployCapabilitiesBlocked: v.optional(v.array(v.string())),
+    deployCapabilitiesAt: v.optional(v.string()),
     // Coarse egress region (eu|us|ap|...) for the multi-vantage device picker.
     // Region only — never the egress IP.
     geoRegion: v.optional(v.string()),
@@ -1203,6 +1210,18 @@ export const heartbeat = mutation({
     }
     if (args.publishCapabilities !== undefined) {
       patch.publishCapabilities = args.publishCapabilities;
+    }
+    // Probe result rides the heartbeat but refreshes on a ~6h cadence, so
+    // most beats carry it unchanged and many carry it not at all. Only
+    // patch when present — an absent field must never blank a good result.
+    if (args.deployCapabilities !== undefined) {
+      patch.deployCapabilities = args.deployCapabilities;
+    }
+    if (args.deployCapabilitiesBlocked !== undefined) {
+      patch.deployCapabilitiesBlocked = args.deployCapabilitiesBlocked;
+    }
+    if (args.deployCapabilitiesAt !== undefined) {
+      patch.deployCapabilitiesAt = args.deployCapabilitiesAt;
     }
 
     // Presence-write coalescing (100k-user cost control). Everything the
@@ -1737,6 +1756,9 @@ export const listMyDevices = query({
       voiceHints: d.voiceHints,
       platform: d.platform,
       publishCapabilities: d.publishCapabilities,
+      deployCapabilities: d.deployCapabilities,
+      deployCapabilitiesBlocked: d.deployCapabilitiesBlocked,
+      deployCapabilitiesAt: d.deployCapabilitiesAt,
       publicKey: d.publicKey,
       hardwareId: d.hardwareId,
       hardwareProfile: d.hardwareProfile,

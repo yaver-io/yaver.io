@@ -57,6 +57,16 @@ export interface Device {
    *  the device (they'd leak the home-dir username into Convex). */
   storage?: DeviceStorage;
   localIps?: string[];
+  /** Deploy targets this box PROBED as ready ("npm","testflight","convex",…).
+   *  Distinct from a platform guess: the agent ran the toolchain. Refreshed
+   *  every ~6h, so always render `deployCapabilitiesAt` alongside it — a stale
+   *  green is the failure mode this whole field exists to replace. */
+  deployCapabilities?: string[];
+  /** Targets this OS could satisfy but currently cannot. Targets the OS can
+   *  never satisfy are omitted, not listed red. */
+  deployCapabilitiesBlocked?: string[];
+  /** RFC3339 timestamp of the last probe. Absent until the box's first probe. */
+  deployCapabilitiesAt?: string;
   deviceClass?: "desktop" | "edge-mobile" | "server";
   edgeProfile?: {
     supportsLocalInference: boolean;
@@ -581,6 +591,11 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         hardwareId: d.hardwareId ?? d.hwid,
         hardwareProfile: d.hardwareProfile ?? undefined,
         localIps: Array.isArray(d.localIps) ? d.localIps : undefined,
+        deployCapabilities: Array.isArray(d.deployCapabilities) ? d.deployCapabilities : undefined,
+        deployCapabilitiesBlocked: Array.isArray(d.deployCapabilitiesBlocked)
+          ? d.deployCapabilitiesBlocked
+          : undefined,
+        deployCapabilitiesAt: d.deployCapabilitiesAt ?? undefined,
         deviceClass: d.deviceClass,
         edgeProfile: d.edgeProfile,
         isGuest: d.isGuest ?? false,

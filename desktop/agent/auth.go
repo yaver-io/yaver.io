@@ -1800,6 +1800,17 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	// target. macOS does both (Xcode + Gradle); Linux does Android only;
 	// iOS is Mac-only, forever. Static + privacy-safe.
 	payload["publishCapabilities"] = computePublishCapabilities()
+	// Real, PROBED deploy capability — the honest counterpart to the line
+	// above. publishCapabilities is a GOOS switch and will happily claim a Mac
+	// with no Xcode can ship iOS; this one asked the toolchain. Cached and
+	// refreshed off the hot path (see deploy_capabilities_convex.go), so the
+	// first beat after boot may carry nothing rather than block. Names only —
+	// no paths, versions, secret names or reasons ever reach Convex.
+	if caps := deployCapabilitiesForHeartbeat(currentRuntimeVaultStore()); caps != nil {
+		payload["deployCapabilities"] = caps.Ready
+		payload["deployCapabilitiesBlocked"] = caps.Blocked
+		payload["deployCapabilitiesAt"] = caps.Computed.UTC().Format(time.RFC3339)
+	}
 	// Coarse egress region (eu|us|ap|...) for the device picker — read from the
 	// cached egress identity ONLY (no network on the hot path). The egress IP is
 	// never sent; only the coarse region, same class as cloudMachines.region.

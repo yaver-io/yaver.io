@@ -921,3 +921,53 @@ func TestTaskPackagePayload_isBookkeepingOnly(t *testing.T) {
 		t.Errorf("name not sanitized to a slug: %v", payload["name"])
 	}
 }
+
+// TestDeployCapabilityPayload_isNamesOnly guards the heartbeat's probed
+// deploy-capability lists.
+//
+// The temptation here is real and specific: ComputeDeployCapability already
+// knows WHY a target is blocked, and "missing vault entries: APP_STORE_KEY_PATH"
+// or a tool's resolved Path would make the fleet UI far more useful. Both are
+// forbidden — the first publishes the NAMES of a user's secrets, the second
+// carries the home-dir username inside an innocuous-looking `path` field. That
+// detail already has a home: the device's own P2P GET /deploy/capabilities,
+// which never touches our servers.
+//
+// If a future change adds Tools/Secrets/Reason to this payload, this fails.
+func TestDeployCapabilityPayload_isNamesOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	convexMutationRecorder(
+		"devices:heartbeat",
+		map[string]interface{}{
+			"deviceId":                  "test-device",
+			"deployCapabilities":        []string{"convex", "cloudflare", "npm"},
+			"deployCapabilitiesBlocked": []string{"testflight", "playstore"},
+			"deployCapabilitiesAt":      "2026-07-19T19:30:00Z",
+		},
+	)
+
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(*buf))
+	}
+	rec := (*buf)[0]
+	assertNoForbiddenFields(t, rec)
+	assertNoUsernameLeak(t, rec, "kivanccakmak-private-dir")
+}
+
+// TestDeployCapabilitySummary_carriesNoDetail asserts at the SOURCE, not just
+// at a hand-written payload: whatever ComputeDeployCapability returns, the
+// summary that reaches Convex reduces to plain target names. A hand-written
+// fixture only proves the author's intent; this proves the reducer's.
+func TestDeployCapabilitySummary_carriesNoDetail(t *testing.T) {
+	summary := computeDeployCapabilitySummary(nil)
+	for _, name := range append(append([]string{}, summary.Ready...), summary.Blocked...) {
+		if strings.ContainsAny(name, "/\\") {
+			t.Errorf("target name %q looks like a path — only bare target names may reach Convex", name)
+		}
+		if strings.Contains(strings.ToUpper(name), "KEY") || strings.Contains(strings.ToUpper(name), "TOKEN") {
+			t.Errorf("target name %q looks like a secret name — reasons must never be summarised into Convex", name)
+		}
+	}
+}

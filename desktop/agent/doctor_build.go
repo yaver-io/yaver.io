@@ -90,6 +90,26 @@ var buildTargets = map[string]buildTarget{
 			{Name: "flyctl", VersionFlag: "version", Required: true, InstallHint: "brew install flyctl"},
 		},
 	},
+	// npm is the ONLY supported install path for yaver-cli itself, so "can this
+	// box cut a release?" is a first-class capability question — yet npm was
+	// absent from this catalogue until 2026-07-19, when the mac mini was
+	// treated as a deploy box while having no npm credential at all. Nothing
+	// could report that, because nothing modelled it.
+	//
+	// The credential is NOT a vault secret: npm reads ~/.npmrc, so a Secrets
+	// entry would report a false red on a correctly-configured box. Auth is
+	// verified for real by verifyDeployToken -> registry /-/whoami
+	// (deploy_tokens.go); note that npm answers a bad publish token with 404,
+	// not 401, so only whoami gives an honest answer.
+	"npm": {
+		Name:        "npm",
+		Stack:       "npm",
+		Description: "Publish a package to the npm registry (yaver-cli ships this way).",
+		Tools: []buildTool{
+			{Name: "node", VersionFlag: "--version", Required: true, InstallHint: "brew install node"},
+			{Name: "npm", VersionFlag: "--version", Required: true, InstallHint: "bundled with node"},
+		},
+	},
 	"netlify": {
 		Name:        "netlify",
 		Stack:       "netlify",

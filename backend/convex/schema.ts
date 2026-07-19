@@ -356,6 +356,27 @@ export default defineSchema({
     // row is the registration). Privacy-safe: a static capability
     // list, never a path or secret.
     publishCapabilities: v.optional(v.array(v.string())),
+    // PROBED deploy capability — which deploy targets this box can actually
+    // ship to right now ("testflight", "playstore", "convex", "cloudflare",
+    // "npm", …). The honest counterpart to publishCapabilities above, which is
+    // a pure OS switch and will claim any Mac can publish iOS even with no
+    // Xcode, no signing identity and a keychain that cannot be unlocked
+    // headlessly. These lists come from ComputeDeployCapability, which runs the
+    // toolchain rather than looking for it.
+    //
+    // `Blocked` holds only targets this OS COULD satisfy but currently cannot —
+    // a Linux box does not report TestFlight as blocked, it reports nothing,
+    // because a wall of permanent red says nothing.
+    //
+    // Privacy: target NAMES only, same class as publishCapabilities. Never tool
+    // paths (they carry the home-dir username), versions, secret names, or
+    // reason strings. The detail lives behind the device's own P2P
+    // GET /deploy/capabilities and never reaches our servers.
+    deployCapabilities: v.optional(v.array(v.string())),
+    deployCapabilitiesBlocked: v.optional(v.array(v.string())),
+    // RFC3339, when the probe last ran. Refreshed every ~6h, so the UI must
+    // show the age rather than implying this is live.
+    deployCapabilitiesAt: v.optional(v.string()),
     publicKey: v.optional(v.string()),
     // ed25519 signing public key (base64), distinct from `publicKey` (X25519
     // box, encryption-only). Published so the relay can verify per-device

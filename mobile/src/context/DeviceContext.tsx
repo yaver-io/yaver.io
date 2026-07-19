@@ -314,6 +314,13 @@ export interface Device {
    *  Convex value. */
   agentVersionReportedAt?: number;
   /** best-effort cached machine + local runtime capability snapshot */
+  /** Deploy targets this box PROBED as ready. Not an OS guess — the agent ran
+   *  the toolchain. Refreshed ~6h, so show the age with it. */
+  deployCapabilities?: string[];
+  /** Targets this OS could satisfy but currently cannot. Targets the OS can
+   *  never satisfy are omitted rather than shown permanently red. */
+  deployCapabilitiesBlocked?: string[];
+  deployCapabilitiesAt?: string;
   hardwareProfile?: {
     os?: string;
     osVersion?: string;
@@ -1278,6 +1285,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             agentVersionReportedAt: typeof d.agentVersionReportedAt === "number"
               ? d.agentVersionReportedAt
               : undefined,
+            deployCapabilities: Array.isArray(d.deployCapabilities) ? d.deployCapabilities : undefined,
+            deployCapabilitiesBlocked: Array.isArray(d.deployCapabilitiesBlocked)
+              ? d.deployCapabilitiesBlocked
+              : undefined,
+            deployCapabilitiesAt: d.deployCapabilitiesAt ?? undefined,
             hardwareProfile: d.hardwareProfile ?? undefined,
             lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
             lastTunnelEvent,

@@ -2481,6 +2481,18 @@ http.route({
         : body.publishCapabilities === null
           ? []
           : undefined,
+      // Probed deploy capability. Unlike publishCapabilities there is no
+      // null->[] coercion: the agent omits these entirely until its first
+      // probe completes, and an omitted field must leave the stored result
+      // alone rather than clear it.
+      deployCapabilities: Array.isArray(body.deployCapabilities)
+        ? body.deployCapabilities
+        : undefined,
+      deployCapabilitiesBlocked: Array.isArray(body.deployCapabilitiesBlocked)
+        ? body.deployCapabilitiesBlocked
+        : undefined,
+      deployCapabilitiesAt:
+        typeof body.deployCapabilitiesAt === "string" ? body.deployCapabilitiesAt : undefined,
       // Batched CPU/RAM samples folded into the heartbeat (replaces the
       // separate /devices/metrics 60s poll). Validated by the mutation's
       // array schema; only forwarded when it's actually an array.
