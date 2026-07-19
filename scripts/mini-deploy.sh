@@ -38,6 +38,17 @@ for arg in "$@"; do
   esac
 done
 
+# A non-interactive `ssh box 'cmd'` gets almost none of the PATH a human sees:
+# no shell profile is sourced, so rbenv/asdf shims and Homebrew are simply
+# absent. That is how a mobile deploy dies at `pod: command not found` on a box
+# where `pod` works perfectly the moment you log in — the tool is installed,
+# the shell just cannot see it. Same class as the tmux-not-on-PATH failure that
+# silently killed autorun. Put the usual suspects back before anything runs.
+for d in "$HOME/.rbenv/shims" "$HOME/.asdf/shims" /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+  [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+done
+export PATH
+
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$*"; }
 bad()  { printf '  \033[31mBLOCKED\033[0m %s\n' "$*"; }
