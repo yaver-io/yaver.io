@@ -203,13 +203,24 @@ export default function AutorunsScreen() {
                     {session.slot}
                   </Text>
                   {session.tmuxSession ? (
-                    <Text
-                      selectable
-                      style={{ color: c.textMuted, fontSize: 11, marginTop: 4, fontFamily: "Menlo" }}
-                      numberOfLines={1}
-                    >
-                      tmux: {session.tmuxSession}
-                    </Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginTop: 4, gap: 8 }}>
+                      <Text
+                        selectable
+                        style={{ color: c.textMuted, fontSize: 11, fontFamily: "Menlo", flexShrink: 1 }}
+                        numberOfLines={1}
+                      >
+                        tmux: {session.tmuxSession}
+                      </Text>
+                      <Pressable
+                        onPress={() =>
+                          router.push({ pathname: "/shell", params: { session: session.tmuxSession! } })
+                        }
+                        hitSlop={6}
+                        style={{ borderColor: accent, borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}
+                      >
+                        <Text style={{ color: accent, fontSize: 11, fontWeight: "600" }}>Open terminal ›</Text>
+                      </Pressable>
+                    </View>
                   ) : null}
                   <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
                     {session.iterations ?? 0} iterations · {session.commits ?? 0} commits

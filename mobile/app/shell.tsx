@@ -22,7 +22,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice, type Device } from "../src/context/DeviceContext";
@@ -37,13 +37,21 @@ import { OpenCodeConfigModal } from "../src/components/OpenCodeConfigModal";
 
 type PTYTarget =
   | { kind: "shell" }
-  | { kind: "runner"; runner: AgentLaunch["id"]; sessionName: string };
+  | { kind: "runner"; runner: AgentLaunch["id"]; sessionName: string }
+  // An arbitrary tmux session — e.g. "observe this autorun", opened with the
+  // autorun's tagged tmuxSession (Epic 7). Same /ws/runner endpoint as a runner
+  // chip, but not tied to a launcher id.
+  | { kind: "tmux"; sessionName: string };
 
 function buildPTYWsUrl(baseUrl: string, token: string, target: PTYTarget): string {
   const ws = baseUrl.replace(/^http/, "ws").replace(/\/+$/, "");
   const q = new URLSearchParams({ token, term: "xterm-256color" });
   if (target.kind === "runner") {
     q.set("runner", target.runner);
+    q.set("name", target.sessionName);
+    return `${ws}/ws/runner?${q.toString()}`;
+  }
+  if (target.kind === "tmux") {
     q.set("name", target.sessionName);
     return `${ws}/ws/runner?${q.toString()}`;
   }
@@ -82,6 +90,14 @@ export default function ShellScreen() {
   const [fullscreen, setFullscreen] = useState(false);
   const [target, setTarget] = useState<PTYTarget>({ kind: "shell" });
   const [closingSessions, setClosingSessions] = useState(false);
+
+  // Deep-link: /shell?session=<tmux> opens straight onto that session's PTY —
+  // used by "Open terminal" on an autorun card to observe the loop's tmux (Epic 7).
+  const routeParams = useLocalSearchParams<{ session?: string }>();
+  useEffect(() => {
+    const s = typeof routeParams.session === "string" ? routeParams.session.trim() : "";
+    if (s) setTarget({ kind: "tmux", sessionName: s });
+  }, [routeParams.session]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const xtermRef = useRef<XtermHandle | null>(null);
@@ -359,7 +375,12 @@ export default function ShellScreen() {
   }
 
   const deviceLabel = activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name;
-  const surfaceLabel = target.kind === "runner" ? `${target.runner} · tmux` : "PTY";
+  const surfaceLabel =
+    target.kind === "runner"
+      ? `${target.runner} · tmux`
+      : target.kind === "tmux"
+        ? `${target.sessionName} · tmux`
+        : "PTY";
 
   return (
     <KeyboardAvoidingView
