@@ -183,6 +183,20 @@ func autorunTmuxKick(ctx context.Context, session, prompt, workDir string, timeo
 	}
 	instruction := "Read " + promptPath + " and carry out the task it describes. Do not ask questions."
 
+	// send-keys does not care what is on screen. If the TUI is showing a modal
+	// — trust dialog, update nag, model migration — the instruction is consumed
+	// as menu input, the pane never goes busy, and the run reports "no changes"
+	// after waiting out its timeout. Look before typing. See
+	// autorun_blocked_prompt.go for the incident list.
+	if pane := autorunTmuxCapture(ctx, session, workDir); pane != "" {
+		if blocked := autorunDetectBlockingPrompt(pane); blocked != nil {
+			return autorunCommandResult{
+				Output: pane,
+				Err:    autorunBlockedPromptError(session, blocked, pane),
+			}
+		}
+	}
+
 	// -l sends the text literally; Enter must be a SEPARATE send-keys, or the
 	// TUI leaves the text sitting unsubmitted in its composer.
 	if res := autorunExec(ctx, tmuxCmdName(), []string{"send-keys", "-t", session, "-l", instruction}, workDir); res.Err != nil {
