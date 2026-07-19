@@ -75,9 +75,13 @@ type autorunSessionView struct {
 	// Master is the planning seat, empty on a single-runner loop. Present so a
 	// reader can tell a two-seat run from a one-seat run without reading the
 	// progress file — the seats fail for different reasons.
-	Master    string             `json:"master,omitempty"`
-	Heals     []autorunHealEvent `json:"heals,omitempty"`
-	Resources autorunResources   `json:"resources"`
+	Master string `json:"master,omitempty"`
+	// TmuxSession is the tmux session driving this loop (Epic 7 observability):
+	// lets a surface label the run and lets the user `tmux attach -t <name>` from
+	// a terminal. Deterministic from task+runner (autorunTmuxSessionName).
+	TmuxSession string             `json:"tmuxSession,omitempty"`
+	Heals       []autorunHealEvent `json:"heals,omitempty"`
+	Resources   autorunResources   `json:"resources"`
 	// Parked is true while the loop is held at the freeze gate for a deploy.
 	// It is deliberately NOT a Status value: the run is still `running` and
 	// still counts as live, so a client filtering on status keeps seeing it.
@@ -224,7 +228,8 @@ func (m *autorunSessionManager) view(s *autorunSession) autorunSessionView {
 		Iterations: s.Summary.Iterations, Commits: s.Summary.Commits, FinishReason: s.Summary.FinishReason,
 		FinalCommit: s.Summary.FinalCommit, FinalCommitSubject: s.Summary.FinalSubject,
 		ActiveRunner: s.Summary.Runner, Master: s.Summary.Master, Heals: s.Summary.Heals, Resources: s.Summary.Resources,
-		Parked: autorunFreeze.isParked(s.ID)}
+		TmuxSession: autorunTmuxSessionName(s.Task, s.Runner),
+		Parked:      autorunFreeze.isParked(s.ID)}
 	if b, err := os.ReadFile(s.ProgressPath); err == nil {
 		const maxTail = 16 * 1024
 		if len(b) > maxTail {

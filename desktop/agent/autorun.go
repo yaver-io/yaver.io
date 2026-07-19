@@ -260,7 +260,13 @@ type autorunStateEvent struct {
 	Commits   int    `json:"commits"`
 	Heals     int    `json:"heals"`
 	Finish    string `json:"finishReason,omitempty"`
-	At        int64  `json:"at"`
+	// TmuxSession is the tmux session driving this autorun (Epic 7 observability).
+	// It lets every surface label the card/task and lets the user attach by name
+	// (`tmux attach -t <TmuxSession>`) from a terminal. Deterministic from
+	// task+runner (autorunTmuxSessionName); carried on the event so a REMOTE
+	// autorun's session name reaches the merging device.
+	TmuxSession string `json:"tmuxSession,omitempty"`
+	At          int64  `json:"at"`
 }
 
 // autorunSeats is the runner assignment a task file asks for in its front

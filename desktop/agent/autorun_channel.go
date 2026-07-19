@@ -43,6 +43,10 @@ func autorunCurrentState(opts autorunOptions, runnerID, kind, status, finishReas
 	if ev.Runner == "" {
 		ev.Runner = strings.TrimSpace(summary.Runner)
 	}
+	// Tag the tmux session so every surface can label + attach-by-name. Derived
+	// from task+effective-runner, matching the name the loop actually created
+	// (autorun.go ensureAutorunTmuxSession).
+	ev.TmuxSession = autorunTmuxSessionName(opts.TaskPath, ev.Runner)
 	return ev
 }
 
@@ -75,6 +79,7 @@ type autorunRunCacheRow struct {
 	Commits      int    `json:"commits"`
 	Heals        int    `json:"heals"`
 	FinishReason string `json:"finishReason,omitempty"`
+	TmuxSession  string `json:"tmuxSession,omitempty"`
 	At           int64  `json:"at"`
 	AgeMs        int64  `json:"ageMs"`
 }
@@ -95,6 +100,7 @@ type autorunRefreshView struct {
 	FinishReason string     `json:"finishReason,omitempty"`
 	ActiveRunner string     `json:"activeRunner,omitempty"`
 	Master       string     `json:"master,omitempty"`
+	TmuxSession  string     `json:"tmuxSession,omitempty"`
 	Heals        []struct{} `json:"heals,omitempty"`
 }
 
@@ -129,6 +135,7 @@ func autorunStateFromBusEvent(evt BusEvent) (autorunRunCacheRow, bool) {
 		Commits:      st.Commits,
 		Heals:        st.Heals,
 		FinishReason: st.Finish,
+		TmuxSession:  st.TmuxSession,
 		At:           publishedAt,
 		AgeMs:        age,
 	}, true
@@ -363,10 +370,11 @@ func cacheAutorunRefresh(deviceID string, view autorunRefreshView) {
 		MaxIters:  view.MaxIters,
 		Runner:    runner,
 		Master:    strings.TrimSpace(view.Master),
-		Commits:   view.Commits,
-		Heals:     len(view.Heals),
-		Finish:    strings.TrimSpace(view.FinishReason),
-		At:        time.Now().UnixMilli(),
+		Commits:     view.Commits,
+		Heals:       len(view.Heals),
+		Finish:      strings.TrimSpace(view.FinishReason),
+		TmuxSession: strings.TrimSpace(view.TmuxSession),
+		At:          time.Now().UnixMilli(),
 	}
 	injectRetainedBusEvent(BusEvent{
 		ID:          generateBusEventID(deviceID, time.Now()),

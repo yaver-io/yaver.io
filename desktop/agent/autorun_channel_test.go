@@ -77,6 +77,55 @@ func TestAutorunRunsReadsRetainedCache(t *testing.T) {
 	}
 }
 
+// A1 (Epic 7): the tmux session name must ride the autorun state event and
+// survive the bus-event -> cache-row conversion every surface reads, so cards
+// can label the run and the user can `tmux attach -t <name>`.
+func TestAutorunStateCarriesTmuxSession(t *testing.T) {
+	b := newTestBus(t, "device-local")
+	globalBusMu.Lock()
+	prev := globalBus
+	globalBus = b
+	globalBusMu.Unlock()
+	t.Cleanup(func() {
+		globalBusMu.Lock()
+		globalBus = prev
+		globalBusMu.Unlock()
+	})
+
+	opts := autorunOptions{
+		SessionID: "autorun-tmux-1",
+		TaskPath:  "/Users/pokayoke/src/repo/tasks/nightly.md",
+		Runner:    "codex",
+		Slot:      "/Users/pokayoke/src/repo/tasks/nightly.md:codex",
+		MaxIters:  9,
+	}
+	summary := autorunRunSummary{Iterations: 3, Runner: "codex"}
+	publishAutorunState(context.Background(), opts, "codex", "iteration", "running", "", summary)
+
+	events := b.Retained("autorun/")
+	if len(events) != 1 {
+		t.Fatalf("retained events = %d, want 1", len(events))
+	}
+	want := autorunTmuxSessionName(opts.TaskPath, "codex") // yaver-autorun-nightly-codex
+	if want == "" {
+		t.Fatal("expected a non-empty session name")
+	}
+	var state autorunStateEvent
+	if err := json.Unmarshal(events[0].Payload, &state); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if state.TmuxSession != want {
+		t.Fatalf("event TmuxSession = %q, want %q", state.TmuxSession, want)
+	}
+	row, ok := autorunStateFromBusEvent(events[0])
+	if !ok {
+		t.Fatal("autorunStateFromBusEvent returned !ok")
+	}
+	if row.TmuxSession != want {
+		t.Fatalf("cache row TmuxSession = %q, want %q", row.TmuxSession, want)
+	}
+}
+
 func TestPublishAutorunStateUsesSlotLabelOnly(t *testing.T) {
 	b := newTestBus(t, "device-local")
 	globalBusMu.Lock()
