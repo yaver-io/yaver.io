@@ -555,6 +555,77 @@ func augmentRunsWithDiscoveredTmux(rows []autorunRunCacheRow, discovered []Autor
 	return rows
 }
 
+// composeAutorunRecap turns the current running autoruns into one spoken
+// sentence — the "what happened while I was at the beach" recap. Pure so it
+// unit-tests without TTS.
+func composeAutorunRecap(rows []autorunRunCacheRow) string {
+	running := make([]autorunRunCacheRow, 0, len(rows))
+	for _, r := range rows {
+		if strings.EqualFold(strings.TrimSpace(r.Status), "running") {
+			running = append(running, r)
+		}
+	}
+	if len(running) == 0 {
+		return "No autoruns are running right now."
+	}
+	sort.Slice(running, func(i, j int) bool { return running[i].Task < running[j].Task })
+	var b strings.Builder
+	if len(running) == 1 {
+		b.WriteString("1 autorun running. ")
+	} else {
+		fmt.Fprintf(&b, "%d autoruns running. ", len(running))
+	}
+	for i, r := range running {
+		task := strings.TrimSpace(r.Task)
+		if task == "" {
+			task = strings.TrimSpace(r.TmuxSession)
+		}
+		b.WriteString(task)
+		if runner := strings.TrimSpace(r.Runner); runner != "" {
+			fmt.Fprintf(&b, " on %s", runner)
+		}
+		if r.Iteration > 0 {
+			fmt.Fprintf(&b, ", iteration %d", r.Iteration)
+		}
+		if r.Commits > 0 {
+			fmt.Fprintf(&b, ", %d commits", r.Commits)
+		}
+		if i < len(running)-1 {
+			b.WriteString(". ")
+		} else {
+			b.WriteString(".")
+		}
+	}
+	return b.String()
+}
+
+// opsRecapSpeakHandler (A4): speak a recap of the current autoruns via the
+// voice_speak TTS pipeline — mirrors feedback_speak. Pass device to render on a
+// specific paired surface, machine to recap a remote device's autoruns.
+func opsRecapSpeakHandler(c OpsContext, payload json.RawMessage) OpsResult {
+	var p struct {
+		Device  string `json:"device,omitempty"`
+		Machine string `json:"machine,omitempty"`
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+		}
+	}
+	rows, _ := autorunRunsFromCache(p.Machine)
+	if p.Machine == "" || p.Machine == "local" || p.Machine == localDeviceID() {
+		if discovered, derr := discoverAutorunTmuxSessions(nil); derr == nil && len(discovered) > 0 {
+			rows = augmentRunsWithDiscoveredTmux(rows, discovered, localDeviceID())
+		}
+	}
+	text := composeAutorunRecap(rows)
+	if c.Server == nil {
+		return OpsResult{OK: false, Code: "no_server", Error: "agent has no server"}
+	}
+	speak := runVoiceSpeak(c.Server.blackboxMgr, voiceSpeakArgs{Device: strings.TrimSpace(p.Device), Text: text})
+	return OpsResult{OK: true, Initial: map[string]any{"text": text, "speak": speak}}
+}
+
 func opsAutorunRunsHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	var p struct {
 		Machine string `json:"machine"`

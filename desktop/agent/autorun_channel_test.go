@@ -77,6 +77,29 @@ func TestAutorunRunsReadsRetainedCache(t *testing.T) {
 	}
 }
 
+// A4 (Epic 7): the spoken recap summarizes only running autoruns, with runner /
+// iteration / commits, and says so plainly when nothing is running.
+func TestComposeAutorunRecap(t *testing.T) {
+	if got := composeAutorunRecap(nil); !strings.Contains(got, "No autoruns") {
+		t.Fatalf("empty recap = %q, want a 'no autoruns' line", got)
+	}
+	rows := []autorunRunCacheRow{
+		{Task: "nightly", Runner: "codex", Iteration: 5, Commits: 3, Status: "running"},
+		{Task: "beach", Runner: "claude", Iteration: 2, Status: "running"},
+		{Task: "old", Runner: "codex", Status: "completed"}, // must be excluded
+	}
+	got := composeAutorunRecap(rows)
+	if !strings.Contains(got, "2 autoruns running") {
+		t.Fatalf("recap = %q, want the running count", got)
+	}
+	if !strings.Contains(got, "nightly on codex, iteration 5, 3 commits") {
+		t.Fatalf("recap = %q missing the nightly detail", got)
+	}
+	if strings.Contains(got, "old") {
+		t.Fatalf("recap = %q must exclude completed runs", got)
+	}
+}
+
 // A2 (Epic 7): autorun-shaped tmux sessions the cache doesn't already represent
 // (bus-expired or hand-started beach loops) must be surfaced so they stay
 // visible + attachable, while sessions already represented are not duplicated.
