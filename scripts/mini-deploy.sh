@@ -124,12 +124,43 @@ if [ -f "$HOME/.appstoreconnect/yaver.env" ] && [ -f "$HOME/.yaver/local-secrets
     security set-keychain-settings "$KC" >/dev/null 2>&1 || true
     security set-key-partition-list -S apple-tool:,apple: -s \
       -k "$YAVER_CI_KEYCHAIN_PASSWORD" "$KC" >/dev/null 2>&1 || true
+    # BOTH keychains, or the archive dies at CodeSign .../*.appex.
+    #
+    # The signing identity spans two keychains: Apple DISTRIBUTION lives in
+    # yaver-ci.keychain, but Apple DEVELOPMENT private keys live in
+    # login.keychain — and during an App Store archive Xcode signs the
+    # app-extension / watch intermediates with the DEVELOPMENT identity before
+    # re-signing with distribution at export. Unlocking only the CI keychain
+    # gets you all the way to `CodeSign .../YaverActivity.appex` and then a
+    # bare "(2 failures)" with no cause named. Observed exactly that on
+    # 2026-07-19. See CLAUDE.md "Headless codesign".
+    LKC="${YAVER_LOGIN_KEYCHAIN_PATH:-$HOME/Library/Keychains/login.keychain-db}"
+    if [ -n "${YAVER_LOGIN_PASSWORD:-}" ] && [ -f "$LKC" ]; then
+      security unlock-keychain -p "$YAVER_LOGIN_PASSWORD" "$LKC" >/dev/null 2>&1 || true
+      # No flags = never auto-lock. A ~20 min archive will otherwise relock
+      # the keychain mid-build and fail at a random extension.
+      security set-keychain-settings "$LKC" >/dev/null 2>&1 || true
+      security set-key-partition-list -S apple-tool:,apple: -s \
+        -k "$YAVER_LOGIN_PASSWORD" "$LKC" >/dev/null 2>&1 || true
+    fi
     SHA="$(security find-identity -v -p codesigning "$KC" 2>/dev/null \
            | grep 'Apple Distribution' | head -1 | awk '{print $2}')"
     if [ -n "$SHA" ]; then
       cp /bin/echo /tmp/.yaver-cs-probe 2>/dev/null || true
       if codesign --force --keychain "$KC" -s "$SHA" /tmp/.yaver-cs-probe >/dev/null 2>&1; then
-        ASC_OK=1; ok "testflight — real codesign with Apple Distribution succeeded headlessly"
+        # Distribution signs. Now prove DEVELOPMENT signs too — that is the
+        # identity the archive uses for app-extension intermediates, and it is
+        # the half that fails 20 minutes in with an unexplained "(2 failures)".
+        DSHA="$(security find-identity -v -p codesigning "$LKC" 2>/dev/null \
+                | grep 'Apple Development' | head -1 | awk '{print $2}')"
+        if [ -z "$DSHA" ]; then
+          bad "testflight — no Apple Development identity in $LKC (appex signing would fail)"
+        elif codesign --force --keychain "$LKC" -s "$DSHA" /tmp/.yaver-cs-probe >/dev/null 2>&1; then
+          ASC_OK=1; ok "testflight — real codesign OK with BOTH Distribution and Development"
+        else
+          bad "testflight — Distribution signs but DEVELOPMENT cannot; archive dies at CodeSign .../*.appex"
+          note "login.keychain is locked or has no partition list; set YAVER_LOGIN_PASSWORD in ~/.yaver/local-secrets.env"
+        fi
       else
         bad "testflight — identity present but CANNOT SIGN (the errSecInternalComponent case)"
         note "the cert is not the problem; the private key's keychain is locked or has no partition list"
