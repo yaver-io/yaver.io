@@ -34,6 +34,7 @@ package main
 // runner_keeper_mcp.go.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -104,6 +105,10 @@ type RunnerKeeper struct {
 	clock func() time.Time
 	// nudgeCap is the per-hour cap; 0 disables the cap (tests).
 	nudgeCap int
+	// superviseOnce guards the single production drain goroutine so that
+	// repeated ensureRunnerKeeper()/StartSupervisor() calls can't spawn
+	// duplicate loops.
+	superviseOnce sync.Once
 }
 
 // NewRunnerKeeper builds a keeper rooted at ~/.yaver/runner/.
@@ -321,6 +326,73 @@ func (k *RunnerKeeper) DecrementHourlyNudges() {
 	for _, st := range k.states {
 		st.NudgesLastHour = 0
 	}
+}
+
+// sessionsNeedingTick returns every session the drain loop must visit this
+// cycle: the union of sessions we already track state for AND sessions that
+// only exist as queued work (EnqueuePrompt can add a prompt for a session
+// before the keeper has ever seen its pane). Without the queue half, a freshly
+// enqueued prompt for a brand-new session would never be drained.
+func (k *RunnerKeeper) sessionsNeedingTick() []string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	seen := make(map[string]bool, len(k.states)+len(k.queue))
+	out := make([]string, 0, len(k.states)+len(k.queue))
+	add := func(n string) {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	for name := range k.states {
+		add(name)
+	}
+	for i := range k.queue {
+		add(k.queue[i].SessionName)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Supervise is the production drain loop the Tick doc comment references
+// ("Real runtime calls this from a per-session goroutine at pollInterval").
+// It was never wired up, so every prompt EnqueuePrompt wrote to queue.json was
+// silently swallowed — runner_queue_add looked like it worked but nothing
+// delivered the work. This loop Ticks each known/queued session every
+// pollInterval (draining idle KeeperModeAuto sessions) and resets the
+// per-hour nudge accounting each hour. Runs until ctx is cancelled.
+func (k *RunnerKeeper) Supervise(ctx context.Context) {
+	poll := k.pollInterval
+	if poll <= 0 {
+		poll = 15 * time.Second
+	}
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	hourly := time.NewTicker(time.Hour)
+	defer hourly.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-hourly.C:
+			k.DecrementHourlyNudges()
+		case <-ticker.C:
+			for _, name := range k.sessionsNeedingTick() {
+				// A dead/renamed session makes capturePane fail; that is
+				// expected churn, not fatal. Skip it and keep draining the
+				// rest so one gone session can't stall the whole queue.
+				_, _ = k.Tick(name)
+			}
+		}
+	}
+}
+
+// StartSupervisor launches the drain loop exactly once for this keeper.
+// Safe to call from every ensureRunnerKeeper() path.
+func (k *RunnerKeeper) StartSupervisor(ctx context.Context) {
+	k.superviseOnce.Do(func() {
+		go k.Supervise(ctx)
+	})
 }
 
 // -- persistence helpers -------------------------------------------

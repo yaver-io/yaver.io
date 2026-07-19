@@ -125,6 +125,83 @@ func TestKeeper_TickNudgesWhenIdleAndQueued(t *testing.T) {
 	}
 }
 
+// The reported P1: runner_queue_add wrote queue.json but nothing drained it,
+// because RunnerKeeper.Tick had no production caller. The drain loop discovers
+// sessions from the queue itself, so a prompt enqueued for a session the keeper
+// has never SetMode'd or Tick'd must still be found and delivered.
+func TestSessionsNeedingTick_IncludesUntrackedQueuedSession(t *testing.T) {
+	k := newTestKeeper(t)
+	// No SetMode, no prior Tick — "fresh" only exists as queued work.
+	if _, err := k.EnqueuePrompt("fresh", "drain me", "phone"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	got := k.sessionsNeedingTick()
+	found := false
+	for _, n := range got {
+		if n == "fresh" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("sessionsNeedingTick=%v, must include the queued-only session 'fresh'", got)
+	}
+}
+
+// End-to-end proof the fix delivers work that used to be silently swallowed:
+// enqueue for an untracked session, then drive the exact discovery→Tick path
+// Supervise uses, and assert the prompt reaches the pane.
+func TestSupervisorDrainDeliversUntrackedQueuedPrompt(t *testing.T) {
+	k := newTestKeeper(t)
+	var (
+		mu   sync.Mutex
+		sent string
+	)
+	k.sendKeys = func(s, txt string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		sent = txt
+		return nil
+	}
+	k.capturePane = func(s string) (string, error) { return "$ claude> \n", nil }
+	base := time.Now()
+	k.clock = func() time.Time { return base }
+	// Real flow: work is enqueued, then the session flips to auto (runner_detach)
+	// so the keeper is allowed to drain it. Before this fix, Supervise never ran
+	// so even a correctly-auto session sat with its queue untouched.
+	if _, err := k.EnqueuePrompt("box-1", "continue the plan", "phone"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	k.SetMode("box-1", KeeperModeAuto)
+	// Cycle 1: discover + seed pane hash. Nothing drained yet.
+	for _, n := range k.sessionsNeedingTick() {
+		if _, err := k.Tick(n); err != nil {
+			t.Fatalf("tick %q: %v", n, err)
+		}
+	}
+	mu.Lock()
+	first := sent
+	mu.Unlock()
+	if first != "" {
+		t.Fatalf("nothing should nudge on first cycle, sent=%q", first)
+	}
+	// Cycle 2: idle past debounce, pane unchanged → drain.
+	k.clock = func() time.Time { return base.Add(2 * time.Second) }
+	for _, n := range k.sessionsNeedingTick() {
+		if _, err := k.Tick(n); err != nil {
+			t.Fatalf("tick %q: %v", n, err)
+		}
+	}
+	mu.Lock()
+	got := sent
+	mu.Unlock()
+	if got != "continue the plan" {
+		t.Fatalf("drained prompt = %q, want the enqueued prompt", got)
+	}
+	if q := k.ListQueue("box-1"); len(q) != 0 {
+		t.Fatalf("queue should be empty after drain, has %d", len(q))
+	}
+}
+
 func TestKeeper_UserDrivenModeDoesNotNudge(t *testing.T) {
 	k := newTestKeeper(t)
 	k.sendKeys = func(string, string) error {

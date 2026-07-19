@@ -18,6 +18,7 @@ package main
 //                        telemetry (time, tokens, runners utilised).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -364,5 +365,9 @@ func (s *HTTPServer) ensureRunnerKeeper() *RunnerKeeper {
 		return nil
 	}
 	s.runnerKeeper = k
+	// Start the production drain loop. Until this existed, queue.json was
+	// written by EnqueuePrompt but never drained (RunnerKeeper.Tick had no
+	// production caller), so runner_queue_add silently swallowed work.
+	k.StartSupervisor(context.Background())
 	return k
 }
