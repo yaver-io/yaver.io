@@ -35,6 +35,12 @@ func runAutorun(args []string) {
 		case "wrapup", "toparla":
 			runAutorunWrapup(args[1:])
 			return
+		case "deploy-lease":
+			runAutorunDeployLease(args[1:])
+			return
+		case "deploy-status", "leases":
+			runAutorunDeployStatus(args[1:])
+			return
 		case "help":
 			printAutorunHelp()
 			return
