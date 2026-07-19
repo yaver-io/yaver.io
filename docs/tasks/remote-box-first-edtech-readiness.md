@@ -98,6 +98,68 @@ tags and `publishCapabilities` (10 platform strings) do not map to each other.
   (`deployCapabilities`, agent 1.99.320+) is probed and safe to trust; render
   its age.
 
+### What the audit already found — do not re-derive it
+
+- **The board is gated server-side.** `autorun_store_http.go:44` hardcodes
+  `["testflight","playstore","convex","cloudflare-web"]` and
+  `autorun_store.go:75` only caps quota for testflight/playstore, so every
+  other target renders `∞`. Adding UI labels alone changes nothing.
+- **Failure data is written and then only ever counted.** `deploy_history` in
+  `autorun_store.go:141` stores an `outcome` column; the only reads are quota
+  counts (`:229`, `:355`). There is no `RecentDeploys()` accessor and no
+  endpoint. Add a store reader + `lastOutcome`/`lastEndedAt` per target and the
+  existing mobile/web rows can render failure with no transport work.
+- **`GET /deploy/runs` already has everything** — `ok`, `exit_code`,
+  `error_class` (classified in `deploy_classify.go`), `timed_out`,
+  `output_tail` — and **zero UI consumes it**. Only the CLI reads it.
+- **The two views already disagree on a key**: DeployStatusView uses
+  `cloudflare-web`, DeployCapabilitiesView uses `cloudflare`. Extract one
+  shared target registry before adding firebase/vercel/gcp-functions/supabase,
+  or you will edit ~8 mobile and ~6 web sites by hand and still drift.
+- **Reuse `mobile/src/components/ErrorMessage.tsx`** for failure rendering —
+  it already carries a smart-retry rule engine. Do not imitate the inline
+  `c.error` text used at `deploy-status.tsx:114`.
+- **Native surfaces**: tvOS shows only a static capability matrix
+  (`RuntimeDashboardView.swift:471`) and does not even decode
+  `publishCapabilities`; watchOS and Wear have no deploy surface at all beyond
+  a voice intent forwarded as text. `/autoruns/deploy-status` is bounded to
+  four scalar rows and fits a watch line unmodified. Wear's typed
+  `Reply.Error` + `Haptics.Cue.FAILURE` (`WatchState.kt:129`) makes failure
+  signalling cheapest there.
+- On car, the only viable channel while driving is the existing Live Activity
+  + spoken line (`car-voice-coding.tsx:444`). On glass, `glass-workspace.tsx`
+  pane kinds (`:153`) are the insertion point.
+
+## Phase 3b — the agent must FIX the box, not just grade it
+
+Every blocker this repo hit on 2026-07-19 was a missing dependency that a
+machine could have installed itself, and in each case the agent knew enough to
+say "blocked" and not enough to act:
+
+- CocoaPods absent — a TestFlight build died at `pod: command not found`.
+- `google-auth` absent — every Play key file was present and the upload would
+  still have failed on import.
+- No npm token — the box could never publish and nothing modelled it.
+
+Extend the build doctor from **diagnosis to remediation**, exposed as an MCP
+verb (and CLI + HTTP, per cross-surface parity) so any surface can ask a box to
+repair itself:
+
+- Per stack, know the install: CocoaPods (gem/rbenv), `google-auth` (pip),
+  wrangler, convex, flutter, node/npm, Java 17, Gradle, Xcode CLT.
+- **Self-heal only when the fix is unambiguous and idempotent** — installing a
+  missing public tool is; writing a credential is not. Never invent, fetch or
+  guess a secret. A missing token stays BLOCKED with the remedy text.
+- Report exactly what was installed, what was skipped and why. Ask before
+  anything that mutates a version a human pinned.
+- Re-probe after repairing and return the new verdict — a repair that reports
+  success without re-running the probe is the same false green this whole task
+  exists to remove.
+- The PATH lesson from `scripts/mini-deploy.sh` applies: a non-interactive ssh
+  sources no profile, so rbenv/asdf shims and Homebrew are invisible. Detect
+  "installed but not on this shell's PATH" and say so — it is a different
+  fault from "not installed" and has a different fix.
+
 ## Phase 4 — close the follow-ups the handoff names
 
 Work the "What Is Still Missing / Follow-Ups" list, in its order. Items 2
