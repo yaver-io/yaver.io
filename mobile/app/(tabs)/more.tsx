@@ -2953,6 +2953,7 @@ export default function MoreScreen() {
   const handleGatewayGates = useCallback(() => router.navigate("/gateway-gates" as any), [router]);
   const handleCarVoice = useCallback(() => router.navigate("/car-voice-coding" as any), [router]);
   const handleVibe = useCallback(() => router.navigate("/vibe" as any), [router]);
+  const handleDeployStatus = useCallback(() => router.navigate("/deploy-status" as any), [router]);
   const handleDataCollection = useCallback(() => router.navigate("/data-collection" as any), [router]);
   const handleTwinMode = useCallback(() => router.navigate("/twin" as any), [router]);
   const handleScrewCell = useCallback(() => router.navigate("/screw-cell" as any), [router]);
@@ -3419,6 +3420,20 @@ export default function MoreScreen() {
                 <Text style={[s.label, { color: c.textPrimary }]}>Vibe</Text>
                 <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
                   {"Talk to build — say “load me the app with Hermes” and keep vibing"}
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+            </Pressable>
+
+            <Pressable
+              style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+              onPress={handleDeployStatus}
+            >
+              <Text style={[s.icon, { color: c.textMuted }]}>{"🚀"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Deploy Status</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  {"Live: what's shipping now — build, stage, uploads-today vs cap"}
                 </Text>
               </View>
               <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
