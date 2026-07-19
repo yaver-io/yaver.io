@@ -21,6 +21,7 @@ import ProjectsView from "@/components/dashboard/ProjectsView";
 import TodosView from "@/components/dashboard/TodosView";
 import BuildsView from "@/components/dashboard/BuildsView";
 import { DeployCapabilitiesView } from "@/components/dashboard/DeployCapabilitiesView";
+import { DeployStatusView } from "@/components/dashboard/DeployStatusView";
 import HealthView from "@/components/dashboard/HealthView";
 import ScreenMonitorView from "@/components/dashboard/ScreenMonitorView";
 import QualityView from "@/components/dashboard/QualityView";
@@ -2690,6 +2691,15 @@ export default function DashboardPage() {
                   Deploy capabilities
                 </h3>
                 <DeployCapabilitiesView />
+              </div>
+              {/* Live deploy board from the box's autorun store — what's
+                  shipping right now, which build/stage, uploads-today vs cap.
+                  Complements "can I deploy?" above with "what is deploying?". */}
+              <div>
+                <h3 className="mb-3 text-sm font-semibold text-surface-200 dark:text-surface-100">
+                  Deploy status
+                </h3>
+                <DeployStatusView />
               </div>
             </div>
           ) : activeTab === "webview" || activeTab === "preview" || activeTab === "web-reload" ? (
