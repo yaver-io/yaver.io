@@ -41,6 +41,8 @@ type AutorunSession = {
   runner?: string;
   activeRunner?: string;
   master?: string;
+  /** tmux session driving this loop (Epic 7): `tmux attach -t <tmuxSession>`. */
+  tmuxSession?: string;
   workDir?: string;
   status?: string;
   startedAt?: string;
@@ -335,6 +337,11 @@ export default function AutorunsView() {
               <span>{s.commits ?? 0} verified commit{(s.commits ?? 0) === 1 ? "" : "s"}</span>
               <span>{duration(s)}{hasEnded(s) ? "" : " so far"}</span>
               {s.startedAt ? <span>started {fmtWhen(s.startedAt)}</span> : null}
+              {s.tmuxSession ? (
+                <span className="font-mono text-surface-400" title="Attach from a terminal: tmux attach -t <session>">
+                  tmux <span className="text-surface-300 select-all">{s.tmuxSession}</span>
+                </span>
+              ) : null}
             </div>
 
             {failedOver ? (
