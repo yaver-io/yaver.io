@@ -1352,8 +1352,15 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
         candidates.push({ url, path: isSub ? "subdomain" : "tunnel" });
       }
     }
-    if (agentClient.activeRelayUrl && device.id) {
-      candidates.push({ url: `${agentClient.activeRelayUrl}/d/${device.id}`, path: "relay" });
+    if (device.id) {
+      // Same-origin relay proxy (web/app/d/[deviceId]/[[...path]]/route.ts):
+      // it injects X-Relay-Password server-side and self-heals on 401. The old
+      // cross-origin `${agentClient.activeRelayUrl}/d/<id>` form sent only a
+      // bearer and NO relay password, so the relay 401'd every reach probe and
+      // the badge stamped "Alive · can't reach (Unauthorized)" even on boxes
+      // whose password was perfectly valid. The proxy also loads relays from
+      // /config itself, so this works for non-active device cards too.
+      candidates.push({ url: `/d/${device.id}`, path: "relay" });
     }
     if (typeof window !== "undefined" && window.location.protocol !== "https:") {
       candidates.push({ url: `http://${device.host}:${device.port}`, path: "direct" });

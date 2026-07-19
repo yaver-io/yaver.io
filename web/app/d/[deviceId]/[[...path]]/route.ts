@@ -181,7 +181,12 @@ async function handle(request: NextRequest, context: { params: Promise<{ deviceI
 
   if (response.status === 401) {
     const body = await response.clone().text();
-    if (/invalid relay password/i.test(body)) {
+    // Self-heal a missing/rotated password too, not just an invalid one. The
+    // relay says "relay password missing — sign in again to fetch it" for a
+    // fresh/rotated user with no password — the case that most needs re-pulling
+    // creds — so match missing|invalid|rejected|denied. Mirrors the agent's
+    // staleRelayPasswordHTTP.
+    if (/relay password (missing|invalid|rejected|denied)/i.test(body)) {
       await repairRelayPassword(token);
       target = await loadRelayTarget(token);
       response = await proxyRelay(request, target.relayUrl, target.password, deviceId, restPath);
