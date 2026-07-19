@@ -3274,6 +3274,7 @@ func runServe(args []string) {
 
 	httpServer.execMgr = NewExecManager(taskMgr.workDir, cfg.Sandbox)
 	httpServer.scheduler = NewScheduler(taskMgr)
+	httpServer.scheduler.SetPlacementBackend(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID)
 	// Wire the routine ("Verb-mode") dispatcher so scheduled routines
 	// can invoke any registered ops verb on this or any peer machine.
 	// Caller is "owner" because routine creation requires owner auth at
@@ -3670,6 +3671,10 @@ func runServe(args []string) {
 			}
 		}
 
+		if err := syncFinalTaskPlacementStatus(context.Background(), task, ""); err != nil {
+			log.Printf("[task %s] sync task placement status: %v", task.ID, err)
+		}
+
 		httpServer.notifyMgr.NotifyTaskCompleted(task.ID, task.Title, string(task.Status), task.CostUSD, dur)
 
 		// Auto hot-reload: if the task completed successfully and a dev server
@@ -3757,7 +3762,12 @@ func runServe(args []string) {
 		}
 	}()
 
-	chatBot := NewChatBot(taskMgr, httpServer.execMgr, httpServer.notifyMgr, cfg.Notifications)
+	chatBot := NewChatBot(taskMgr, httpServer.execMgr, httpServer.notifyMgr, cfg.Notifications, ChatBotPlacementConfig{
+		ConvexURL:     httpServer.convexURL,
+		Token:         httpServer.token,
+		LocalDeviceID: httpServer.deviceID,
+		WorkDir:       *workDir,
+	})
 	chatBot.Start(ctx)
 	httpServer.onShutdown = func() {
 		log.Println("Shutdown requested via API — stopping agent")
@@ -3794,7 +3804,7 @@ func runServe(args []string) {
 
 	// Start QUIC server (legacy, can be disabled)
 	if !*noQUIC {
-		quicServer := NewQUICServer(*quicPort, cfg.AuthToken, hostname, taskMgr)
+		quicServer := NewQUICServer(*quicPort, cfg.AuthToken, hostname, taskMgr, WithQUICPlacementBackend(cfg.ConvexSiteURL, cfg.DeviceID))
 		go func() {
 			if err := quicServer.Start(ctx); err != nil {
 				log.Printf("QUIC server error: %v", err)
@@ -3830,6 +3840,16 @@ func runServe(args []string) {
 	// and runs registered handlers with retry/backoff/DLQ.
 	registerBuiltinJobHandlers()
 	StartJobQueue()
+
+	// Relay source worker — opt-in branch-prep worker for Yaver Git relay
+	// tasks. It only claims prompt-free metadata and prepares scoped yaver/*
+	// branches; client-held prompt/files still go through work-once directly.
+	StartRelaySourceWorker(ctx, httpServer, cfg)
+
+	// Feedback work worker — opt-in owner-side bridge from Feedback SDK queue
+	// items into prompt-free relay-source branch work. It never runs a coding
+	// assistant or stores guest feedback in relay intent metadata.
+	StartFeedbackWorkWorker(ctx, httpServer, cfg)
 
 	// Start relay tunnels with hot-reload support
 	// Initial relay tunnels are started, and config is polled for changes every 30s

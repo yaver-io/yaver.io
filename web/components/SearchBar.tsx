@@ -10,7 +10,7 @@ const SEARCH_INDEX = [
   { path: "/docs", title: "Documentation", tags: "docs guide api reference" },
   { path: "/docs/developers", title: "Developer Guide", tags: "sdk api architecture build test contribute" },
   { path: "/docs/mcp", title: "MCP Protocol", tags: "mcp model context protocol tools json-rpc" },
-  { path: "/docs/self-hosting", title: "Self-Hosting", tags: "self-host relay docker vps deploy" },
+  { path: "/docs/self-hosting", title: "Relay and Cloud Options", tags: "free relay relay pro cloud workspace billing" },
   { path: "/docs/contributing", title: "Contributing", tags: "contribute pull request pr code style" },
   { path: "/faq", title: "FAQ", tags: "questions help troubleshoot" },
   { path: "/manuals", title: "Manuals", tags: "setup guide tutorial how-to" },
@@ -32,7 +32,7 @@ const SEARCH_INDEX = [
   { path: "/manuals/integrations#mcp-tools", title: "MCP Tools", tags: "mcp tools search files git exec screenshot system" },
   { path: "/manuals/integrations#session-transfer", title: "Session Transfer", tags: "session transfer move migrate claude codex opencode" },
   { path: "/docs/developers#sdk", title: "SDKs", tags: "sdk go python javascript typescript flutter dart npm pip pub.dev" },
-  { path: "/manuals/relay-setup", title: "Self-Host Relay", tags: "self-host relay install docker one-line script curl" },
+  { path: "/manuals/relay-setup", title: "Yaver Relay Setup", tags: "free relay relay pro cloud workspace remote access" },
   { path: "/docs/developers#session-transfer", title: "Session Transfer API", tags: "session export import transfer api endpoint" },
   { path: "/integrations", title: "Integrations", tags: "integrations chat ai agents developer tools ci cd sdk connectivity" },
 ];

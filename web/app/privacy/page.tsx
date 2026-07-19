@@ -195,7 +195,7 @@ export default function PrivacyPolicyPage() {
             <strong className="text-surface-300">It is peer-to-peer and self-hosted.</strong> The
             clone runs on your own device or your own machine. Your credentials, sessions, and the
             data the gateway reads flow directly between your devices over Yaver&rsquo;s P2P transport
-            (direct LAN / Tailscale / self-hostable relay). They do not pass through, and are never
+            (direct LAN / Yaver Relay). They do not pass through, and are never
             stored on, our backend (Convex).
           </li>
           <li>

@@ -167,6 +167,18 @@ func (s *HTTPServer) handleVibePreviewClipFix(w http.ResponseWriter, r *http.Req
 			// initiated, not guest-initiated, so no Docker isolation
 			// is required.
 			opts.WorkDir = s.taskMgr.workDir
+			if deferral, deferred, derr := s.deferIngressTaskToCloudWorkspace(r.Context(), "vibe-clip-fix", "vibe", "", opts.WorkDir); deferred {
+				if deferral != nil {
+					resp.TaskID = deferral.PendingTaskID
+				}
+				if derr != nil {
+					resp.Hint = "feedback filed; Cloud Workspace selected but handoff is not ready: " + derr.Error()
+				} else {
+					resp.Hint = fmt.Sprintf("filed feedback %s; Cloud Workspace handoff %s queued for clip fix", report.ID, resp.TaskID)
+				}
+				jsonReply(w, http.StatusOK, resp)
+				return
+			}
 			task, terr := s.taskMgr.CreateTaskWithOptions(prompt, "", "", "vibe-clip-fix", "", "", nil, opts)
 			if terr != nil {
 				resp.Hint = "fix task creation failed: " + terr.Error()

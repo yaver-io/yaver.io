@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"time"
 )
 
 type whatsappCommandRequest struct {
@@ -61,13 +63,13 @@ func (s *HTTPServer) handleWhatsAppCommand(w http.ResponseWriter, r *http.Reques
 	case "reload", "build_reload":
 		s.handleWhatsAppReload(w, r, req)
 	case "task", "":
-		s.handleWhatsAppTask(w, req)
+		s.handleWhatsAppTask(w, r, req)
 	default:
 		jsonError(w, http.StatusBadRequest, "unsupported whatsapp action")
 	}
 }
 
-func (s *HTTPServer) handleWhatsAppTask(w http.ResponseWriter, req whatsappCommandRequest) {
+func (s *HTTPServer) handleWhatsAppTask(w http.ResponseWriter, r *http.Request, req whatsappCommandRequest) {
 	if s == nil || s.taskMgr == nil {
 		jsonError(w, http.StatusServiceUnavailable, "task manager unavailable")
 		return
@@ -75,6 +77,81 @@ func (s *HTTPServer) handleWhatsAppTask(w http.ResponseWriter, req whatsappComma
 	title := req.CommandText
 	if req.ProjectSlug != "" {
 		title = "WhatsApp request for " + req.ProjectSlug + ": " + title
+	}
+	taskOpts := TaskCreateOptions{InitialUserPrompt: req.CommandText}
+	meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		Title:          title,
+		Source:         "whatsapp",
+		ProjectName:    req.ProjectSlug,
+		WorkDir:        s.taskMgr.workDir,
+		TargetDeviceID: s.deviceID,
+	})
+	if previewPlacement, perr := s.previewTaskPlacement(r.Context(), meta); perr != nil {
+		log.Printf("[placement] WhatsApp preview skipped before task create: %v", perr)
+	} else if shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
+		pendingTaskID := newPendingCloudTaskID()
+		recordedPlacement := previewPlacement
+		if placement, rerr := s.recordTaskPlacement(r.Context(), pendingTaskID, meta); rerr != nil {
+			log.Printf("[placement] WhatsApp pending record skipped for %s: %v", pendingTaskID, rerr)
+		} else if placement != nil {
+			recordedPlacement = placement
+		}
+		var activation map[string]any
+		if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+			if result, aerr := s.activateTaskPlacement(r.Context(), recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+				activation = activationMapFromError(aerr)
+				log.Printf("[placement] WhatsApp activation skipped for %s: %v", pendingTaskID, aerr)
+			} else {
+				activation = result
+			}
+		}
+		bodyJSON, _ := json.Marshal(map[string]any{
+			"title":             title,
+			"source":            "whatsapp",
+			"projectName":       req.ProjectSlug,
+			"userPrompt":        req.CommandText,
+			"initialUserPrompt": req.CommandText,
+			"placementKind":     meta.Kind,
+		})
+		cloudErr := &CloudWorkspaceRequiredError{
+			PendingTaskID: pendingTaskID,
+			Placement:     recordedPlacement,
+			Activation:    activation,
+			Reason:        "placement selected a Cloud Workspace for this WhatsApp task",
+		}
+		authHeader := "Bearer " + strings.TrimSpace(s.token)
+		if _, remoteTask, herr := createTaskOnCloudWorkspace(r.Context(), cloudErr, authHeader, bodyJSON, 20*time.Second); herr == nil && remoteTask != nil {
+			targetDeviceID := ""
+			if recordedPlacement != nil {
+				targetDeviceID = recordedPlacement.TargetDeviceID
+			}
+			jsonReply(w, http.StatusOK, map[string]interface{}{
+				"ok":             true,
+				"mode":           "cloud_workspace",
+				"taskId":         remoteTask.TaskID,
+				"status":         remoteTask.Status,
+				"pendingTaskId":  pendingTaskID,
+				"targetDeviceId": targetDeviceID,
+				"placement":      recordedPlacement,
+			})
+			return
+		} else {
+			reason := "Cloud Workspace is waking or needs attention before this WhatsApp task can run."
+			if herr != nil {
+				reason = herr.Error()
+			}
+			jsonReply(w, http.StatusConflict, map[string]interface{}{
+				"ok":            false,
+				"action":        "cloud_workspace_required",
+				"pendingTaskId": pendingTaskID,
+				"placement":     recordedPlacement,
+				"activation":    activation,
+				"reason":        reason,
+			})
+			return
+		}
+	} else if previewPlacement != nil {
+		taskOpts.Placement = previewPlacement
 	}
 	task, err := s.taskMgr.CreateTaskWithOptions(
 		title,
@@ -84,7 +161,7 @@ func (s *HTTPServer) handleWhatsAppTask(w http.ResponseWriter, req whatsappComma
 		"",
 		"",
 		nil,
-		TaskCreateOptions{InitialUserPrompt: req.CommandText},
+		taskOpts,
 	)
 	if err != nil {
 		if task == nil {

@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -28,6 +29,9 @@ type VoiceDispatchOptions struct {
 	// Viewport — surface where the user is reading the response.
 	// Set by the WS handler from the start frame; nil = no hint.
 	Viewport *TaskViewport
+	// Placement lets voice ingress avoid spending relay runner time when the
+	// machine layer selects a Cloud Workspace.
+	Placement TaskIngressPlacementConfig
 }
 
 // VoiceTaskResult is what we return after the task finishes — used
@@ -53,6 +57,10 @@ func DispatchVoiceTranscript(ctx context.Context, tm *TaskManager, transcript st
 	transcript = strings.TrimSpace(transcript)
 	if transcript == "" {
 		return nil, fmt.Errorf("empty transcript")
+	}
+
+	if result, deferred := deferVoiceTranscriptToCloudWorkspace(ctx, opts.Placement); deferred {
+		return result, nil
 	}
 
 	// Proactive runner pre-flight: if a specific runner is named and its auth is
@@ -123,6 +131,48 @@ func DispatchVoiceTranscript(ctx context.Context, tm *TaskManager, transcript st
 			}
 		}
 	}
+}
+
+func deferVoiceTranscriptToCloudWorkspace(ctx context.Context, cfg TaskIngressPlacementConfig) (*VoiceTaskResult, bool) {
+	deferral, deferred, err := deferIngressTaskToCloudWorkspace(ctx, cfg, "voice-input", "unknown")
+	if err != nil && !deferred {
+		log.Printf("[placement] voice preview skipped before task create: %v", err)
+		return nil, false
+	}
+	if !deferred {
+		return nil, false
+	}
+	if err != nil {
+		pendingTaskID := ""
+		if deferral != nil {
+			pendingTaskID = deferral.PendingTaskID
+		}
+		log.Printf("[placement] voice cloud deferral failed for %s: %v", pendingTaskID, err)
+		return &VoiceTaskResult{
+			TaskID:     pendingTaskID,
+			Status:     "cloud_workspace_required",
+			ResultText: fmt.Sprintf("Cloud Workspace is selected for this request, but the handoff is not ready yet: %v", err),
+		}, true
+	}
+	if blocker := strings.TrimSpace(deferral.Blocker); blocker != "" {
+		return &VoiceTaskResult{
+			TaskID:     deferral.PendingTaskID,
+			Status:     "cloud_workspace_required",
+			ResultText: "Cloud Workspace is selected for this request, but it needs your attention first: " + blocker,
+		}, true
+	}
+	target := ""
+	if deferral.Placement != nil {
+		target = strings.TrimSpace(deferral.Placement.TargetDeviceID)
+	}
+	if target == "" {
+		target = "Cloud Workspace"
+	}
+	return &VoiceTaskResult{
+		TaskID:     deferral.PendingTaskID,
+		Status:     "cloud_workspace_required",
+		ResultText: fmt.Sprintf("Cloud Workspace is selected for this request. I queued a pending handoff for %s and will not run it on the relay while the workspace wakes.", target),
+	}, true
 }
 
 // voiceTitleFromTranscript turns a raw transcript into a short title

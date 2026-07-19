@@ -24,6 +24,21 @@ func TestParkEnvMinutes(t *testing.T) {
 	}
 }
 
+func TestManagedCloudIdleDisabled(t *testing.T) {
+	t.Setenv("YAVER_CLOUD_IDLE_DISABLE", "")
+	if managedCloudIdleDisabled() {
+		t.Fatal("managed Cloud Workspace auto-park must be enabled by default")
+	}
+	t.Setenv("YAVER_CLOUD_IDLE_DISABLE", "true")
+	if !managedCloudIdleDisabled() {
+		t.Fatal("YAVER_CLOUD_IDLE_DISABLE=true must disable auto-park")
+	}
+	t.Setenv("YAVER_CLOUD_IDLE_DISABLE", "off")
+	if managedCloudIdleDisabled() {
+		t.Fatal("YAVER_CLOUD_IDLE_DISABLE=off must leave auto-park enabled")
+	}
+}
+
 func TestDurSince(t *testing.T) {
 	if got := durSince(time.Now(), time.Time{}); got != 0 {
 		t.Fatalf("zero time must give 0 duration, got %v", got)

@@ -159,9 +159,9 @@ export default function YaverMachineDiscoveryBlogPage() {
             <h2 className="mb-3 text-xl font-semibold text-surface-100">4 — Sync the device to your system of record</h2>
             <p>
               <code>machine_sync</code> pushes a device heartbeat plus the learned schematic (and
-              optional telemetry samples) to Talos over org-secret machine-edge routes, where it&apos;s
+              optional telemetry samples) over org-secret machine-edge routes, where it&apos;s
               stored as a typed device with a manual and a telemetry stream. The opaque controller is
-              now a first-class machine in your MES — discovered, not hand-mapped.
+              now a first-class machine in your system of record — discovered, not hand-mapped.
             </p>
           </section>
 

@@ -985,6 +985,14 @@ func codeCreateTask(deviceID string, payload terminalPromptPayload, runner, mode
 	if deviceID == "" {
 		raw, err := localAgentRequest("POST", "/tasks", body)
 		if err != nil {
+			if cloudErr, ok := err.(*CloudWorkspaceRequiredError); ok {
+				bodyJSON, _ := json.Marshal(body)
+				_, cloudResp, handoffErr := createTaskOnCloudWorkspace(context.Background(), cloudErr, "", bodyJSON, 60*time.Second)
+				if handoffErr != nil {
+					return nil, handoffErr
+				}
+				return &TaskInfo{ID: cloudResp.TaskID, Status: cloudResp.Status, RunnerID: cloudResp.RunnerID, Model: cloudResp.Model, Placement: cloudErr.Placement}, nil
+			}
 			return nil, err
 		}
 		data, _ := json.Marshal(raw)
@@ -994,6 +1002,14 @@ func codeCreateTask(deviceID string, payload terminalPromptPayload, runner, mode
 		return &TaskInfo{ID: resp.TaskID, Status: resp.Status, RunnerID: resp.RunnerID}, nil
 	}
 	if err := remoteAgentJSONForDevice(context.Background(), deviceID, "POST", "/tasks", body, &resp); err != nil {
+		if cloudErr, ok := err.(*CloudWorkspaceRequiredError); ok {
+			bodyJSON, _ := json.Marshal(body)
+			_, cloudResp, handoffErr := createTaskOnCloudWorkspace(context.Background(), cloudErr, "", bodyJSON, 60*time.Second)
+			if handoffErr != nil {
+				return nil, handoffErr
+			}
+			return &TaskInfo{ID: cloudResp.TaskID, Status: cloudResp.Status, RunnerID: cloudResp.RunnerID, Model: cloudResp.Model, Placement: cloudErr.Placement}, nil
+		}
 		return nil, err
 	}
 	return &TaskInfo{ID: resp.TaskID, Status: resp.Status, RunnerID: resp.RunnerID}, nil

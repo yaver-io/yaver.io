@@ -38,15 +38,11 @@ const faqs = [
     items: [
       {
         q: "Do I need a relay server?",
-        a: "Only if your phone and dev machine aren't on the same network. On the same WiFi, Yaver finds your machine automatically via LAN broadcast. For remote access you can self-host a relay (one Docker command), use Tailscale, or use Cloudflare Tunnel.",
-      },
-      {
-        q: "Can I use Tailscale instead of a relay?",
-        a: "Yes. If both devices are on your tailnet, Yaver connects directly via the Tailscale IP. No relay needed. Tailscale's DERP servers handle hard NAT cases automatically, so it works even behind restrictive firewalls.",
+        a: "Only if your phone and dev machine aren't on the same network. On the same WiFi, Yaver finds your machine automatically via LAN broadcast. For remote access, start with Yaver's free shared relay. Relay Pro gives you a private managed relay and higher limits.",
       },
       {
         q: "Can I use Yaver with a VPN?",
-        a: "Yes. Yaver operates at the application layer — no TUN/TAP, no VPN conflicts. As long as both devices have internet access, it works alongside any VPN.",
+        a: "Yes. Yaver operates at the application layer, so it can coexist with an existing private network. You do not need to set one up for normal Yaver use.",
       },
       {
         q: "What happens if my connection fails?",
@@ -55,19 +51,15 @@ const faqs = [
     ],
   },
   {
-    category: "Self-Hosting",
+    category: "Relay",
     items: [
       {
-        q: "How do I self-host a relay?",
-        a: "One Docker command: `RELAY_PASSWORD=secret docker compose up -d`. For production with HTTPS, use the setup script: `./scripts/setup-relay.sh <ip> <domain> --password <pass>`. See the self-hosting guide for full details.",
+        q: "Which relay should I use?",
+        a: "Start with Free Relay for light personal use. Upgrade to Relay Pro when Yaver becomes part of daily work and you need private managed capacity with higher limits.",
       },
       {
         q: "Can I run everything locally with no cloud?",
-        a: "Yes. Use Ollama for local models + Tailscale for networking. Zero cloud, zero API keys, zero cost. Your code, your models, your hardware. The only cloud component is the Convex auth bridge for OAuth sign-in, and you can deploy your own instance of that too. One honest caveat: the mobile app connects through Yaver's thin coordination plane today — identity and device discovery only, your code stays P2P — and full mobile self-host is on the way.",
-      },
-      {
-        q: "What about Cloudflare Tunnel?",
-        a: "If you're behind a corporate firewall that blocks UDP, Cloudflare Tunnel can forward traffic to your agent's HTTP port. Install cloudflared, create a tunnel pointing to localhost:18080, and use the tunnel URL in the mobile app.",
+        a: "Yes for local development: run the agent on your own machine and use local models through Ollama if you want. Yaver's hosted coordination plane handles sign-in, discovery, billing, and relay presence for the public app; your source and runner sessions stay on the machine doing the work.",
       },
     ],
   },
@@ -76,7 +68,7 @@ const faqs = [
     items: [
       {
         q: "Is my code safe?",
-        a: "Yaver connects your phone directly to your dev machine. CLI-to-relay uses QUIC (TLS encrypted), mobile-to-relay uses HTTPS. The relay is password-protected and forwards bytes without inspecting them. On Tailscale, you get full WireGuard end-to-end encryption. On LAN, the beacon uses a SHA-256 token fingerprint so only your devices can discover each other. No code, tasks, or output ever reach any server. All of this is open source — read the code yourself.",
+        a: "Yaver connects your phone to your dev machine over the best available Yaver transport. CLI-to-relay uses QUIC (TLS encrypted), mobile-to-relay uses HTTPS, and the relay is password-protected and forwards bytes without inspecting them. On LAN, the beacon uses a SHA-256 token fingerprint so only your devices can discover each other. No code, tasks, or output are stored on Yaver servers. All of this is open source — read the code yourself.",
       },
       {
         q: "What is the privacy model?",
@@ -88,7 +80,7 @@ const faqs = [
       },
       {
         q: "What encryption is used?",
-        a: "It depends on the connection path. CLI-to-relay: QUIC with TLS (encrypted transport). Mobile-to-relay: HTTPS with TLS certificate. Tailscale path: WireGuard (full end-to-end encryption, no relay involved). Direct LAN: HTTP on your local network (no encryption, but traffic stays on your WiFi). The relay is a pass-through — since you self-host it, you control it.",
+        a: "It depends on the connection path. CLI-to-relay uses QUIC with TLS. Mobile-to-relay uses HTTPS with TLS certificates. Direct LAN uses HTTP on your local network, where traffic stays on your WiFi. The relay is a pass-through transport.",
       },
       {
         q: "Where are my relay credentials stored?",

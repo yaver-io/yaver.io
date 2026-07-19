@@ -62,32 +62,78 @@ actor AgentClient {
         return true
     }
 
-    private func rawOps(_ verb: String, _ payload: [String: Any]) async throws -> Data {
-        guard let url = URL(string: "http://\(box.host):\(box.port)/ops") else {
-            throw AgentError(message: "bad box host")
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
-        req.httpBody = try JSONSerialization.data(withJSONObject: [
+    /// Run an ops verb, trying LAN first and the relay second.
+    ///
+    /// `machine` selects the TARGET of the verb once a reachable agent is
+    /// found: "local" drives the box we connected to, any other device id or
+    /// alias is proxied onward by the agent's dispatchOps. That is what lets an
+    /// Apple TV drive a Windows tower through whichever box it can actually
+    /// reach.
+    private func rawOps(_ verb: String, _ payload: [String: Any], machine: String = "local") async throws -> Data {
+        let endpoints = box.opsEndpoints
+        guard !endpoints.isEmpty else { throw AgentError(message: "bad box host") }
+
+        let body = try JSONSerialization.data(withJSONObject: [
             "verb": verb,
             "payload": payload,
-            "machine": "local",
+            "machine": machine,
         ])
-        let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse else { throw AgentError(message: "no response") }
-        // The agent returns 200 for results and also 4xx with an {error} body;
-        // surface the error message when present, like the RN client.
-        if !(200..<300).contains(http.statusCode) {
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let err = obj["error"] as? String {
-                throw AgentError(message: err)
+
+        var lastError: Error = AgentError(message: "ops \(verb) failed")
+        for (index, url) in endpoints.enumerated() {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue(Backend.surface, forHTTPHeaderField: "X-Yaver-Surface")
+            if let pw = box.relayPassword, !pw.isEmpty, index > 0 {
+                req.setValue(pw, forHTTPHeaderField: "X-Relay-Password")
             }
-            throw AgentError(message: "ops \(verb) failed (\(http.statusCode))")
+            req.httpBody = body
+
+            do {
+                let (data, resp) = try await session.data(for: req)
+                guard let http = resp as? HTTPURLResponse else {
+                    throw AgentError(message: "no response")
+                }
+                // The agent returns 200 for results and also 4xx with an
+                // {error} body; surface the error message when present, like
+                // the RN client.
+                if !(200..<300).contains(http.statusCode) {
+                    if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let err = obj["error"] as? String {
+                        // A real answer from a reachable agent — do NOT retry
+                        // the next endpoint. Retrying would re-run a verb that
+                        // already executed and merely reported a refusal.
+                        throw AgentError(message: err)
+                    }
+                    lastError = AgentError(message: "ops \(verb) failed (\(http.statusCode))")
+                    continue // transport-level failure: try the relay
+                }
+                return data
+            } catch let err as AgentError {
+                throw err
+            } catch {
+                // Connection refused / timeout / DNS — this leg is dead, try
+                // the next one.
+                lastError = error
+                continue
+            }
         }
-        return data
+        throw lastError
+    }
+
+    /// Speak-to-control a desktop from the TV. Reads the target machine's
+    /// accessibility tree and returns ONE spoken sentence — no video stream, so
+    /// it works on a lean-back surface and costs effectively no relay egress.
+    func desktopVoice(_ transcript: String, machine: String = "local") async throws -> String {
+        let data = try await rawOps("desktop_voice", ["transcript": transcript], machine: machine)
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let initial = obj["initial"] as? [String: Any],
+              let spoken = initial["spoken"] as? String,
+              !spoken.isEmpty
+        else { return "Done." }
+        return spoken
     }
 
     // ---- Typed convenience wrappers for the lean-back surfaces -------------

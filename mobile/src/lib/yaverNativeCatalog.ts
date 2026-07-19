@@ -63,6 +63,29 @@ export const YAVER_NATIVE_CATALOG: readonly YaverNativeCatalogApp[] = [
     auth: { provider: "yaver-oauth", requiredInYaverBuild: true },
   },
   {
+    // Remote PC control. `framework=desktop` is a pseudo-framework: it streams
+    // the MACHINE rather than a project, so it carries no workDir (the agent
+    // and remote-runtime.tsx both special-case it).
+    //
+    // Listed on watch/car/tv as companion-only on purpose — those surfaces
+    // cannot usefully render a desktop video stream, but they CAN drive the
+    // same machine by voice through the `desktop_voice` ops verb, which reads
+    // the accessibility tree and answers out loud with no video at all.
+    id: "app_remote_pc",
+    slug: "remote-pc",
+    title: "Remote PC",
+    subtitle: "Control your Windows, Linux, or Mac desktop — video stream or voice only.",
+    kind: "devtool",
+    status: "prototype",
+    owner: "yaver",
+    surfaces: ["web", "ios", "android", "tablet", "tvos", "android-tv", "watch", "car", "visionos", "xr", "remote-runner", "mcp"],
+    companionOnlySurfaces: ["watch", "car", "tvos", "android-tv"],
+    route: "/remote-runtime?framework=desktop",
+    launchLabel: "Control this machine",
+    manifestFile: "yaver.app.yaml",
+    auth: { provider: "yaver-oauth", requiredInYaverBuild: true },
+  },
+  {
     id: "app_personal_runtime",
     slug: "personal-runtime",
     title: "Personal Runtime",

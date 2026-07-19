@@ -11,6 +11,11 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
 import type { Id } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
 import { estimatedHourlyCents, includedHoursForPlan } from "./cloudLifecycle";
+import {
+  cloudMachineEligibleForPlacement,
+  cloudWorkspaceProfilePolicy,
+  selectCloudMachineForPlacement,
+} from "./cloudPlacementCapacity";
 import { isOwner } from "./ownerAllowlist";
 import {
   classifyProjectForPlacement,
@@ -68,6 +73,9 @@ type CreditEstimate = {
   hourlyCents: number;
   estimatedMinutes: number;
   includedHoursBucket?: number;
+  standardCredits?: number;
+  includedStandardCreditsBucket?: number;
+  creditWeight?: number;
   billingScope: BillingScope;
   resourceClass: ResourceClass;
   display: string;
@@ -81,6 +89,20 @@ function isCloudWorkspacePlan(plan: string | undefined): boolean {
 function isRelayProPlan(plan: string | undefined): boolean {
   if (!plan) return false;
   return plan === "relay-pro" || plan === "relay-monthly" || plan === "relay-yearly" || plan === "managed-relay";
+}
+
+export function subscriptionStatusAllowsPlacement(status: string | undefined | null): boolean {
+  return status === "active" || status === "past_due";
+}
+
+export function subscriptionProductForPlacement(
+  plan: string | undefined,
+  status: string | undefined | null,
+): "free" | "relay-pro" | "cloud-workspace" {
+  if (!subscriptionStatusAllowsPlacement(status)) return "free";
+  if (isCloudWorkspacePlan(plan)) return "cloud-workspace";
+  if (isRelayProPlan(plan)) return "relay-pro";
+  return "free";
 }
 
 type Profile = {
@@ -128,7 +150,7 @@ function machineTypeForResource(resourceClass: ResourceClass): "standard" | "hea
   return "standard";
 }
 
-function creditEstimateFor(args: {
+export function creditEstimateFor(args: {
   kind: TaskKind;
   lane: Lane;
   resourceClass: ResourceClass;
@@ -147,8 +169,17 @@ function creditEstimateFor(args: {
   const includedHoursBucket = scope === "cloud-included-then-metered" && args.plan
     ? includedHoursForPlan(args.plan, machineType)
     : undefined;
+  const profilePolicy = scope === "cloud-included-then-metered"
+    ? cloudWorkspaceProfilePolicy(machineType)
+    : null;
+  const standardCredits = profilePolicy
+    ? Math.ceil((minutes / 60) * profilePolicy.standardCreditWeight * 10) / 10
+    : undefined;
+  const includedStandardCreditsBucket = profilePolicy && args.plan
+    ? Math.round(includedHoursForPlan(args.plan, machineType) * profilePolicy.standardCreditWeight)
+    : undefined;
   const display = scope === "cloud-included-then-metered"
-    ? `Included hours first, then ~$${(estimatedCents / 100).toFixed(2)} for ~${minutes}m`
+    ? `~${standardCredits} standard credit${standardCredits === 1 ? "" : "s"} from included Cloud Workspace allowance`
     : scope === "relay-included"
       ? "Included in Relay"
       : scope === "external"
@@ -160,6 +191,9 @@ function creditEstimateFor(args: {
     hourlyCents,
     estimatedMinutes: minutes,
     includedHoursBucket,
+    standardCredits,
+    includedStandardCreditsBucket,
+    creditWeight: profilePolicy?.standardCreditWeight,
     billingScope: scope,
     resourceClass: args.resourceClass,
     display,
@@ -182,6 +216,77 @@ function withCreditEstimate<T extends Omit<PlacementDecision, "creditEstimate">>
     estimatedCreditCost: creditEstimate.estimatedCents,
     creditEstimate,
   };
+}
+
+function serializePlacement(row: any) {
+  return {
+    id: row._id,
+    taskId: row.taskId,
+    sourceSurface: row.sourceSurface ?? null,
+    projectSlug: row.projectSlug ?? null,
+    kind: row.kind,
+    lane: row.lane,
+    resourceClass: row.resourceClass,
+    targetDeviceId: row.targetDeviceId ?? null,
+    cloudMachineId: row.cloudMachineId ? String(row.cloudMachineId) : null,
+    subscriptionPlan: row.subscriptionPlan ?? null,
+    entitlement: row.entitlement ?? null,
+    status: row.status,
+    reason: row.reason,
+    wakeRequired: row.wakeRequired,
+    wakeTargetMs: row.wakeTargetMs ?? null,
+    estimatedCreditCost: row.estimatedCreditCost ?? null,
+    creditEstimate: creditEstimateFor({
+      kind: (row.kind ?? "unknown") as TaskKind,
+      lane: row.lane as Lane,
+      resourceClass: row.resourceClass as ResourceClass,
+      plan: row.subscriptionPlan,
+      estimatedCents: row.estimatedCreditCost,
+    }),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function serializeWakeRun(row: any) {
+  if (!row) return null;
+  return {
+    id: row._id,
+    machineId: row.machineId,
+    placementId: row.placementId ?? null,
+    taskId: row.taskId ?? null,
+    kind: row.kind,
+    status: row.status,
+    phase: row.phase ?? null,
+    progress: row.progress ?? null,
+    resourceClass: row.resourceClass ?? null,
+    machineType: row.machineType ?? null,
+    targetDeviceId: row.targetDeviceId ?? null,
+    reason: row.reason ?? null,
+    error: row.error ?? null,
+    provider: row.provider ?? null,
+    providerResourceId: row.providerResourceId ?? null,
+    providerActionId: row.providerActionId ?? null,
+    providerStatus: row.providerStatus ?? null,
+    dryRun: row.dryRun ?? null,
+    startedAt: row.startedAt,
+    updatedAt: row.updatedAt,
+    completedAt: row.completedAt ?? null,
+  };
+}
+
+export function selectLatestPlacementStatusWakeRun(linkedWakeRuns: any[], machineWakeRuns: any[] = []) {
+  let candidates = linkedWakeRuns.filter((candidate: any) =>
+    candidate.kind === "wake" || candidate.kind === "provision"
+  );
+  if (candidates.length === 0) {
+    candidates = machineWakeRuns.filter((candidate: any) =>
+      candidate.kind === "wake" || candidate.kind === "provision"
+    );
+  }
+  return [...candidates].sort((a: any, b: any) =>
+    (b.updatedAt ?? b.startedAt ?? 0) - (a.updatedAt ?? a.startedAt ?? 0)
+  )[0] ?? null;
 }
 
 async function userFromToken(ctx: any, tokenHash: string): Promise<Id<"users">> {
@@ -269,22 +374,19 @@ async function candidateOwnedDevice(
   }) ?? null;
 }
 
+export function selectTaskPlacementCloudMachine(machines: any[], resourceClass: ResourceClass) {
+  const activeish = machines
+    .filter(cloudMachineEligibleForPlacement)
+    .sort((a: any, b: any) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
+  return selectCloudMachineForPlacement(activeish, resourceClass);
+}
+
 async function candidateCloudMachine(ctx: any, userId: Id<"users">, resourceClass: ResourceClass) {
   const machines = await ctx.db
     .query("cloudMachines")
     .withIndex("by_user", (q: any) => q.eq("userId", userId))
     .collect();
-  const activeish = machines
-    .filter((m: any) => ["active", "paused", "stopped", "resuming", "provisioning"].includes(m.status))
-    .sort((a: any, b: any) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0));
-  if (activeish.length === 0) return null;
-  if (resourceClass === "build") {
-    return activeish.find((m: any) => (m.specs?.ramGb ?? 0) >= 24) ?? activeish[0];
-  }
-  if (resourceClass === "heavy") {
-    return activeish.find((m: any) => (m.specs?.ramGb ?? 0) >= 16) ?? activeish[0];
-  }
-  return activeish[0];
+  return selectTaskPlacementCloudMachine(machines, resourceClass);
 }
 
 async function decidePlacement(
@@ -308,8 +410,9 @@ async function decidePlacement(
   const sub = await activeSubscription(ctx, userId);
   const plan = sub?.plan as string | undefined;
   const ownerDev = await isOwnerDev(ctx, userId);
-  const hasCloudWorkspace = sub?.status === "active" && isCloudWorkspacePlan(plan);
-  const hasRelayPro = (sub?.status === "active" || sub?.status === "past_due") && isRelayProPlan(plan);
+  const subscriptionProduct = subscriptionProductForPlacement(plan, sub?.status);
+  const hasCloudWorkspace = subscriptionProduct === "cloud-workspace";
+  const hasRelayPro = subscriptionProduct === "relay-pro";
   const entitlement = ownerDev
     ? "owner-dev"
     : hasCloudWorkspace
@@ -569,33 +672,44 @@ export const listRecent = query({
           .withIndex("by_user_created", (q: any) => q.eq("userId", userId))
           .order("desc")
           .take(n);
-    return rows.map((r: any) => ({
-      id: r._id,
-      taskId: r.taskId,
-      sourceSurface: r.sourceSurface ?? null,
-      projectSlug: r.projectSlug ?? null,
-      kind: r.kind,
-      lane: r.lane,
-      resourceClass: r.resourceClass,
-      targetDeviceId: r.targetDeviceId ?? null,
-      cloudMachineId: r.cloudMachineId ? String(r.cloudMachineId) : null,
-      subscriptionPlan: r.subscriptionPlan ?? null,
-      entitlement: r.entitlement ?? null,
-      status: r.status,
-      reason: r.reason,
-      wakeRequired: r.wakeRequired,
-      wakeTargetMs: r.wakeTargetMs ?? null,
-      estimatedCreditCost: r.estimatedCreditCost ?? null,
-      creditEstimate: creditEstimateFor({
-        kind: (r.kind ?? "unknown") as TaskKind,
-        lane: r.lane as Lane,
-        resourceClass: r.resourceClass as ResourceClass,
-        plan: r.subscriptionPlan,
-        estimatedCents: r.estimatedCreditCost,
-      }),
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
+    return rows.map(serializePlacement);
+  },
+});
+
+export const getStatus = query({
+  args: {
+    tokenHash: v.string(),
+    placementId: v.optional(v.id("taskPlacements")),
+    taskId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await userFromToken(ctx, args.tokenHash);
+    if (!args.placementId && !args.taskId) throw new Error("placementId or taskId required");
+    const row = args.placementId
+      ? await ctx.db.get(args.placementId)
+      : (await ctx.db
+          .query("taskPlacements")
+          .withIndex("by_task", (q: any) => q.eq("taskId", args.taskId!))
+          .collect())
+          .find((candidate: any) => String(candidate.userId) === String(userId));
+    if (!row || String(row.userId) !== String(userId)) throw new Error("placement not found");
+    let wakeRuns = await ctx.db
+      .query("wakeRuns")
+      .withIndex("by_placement", (q: any) => q.eq("placementId", row._id))
+      .collect();
+    let machineWakeRuns: any[] = [];
+    if (wakeRuns.length === 0 && row.cloudMachineId) {
+      machineWakeRuns = await ctx.db
+        .query("wakeRuns")
+        .withIndex("by_machine_started", (q: any) => q.eq("machineId", row.cloudMachineId))
+        .order("desc")
+        .take(12);
+    }
+    const latestWakeRun = selectLatestPlacementStatusWakeRun(wakeRuns, machineWakeRuns);
+    return {
+      ...serializePlacement(row),
+      latestWakeRun: serializeWakeRun(latestWakeRun),
+    };
   },
 });
 

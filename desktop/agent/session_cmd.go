@@ -300,6 +300,9 @@ func localAgentRequestAuth(method, path string, body map[string]interface{}, req
 			}
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if err := decodeCloudWorkspaceRequiredError(resp.StatusCode, raw); err != nil {
+				return nil, err, false
+			}
 			msg := strings.TrimSpace(string(raw))
 			if errMsg, ok := result["error"].(string); ok && strings.TrimSpace(errMsg) != "" {
 				msg = strings.TrimSpace(errMsg)

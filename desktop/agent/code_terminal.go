@@ -106,6 +106,7 @@ func runCodeTerminal(runner, model, mode string) {
 		},
 		knownTasks:    map[string]bool{},
 		lastOutputLen: map[string]int{},
+		taskRefs:      map[string]*attachTaskRef{},
 		firstDraw:     true,
 	}
 	sess.prefetchAttachDevices()
@@ -148,6 +149,7 @@ type codeTerminalSession struct {
 	// poll bookkeeping
 	knownTasks    map[string]bool
 	lastOutputLen map[string]int
+	taskRefs      map[string]*attachTaskRef
 	activeTask    string
 	sessionTask   string
 
@@ -827,7 +829,17 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 			taskID = task.ID
 		}
 	} else {
-		taskID, err = attachCreateTask(s.baseURL, s.token, payload, s.opts)
+		var ref *attachTaskRef
+		ref, err = attachCreateTask(s.baseURL, s.token, payload, s.opts)
+		if ref != nil {
+			taskID = ref.ID
+			if strings.TrimSpace(ref.BaseURL) != "" && strings.TrimRight(ref.BaseURL, "/") != strings.TrimRight(s.baseURL, "/") {
+				if s.taskRefs == nil {
+					s.taskRefs = map[string]*attachTaskRef{}
+				}
+				s.taskRefs[taskID] = ref
+			}
+		}
 	}
 	if err != nil {
 		s.writeRaw(fmt.Sprintf("\033[31mError: %v\033[0m\r\n", err))
@@ -1054,6 +1066,13 @@ func substituteRunnerArgs(args []string, prompt string) []string {
 
 func (s *codeTerminalSession) applyPoll(tasks []TaskInfo) {
 	var out strings.Builder
+	if s.activeTask != "" {
+		if ref := s.taskRefs[s.activeTask]; ref != nil && strings.TrimSpace(ref.BaseURL) != "" {
+			if remoteTask, err := attachGetTask(ref.BaseURL, s.token, s.activeTask, ref.Headers); err == nil {
+				tasks = append(tasks, remoteTask)
+			}
+		}
+	}
 	for _, t := range tasks {
 		if !s.knownTasks[t.ID] {
 			s.knownTasks[t.ID] = true
@@ -1081,6 +1100,9 @@ func (s *codeTerminalSession) applyPoll(tasks []TaskInfo) {
 				}
 			}
 			s.activeTask = ""
+			if s.taskRefs[t.ID] != nil {
+				s.sessionTask = ""
+			}
 		}
 	}
 	if out.Len() == 0 {

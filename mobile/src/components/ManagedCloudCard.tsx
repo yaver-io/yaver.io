@@ -10,13 +10,11 @@ import { View, Text, Pressable, Alert, ActivityIndicator } from "react-native";
 import { getConvexSiteUrl } from "../lib/auth";
 import {
   getManagedCloudBalance,
-  getManagedCloudUsage,
   getManagedSubscription,
   setManagedCloudAutoPark,
   startManagedCloudMachine,
   stopManagedCloudMachine,
   type ManagedCloudBalanceSummary,
-  type ManagedCloudUsageSummary,
   type ManagedSubscriptionSummary,
 } from "../lib/subscription";
 import { describeRest } from "../lib/wakeMachineCore";
@@ -29,15 +27,15 @@ const PHASE_LABEL: Record<string, string> = {
   "starting-agent": "Starting the Yaver agent…",
   registering: "Registering your device…",
   "authorizing-runners": "Almost there — finishing setup…",
-  snapshotting: "Saving a snapshot…",
+  snapshotting: "Saving recovery snapshot…",
   "powering-down": "Powering down…",
   ready: "Ready",
   error: "Setup failed",
   // Wake-only steps. Without entries these fell through the `?? phase`
   // fallback below and printed the raw control-plane slug at the user.
-  "checking-snapshot": "Finding your snapshot…",
-  "preparing-volume": "Freeing your data volume…",
-  "restoring-snapshot": "Restoring from your snapshot…",
+  "checking-snapshot": "Finding legacy snapshot…",
+  "preparing-volume": "Preparing saved workspace state…",
+  "restoring-snapshot": "Starting workspace…",
   // Not progress — the box is up and waiting on the user.
   "awaiting-yaver-auth": "Waiting for you to sign this box in",
 };
@@ -51,10 +49,8 @@ export default function ManagedCloudCard({
 }) {
   const [data, setData] = useState<ManagedSubscriptionSummary | null>(null);
   const [balance, setBalance] = useState<ManagedCloudBalanceSummary | null>(null);
-  const [usage, setUsage] = useState<ManagedCloudUsageSummary | null>(null);
   const [access, setAccess] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [showLedger, setShowLedger] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -63,12 +59,8 @@ export default function ManagedCloudCard({
       setData(r);
       // Render for the owner OR when the launch flag opens cloud access.
       setAccess(r.cloudAccess === true || r.cloudPreviewOwner === true);
-      const [b, u] = await Promise.all([
-        getManagedCloudBalance(token),
-        getManagedCloudUsage(token),
-      ]);
+      const b = await getManagedCloudBalance(token);
       setBalance(b ?? r.balance ?? null);
-      setUsage(u);
     } else {
       setAccess(false);
     }
@@ -86,17 +78,8 @@ export default function ManagedCloudCard({
 
   const machines = data?.machines ?? [];
   const sub = data?.subscription ?? null;
-  const balanceCents =
-    balance?.balanceCents ??
-    balance?.prepaidBalanceCents ??
-    data?.prepaidBalanceCents ??
-    null;
-  const currency = balance?.currency ?? data?.currency ?? "EUR";
-
-  const money = (cents: number | null | undefined) => {
-    if (typeof cents !== "number") return "—";
-    return `${currency.toUpperCase()} ${(cents / 100).toFixed(2)}`;
-  };
+  const remainingCredits = balance?.allowance?.remainingStandardCredits;
+  const includedCredits = balance?.allowance?.includedStandardCredits;
 
   const decommission = (id: string, resourceId?: string) => {
     Alert.alert(
@@ -168,19 +151,15 @@ export default function ManagedCloudCard({
           : "No Yaver Cloud workspace is active on this account."}
       </Text>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "800" }}>
-          {money(balanceCents)}
-        </Text>
-        {typeof balance?.estimatedHourlyCents === "number" ? (
+        {typeof remainingCredits === "number" && typeof includedCredits === "number" ? (
           <Text style={{ color: c.textMuted, fontSize: 11 }}>
-            ~{money(balance.estimatedHourlyCents)}/hr running
+            {remainingCredits.toFixed(1)} standard credits left of {includedCredits}
           </Text>
-        ) : null}
-        {balance?.lowBalance ? (
-          <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>
-            Low balance
+        ) : (
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>
+            Workspace allowance appears here after web subscription setup.
           </Text>
-        ) : null}
+        )}
       </View>
 
       <View style={{ borderWidth: 1, borderColor: c.border, borderRadius: 8, padding: 10, gap: 4 }}>
@@ -188,47 +167,11 @@ export default function ManagedCloudCard({
           Web-billed infrastructure
         </Text>
         <Text style={{ color: c.textMuted, fontSize: 10, lineHeight: 15 }}>
-          Yaver Cloud checkout, credits, and new workspace purchases live on
-          the web. This app only controls cloud workspaces already active on
-          your account: resume, pause, monitor, and finish setup.
+          Yaver Cloud subscription, cancellation, and new workspace purchase
+          flows live on the web. This app only controls cloud workspaces already
+          active on your account: resume, pause, monitor, and finish setup.
         </Text>
       </View>
-
-      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        {usage && (usage.usage.length || usage.topups.length) ? (
-          <Pressable onPress={() => setShowLedger((s) => !s)} style={{ paddingVertical: 6, paddingHorizontal: 6 }}>
-            <Text style={{ color: c.textMuted, fontSize: 11 }}>
-              {showLedger ? "Hide activity" : "Activity"}
-            </Text>
-          </Pressable>
-        ) : null}
-      </View>
-
-      {/* Recent wallet activity ledger. */}
-      {showLedger && usage ? (
-        <View style={{ gap: 3, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 6 }}>
-          {usage.topups.slice(0, 5).map((t) => (
-            <View key={`t-${t.orderId}`} style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <Text style={{ color: c.textMuted, fontSize: 10 }}>
-                Top-up{t.packId ? ` (${t.packId})` : ""}
-              </Text>
-              <Text style={{ color: "#059669", fontSize: 10, fontWeight: "700" }}>
-                + {money(t.amountCents)}
-              </Text>
-            </View>
-          ))}
-          {usage.usage.slice(0, 6).map((u, i) => (
-            <View key={`u-${u.createdAt}-${i}`} style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <Text style={{ color: c.textMuted, fontSize: 10 }}>
-                {u.date} · {u.state}{u.dryRun ? " · sim" : ""}
-              </Text>
-              <Text style={{ color: c.textMuted, fontSize: 10 }}>
-                − {money(u.chargedCents)}
-              </Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
 
       {machines.length === 0 ? (
         <Text style={{ color: c.textMuted, fontSize: 12 }}>No managed boxes.</Text>
@@ -279,7 +222,7 @@ export default function ManagedCloudCard({
                     onPress={() =>
                       Alert.alert(
                         "Pause box?",
-                        "Snapshots the disk, then deletes the cloud server so it stops billing — ~€0.50/mo paused vs ~€30/mo running. Resume recreates it from the snapshot in ~2-3 min (new IP).",
+                        "This preserves workspace state, deletes active compute, and stops compute spend. Resume recreates it when you need it.",
                         [
                           { text: "Cancel", style: "cancel" },
                           { text: "Pause", onPress: () => void lifecycle(m.id, "stop") },
@@ -347,7 +290,7 @@ export default function ManagedCloudCard({
                   {m.bootImageSource === "golden" ? (
                     <Text style={{ color: "#059669", fontSize: 10 }}>⚡ Fast boot from a prebuilt image</Text>
                   ) : m.bootImageSource === "vanilla" ? (
-                    <Text style={{ color: c.textMuted, fontSize: 10 }}>First boot — building the image (~3-5 min)</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 10 }}>First boot — preparing workspace image</Text>
                   ) : null}
                   <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border, overflow: "hidden" }}>
                     <View
@@ -375,7 +318,7 @@ export default function ManagedCloudCard({
                   return (
                     <View style={{ gap: 3 }}>
                       <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                        ⏸ Paused — data kept, meter stopped (~€0.50/mo vs ~€30/mo running).
+                        ⏸ Paused — data kept, active compute stopped.
                       </Text>
                       {rest.warning ? (
                         <Text style={{ color: c.warn, fontSize: 11 }}>{rest.warning}</Text>
@@ -388,18 +331,16 @@ export default function ManagedCloudCard({
                 })()
               ) : null}
 
-              {/* Auto-close (auto-park). ON by default so a forgotten box always
-                  stops its own meter; turning it OFF means it keeps billing. */}
+              {/* Auto-close (auto-park). Required so a forgotten box always
+                  stops its own meter. Legacy OFF rows can only be turned ON. */}
               <Pressable
-                disabled={busy !== null}
+                disabled={busy !== null || m.autoParkEnabled !== false}
                 onPress={() => {
-                  const nowOn = m.autoParkEnabled !== false; // undefined === ON
-                  const next = !nowOn;
                   const go = async () => {
                     if (!token) return;
                     setBusy(`autopark:${m.id}`);
                     try {
-                      await setManagedCloudAutoPark(token, m.id, next);
+                      await setManagedCloudAutoPark(token, m.id, true);
                       await load();
                     } catch (e: any) {
                       Alert.alert("Couldn't change auto-close", e?.message ?? "Try again.");
@@ -407,17 +348,15 @@ export default function ManagedCloudCard({
                       setBusy(null);
                     }
                   };
-                  if (next) return void go();
-                  Alert.alert(
-                    "Turn off auto-close?",
-                    "This box will KEEP RUNNING (and billing, ~€30/mo) when idle until you pause it yourself. Auto-close is what stops the meter for you.",
-                    [
-                      { text: "Cancel", style: "cancel" },
-                      { text: "Turn off", style: "destructive", onPress: () => void go() },
-                    ],
-                  );
+                  void go();
                 }}
-                style={{ marginTop: 6, flexDirection: "row", alignItems: "center", gap: 6, opacity: busy ? 0.5 : 1 }}
+                style={{
+                  marginTop: 6,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  opacity: busy || m.autoParkEnabled !== false ? 0.65 : 1,
+                }}
               >
                 {busy === `autopark:${m.id}` ? (
                   <ActivityIndicator size="small" color={c.textMuted} />
@@ -426,7 +365,7 @@ export default function ManagedCloudCard({
                 )}
                 <Text style={{ color: c.textMuted, fontSize: 11, flex: 1 }}>
                   {m.autoParkEnabled === false
-                    ? "Auto-close OFF — this box keeps billing when idle."
+                    ? "Auto-close OFF on this legacy row — tap to turn cost protection back on."
                     : `Auto-close ON — parks itself after ${m.autoParkMinutes ?? 45} min idle so it stops billing.`}
                 </Text>
               </Pressable>

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -40,11 +41,48 @@ func maybeGrowTestsAfterTask(tm *TaskManager, task *Task) {
 		return
 	}
 	title := "Grow tests: " + filepath.Base(plan.ProjectDir)
+	if cfg, ok := testkitGrowPlacementConfig(workdir); ok {
+		if deferral, deferred, err := deferTestkitGrowTaskToCloudWorkspace(context.Background(), cfg, ""); deferred {
+			if err != nil {
+				log.Printf("[testkit-grow] cloud deferral after task %s failed for %s: %v", task.ID, firstNonEmpty(deferralPendingTaskID(deferral), "pending-cloud"), err)
+			} else {
+				log.Printf("[testkit-grow] queued Cloud Workspace handoff %s for %d uncovered route(s) in %s", deferralPendingTaskID(deferral), len(plan.Uncovered), workdir)
+			}
+			return
+		} else if err != nil {
+			log.Printf("[testkit-grow] placement preview skipped after task %s: %v", task.ID, err)
+		}
+	}
 	if _, err := tm.CreateTask(title, plan.AuthorPrompt, "", "testkit-grow", "", "", nil); err != nil {
 		log.Printf("[testkit-grow] auto-grow after task %s: %v", task.ID, err)
 		return
 	}
 	log.Printf("[testkit-grow] queued spec authoring for %d uncovered route(s) in %s", len(plan.Uncovered), workdir)
+}
+
+func deferTestkitGrowTaskToCloudWorkspace(ctx context.Context, cfg TaskIngressPlacementConfig, runner string) (*taskIngressCloudDeferral, bool, error) {
+	return deferIngressTaskToCloudWorkspace(ctx, cfg, "testkit-grow", "test", runner)
+}
+
+func testkitGrowPlacementConfig(workDir string) (TaskIngressPlacementConfig, bool) {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return TaskIngressPlacementConfig{}, false
+	}
+	out := TaskIngressPlacementConfig{
+		ConvexURL:     strings.TrimSpace(cfg.ConvexSiteURL),
+		Token:         strings.TrimSpace(cfg.AuthToken),
+		LocalDeviceID: strings.TrimSpace(cfg.DeviceID),
+		WorkDir:       strings.TrimSpace(workDir),
+	}
+	return out, out.ConvexURL != "" && out.Token != ""
+}
+
+func deferralPendingTaskID(deferral *taskIngressCloudDeferral) string {
+	if deferral == nil {
+		return ""
+	}
+	return strings.TrimSpace(deferral.PendingTaskID)
 }
 
 // testkit_grow.go — the self-growing test loop's planning half (P2). It scans a

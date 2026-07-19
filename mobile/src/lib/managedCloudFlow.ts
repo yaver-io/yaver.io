@@ -2,8 +2,8 @@
 // box from the mobile app.
 //
 // Store-policy boundary: mobile must not create, display, or open a checkout
-// URL. Purchase/top-up flows stay on web and CLI. This helper sequences only
-// the post-purchase setup verbs that are safe in the App Store / Play Store
+// URL. Subscription checkout/cancellation stay on web. This helper sequences
+// only the post-purchase setup verbs that are safe in the App Store / Play Store
 // app: cloud_status, runner_auth_mirror, and runner_auth_setup.
 //
 // Step-by-step:

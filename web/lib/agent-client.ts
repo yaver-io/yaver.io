@@ -8,6 +8,7 @@
 
 import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 import { CONVEX_URL } from "@/lib/constants";
+import { decodeCloudWorkspaceRequiredError } from "@/lib/cloud-workspace-required";
 import webPkg from "../package.json";
 
 // X-Yaver-Caller surface identifier sent on every agent request.
@@ -80,6 +81,17 @@ export interface Task {
   placementLane?: string;
   placementReason?: string;
   placementCreditLabel?: string;
+}
+
+export interface FeedbackWorkAgentConfig {
+  ok?: boolean;
+  enabled: boolean;
+  running: boolean;
+  intervalSeconds?: number;
+  workerId?: string;
+  projectSlug?: string;
+  createProviderIssues: boolean;
+  runtimeReason?: string;
 }
 
 export interface EnvironmentProjectSummary {
@@ -1043,6 +1055,55 @@ export interface ManagedGitProjectMeta {
   updatedAt: string;
 }
 
+export interface ManagedGitRelaySourceFilePatch {
+  path: string;
+  content: string;
+}
+
+export interface ManagedGitRelaySourcePlanResult {
+  ok: boolean;
+  repoId?: string;
+  branch?: string;
+  baseBranch?: string;
+  mode: "apply_patch" | "prepare_only" | "compute_required" | string;
+  relayEligible: boolean;
+  canApply: boolean;
+  filesPlanned?: string[];
+  commitMessage?: string;
+  reasons?: string[];
+}
+
+export interface ManagedGitRelaySourceBranchResult {
+  ok: boolean;
+  repoId: string;
+  branch: string;
+  baseBranch: string;
+  commit: string;
+}
+
+export interface ManagedGitRelaySourceApplyResult extends ManagedGitRelaySourceBranchResult {
+  filesChanged: string[];
+  mirrorsPushed?: string[];
+  providerBranches?: Array<{
+    providerKind: string;
+    providerHost: string;
+    providerRepo: string;
+    providerBranch: string;
+    providerBranchUrl?: string;
+    providerAuthMode: string;
+    providerAuthStatus: string;
+  }>;
+  noop?: boolean;
+}
+
+export interface ManagedGitRelaySourceWorkResult {
+  ok: boolean;
+  intent?: unknown;
+  plan?: ManagedGitRelaySourcePlanResult;
+  prepare?: ManagedGitRelaySourceBranchResult;
+  apply?: ManagedGitRelaySourceApplyResult;
+}
+
 export interface RunnerAuthSetParams {
   runner: "claude" | "claude-code" | "codex" | "opencode";
   openaiApiKey?: string;
@@ -1534,6 +1595,41 @@ export interface McpServerInput {
   enabled?: boolean;
 }
 
+export type CreateTaskParams = {
+  title: string;
+  description: string;
+  userPrompt?: string;
+  runner?: string;
+  model?: string;
+  mode?: string;
+  customCommand?: string;
+  projectName?: string;
+  workDir?: string;
+  videoEnabled?: boolean;
+  videoSource?: "browser" | "sim-ios" | "sim-android" | "phone" | "";
+  askMode?: boolean;
+  allowLocalFallback?: boolean;
+};
+
+export function buildCreateTaskBody(params: CreateTaskParams): Record<string, unknown> {
+  return {
+    title: params.title,
+    description: params.description,
+    userPrompt: params.userPrompt ?? "",
+    runner: params.runner ?? "",
+    model: params.model ?? "",
+    mode: params.mode ?? "",
+    customCommand: params.customCommand ?? "",
+    projectName: params.projectName ?? "",
+    workDir: params.workDir ?? "",
+    videoEnabled: params.videoEnabled ?? false,
+    videoSource: params.videoSource ?? "",
+    askMode: params.askMode ?? false,
+    allowLocalFallback: params.allowLocalFallback ?? false,
+    source: "web",
+  };
+}
+
 export class AgentClient {
   private host: string | null = null;
   private port: number | null = null;
@@ -1681,6 +1777,8 @@ export class AgentClient {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
+      const cloudRequired = await decodeCloudWorkspaceRequiredError(res);
+      if (cloudRequired) throw cloudRequired;
       throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
     }
     const data = await res.json();
@@ -1724,28 +1822,21 @@ export class AgentClient {
      *  instead of a work run. The console sets this when the typed input is
      *  a natural-language question rather than a build instruction. */
     askMode?: boolean;
+    /** Internal handoff guard: true only when posting a client-held task body
+     *  to the assigned Cloud Workspace after placement/activation already
+     *  selected that target. Prevents the target agent from re-deferring the
+     *  same task back into another pending-cloud placeholder. */
+    allowLocalFallback?: boolean;
   }): Promise<Task> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tasks`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: params.title,
-        description: params.description,
-        userPrompt: params.userPrompt ?? "",
-        runner: params.runner ?? "",
-        model: params.model ?? "",
-        mode: params.mode ?? "",
-        customCommand: params.customCommand ?? "",
-        projectName: params.projectName ?? "",
-        workDir: params.workDir ?? "",
-        videoEnabled: params.videoEnabled ?? false,
-        videoSource: params.videoSource ?? "",
-        askMode: params.askMode ?? false,
-        source: "web",
-      }),
+      body: JSON.stringify(buildCreateTaskBody(params)),
     });
     if (!res.ok) {
+      const cloudRequired = await decodeCloudWorkspaceRequiredError(res);
+      if (cloudRequired) throw cloudRequired;
       throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
     }
     const data = await res.json().catch(() => ({}));
@@ -2471,7 +2562,7 @@ export class AgentClient {
       planModel?: string;
       /** Optional provider upserts. Each entry creates or merges a
        *  provider entry in opencode.json. Common case: setting an
-       *  Ollama provider's baseUrl to a Tailscale-reachable address.
+       *  Ollama provider's baseUrl to a private-network-reachable address.
        *  Pass `delete: true` on an entry to remove it entirely. */
       providers?: Array<{
         id: string;
@@ -3463,7 +3554,7 @@ export class AgentClient {
    *  any device-specific transport hints the caller passes —
    *  direct host, tunnelUrl, publicEndpoints. The previous
    *  relay-only version broke reclaim for boxes reachable only
-   *  via Cloudflare tunnel or LAN when the relay was degraded,
+   *  via custom tunnel or LAN when the relay was degraded,
    *  even though the agent itself was up.
    *
    *  Use case: user clicks "Pair Device" / "Reclaim" on a card
@@ -6134,6 +6225,46 @@ export class AgentClient {
     if (!res.ok) throw new Error(`apikey disable: HTTP ${res.status}`);
   }
 
+  // ── Feedback work local worker config ─────────────────────────────
+
+  async getFeedbackWorkConfig(): Promise<FeedbackWorkAgentConfig> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/feedback-work/config`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `feedback work config: HTTP ${res.status}`);
+    return {
+      enabled: !!data.enabled,
+      running: !!data.running,
+      intervalSeconds: typeof data.intervalSeconds === "number" ? data.intervalSeconds : undefined,
+      workerId: typeof data.workerId === "string" ? data.workerId : undefined,
+      projectSlug: typeof data.projectSlug === "string" ? data.projectSlug : undefined,
+      createProviderIssues: !!data.createProviderIssues,
+      runtimeReason: typeof data.runtimeReason === "string" ? data.runtimeReason : undefined,
+      ok: data.ok !== false,
+    };
+  }
+
+  async updateFeedbackWorkConfig(patch: Partial<FeedbackWorkAgentConfig>): Promise<FeedbackWorkAgentConfig> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/feedback-work/config`, {
+      method: "PATCH",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `feedback work config update: HTTP ${res.status}`);
+    return {
+      enabled: !!data.enabled,
+      running: !!data.running,
+      intervalSeconds: typeof data.intervalSeconds === "number" ? data.intervalSeconds : undefined,
+      workerId: typeof data.workerId === "string" ? data.workerId : undefined,
+      projectSlug: typeof data.projectSlug === "string" ? data.projectSlug : undefined,
+      createProviderIssues: !!data.createProviderIssues,
+      runtimeReason: typeof data.runtimeReason === "string" ? data.runtimeReason : undefined,
+      ok: data.ok !== false,
+    };
+  }
+
   // ── Exec (compute: run commands, poll / stream output) ────────────
   //
   // Mirrors the shape already in mobile/src/lib/quic.ts so UI code
@@ -7004,6 +7135,50 @@ export class AgentClient {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `managedGitBackupRun ${res.status}`);
     return data as { ok: boolean; backup: ManagedGitBackupMeta };
+  }
+
+  async managedGitRelaySourcePlan(args: {
+    slug?: string;
+    workDir?: string;
+    branch?: string;
+    baseBranch?: string;
+    title?: string;
+    prompt?: string;
+    files?: ManagedGitRelaySourceFilePatch[];
+  }): Promise<ManagedGitRelaySourcePlanResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/relay-source/plan`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitRelaySourcePlan ${res.status}`);
+    return data as ManagedGitRelaySourcePlanResult;
+  }
+
+  async managedGitRelaySourceWorkOnce(args: {
+    slug?: string;
+    workDir?: string;
+    intentId?: string;
+    localTaskId?: string;
+    branch?: string;
+    baseBranch?: string;
+    relayId?: string;
+    title?: string;
+    prompt?: string;
+    message?: string;
+    files?: ManagedGitRelaySourceFilePatch[];
+  }): Promise<ManagedGitRelaySourceWorkResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/relay-source/work-once`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `managedGitRelaySourceWorkOnce ${res.status}`);
+    return data as ManagedGitRelaySourceWorkResult;
   }
 
   async managedGitBackupCopy(args: {

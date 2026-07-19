@@ -480,6 +480,9 @@ func (s *HTTPServer) handleRunnerBrowserAuthStart(w http.ResponseWriter, r *http
 		jsonError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	if rejectScopedSubscriptionRunnerAuth(w, r, req.Runner) {
+		return
+	}
 	tr := runnerAuthTenantRuntimeFromRequest(r)
 	sess, err := startRunnerBrowserAuthSession(req.Runner, tr, s.TriggerHeartbeat)
 	if err != nil {
@@ -563,6 +566,9 @@ func (s *HTTPServer) handleRunnerBrowserAuthSubmitCode(w http.ResponseWriter, r 
 	sess, ok := lookupRunnerBrowserAuthSession(id)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "auth session not found")
+		return
+	}
+	if rejectScopedSubscriptionRunnerAuth(w, r, sess.Runner) {
 		return
 	}
 	// Log that a code arrived (never the value — privacy contract above).
@@ -684,6 +690,9 @@ func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r 
 	runner := normalizeRunnerAuthName(body.Runner)
 	if runner != "claude" && runner != "codex" && runner != "opencode" {
 		jsonError(w, http.StatusBadRequest, "unsupported runner — claude, codex, or opencode")
+		return
+	}
+	if rejectScopedSubscriptionRunnerAuth(w, r, runner) {
 		return
 	}
 	creds := strings.TrimSpace(body.CredentialsJSON)

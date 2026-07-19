@@ -36,6 +36,8 @@ import OverviewView from "@/components/dashboard/OverviewView";
 import ExtrasView from "@/components/dashboard/ExtrasView";
 import ShareView from "@/components/dashboard/ShareView";
 import GuestsStatusView from "@/components/dashboard/GuestsStatusView";
+import FeedbackWorkQueueView from "@/components/dashboard/FeedbackWorkQueueView";
+import ProjectArtifactsView from "@/components/dashboard/ProjectArtifactsView";
 import CollabView from "@/components/dashboard/CollabView";
 import InfraView from "@/components/dashboard/InfraView";
 import ConnectivityView from "@/components/dashboard/ConnectivityView";
@@ -66,6 +68,43 @@ import StoresView from "@/components/dashboard/StoresView";
 import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
 import { CapabilityShelf } from "@/components/dashboard/CapabilityShelf";
 import { HIDE_PAID_UI } from "@/lib/launchFlags";
+import {
+  activationBlockReason,
+  activateTaskPlacement,
+  createTaskDispatchIntent,
+  expensiveCloudPlacementMessage,
+  getTaskPlacementStatus,
+  listTaskDispatchIntents,
+  listRecentTaskPlacements,
+  markTaskPlacementStatus,
+  placementCreditLabel,
+  placementLaneLabel,
+  previewTaskPlacement,
+  recordTaskPlacement,
+  pendingPlacementTaskId,
+  shouldConfirmExpensiveCloudPlacement,
+  shouldDeferTaskForCloudWorkspace,
+  rebindTaskPlacement,
+  updateTaskDispatchIntent,
+  upsertProjectProfile,
+  type TaskPlacementDecision,
+  type TaskPlacementKind,
+  type TaskPlacementRequest,
+  type TaskPlacementResourceClass,
+} from "@/lib/task-placement";
+import {
+  listPendingCloudDispatches,
+  mergePendingCloudPlacementStatus,
+  mergePendingCloudDispatchIntents,
+  pendingCloudDispatchNeedsUserAction,
+  pendingCloudTaskPlaceholder,
+  removePendingCloudDispatch,
+  saveCloudWorkspaceRequiredDispatch,
+  savePendingCloudDispatch,
+  updatePendingCloudDispatch,
+  type PendingCloudDispatch,
+} from "@/lib/pending-cloud-dispatch";
+import { CloudWorkspaceRequiredError } from "@/lib/cloud-workspace-required";
 import StudioPanel from "@/components/dashboard/StudioPanel";
 import QAPanel from "@/components/dashboard/QAPanel";
 import WebTestsPanel from "@/components/dashboard/WebTestsPanel";
@@ -94,6 +133,34 @@ function displayTaskTitle(title: string): string {
   const m = raw.match(/User request:\s*([\s\S]+?)$/i);
   if (m && m[1]) return m[1].trim().split("\n")[0] || raw;
   return raw;
+}
+
+function inferTaskPlacementKind(text: string): TaskPlacementKind {
+  const lower = String(text || "").toLowerCase();
+  if (/\b(deploy|publish|release|ship)\b/.test(lower)) return "deploy";
+  if (/\b(build|apk|ipa|xcode|gradle|eas|archive)\b/.test(lower)) return "build";
+  if (/\b(test|spec|lint|typecheck|ci)\b/.test(lower)) return "test";
+  if (/\b(read|explain|review|summarize|inspect)\b/.test(lower)) return "source";
+  return "vibe";
+}
+
+function projectSlugForPlacement(pathOrName?: string | null): string | undefined {
+  const leaf = String(pathOrName || "")
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .pop()
+    ?.trim();
+  return leaf ? leaf.slice(0, 80) : undefined;
+}
+
+function resourceClassFromDashboardHints(args: {
+  kind: TaskPlacementKind;
+  path?: string | null;
+}): TaskPlacementResourceClass {
+  const haystack = String(args.path || "").toLowerCase();
+  if (args.kind === "deploy" || args.kind === "build") return "build";
+  if (/\b(ios|android|mobile|expo|react-native|hermes|docker|compose)\b/.test(haystack)) return "heavy";
+  return args.kind === "source" || args.kind === "vibe" ? "relay-source" : "standard";
 }
 
 function DeviceIcon({ platform }: { platform: string }) {
@@ -700,6 +767,7 @@ export default function DashboardPage() {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const pendingDispatchRef = useRef<Set<string>>(new Set());
   // Pending agent_question pulled from the SSE stream. When non-null
   // the dashboard renders an inline answer card above the composer;
   // submitting POSTs to /tasks/{id}/answer (via answerTaskQuestion),
@@ -775,7 +843,7 @@ export default function DashboardPage() {
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [remoteDesktopDevice, setRemoteDesktopDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "autoruns" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "stores" | "cloud" | "build" | "arm" | "appletv" | "packages" | "verbs">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "feedback" | "artifacts" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "company-ai" | "companion" | "observ" | "ops" | "autoruns" | "extras" | "share" | "guests" | "collab" | "infra" | "connect" | "network" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "screenlog" | "settings" | "billing" | "stores" | "cloud" | "build" | "arm" | "appletv" | "packages" | "verbs">("devices");
   const [autoStart2faSetup, setAutoStart2faSetup] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
@@ -836,6 +904,7 @@ export default function DashboardPage() {
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+  const placementStatusSyncRef = useRef<Set<string>>(new Set());
   const relayReadyPromiseRef = useRef<Promise<void> | null>(null);
   const previousActiveTabRef = useRef<string | null>(null);
   const hydratedOpenCodePrefKeyRef = useRef("");
@@ -1212,11 +1281,36 @@ export default function DashboardPage() {
       fresh.status !== activeTask.status ||
       fresh.resultText !== activeTask.resultText ||
       fresh.costUsd !== activeTask.costUsd ||
-      fresh.turns?.length !== activeTask.turns?.length
+      fresh.turns?.length !== activeTask.turns?.length ||
+      fresh.placementId !== activeTask.placementId
     ) {
-      setActiveTask(fresh);
+      setActiveTask({
+        ...fresh,
+        placementId: fresh.placementId || activeTask.placementId,
+        placementLane: fresh.placementLane || activeTask.placementLane,
+        placementReason: fresh.placementReason || activeTask.placementReason,
+        placementCreditLabel: fresh.placementCreditLabel || activeTask.placementCreditLabel,
+      });
     }
   }, [tasks, activeTask]);
+
+  useEffect(() => {
+    if (!token || !activeTask?.placementId) return;
+    const nextStatus =
+      activeTask.status === "completed"
+        ? "completed"
+        : activeTask.status === "failed" || activeTask.status === "stopped"
+          ? "failed"
+          : activeTask.status === "queued"
+            ? "queued"
+            : "running";
+    const key = `${activeTask.placementId}:${nextStatus}`;
+    if (placementStatusSyncRef.current.has(key)) return;
+    placementStatusSyncRef.current.add(key);
+    void markTaskPlacementStatus(token, activeTask.placementId, nextStatus).catch(() => {
+      placementStatusSyncRef.current.delete(key);
+    });
+  }, [token, activeTask?.placementId, activeTask?.status]);
 
   // Keep selectedRunner valid: prefer the connected device's chosen
   // primary runner, then the agent's default/active runner, then a
@@ -1439,8 +1533,21 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    const pending = listPendingCloudDispatches().map(pendingCloudTaskPlaceholder);
+    if (pending.length === 0) return;
+    setTasks((prev) => [...pending, ...prev.filter((task) => !pending.some((row) => row.id === task.id))]);
+    setActiveTask((current) => current ?? pending[0] ?? null);
+  }, []);
+
+  useEffect(() => {
     if (!isConnected) return;
-    const load = async () => { try { setTasks(await agentClient.listTasks(20)); } catch {} };
+    const load = async () => {
+      try {
+        const agentTasks = await agentClient.listTasks(20);
+        const pendingTasks = listPendingCloudDispatches().map(pendingCloudTaskPlaceholder);
+        setTasks([...pendingTasks, ...agentTasks.filter((task) => !pendingTasks.some((pending) => pending.id === task.id))]);
+      } catch {}
+    };
     load(); const iv = setInterval(load, 10000); return () => clearInterval(iv);
   }, [isConnected]);
 
@@ -1648,6 +1755,144 @@ export default function DashboardPage() {
     }
   };
 
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    const run = async () => {
+      const pending = listPendingCloudDispatches();
+      if (pending.length === 0) return;
+      let placements: TaskPlacementDecision[] = [];
+      let pendingRows = pending;
+      try {
+        placements = await listRecentTaskPlacements(token, { limit: 50 });
+      } catch {
+        placements = [];
+      }
+      try {
+        pendingRows = mergePendingCloudDispatchIntents(await listTaskDispatchIntents(token, { limit: 80 }));
+        const placeholders = pendingRows.map(pendingCloudTaskPlaceholder);
+        setTasks((prev) => [
+          ...placeholders,
+          ...prev.filter((task) => !placeholders.some((pendingTask) => pendingTask.id === task.id)),
+        ]);
+      } catch {
+        pendingRows = pending;
+      }
+      for (const row of pendingRows) {
+        if (cancelled || pendingDispatchRef.current.has(row.localTaskId)) continue;
+        let currentRow = row;
+        if (currentRow.placementId) {
+          try {
+            currentRow = mergePendingCloudPlacementStatus(
+              currentRow,
+              await getTaskPlacementStatus(token, { placementId: currentRow.placementId }),
+            );
+            updatePendingCloudDispatch(currentRow.localTaskId, currentRow);
+            setTasks((prev) => prev.map((task) =>
+              task.id === currentRow.localTaskId ? pendingCloudTaskPlaceholder(currentRow) : task,
+            ));
+          } catch {
+            /* placement status is advisory; dispatch intents remain authoritative */
+          }
+        }
+        if (pendingCloudDispatchNeedsUserAction(currentRow)) continue;
+        const placement = currentRow.placementId
+          ? placements.find((candidate) => candidate.id === currentRow.placementId)
+          : undefined;
+        const targetDeviceId = placement?.targetDeviceId || currentRow.targetDeviceId || undefined;
+        if (placement?.targetDeviceId && placement.targetDeviceId !== currentRow.targetDeviceId) {
+          updatePendingCloudDispatch(currentRow.localTaskId, {
+            targetDeviceId: placement.targetDeviceId,
+            placementLane: placement.lane,
+            placementReason: placement.reason,
+            placementCreditLabel: placementCreditLabel(placement) ?? undefined,
+          });
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "queued",
+            targetDeviceId: placement.targetDeviceId,
+          }).catch(() => null);
+        }
+        if (!targetDeviceId) continue;
+        if (connectedDevice?.id !== targetDeviceId || connState !== "connected") {
+          const target = devices.find((device) => device.id === targetDeviceId && device.online && !device.needsAuth);
+          if (target) void connectToDevice(target);
+          continue;
+        }
+        pendingDispatchRef.current.add(currentRow.localTaskId);
+        try {
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "dispatching",
+            targetDeviceId,
+          }).catch(() => null);
+          const task = await agentClient.createTask({ ...currentRow.params, allowLocalFallback: true });
+          if (placement?.id || currentRow.placementId) {
+            await rebindTaskPlacement(token, placement?.id ?? currentRow.placementId!, task.id, "running").catch(() => null);
+          }
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "dispatched",
+            taskId: task.id,
+            targetDeviceId,
+          }).catch(() => null);
+          removePendingCloudDispatch(currentRow.localTaskId);
+          const nextTask = {
+            ...task,
+            placementId: placement?.id ?? currentRow.placementId,
+            placementLane: placement?.lane ?? currentRow.placementLane,
+            placementReason: placement?.reason ?? currentRow.placementReason,
+            placementCreditLabel: placementCreditLabel(placement) ?? currentRow.placementCreditLabel,
+          };
+          setTasks((prev) => [nextTask, ...prev.filter((item) => item.id !== currentRow.localTaskId && item.id !== task.id)]);
+          setActiveTask((current) => current?.id === currentRow.localTaskId ? nextTask : current);
+          setChatMsgs((prev) => {
+            if (activeTask?.id !== currentRow.localTaskId) return prev;
+            const base = prev.filter((msg) => !msg.queued);
+            return [
+              ...base,
+              { role: "assistant", text: "Cloud Workspace is connected. Dispatching the queued task now…" },
+            ];
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "failed",
+            lastError: message,
+            bumpAttempt: true,
+          }).catch(() => null);
+          updatePendingCloudDispatch(currentRow.localTaskId, {
+            attempts: currentRow.attempts + 1,
+            lastError: message,
+          });
+          setTasks((prev) => prev.map((task) =>
+            task.id === currentRow.localTaskId
+              ? pendingCloudTaskPlaceholder({
+                  ...currentRow,
+                  attempts: currentRow.attempts + 1,
+                  lastError: message,
+                  updatedAt: Date.now(),
+                })
+              : task,
+          ));
+        } finally {
+          pendingDispatchRef.current.delete(currentRow.localTaskId);
+        }
+      }
+    };
+    void run();
+    const id = setInterval(() => void run(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [activeTask?.id, connState, connectedDevice?.id, devices, token]);
+
   const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setSelectedModel(""); setConnectError(null); setPendingFollowUps([]); };
 
   // Stream C — silent auto-connect on load (parity with mobile/tvOS). Rule:
@@ -1739,22 +1984,204 @@ export default function DashboardPage() {
       return [...base, { role: "user", text }, { role: "assistant", text: "" }];
     });
     if (!continuing) setOutputLines([]);
+    let fallbackPendingCloudTask: PendingCloudDispatch | null = null;
     try {
       if (continuing) {
         await agentClient.continueTask(activeTask!.id, text);
       } else {
-        const t = await agentClient.createTask({
+        let placementPreview: TaskPlacementDecision | null = null;
+        const placementKind = inferTaskPlacementKind(text);
+        const projectSlug = projectSlugForPlacement(preferredSurfaceProjectPath);
+        const resourceClass = resourceClassFromDashboardHints({
+          kind: placementKind,
+          path: preferredSurfaceProjectPath,
+        });
+        const profileHints: Partial<TaskPlacementRequest> = {
+          projectSlug,
+          hasNativeMobile: resourceClass === "heavy" && /\b(ios|android|mobile|expo|react-native|hermes)\b/i.test(preferredSurfaceProjectPath || ""),
+          hasDocker: /\b(docker|compose)\b/i.test(preferredSurfaceProjectPath || ""),
+        };
+        if (token && projectSlug) {
+          void upsertProjectProfile(token, {
+            projectSlug,
+            sourceDeviceId: connectedDevice?.id,
+            resourceClass,
+            hasNativeMobile: profileHints.hasNativeMobile,
+            hasDocker: profileHints.hasDocker,
+            confidence: 0.5,
+          }).catch(() => {});
+        }
+        const placementRequest = {
+          kind: placementKind,
+          sourceSurface: "web-dashboard",
+          requestedRunner: selectedRunner || undefined,
+          targetDeviceId: connectedDevice?.id,
+          forceRelaySource: !preferredSurfaceProjectPath,
+          ...profileHints,
+        };
+        if (token) {
+          placementPreview = await previewTaskPlacement(token, placementRequest).catch(() => null);
+        }
+        if (shouldConfirmExpensiveCloudPlacement(placementPreview)) {
+          const ok = window.confirm(expensiveCloudPlacementMessage(placementPreview));
+          if (!ok) {
+            setChatMsgs((prev) => {
+              if (prev.length < 2) return prev;
+              return prev.slice(0, prev.length - 2);
+            });
+            setInput(text);
+            return;
+          }
+        }
+        const cloudTargetIsCurrent =
+          !!placementPreview?.lane?.startsWith("cloud_") &&
+          !!placementPreview.targetDeviceId &&
+          placementPreview.targetDeviceId === connectedDevice?.id;
+        if (token && placementPreview?.lane?.startsWith("cloud_") && (!cloudTargetIsCurrent || shouldDeferTaskForCloudWorkspace(placementPreview))) {
+          const pendingId = pendingPlacementTaskId();
+          const recorded = await recordTaskPlacement(token, {
+            ...placementRequest,
+            taskId: pendingId,
+          }).catch(() => null);
+          const now = Date.now();
+          const pending: PendingCloudDispatch = {
+            localTaskId: pendingId,
+            placementId: recorded?.id,
+            placementLane: recorded?.lane ?? placementPreview?.lane ?? undefined,
+            placementReason: recorded?.reason ?? placementPreview?.reason ?? undefined,
+            placementCreditLabel: placementCreditLabel(recorded ?? placementPreview) ?? undefined,
+            targetDeviceId: recorded?.targetDeviceId ?? placementPreview?.targetDeviceId ?? null,
+            params: {
+              title: text.slice(0, 80),
+              description: text,
+              runner: selectedRunner || undefined,
+              model: selectedModel || undefined,
+              mode: selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
+              workDir: preferredSurfaceProjectPath || undefined,
+            },
+            createdAt: now,
+            updatedAt: now,
+            attempts: 0,
+          };
+          savePendingCloudDispatch(pending);
+          createTaskDispatchIntent(token, {
+            localTaskId: pendingId,
+            placementId: recorded?.id,
+            sourceSurface: placementRequest.sourceSurface,
+            lane: recorded?.lane ?? placementPreview?.lane ?? undefined,
+            targetDeviceId: recorded?.targetDeviceId ?? placementPreview?.targetDeviceId ?? null,
+            cloudMachineId: recorded?.cloudMachineId ?? placementPreview?.cloudMachineId ?? null,
+            requestedRunner: placementRequest.requestedRunner,
+            projectSlug: placementRequest.projectSlug,
+            reason: recorded?.reason ?? placementPreview?.reason ?? undefined,
+          }).then((intent) => {
+            updatePendingCloudDispatch(pendingId, {
+              dispatchIntentId: intent.id,
+              dispatchStatus: intent.status,
+              dispatchExpiresAt: intent.expiresAt,
+            });
+          }).catch(() => null);
+          if (recorded?.id) {
+            void activateTaskPlacement(token, { placementId: recorded.id }).then((activation) => {
+              const blockedReason = activationBlockReason(activation);
+              if (!blockedReason) return;
+              updatePendingCloudDispatch(pendingId, {
+                dispatchStatus: "blocked",
+                blockedAction: activation.action,
+                blockedReason,
+              });
+              void updateTaskDispatchIntent(token, {
+                localTaskId: pendingId,
+                status: "blocked",
+                blockedAction: activation.action,
+                reason: blockedReason,
+              }).catch(() => null);
+            }).catch(() => {});
+          }
+          const nextTask = pendingCloudTaskPlaceholder(pending);
+          setActiveTask(nextTask);
+          setTasks((p) => [nextTask, ...p]);
+          setChatMsgs((prev) => {
+            const base = prev.slice(0, Math.max(0, prev.length - 1));
+            return [
+              ...base,
+              {
+                role: "assistant",
+                text: "Cloud Workspace is waking. I queued this locally and did not send it to the currently connected machine.",
+                queued: true,
+              },
+            ];
+          });
+          return;
+        }
+        const taskParams = {
           title: text.slice(0, 80),
           description: text,
           runner: selectedRunner || undefined,
           model: selectedModel || undefined,
           mode: selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
           workDir: preferredSurfaceProjectPath || undefined,
-        });
-        setActiveTask(t);
-        setTasks(p => [t, ...p]);
+        };
+        fallbackPendingCloudTask = {
+          localTaskId: "",
+          params: taskParams,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          attempts: 0,
+        };
+        const t = await agentClient.createTask(taskParams);
+        let nextTask: Task = {
+          ...t,
+          placementLane: placementPreview?.lane ?? undefined,
+          placementReason: placementPreview?.reason ?? undefined,
+          placementCreditLabel: placementCreditLabel(placementPreview) ?? undefined,
+        };
+        if (token) {
+          const recorded = await recordTaskPlacement(token, {
+            ...placementRequest,
+            taskId: t.id,
+          }).catch(() => null);
+          if (recorded) {
+            nextTask = {
+              ...nextTask,
+              placementId: recorded.id,
+              placementLane: recorded.lane,
+              placementReason: recorded.reason ?? undefined,
+              placementCreditLabel: placementCreditLabel(recorded) ?? undefined,
+            };
+            if (recorded.id && recorded.lane.startsWith("cloud_")) {
+              void activateTaskPlacement(token, { placementId: recorded.id }).catch(() => {});
+            }
+          }
+        }
+        setActiveTask(nextTask);
+        setTasks(p => [nextTask, ...p]);
       }
     } catch (err: any) {
+      if (err instanceof CloudWorkspaceRequiredError && fallbackPendingCloudTask) {
+        const pending = saveCloudWorkspaceRequiredDispatch({
+          err,
+          params: fallbackPendingCloudTask.params,
+          token,
+          sourceSurface: "web-dashboard",
+          projectSlug: preferredSurfaceProjectPath?.split(/[\\/]/).filter(Boolean).pop()?.slice(0, 80),
+        });
+        const nextTask = pendingCloudTaskPlaceholder(pending);
+        setActiveTask(nextTask);
+        setTasks((prev) => [nextTask, ...prev.filter((task) => task.id !== nextTask.id)]);
+        setChatMsgs((prev) => {
+          const base = prev.slice(0, Math.max(0, prev.length - 1));
+          return [
+            ...base,
+            {
+              role: "assistant",
+              text: "Cloud Workspace is waking. I queued this locally and did not send it to the currently connected machine.",
+              queued: true,
+            },
+          ];
+        });
+        return;
+      }
       setConnectError(err?.message || "Failed to send");
       // Restore the user's text so they don't have to retype it.
       setInput(text);
@@ -1935,6 +2362,8 @@ export default function DashboardPage() {
     { id: "chat", label: "Chat", icon: "\uD83D\uDCAC" },
     { id: "projects", label: "Projects", icon: "\uD83D\uDCC1" },
     { id: "vibe", label: "Vibe", icon: "\u2328\uFE0F" },
+    { id: "feedback", label: "Feedback", icon: "\uD83D\uDCE5" },
+    { id: "artifacts", label: "Artifacts", icon: "\uD83D\uDCE6" },
     { id: "todos", label: "Todos", icon: "\u2611\uFE0F", badge: todoCount },
     { id: "webview", label: "Webview", icon: "\uD83D\uDCF1" },
     { id: "health", label: "Health", icon: "\uD83D\uDCCA" },
@@ -2037,6 +2466,8 @@ export default function DashboardPage() {
               { id: "chat",     label: "Chat",     icon: "💬" },
               { id: "projects", label: "Projects", icon: "📁" },
               { id: "git",      label: "Git",      icon: "⎇" },
+              { id: "feedback", label: "Feedback", icon: "📥" },
+              { id: "artifacts", label: "Artifacts", icon: "📦" },
               { id: "webview",  label: "Webview", icon: "📱" },
               { id: "vibe-preview", label: "Vibe Preview", icon: "🎬" },
               { id: "guests",   label: "Guests",   icon: "👥" },
@@ -2677,6 +3108,10 @@ export default function DashboardPage() {
             </div>
           ) : activeTab === "todos" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><TodosView onTaskCreated={onTaskCreated} /></div>
+          ) : activeTab === "feedback" ? (
+            <div className="flex-1 min-h-0 w-full max-w-5xl mx-auto"><FeedbackWorkQueueView token={token} agentConnected={connState === "connected"} /></div>
+          ) : activeTab === "artifacts" ? (
+            <div className="flex-1 min-h-0 w-full max-w-5xl mx-auto"><ProjectArtifactsView token={token} /></div>
           ) : activeTab === "builds" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full space-y-6">
               <BuildsView onTaskCreated={onTaskCreated} preferredProjectPath={preferredSurfaceProjectPath} />
@@ -2924,6 +3359,17 @@ export default function DashboardPage() {
                           </button>
                         ) : null}
                         {activeTask.costUsd != null && <span className="text-[10px] text-surface-600">${activeTask.costUsd.toFixed(3)}</span>}
+                        {placementLaneLabel(activeTask.placementLane) ? (
+                          <span
+                            className="max-w-[180px] truncate rounded-md border border-surface-700 bg-surface-900 px-2 py-0.5 text-[10px] font-medium text-surface-300"
+                            title={activeTask.placementReason || activeTask.placementCreditLabel || placementLaneLabel(activeTask.placementLane) || undefined}
+                          >
+                            {[
+                              placementLaneLabel(activeTask.placementLane),
+                              activeTask.placementCreditLabel,
+                            ].filter(Boolean).join(" · ")}
+                          </span>
+                        ) : null}
                       </div>
                       <div ref={outputRef} className="flex-1 overflow-y-auto bg-surface-950 px-4 py-5">
                         {activeRunnerAuthIssue ? (

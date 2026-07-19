@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -181,12 +180,12 @@ func runCode(args []string) {
 		return
 	}
 
-	taskID, err := createCodeTask(enrichedPrompt, *runner, *model, *mode)
+	task, remote, err := createCodeTask(enrichedPrompt, *runner, *model, *mode)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "code: %v\n", err)
 		os.Exit(1)
 	}
-	if err := streamCodeTask(taskID, "local"); err != nil {
+	if err := streamCodeTaskRef(task.TaskID, "local", remote); err != nil {
 		fmt.Fprintf(os.Stderr, "code stream: %v\n", err)
 		os.Exit(1)
 	}
@@ -311,10 +310,10 @@ func splitCSVAllowlist(raw string) []string {
 	return out
 }
 
-func createCodeTask(prompt, runner, model, mode string) (string, error) {
+func createCodeTask(prompt, runner, model, mode string) (*taskCreateHTTPResponse, *RemoteAgentCandidate, error) {
 	cfg, err := LoadConfig()
 	if err != nil || cfg.AuthToken == "" {
-		return "", fmt.Errorf("not authenticated — run 'yaver auth'")
+		return nil, nil, fmt.Errorf("not authenticated — run 'yaver auth'")
 	}
 	body, _ := json.Marshal(map[string]interface{}{
 		"title":       prompt,
@@ -324,31 +323,7 @@ func createCodeTask(prompt, runner, model, mode string) (string, error) {
 		"mode":        mode,
 		"source":      terminalLocalTaskSource,
 	})
-	req, _ := http.NewRequest("POST", "http://127.0.0.1:18080/tasks", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Yaver-Source", terminalLocalTaskSource)
-	req.Header.Set("X-Yaver-Session-Mode", "terminal")
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		OK     bool   `json:"ok"`
-		TaskID string `json:"taskId"`
-		Error  string `json:"error"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&result)
-	if !result.OK || result.TaskID == "" {
-		if result.Error != "" {
-			return "", fmt.Errorf("%s", result.Error)
-		}
-		return "", fmt.Errorf("task creation failed (status %d)", resp.StatusCode)
-	}
-	return result.TaskID, nil
+	return createHTTPTaskWithCloudHandoff(context.Background(), &http.Client{Timeout: 30 * time.Second}, "http://127.0.0.1:18080", "Bearer "+cfg.AuthToken, body, 60*time.Second, newTerminalCloudHandoffProgressPrinter())
 }
 
 func runRemoteCodeAttach(prompt, attachTarget, username, runner, model, mode string) error {
@@ -420,12 +395,28 @@ func resolveCodeAttachDevice(cfg *Config, attachTarget, username string) (*Devic
 }
 
 func streamCodeTask(taskID, label string) error {
+	return streamCodeTaskRef(taskID, label, nil)
+}
+
+func streamCodeTaskRef(taskID, label string, remote *RemoteAgentCandidate) error {
 	cfg, err := LoadConfig()
 	if err != nil || cfg.AuthToken == "" {
 		return fmt.Errorf("not authenticated — run 'yaver auth'")
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), "GET", "http://127.0.0.1:18080/tasks/"+taskID+"/output", nil)
+	baseURL := "http://127.0.0.1:18080"
+	extraHeaders := map[string]string(nil)
+	if remote != nil && strings.TrimSpace(remote.BaseURL) != "" {
+		baseURL = strings.TrimRight(remote.BaseURL, "/")
+		extraHeaders = remote.Headers
+		label = firstNonEmpty(remote.Label, remote.DeviceID, "cloud")
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", baseURL+"/tasks/"+taskID+"/output", nil)
 	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+	for k, v := range extraHeaders {
+		if strings.TrimSpace(v) != "" {
+			req.Header.Set(k, v)
+		}
+	}
 	client := &http.Client{Timeout: 30 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {

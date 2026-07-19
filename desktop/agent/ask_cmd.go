@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -82,12 +82,12 @@ func runAsk(args []string) {
 		return
 	}
 
-	taskID, err := createAskTask(question, runner, model, workDir)
+	task, remote, err := createAskTask(question, runner, model, workDir)
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 		os.Exit(1)
 	}
-	if err := streamCodeTask(taskID, "ask"); err != nil {
+	if err := streamCodeTaskRef(task.TaskID, "ask", remote); err != nil {
 		fmt.Printf("\nstream error: %v\n", err)
 		os.Exit(1)
 	}
@@ -139,10 +139,10 @@ func createAskGraph(question, runner, model, workDir string) (string, error) {
 	return "", fmt.Errorf("ask graph start returned no run id")
 }
 
-func createAskTask(question, runner, model, workDir string) (string, error) {
+func createAskTask(question, runner, model, workDir string) (*taskCreateHTTPResponse, *RemoteAgentCandidate, error) {
 	cfg, err := LoadConfig()
 	if err != nil || cfg.AuthToken == "" {
-		return "", fmt.Errorf("not authenticated — run 'yaver auth'")
+		return nil, nil, fmt.Errorf("not authenticated — run 'yaver auth'")
 	}
 	body, _ := json.Marshal(map[string]interface{}{
 		"title":   question,
@@ -152,28 +152,9 @@ func createAskTask(question, runner, model, workDir string) (string, error) {
 		"source":  "ask",
 		"askMode": true,
 	})
-	req, _ := http.NewRequest("POST", "http://127.0.0.1:18080/tasks", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Yaver-Source", "ask")
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return "", fmt.Errorf("is the agent running? start it with 'yaver serve' (%w)", err)
+	task, remote, err := createHTTPTaskWithCloudHandoff(context.Background(), &http.Client{Timeout: 30 * time.Second}, "http://127.0.0.1:18080", "Bearer "+cfg.AuthToken, body, 60*time.Second, newTerminalCloudHandoffProgressPrinter())
+	if err != nil && strings.Contains(err.Error(), "connect") {
+		return nil, nil, fmt.Errorf("is the agent running? start it with 'yaver serve' (%w)", err)
 	}
-	defer resp.Body.Close()
-
-	var result struct {
-		OK     bool   `json:"ok"`
-		TaskID string `json:"taskId"`
-		Error  string `json:"error"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&result)
-	if !result.OK || result.TaskID == "" {
-		if result.Error != "" {
-			return "", fmt.Errorf("%s", result.Error)
-		}
-		return "", fmt.Errorf("ask failed (status %d)", resp.StatusCode)
-	}
-	return result.TaskID, nil
+	return task, remote, err
 }

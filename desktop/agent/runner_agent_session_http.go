@@ -24,6 +24,12 @@ import (
 func (s *HTTPServer) ensureAgentSessionManager() *AgentSessionManager {
 	if s.agentSessionMgr == nil && s.taskMgr != nil {
 		s.agentSessionMgr = NewAgentSessionManager(s.taskMgr)
+		s.agentSessionMgr.SetPlacementConfig(TaskIngressPlacementConfig{
+			ConvexURL:     s.convexURL,
+			Token:         s.token,
+			LocalDeviceID: s.deviceID,
+			WorkDir:       s.taskMgr.workDir,
+		})
 	}
 	return s.agentSessionMgr
 }

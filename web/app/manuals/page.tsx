@@ -40,13 +40,6 @@ const manuals = [
     tags: ["Docker", "VPS", "nginx"],
   },
   {
-    title: "Cloudflare Tunnel + Box Sharing",
-    description:
-      "Use Cloudflare Tunnel for a single always-on box, then share that box safely through Yaver guest access or host-share sessions. Covers machine scoping, project scoping, and the security caveats.",
-    href: "/manuals/cloudflare-share",
-    tags: ["Cloudflare", "Guests", "Sharing", "Security"],
-  },
-  {
     title: "Integrations guide",
     description:
       "Set up notifications (Telegram, Discord, Slack), CI/CD webhooks (GitHub Actions, GitLab CI), MCP tools, and session transfer between machines.",
@@ -70,9 +63,9 @@ const manuals = [
   {
     title: "MacBook to Windows AI Box over SSH",
     description:
-      "Use a Windows machine as the always-on coding box behind a MacBook: OpenSSH, Tailscale, Ollama with Qwen, OpenCode, and the power settings that keep it alive.",
+      "Use a Windows machine as the always-on coding box behind a MacBook: OpenSSH, Yaver Relay, Ollama with Qwen, OpenCode, and the power settings that keep it alive.",
     href: "/manuals/windows-ssh-coding-box",
-    tags: ["Windows", "SSH", "Tailscale", "Ollama"],
+    tags: ["Windows", "SSH", "Relay", "Ollama"],
   },
 ];
 

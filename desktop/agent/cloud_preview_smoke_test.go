@@ -2,12 +2,56 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestCloudDevBypassRequiresExplicitEnv(t *testing.T) {
+	t.Setenv("YAVER_CLOUD_DEV_BYPASS", "")
+	if cloudDevBypassEnabled() {
+		t.Fatal("dev bypass should default off")
+	}
+	for _, value := range []string{"1", "true", "yes", "on"} {
+		t.Setenv("YAVER_CLOUD_DEV_BYPASS", value)
+		if !cloudDevBypassEnabled() {
+			t.Fatalf("dev bypass should accept %q", value)
+		}
+	}
+	t.Setenv("YAVER_CLOUD_DEV_BYPASS", "0")
+	if cloudDevBypassEnabled() {
+		t.Fatal("dev bypass should reject 0")
+	}
+}
+
+func TestCloudUsageDoesNotAdvertiseDevBypass(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	printCloudUsage()
+	_ = w.Close()
+	os.Stdout = oldStdout
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read usage: %v", err)
+	}
+	text := string(out)
+	for _, forbidden := range []string{"skip-payment", "private-preview", "without Lemon Squeezy"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("usage must not advertise %q:\n%s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "Cloud Workspace purchase is web-only") {
+		t.Fatalf("usage missing web-only Cloud Workspace billing note:\n%s", text)
+	}
+}
 
 func TestActivateCloudMachine_DevBypass(t *testing.T) {
 	sawAuth := ""

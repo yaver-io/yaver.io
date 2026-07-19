@@ -26,6 +26,7 @@
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { includedHoursForCloudWorkspaceProfile } from "./cloudPlacementCapacity";
 
 export type PlanTier = "hosted" | "byok";
 
@@ -58,15 +59,26 @@ export interface PlanEntitlements {
   };
 }
 
+export function cloudWorkspaceUpgradeBillingGate(args: {
+  lemonSqueezyId?: string | null;
+  billing?: { ok?: boolean; reason?: string } | null;
+}): { ok: boolean; reason?: string } {
+  if (!args.lemonSqueezyId) return { ok: false, reason: "missing-lemonsqueezy-subscription" };
+  if (args.billing && !args.billing.ok) {
+    return { ok: false, reason: args.billing.reason ?? "billing-sync-failed" };
+  }
+  return { ok: true };
+}
+
 // Defaults chosen for Cloud Workspace. Retune via env without a redeploy.
 // The active launch product uses BYOK; hosted is retained only for legacy data.
 export function planEntitlements(tier: PlanTier): PlanEntitlements {
   if (tier === "byok") {
     return {
       tier,
-      includedHoursStandard: num("YAVER_PLAN_BYOK_HOURS_STANDARD", num("YAVER_PLAN_BYOK_HOURS", 40)),
-      includedHoursHeavy: num("YAVER_PLAN_BYOK_HOURS_HEAVY", 20),
-      includedHoursBuild: num("YAVER_PLAN_BYOK_HOURS_BUILD", 10),
+      includedHoursStandard: num("YAVER_PLAN_BYOK_HOURS_STANDARD", num("YAVER_PLAN_BYOK_HOURS", includedHoursForCloudWorkspaceProfile("standard"))),
+      includedHoursHeavy: num("YAVER_PLAN_BYOK_HOURS_HEAVY", includedHoursForCloudWorkspaceProfile("heavy")),
+      includedHoursBuild: num("YAVER_PLAN_BYOK_HOURS_BUILD", includedHoursForCloudWorkspaceProfile("build")),
       monthlyWalletCents: num("YAVER_PLAN_BYOK_WALLET_CENTS", 150),
       gateway: {
         enabled: false,
@@ -210,10 +222,10 @@ export const revokePlanEntitlements = internalAction({
   },
 });
 
-// Legacy no-op plan normalizer. The old dashboard used this to switch Cloud
-// Agent ⇄ Cloud Workspace. The public product model no longer has Cloud Agent,
-// so this action only normalizes legacy managed-cloud rows to Cloud Workspace
-// and reapplies BYOK entitlements.
+// Upgrade/normalizer for the two-product catalog. Relay Pro can move to Cloud
+// Workspace only after LemonSqueezy accepts the variant change; legacy managed
+// cloud rows are normalized through the same path. This prevents a local Convex
+// label flip from granting $29 compute entitlements to a $9 subscription.
 export const changePlan = internalAction({
   args: {
     userId: v.id("users"),
@@ -225,16 +237,30 @@ export const changePlan = internalAction({
     { userId, lemonSqueezyId, targetPlan },
   ): Promise<{ ok: boolean; tier: PlanTier; billingSynced: boolean; reason?: string }> => {
     const tier: PlanTier = "byok";
+    const preflight = cloudWorkspaceUpgradeBillingGate({ lemonSqueezyId });
+    if (!preflight.ok) {
+      return { ok: false, tier, billingSynced: false, reason: preflight.reason };
+    }
+    const billingSubscriptionId = lemonSqueezyId!;
+
+    const billing = await ctx.runAction(internal.http.updateLemonSqueezyVariant, {
+      lemonSqueezyId: billingSubscriptionId,
+      tier,
+    });
+    const billingGate = cloudWorkspaceUpgradeBillingGate({ lemonSqueezyId: billingSubscriptionId, billing });
+    if (!billingGate.ok) {
+      return { ok: false, tier, billingSynced: false, reason: billingGate.reason };
+    }
 
     await ctx.runMutation(internal.subscriptions.setPlan, { userId, plan: targetPlan });
 
     await ctx.runAction(internal.plans.applyPlanEntitlements, {
       userId,
-      subscriptionId: lemonSqueezyId,
+      subscriptionId: billingSubscriptionId,
       tier,
       plan: targetPlan,
     });
 
-    return { ok: true, tier, billingSynced: false };
+    return { ok: true, tier, billingSynced: true };
   },
 });

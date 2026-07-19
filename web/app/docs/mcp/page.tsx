@@ -365,7 +365,7 @@ export default function McpPage() {
               </h4>
               <p className="text-sm leading-relaxed text-surface-400">
                 Yaver publishes official registry metadata as{" "}
-                <InlineCode>io.github.kivanccakmak/yaver</InlineCode> and also
+                <InlineCode>io.github.yaver-io/yaver</InlineCode> and also
                 serves machine-readable discovery files at{" "}
                 <InlineCode>/.well-known/mcp/server.json</InlineCode>,{" "}
                 <InlineCode>/.well-known/mcp/server-card.json</InlineCode>,{" "}
@@ -428,28 +428,14 @@ export default function McpPage() {
               <p className="text-sm leading-relaxed text-surface-400">
                 Point your MCP client to{" "}
                 <InlineCode>http://your-machine:18090/mcp</InlineCode>. If
-                connecting from outside your local network, combine with
-                Tailscale, a relay server, or Cloudflare Tunnel for secure
-                access. See the{" "}
+                connecting from outside your local network, use Yaver Relay. See the{" "}
                 <Link
                   href="/docs/self-hosting"
                   className="text-surface-200 underline underline-offset-2 hover:text-surface-50"
                 >
-                  Self-Hosting Guide
+                  Relay and Cloud Options
                 </Link>{" "}
-                for networking options.
-              </p>
-            </div>
-
-            <div className="card">
-              <h4 className="mb-2 text-sm font-medium text-surface-200">
-                With Tailscale
-              </h4>
-              <p className="text-sm leading-relaxed text-surface-400">
-                If both devices are on your tailnet, simply use your Tailscale
-                IP:{" "}
-                <InlineCode>http://100.x.x.x:18090/mcp</InlineCode>. No
-                additional configuration needed.
+                for product options.
               </p>
             </div>
           </div>
@@ -537,12 +523,12 @@ export default function McpPage() {
             />
 
             <ToolCategory
-              title="Cloudflare Tunnels"
+              title="Advanced External Endpoints"
               tools={[
-                { name: "tunnel_list", description: "List configured Cloudflare Tunnels" },
-                { name: "tunnel_add", description: "Add a Cloudflare Tunnel endpoint" },
-                { name: "tunnel_remove", description: "Remove a tunnel by ID or URL" },
-                { name: "tunnel_test", description: "Test tunnel connectivity and latency" },
+                { name: "tunnel_list", description: "List configured external endpoints" },
+                { name: "tunnel_add", description: "Add an external endpoint" },
+                { name: "tunnel_remove", description: "Remove an external endpoint by ID or URL" },
+                { name: "tunnel_test", description: "Test external endpoint connectivity and latency" },
               ]}
             />
 

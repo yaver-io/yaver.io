@@ -5,9 +5,10 @@ package main
 // single-owner counterparts to the managed cloud_stop/cloud_start verbs:
 //
 //   - BYO vault token only (accountField(ProviderHetzner)) — the user pays
-//     their own Hetzner, so there is NO managed money-safety env gate
-//     (YAVER_CLOUD_STOPSTART_LIVE). A `confirm:true` is still required so a
-//     stray call never spends by accident.
+//     their own Hetzner. Real spend is still fail-closed behind the same
+//     confirm=true + YAVER_CLOUD_STOPSTART_LIVE=1 double gate used by the older
+//     BYO cloud_stop/cloud_start plane, so a stray UI/API call never creates or
+//     wakes a billable box.
 //   - down = snapshot (recover-safe) THEN delete — scale-to-zero to cut cost.
 //     ALWAYS snapshot first; a failed snapshot ABORTS the delete (CLAUDE.md).
 //   - up   = recreate the box from the stop snapshot (~minutes).
@@ -40,18 +41,18 @@ func machineLifecycleReady() (token string, m *CloudDeployManager, fail *OpsResu
 }
 
 func machineConfirmPlan(confirm bool, plan string) *OpsResult {
-	if confirm {
+	if confirm && cloudStopStartLive() {
 		return nil
 	}
 	return &OpsResult{OK: true, Initial: map[string]interface{}{
-		"dryRun": true, "plan": plan, "why": "confirm=true not set",
+		"dryRun": true, "plan": plan, "why": planGateReason(confirm),
 	}}
 }
 
 func init() {
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_create",
-		Description: "Create a NEW BYO cloud box on your own Hetzner account and record it as <name>. Requires name + confirm=true. plan=starter|pro|scale, region=eu|us. Uses your vault Hetzner token; you pay Hetzner directly (no managed gate).",
+		Description: "Create a NEW BYO cloud box on your own Hetzner account and record it as <name>. Requires name + confirm=true + YAVER_CLOUD_STOPSTART_LIVE=1. plan=starter|pro|scale, region=eu|us. Uses your vault Hetzner token; you pay Hetzner directly.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"name", "confirm"},
@@ -69,7 +70,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_down",
-		Description: "Scale a BYO box to zero: snapshot (recover-safe) THEN delete the server so Hetzner billing stops (a powered-off box still bills full price — only delete stops it). Requires serverId + confirm=true. Returns the snapshot id used by machine_up.",
+		Description: "Scale a BYO box to zero: snapshot (recover-safe) THEN delete the server so Hetzner billing stops (a powered-off box still bills full price — only delete stops it). Requires serverId + confirm=true + YAVER_CLOUD_STOPSTART_LIVE=1. Returns the snapshot id used by machine_up.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"serverId", "confirm"},
@@ -86,7 +87,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_up",
-		Description: "Bring a stopped BYO box back: recreate the server from its stop snapshot (~minutes). Requires snapshotImageId + name + confirm=true. plan/region optional.",
+		Description: "Bring a stopped BYO box back: recreate the server from its stop snapshot (~minutes). Requires snapshotImageId + name + confirm=true + YAVER_CLOUD_STOPSTART_LIVE=1. plan/region optional.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"snapshotImageId", "name", "confirm"},
@@ -105,7 +106,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_rm",
-		Description: "Permanently remove a BYO box: snapshot (recover-safe, always) THEN delete the server and mark it deleted. Requires serverId + confirm=true. The final snapshot is retained unless purge=true.",
+		Description: "Permanently remove a BYO box: snapshot (recover-safe, always) THEN delete the server and mark it deleted. Requires serverId + confirm=true + YAVER_CLOUD_STOPSTART_LIVE=1. The final snapshot is retained unless purge=true.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"serverId", "confirm"},
@@ -123,7 +124,7 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "machine_wake",
-		Description: "Wake a scaled-to-zero BYO box BY NAME: look up its stopped byoMachines row and recreate the server from its stop snapshot. Unlike machine_up you don't pass a snapshot id — the row supplies it, so a voice/car surface can just say the box name. Idempotent: a box already active returns immediately. Requires confirm=true (recreating a box starts Hetzner billing). Call this before runner_turn when the target box may be asleep.",
+		Description: "Wake a scaled-to-zero BYO box BY NAME: look up its stopped byoMachines row and recreate the server from its stop snapshot. Unlike machine_up you don't pass a snapshot id — the row supplies it, so a voice/car surface can just say the box name. Idempotent: a box already active returns immediately. Requires confirm=true + YAVER_CLOUD_STOPSTART_LIVE=1 (recreating a box starts Hetzner billing). Call this before runner_turn when the target box may be asleep.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"name", "confirm"},

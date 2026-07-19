@@ -28,6 +28,7 @@ var forbiddenOnNonOwnerSurfaces = []string{
 	"/autodev/",        // long-running autonomous dev loops
 	"/sdk/token",       // creates new bearer tokens
 	"/auth/",           // pairing, recovery
+	"/feedback-work/",  // owner-machine worker config and provider issue gate
 }
 
 func TestGuestAllowlistHasNoOwnerOnlyPrefixes(t *testing.T) {

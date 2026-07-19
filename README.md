@@ -64,14 +64,14 @@ codex mcp add yaver -- npx -y yaver-cli yaver-mcp
 npm install -g yaver-cli && yaver mcp setup opencode
 ```
 
-Already installed globally? `yaver mcp setup claude-code` (or `codex` / `opencode`) writes the same entry, and `yaver auth` auto-registers every installed runner on first sign-in. Yaver is published to the official MCP registry as `io.github.kivanccakmak/yaver`. Codex Desktop can also load the repo-local plugin in [`plugins/yaver`](plugins/yaver).
+Already installed globally? `yaver mcp setup claude-code` (or `codex` / `opencode`) writes the same entry, and `yaver auth` auto-registers every installed runner on first sign-in. Yaver is published to the official MCP registry as `io.github.yaver-io/yaver`. Codex Desktop can also load the repo-local plugin in [`plugins/yaver`](plugins/yaver).
 
 Full tool list and HTTP/remote setup: **[MCP guide](https://yaver.io/docs/mcp)**.
 
 ## How it works
 
 <p align="center">
-  <img src="./assets/readme/architecture.svg" width="100%" alt="The yaver agent runs on your own machine and holds your repo, tasks, vault and builds. Surfaces connect directly over a LAN beacon and QUIC, falling back to a self-hostable QUIC relay that stores nothing. A thin hosted plane carries identity and device discovery only.">
+  <img src="./assets/readme/architecture.svg" width="100%" alt="The yaver agent runs on your own machine and holds your repo, tasks, vault and builds. Surfaces connect directly over a LAN beacon and QUIC, falling back to Yaver Relay. A thin hosted plane carries identity and device discovery only.">
 </p>
 
 1. Start `yaver serve` on your own machine.
@@ -81,6 +81,10 @@ Full tool list and HTTP/remote setup: **[MCP guide](https://yaver.io/docs/mcp)**
 5. Push the fix to a real device, or deploy from your own machine when it's ready.
 
 The CLI, agent, relay, and backend are all self-hostable. Client apps currently reach you through a thin hosted coordination plane for identity and device discovery; full client self-host is on the way.
+
+For remote access, Yaver Relay is the default path. The free shared relay is for
+light personal use and has fair limits; paid Relay Pro gives daily users a
+private managed relay with higher limits.
 
 ## What works today
 
@@ -93,7 +97,7 @@ The CLI, agent, relay, and backend are all self-hostable. Client apps currently 
 
 ## What it costs
 
-**A solo developer can run the open-source stack at $0.**
+**A solo developer can start with the open-source stack at $0.**
 
 | Component | Runs on | Cost |
 |---|---|---|
@@ -101,12 +105,17 @@ The CLI, agent, relay, and backend are all self-hostable. Client apps currently 
 | Yaver surface apps | iOS / Android / watch / TV / car / AR/VR | $0 |
 | Web dashboard | Browser | $0 |
 | Backend on your own machine | Your Mac / Linux / WSL / VPS | $0 + your hardware |
-| Relay server | Self-host on any VPS | $0 |
+| Yaver shared relay | Yaver-hosted, fair-use limited | $0 |
 | AI models (Ollama) | Your GPU or CPU | $0 |
 
-The whole open-source stack is free: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. That's everything you need to build and iterate. Your coding agent brings its own login or subscription — Yaver never resells tokens.
+The open-source stack includes the mobile app, CLI, agent, web dashboard, SDKs,
+and relay implementation. Yaver's shared relay is available with fair limits for
+getting started. Your coding agent brings its own login or subscription — Yaver
+never resells tokens.
 
-An optional managed-cloud option, for people who don't want to run their own always-reachable box, is coming later. Self-hosting stays free.
+Optional paid products are for convenience and reliability: Relay Pro for a
+private managed relay, and Cloud Workspace for people who do not want to run
+their own always-reachable box.
 
 ## Repository map
 
@@ -155,7 +164,7 @@ and not the app:
 | [yaver-todo-kt](https://github.com/yaver-io/yaver-todo-kt) | Native Android (Kotlin) | **native-webrtc** — runs on a build host, H.264 streamed to the phone, taps sent back |
 | [yaver-todo-swift](https://github.com/yaver-io/yaver-todo-swift) | Native iOS (SwiftUI) | **native-webrtc** — same, macOS build host only |
 | [yaver-todo-flutter](https://github.com/yaver-io/yaver-todo-flutter) | Flutter / Dart | **native-webrtc** — Dart has no Hermes equivalent |
-| [yaver-todo-web](https://github.com/yaver-io/yaver-todo-web) | Next.js | **dev server** — HMR through the tunnelled port |
+| [yaver-todo-web](https://github.com/yaver-io/yaver-todo-web) | Next.js | **dev server** — HMR through Yaver's relay path |
 
 Hermes is React-Native-only: native and Flutter apps compile to real binaries
 and can never be loaded into the Yaver container. That is why three of the five

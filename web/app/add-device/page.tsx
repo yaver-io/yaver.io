@@ -1,7 +1,7 @@
 "use client";
 
 // /add-device — claim a Yaver-powered device by its label QR (zero-touch /
-// DPP-style). The buyer scans the QR printed on a box (Talos edge node,
+// DPP-style). The buyer scans the QR printed on a box (Yaver edge node,
 // blackbox Pi, any third-party hardware) and becomes the owner; the box
 // self-credentials to this account on its next boot.
 //

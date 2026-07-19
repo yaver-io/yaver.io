@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	osexec "os/exec"
@@ -69,10 +70,11 @@ type FinalizeStartRequest struct {
 }
 
 type FinalizeManager struct {
-	mu      sync.Mutex
-	runs    map[string]*FinalizeRun
-	taskMgr *TaskManager
-	path    string
+	mu        sync.Mutex
+	runs      map[string]*FinalizeRun
+	taskMgr   *TaskManager
+	path      string
+	placement TaskIngressPlacementConfig
 }
 
 func NewFinalizeManager(taskMgr *TaskManager) *FinalizeManager {
@@ -84,6 +86,15 @@ func NewFinalizeManager(taskMgr *TaskManager) *FinalizeManager {
 	}
 	m.load()
 	return m
+}
+
+func (m *FinalizeManager) SetPlacementConfig(cfg TaskIngressPlacementConfig) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.placement = cfg
 }
 
 func (m *FinalizeManager) load() {
@@ -291,6 +302,19 @@ func (m *FinalizeManager) tickRun(ctx context.Context, id string) {
 	m.mu.Unlock()
 
 	if snap.TaskID == "" {
+		if deferral, deferred := m.deferTaskToCloudWorkspace(ctx, snap.Runner, snap.WorkDir); deferred {
+			m.mu.Lock()
+			if rr := m.runs[id]; rr != nil {
+				rr.TaskID = deferral.PendingTaskID
+				rr.Status = FinalizeBlocked
+				rr.LastError = finalizeCloudDeferralText(deferral)
+				rr.addHistory(rr.LastError)
+				rr.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				_ = m.saveLocked()
+			}
+			m.mu.Unlock()
+			return
+		}
 		task, err := m.taskMgr.CreateTaskWithOptions("Finalize: "+truncateForTitle(snap.Objective), finalizeInitialPrompt(&snap), snap.Model, "finalize", snap.Runner, "", nil, TaskCreateOptions{
 			WorkDir: snap.WorkDir,
 		})
@@ -354,6 +378,56 @@ func (m *FinalizeManager) tickRun(ctx context.Context, id string) {
 	if !ok {
 		m.kickRun(id, finalizeFollowupPrompt(report))
 	}
+}
+
+func (m *FinalizeManager) deferTaskToCloudWorkspace(ctx context.Context, runner, workDir string) (*taskIngressCloudDeferral, bool) {
+	if m == nil {
+		return nil, false
+	}
+	m.mu.Lock()
+	cfg := m.placement
+	m.mu.Unlock()
+	if strings.TrimSpace(workDir) != "" {
+		cfg.WorkDir = workDir
+	}
+	deferral, deferred, err := deferIngressTaskToCloudWorkspace(ctx, cfg, "finalize", "unknown", runner)
+	if err != nil && !deferred {
+		log.Printf("[placement] finalize preview skipped before task create: %v", err)
+		return nil, false
+	}
+	if !deferred {
+		return nil, false
+	}
+	if err != nil {
+		pendingTaskID := ""
+		if deferral != nil {
+			pendingTaskID = deferral.PendingTaskID
+		}
+		log.Printf("[placement] finalize cloud deferral failed for %s: %v", pendingTaskID, err)
+		if deferral == nil {
+			deferral = &taskIngressCloudDeferral{}
+		}
+		deferral.Blocker = err.Error()
+		return deferral, true
+	}
+	return deferral, true
+}
+
+func finalizeCloudDeferralText(deferral *taskIngressCloudDeferral) string {
+	if deferral == nil {
+		return "Cloud Workspace is selected for this finalize run, but the handoff is not ready yet."
+	}
+	if blocker := strings.TrimSpace(deferral.Blocker); blocker != "" {
+		return "Cloud Workspace is selected for this finalize run, but it needs attention first: " + blocker
+	}
+	target := ""
+	if deferral.Placement != nil {
+		target = strings.TrimSpace(deferral.Placement.TargetDeviceID)
+	}
+	if target == "" {
+		target = "Cloud Workspace"
+	}
+	return "Cloud Workspace is selected for this finalize run. A pending handoff was queued for " + target + ", so this relay will not run the finalize task while the workspace wakes."
 }
 
 func (m *FinalizeManager) shouldKick(r *FinalizeRun) bool {

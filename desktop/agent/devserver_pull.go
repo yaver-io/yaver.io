@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	osexec "os/exec"
@@ -135,6 +136,33 @@ SKIPPED:
 FAILED:`)
 }
 
+func (s *HTTPServer) shouldSkipHotReloadPullForCloudPlacement(ctx context.Context, workDir, runnerID string) (bool, string) {
+	if s == nil || s.taskMgr == nil {
+		return false, ""
+	}
+	meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		KindHint:       "source",
+		Title:          "Pre-build git update",
+		Source:         "devserver-prepull",
+		Runner:         runnerID,
+		WorkDir:        workDir,
+		TargetDeviceID: s.deviceID,
+	})
+	placement, err := s.previewTaskPlacement(ctx, meta)
+	if err != nil {
+		log.Printf("[placement] pre-build pull preview skipped: %v", err)
+		return false, ""
+	}
+	if shouldDeferLocalTaskForPlacement(placement, s.deviceID) {
+		target := "Cloud Workspace"
+		if placement != nil && strings.TrimSpace(placement.TargetDeviceID) != "" {
+			target = "Cloud Workspace " + strings.TrimSpace(placement.TargetDeviceID)
+		}
+		return true, "pre-build pull skipped: placement selected " + target
+	}
+	return false, ""
+}
+
 func (s *HTTPServer) maybePullWithCodingAgentBeforeBuild(workDir string) hotReloadPullAttempt {
 	result := hotReloadPullAttempt{Status: "skipped"}
 	workDir = strings.TrimSpace(workDir)
@@ -159,6 +187,10 @@ func (s *HTTPServer) maybePullWithCodingAgentBeforeBuild(workDir string) hotRelo
 	runnerID := chooseHotReloadPullRunner(defaultRunnerID, rows)
 	if runnerID == "" {
 		result.Summary = "pre-build pull skipped: no ready authenticated coding runner"
+		return result
+	}
+	if skip, summary := s.shouldSkipHotReloadPullForCloudPlacement(context.Background(), workDir, runnerID); skip {
+		result.Summary = summary
 		return result
 	}
 

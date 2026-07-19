@@ -8,6 +8,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { validateSessionInternal } from "./auth";
 
 const statuses = v.union(
@@ -28,6 +29,38 @@ type DispatchStatus =
   | "failed"
   | "cancelled"
   | "expired";
+
+export function isTerminalTaskDispatchStatus(status: string | undefined): boolean {
+  return status === "dispatched" || status === "failed" || status === "cancelled" || status === "expired";
+}
+
+export function dispatchBlockedActionNeedsUserAction(action: string | undefined | null): boolean {
+  switch (String(action || "").trim()) {
+    case "runner_auth_required":
+    case "yaver_auth_required":
+    case "billing_required":
+    case "resize_required":
+    case "resize_failed":
+    case "wake_failed":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function shouldPreserveDispatchUserActionBlock(args: {
+  currentStatus?: string | null;
+  currentBlockedAction?: string | null;
+  nextStatus?: string | null;
+  nextBlockedAction?: string | null;
+  clearBlockedAction?: boolean | null;
+}): boolean {
+  if (args.clearBlockedAction) return false;
+  if (args.currentStatus !== "blocked") return false;
+  if (!dispatchBlockedActionNeedsUserAction(args.currentBlockedAction)) return false;
+  if (args.nextStatus === "blocked" && dispatchBlockedActionNeedsUserAction(args.nextBlockedAction)) return false;
+  return args.nextStatus === "queued" || args.nextStatus === "dispatching";
+}
 
 async function userFromToken(ctx: any, tokenHash: string): Promise<Id<"users">> {
   const session = await validateSessionInternal(ctx, tokenHash);
@@ -50,6 +83,44 @@ function setIfDefined<T extends Record<string, any>>(patch: T, key: string, valu
   if (value !== undefined) patch[key as keyof T] = value;
 }
 
+export function taskDispatchIntentUserLocalIndexName(): "by_user_local_task" {
+  return "by_user_local_task";
+}
+
+async function findByUserLocalTask(ctx: any, userId: Id<"users">, localTaskId: string) {
+  return ctx.db
+    .query("taskDispatchIntents")
+    .withIndex(taskDispatchIntentUserLocalIndexName(), (q: any) =>
+      q.eq("userId", userId).eq("localTaskId", localTaskId),
+    )
+    .first();
+}
+
+export function dispatchIntentForeignResourceDeniedMessage(resource: "placement" | "cloudMachine"): string {
+  return resource === "placement" ? "placement not found" : "cloud machine not found";
+}
+
+async function requireOwnedDispatchIntentReferences(ctx: any, args: {
+  userId: Id<"users">;
+  placementId?: Id<"taskPlacements">;
+  cloudMachineId?: Id<"cloudMachines">;
+}) {
+  if (args.placementId) {
+    const placement = await ctx.db.get(args.placementId);
+    if (!placement || String(placement.userId) !== String(args.userId)) {
+      throw new Error(dispatchIntentForeignResourceDeniedMessage("placement"));
+    }
+  }
+  if (args.cloudMachineId) {
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, {
+      machineId: args.cloudMachineId,
+    });
+    if (!machine || String(machine.userId) !== String(args.userId)) {
+      throw new Error(dispatchIntentForeignResourceDeniedMessage("cloudMachine"));
+    }
+  }
+}
+
 function serialize(row: any) {
   return {
     id: row._id,
@@ -63,6 +134,7 @@ function serialize(row: any) {
     requestedRunner: row.requestedRunner ?? null,
     projectSlug: row.projectSlug ?? null,
     status: row.status,
+    blockedAction: row.blockedAction ?? null,
     reason: row.reason ?? null,
     lastError: row.lastError ?? null,
     attempts: row.attempts,
@@ -92,16 +164,14 @@ export const create = mutation({
     const localTaskId = args.localTaskId.trim();
     if (!localTaskId) throw new Error("localTaskId required");
     if (localTaskId.length > 160) throw new Error("localTaskId too long");
-    if (args.placementId) {
-      const placement = await ctx.db.get(args.placementId);
-      if (!placement || String(placement.userId) !== String(userId)) throw new Error("placement not found");
-    }
+    await requireOwnedDispatchIntentReferences(ctx, {
+      userId,
+      placementId: args.placementId,
+      cloudMachineId: args.cloudMachineId,
+    });
     const now = Date.now();
     const expiresAt = now + Math.max(5 * 60_000, Math.min(args.ttlMs ?? 24 * 60 * 60_000, 7 * 24 * 60 * 60_000));
-    const existing = await ctx.db
-      .query("taskDispatchIntents")
-      .withIndex("by_local_task", (q: any) => q.eq("localTaskId", localTaskId))
-      .first();
+    const existing = await findByUserLocalTask(ctx, userId, localTaskId);
     const patch: Record<string, any> = {
       userId,
       localTaskId,
@@ -118,7 +188,13 @@ export const create = mutation({
     setIfDefined(patch, "requestedRunner", trimLabel(args.requestedRunner, 80));
     setIfDefined(patch, "projectSlug", normalizeProjectSlug(args.projectSlug));
     setIfDefined(patch, "reason", trimLabel(args.reason, 240));
-    if (existing && String(existing.userId) === String(userId)) {
+    if (existing) {
+      if (existing.status === "blocked" && dispatchBlockedActionNeedsUserAction(existing.blockedAction)) {
+        patch.status = existing.status;
+        patch.blockedAction = existing.blockedAction;
+        patch.reason = existing.reason;
+        patch.lastError = existing.lastError;
+      }
       await ctx.db.patch(existing._id, patch);
       return serialize({ ...existing, ...patch });
     }
@@ -142,6 +218,8 @@ export const update = mutation({
     targetDeviceId: v.optional(v.string()),
     lastError: v.optional(v.string()),
     reason: v.optional(v.string()),
+    blockedAction: v.optional(v.string()),
+    clearBlockedAction: v.optional(v.boolean()),
     bumpAttempt: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
@@ -149,13 +227,10 @@ export const update = mutation({
     const row = args.intentId
       ? await ctx.db.get(args.intentId)
       : args.localTaskId
-        ? await ctx.db
-            .query("taskDispatchIntents")
-            .withIndex("by_local_task", (q: any) => q.eq("localTaskId", args.localTaskId!.trim()))
-            .first()
+        ? await findByUserLocalTask(ctx, userId, args.localTaskId.trim())
         : null;
     if (!row || String(row.userId) !== String(userId)) throw new Error("dispatch intent not found");
-    const terminal = args.status === "dispatched" || args.status === "cancelled" || args.status === "expired";
+    const terminal = isTerminalTaskDispatchStatus(args.status);
     const now = Date.now();
     const patch: Record<string, any> = {
       status: args.status,
@@ -166,6 +241,26 @@ export const update = mutation({
     setIfDefined(patch, "targetDeviceId", trimLabel(args.targetDeviceId, 160));
     setIfDefined(patch, "lastError", trimLabel(args.lastError, 240));
     setIfDefined(patch, "reason", trimLabel(args.reason, 240));
+    if (shouldPreserveDispatchUserActionBlock({
+      currentStatus: row.status,
+      currentBlockedAction: row.blockedAction,
+      nextStatus: args.status,
+      nextBlockedAction: args.blockedAction,
+      clearBlockedAction: args.clearBlockedAction,
+    })) {
+      patch.status = row.status;
+      patch.blockedAction = row.blockedAction;
+      patch.reason = row.reason;
+      patch.lastError = row.lastError;
+      patch.completedAt = row.completedAt;
+      await ctx.db.patch(row._id, patch);
+      return serialize({ ...row, ...patch });
+    }
+    if (args.status === "blocked") {
+      setIfDefined(patch, "blockedAction", trimLabel(args.blockedAction, 80));
+    } else {
+      patch.blockedAction = undefined;
+    }
     if (terminal) patch.completedAt = now;
     await ctx.db.patch(row._id, patch);
     return serialize({ ...row, ...patch });
@@ -190,7 +285,7 @@ export const listRecent = query({
     return rows
       .filter((row: any) =>
         args.includeTerminal ||
-        (row.expiresAt > now && row.status !== "dispatched" && row.status !== "cancelled" && row.status !== "expired")
+        (row.expiresAt > now && !isTerminalTaskDispatchStatus(row.status))
       )
       .map(serialize);
   },

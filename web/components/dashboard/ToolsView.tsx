@@ -927,7 +927,7 @@ export default function ToolsView({ devices = [] }: Props) {
           ) : null}
           <details className="rounded-xl border border-surface-800 bg-surface-950/40 p-3">
             <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.16em] text-surface-300">
-              + Add provider (e.g. Tailscale Ollama)
+              + Add provider (e.g. remote Ollama)
             </summary>
             <AddProviderForm
               onAdd={async ({ id, baseUrl, apiKey, name }) => {
@@ -1141,12 +1141,10 @@ export default function ToolsView({ devices = [] }: Props) {
   );
 }
 
-// Inline editor for an existing provider's baseURL. The most common
-// edit on a remote machine is updating the Tailscale address of an
-// Ollama instance (the IP / DNS changes when the remote box reboots
-// or you re-key Tailscale), so we surface it as a one-click "Save"
-// next to the existing display row instead of forcing the user
-// through the full opencode.json edit flow. Other provider settings
+// Inline editor for an existing provider's baseURL. The common edit on a
+// remote machine is updating the address of an Ollama instance, so we surface
+// it as a one-click "Save" next to the existing display row instead of forcing
+// the user through the full opencode.json edit flow. Other provider settings
 // (API keys, custom options) still go through the full save form.
 function ProviderCard({
   provider,
@@ -1211,8 +1209,8 @@ function ProviderCard({
 
 // Compact form for adding a new provider (or replacing the config
 // for an existing one). Use case the user explicitly named: pointing
-// the remote machine's opencode at its own local Ollama via a
-// Tailscale URL. We collect just enough to write the entry — id,
+// the remote machine's opencode at its own local Ollama via a private-network
+// URL. We collect just enough to write the entry — id,
 // name, baseURL, optional API key. Custom per-model metadata is left
 // out on purpose; users who need it edit opencode.json directly or
 // invoke the MCP `opencode_config_set` tool with the full payload.
@@ -1272,11 +1270,11 @@ const providerPresets: Array<{
     hint: "Local Ollama on the dev box. No API key needed.",
   },
   {
-    label: "Tailscale Ollama",
-    id: "ollama-tailscale",
-    name: "Ollama (Tailscale)",
-    baseUrl: "http://yaver-gpu.tailscale.net:11434/v1",
-    hint: "Remote Ollama over Tailscale — replace the host with your tailnet name.",
+    label: "Remote Ollama",
+    id: "ollama-remote",
+    name: "Ollama (remote)",
+    baseUrl: "http://remote-ollama.example:11434/v1",
+    hint: "Remote Ollama over a private network — replace the host with your endpoint.",
   },
   {
     label: "DeepSeek",
@@ -1300,8 +1298,7 @@ function AddProviderForm({
   const [hint, setHint] = useState("");
   return (
     <div className="mt-3">
-      {/* One-click presets so users don't have to remember the Z.ai
-          base URL or which Tailscale host their Ollama runs on. */}
+      {/* One-click presets so users don't have to remember provider base URLs. */}
       <div className="mb-3 flex flex-wrap gap-1.5">
         {providerPresets.map((preset) => (
           <button

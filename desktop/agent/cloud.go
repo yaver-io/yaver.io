@@ -63,7 +63,7 @@ func runCloudBuy(args []string) {
 func runCloudCreate(args []string) {
 	fs := flag.NewFlagSet("cloud create", flag.ExitOnError)
 	wait := fs.Bool("wait", true, "Poll for the machine after checkout or create")
-	skipPayment := fs.Bool("skip-payment", false, "Bypass checkout and activate the private-preview machine directly")
+	skipPayment := fs.Bool("skip-payment", false, "Developer-only: requires YAVER_CLOUD_DEV_BYPASS=1")
 	fs.Parse(args)
 
 	machine, err := activeCloudMachine()
@@ -73,6 +73,10 @@ func runCloudCreate(args []string) {
 	}
 
 	if *skipPayment || strings.EqualFold(strings.TrimSpace(os.Getenv("YAVER_CLOUD_SKIP_PAYMENT")), "true") {
+		if !cloudDevBypassEnabled() {
+			fmt.Fprintln(os.Stderr, "cloud create --skip-payment is developer-only and requires YAVER_CLOUD_DEV_BYPASS=1")
+			os.Exit(1)
+		}
 		activateCloudPreview(*wait)
 		return
 	}
@@ -87,8 +91,8 @@ func runCloudStatus() {
 		os.Exit(1)
 	}
 	if machine == nil {
-		fmt.Println("No active Yaver Cloud machine found for this account.")
-		fmt.Println("Run `yaver cloud create` to start the private-preview checkout flow.")
+		fmt.Println("No active Cloud Workspace found for this account.")
+		fmt.Println("Run `yaver cloud create` to open the web checkout.")
 		return
 	}
 	printCloudMachine(machine)
@@ -96,7 +100,7 @@ func runCloudStatus() {
 
 func runCloudSmoke(args []string) {
 	fs := flag.NewFlagSet("cloud smoke", flag.ExitOnError)
-	skipPayment := fs.Bool("skip-payment", true, "Bypass checkout and activate the private-preview machine directly")
+	skipPayment := fs.Bool("skip-payment", true, "Developer-only: requires YAVER_CLOUD_DEV_BYPASS=1")
 	fs.Parse(args)
 
 	cfg, user, err := requireCloudPreviewUser()
@@ -106,6 +110,10 @@ func runCloudSmoke(args []string) {
 	}
 
 	if *skipPayment {
+		if !cloudDevBypassEnabled() {
+			fmt.Fprintln(os.Stderr, "cloud smoke --skip-payment is developer-only and requires YAVER_CLOUD_DEV_BYPASS=1")
+			os.Exit(1)
+		}
 		mode, err := activateCloudMachine(cfg.AuthToken, cfg.ConvexSiteURL)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "activate cloud preview: %v\n", err)
@@ -220,8 +228,8 @@ func openCloudCheckout(wait bool) {
 		mode = "fallback"
 	}
 
-	fmt.Println("Yaver Cloud — private preview")
-	fmt.Println("-----------------------------")
+	fmt.Println("Cloud Workspace")
+	fmt.Println("---------------")
 	fmt.Printf("Signed in as: %s\n", user.Email)
 	fmt.Printf("Billing mode: %s\n", mode)
 	fmt.Printf("Checkout URL: %s\n", checkoutURL)
@@ -256,6 +264,10 @@ func cloudPreviewBaseURL() string {
 }
 
 func activateCloudPreview(wait bool) {
+	if !cloudDevBypassEnabled() {
+		fmt.Fprintln(os.Stderr, "cloud preview activation is developer-only and requires YAVER_CLOUD_DEV_BYPASS=1")
+		os.Exit(1)
+	}
 	cfg, user, err := requireCloudPreviewUser()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -267,8 +279,8 @@ func activateCloudPreview(wait bool) {
 		os.Exit(1)
 	}
 
-	fmt.Println("Yaver Cloud — private preview")
-	fmt.Println("-----------------------------")
+	fmt.Println("Cloud Workspace developer preview")
+	fmt.Println("---------------------------------")
 	fmt.Printf("Signed in as: %s\n", user.Email)
 	fmt.Printf("Activation mode: %s\n", mode)
 
@@ -279,6 +291,14 @@ func activateCloudPreview(wait bool) {
 	fmt.Println()
 	fmt.Println("Waiting for the preview machine to become active...")
 	waitForCloudMachine()
+}
+
+func cloudDevBypassEnabled() bool {
+	value := strings.TrimSpace(os.Getenv("YAVER_CLOUD_DEV_BYPASS"))
+	return strings.EqualFold(value, "1") ||
+		strings.EqualFold(value, "true") ||
+		strings.EqualFold(value, "yes") ||
+		strings.EqualFold(value, "on")
 }
 
 func requireCloudPreviewUser() (*Config, *UserInfo, error) {
@@ -482,16 +502,15 @@ func printCloudMachine(machine *cloudMachineRecord) {
 
 func printCloudUsage() {
 	fmt.Print(`Usage:
-  yaver cloud buy      Open the web checkout for the private-preview cloud flow
-  yaver cloud create   Open checkout if needed, then wait for your cloud machine
-  yaver cloud smoke    Activate preview if needed, push a dummy todos backend, print the browse URL
-  yaver cloud status   Show the current cloud machine state
-  yaver cloud ssh      Print the SSH target for the current cloud machine
+  yaver cloud buy      Open the web checkout for Cloud Workspace
+  yaver cloud create   Open checkout if needed, then wait for your Cloud Workspace
+  yaver cloud smoke    Developer smoke test for a Cloud Workspace target
+  yaver cloud status   Show the current Cloud Workspace state
+  yaver cloud ssh      Print the SSH target for the current Cloud Workspace
   yaver cloud destroy  Show the current manual teardown note
 
 Notes:
-  - Yaver Cloud purchase is web-only for now.
+  - Cloud Workspace purchase is web-only.
   - CLI opens the hosted checkout and then polls the backend so the flow does not stall.
-  - Use 'yaver cloud create --skip-payment' to test the shared preview machine without Lemon Squeezy.
 `)
 }

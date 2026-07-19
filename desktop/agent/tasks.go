@@ -815,6 +815,7 @@ type TaskCreateOptions struct {
 	WorkDir           string
 	InitialUserPrompt string
 	SliceContract     *TaskSliceContract
+	Placement         *TaskPlacementMetadata
 
 	// Viewport (surface + STT/TTS shaping) is applied before startProcess
 	// runs so the prompt wrapper sees it during prompt assembly. Setting
@@ -944,7 +945,8 @@ type Task struct {
 	// Image paths saved to disk for this task (not persisted in tasks.json)
 	ImagePaths []string `json:"-"`
 
-	SliceContract *TaskSliceContract `json:"sliceContract,omitempty"`
+	SliceContract *TaskSliceContract     `json:"sliceContract,omitempty"`
+	Placement     *TaskPlacementMetadata `json:"placement,omitempty"`
 
 	// Guest execution policy snapshot resolved at task creation time.
 	GuestUseHostAPIKeys         bool     `json:"-"`
@@ -1077,6 +1079,33 @@ func taskSuccessStatus(task *Task) TaskStatus {
 	return TaskStatusFinished
 }
 
+type TaskCreditEstimate struct {
+	Unit                string `json:"unit,omitempty"`
+	EstimatedCents      int    `json:"estimatedCents,omitempty"`
+	HourlyCents         int    `json:"hourlyCents,omitempty"`
+	EstimatedMinutes    int    `json:"estimatedMinutes,omitempty"`
+	IncludedHoursBucket int    `json:"includedHoursBucket,omitempty"`
+	BillingScope        string `json:"billingScope,omitempty"`
+	ResourceClass       string `json:"resourceClass,omitempty"`
+	Display             string `json:"display,omitempty"`
+}
+
+type TaskPlacementMetadata struct {
+	PlacementID        string              `json:"id,omitempty"`
+	Lane               string              `json:"lane,omitempty"`
+	ResourceClass      string              `json:"resourceClass,omitempty"`
+	TargetDeviceID     string              `json:"targetDeviceId,omitempty"`
+	CloudMachineID     string              `json:"cloudMachineId,omitempty"`
+	SubscriptionPlan   string              `json:"subscriptionPlan,omitempty"`
+	Entitlement        string              `json:"entitlement,omitempty"`
+	Status             string              `json:"status,omitempty"`
+	Reason             string              `json:"reason,omitempty"`
+	WakeRequired       bool                `json:"wakeRequired,omitempty"`
+	WakeTargetMs       int                 `json:"wakeTargetMs,omitempty"`
+	EstimatedCostCents int                 `json:"estimatedCreditCost,omitempty"`
+	CreditEstimate     *TaskCreditEstimate `json:"creditEstimate,omitempty"`
+}
+
 // TaskInfo is the JSON-safe subset returned in listings.
 type TaskInfo struct {
 	ID          string     `json:"id"`
@@ -1108,25 +1137,26 @@ type TaskInfo struct {
 	// TurnCount lets a list view show "12 turns" without shipping the
 	// transcript to render a number. The list handler nils Turns and sets this;
 	// the detail endpoint leaves Turns intact and this stays 0.
-	TurnCount      int        `json:"turnCount,omitempty"`
-	Source         string     `json:"source,omitempty"`
-	TmuxSession    string     `json:"tmuxSession,omitempty"`
-	IsAdopted      bool       `json:"isAdopted,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	StartedAt      *time.Time `json:"startedAt,omitempty"`
-	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
-	ChainID        string     `json:"chainId,omitempty"`
-	ChainOrder     int        `json:"chainOrder,omitempty"`
-	AutoRetry      bool       `json:"autoRetry,omitempty"`
-	AutoRetryCount int        `json:"autoRetryCount,omitempty"`
-	AutoRetryMax   int        `json:"autoRetryMax,omitempty"`
-	VideoEnabled   bool       `json:"videoEnabled,omitempty"`
-	VideoSource    string     `json:"videoSource,omitempty"`
-	VideoClipID    string     `json:"videoClipId,omitempty"`
-	VideoStatus    string     `json:"videoStatus,omitempty"`
-	VideoClipURL   string     `json:"videoClipUrl,omitempty"`
-	VideoPosterURL string     `json:"videoPosterUrl,omitempty"`
-	AskFreely      bool       `json:"askFreely,omitempty"`
+	TurnCount      int                    `json:"turnCount,omitempty"`
+	Source         string                 `json:"source,omitempty"`
+	TmuxSession    string                 `json:"tmuxSession,omitempty"`
+	IsAdopted      bool                   `json:"isAdopted,omitempty"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	StartedAt      *time.Time             `json:"startedAt,omitempty"`
+	FinishedAt     *time.Time             `json:"finishedAt,omitempty"`
+	ChainID        string                 `json:"chainId,omitempty"`
+	ChainOrder     int                    `json:"chainOrder,omitempty"`
+	AutoRetry      bool                   `json:"autoRetry,omitempty"`
+	AutoRetryCount int                    `json:"autoRetryCount,omitempty"`
+	AutoRetryMax   int                    `json:"autoRetryMax,omitempty"`
+	VideoEnabled   bool                   `json:"videoEnabled,omitempty"`
+	VideoSource    string                 `json:"videoSource,omitempty"`
+	VideoClipID    string                 `json:"videoClipId,omitempty"`
+	VideoStatus    string                 `json:"videoStatus,omitempty"`
+	VideoClipURL   string                 `json:"videoClipUrl,omitempty"`
+	VideoPosterURL string                 `json:"videoPosterUrl,omitempty"`
+	AskFreely      bool                   `json:"askFreely,omitempty"`
+	Placement      *TaskPlacementMetadata `json:"placement,omitempty"`
 }
 
 // TaskManager manages the lifecycle of tasks.
@@ -1567,6 +1597,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		doneCh:                      make(chan struct{}),
 		WorkDir:                     strings.TrimSpace(opts.WorkDir),
 		SliceContract:               opts.SliceContract,
+		Placement:                   opts.Placement,
 		TaskViewport:                opts.Viewport,
 		GuestUserID:                 opts.GuestUserID,
 		GuestUseHostAPIKeys:         opts.GuestUseHostAPIKeys,
@@ -3986,6 +4017,7 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			VideoClipID:    t.VideoClipID,
 			VideoStatus:    t.VideoStatus,
 			AskFreely:      t.AskFreely,
+			Placement:      t.Placement,
 		})
 	}
 	return result
@@ -4248,6 +4280,7 @@ func (tm *TaskManager) GetChainStatus(chainID string) []TaskInfo {
 				CostUSD:      t.CostUSD,
 				InputTokens:  t.InputTokens,
 				OutputTokens: t.OutputTokens,
+				Placement:    t.Placement,
 			})
 		}
 	}

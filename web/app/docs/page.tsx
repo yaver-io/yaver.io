@@ -2,11 +2,11 @@ import Link from "next/link";
 
 const docs = [
   {
-    title: "Self-hosting guide",
+    title: "Hosting and Relay options",
     description:
-      "Run your own relay server, use Tailscale, or Cloudflare Tunnel. Full control over your infrastructure.",
+      "Choose Free Relay, Relay Pro, or Cloud Workspace. Custom infrastructure remains source-compatible for advanced operators.",
     href: "/docs/self-hosting",
-    tags: ["Tailscale", "Docker", "Cloudflare"],
+    tags: ["Relay", "Cloud Workspace", "Billing"],
   },
   {
     title: "MCP integration",
@@ -53,26 +53,22 @@ const docs = [
   {
     title: "Unity",
     description:
-      "Unity setup, self-hosted runner patterns, mobile and desktop usage cases, CI, and publishing paths.",
+      "Unity setup, Yaver runner patterns, mobile and desktop usage cases, CI, and publishing paths.",
     href: "/docs/unity",
-    tags: ["Unity", "Games", "Self-hosted"],
+    tags: ["Unity", "Games", "Runners"],
   },
 ];
 
 const manualLinks = [
   {
-    title: "Full On-Prem Free Stack",
-    description: "Yaver + Ollama + GLM-4.7-Flash + Aider — $0/month AI coding with SWE-bench analysis.",
-    href: "/manuals/free-onprem",
+    title: "Yaver Relay setup",
+    description: "Start with Free Relay, then use Relay Pro for private managed reachability.",
+    href: "/manuals/relay-setup",
     featured: true,
   },
   {
     title: "CLI setup & usage",
     href: "/manuals/cli-setup",
-  },
-  {
-    title: "Relay server setup",
-    href: "/manuals/relay-setup",
   },
   {
     title: "Zero-cost local AI coding",

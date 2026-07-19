@@ -2066,7 +2066,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
             ) : null}
             {device.tunnelUrl ? <Row label="Tunnel URL" value={device.tunnelUrl} mono /> : null}
             {meshIp ? <Row label="Yaver Mesh IP" value={`${meshIp}:${device.port ?? 18080}`} mono /> : null}
-            {tailscaleIp ? <Row label="Tailscale IP" value={`${tailscaleIp}:${device.port ?? 18080}`} mono /> : null}
+            {tailscaleIp ? <Row label="Private network IP" value={`${tailscaleIp}:${device.port ?? 18080}`} mono /> : null}
             {wslIp ? <Row label="WSL2 NAT IP" value={`${wslIp}:${device.port ?? 18080}`} mono /> : null}
             {privateLanIps.length ? <Row label="LAN IPs" value={privateLanIps.join(", ")} mono /> : null}
             {(device.publicEndpoints || []).length ? <Row label="Public endpoints" value={(device.publicEndpoints || []).join(", ")} mono /> : null}

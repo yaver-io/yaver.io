@@ -271,11 +271,11 @@ async function authRunner(runner) {
             <li>{code("transcribe")} — speech-to-text helper for voice input.</li>
           </ul>
           <p className="mt-3">
-            Talos — the manufacturing platform — is the first external consumer: its phone app embeds
-            {" "}{code("yaver-sdk")} so a factory operator can ask a remote Codex/Claude-Code agent
-            real ERP questions, with the curated Talos MCP wired into the runner. That&apos;s the whole
-            point of shipping Yaver as a library: your product gets a remote coding/agent brain, and
-            you never reimplement the plumbing.
+            Production apps can embed {code("yaver-sdk")} so an operator can ask
+            a remote Codex or Claude Code runner real product questions with a
+            curated MCP surface wired into the session. That&apos;s the whole point
+            of shipping Yaver as a library: your product gets a remote
+            coding/agent brain, and you never reimplement the plumbing.
           </p>
         </section>
 

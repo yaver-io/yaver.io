@@ -28,13 +28,14 @@ After reading the docs, **grep the code for the symbols the docs name** before r
 ## Local Deploy Memory
 
 - On this Mac, local TestFlight deploys can work even when `yaver vault env --project mobile` is unauthenticated, because the deploy guide in [`CLAUDE.md`](CLAUDE.md) already documents the fallback `APP_STORE_KEY_*` / `APPLE_TEAM_ID` exports used by the working local path.
-- If `scripts/deploy-testflight.sh` appears stuck with almost no output, check for another active `xcodebuild archive` from `talos`, `sfmg`, or an earlier Yaver run before assuming credentials are broken.
+- If `scripts/deploy-testflight.sh` appears stuck with almost no output, check for another active `xcodebuild archive` from another local mobile project or an earlier Yaver run before assuming credentials are broken.
 - If you must clean local archive artifacts, inspect the exact path first (`ls -la /tmp/YaverBuild /tmp/Yaver.xcarchive /tmp/YaverExport`) and only then remove those specific directories.
 
 ## Hard safety rules (summarised from CLAUDE.md)
 
 - **Never push or commit without explicit user permission.**
 - **Never run `rm -rf` on a computed path without `ls -la` first** — case-insensitive macOS filesystems already cost us a full repo once.
+- **Only touch Yaver project resources from this repo.** Do not delete, revoke, stop, snapshot, migrate, or mutate personal machines, private sibling-project resources, generic `ubuntu-*` boxes, storage volumes, or non-Yaver provider state unless the user explicitly identifies that exact resource as part of the Yaver task. Before destructive provider/Convex cleanup, list candidates and verify Yaver-specific labels, names, IDs, subscription links, or `cloudMachines` rows; ask on ambiguity.
 - **Never use WebView to load third-party React Native apps** — use the Hermes bundle push path (`/dev/build-native`).
 - **Never commit credentials, customer IPs, relay hostnames, or any secret** — the repo is public on GitHub.
 - **Never deploy mobile / publish npm / push a tag without confirming with the user first.**

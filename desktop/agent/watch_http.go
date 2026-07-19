@@ -24,8 +24,10 @@ package main
 // dispatch with the risk gate bypassed. No server-side pending-state map.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -147,15 +149,60 @@ func (s *HTTPServer) dispatchWatchTranscript(w http.ResponseWriter, text, projec
 		VisualBudget: "glance",
 		RiskPolicy:   "watch",
 	}
+	title := voiceTitleFromTranscript(text)
+	taskOpts := TaskCreateOptions{Viewport: vp}
+	meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		Title:          title,
+		Description:    plan.Prompt,
+		Source:         "voice-input",
+		ProjectName:    project,
+		WorkDir:        s.taskMgr.workDir,
+		TargetDeviceID: s.deviceID,
+	})
+	if previewPlacement, perr := s.previewTaskPlacement(context.Background(), meta); perr != nil {
+		log.Printf("[placement] watch preview skipped before task create: %v", perr)
+	} else if shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
+		pendingTaskID := newPendingCloudTaskID()
+		recordedPlacement := previewPlacement
+		if placement, rerr := s.recordTaskPlacement(context.Background(), pendingTaskID, meta); rerr != nil {
+			log.Printf("[placement] watch pending record skipped for %s: %v", pendingTaskID, rerr)
+		} else if placement != nil {
+			recordedPlacement = placement
+		}
+		var activation map[string]any
+		if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+			if result, aerr := s.activateTaskPlacement(context.Background(), recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+				activation = activationMapFromError(aerr)
+				log.Printf("[placement] watch activation skipped for %s: %v", pendingTaskID, aerr)
+			} else {
+				activation = result
+			}
+		}
+		status := "cloud_workspace_required"
+		if action := cloudActivationBlockerAction(activation); action != "" {
+			status = action
+		}
+		writeJSON(w, http.StatusOK, watchReply{
+			V:      1,
+			Kind:   "handoff",
+			Target: "cloud-workspace",
+			TaskID: pendingTaskID,
+			Status: status,
+			Spoken: "Your Cloud Workspace is getting ready. Continue on your phone.",
+		})
+		return
+	} else if previewPlacement != nil {
+		taskOpts.Placement = previewPlacement
+	}
 	task, err := s.taskMgr.CreateTaskWithOptions(
-		voiceTitleFromTranscript(text),
+		title,
 		plan.Prompt,
 		"",            // model: task manager default
 		"voice-input", // source: same arm as the car/voice loop
 		"",            // runner: default
 		"",            // customCommand
 		nil,           // images
-		TaskCreateOptions{Viewport: vp},
+		taskOpts,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusOK, watchReply{V: 1, Kind: "error", Spoken: "I couldn't start that."})

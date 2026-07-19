@@ -47,6 +47,15 @@ func TestParseTerminalCommandLocalInfo(t *testing.T) {
 	}
 }
 
+func TestParseTerminalCommandCloudPending(t *testing.T) {
+	for _, input := range []string{"cloud", "/cloud", "cloud-pending", "/cloud-pending", "pending cloud", "/pending cloud"} {
+		cmd, ok := parseTerminalCommand(input)
+		if !ok || cmd.Kind != "cloud-pending" {
+			t.Fatalf("%q parsed as %+v ok=%v, want kind=cloud-pending", input, cmd, ok)
+		}
+	}
+}
+
 func TestParseTerminalCommandAgentQueries(t *testing.T) {
 	cmd, ok := parseTerminalCommand("get agent")
 	if !ok || cmd.Kind != "agent" {

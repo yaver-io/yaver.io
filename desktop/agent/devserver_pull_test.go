@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestChooseHotReloadPullRunnerPrefersReadyDefault(t *testing.T) {
 	rows := []runnerAuthStatusRow{
@@ -51,5 +57,50 @@ func TestInterpretHotReloadPullResult(t *testing.T) {
 		if status != tc.status || updated != tc.updated {
 			t.Fatalf("interpretHotReloadPullResult(%q) = (%q,%v), want (%q,%v)", tc.text, status, updated, tc.status, tc.updated)
 		}
+	}
+}
+
+func TestHotReloadPullSkipsWhenCloudPlacementSelected(t *testing.T) {
+	var seen []string
+	var payload map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		if r.URL.Path != "/tasks/placement/preview" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":             "placement-preview",
+			"lane":           "cloud_build",
+			"resourceClass":  "build",
+			"targetDeviceId": "cloud-dev",
+			"wakeRequired":   true,
+		})
+	}))
+	defer backend.Close()
+
+	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
+	tm.DummyMode = true
+	s := NewHTTPServer(0, "owner-token", "owner", "local-dev", backend.URL, "host", tm)
+
+	skip, summary := s.shouldSkipHotReloadPullForCloudPlacement(context.Background(), t.TempDir(), "codex")
+	if !skip {
+		t.Fatalf("skip = false, summary = %q", summary)
+	}
+	if summary == "" {
+		t.Fatal("expected skip summary")
+	}
+	if len(seen) != 1 || seen[0] != "/tasks/placement/preview" {
+		t.Fatalf("paths = %#v", seen)
+	}
+	for _, forbidden := range []string{"title", "description", "prompt", "userPrompt", "bodyJson", "workDir"} {
+		if _, ok := payload[forbidden]; ok {
+			t.Fatalf("metadata payload leaked %q: %#v", forbidden, payload)
+		}
+	}
+	if tasks := tm.ListTasks(); len(tasks) != 0 {
+		t.Fatalf("expected no local helper task, got %d", len(tasks))
 	}
 }

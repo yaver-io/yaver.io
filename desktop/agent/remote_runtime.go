@@ -263,6 +263,15 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			caps.Targets = []RemoteRuntimeTarget{
 				probeBrowserWindowTarget(),
 			}
+		case "desktop":
+			// The host's own screen, not a project runtime — this is the
+			// "drive my actual PC from a phone/headset" path. Unlike every
+			// other arm here it is framework-independent; "desktop" is a
+			// pseudo-framework so the existing picker plumbing can reach it
+			// without a parallel capabilities endpoint.
+			caps.Targets = []RemoteRuntimeTarget{
+				probeDesktopScreenTarget(),
+			}
 		}
 	}
 
@@ -559,6 +568,10 @@ func launchAppOnRuntimeTarget(ctx context.Context, session RemoteRuntimeSession,
 		return (&testkit.IOSSimDriver{BundleID: bundleID}).Launch(ctx, session.DeviceID)
 	case "android-emulator", "android-device", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
 		return (&testkit.AndroidEmuDriver{Package: bundleID}).Launch(ctx, session.DeviceID)
+	case desktopScreenTargetID:
+		// bundleID carries an application NAME here ("Safari", "AutoCAD"),
+		// not a bundle identifier — desktop launchers resolve by name.
+		return launchDesktopApp(ctx, bundleID)
 	}
 	return fmt.Errorf("launch-app is not supported for target %q", session.TargetID)
 }
@@ -577,8 +590,15 @@ func (s *HTTPServer) handleRemoteRuntimeCapabilities(w http.ResponseWriter, r *h
 	}
 	workDir := strings.TrimSpace(r.URL.Query().Get("workDir"))
 	framework := strings.TrimSpace(r.URL.Query().Get("framework"))
-	if workDir == "" || framework == "" {
-		jsonError(w, http.StatusBadRequest, "workDir and framework are required")
+	if framework == "" {
+		jsonError(w, http.StatusBadRequest, "framework is required")
+		return
+	}
+	// The desktop target streams the machine itself, not a project, so it has
+	// no workDir. Every other framework still requires one — a missing workDir
+	// there is a client bug we want surfaced, not defaulted away.
+	if workDir == "" && !strings.EqualFold(framework, "desktop") {
+		jsonError(w, http.StatusBadRequest, "workDir is required for project runtimes")
 		return
 	}
 	jsonReply(w, http.StatusOK, remoteRuntimeCapabilitiesForProject(workDir, framework))

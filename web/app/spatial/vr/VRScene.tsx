@@ -251,7 +251,7 @@ function StatusStrip({ tasks }: { tasks: Task[] }) {
     ctx.fillRect(0, 0, c.width, c.height);
     ctx.font = "20px ui-monospace, Menlo, monospace";
     ctx.textBaseline = "middle";
-    // tmux-ish prefix: [0] 0:yaver* 1:talos- 2:emlaq-
+    // tmux-ish prefix: [0] 0:yaver* 1:app- 2:ops-
     const running = tasks.filter((t) => t.status === "running").length;
     const total = tasks.length;
     let x = 14;

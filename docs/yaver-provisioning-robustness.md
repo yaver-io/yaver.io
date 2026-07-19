@@ -54,7 +54,9 @@ than none.
 **Principle:** a "don't bill the user for idle" guarantee must not depend on any
 external component staying up, and its absence must be detectable.
 - ✅ **Convex-native idle cron** (`crons.ts` → `idleSweepCron`), decoupled from the
-  prepaid meter, enabled on prod (`YAVER_CLOUD_IDLE_ENABLE`, `_MINUTES=120`).
+  prepaid meter. Auto-off is default-on for managed boxes; use
+  `YAVER_CLOUD_IDLE_DISABLE=true` only as an emergency brake, and tune with
+  `YAVER_CLOUD_IDLE_MINUTES`.
 - ✅ **Fail-closed** — `pauseMachine` snapshots then deletes, aborts the delete if
   the snapshot fails (box never lost), no-op without `HCLOUD_TOKEN`.
 - ❌ **Auto-off health check** — a check/alert that the sweep actually ran recently,

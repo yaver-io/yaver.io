@@ -993,6 +993,9 @@ func remoteAgentJSON(ctx context.Context, baseURL, token, method, path string, b
 		}
 	}
 	if status >= 400 {
+		if err := decodeCloudWorkspaceRequiredError(status, raw); err != nil {
+			return err
+		}
 		msg := strings.TrimSpace(string(raw))
 		if msg == "" {
 			msg = http.StatusText(status)

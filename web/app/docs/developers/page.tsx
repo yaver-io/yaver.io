@@ -258,7 +258,7 @@ export default function DevelopersPage() {
           <Prose>
             A practical supported setup is a MacBook as the control surface and a stronger Windows
             machine as the always-on coding box. The box should expose OpenSSH, stay awake on AC,
-            join Tailscale for a stable private address, and run the local model or coding agent.
+            use Yaver Relay for remote task control, and run the local model or coding agent.
           </Prose>
           <div className="space-y-4">
             {[
@@ -272,7 +272,7 @@ export default function DevelopersPage() {
               },
               {
                 title: "Stable network path",
-                desc: "Prefer Tailscale hostnames over raw LAN IPs for daily use, especially once the MacBook leaves the local network.",
+                desc: "Use LAN addresses for admin SSH at home and Yaver Relay for phone-to-box task control away from the local network.",
               },
               {
                 title: "Continue, not the native picker",
@@ -284,7 +284,7 @@ export default function DevelopersPage() {
               },
               {
                 title: "Config schema matters",
-                desc: "On the validated setup, Continue required a top-level version field in config.yaml. Without it, the model picker stayed empty even though the Tailscale endpoint was reachable.",
+                desc: "On the validated setup, Continue required a top-level version field in config.yaml. Without it, the model picker stayed empty even though the LAN endpoint was reachable.",
               },
             ].map((item) => (
               <div
@@ -2152,7 +2152,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <li><strong className="text-surface-200">Backend:</strong> <InlineCode>POST /auth/refresh</InlineCode> extends session by 30 more days.</li>
           </ul>
           <Prose>
-            Settings (relay servers, tunnels, preferences) are preserved across sign-out/sign-in
+            Settings (relay servers, advanced endpoints, preferences) are preserved across sign-out/sign-in
             on both CLI and mobile. Mobile settings are user-scoped &mdash; different accounts on the
             same device get isolated settings.
           </Prose>
@@ -2237,7 +2237,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
           <Prose>
             The full integration test suite verifies CLI-to-CLI connections across
             every transport mode &mdash; LAN, relay server (local + remote Docker + remote
-            binary), Tailscale, and Cloudflare Tunnel. It also builds all
+            binary), and remote relay deployments. It also builds all
             components and validates MCP protocol compliance.
           </Prose>
 
@@ -2253,8 +2253,6 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               <Cmd>./scripts/test-suite.sh --relay</Cmd>
               <Cmd>./scripts/test-suite.sh --relay-docker</Cmd>
               <Cmd>./scripts/test-suite.sh --relay-binary</Cmd>
-              <Cmd>./scripts/test-suite.sh --tailscale</Cmd>
-              <Cmd>./scripts/test-suite.sh --cloudflare</Cmd>
               <Divider />
               <Comment># Combine flags</Comment>
               <Cmd>./scripts/test-suite.sh --unit --lan --relay</Cmd>
@@ -2301,16 +2299,6 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                   <td className="py-3 pr-4">Deploy relay as native binary to remote server, test, teardown</td>
                   <td className="py-3">Remote server + SSH</td>
                 </tr>
-                <tr className="border-b border-surface-800/50">
-                  <td className="py-3 pr-4"><InlineCode>--tailscale</InlineCode></td>
-                  <td className="py-3 pr-4">Deploy agent to remote server, connect via Tailscale IPs</td>
-                  <td className="py-3">Tailscale on both machines</td>
-                </tr>
-                <tr>
-                  <td className="py-3 pr-4"><InlineCode>--cloudflare</InlineCode></td>
-                  <td className="py-3 pr-4">Quick tunnel + optional named tunnel with CF Access</td>
-                  <td className="py-3"><InlineCode>cloudflared</InlineCode></td>
-                </tr>
               </tbody>
             </table>
           </div>
@@ -2334,8 +2322,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               </h4>
               <p className="mb-3 text-sm text-surface-400">
                 <InlineCode>--relay-docker</InlineCode>, <InlineCode>--relay-binary</InlineCode>,
-                and <InlineCode>--tailscale</InlineCode> SSH into a remote Linux server,
-                deploy binaries, test cross-network connectivity,
+                and related remote relay checks SSH into a remote Linux server,
+                deploy binaries, test relay connectivity,
                 then tear everything down. Auto-detects CPU architecture (amd64 vs arm64).
               </p>
               <Terminal title="credentials setup">
@@ -2739,7 +2727,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
                   <td className="px-4 py-2 font-mono text-surface-200">tunnels</td>
                   <td className="px-4 py-2">true, false</td>
                   <td className="px-4 py-2">false</td>
-                  <td className="px-4 py-2">Allow the guest to use host-approved local tunnel forwards such as DB/devserver/VNC endpoints</td>
+                  <td className="px-4 py-2">Allow the guest to use host-approved local forwarded endpoints such as DB/devserver/VNC views</td>
                 </tr>
               </tbody>
             </table>

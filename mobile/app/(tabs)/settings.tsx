@@ -330,7 +330,7 @@ export default function SettingsScreen() {
   const [relayTestResults, setRelayTestResults] = useState<Record<string, { ok: boolean; ms?: number; error?: string }>>({});
   const [relaySyncEnabled, setRelaySyncEnabled] = useState(false);
 
-  // Cloudflare Tunnels
+  // Advanced HTTPS endpoints kept for compatibility; not shown in the normal UI.
   const [customTunnels, setCustomTunnels] = useState<TunnelServer[]>([]);
   const [showAddTunnel, setShowAddTunnel] = useState(false);
   const [newTunnelUrl, setNewTunnelUrl] = useState("");
@@ -688,7 +688,7 @@ export default function SettingsScreen() {
   };
 
   const handleRemoveTunnel = (tunnelId: string) => {
-    Alert.alert("Remove Tunnel", "Remove this Cloudflare Tunnel?", [
+    Alert.alert("Remove Endpoint", "Remove this advanced HTTPS endpoint?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Remove",
@@ -4466,7 +4466,7 @@ export default function SettingsScreen() {
                 <View style={{ flex: 1, marginRight: 12 }}>
                   <Text style={{ fontSize: 14, color: c.textPrimary, fontWeight: "500" }}>Sync to cloud</Text>
                   <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>
-                    Sync relay and tunnel URLs to your account (accessible from other devices). Passwords and secrets are always stored locally only.
+                    Sync relay URLs to your account so your devices can connect through Yaver Relay. Passwords and secrets are always stored locally only.
                   </Text>
                 </View>
                 <Switch
@@ -4476,145 +4476,6 @@ export default function SettingsScreen() {
                 />
               </View>
             </View>
-          </View>
-
-          {/* Cloudflare Tunnel */}
-          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 8 }]}>
-            <View style={styles.themeRow}>
-              <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Cloudflare Tunnel</Text>
-              <Pressable
-                style={({ pressed }) => [
-                  { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 6, backgroundColor: c.accent },
-                  pressed && { opacity: 0.7 },
-                ]}
-                onPress={() => setShowAddTunnel(true)}
-              >
-                <Text style={{ fontSize: 13, color: "#fff", fontWeight: "600" }}>+ Add</Text>
-              </Pressable>
-            </View>
-
-            {/* Add Tunnel Modal */}
-            <Modal visible={showAddTunnel} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowAddTunnel(false)}>
-              <KeyboardAvoidingView style={{ flex: 1, backgroundColor: c.bg }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, paddingTop: Platform.OS === "ios" ? 56 : 16 }}>
-                  <Pressable onPress={() => setShowAddTunnel(false)}>
-                    <Text style={{ fontSize: 16, color: c.accent }}>Cancel</Text>
-                  </Pressable>
-                  <Text style={{ fontSize: 17, fontWeight: "600", color: c.textPrimary }}>Add Cloudflare Tunnel</Text>
-                  <Pressable onPress={() => { handleAddTunnel(); }}>
-                    <Text style={{ fontSize: 16, color: c.accent, fontWeight: "600" }}>Add</Text>
-                  </Pressable>
-                </View>
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }} keyboardShouldPersistTaps="handled">
-                  <Text style={{ fontSize: 13, color: c.textMuted, marginBottom: 4 }}>
-                    Connect through Cloudflare Tunnel for HTTPS access through firewalls.
-                  </Text>
-                  <TextInput
-                    style={[styles.relayInput, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                    placeholder="https://tunnel.yourdomain.com"
-                    placeholderTextColor={c.textMuted}
-                    value={newTunnelUrl}
-                    onChangeText={setNewTunnelUrl}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                    autoFocus
-                  />
-                  <TextInput
-                    style={[styles.relayInput, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                    placeholder="CF Access Client ID (optional)"
-                    placeholderTextColor={c.textMuted}
-                    value={newTunnelCfClientId}
-                    onChangeText={setNewTunnelCfClientId}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <TextInput
-                    style={[styles.relayInput, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                    placeholder="CF Access Client Secret (optional)"
-                    placeholderTextColor={c.textMuted}
-                    value={newTunnelCfClientSecret}
-                    onChangeText={setNewTunnelCfClientSecret}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    secureTextEntry
-                  />
-                  <TextInput
-                    style={[styles.relayInput, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                    placeholder="Label (optional) e.g. My Tunnel"
-                    placeholderTextColor={c.textMuted}
-                    value={newTunnelLabel}
-                    onChangeText={setNewTunnelLabel}
-                    autoCapitalize="none"
-                  />
-                </ScrollView>
-              </KeyboardAvoidingView>
-            </Modal>
-
-            {customTunnels.length === 0 && !showAddTunnel && (
-              <View style={{ marginTop: 8 }}>
-                <Text style={{ fontSize: 12, color: c.textMuted }}>
-                  No Cloudflare Tunnels configured. Use tunnels to connect through firewalls via HTTPS.
-                </Text>
-              </View>
-            )}
-
-            {customTunnels.map((tunnel) => {
-              const testResult = tunnelTestResults[tunnel.id];
-              return (
-                <View
-                  key={tunnel.id}
-                  style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: c.borderSubtle }}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, color: c.textPrimary, fontWeight: "500" }}>
-                        {tunnel.label || tunnel.url}
-                      </Text>
-                      {tunnel.label && (
-                        <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>{tunnel.url}</Text>
-                      )}
-                      {tunnel.cfAccessClientId && (
-                        <Text style={{ fontSize: 10, color: c.accent, marginTop: 2 }}>CF Access enabled</Text>
-                      )}
-                    </View>
-                    {testResult && (
-                      <View style={{
-                        width: 8, height: 8, borderRadius: 4, marginRight: 8,
-                        backgroundColor: testResult.ok ? c.success : c.error,
-                      }} />
-                    )}
-                  </View>
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-                    <Pressable
-                      style={({ pressed }) => [
-                        { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 6, backgroundColor: c.bgCardElevated },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                      onPress={() => handleTestTunnel(tunnel)}
-                      disabled={testingTunnelId === tunnel.id}
-                    >
-                      {testingTunnelId === tunnel.id ? (
-                        <ActivityIndicator size="small" color={c.accent} />
-                      ) : (
-                        <Text style={{ fontSize: 12, color: c.accent }}>
-                          {testResult ? (testResult.ok ? `OK ${testResult.ms}ms` : "Failed") : "Test"}
-                        </Text>
-                      )}
-                    </Pressable>
-                    <Pressable
-                      style={({ pressed }) => [
-                        { paddingVertical: 4, paddingHorizontal: 10, borderRadius: 6, backgroundColor: c.errorBg },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                      onPress={() => handleRemoveTunnel(tunnel.id)}
-                    >
-                      <Text style={{ fontSize: 12, color: c.error }}>Remove</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              );
-            })}
           </View>
 
           {/* Setup Guide — collapsible */}
@@ -4643,12 +4504,9 @@ export default function SettingsScreen() {
                 <View style={{ paddingBottom: 12 }}>
                   <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18 }}>
                     Yaver tries connections in this order:{"\n\n"}
-                    1. LAN direct (same WiFi, ~5ms){"\n"}
-                    2. Cloudflare Tunnel (any network, HTTPS){"\n"}
-                    3. Relay server (any network, QUIC){"\n\n"}
-                    On the same WiFi, your machine is discovered automatically via UDP beacon. No configuration needed.{"\n\n"}
-                    For remote access (phone on cellular, machine at home), set up a Cloudflare Tunnel or a relay server.{"\n\n"}
-                    Network transitions (WiFi to cellular and back) are seamless — the app reconnects automatically without interruption.
+                    1. Yaver Relay for remote access{"\n"}
+                    2. Direct local network when available{"\n\n"}
+                    Keep relay enabled for the normal experience. Network transitions are handled automatically while the app reconnects.
                   </Text>
                 </View>
               )}
@@ -4680,98 +4538,6 @@ export default function SettingsScreen() {
                 </View>
               )}
 
-              <View style={{ height: 1, backgroundColor: c.borderSubtle }} />
-
-              {/* Cloudflare Tunnel */}
-              <Pressable onPress={() => setGuideSection(guideSection === "cloudflare" ? null : "cloudflare")}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "600", color: c.textPrimary }}>Cloudflare Tunnel</Text>
-                  <Text style={{ color: c.textMuted }}>{guideSection === "cloudflare" ? "\u2303" : "\u2304"}</Text>
-                </View>
-              </Pressable>
-              {guideSection === "cloudflare" && (
-                <View style={{ paddingBottom: 12 }}>
-                  <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18, marginBottom: 8 }}>
-                    Creates a secure HTTPS path from Cloudflare's edge to your machine. Works through any firewall that allows web browsing.
-                  </Text>
-                  <Text style={{ fontSize: 11, color: c.textSecondary, fontFamily: "monospace", lineHeight: 18, backgroundColor: c.bgCardElevated, padding: 10, borderRadius: 6, overflow: "hidden" }}>
-                    {"# Install cloudflared\n"}
-                    {"yaver install cloudflared\n\n"}
-                    {"# Quick tunnel (testing)\n"}
-                    {"cloudflared tunnel --url http://localhost:18080\n\n"}
-                    {"# Named tunnel (permanent)\n"}
-                    {"cloudflared tunnel create yaver\n"}
-                    {"cloudflared tunnel route dns yaver \\\n"}
-                    {"  tunnel.yourdomain.com\n"}
-                    {"cloudflared tunnel run yaver\n\n"}
-                    {"# Register in CLI\n"}
-                    {"yaver tunnel add https://tunnel.yourdomain.com"}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18, marginTop: 8 }}>
-                    Then add the same tunnel URL in the Cloudflare Tunnel section above.
-                  </Text>
-                </View>
-              )}
-
-              <View style={{ height: 1, backgroundColor: c.borderSubtle }} />
-
-              {/* Relay server */}
-              <Pressable onPress={() => setGuideSection(guideSection === "relay" ? null : "relay")}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "600", color: c.textPrimary }}>Self-hosted relay server</Text>
-                  <Text style={{ color: c.textMuted }}>{guideSection === "relay" ? "\u2303" : "\u2304"}</Text>
-                </View>
-              </Pressable>
-              {guideSection === "relay" && (
-                <View style={{ paddingBottom: 12 }}>
-                  <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18, marginBottom: 8 }}>
-                    Deploy a QUIC relay on any VPS. It's a pass-through proxy — stores nothing, can't read your traffic. Password-protected.
-                  </Text>
-                  <Text style={{ fontSize: 11, color: c.textSecondary, fontFamily: "monospace", lineHeight: 18, backgroundColor: c.bgCardElevated, padding: 10, borderRadius: 6, overflow: "hidden" }}>
-                    {"# One-command setup\n"}
-                    {"# (Docker + nginx + Let's Encrypt)\n"}
-                    {"./scripts/setup-relay.sh IP DOMAIN \\\n"}
-                    {"  --password SECRET\n\n"}
-                    {"# Or Docker only\n"}
-                    {"cd relay\n"}
-                    {"RELAY_PASSWORD=secret \\\n"}
-                    {"  docker compose up -d\n\n"}
-                    {"# Register in CLI\n"}
-                    {"yaver relay add \\\n"}
-                    {"  https://relay.yourdomain.com \\\n"}
-                    {"  --password secret"}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18, marginTop: 8 }}>
-                    Then add the relay URL and password in the Relay Servers section above.{"\n\n"}
-                    Requirements: 1 vCPU, 512 MB RAM, any Linux VPS.
-                  </Text>
-                </View>
-              )}
-
-              <View style={{ height: 1, backgroundColor: c.borderSubtle }} />
-
-              {/* Tailscale */}
-              <Pressable onPress={() => setGuideSection(guideSection === "tailscale" ? null : "tailscale")}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "600", color: c.textPrimary }}>Tailscale</Text>
-                  <Text style={{ color: c.textMuted }}>{guideSection === "tailscale" ? "\u2303" : "\u2304"}</Text>
-                </View>
-              </Pressable>
-              {guideSection === "tailscale" && (
-                <View style={{ paddingBottom: 12 }}>
-                  <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18 }}>
-                    If both your phone and machine are on a Tailscale network, no tunnel or relay is needed.{"\n\n"}
-                    Install Tailscale on both devices, then run:{"\n"}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: c.textSecondary, fontFamily: "monospace", lineHeight: 18, backgroundColor: c.bgCardElevated, padding: 10, borderRadius: 6, overflow: "hidden" }}>
-                    {"yaver serve --no-relay"}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: c.textMuted, lineHeight: 18, marginTop: 8 }}>
-                    The app connects directly via your Tailscale IP. WireGuard end-to-end encryption, ~5ms latency. Tailscale's DERP servers handle hard NAT automatically.{"\n\n"}
-                    Free for personal use (up to 100 devices).
-                  </Text>
-                </View>
-              )}
             </View>
           )}
 
@@ -5028,8 +4794,8 @@ export default function SettingsScreen() {
               </Text>
 
               {/* Full opencode.json editor — opens a sheet that lets the
-                  user pick agents, edit per-provider baseURLs (e.g.
-                  Tailscale Ollama), set per-agent model overrides.
+                  user pick agents, edit per-provider baseURLs, set
+                  per-agent model overrides.
                   Drives /runner/opencode/config on the connected device,
                   same code path the web ToolsView hits. */}
               <Pressable

@@ -41,11 +41,11 @@ type Config struct {
 	// `yaver ssh add <name> <user@host[:port]> [--identity <key>]`.
 	// Passwords are NOT stored here in plaintext — use an SSH key /
 	// ssh-agent (identity_file), the secure path magara already uses.
-	SSHTargets        []SSHTarget         `json:"ssh_targets,omitempty"`
-	WebBaseURL        string              `json:"web_base_url,omitempty"`
-	TLSCert           string              `json:"tls_cert,omitempty"`
-	TLSKey            string              `json:"tls_key,omitempty"`
-	AutoStart         bool                `json:"auto_start,omitempty"`
+	SSHTargets []SSHTarget `json:"ssh_targets,omitempty"`
+	WebBaseURL string      `json:"web_base_url,omitempty"`
+	TLSCert    string      `json:"tls_cert,omitempty"`
+	TLSKey     string      `json:"tls_key,omitempty"`
+	AutoStart  bool        `json:"auto_start,omitempty"`
 	// AutoUpdate is tri-state: nil ("operator never said") defaults to
 	// ON — see shouldAutoUpdate in auto_update_policy.go. Read it
 	// through that helper, never directly.
@@ -117,8 +117,10 @@ type Config struct {
 	// result. Targets absent from the map fall back to DeployWebhookOn
 	// (or "all" when that's also empty). Values same as
 	// DeployWebhookOn: "all", "success", "failure".
-	DeployWebhookOnByTarget map[string]string `json:"deploy_webhook_on_by_target,omitempty"`
-	RateLimit               *RateLimitConfig  `json:"rate_limit,omitempty"`
+	DeployWebhookOnByTarget map[string]string         `json:"deploy_webhook_on_by_target,omitempty"`
+	RateLimit               *RateLimitConfig          `json:"rate_limit,omitempty"`
+	RelaySourceWorker       *RelaySourceWorkerConfig  `json:"relay_source_worker,omitempty"`
+	FeedbackWorkWorker      *FeedbackWorkWorkerConfig `json:"feedback_work_worker,omitempty"`
 
 	// Machine-level monitors (disk-health, peer heartbeat)
 	// run on every serve by default. Each can be individually

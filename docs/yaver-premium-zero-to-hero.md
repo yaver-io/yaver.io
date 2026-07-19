@@ -252,21 +252,19 @@ existing Mac-farm / `deploy-testflight.sh` / `upload-playstore.py` /
 contribution is tapping "Publish" and answering a few plain-language
 prompts (app name, icon, one-line description).
 
-## 8. Wallet & top-up — Apple-safe by design
+## 8. Billing — Apple-safe by design
 
-**Decision (locked by user): sell infrastructure, top up on the web.**
+**Decision (current): sell flat infrastructure subscriptions on the web.**
 
 - The app is positioned as a **developer / infrastructure tool**, not a
   consumer content app. Money buys **cloud infrastructure** (compute,
   hosting, build minutes) — a real metered service.
-- **Top-up happens on the web**, outside the app (email link / web
-  dashboard → LemonSqueezy credit packs, the existing path). The app
-  only ever *spends* the balance.
-- This is the "reader-app" shape: acquisition of credit occurs outside
-  IAP; the app consumes a service. Avoids the 30% IAP cut and the
-  in-app-purchase mandate.
-- No IAP, consistent with `project_business_model` and
-  `project_yaver_cloud_credits` (LemonSqueezy, no IAP, web up/down).
+- Subscription purchase, cancellation, and payment updates happen on the web,
+  outside the app. Mobile may show entitlement/status and route users to web,
+  but it must not call checkout, portal, cancel, or plan-change APIs.
+- This avoids Apple/Google IAP for remote infrastructure while keeping the app
+  free of purchase flows.
+- Public credit-pack checkout and prepaid workspace provisioning are retired.
 
 > Risk flag: Apple's line between "infra tool" and "digital content
 > consumed in-app" is fuzzy and enforced unevenly. Keep the in-app copy

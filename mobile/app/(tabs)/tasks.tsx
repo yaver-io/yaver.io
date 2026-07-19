@@ -53,6 +53,7 @@ import * as ExpoClipboard from "expo-clipboard";
 import { getLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
 import {
   AgentStatus,
+  CloudWorkspaceRequiredError,
   ConnectionMode,
   ConnectionState,
   ImageAttachment,
@@ -65,6 +66,23 @@ import {
 } from "../../src/lib/quic";
 import { connectionManager } from "../../src/lib/connectionManager";
 import { markTaskDeleted, getDeletedTaskIds } from "../../src/lib/storage";
+import {
+  getTaskPlacementStatus,
+  listTaskDispatchIntents,
+  rebindTaskPlacement,
+  updateTaskDispatchIntent,
+} from "../../src/lib/taskPlacement";
+import {
+  listPendingCloudDispatches,
+  mergePendingCloudDispatchIntents,
+  mergePendingCloudPlacementStatus,
+  pendingCloudDispatchNeedsUserAction,
+  pendingCloudTaskPlaceholder,
+  removePendingCloudDispatch,
+  saveCloudWorkspaceRequiredDispatch,
+  savePendingCloudDispatch,
+  updatePendingCloudDispatch,
+} from "../../src/lib/pendingCloudDispatch";
 import { useAuth } from "../../src/context/AuthContext";
 import { getUserSettings, getLocalSecret, LOCAL_KEYS, loadLocalSpeechConfig, type SpeechProvider, type TtsProvider } from "../../src/lib/auth";
 import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS, speakText as speakConfiguredText } from "../../src/lib/speech";
@@ -1665,6 +1683,7 @@ export default function TasksScreen() {
   // follow-up composer opens the same picker WITHOUT this flag, so its
   // Done just closes. Holds the task to re-run.
   const retryAfterPickRef = useRef<Task | null>(null);
+  const pendingCloudDispatchRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     userPickedRunnerRef.current = false;
     userPickedModelRef.current = false;
@@ -1709,6 +1728,33 @@ export default function TasksScreen() {
   const [speechApiKey, setSpeechApiKey] = useState<string | undefined>();
   const [sttModel, setSttModel] = useState<string | undefined>();
   const [ttsModel, setTtsModel] = useState<string | undefined>();
+
+  const saveDeferredCloudWorkspaceTask = useCallback(async (
+    err: CloudWorkspaceRequiredError,
+    args: {
+      title: string;
+      description: string;
+      model?: string;
+      runner?: string;
+      customCommand?: string;
+      speechContext?: any;
+      images?: ImageAttachment[];
+      workDir?: string;
+      mode?: string;
+      video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" };
+      codeMode?: boolean;
+      allowLocalFallback?: boolean;
+    },
+  ): Promise<Task> => {
+    const row = await saveCloudWorkspaceRequiredDispatch({
+      err,
+      params: args,
+      sourceSurface: "mobile",
+      requestedRunner: args.runner,
+      projectSlug: args.workDir?.split(/[\\/]/).filter(Boolean).pop()?.slice(0, 80),
+    });
+    return pendingCloudTaskPlaceholder(row);
+  }, []);
   const [ttsVoice, setTtsVoice] = useState<string | undefined>();
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsProvider, setTtsProvider] = useState<TtsProvider>("device");
@@ -2114,14 +2160,132 @@ export default function TasksScreen() {
         const deviceId = t.deviceId || focusedDeviceId || undefined;
         return { ...t, output, deviceId, deviceName };
       });
-      setTasks(capped);
+      const pendingCloudTasks = (await listPendingCloudDispatches()).map(pendingCloudTaskPlaceholder);
+      const nextTasks = [
+        ...pendingCloudTasks,
+        ...capped.filter((task) => !pendingCloudTasks.some((pending) => pending.id === task.id)),
+      ];
+      setTasks(nextTasks);
       // Keep selected task in sync with latest data
       setSelectedTask((prev) => {
         if (!prev) return null;
-        return capped.find((t) => t.id === prev.id) || prev;
+        return nextTasks.find((t) => t.id === prev.id) || prev;
       });
     } catch {}
   }, [activeDevice?.id, activeDevice?.name, devices]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    const run = async () => {
+      const pending = await listPendingCloudDispatches();
+      if (pending.length === 0) return;
+      let rows = pending;
+      try {
+        rows = await mergePendingCloudDispatchIntents(await listTaskDispatchIntents({ limit: 80 }));
+      } catch {
+        rows = pending;
+      }
+      const placeholders = rows.map(pendingCloudTaskPlaceholder);
+      setTasks((prev) => [
+        ...placeholders,
+        ...prev.filter((task) => !placeholders.some((pendingTask) => pendingTask.id === task.id)),
+      ]);
+      for (const row of rows) {
+        if (cancelled || pendingCloudDispatchRef.current.has(row.localTaskId)) continue;
+        let currentRow = row;
+        if (currentRow.placementId) {
+          try {
+            currentRow = mergePendingCloudPlacementStatus(
+              currentRow,
+              await getTaskPlacementStatus({ placementId: currentRow.placementId }),
+            );
+            await updatePendingCloudDispatch(currentRow.localTaskId, currentRow);
+            setTasks((prev) => prev.map((task) =>
+              task.id === currentRow.localTaskId ? pendingCloudTaskPlaceholder(currentRow) : task,
+            ));
+          } catch {
+            /* placement status is advisory; dispatch intents remain authoritative */
+          }
+        }
+        if (pendingCloudDispatchNeedsUserAction(currentRow)) continue;
+        const targetDeviceId = currentRow.targetDeviceId || undefined;
+        if (!targetDeviceId || !connectedDeviceIds.includes(targetDeviceId)) continue;
+        const targetClient = connectionManager.clientFor(targetDeviceId);
+        if (!targetClient.isConnected) continue;
+        pendingCloudDispatchRef.current.add(currentRow.localTaskId);
+        try {
+          await updateTaskDispatchIntent({
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "dispatching",
+            targetDeviceId,
+            clearBlockedAction: currentRow.clearedBlockedAction === true,
+          }).catch(() => undefined);
+          const task = await targetClient.sendTask(
+            currentRow.params.title,
+            currentRow.params.description,
+            currentRow.params.model,
+            currentRow.params.runner,
+            currentRow.params.customCommand,
+            currentRow.params.speechContext,
+            currentRow.params.images,
+            currentRow.params.workDir,
+            currentRow.params.mode,
+            currentRow.params.video,
+            currentRow.params.codeMode,
+            true,
+          );
+          if (currentRow.placementId) {
+            await rebindTaskPlacement(currentRow.placementId, task.id, "running").catch(() => undefined);
+          }
+          await updateTaskDispatchIntent({
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "dispatched",
+            taskId: task.id,
+            targetDeviceId,
+          }).catch(() => undefined);
+          await removePendingCloudDispatch(currentRow.localTaskId);
+          const nextTask = {
+            ...task,
+            deviceId: targetDeviceId,
+            deviceName: devices.find((device) => device.id === targetDeviceId)?.name || task.deviceName,
+            placementId: currentRow.placementId,
+            placementLane: currentRow.placementLane,
+            placementReason: currentRow.placementReason,
+            placementCreditLabel: currentRow.placementCreditLabel,
+          };
+          setTasks((prev) => [
+            nextTask,
+            ...prev.filter((item) => item.id !== currentRow.localTaskId && item.id !== task.id),
+          ]);
+          setSelectedTask((current) => current?.id === currentRow.localTaskId ? nextTask : current);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          await updateTaskDispatchIntent({
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "failed",
+            lastError: message,
+            bumpAttempt: true,
+          }).catch(() => undefined);
+          await updatePendingCloudDispatch(currentRow.localTaskId, {
+            attempts: currentRow.attempts + 1,
+            lastError: message,
+          });
+        } finally {
+          pendingCloudDispatchRef.current.delete(currentRow.localTaskId);
+        }
+      }
+    };
+    void run();
+    const id = setInterval(() => void run(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [connectedDeviceIds, devices, token]);
 
   const hasRunningTask = tasks.some(t => t.status === "running" || t.status === "queued");
   const effectiveFilter = statusFilter;
@@ -2883,6 +3047,7 @@ export default function TasksScreen() {
     }
     Keyboard.dismiss();
     setIsSubmitting(true);
+    let pendingCloudTaskParams: Parameters<typeof saveDeferredCloudWorkspaceTask>[1] | null = null;
     try {
       const speechCtx = (speechProvider || verbosity < 10) ? {
         inputFromSpeech,
@@ -2967,17 +3132,33 @@ export default function TasksScreen() {
           );
         }
       }
+      const taskParams = {
+        title,
+        description: "",
+        model: effectiveRunner === "custom" ? undefined : effectiveModel,
+        runner: effectiveRunner === "custom" ? "custom" : effectiveRunner,
+        customCommand: effectiveRunner === "custom" ? customCommand.trim() || undefined : undefined,
+        speechContext: speechCtx,
+        images: attachedImages.length > 0 ? attachedImages : undefined,
+        workDir: projectDir || undefined,
+        mode: effectiveRunner === "opencode" && effectiveOpencodeMode ? effectiveOpencodeMode : undefined,
+        video: videoSummaryEnabled ? { enabled: true } : undefined,
+        codeMode: true,
+        allowLocalFallback: false,
+      };
+      pendingCloudTaskParams = taskParams;
       const rawTask = await sendClient.sendTask(
-        title, "",
-        effectiveRunner === "custom" ? undefined : effectiveModel,
-        effectiveRunner === "custom" ? "custom" : effectiveRunner,
-        effectiveRunner === "custom" ? customCommand.trim() || undefined : undefined,
-        speechCtx,
-        attachedImages.length > 0 ? attachedImages : undefined,
-        projectDir || undefined,
-        effectiveRunner === "opencode" && effectiveOpencodeMode ? effectiveOpencodeMode : undefined,
-        videoSummaryEnabled ? { enabled: true } : undefined,
-        true,
+        taskParams.title,
+        taskParams.description,
+        taskParams.model,
+        taskParams.runner,
+        taskParams.customCommand,
+        taskParams.speechContext,
+        taskParams.images,
+        taskParams.workDir,
+        taskParams.mode,
+        taskParams.video,
+        taskParams.codeMode,
       );
       // Stamp the task with the device + model we KNOW we sent it to
       // (sendTask response doesn't always echo deviceName; with the
@@ -3006,7 +3187,20 @@ export default function TasksScreen() {
       setShowNewTask(false);
       fetchTasks();
     } catch (e) {
-      if (isAuthError(e)) {
+      if (e instanceof CloudWorkspaceRequiredError && pendingCloudTaskParams) {
+        const pendingTask = await saveDeferredCloudWorkspaceTask(e, pendingCloudTaskParams);
+        setNewTaskText("");
+        setAttachedImages([]);
+        setInputFromSpeech(false);
+        setPendingTarget(null);
+        setTasks((prev) => [pendingTask, ...prev.filter((task) => task.id !== pendingTask.id)]);
+        pendingOpenTaskRef.current = pendingTask;
+        setShowNewTask(false);
+        Alert.alert(
+          "Cloud Workspace is preparing",
+          "Yaver kept this prompt on your phone and will dispatch it when the assigned workspace is ready.",
+        );
+      } else if (isAuthError(e)) {
         Alert.alert(
           "Session expired",
           "Your sign-in is no longer valid, so the task could not be sent. Sign in again to continue — your work is safe.",

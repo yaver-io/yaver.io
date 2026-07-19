@@ -263,8 +263,8 @@ export default function RelayServerView({ token }: RelayServerViewProps) {
       <div className="mb-6 rounded-xl border border-surface-800 bg-surface-900/50 px-5 py-4">
         <p className="text-xs leading-relaxed text-surface-500">
           A relay server helps connect your devices when they are on different networks (e.g., phone
-          on cellular, dev machine at home). If you use Tailscale or are always on the same WiFi, you
-          don&apos;t need one.
+          on cellular, dev machine at home). If you are always on the same WiFi, direct LAN can work;
+          for normal remote use, Yaver Relay is the supported path.
         </p>
       </div>
     </>

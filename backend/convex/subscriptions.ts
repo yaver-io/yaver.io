@@ -3,6 +3,11 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 import { internal } from "./_generated/api";
 import { isOwnerEmail, isOwnerUserId } from "./ownerAllowlist";
 
+export function isCloudWorkspaceSubscriptionPlan(plan: unknown): boolean {
+  const value = String(plan || "").trim();
+  return value === "cloud-workspace" || value === "cloud-agent" || value.startsWith("yaver-cloud");
+}
+
 // The subscription that actually governs a user's billing right now.
 // A user accumulates many subscription rows over time (renewals,
 // decommissioned boxes, e2e test subs). The old `.first()` returned
@@ -96,10 +101,7 @@ export const listActiveManaged = internalQuery({
       .withIndex("by_status", (q) => q.eq("status", "active"))
       .collect();
     return rows
-      .filter((s) =>
-        typeof s.plan === "string" &&
-        (s.plan.startsWith("yaver-cloud") || s.plan === "cloud-agent" || s.plan === "cloud-workspace")
-      )
+      .filter((s) => isCloudWorkspaceSubscriptionPlan(s.plan))
       .map((s) => ({
         subscriptionId: s._id,
         userId: s.userId,
@@ -136,6 +138,25 @@ export const canProvisionManaged = internalQuery({
       }
     }
     return false;
+  },
+});
+
+// Yaver-held artifact storage is bundled with Cloud Workspace, not the free
+// tier or Relay Pro. External artifact links remain free because they do not
+// store bytes on Yaver. Owner allowlist is the same env-configured preview
+// bypass used by managed provisioning.
+export const canUseManagedArtifactStorage = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    if (user && (isOwnerEmail((user as any).email) || isOwnerUserId(String(user._id)))) {
+      return true;
+    }
+    const rows = await ctx.db
+      .query("subscriptions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    return rows.some((sub) => sub.status === "active" && isCloudWorkspaceSubscriptionPlan(sub.plan));
   },
 });
 

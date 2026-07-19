@@ -18,6 +18,25 @@ type runnerAuthSetRequest struct {
 	Notes           string `json:"notes"`
 }
 
+func runnerAuthScopedCaller(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")) != "" ||
+		strings.TrimSpace(r.Header.Get("X-Yaver-GuestScope")) != ""
+}
+
+func rejectScopedSubscriptionRunnerAuth(w http.ResponseWriter, r *http.Request, runner string) bool {
+	switch normalizeRunnerAuthName(runner) {
+	case "claude", "codex":
+		if runnerAuthScopedCaller(r) {
+			jsonError(w, http.StatusForbidden, "Claude/Codex subscription OAuth must be configured on an owner-authenticated Yaver machine, not through relay/SDK/guest scope")
+			return true
+		}
+	}
+	return false
+}
+
 func (s *HTTPServer) handleRunnerAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "use GET")
@@ -186,6 +205,9 @@ func (s *HTTPServer) handleRunnerAuthSetup(w http.ResponseWriter, r *http.Reques
 	var req runnerAuthSetupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if rejectScopedSubscriptionRunnerAuth(w, r, req.Runner) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)

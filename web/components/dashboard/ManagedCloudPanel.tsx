@@ -1,18 +1,13 @@
 "use client";
 
-// ManagedCloudPanel — owner/dev surface for ADDING managed-cloud
-// boxes (docs/managed-cloud-host-lifecycle.md): buy one via
-// LemonSqueezy, or ADOPT an existing cloud box as a managed machine
+// ManagedCloudPanel — web-only surface for Cloud Workspace resources:
+// subscribe via LemonSqueezy, or owner/dev ADOPT an existing cloud machine
 // (allowlist-gated server-side). Every managed row carries the
-// `origin` provenance tag ("managed" = bought from / adopted by
-// Yaver; plain BYO devices in the list above are "self-hosted"), and
-// each device card now shows that same Self-hosted / Yaver Cloud
-// label inline.
+// `origin` provenance tag ("managed" = bought from/adopted by Yaver;
+// plain BYO devices in the list above are "self-hosted").
 //
-// Removal is intentionally NOT here — the per-device "♻ Recycle box"
-// action on each card owns teardown (snapshot + delete, dry-run
-// first). Keeping decommission in one place avoids two divergent
-// destroy paths.
+// Removal is intentionally per-workspace. Pause preserves state and deletes
+// active compute; Delete decommissions the managed resource.
 //
 // Non-owners just see an empty list / 403s — the gate is the server
 // (isCloudPreviewUser), never the client.
@@ -21,6 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient } from "@/lib/agent-client";
 import WakeProgress from "@/components/dashboard/WakeProgress";
+import { listRecentWakeRuns, type CloudWakeRun } from "@/lib/task-placement";
 
 interface ManagedMachine {
   id: string;            // /subscription returns the machine id as `id` (NOT _id)
@@ -48,18 +44,14 @@ interface ManagedMachine {
   runnersAuthorized?: boolean;
 }
 
-// HN-LAUNCH-HIDE-PAID: temporarily hide the managed-cloud purchase surface
-// (plan cards + prepaid wallet + provision/checkout/add-credit CTAs) so the
-// launch reads as free + open-source + self-hosted. The panel's machine list
-// and per-box control actions (git connect, dev-loop, deploy, recycle) STAY —
-// they let a user control boxes they already own. Flip to false to restore the
-// buy CTAs. (grep this token to find every gated surface across web + mobile.)
-const HIDE_PAID_UI = true;
+// Web-only checkout is allowed here. Mobile surfaces may control existing
+// machines, but must not initiate purchases.
+const HIDE_PAID_UI = false;
 
-type CloudPlanId = "cloud-agent" | "cloud-workspace";
+type PaidProductId = "relay-pro" | "cloud-workspace";
 
 const CLOUD_PLANS: Array<{
-  id: CloudPlanId;
+  id: PaidProductId;
   name: string;
   price: string;
   label: string;
@@ -67,22 +59,59 @@ const CLOUD_PLANS: Array<{
   bullets: string[];
 }> = [
   {
-    id: "cloud-agent",
-    name: "Cloud Agent",
-    price: "$19",
-    label: "starter credit",
-    detail: "Included managed model for normal users who just want the agent to work.",
-    bullets: ["Saved workspace", "Included coding model", "Auto-stop when idle"],
+    id: "relay-pro",
+    name: "Relay Pro",
+    price: "$9",
+    label: "/mo",
+    detail: "Private managed relay for users who keep coding on their own machine.",
+    bullets: ["Private relay", "Higher shared limits", "Custom managed endpoint"],
   },
   {
     id: "cloud-workspace",
     name: "Cloud Workspace",
-    price: "$9",
-    label: "starter credit",
-    detail: "Bring Claude Code, Codex, OpenRouter, or another account you already pay for.",
-    bullets: ["BYO AI account", "Private Yaver relay", "Auto-stop when idle"],
+    price: "$29",
+    label: "/mo",
+    detail: "Saved cloud machine for full-stack projects, with Relay Pro included.",
+    bullets: ["Saved workspace", "Relay Pro included", "Auto-sleep when idle"],
   },
 ];
+
+function wakeRunLabel(run: CloudWakeRun): string {
+  const kind =
+    run.kind === "provision"
+      ? "Provisioning"
+      : run.kind === "park"
+        ? "Parking"
+        : "Waking";
+  const phase = run.phase ? run.phase.replace(/-/g, " ") : null;
+  return phase ? `${kind} · ${phase}` : kind;
+}
+
+function wakeRunTone(status: CloudWakeRun["status"]): string {
+  switch (status) {
+    case "succeeded":
+      return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
+    case "failed":
+    case "cancelled":
+      return "bg-rose-500/15 text-rose-700 dark:text-rose-300";
+    case "retrying":
+    case "blocked":
+      return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
+    default:
+      return "bg-sky-500/15 text-sky-700 dark:text-sky-300";
+  }
+}
+
+function timeAgo(ts?: number | null): string {
+  if (!ts) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
 
 // Per-machine actions (D3 git connect/push, D4 dev-loop, D5 deploy).
 // Every action targets the box's EXPLICIT agent deviceId — never a
@@ -103,11 +132,11 @@ async function ensureBoxConnected(
   hostname?: string,
   token?: string | null,
 ): Promise<void> {
-  if (!deviceId) throw new Error("box agent not registered yet");
+  if (!deviceId) throw new Error("workspace agent not registered yet");
   if (!token) throw new Error("not signed in");
   if (agentClient.isConnected && agentClient.connectedDeviceId === deviceId) return;
   const host = serverIp || hostname;
-  if (!host) throw new Error("box has no address yet (still provisioning)");
+  if (!host) throw new Error("workspace has no address yet (still provisioning)");
   const tunnelUrls = [
     hostname ? `https://${hostname}` : "",
     serverIp ? `http://${serverIp}:18080` : "",
@@ -133,7 +162,7 @@ function ManagedMachineActions({
   if (!deviceId) {
     return (
       <p className="mt-1 text-[10px] text-slate-400">
-        Actions appear once the box has registered its agent (deviceId pending).
+        Actions appear once the workspace has registered its agent (deviceId pending).
       </p>
     );
   }
@@ -240,7 +269,7 @@ function RunnerAuthCTA({
   if (!deviceId) {
     return (
       <span className="text-[11px] text-slate-400">
-        Authorize unlocks once the box has registered its agent.
+        Authorize unlocks once the workspace has registered its agent.
       </span>
     );
   }
@@ -272,7 +301,7 @@ function RunnerAuthCTA({
   const submitCode = async () => {
     if (!sess || !authCode.trim()) return;
     setBusy(true);
-    setMsg("verifying on the remote box...");
+    setMsg("verifying on the remote workspace...");
     try {
       await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps("runner_auth", {
@@ -401,7 +430,7 @@ function RunnerAuthCTA({
 // Slim one-line summary for the Devices index. The full buy/manage
 // flow now lives on its own Cloud page (so it doesn't pollute the
 // Devices list and has room to grow into the paid surface) — this just
-// shows machine count + balance and links there.
+// shows machine count + allowance and links there.
 export function ManagedCloudSummary({
   token,
   onOpen,
@@ -412,7 +441,7 @@ export function ManagedCloudSummary({
   const [access, setAccess] = useState<boolean | null>(null);
   const [count, setCount] = useState(0);
   const [active, setActive] = useState(0);
-  const [balanceCents, setBalanceCents] = useState<number | null>(null);
+  const [allowanceLabel, setAllowanceLabel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -438,7 +467,13 @@ export function ManagedCloudSummary({
         });
         if (b.ok && alive) {
           const j = await b.json().catch(() => ({}));
-          setBalanceCents(typeof j?.balanceCents === "number" ? j.balanceCents : null);
+          const remaining = j?.allowance?.remainingStandardCredits;
+          const included = j?.allowance?.includedStandardCredits;
+          setAllowanceLabel(
+            typeof remaining === "number" && typeof included === "number"
+              ? `${remaining.toFixed(1)} standard credits left of ${included}`
+              : null,
+          );
         }
       } catch {
         /* non-fatal */
@@ -450,7 +485,6 @@ export function ManagedCloudSummary({
   }, [token]);
 
   if (!token || access !== true) return null;
-  const money = typeof balanceCents === "number" ? `$${(balanceCents / 100).toFixed(2)}` : null;
 
   return (
     <button
@@ -458,18 +492,18 @@ export function ManagedCloudSummary({
       className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/60 px-4 py-3 text-left text-sm font-semibold text-slate-700 transition-colors hover:border-sky-500/50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.6)] dark:text-surface-200"
     >
       <span className="flex flex-wrap items-center gap-2">
-        <span>☁ Yaver Cloud</span>
+        <span>Cloud Workspace</span>
         {count > 0 ? (
           <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold text-sky-600 dark:text-sky-300">
-            {count} machine{count === 1 ? "" : "s"}
+            {count} workspace{count === 1 ? "" : "s"}
             {active > 0 ? ` · ${active} active` : ""}
           </span>
         ) : (
-          <span className="text-xs font-normal text-slate-400">rent a managed box</span>
+          <span className="text-xs font-normal text-slate-400">subscribe for a saved workspace</span>
         )}
       </span>
       <span className="flex items-center gap-2 text-xs font-normal text-slate-500 dark:text-surface-400">
-        {money ? <span>{money}</span> : null}
+        {allowanceLabel ? <span>{allowanceLabel}</span> : null}
         <span className="opacity-60">→</span>
       </span>
     </button>
@@ -495,21 +529,18 @@ export function ManagedCloudPanel({
   // access = owner allowlist OR the YAVER_CLOUD_PUBLIC launch flag. The
   // panel renders when EITHER is true; still cosmetic (routes 403 too).
   const [access, setAccess] = useState<boolean | null>(null);
-  const [balanceCents, setBalanceCents] = useState<number | null>(null);
-  const [hourlyCents, setHourlyCents] = useState<number | null>(null);
-  const [lowBalance, setLowBalance] = useState(false);
-  const [packs, setPacks] = useState<Array<{ id: string; cents: number; label: string }>>([]);
+  const [allowance, setAllowance] = useState<{
+    includedStandardCredits?: number;
+    usedStandardCredits?: number;
+    remainingStandardCredits?: number;
+  } | null>(null);
+  const [wakeRuns, setWakeRuns] = useState<CloudWakeRun[]>([]);
   const [adoptId, setAdoptId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<CloudPlanId>("cloud-agent");
-  // CPU is the only shipped tier. GPU / KVM-emulator / iOS-Mac aren't
-  // implemented, so there's no machine-type picker on the index — the
-  // full catalog (when those land) lives on a dedicated checkout page,
-  // not inline here. Kept as a const so buy()/provision still send it.
-  const machineType = "cpu";
+  const [selectedPlan, setSelectedPlan] = useState<PaidProductId>("cloud-workspace");
   const [region, setRegion] = useState("eu");
   const [showAdopt, setShowAdopt] = useState(false);
 
@@ -518,10 +549,10 @@ export function ManagedCloudPanel({
     setError(null);
     setNote(null);
     try {
-      const res = await fetch(`${CONVEX_URL}/billing/yaver-cloud/checkout`, {
+      const res = await fetch(`${CONVEX_URL}/billing/checkout`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineType, region, planId: selectedPlan }),
+        body: JSON.stringify({ productId: selectedPlan, region }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.url) {
@@ -529,7 +560,7 @@ export function ManagedCloudPanel({
         // rather than a bare "checkout failed: 403". Other errors get a
         // clean fallback (don't leak LemonSqueezy/env internals).
         if (res.status === 403) {
-          setError("Managed cloud is in private preview.");
+          setError("Please sign in on the web to subscribe.");
         } else {
           setError(
             typeof data?.error === "string" && data.error.length <= 120 && !/[<{]/.test(data.error)
@@ -564,22 +595,19 @@ export function ManagedCloudPanel({
       setAccess(data?.cloudAccess === true || data?.cloudPreviewOwner === true);
       setMachines(Array.isArray(data?.machines) ? data.machines : []);
       setLoadError(false);
-      // Wallet + catalog (best-effort; null balance just hides the row).
+      void listRecentWakeRuns(token, { limit: 6 })
+        .then(setWakeRuns)
+        .catch(() => {
+          /* non-fatal */
+        });
+      // Allowance is best-effort; if it fails, the subscription/resource rows
+      // still render.
       void (async () => {
         try {
-          const [bRes, pRes] = await Promise.all([
-            fetch(`${CONVEX_URL}/billing/yaver-cloud/balance`, { headers: { Authorization: `Bearer ${token}` } }),
-            fetch(`${CONVEX_URL}/billing/credits/packs`, { headers: { Authorization: `Bearer ${token}` } }),
-          ]);
+          const bRes = await fetch(`${CONVEX_URL}/billing/yaver-cloud/balance`, { headers: { Authorization: `Bearer ${token}` } });
           if (bRes.ok) {
             const b = await bRes.json().catch(() => ({}));
-            setBalanceCents(typeof b?.balanceCents === "number" ? b.balanceCents : null);
-            setHourlyCents(typeof b?.estimatedHourlyCents === "number" ? b.estimatedHourlyCents : null);
-            setLowBalance(b?.lowBalance === true);
-          }
-          if (pRes.ok) {
-            const p = await pRes.json().catch(() => ({}));
-            if (Array.isArray(p?.packs)) setPacks(p.packs);
+            setAllowance(b?.allowance ?? null);
           }
         } catch {
           /* non-fatal */
@@ -589,37 +617,6 @@ export function ManagedCloudPanel({
       setLoadError(true);
     }
   }, [token]);
-
-  // Add credit (OpenAI-style): create a one-time pack checkout and send
-  // the browser to LemonSqueezy. Webhook credits the wallet on payment.
-  async function addCredit(packId: string) {
-    setBusy(true);
-    setError(null);
-    setNote(null);
-    try {
-      const res = await fetch(`${CONVEX_URL}/billing/credits/checkout`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ packId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.url) {
-        setError(
-          res.status === 503
-            ? "Credit packs aren't configured yet (owner: set the LemonSqueezy pack variant ids)."
-            : typeof data?.error === "string" && data.error.length <= 140 && !/[<{]/.test(data.error)
-              ? data.error
-              : "Couldn't start top-up. Please try again.",
-        );
-        return;
-      }
-      window.location.href = data.url; // → LemonSqueezy
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   // Provision is async (LemonSqueezy webhook → provider → cloud-init →
   // agent heartbeat). Poll while the panel is open so a freshly
@@ -670,8 +667,9 @@ export function ManagedCloudPanel({
       m.status === "resuming",
   ).length;
   const active = machines.filter((m) => m.status === "active").length;
-  // Paused = snapshotted + server deleted to cut cost; resumable.
-  // suspended = auto-paused (prepaid floor breach) — same UX.
+  // Paused = compute deleted to cut cost; resumable from volume/base image or
+  // legacy snapshot.
+  // suspended = auto-paused after allowance/cost guardrail breach — same UX.
   const paused = machines.filter(
     (m) => m.status === "paused" || m.status === "suspended",
   ).length;
@@ -705,15 +703,12 @@ export function ManagedCloudPanel({
   }
 
   if (!token) return null;
-  // Private preview / launch-gated: render NOTHING for non-access users
-  // (and while access is still unknown, so the panel never flashes).
-  // Server independently 403s every action regardless.
-  if (access !== true) return null;
-
-  const money = (cents: number | null) =>
-    typeof cents === "number" ? `$${(cents / 100).toFixed(2)}` : "—";
-
   const cloudCount = liveMachines.length;
+  const allowanceText =
+    typeof allowance?.remainingStandardCredits === "number" &&
+    typeof allowance?.includedStandardCredits === "number"
+      ? `${allowance.remainingStandardCredits.toFixed(1)} standard credits left of ${allowance.includedStandardCredits}`
+      : null;
 
   return (
     <div className="mt-4 rounded-xl border border-slate-300 bg-white/60 p-4 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.6)]">
@@ -722,7 +717,7 @@ export function ManagedCloudPanel({
         className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-slate-700 dark:text-surface-200"
       >
         <span className="flex flex-wrap items-center gap-2">
-          <span>☁ Yaver Cloud</span>
+          <span>Cloud Workspace</span>
           {cloudCount > 0 ? (
             <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold text-sky-600 dark:text-sky-300">
               {cloudCount} machine{cloudCount === 1 ? "" : "s"}
@@ -731,11 +726,11 @@ export function ManagedCloudPanel({
               {provisioning > 0 ? ` · ${provisioning} starting` : ""}
             </span>
           ) : (
-            <span className="text-xs font-normal text-slate-400">rent a managed box</span>
+            <span className="text-xs font-normal text-slate-400">subscribe for a saved workspace</span>
           )}
         </span>
         <span className="flex items-center gap-2 text-xs font-normal text-slate-500 dark:text-surface-400">
-          <span>{money(balanceCents)}</span>
+          {allowanceText ? <span>{allowanceText}</span> : null}
           <span className="opacity-60">{open ? "▾" : "▸"}</span>
         </span>
       </button>
@@ -743,12 +738,12 @@ export function ManagedCloudPanel({
       {open ? (
         <div className="mt-3 space-y-3">
           <p className="text-xs text-slate-500 dark:text-surface-400">
-            Optional managed infrastructure bought on the web. The mobile app
-            can control an existing workspace, but checkout stays out of the
-            App Store / Play Store app.
+            Web-only subscription for a saved Cloud Workspace. Mobile can
+            control an existing workspace, but checkout stays out of the App
+            Store / Play Store app.
           </p>
 
-          {/* HN-LAUNCH-HIDE-PAID: plan cards + prepaid wallet + buy CTAs. */}
+          {/* HN-LAUNCH-HIDE-PAID: plan cards + web checkout CTA. */}
           {!HIDE_PAID_UI && (<>
           <div className="grid gap-2 md:grid-cols-2">
             {CLOUD_PLANS.map((plan) => {
@@ -788,48 +783,20 @@ export function ManagedCloudPanel({
             })}
           </div>
 
-          {/* Prepaid wallet — OpenAI-style credit. Top up on the web
-              (no app-store billing); spend it on compute. */}
           <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-bold text-slate-800 dark:text-surface-100">
-                {money(balanceCents)}
+                {allowanceText ?? "Workspace allowance"}
               </span>
-              {typeof hourlyCents === "number" ? (
-                <span className="text-[11px] text-slate-500 dark:text-surface-400">
-                  ~{money(hourlyCents)}/hr running
-                </span>
-              ) : null}
-              {lowBalance ? (
-                <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                  Low balance
-                </span>
-              ) : null}
-              <span className="ml-auto flex flex-wrap gap-1.5">
-                {(packs.length
-                  ? packs
-                  : [
-                      { id: "p10", cents: 1000, label: "$10" },
-                      { id: "p25", cents: 2500, label: "$25" },
-                      { id: "p50", cents: 5000, label: "$50" },
-                    ]
-                ).map((p) => (
-                  <button
-                    key={p.id}
-                    disabled={busy}
-                    onClick={() => void addCredit(p.id)}
-                    className="rounded border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-[11px] font-semibold text-sky-700 disabled:opacity-50 dark:text-sky-300"
-                  >
-                    + {p.label}
-                  </button>
-                ))}
+              <span className="text-[11px] text-slate-500 dark:text-surface-400">
+                Cloud Workspace includes monthly use; heavy/build work uses it faster.
               </span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="text-[11px] text-slate-500 dark:text-surface-400">
-                Start selected infrastructure
+                Free includes limited shared relay usage. Upgrade for a private relay or saved cloud workspace. If allowance is exhausted, Cloud Workspace compute pauses until the next period or billing settings are updated.
               </span>
-              <span className="flex gap-1">
+              {selectedPlan === "cloud-workspace" ? <span className="flex gap-1">
                 {["eu", "us"].map((r) => (
                   <button
                     key={r}
@@ -843,29 +810,18 @@ export function ManagedCloudPanel({
                     {r}
                   </button>
                 ))}
-              </span>
+              </span> : null}
               <button
                 disabled={busy}
-                onClick={() => post("/billing/yaver-cloud/provision", { machineType, region, planId: selectedPlan })}
+                onClick={() => void buy()}
                 className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
               >
-                {busy ? "…" : "Spin up (prepaid)"}
+                {busy ? "…" : "Subscribe on web"}
               </button>
-              {owner ? (
-                <button
-                  disabled={busy}
-                  onClick={() => void buy()}
-                  className="rounded-md border border-slate-300 px-3 py-1 text-xs font-semibold disabled:opacity-50 dark:border-surface-700"
-                  title="Web checkout (owner/dev path)"
-                >
-                  {busy ? "…" : "Web checkout"}
-                </button>
-              ) : null}
             </div>
             <p className="mt-1.5 text-[10px] text-slate-400">
-              Bills from web-purchased cloud credit. Auto-stop keeps forgotten
-              workspaces from running indefinitely. GPU, emulator and iOS tiers
-              are not part of the launch purchase path.
+              Free is not a product to buy: it is the limited shared public relay.
+              Cloud Workspace provisions after LemonSqueezy confirms payment.
             </p>
           </div>
           </>)}
@@ -895,7 +851,7 @@ export function ManagedCloudPanel({
                 onClick={() => setShowAdopt(true)}
                 className="text-[11px] font-medium text-slate-500 underline-offset-2 hover:underline dark:text-surface-400"
               >
-                Adopt an existing cloud box →
+                Adopt an existing cloud workspace →
               </button>
             )
           ) : null}
@@ -933,7 +889,7 @@ export function ManagedCloudPanel({
                       {m.origin ?? "managed"}
                     </span>
                     <span className="font-mono opacity-80">
-                      {m.machineType ?? "cpu"} · resource {m.hetznerServerId ?? "—"} · {m.region ?? "eu"} ·{" "}
+                      {m.machineType ?? "standard"} · {m.region ?? "eu"} ·{" "}
                       <span className={m.status === "error" ? "font-semibold text-rose-600 dark:text-rose-400" : ""}>
                         {m.status ?? "?"}
                       </span>
@@ -946,17 +902,15 @@ export function ManagedCloudPanel({
                         onClick={() => {
                           if (
                             !window.confirm(
-                              "Pause this box? It snapshots the disk, then deletes the cloud " +
-                                "server so it stops billing — paused costs only ~€0.50/mo (snapshot " +
-                                "storage) vs ~€30/mo running. Resume recreates it from the snapshot " +
-                                "in ~2-3 min (the box gets a new IP).",
+                              "Pause this workspace? It preserves state, deletes active compute, " +
+                                "and stops compute spend. Resume recreates it when you need it.",
                             )
                           )
                             return;
                           void post("/billing/yaver-cloud/stop", { machineId: m.id });
                         }}
                         className="rounded border border-amber-400/50 px-2 py-0.5 text-[10px] font-semibold text-amber-600 disabled:opacity-50 dark:text-amber-400"
-                        title="Snapshot + delete the server to stop billing — resumable"
+                        title="Preserve state and stop active compute spend"
                       >
                         ⏸ Pause
                       </button>
@@ -966,8 +920,8 @@ export function ManagedCloudPanel({
                       onClick={() => {
                         if (
                           !window.confirm(
-                            `Delete this managed box (resource ${m.hetznerServerId ?? "—"})? ` +
-                              `It snapshots first, then decommissions the cloud resource and stops billing. This cannot be undone — use Pause instead if you just want to save cost temporarily.`,
+                            "Delete this Cloud Workspace? " +
+                              "This decommissions the managed cloud resource and stops its billing. This cannot be undone - use Pause instead if you just want to save cost temporarily.",
                         )
                         )
                           return;
@@ -975,7 +929,7 @@ export function ManagedCloudPanel({
                       }}
                       className="rounded border border-rose-400/50 px-2 py-0.5 text-[10px] font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
                     >
-                      ♻ Delete box
+                      Delete workspace
                     </button>
                   </div>
                  </div>
@@ -988,7 +942,7 @@ export function ManagedCloudPanel({
                             ⏸ {m.status === "suspended" ? "Suspended" : "Paused"}
                           </span>
                           <span className="text-slate-500 dark:text-surface-400">
-                            Snapshot kept · ~€0.50/mo while paused (vs ~€30/mo running)
+                            State kept · active compute stopped
                           </span>
                           <button
                             disabled={busy}
@@ -1003,9 +957,9 @@ export function ManagedCloudPanel({
                     // A wake gets the real ladder: which step, how long it has
                     // been on it, what the provider sees, and — when the box is
                     // merely blocked on sign-in — that fact instead of a bar.
-                    // The old branch was a static sentence promising "~2-3 min"
-                    // for something that routinely takes eight, with no bar and
-                    // no way to tell progress from a hang.
+                    // The old branch was a static ETA for work that depends on
+                    // provider state, with no bar and no way to tell progress
+                    // from a hang.
                     if (m.status === "resuming" || m.status === "stopping" || m.status === "grace") {
                       return <WakeProgress machine={m} deviceReachable={false} />;
                     }
@@ -1024,7 +978,7 @@ export function ManagedCloudPanel({
                         m.status !== "stopped" &&
                         m.status !== "active");
                     const LABEL: Record<string, string> = {
-                      creating: "Reserving your box…",
+                      creating: "Reserving your workspace…",
                       booting: "Booting & installing Docker…",
                       "installing-docker": "Installing Docker…",
                       "pulling-image": "Pulling the Yaver image…",
@@ -1036,9 +990,9 @@ export function ManagedCloudPanel({
                       // Wake-only steps. Absent here, they fell through the
                       // `?? phase` fallback below and printed the raw
                       // control-plane slug at the user.
-                      "checking-snapshot": "Finding your snapshot…",
-                      "preparing-volume": "Freeing your data volume…",
-                      "restoring-snapshot": "Restoring from your snapshot…",
+                      "checking-snapshot": "Finding legacy snapshot…",
+                      "preparing-volume": "Preparing saved workspace state…",
+                      "restoring-snapshot": "Starting workspace…",
                     };
                     // Not progress: the box is up and nothing will change until
                     // the user signs it in. This slug was missing from LABEL, so
@@ -1051,7 +1005,7 @@ export function ManagedCloudPanel({
                       return (
                         <div className="mt-1.5">
                           <div className="mb-1 text-[11px] text-slate-500 dark:text-surface-400">
-                            Setting up your box —{" "}
+                            Setting up your workspace —{" "}
                             {/* Never print a raw slug: an unmapped phase is our
                                 bug, and the user cannot act on "pulling-image"
                                 spelled with a hyphen. */}
@@ -1105,6 +1059,52 @@ export function ManagedCloudPanel({
               ))
             )}
           </div>
+
+          {wakeRuns.length > 0 ? (
+            <div className="rounded-md border border-slate-200 px-3 py-2 dark:border-surface-800">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <p className="text-xs font-bold text-slate-700 dark:text-surface-200">
+                  Recent workspace activity
+                </p>
+                <button
+                  disabled={busy}
+                  onClick={() => void load()}
+                  className="rounded border border-slate-300 px-2 py-0.5 text-[10px] font-medium text-slate-500 disabled:opacity-50 dark:border-surface-700 dark:text-surface-400"
+                >
+                  Refresh
+                </button>
+              </div>
+              <div className="space-y-1">
+                {wakeRuns.map((run) => {
+                  const pct =
+                    typeof run.progress === "number"
+                      ? Math.max(0, Math.min(100, Math.round(run.progress)))
+                      : null;
+                  return (
+                    <div
+                      key={run.id}
+                      className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-surface-400"
+                    >
+                      <span className={`rounded-full px-2 py-0.5 font-semibold ${wakeRunTone(run.status)}`}>
+                        {run.status}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {wakeRunLabel(run)}
+                        {run.machineType ? ` · ${run.machineType}` : ""}
+                      </span>
+                      {pct !== null ? (
+                        <span className="font-mono tabular-nums">{pct}%</span>
+                      ) : null}
+                      <span className="font-mono tabular-nums">{timeAgo(run.updatedAt || run.startedAt)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[10px] text-slate-400">
+                This tracks provisioning, wake and park steps only. Prompts, repo paths and output stay off the ledger.
+              </p>
+            </div>
+          ) : null}
 
           {note ? <p className="text-xs text-emerald-600 dark:text-emerald-400">✓ {note}</p> : null}
           {error ? <p className="text-xs text-rose-600 dark:text-rose-400">{error}</p> : null}

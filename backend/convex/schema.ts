@@ -1330,6 +1330,14 @@ export default defineSchema({
     // difference between a ~10 min wake and a ~60-90s one.
     volumeId: v.optional(v.string()),
     volumeSizeGb: v.optional(v.number()),
+    // Resize request state. The current first pass records that the existing
+    // persisted workspace must be recreated on a larger profile; the provider
+    // worker consumes this later. Labels only — no paths, prompts, logs, IPs,
+    // or provider-native volume details beyond the existing volume pointer.
+    resizeTargetMachineType: v.optional(v.string()),
+    resizeRequestedAt: v.optional(v.number()),
+    resizeReason: v.optional(v.string()),
+    resizePlacementId: v.optional(v.id("taskPlacements")),
     // SLIM boot image (OS + toolchain, no user data) used to recreate the
     // server on wake when a volume holds the state. Restoring this is fast;
     // the old full-disk snapshot (lastSnapshotId) is the legacy fallback.
@@ -1918,6 +1926,114 @@ export default defineSchema({
     .index("by_share_user", ["shareId", "userId"])
     .index("by_owner", ["ownerUserId"]),
 
+  // Project artifacts are the shareable outputs a normie wants friends to try:
+  // APKs, Hermes bundles, web previews, screenshots, logs, etc. The record is
+  // metadata + a signed/external URL pointer only. Privacy contract: no local
+  // filesystem paths, no build stdout, no secrets, no provider credentials.
+  projectArtifacts: defineTable({
+    userId: v.id("users"),             // uploader / creator
+    ownerUserId: v.id("users"),        // project owner
+    shareId: v.id("projectShares"),
+    membershipId: v.optional(v.id("projectMemberships")),
+    taskId: v.optional(v.string()),
+    localTaskId: v.optional(v.string()),
+    projectSlug: v.string(),
+    kind: v.string(),                  // apk | hermes | web-preview | screenshot | log | other
+    title: v.string(),
+    description: v.optional(v.string()),
+    provider: v.string(),              // yaver-storage | external | convex | s3 | r2 | ...
+    storageId: v.optional(v.id("_storage")),
+    objectKey: v.optional(v.string()), // provider object id/key, never local path
+    url: v.optional(v.string()),       // externally shareable URL, if already minted
+    contentType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+    checksum: v.optional(v.string()),
+    visibility: v.union(v.literal("private"), v.literal("project"), v.literal("public-link")),
+    shareToken: v.optional(v.string()),
+    shareUrlExpiresAt: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+    status: v.union(v.literal("active"), v.literal("hidden"), v.literal("expired"), v.literal("deleted")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastAccessedAt: v.optional(v.number()),
+  })
+    .index("by_user_created", ["userId", "createdAt"])
+    .index("by_owner_created", ["ownerUserId", "createdAt"])
+    .index("by_share_created", ["shareId", "createdAt"])
+    .index("by_share_kind_created", ["shareId", "kind", "createdAt"])
+    .index("by_shareToken", ["shareToken"]),
+
+  projectArtifactUploadIntents: defineTable({
+    userId: v.id("users"),
+    ownerUserId: v.id("users"),
+    shareId: v.id("projectShares"),
+    projectSlug: v.string(),
+    sizeBytes: v.number(),
+    status: v.union(v.literal("pending"), v.literal("consumed")),
+    storageId: v.optional(v.id("_storage")),
+    artifactId: v.optional(v.id("projectArtifacts")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner_status", ["ownerUserId", "status"])
+    .index("by_share_status", ["shareId", "status"])
+    .index("by_user_status", ["userId", "status"]),
+
+  // Feedback SDK work queue. This is the bridge from guest/end-user feedback to
+  // owner-reviewed task, issue, or Yaver Git branch work. The row may contain
+  // the user's short feedback text because that is the submitted issue itself,
+  // but it must not contain local filesystem paths, runner output, OAuth,
+  // provider credentials, screenshots/base64, or app secrets. Attachments are
+  // artifact ids or HTTPS URLs only.
+  feedbackWorkItems: defineTable({
+    userId: v.id("users"),             // requester; guest user for delegated SDK tokens, owner otherwise
+    ownerUserId: v.id("users"),
+    shareId: v.id("projectShares"),
+    membershipId: v.optional(v.id("projectMemberships")),
+    projectSlug: v.string(),
+    sourceSurface: v.optional(v.string()),
+    sourceTokenLabel: v.optional(v.string()),
+    title: v.string(),
+    body: v.string(),
+    kind: v.string(),                  // bug | idea | task | question | other
+    priority: v.string(),              // low | normal | high
+    component: v.optional(v.string()),
+    appVersion: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    artifactIds: v.optional(v.array(v.id("projectArtifacts"))),
+    attachmentUrls: v.optional(v.array(v.string())),
+    target: v.union(v.literal("task"), v.literal("issue"), v.literal("branch"), v.literal("triage")),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("claimed"),
+      v.literal("task_created"),
+      v.literal("issue_draft_created"),
+      v.literal("issue_created"),
+      v.literal("branch_created"),
+      v.literal("blocked"),
+      v.literal("cancelled"),
+      v.literal("rejected"),
+      v.literal("expired"),
+    ),
+    relaySourceIntentId: v.optional(v.id("relaySourceIntents")),
+    taskId: v.optional(v.string()),
+    issueUrl: v.optional(v.string()),
+    branch: v.optional(v.string()),
+    reason: v.optional(v.string()),
+    lastError: v.optional(v.string()),
+    workerId: v.optional(v.string()),
+    attempts: v.number(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_user_created", ["userId", "createdAt"])
+    .index("by_owner_created", ["ownerUserId", "createdAt"])
+    .index("by_share_created", ["shareId", "createdAt"])
+    .index("by_owner_status", ["ownerUserId", "status"])
+    .index("by_share_status", ["shareId", "status"])
+    .index("by_status_expires", ["status", "expiresAt"]),
+
   // SDK tokens — long-lived tokens for Feedback SDK (independent from CLI session tokens)
   sdkTokens: defineTable({
     tokenHash: v.string(),        // SHA-256 of the raw token
@@ -2143,6 +2259,7 @@ export default defineSchema({
       v.literal("cancelled"),
       v.literal("expired"),
     ),
+    blockedAction: v.optional(v.string()),
     reason: v.optional(v.string()),
     lastError: v.optional(v.string()),
     attempts: v.number(),
@@ -2151,8 +2268,61 @@ export default defineSchema({
     updatedAt: v.number(),
     completedAt: v.optional(v.number()),
   }).index("by_user_created", ["userId", "createdAt"])
+    .index("by_user_local_task", ["userId", "localTaskId"])
     .index("by_local_task", ["localTaskId"])
     .index("by_placement", ["placementId"])
+    .index("by_status_expires", ["status", "expiresAt"]),
+
+  // Relay-source work ledger. This lets the cheap relay layer create/track a
+  // branch-scoped source task for Yaver-managed projects while Cloud Workspace
+  // wakes. Privacy contract: no prompt, diff, file path, stdout, token, vault
+  // reference, or runner OAuth. It stores only ids, branch names scoped under
+  // yaver/, coarse status/reason labels, and expiry/attempt counters.
+  relaySourceIntents: defineTable({
+    userId: v.id("users"),             // requester / collaborator
+    ownerUserId: v.id("users"),        // project owner
+    shareId: v.id("projectShares"),
+    membershipId: v.optional(v.id("projectMemberships")),
+    placementId: v.optional(v.id("taskPlacements")),
+    localTaskId: v.string(),
+    taskId: v.optional(v.string()),
+    sourceSurface: v.optional(v.string()),
+    projectSlug: v.string(),
+    repoUrl: v.string(),               // normalized projectShares.repoUrl
+    baseBranch: v.string(),
+    branch: v.string(),                // must be under yaver/
+    providerKind: v.optional(v.string()),          // github | gitlab | yaver-git | ...
+    providerHost: v.optional(v.string()),          // github.com / gitlab.com / custom host
+    providerRepo: v.optional(v.string()),          // owner/repo, non-secret
+    providerBranch: v.optional(v.string()),        // yaver/* branch mirrored on provider
+    providerBranchUrl: v.optional(v.string()),     // provider web URL for the branch, non-secret
+    providerAppInstallationId: v.optional(v.string()), // opaque app install id, never token material
+    providerAuthMode: v.optional(v.string()),      // none | app_installation | owner_local_token
+    providerAuthStatus: v.optional(v.string()),    // required | available | owner_token_fallback | unsupported
+    kind: v.string(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("claimed"),
+      v.literal("committed"),
+      v.literal("handoff_ready"),
+      v.literal("blocked"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+      v.literal("expired"),
+    ),
+    reason: v.optional(v.string()),
+    lastError: v.optional(v.string()),
+    relayId: v.optional(v.string()),
+    attempts: v.number(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_user_created", ["userId", "createdAt"])
+    .index("by_owner_created", ["ownerUserId", "createdAt"])
+    .index("by_share_created", ["shareId", "createdAt"])
+    .index("by_placement", ["placementId"])
+    .index("by_local_task", ["localTaskId"])
     .index("by_status_expires", ["status", "expiresAt"]),
 
   // Durable Cloud Workspace wake/provision/park attempts. This is the honest

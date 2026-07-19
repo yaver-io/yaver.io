@@ -93,8 +93,34 @@ func (s *HTTPServer) handleBlackBoxStream(w http.ResponseWriter, r *http.Request
 				strings.ReplaceAll(event.Message, "\"", "'"))
 			flusher.Flush()
 
-			// Auto-create a task for fatal crashes if task manager is available
+			// Auto-create a task for fatal crashes if task manager is available.
 			if s.taskMgr != nil {
+				if deferral, deferred, derr := s.deferIngressTaskToCloudWorkspace(r.Context(), "blackbox-crash", "unknown", "", s.taskMgr.workDir); deferred {
+					if derr != nil {
+						log.Printf("[placement] blackbox crash cloud deferral failed: %v", derr)
+					}
+					pendingTaskID := ""
+					blocker := ""
+					if deferral != nil {
+						pendingTaskID = deferral.PendingTaskID
+						blocker = strings.TrimSpace(deferral.Blocker)
+					}
+					message := "Cloud Workspace is selected for this crash fix; queued pending handoff instead of running on the relay."
+					if blocker != "" {
+						message = "Cloud Workspace is selected for this crash fix but needs attention first: " + blocker
+					}
+					payload, _ := json.Marshal(map[string]string{
+						"type":          "cloud_workspace_required",
+						"pendingTaskId": pendingTaskID,
+						"message":       message,
+					})
+					fmt.Fprintf(w, "data: %s\n\n", payload)
+					flusher.Flush()
+					continue
+				} else if derr != nil {
+					log.Printf("[placement] blackbox crash preview skipped before task create: %v", derr)
+				}
+
 				prompt := fmt.Sprintf("FATAL CRASH on %s device:\n\n%s\n\nStack:\n", platform, event.Message)
 				for _, frame := range event.Stack {
 					prompt += fmt.Sprintf("  %s\n", frame)

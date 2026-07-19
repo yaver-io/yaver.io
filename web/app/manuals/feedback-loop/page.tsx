@@ -486,14 +486,6 @@ export default function FeedbackLoopManual() {
                 automatically. Works from 5G, hotel Wi-Fi, anywhere.
               </span>
             </li>
-            <li className="flex gap-3">
-              <span className="text-surface-500">&#8226;</span>
-              <span>
-                <strong className="text-surface-300">Tailscale</strong>{" "}
-                &mdash; if you use Tailscale, direct connection works from
-                any network without a relay.
-              </span>
-            </li>
           </ul>
         </section>
 

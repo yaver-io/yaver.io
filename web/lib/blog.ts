@@ -23,7 +23,7 @@ export const blogPosts: BlogPost[] = [
     date: "2026-06-05",
     published: true,
     description:
-      "Yaver ships as a library, not just an app. yaver-sdk lets your own React Native, web, or Node app run Claude Code, Codex, or OpenCode on a remote machine — broker a scoped token on the server, connectHandle() on the client, stream the runner's output, and drive runner OAuth in an in-app browser. The full developer guide: the broker/connect model, self-healing token refresh, the two OAuth levels, and the complete export surface. Talos is the first external consumer.",
+      "Yaver ships as a library, not just an app. yaver-sdk lets your own React Native, web, or Node app run Claude Code, Codex, or OpenCode on a remote machine — broker a scoped token on the server, connectHandle() on the client, stream the runner's output, and drive runner OAuth in an in-app browser. The full developer guide: the broker/connect model, self-healing token refresh, the two OAuth levels, and the complete export surface.",
   },
   {
     slug: "yaver-rustdesk-ghosting",
@@ -39,7 +39,7 @@ export const blogPosts: BlogPost[] = [
     date: "2026-06-04",
     published: true,
     description:
-      "Point Yaver at a wire-harness machine's PLC — sniff the Modbus-RTU bus read-only or read-scan it over Modbus-TCP — and let an AI infer what each holding register means (cut_length, strip_left, quantity, speed, alarm word…), its unit, and its scale, anchored on the job's ground-truth values. Then read/verify, optionally range-clamped write-back (safety registers never network-writable), and sync the learned schematic to Talos. How yaver serve --machine turns an opaque controller into a typed, queryable device.",
+      "Point Yaver at a wire-harness machine's PLC — sniff the Modbus-RTU bus read-only or read-scan it over Modbus-TCP — and let an AI infer what each holding register means (cut_length, strip_left, quantity, speed, alarm word…), its unit, and its scale, anchored on the job's ground-truth values. Then read/verify, optionally range-clamped write-back, and turn an opaque controller into a typed, queryable device.",
   },
   {
     slug: "stt-tts-voice-local-byok",
@@ -128,11 +128,11 @@ export const blogPosts: BlogPost[] = [
       "A plain-language explanation of what Yaver is building for Unity: feedback inside the game, self-hosted iteration, tests, builds, relaunches, and remote supervision on your own machines.",
   },
   {
-    slug: "cloudflare-tunnels-shared-boxes",
-    title: "Cloudflare Tunnels, Shared Boxes, and Yaver's Real Trust Boundary",
+    slug: "yaver-relay-shared-boxes",
+    title: "Yaver Relay, Shared Boxes, and the Real Trust Boundary",
     date: "2026-04-22",
     description:
-      "How a host can put one Yaver box behind Cloudflare Tunnel, share that box with guests, and keep Yaver as the actual authorization boundary.",
+      "How a host can put one Yaver box behind Yaver Relay, share that box with guests, and keep Yaver as the actual authorization boundary.",
   },
   {
     slug: "yaver-pi-image",

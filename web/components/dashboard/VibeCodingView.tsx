@@ -1,13 +1,50 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { capStreamText } from "@/lib/streamBuffer";
 import { agentClient, type AgentGraphRun, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
 import { detectAskBreadth, detectAskIntent } from "@/lib/ask-intent";
+import {
+  activationBlockReason,
+  activateTaskPlacement,
+  createTaskDispatchIntent,
+  expensiveCloudPlacementMessage,
+  getTaskPlacementStatus,
+  listTaskDispatchIntents,
+  listRecentTaskPlacements,
+  markTaskPlacementStatus,
+  placementCreditLabel,
+  placementLaneLabel,
+  previewTaskPlacement,
+  recordTaskPlacement,
+  pendingPlacementTaskId,
+  shouldConfirmExpensiveCloudPlacement,
+  shouldDeferTaskForCloudWorkspace,
+  rebindTaskPlacement,
+  updateTaskDispatchIntent,
+  upsertProjectProfile,
+  type TaskPlacementDecision,
+  type TaskPlacementKind,
+  type TaskPlacementRequest,
+  type TaskPlacementResourceClass,
+} from "@/lib/task-placement";
+import {
+  listPendingCloudDispatches,
+  mergePendingCloudPlacementStatus,
+  mergePendingCloudDispatchIntents,
+  pendingCloudDispatchNeedsUserAction,
+  pendingCloudTaskPlaceholder,
+  removePendingCloudDispatch,
+  saveCloudWorkspaceRequiredDispatch,
+  savePendingCloudDispatch,
+  updatePendingCloudDispatch,
+  type PendingCloudDispatch,
+} from "@/lib/pending-cloud-dispatch";
+import { CloudWorkspaceRequiredError } from "@/lib/cloud-workspace-required";
 import PreviewPane from "./PreviewPane";
 import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "./DevicesView";
 
@@ -22,6 +59,39 @@ const BARE_CSI_RE = /\[\d+(?:;\d+)*m/g;
 export function stripAnsi(s: string): string {
   if (!s) return s;
   return s.replace(ANSI_ESC_RE, "").replace(BARE_CSI_RE, "");
+}
+
+function inferTaskPlacementKind(text: string): TaskPlacementKind {
+  const lower = String(text || "").toLowerCase();
+  if (/\b(deploy|publish|release|ship)\b/.test(lower)) return "deploy";
+  if (/\b(build|apk|ipa|xcode|gradle|eas|archive)\b/.test(lower)) return "build";
+  if (/\b(test|spec|lint|typecheck|ci)\b/.test(lower)) return "test";
+  if (/\b(read|explain|review|summarize|inspect)\b/.test(lower)) return "source";
+  return "vibe";
+}
+
+function projectSlugForPlacement(pathOrName?: string | null): string | undefined {
+  const leaf = String(pathOrName || "")
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .pop()
+    ?.trim();
+  return leaf ? leaf.slice(0, 80) : undefined;
+}
+
+function resourceClassFromProjectHints(args: {
+  kind: TaskPlacementKind;
+  framework?: string;
+  appCount?: number;
+  hasNativeMobile?: boolean;
+  hasDocker?: boolean;
+}): TaskPlacementResourceClass {
+  if (args.kind === "deploy" || args.kind === "build") return "build";
+  if (args.hasNativeMobile || args.hasDocker || /react-native|expo|xcode|gradle/i.test(args.framework || "")) {
+    return "heavy";
+  }
+  if ((args.appCount ?? 0) >= 2) return "heavy";
+  return args.kind === "source" || args.kind === "vibe" ? "relay-source" : "standard";
 }
 
 // react-markdown component overrides shared by every assistant-side
@@ -257,6 +327,8 @@ export default function VibeCodingView({
   const [selectedMode, setSelectedMode] = useState("");
   const [taskList, setTaskList] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState("");
+  const placementStatusSyncRef = useRef<Set<string>>(new Set());
+  const pendingDispatchRef = useRef<Set<string>>(new Set());
   // Deep ask graph (investigate → answer → verify) — set when a broad
   // architectural question auto-escalates from a single agent to a graph.
   // While active, the main panel shows graph progress instead of a task.
@@ -379,6 +451,141 @@ export default function VibeCodingView({
     () => taskList.find((task) => task.id === activeTaskId) || taskList[0] || null,
     [taskList, activeTaskId],
   );
+
+  useEffect(() => {
+    const pending = listPendingCloudDispatches();
+    if (pending.length === 0) return;
+    setTaskList((prev) => {
+      const known = new Set(prev.map((task) => task.id));
+      const restored = pending
+        .filter((row) => !known.has(row.localTaskId))
+        .map(pendingCloudTaskPlaceholder);
+      return restored.length ? [...restored, ...prev] : prev;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    const run = async () => {
+      const pending = listPendingCloudDispatches();
+      if (pending.length === 0) return;
+      let placements: TaskPlacementDecision[] = [];
+      let pendingRows = pending;
+      try {
+        placements = await listRecentTaskPlacements(token, { limit: 50 });
+      } catch {
+        placements = [];
+      }
+      try {
+        pendingRows = mergePendingCloudDispatchIntents(await listTaskDispatchIntents(token, { limit: 80 }));
+        const placeholders = pendingRows.map(pendingCloudTaskPlaceholder);
+        setTaskList((prev) => [
+          ...placeholders,
+          ...prev.filter((task) => !placeholders.some((pendingTask) => pendingTask.id === task.id)),
+        ]);
+      } catch {
+        pendingRows = pending;
+      }
+      for (const row of pendingRows) {
+        if (cancelled || pendingDispatchRef.current.has(row.localTaskId)) continue;
+        let currentRow = row;
+        if (currentRow.placementId) {
+          try {
+            currentRow = mergePendingCloudPlacementStatus(
+              currentRow,
+              await getTaskPlacementStatus(token, { placementId: currentRow.placementId }),
+            );
+            updatePendingCloudDispatch(currentRow.localTaskId, currentRow);
+            setTaskList((prev) => prev.map((task) =>
+              task.id === currentRow.localTaskId ? pendingCloudTaskPlaceholder(currentRow) : task,
+            ));
+          } catch {
+            /* placement status is advisory; dispatch intents remain authoritative */
+          }
+        }
+        if (pendingCloudDispatchNeedsUserAction(currentRow)) continue;
+        const placement = currentRow.placementId
+          ? placements.find((candidate) => candidate.id === currentRow.placementId)
+          : undefined;
+        const targetDeviceId = placement?.targetDeviceId || currentRow.targetDeviceId || undefined;
+        if (placement?.targetDeviceId && placement.targetDeviceId !== currentRow.targetDeviceId) {
+          updatePendingCloudDispatch(currentRow.localTaskId, {
+            targetDeviceId: placement.targetDeviceId,
+            placementLane: placement.lane,
+            placementReason: placement.reason,
+            placementCreditLabel: placementCreditLabel(placement) ?? undefined,
+          });
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "queued",
+            targetDeviceId: placement.targetDeviceId,
+          }).catch(() => null);
+        }
+        if (!targetDeviceId) continue;
+        if (connectedDevice?.id !== targetDeviceId || connState !== "connected") {
+          const target = devices.find((device) => device.id === targetDeviceId && device.online && !device.needsAuth);
+          if (target) void onSelectDevice(target);
+          continue;
+        }
+        pendingDispatchRef.current.add(currentRow.localTaskId);
+        try {
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "dispatching",
+            targetDeviceId,
+            clearBlockedAction: currentRow.clearedBlockedAction === true,
+          }).catch(() => null);
+          const task = await agentClient.createTask({ ...currentRow.params, allowLocalFallback: true });
+          if (placement?.id || currentRow.placementId) {
+            await rebindTaskPlacement(token, placement?.id ?? currentRow.placementId!, task.id, "running").catch(() => null);
+          }
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "dispatched",
+            taskId: task.id,
+            targetDeviceId,
+          }).catch(() => null);
+          removePendingCloudDispatch(currentRow.localTaskId);
+          setTaskList((prev) => [
+            {
+              ...task,
+              placementId: placement?.id ?? currentRow.placementId,
+              placementLane: placement?.lane ?? currentRow.placementLane,
+              placementReason: placement?.reason ?? currentRow.placementReason,
+              placementCreditLabel: placementCreditLabel(placement) ?? currentRow.placementCreditLabel,
+            },
+            ...prev.filter((item) => item.id !== currentRow.localTaskId && item.id !== task.id),
+          ]);
+          setActiveTaskId(task.id);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          void updateTaskDispatchIntent(token, {
+            intentId: currentRow.dispatchIntentId,
+            localTaskId: currentRow.localTaskId,
+            status: "failed",
+            lastError: message,
+            bumpAttempt: true,
+          }).catch(() => null);
+          updatePendingCloudDispatch(currentRow.localTaskId, {
+            attempts: currentRow.attempts + 1,
+            lastError: message,
+          });
+        } finally {
+          pendingDispatchRef.current.delete(currentRow.localTaskId);
+        }
+      }
+    };
+    void run();
+    const id = setInterval(() => void run(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [connState, connectedDevice?.id, devices, onSelectDevice, token]);
   const selectedRunnerRow = useMemo(
     () => runners.find((runner) => runner.id === selectedRunner) || null,
     [runners, selectedRunner],
@@ -415,8 +622,9 @@ export default function VibeCodingView({
     if (!connected) {
       setProjects([]);
       setRunners([]);
-      setTaskList([]);
-      setActiveTaskId("");
+      const pending = listPendingCloudDispatches().map(pendingCloudTaskPlaceholder);
+      setTaskList(pending);
+      setActiveTaskId((current) => current || pending[0]?.id || "");
       setDeployTargets([]);
       return;
     }
@@ -438,7 +646,22 @@ export default function VibeCodingView({
         if (cancelled) return;
         setProjects(projectRows);
         setRunners((runnerRows || []).filter((runner) => runner.installed));
-        setTaskList(tasks || []);
+        setTaskList((prev) => {
+          const priorById = new Map(prev.map((task) => [task.id, task]));
+          const pending = listPendingCloudDispatches().map(pendingCloudTaskPlaceholder);
+          const merged = (tasks || []).map((task) => {
+            const prior = priorById.get(task.id);
+            if (!prior) return task;
+            return {
+              ...task,
+              placementId: task.placementId || prior.placementId,
+              placementLane: task.placementLane || prior.placementLane,
+              placementReason: task.placementReason || prior.placementReason,
+              placementCreditLabel: task.placementCreditLabel || prior.placementCreditLabel,
+            };
+          });
+          return [...pending, ...merged.filter((task) => !pending.some((row) => row.id === task.id))];
+        });
         setDevStatus(currentDevStatus);
         setGitStatus(git ?? null);
         setGitCommits(commits || []);
@@ -584,6 +807,24 @@ export default function VibeCodingView({
     return stop;
   }, [activeTask?.id]);
 
+  useEffect(() => {
+    if (!token || !activeTask?.placementId) return;
+    const nextStatus =
+      activeTask.status === "completed"
+        ? "completed"
+        : activeTask.status === "failed" || activeTask.status === "stopped"
+          ? "failed"
+          : activeTask.status === "queued"
+            ? "queued"
+            : "running";
+    const key = `${activeTask.placementId}:${nextStatus}`;
+    if (placementStatusSyncRef.current.has(key)) return;
+    placementStatusSyncRef.current.add(key);
+    void markTaskPlacementStatus(token, activeTask.placementId, nextStatus).catch(() => {
+      placementStatusSyncRef.current.delete(key);
+    });
+  }, [token, activeTask?.placementId, activeTask?.status]);
+
   // Poll the active deep-ask graph until it reaches a terminal status.
   useEffect(() => {
     if (!activeGraphRunId) {
@@ -648,13 +889,36 @@ export default function VibeCodingView({
     };
   }, [selectedProject?.path]);
 
+  async function rememberProjectProfile(kind: TaskPlacementKind): Promise<Partial<TaskPlacementRequest>> {
+    const projectSlug = projectSlugForPlacement(selectedProject?.path || selectedProject?.name);
+    if (!token || !projectSlug || !selectedProject) return { projectSlug };
+    const stack = selectedProject.framework || devStatus?.framework || undefined;
+    const hasNativeMobile = /react-native|expo|ios|android|mobile|hermes/i.test(stack || selectedProject.name || "");
+    const hasDocker = /docker/i.test(stack || "");
+    const appCount = Math.min(100, Math.max(1, projects.length || 1));
+    const resourceClass = resourceClassFromProjectHints({
+      kind,
+      framework: stack,
+      appCount,
+      hasNativeMobile,
+      hasDocker,
+    });
+    void upsertProjectProfile(token, {
+      projectSlug,
+      sourceDeviceId: connectedDevice?.id,
+      stack,
+      appCount,
+      hasNativeMobile,
+      hasDocker,
+      resourceClass,
+      confidence: 0.65,
+    }).catch(() => {});
+    return { projectSlug, appCount, hasNativeMobile, hasDocker };
+  }
+
   async function startChatTask() {
     if (!selectedProject || !composer.trim()) {
       setBusy("Pick a project and enter a prompt.");
-      return;
-    }
-    if (selectedRunnerRow && selectedRunnerRow.ready === false) {
-      setBusy(selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`);
       return;
     }
     const promptText = composer.trim();
@@ -692,7 +956,119 @@ export default function VibeCodingView({
     // Leaving any prior deep-ask graph view when starting a normal task.
     setActiveGraphRunId(null);
     const title = draftTitle.trim() || summarizeTitle(composer, selectedProject.name);
-    const task = await agentClient.createTask({
+    let placementPreview: TaskPlacementDecision | null = null;
+    const placementKind = inferTaskPlacementKind(promptText);
+    const profileHints = await rememberProjectProfile(placementKind);
+    const placementRequest = {
+      kind: placementKind,
+      sourceSurface: "web-vibe-coding",
+      requestedRunner: selectedRunner || undefined,
+      targetDeviceId: connectedDevice?.id,
+      ...profileHints,
+      hasNativeMobile:
+        profileHints.hasNativeMobile ||
+        deployTargets.some((target) => /ios|android|expo|apk|ipa|mobile/i.test(`${target.id} ${target.name}`)),
+      hasDocker: profileHints.hasDocker || (devStatus?.framework ? /docker/i.test(devStatus.framework) : undefined),
+    };
+    if (token) {
+      placementPreview = await previewTaskPlacement(token, placementRequest).catch(() => null);
+    }
+    if (shouldConfirmExpensiveCloudPlacement(placementPreview)) {
+      const ok = window.confirm(expensiveCloudPlacementMessage(placementPreview));
+      if (!ok) {
+        setBusy("Heavy Cloud Workspace task cancelled.");
+        return;
+      }
+    }
+    const cloudTargetIsCurrent =
+      !!placementPreview?.lane?.startsWith("cloud_") &&
+      !!placementPreview.targetDeviceId &&
+      placementPreview.targetDeviceId === connectedDevice?.id;
+    if (token && placementPreview?.lane?.startsWith("cloud_") && (!cloudTargetIsCurrent || shouldDeferTaskForCloudWorkspace(placementPreview))) {
+      const pendingId = pendingPlacementTaskId();
+      const recorded = await recordTaskPlacement(token, {
+        ...placementRequest,
+        taskId: pendingId,
+      }).catch(() => null);
+      const now = Date.now();
+      const pending: PendingCloudDispatch = {
+        localTaskId: pendingId,
+        placementId: recorded?.id,
+        placementLane: recorded?.lane ?? placementPreview?.lane ?? undefined,
+        placementReason: recorded?.reason ?? placementPreview?.reason ?? undefined,
+        placementCreditLabel: placementCreditLabel(recorded ?? placementPreview) ?? undefined,
+        targetDeviceId: recorded?.targetDeviceId ?? placementPreview?.targetDeviceId ?? null,
+        params: {
+          title,
+          description: buildVibeTaskPrompt({
+            project: selectedProject,
+            prompt: composer.trim(),
+            gitStatus,
+            deployTargets,
+            machine: connectedMachine,
+          }),
+          userPrompt: composer.trim(),
+          runner: selectedRunner || undefined,
+          model: selectedModel || undefined,
+          mode: selectedRunner === "opencode" && selectedMode ? selectedMode : undefined,
+          projectName: selectedProject.name,
+          workDir: selectedProject.path,
+          videoEnabled: videoSummaryEnabled,
+          askMode: detectAskIntent(composer.trim()),
+        },
+        createdAt: now,
+        updatedAt: now,
+        attempts: 0,
+      };
+      savePendingCloudDispatch(pending);
+      createTaskDispatchIntent(token, {
+        localTaskId: pendingId,
+        placementId: recorded?.id,
+        sourceSurface: placementRequest.sourceSurface,
+        lane: recorded?.lane ?? placementPreview?.lane ?? undefined,
+        targetDeviceId: recorded?.targetDeviceId ?? placementPreview?.targetDeviceId ?? null,
+        cloudMachineId: recorded?.cloudMachineId ?? placementPreview?.cloudMachineId ?? null,
+        requestedRunner: placementRequest.requestedRunner,
+        projectSlug: placementRequest.projectSlug,
+        reason: recorded?.reason ?? placementPreview?.reason ?? undefined,
+      }).then((intent) => {
+        updatePendingCloudDispatch(pendingId, {
+          dispatchIntentId: intent.id,
+          dispatchStatus: intent.status,
+          dispatchExpiresAt: intent.expiresAt,
+        });
+      }).catch(() => null);
+      if (recorded?.id) {
+        void activateTaskPlacement(token, { placementId: recorded.id }).then((activation) => {
+          const blockedReason = activationBlockReason(activation);
+          if (!blockedReason) return;
+          updatePendingCloudDispatch(pendingId, {
+            dispatchStatus: "blocked",
+            blockedAction: activation.action,
+            blockedReason,
+          });
+          void updateTaskDispatchIntent(token, {
+            localTaskId: pendingId,
+            status: "blocked",
+            blockedAction: activation.action,
+            reason: blockedReason,
+          }).catch(() => null);
+        }).catch(() => {});
+      }
+      const pendingTask = pendingCloudTaskPlaceholder(pending);
+      setComposer("");
+      setDraftTitle("");
+      setTaskList((prev) => [pendingTask, ...prev.filter((row) => row.id !== pendingTask.id)]);
+      setActiveTaskId(pendingTask.id);
+      setBusy("Cloud Workspace is waking. Task is queued locally; it was not sent to the wrong machine.");
+      setRefreshNonce((value) => value + 1);
+      return;
+    }
+    if (selectedRunnerRow && selectedRunnerRow.ready === false) {
+      setBusy(selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`);
+      return;
+    }
+    const taskParams = {
       title,
       description: buildVibeTaskPrompt({
         project: selectedProject,
@@ -713,11 +1089,58 @@ export default function VibeCodingView({
       // — instead of a work run. High-precision; imperative build prompts are
       // left as normal tasks. See lib/ask-intent.ts.
       askMode: detectAskIntent(composer.trim()),
-    });
+    };
+    let task: Task;
+    try {
+      task = await agentClient.createTask(taskParams);
+    } catch (err) {
+      if (!(err instanceof CloudWorkspaceRequiredError)) throw err;
+      const pending = saveCloudWorkspaceRequiredDispatch({
+        err,
+        params: taskParams,
+        token,
+        sourceSurface: placementRequest.sourceSurface,
+        requestedRunner: placementRequest.requestedRunner,
+        projectSlug: placementRequest.projectSlug,
+      });
+      const pendingTask = pendingCloudTaskPlaceholder(pending);
+      setComposer("");
+      setDraftTitle("");
+      setTaskList((prev) => [pendingTask, ...prev.filter((row) => row.id !== pendingTask.id)]);
+      setActiveTaskId(pendingTask.id);
+      setBusy("Cloud Workspace is waking. Task is queued locally; it was not sent to the wrong machine.");
+      setRefreshNonce((value) => value + 1);
+      return;
+    }
+    let nextTask: Task = {
+      ...task,
+      placementLane: placementPreview?.lane ?? undefined,
+      placementReason: placementPreview?.reason ?? undefined,
+      placementCreditLabel: placementCreditLabel(placementPreview) ?? undefined,
+    };
+    if (token) {
+      const recorded = await recordTaskPlacement(token, {
+        ...placementRequest,
+        taskId: task.id,
+      }).catch(() => null);
+      if (recorded) {
+        nextTask = {
+          ...nextTask,
+          placementId: recorded.id,
+          placementLane: recorded.lane,
+          placementReason: recorded.reason ?? undefined,
+          placementCreditLabel: placementCreditLabel(recorded) ?? undefined,
+        };
+        if (recorded.id && recorded.lane.startsWith("cloud_")) {
+          void activateTaskPlacement(token, { placementId: recorded.id }).catch(() => {});
+        }
+      }
+    }
     setComposer("");
     setDraftTitle("");
-    setActiveTaskId(task.id);
-    setBusy(`Started ${task.title}.`);
+    setTaskList((prev) => [nextTask, ...prev.filter((row) => row.id !== nextTask.id)]);
+    setActiveTaskId(nextTask.id);
+    setBusy(`Started ${nextTask.title}.`);
     setRefreshNonce((value) => value + 1);
   }
 
@@ -1925,6 +2348,17 @@ export default function VibeCodingView({
                 ) : activeTask?.videoStatus === "recording" || activeTask?.videoStatus === "queued" ? (
                   <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
                     🎬 {activeTask.videoStatus}…
+                  </span>
+                ) : null}
+                {!activeGraphRunId && placementLaneLabel(activeTask?.placementLane) ? (
+                  <span
+                    className="max-w-[190px] truncate rounded-md border border-surface-700 bg-surface-950 px-2 py-0.5 text-[11px] font-semibold text-surface-300"
+                    title={activeTask?.placementReason || activeTask?.placementCreditLabel || placementLaneLabel(activeTask?.placementLane) || undefined}
+                  >
+                    {[
+                      placementLaneLabel(activeTask?.placementLane),
+                      activeTask?.placementCreditLabel,
+                    ].filter(Boolean).join(" · ")}
                   </span>
                 ) : null}
               </div>

@@ -20,9 +20,9 @@ import { cronJobs } from "convex/server";
 //       dryRun:true until the prepaid product launches)
 //   - internal.cloudLifecycle.idleSweep        (Hetzner: every ~10–15 min
 //       — POST /crons/run {name:"cloudIdleSweep"}; pauses active managed
-//       boxes idle past YAVER_CLOUD_IDLE_MINUTES. DEFAULT OFF
-//       (YAVER_CLOUD_IDLE_ENABLE) until the box agent reports activity via
-//       /machine/activity; pause is HCLOUD_TOKEN/dryRun fail-closed.)
+//       boxes idle past YAVER_CLOUD_IDLE_MINUTES. Auto-off is default-on for
+//       managed boxes; YAVER_CLOUD_IDLE_DISABLE is the emergency brake. Pause
+//       is HCLOUD_TOKEN/dryRun fail-closed.)
 const crons = cronJobs();
 
 // Auto-off (scale-to-zero) is NOT a Convex cron — a perpetual 15-min sweep is

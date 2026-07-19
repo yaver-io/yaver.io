@@ -55,13 +55,26 @@ changing those.
   bills servers hourly (metered) up to the monthly cap, and bills even
   **stopped** servers — only **deleting** a server stops the meter. NEVER launch
   a Hetzner box and leave it running (or merely stopped) to accrue the monthly
-  charge. Every provisioned box MUST be **scale-to-zero**: snapshot + **DELETE**
-  when idle, recreate from the snapshot on demand. You pay only for active hours
-  + cheap snapshot storage (~€0.01/GB/mo). No always-on servers for beta/dev/
-  test. Before provisioning, confirm the snapshot+delete teardown path exists;
-  delete every test/builder box the moment it's done. The user's standing
-  directive (2026-06-20): "always pay metered, never ever launch something
-  Hetzner will charge monthly automatically."
+  charge. Every provisioned box MUST be **scale-to-zero**: preserve state
+  first, then **DELETE** the server when idle. The preferred Cloud Workspace
+  path keeps mutable state on a Hetzner Volume and wakes from a slim base image;
+  snapshot+delete remains the legacy/hosted recovery fallback. You pay only for
+  active hours + cheap parked storage. No always-on servers for beta/dev/test.
+  Before provisioning, confirm the volume-backed or snapshot-backed teardown
+  path exists; delete every test/builder box the moment it's done. The user's
+  standing directive (2026-06-20): "always pay metered, never ever launch
+  something Hetzner will charge monthly automatically."
+- **Repo/resource boundary: touch only Yaver project resources.** When working
+  in this `yaver.io` repo, agents may modify only files, cloud resources,
+  Convex rows, Hetzner servers/snapshots/volumes, LemonSqueezy state, and other
+  external resources that are clearly owned by the Yaver project. Do **not**
+  delete, revoke, rename, stop, snapshot, migrate, or otherwise mutate personal
+  machines, private sibling-project resources, generic `ubuntu-*` boxes, or
+  storage volumes unless the user explicitly says that exact resource belongs
+  to the Yaver task and should be changed. Before any destructive provider or
+  Convex cleanup, list the candidates and verify their Yaver-specific labels,
+  names, IDs, subscription links, or `cloudMachines` rows. Ambiguity means stop
+  and ask.
 - **Do no harm to third parties — it is not our purpose.** Yaver exists to lower
   the *user's own* dev/ops cost, not to attack, scrape-abuse, or burden anyone
   else's infrastructure. A datacenter IP (Hetzner/AWS/…) that hammers a third
@@ -359,7 +372,7 @@ yaver code                           # local TUI on this machine
 yaver code --attach <device>         # remote machine via QUIC tunnel
 yaver insert <app>                   # tell the paired mobile to load <app> via Hermes push
 
-# Mac mini remote worker (Yaver/Talos via Yaver + Codex)
+# Mac mini remote worker (Yaver via Yaver + Codex)
 scripts/setup-mac-mini-dev.sh        # on the mini: Xcode platforms, simulators, Codex gpt-5.5, Yaver MCP
                                       # details: docs/mac-mini-remote-worker.md
 
@@ -553,7 +566,7 @@ mobile-cache-cleanup.sh mark-deployed yaver
 ```
 
 The script lives at `~/.local/bin/mobile-cache-cleanup.sh` (shared across
-sfmg/talos/yaver/botox — don't fork).
+local mobile projects — don't fork).
 
 ### Version bumping (5 places, all must match)
 
@@ -598,10 +611,10 @@ Running from `desktop/agent`, `web/`, `relay/`, or any non-mobile
 subdir fails with `no mobile project detected at <path>`. Always
 `cd` to repo root first.
 
-**To iterate on a third-party app (sfmg, talos, …):**
+**To iterate on a third-party app:**
 ```bash
 cd <example-app>
-yaver wire push       # builds + installs sfmg, NOT Yaver
+yaver wire push       # builds + installs that app, NOT Yaver
 ```
 Third-party RN apps load INSIDE the Yaver container via Hermes-push;
 they don't need their own native install once Yaver is on-device.

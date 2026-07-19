@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -360,6 +361,73 @@ func TestVoiceTitleFromTranscript(t *testing.T) {
 		}
 		if c.in == c.want && got != c.want {
 			t.Errorf("short input mangled: got %q want %q", got, c.want)
+		}
+	}
+}
+
+func TestDispatchVoiceTranscriptDefersWhenCloudPlacementSelected(t *testing.T) {
+	const transcript = "fix the login bug in auth.ts"
+	var seen []string
+	var bodies []string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/tasks/placement/preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-preview",
+				"lane":           "cloud_wake",
+				"targetDeviceId": "cloud-device",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/record":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-recorded",
+				"lane":           "cloud_wake",
+				"targetDeviceId": "cloud-device",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/activate":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":         true,
+				"activation": map[string]any{"status": "queued"},
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
+	result, err := DispatchVoiceTranscript(context.Background(), tm, transcript, VoiceDispatchOptions{
+		Placement: TaskIngressPlacementConfig{
+			ConvexURL:     backend.URL,
+			Token:         "owner-token",
+			LocalDeviceID: "relay-device",
+			WorkDir:       t.TempDir(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("DispatchVoiceTranscript error: %v", err)
+	}
+	if result == nil || result.Status != "cloud_workspace_required" {
+		t.Fatalf("result = %#v, want cloud_workspace_required", result)
+	}
+	if !strings.HasPrefix(result.TaskID, "pending-cloud:") {
+		t.Fatalf("task id = %q, want pending-cloud id", result.TaskID)
+	}
+	if got := len(tm.ListTasks()); got != 0 {
+		t.Fatalf("local tasks = %d, want 0", got)
+	}
+	wantSeen := []string{"/tasks/placement/preview", "/tasks/placement/record", "/tasks/placement/activate"}
+	if strings.Join(seen, ",") != strings.Join(wantSeen, ",") {
+		t.Fatalf("seen paths = %v, want %v", seen, wantSeen)
+	}
+	for _, body := range bodies {
+		if strings.Contains(body, transcript) || strings.Contains(body, "auth.ts") || strings.Contains(body, "login bug") {
+			t.Fatalf("placement body leaked transcript: %s", body)
 		}
 	}
 }

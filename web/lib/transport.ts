@@ -1,6 +1,6 @@
 /**
  * Classify how a device is reachable so the UI can show "Yaver public
- * relay v0.1.9 ✓" or "Tailscale 100.64.x.x" etc. instead of just an
+ * relay v0.1.9 ✓" or "Private network 100.64.x.x" etc. instead of just an
  * opaque IP. Pure function over {Device + activeRelayUrl}; no I/O.
  *
  * Mirrored in mobile/src/lib/transport.ts so the mobile device card
@@ -11,8 +11,8 @@
 export type TransportPrimary =
   | "yaver-public-relay"   // public.yaver.io (or any subdomain that resolves to a Yaver-managed relay)
   | "self-hosted-relay"    // user-deployed relay (custom URL)
-  | "cloudflare-tunnel"    // *.trycloudflare.com / *.cfargotunnel.com / cf-access (X-Forwarded-Host)
-  | "tailscale"            // 100.64/10 CGNAT range
+  | "cloudflare-tunnel"    // custom tunnel URL / cf-access (X-Forwarded-Host)
+  | "tailscale"            // private overlay 100.64/10 CGNAT range
   | "wsl-nat"              // 172.16-31/12 + Windows-shaped hostname
   | "private-lan"          // RFC1918 reachable directly
   | "direct-public"        // public IP, no tunnel / relay
@@ -56,8 +56,8 @@ export interface TransportInput {
    *  connected to. Without this, every device in the list would
    *  inherit the active connection's transport label, which is
    *  wrong — see the original bug where a remote Linux box showed
-   *  "Tailscale" because the dashboard happened to reach the
-   *  current device via Tailscale. */
+   *  "Private network" because the dashboard happened to reach the
+   *  current device via a private overlay. */
   isActiveDevice?: boolean;
   /** "ios"/"linux"/"darwin"/"windows"/"android" — used to spot WSL2. */
   platform?: string;
@@ -102,7 +102,7 @@ function looksWindowsLike(name: string): boolean {
  * Classify the transport for a device. Order of precedence:
  *   1. activeRelayUrl set by the WebClient        → relay (yaver-public OR self-hosted)
  *   2. activeTunnelUrl / device.tunnelUrl         → cloudflare-tunnel
- *   3. host / localIps Tailscale CGNAT IP         → tailscale
+ *   3. host / localIps private-overlay CGNAT IP   → tailscale
  *   4. host RFC1918 + Windows hostname / WSL NAT  → wsl-nat
  *   5. host RFC1918                                → private-lan
  *   6. host is a non-private IP and reachable      → direct-public
@@ -128,7 +128,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     }
     return {
       primary: "self-hosted-relay",
-      label: "Self-hosted relay",
+        label: "Custom relay",
       detail: `via ${cleanHostFromUrl(d.activeRelayUrl)}`,
       tone: "violet",
       url: d.activeRelayUrl,
@@ -141,7 +141,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     if (isCloudflareTunnel(tunnel)) {
       return {
         primary: "cloudflare-tunnel",
-        label: "Cloudflare tunnel",
+        label: "Custom tunnel",
         detail: `via ${cleanHostFromUrl(tunnel)}`,
         tone: "amber",
         url: tunnel,
@@ -156,12 +156,12 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     };
   }
 
-  // 3. Tailscale
+  // 3. Private network overlay
   const tsIp = ips.find(isTailscaleIP);
   if (tsIp) {
     return {
       primary: "tailscale",
-      label: "Tailscale",
+      label: "Private network",
       detail: `via ${tsIp}`,
       tone: "blue",
       url: `http://${tsIp}:${d.port ?? 18080}`,

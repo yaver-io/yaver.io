@@ -56,7 +56,7 @@ const PRESETS: Array<{ label: string; id: string; name: string; baseUrl?: string
   { label: "OpenRouter", id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", hint: "Aggregator across most models. openrouter.ai." },
   { label: "Together", id: "together", name: "Together AI", baseUrl: "https://api.together.xyz/v1", hint: "Open-weight models. api.together.xyz." },
   { label: "Local Ollama", id: "ollama", name: "Ollama (local)", baseUrl: "http://127.0.0.1:11434/v1", hint: "Local Ollama on the dev box. No API key needed." },
-  { label: "Tailscale Ollama", id: "ollama-tailscale", name: "Ollama (Tailscale)", baseUrl: "http://yaver-gpu.tailscale.net:11434/v1", hint: "Edit the host to match your tailnet." },
+  { label: "Private Ollama", id: "ollama-private", name: "Ollama (private network)", baseUrl: "http://your-ollama-host:11434/v1", hint: "Use a reachable host on your private network." },
   { label: "DeepSeek", id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", hint: "DeepSeek-Coder/V3. Key from platform.deepseek.com." },
 ];
 

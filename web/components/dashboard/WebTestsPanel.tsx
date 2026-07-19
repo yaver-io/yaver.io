@@ -350,7 +350,7 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
           <span className="text-neutral-400">Project dir (on the runner; empty = its cwd)</span>
-          <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="/Users/…/talos" />
+          <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="/Users/.../project" />
         </label>
         <label className="text-sm">
           <span className="text-neutral-400">Session token (optional, for authed pages)</span>
@@ -362,7 +362,7 @@ export default function WebTestsPanel({ initialDir = "" }: { initialDir?: string
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-sm">
             <span className="text-neutral-400">Profile</span>
-            <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={profile} onChange={(e) => setProfile(e.target.value)} placeholder="talos-admin" />
+            <input className="mt-1 w-full rounded bg-neutral-900 border border-neutral-700 p-2 text-sm" value={profile} onChange={(e) => setProfile(e.target.value)} placeholder="qa-admin" />
           </label>
           <label className="text-sm">
             <span className="text-neutral-400">Wait URL</span>

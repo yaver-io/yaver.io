@@ -110,15 +110,15 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Is my code safe?",
-    a: "Your code never leaves your machine. All traffic is P2P encrypted (QUIC+TLS). The relay is a dumb pipe — it forwards bytes but cannot read your data. Self-host the relay if you want zero third-party servers involved. Convex stores only sign-in identity, peer discovery, and audit summaries — never task input, output, files, vault values, or absolute paths (enforced by tests in the repo).",
+    a: "Your code stays on the machine doing the work. All traffic is encrypted (QUIC+TLS). Yaver Relay forwards bytes and does not store your source, prompts, runner output, or vault values. Convex stores sign-in identity, peer discovery, billing state, and audit summaries, not task input or files.",
   },
   {
     q: "Does Yaver manage my servers?",
-    a: "No. You run Yaver on your own machine, dev box, or VPS — Yaver drives it, it doesn't host it. The default path is your phone sandbox first, then your own hardware. Self-hosted Yaver is free. (An optional managed-cloud option for people who don't want to run their own box is coming later.)",
+    a: "You can run Yaver on your own machine, dev box, or VPS. If you do not want to manage a machine, Cloud Workspace gives you a saved Yaver-hosted development box with Relay Pro included.",
   },
   {
     q: "What is free, and what is paid?",
-    a: "The whole open-source stack is free: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. That's everything you need to build and iterate. (An optional managed-cloud option for people who don't want to run their own always-reachable box is coming later.)",
+    a: "Free includes the app, CLI, agent, SDKs, local development, and limited shared relay usage. Paid products are Relay Pro for private managed reachability and Cloud Workspace for a saved Yaver-hosted dev machine with Relay Pro included.",
   },
   {
     q: "What if I already use Vercel or Supabase Cloud?",
@@ -872,34 +872,48 @@ function FAQItem({ question, answer }: { question: string; answer: string }) {
 function CloudInfraSection() {
   const plans = [
     {
-      name: "Cloud Agent",
-      price: "$19",
-      unit: "starter credit",
-      badge: "Included model",
-      tone: "border-emerald-500/35 bg-emerald-500/5",
-      text: "Managed coding workspace with an included agent model. Connect GitHub, ask for changes from phone, web, or another Yaver surface, preview, and let Yaver stop the machine when idle.",
+      name: "Free",
+      price: "$0",
+      unit: "/mo",
+      badge: "Shared relay",
+      tone: "border-surface-700 bg-surface-900/40",
+      text: "Use Yaver with your own machine and the shared public relay for light personal work. It is deliberately limited so the free pool stays usable.",
       items: [
-        "Saved cloud workspace",
-        "Managed coding agent",
-        "GitHub projects preserved",
-        "Auto-stop when idle",
-        "Web purchase, mobile control",
+        "Limited shared public relay",
+        "Own-machine agent and local projects",
+        "Phone and web control",
+        "No checkout",
       ],
-      cta: "Start Cloud Agent",
+      cta: "Start free",
+    },
+    {
+      name: "Relay Pro",
+      price: "$9",
+      unit: "/mo",
+      badge: "Private relay",
+      tone: "border-emerald-500/35 bg-emerald-500/5",
+      text: "For users who keep coding on their own machine but need reliable reachability, higher limits, and a private managed relay.",
+      items: [
+        "Private Yaver relay",
+        "Higher relay limits",
+        "Managed endpoint",
+        "Works with your own machines",
+      ],
+      cta: "Start Relay Pro",
     },
     {
       name: "Cloud Workspace",
-      price: "$9",
-      unit: "starter credit",
-      badge: "BYO Claude / Codex",
+      price: "$29",
+      unit: "/mo",
+      badge: "Relay Pro included",
       tone: "border-indigo-500/35 bg-indigo-500/5",
-      text: "For people already paying Claude Code, Codex, ChatGPT, OpenRouter, or another provider. Yaver gives your agent a private reachable workspace.",
+      text: "For users who want Yaver to provide the machine too: a saved cloud workspace for full-stack projects, builds, previews, and deploys.",
       items: [
-        "Bring your own AI account",
-        "Private Yaver relay included",
-        "Saved runner auth and repos",
-        "Phone and web access",
-        "Auto-stop when idle",
+        "Saved cloud workspace",
+        "Relay Pro included",
+        "Cloud runner for builds",
+        "Auto-sleep when idle",
+        "Web purchase, mobile control",
       ],
       cta: "Start Workspace",
     },
@@ -917,13 +931,13 @@ function CloudInfraSection() {
           Buy a cloud coding workspace, not a mobile subscription.
         </h2>
         <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-          Self-hosted Yaver stays free. Yaver Cloud is paid infrastructure:
-          a saved workspace, private reachability, and an agent runtime that
-          shuts itself down when idle. Checkout happens on the web; the mobile
-          app only controls workspaces you already own.
+          Free Yaver includes own-machine development with limited shared relay
+          usage. Paid products are simple: Relay Pro for private reachability, or Cloud
+          Workspace when Yaver provides the machine too. Checkout happens on
+          the web; the mobile app only controls workspaces you already own.
         </p>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           {plans.map((plan) => (
             <div key={plan.name} className={`rounded-2xl border p-5 ${plan.tone}`}>
               <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -972,7 +986,7 @@ function ResourceCardsSection() {
     {
       eyebrow: "Manual",
       title: "MacBook to Windows AI Box over SSH",
-      text: "OpenSSH, Tailscale, always-on power settings, Ollama with Qwen, and a clean remote coding loop for a stronger Windows box behind a MacBook.",
+      text: "OpenSSH, Yaver Relay, always-on power settings, Ollama with Qwen, and a clean remote coding loop for a stronger Windows box behind a MacBook.",
       href: "/manuals/windows-ssh-coding-box",
       cta: "Read setup guide",
     },
@@ -1817,7 +1831,7 @@ return (
                   ["Web UI (yaver.io)", "Browser", "$0"],
                   ["Local phone sandbox backend", "Inside the mobile app", "$0"],
                   ["Promoted backend on your own machine", "Your Mac / Linux / WSL / VPS", "$0 + your hardware"],
-                  ["Relay server", "Self-host on any VPS", "$0"],
+                  ["Yaver Relay", "Free shared relay or Relay Pro", "Free / $9"],
                   ["AI models (Ollama)", "Your GPU or CPU", "$0"],
                   ["Store / CI release plumbing", "Hosted distribution surfaces", "Optional"],
                 ].map((row) => (
@@ -1834,7 +1848,7 @@ return (
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
             <p><strong className="text-surface-100">A solo developer can run the open-source stack at $0.</strong></p>
             <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi, with control surfaces expanding across mobile, watch, TV, car, and AR/VR.</p>
-            <p>Self-host the CLI, agent, relay, and backend for free. Client surfaces connect through Yaver&apos;s thin coordination plane today &mdash; identity and device discovery only, your code stays P2P &mdash; and full client self-host is on the way.</p>
+            <p>The CLI, agent, relay, and backend remain source-available for advanced operators. Normal remote access should use Yaver Relay; your code stays P2P and the hosted plane carries identity and device discovery.</p>
             <p className="mt-4 text-surface-500">
               The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}
               <strong className="text-surface-300">FSL-1.1</strong> (auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}

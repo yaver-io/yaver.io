@@ -304,10 +304,11 @@ Invitee (mobile/web)
         - web: GitView + terminal attached to the box
 ```
 
-For host **(c)** "they pay," the invitee's accept triggers
-`/billing/yaver-cloud/provision` against **their** wallet; the owner only
-shares the repo URL + (optionally) a deploy key. Clean billing separation,
-already supported by the per-user wallet model.
+For host **(c)** "they pay," the invitee must have their own active Cloud
+Workspace subscription. Accept records the repo/share relationship; the
+workspace comes from the invitee's subscription/reconcile/placement flow, not a
+direct wallet-funded provision route. The owner only shares the repo URL and,
+optionally, a deploy key.
 
 ### 3.4 Git wiring for the normie loop: clone → test → commit → push → deploy
 

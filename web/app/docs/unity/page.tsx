@@ -116,7 +116,7 @@ export default function UnityDocsPage() {
           <SectionHeading id="runners">Self-Hosted Runner Patterns</SectionHeading>
           <div className="space-y-4">
             {[
-              "Solo developer: Unity project on your own desktop or laptop, reachable through relay, Tailscale, or a tunnel.",
+              "Solo developer: Unity project on your own desktop or laptop, reachable through Yaver Relay.",
               "Home build machine: a stronger desktop or Mac mini that keeps working while you are away.",
               "Studio runner: a shared workstation, remote Linux box, or GPU VPS with a private model and controlled costs.",
             ].map((item) => (

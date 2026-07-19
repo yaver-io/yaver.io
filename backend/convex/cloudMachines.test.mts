@@ -5,7 +5,10 @@ import {
   buildManagedCloudInit,
   managedDeviceIdFor,
   buildManagedCloudInitContainer,
+  isMachineWakeable,
+  managedMachineLimit,
   planDeprovision,
+  reusableSubscriptionMachineStatus,
   snapshotIsMandatory,
   HOSTED_GRACE_MS,
 } from "./cloudMachines.js";
@@ -158,6 +161,31 @@ test("planDeprovision: hosted gets a grace window, byok deletes now, force overr
   assert.equal(forced.grace, false);
 });
 
+test("reusableSubscriptionMachineStatus excludes dead and deleting rows", () => {
+  for (const status of ["active", "provisioning", "resuming", "paused", "suspended", "grace"]) {
+    assert.equal(reusableSubscriptionMachineStatus(status), true, status);
+  }
+  for (const status of ["stopped", "stopping", "removed", "error", "", undefined]) {
+    assert.equal(reusableSubscriptionMachineStatus(status), false, String(status));
+  }
+});
+
+test("managed machine quota keeps flat Cloud Workspace to one saved box", () => {
+  assert.equal(managedMachineLimit("cloud-workspace"), 1);
+  assert.equal(managedMachineLimit("cloud-agent"), 1);
+  const previous = process.env.YAVER_MANAGED_MACHINE_LIMIT;
+  delete process.env.YAVER_MANAGED_MACHINE_LIMIT;
+  try {
+    assert.equal(managedMachineLimit(undefined), 1);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.YAVER_MANAGED_MACHINE_LIMIT;
+    } else {
+      process.env.YAVER_MANAGED_MACHINE_LIMIT = previous;
+    }
+  }
+});
+
 test("snapshotIsMandatory: only hosted (the user's only data copy)", () => {
   assert.equal(snapshotIsMandatory("hosted"), true);
   assert.equal(snapshotIsMandatory("byok"), false);
@@ -193,11 +221,23 @@ test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self
   assert.match(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/yaver\.io\.git yaver\.io/);
   assert.doesNotMatch(byok, /clone_one https:\/\/github\.com\/kivanccakmak\/(?!yaver\.io\.git)/);
   assert.match(byok, /-v \/srv\/yaver\/state\/Workspace:\/srv\/yaver\/workspace/);
+  assert.doesNotMatch(byok, /HC_Volume_/);
   assert.doesNotMatch(byok, /ghcr\.io\/get-convex\/convex-backend/);
   assert.doesNotMatch(byok, /docker run -d --name yaver-convex/);
   assert.match(byok, /: > \/etc\/nginx\/snippets\/yaver-convex\.conf/);
   // tier absent ⇒ identical to explicit byok (byte-identical default).
-  assert.equal(byok, buildManagedCloudInitContainer(base, IMG));
+  {
+    const realNow = Date.now;
+    Date.now = () => 1_784_418_035_010;
+    try {
+      assert.equal(
+        buildManagedCloudInitContainer({ ...base, tier: "byok" }, IMG),
+        buildManagedCloudInitContainer(base, IMG),
+      );
+    } finally {
+      Date.now = realNow;
+    }
+  }
 
   // hosted — agent container + Convex sidecar + admin-key on the
   // PERSISTED volume (so the in-container agent reads it) + nginx WS.
@@ -216,6 +256,40 @@ test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self
   assert.match(hosted, /proxy_pass http:\/\/127\.0\.0\.1:3210\//);
   assert.match(hosted, /location \/_convex-http\/ \{/);
   assert.match(hosted, /include \/etc\/nginx\/snippets\/yaver-convex\.conf;/);
+});
+
+test("buildManagedCloudInitContainer: volume-backed boxes mount durable state before writing config", () => {
+  const ci = buildManagedCloudInitContainer(
+    {
+      convexSite: "https://example.convex.site",
+      machineId: "machine_vol",
+      machineToken: "machine-token-vol",
+      bootstrapDeviceCode: "device-code-vol",
+      bootstrapExpiresAt: 1893456000000,
+      deviceId: "cloud-vol",
+      hostname: "vol.cloud.yaver.io",
+      yaverArch: "amd64",
+      yaverReleaseUrl: "https://example.invalid/yaver-linux-amd64.tar.gz",
+      gpu: false,
+      volumeId: "123456",
+    },
+    "ghcr.io/kivanccakmak/yaver-cloud:latest",
+  );
+
+  const mountIdx = ci.indexOf("/dev/disk/by-id/scsi-0HC_Volume_123456");
+  const configIdx = ci.indexOf("cat > /srv/yaver/state/.yaver/config.json");
+  assert.ok(mountIdx > 0, "volume mount block is present");
+  assert.ok(configIdx > 0, "state config write is present");
+  assert.ok(mountIdx < configIdx, "volume is mounted before state is written");
+  assert.match(ci, /mountpoint -q \/srv\/yaver\/state \|\| mount \/srv\/yaver\/state/);
+  assert.match(ci, /refusing ephemeral state/);
+});
+
+test("isMachineWakeable requires snapshot or volume plus base image", () => {
+  assert.equal(isMachineWakeable({ status: "paused", lastSnapshotId: "snap-1" }), true);
+  assert.equal(isMachineWakeable({ status: "paused", volumeId: "vol-1", baseImageId: "ubuntu-24.04" }), true);
+  assert.equal(isMachineWakeable({ status: "paused", baseImageId: "ubuntu-24.04" }), false);
+  assert.equal(isMachineWakeable({ status: "active", volumeId: "vol-1", baseImageId: "ubuntu-24.04" }), false);
 });
 
 test("buildManagedCloudInitContainer: observability beacon + optional ssh/relay", () => {

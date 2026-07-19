@@ -58,7 +58,7 @@ function isSubdomainUrl(url?: string): boolean {
 function pathLabel(path?: ClassifyFetchErrorInput["path"]): string {
   switch (path) {
     case "relay": return "relay";
-    case "tunnel": return "Cloudflare tunnel";
+    case "tunnel": return "custom tunnel";
     case "direct": return "direct LAN";
     case "subdomain": return "device subdomain";
     default: return "agent";
@@ -170,9 +170,9 @@ export function classifyFetchError(input: ClassifyFetchErrorInput): ClassifiedFa
     if (path === "tunnel") {
       return {
         reason: "tunnel-stale",
-        label: "Cloudflare tunnel down",
-        detail: "The agent's Cloudflare tunnel URL returned 502. The tunnel is dead or restarting.",
-        suggestedAction: "Restart the agent's tunnel or fall back to relay.",
+        label: "Custom tunnel down",
+        detail: "The agent's custom tunnel URL returned 502. The tunnel is dead or restarting.",
+        suggestedAction: "Restart the agent's custom tunnel or fall back to relay.",
         status,
         raw,
       };

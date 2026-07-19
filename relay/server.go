@@ -70,8 +70,9 @@ type RelayServer struct {
 	convexURL string
 
 	// Cache of validated per-user passwords (password -> expiry time)
-	validatedPwMu sync.RWMutex
-	validatedPw   map[string]time.Time // password/access cache key -> cache expiry
+	validatedPwMu       sync.RWMutex
+	validatedPw         map[string]time.Time           // password/access cache key -> cache expiry
+	validatedAccessMeta map[string]validatedAccessMeta // access cache key -> entitlement metadata
 
 	startedAt time.Time // server start time for uptime tracking
 
@@ -125,6 +126,13 @@ type RelayServer struct {
 	// the password. Without this split the cutover is a guess. See sigFailReason.
 	sigFailMu sync.Mutex
 	sigFails  map[sigFailReason]uint64
+}
+
+type validatedAccessMeta struct {
+	UserID string
+	IsPaid bool
+	Plan   string
+	Expiry time.Time
 }
 
 type exposeRoute struct {
@@ -226,19 +234,20 @@ func (wst *wsAgentTunnel) readLoop() {
 
 func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain string) *RelayServer {
 	s := &RelayServer{
-		quicPort:     quicPort,
-		httpPort:     httpPort,
-		password:     password,
-		convexURL:    convexURL,
-		validatedPw:  make(map[string]time.Time),
-		startedAt:    time.Now(),
-		tunnels:      make(map[string]*agentTunnel),
-		meshStreams:  make(map[string]*meshStreamHandle),
-		exposeRoutes: make(map[string]*exposeRoute),
-		exposeDomain: exposeDomain,
-		busHub:       newBusHub(),
-		pwUserIDs:    make(map[string]string),
-		pwUserIDExp:  make(map[string]time.Time),
+		quicPort:            quicPort,
+		httpPort:            httpPort,
+		password:            password,
+		convexURL:           convexURL,
+		validatedPw:         make(map[string]time.Time),
+		validatedAccessMeta: make(map[string]validatedAccessMeta),
+		startedAt:           time.Now(),
+		tunnels:             make(map[string]*agentTunnel),
+		meshStreams:         make(map[string]*meshStreamHandle),
+		exposeRoutes:        make(map[string]*exposeRoute),
+		exposeDomain:        exposeDomain,
+		busHub:              newBusHub(),
+		pwUserIDs:           make(map[string]string),
+		pwUserIDExp:         make(map[string]time.Time),
 		// RELAY_ADMIN_TOKEN gates /admin/* + diagnostic endpoints
 		// regardless of relay password. Empty = no admin-token path
 		// available (callers must use the relay password instead).
@@ -295,6 +304,7 @@ func (s *RelayServer) setPassword(pw string) {
 	// stale shared-password hit.
 	s.validatedPwMu.Lock()
 	s.validatedPw = make(map[string]time.Time)
+	s.validatedAccessMeta = make(map[string]validatedAccessMeta)
 	s.validatedPwMu.Unlock()
 
 	s.pwUserIDMu.Lock()
@@ -477,13 +487,25 @@ func (s *RelayServer) validatePassword(pw string) bool {
 
 // validatePasswordViaConvex calls the Convex backend to check a per-user relay password.
 func (s *RelayServer) validatePasswordViaConvex(pw string) bool {
-	_, ok := s.validateAndResolveViaConvex(pw, "", "", "")
+	_, ok, _ := s.validateAndResolveViaConvex(pw, "", "", "")
 	return ok
 }
 
 func (s *RelayServer) validateRelayAccess(pw, action, deviceID, token string) (string, bool) {
 	uid, ok, _ := s.validateRelayAccessE(pw, action, deviceID, token)
 	return uid, ok
+}
+
+func relayAccessCacheKey(action, deviceID, pw, token string) string {
+	return strings.Join([]string{"access", action, deviceID, pw, token}, "\x00")
+}
+
+func (s *RelayServer) relayAccessIsPaid(action, deviceID, pw, token string) bool {
+	key := relayAccessCacheKey(strings.TrimSpace(action), strings.TrimSpace(deviceID), strings.TrimSpace(pw), strings.TrimSpace(token))
+	s.validatedPwMu.RLock()
+	meta, ok := s.validatedAccessMeta[key]
+	s.validatedPwMu.RUnlock()
+	return ok && time.Now().Before(meta.Expiry) && meta.IsPaid
 }
 
 // validateRelayAccessE is validateRelayAccess plus an honest reason.
@@ -509,7 +531,7 @@ func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (
 		return "", true, nil
 	}
 
-	cacheKey := strings.Join([]string{"access", action, deviceID, pw, token}, "\x00")
+	cacheKey := relayAccessCacheKey(action, deviceID, pw, token)
 	s.validatedPwMu.RLock()
 	if expiry, ok := s.validatedPw[cacheKey]; ok && time.Now().Before(expiry) {
 		s.validatedPwMu.RUnlock()
@@ -517,15 +539,22 @@ func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (
 	}
 	s.validatedPwMu.RUnlock()
 
-	userID, ok, err := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
+	userID, ok, isPaid, plan, err := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
 	if ok {
+		expiry := time.Now().Add(5 * time.Minute)
 		s.validatedPwMu.Lock()
-		s.validatedPw[cacheKey] = time.Now().Add(5 * time.Minute)
+		s.validatedPw[cacheKey] = expiry
+		s.validatedAccessMeta[cacheKey] = validatedAccessMeta{
+			UserID: userID,
+			IsPaid: isPaid,
+			Plan:   plan,
+			Expiry: expiry,
+		}
 		s.validatedPwMu.Unlock()
 		if userID != "" {
 			s.pwUserIDMu.Lock()
 			s.pwUserIDs[pw] = userID
-			s.pwUserIDExp[pw] = time.Now().Add(5 * time.Minute)
+			s.pwUserIDExp[pw] = expiry
 			s.pwUserIDMu.Unlock()
 		}
 	}
@@ -547,9 +576,9 @@ func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (
 // not blame the caller's credential, and let them retry.
 var errAuthBackendUnavailable = errors.New("relay auth backend unavailable")
 
-func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token string) (string, bool) {
-	uid, ok, _ := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
-	return uid, ok
+func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token string) (string, bool, bool) {
+	uid, ok, isPaid, _, _ := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
+	return uid, ok, isPaid
 }
 
 // validateAndResolveViaConvexE additionally reports errAuthBackendUnavailable
@@ -557,7 +586,7 @@ func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token st
 // check". Everything security-relevant still fails CLOSED: a non-nil error
 // grants no access. It only changes what we TELL the caller and whether we
 // hold it against them.
-func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token string) (string, bool, error) {
+func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token string) (string, bool, bool, string, error) {
 	url := strings.TrimRight(s.convexURL, "/") + "/relay/validate"
 	payload := map[string]string{"password": pw}
 	if strings.TrimSpace(action) != "" {
@@ -574,25 +603,27 @@ func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token s
 	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		log.Printf("[RELAY] Convex validation error: %v", err)
-		return "", false, errAuthBackendUnavailable
+		return "", false, false, "", errAuthBackendUnavailable
 	}
 	defer resp.Body.Close()
 
 	// 5xx is the backend failing, not the caller. 401 IS a real verdict.
 	if resp.StatusCode >= 500 {
 		log.Printf("[RELAY] Convex validation backend error: HTTP %d", resp.StatusCode)
-		return "", false, errAuthBackendUnavailable
+		return "", false, false, "", errAuthBackendUnavailable
 	}
 
 	var result struct {
 		OK     bool   `json:"ok"`
 		UserID string `json:"userId"`
+		IsPaid bool   `json:"isPaid"`
+		Plan   string `json:"plan"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("[RELAY] Convex validation parse error: %v", err)
-		return "", false, errAuthBackendUnavailable
+		return "", false, false, "", errAuthBackendUnavailable
 	}
-	return result.UserID, result.OK, nil
+	return result.UserID, result.OK, result.IsPaid, result.Plan, nil
 }
 
 // resolveSigViaConvex fetches the SIGNER device's ed25519 signing public key
@@ -745,7 +776,7 @@ func (s *RelayServer) resolveUserIDFromPassword(pw string) string {
 	}
 	s.pwUserIDMu.RUnlock()
 
-	uid, ok := s.validateAndResolveViaConvex(pw, "", "", "")
+	uid, ok, _ := s.validateAndResolveViaConvex(pw, "", "", "")
 	if !ok || uid == "" {
 		return ""
 	}
@@ -1563,6 +1594,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// password path — so a client that hasn't migrated is never locked out.
 	var userID string
 	var authed bool
+	var relayPaid bool
 	if hasDeviceSig(r) {
 		if uid, sigOK := s.authorizeProxyViaSig(r, deviceID); sigOK {
 			userID, authed = uid, true
@@ -1599,6 +1631,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		userID = uid
+		relayPaid = s.relayAccessIsPaid("proxy", deviceID, relayPw, "")
 		s.authViaPw.Add(1)
 		s.abuseGuard.clearInvalidAuth(s.abuseGuard.clientIP(r))
 	}
@@ -1639,6 +1672,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if bytesRequested < 0 {
 		bytesRequested = 0
 	}
+	s.bandwidth.SetDevicePaid(deviceID, relayPaid)
 
 	// Check bandwidth limit
 	if err := s.bandwidth.CheckAllowed(deviceID, bytesRequested); err != nil {
@@ -1755,7 +1789,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > 0 {
 			bytesIn += r.ContentLength
 		}
-		s.bandwidth.RecordBytes(deviceID, bytesIn, int64(len(tunnelResp.Body)), false)
+		s.bandwidth.RecordBytes(deviceID, bytesIn, int64(len(tunnelResp.Body)), relayPaid)
 		return
 	}
 	if tunnel.conn == nil {
@@ -1853,17 +1887,43 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if first[0] == streamWireMagic {
 		// New streaming wire format. Don't buffer; let the reader
 		// flush chunks straight to the client.
-		if err := readStreamingResponse(w, stream); err != nil {
+		//
+		// Outbound bytes are now counted exactly (countingResponseWriter)
+		// rather than recorded as 0. Streaming is the most expensive traffic
+		// the relay carries — continuous media over the WebRTC/TURN fallback
+		// and desktop streams — and reporting 0 made it invisible to
+		// BandwidthManager.CheckAllowed, i.e. uncapped free egress. Wrapping
+		// the writer is precisely the fix the old comment here deferred.
+		//
+		// The budget is the device's remaining daily allowance. Without it a
+		// single stream could never be stopped: CheckAllowed above ran once
+		// against ContentLength (0 for a streaming GET), so it always passed,
+		// and nothing re-checked until the tunnel's 15-minute timeout.
+		cw := &countingResponseWriter{
+			ResponseWriter: w,
+			budget:         s.bandwidth.RemainingBytes(deviceID),
+			// Report incrementally so a long stream is visible to concurrent
+			// requests while it runs, instead of landing in one lump at the end.
+			// bytesIn is billed once, below, to avoid double-counting it.
+			report: func(delta int64) {
+				s.bandwidth.RecordBytes(deviceID, 0, delta, relayPaid)
+			},
+		}
+		err := readStreamingResponse(cw, stream)
+		cw.Close() // flush the final partial increment
+		if err != nil && !errors.Is(err, errBandwidthBudgetExhausted) {
 			// Headers were already written by the time most errors
 			// fire — log and bail, the client sees a truncated body.
 			log.Printf("[RELAY] streaming response from %s failed: %v", tunnel.deviceID[:8], err)
 		}
-		// Bandwidth bookkeeping for streaming responses isn't byte-
-		// exact (we'd need to wrap the io.Copy with a counter); for
-		// now record the request side accurately and treat streaming
-		// outbound as best-effort. The bandwidth dashboard already
-		// flags very off-base numbers.
-		s.bandwidth.RecordBytes(deviceID, bytesIn, 0, false)
+		if cw.Exhausted() {
+			log.Printf("[RELAY] device %s hit its bandwidth limit mid-stream after %d bytes; stream cut",
+				tunnel.deviceID[:8], cw.BytesWritten())
+		}
+		// Outbound was billed incrementally by the reporter above; only the
+		// request side remains. Bytes already sent are billed even when the
+		// stream was cut — they cost the same as a clean transfer.
+		s.bandwidth.RecordBytes(deviceID, bytesIn, 0, relayPaid)
 		return
 	}
 
@@ -1893,7 +1953,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Record bandwidth usage
 	bytesOut := int64(len(tunnelResp.Body))
-	s.bandwidth.RecordBytes(deviceID, bytesIn, bytesOut, false)
+	s.bandwidth.RecordBytes(deviceID, bytesIn, bytesOut, relayPaid)
 }
 
 // proxySSE handles Server-Sent Events by streaming from the QUIC stream.

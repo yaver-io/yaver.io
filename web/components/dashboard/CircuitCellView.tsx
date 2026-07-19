@@ -306,7 +306,7 @@ export default function CircuitCellView({ devices, token }: { devices: Device[];
               />
               <button onClick={createDesign} className={`${btn} bg-sky-600/80 text-white hover:bg-sky-600`}>＋ New</button>
             </div>
-            <p className="mt-2 text-xs text-white/40">One sim node holds many designs — Talos panels, OCPP board revs… each persisted on the box, never on Convex.</p>
+            <p className="mt-2 text-xs text-white/40">One sim node holds many designs — control panels, OCPP board revs… each persisted on the box, never on Convex.</p>
           </div>
 
           <div className={card}>

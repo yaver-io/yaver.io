@@ -2,16 +2,17 @@ package main
 
 // mcp_billing.go — buyer-side billing MCP tools. Let a Yaver user, from their
 // terminal coding agent, check their plan and get payment / manage links for
-// Yaver's own Workspace ($9) / Agent ($19) plans. Thin wrappers over the authed
-// Convex /billing/* endpoints (the daemon already holds the user's token).
+// Yaver's own Relay Pro ($9) / Cloud Workspace ($29) plans. Thin wrappers over
+// the authed Convex /billing/* endpoints (the daemon already holds the user's
+// token).
 //
 // NOT the lemonsqueezy_* tools, which are SELLER-side (the user's OWN store).
 // These buy *Yaver itself*.
 //
-// Mis-bill safety: the server-side checkout maps plan→tier and REQUIRES a
-// distinct LemonSqueezy variant for the $19 hosted plan — if that variant
-// isn't configured it returns a clean 503, which these tools surface verbatim
-// (never a wrong-priced link). See docs/yaver-mcp-billing.md.
+// Mis-bill safety: the server-side checkout maps product→variant and REQUIRES
+// a distinct LemonSqueezy variant for each paid product — if a variant isn't
+// configured it returns a clean 503, which these tools surface verbatim (never
+// a wrong-priced link). See docs/yaver-mcp-billing.md.
 
 import (
 	"bytes"
@@ -74,9 +75,9 @@ func billingRequest(method, path string, bodyJSON []byte) (int, []byte, error) {
 
 // --- yaver_billing_status ---------------------------------------------------
 
-// mcpYaverBillingStatus reports whether the user is subscribed, which tier,
-// included active-hours left this month, prepaid wallet balance, and whether
-// managed inference is on. The "am I already subscribed" read.
+// mcpYaverBillingStatus reports whether the user is subscribed, which plan,
+// included active-hours left this month, and whether managed inference is on.
+// Internal wallet/meter fields are intentionally not exposed in this buyer UX.
 func mcpYaverBillingStatus() interface{} {
 	if _, token := billingBaseURL(); token == "" {
 		return billingNotSignedIn()
@@ -94,7 +95,6 @@ func mcpYaverBillingStatus() interface{} {
 		SubscriptionStatus *string  `json:"subscriptionStatus"`
 		CurrentPeriodEnd   *float64 `json:"currentPeriodEnd"`
 		IncludedHoursLeft  float64  `json:"includedHoursLeft"`
-		WalletCents        float64  `json:"walletCents"`
 		ManagedInference   bool     `json:"managedInference"`
 	}
 	if err := json.Unmarshal(body, &s); err != nil {
@@ -106,7 +106,6 @@ func mcpYaverBillingStatus() interface{} {
 		"tier":                s.Tier,
 		"subscription_status": s.SubscriptionStatus,
 		"included_hours_left": s.IncludedHoursLeft,
-		"wallet_usd":          s.WalletCents / 100.0,
 		"managed_inference":   s.ManagedInference,
 	}
 	if s.Subscribed {
@@ -116,7 +115,7 @@ func mcpYaverBillingStatus() interface{} {
 		}
 		out["next_action"] = fmt.Sprintf("You're on the %s plan. Use yaver_billing_manage to update payment, change plan, or cancel.", tier)
 	} else {
-		out["next_action"] = "No active Yaver plan. Use yaver_billing_checkout to subscribe — Workspace ($9, bring your own Claude/Codex) or Agent ($19, included model)."
+		out["next_action"] = "No active Yaver plan. Use yaver_billing_checkout to subscribe — Relay Pro ($9/mo) or Cloud Workspace ($29/mo, BYO Claude/Codex/OpenCode)."
 	}
 	return mcpToolJSON(out)
 }
@@ -124,18 +123,17 @@ func mcpYaverBillingStatus() interface{} {
 // --- yaver_billing_checkout -------------------------------------------------
 
 // mcpYaverBillingCheckout returns a LemonSqueezy payment link for the chosen
-// plan. Both tiers go through the server checkout, which sets the correct
-// tier + variant; the $19 Agent surfaces a clean "not configured" message (not
-// a mis-billed link) until its hosted variant is set.
-// billingPlanMap maps a user-facing plan name to its server planId, canonical
+// product. Both paid products go through the server checkout, which sets the
+// correct product + variant.
+// billingPlanMap maps a user-facing plan name to its server productId, canonical
 // short name, label, and price. ok=false for anything unrecognized. Pure (no
 // I/O) so it's unit-testable.
 func billingPlanMap(plan string) (planID, short, label, price string, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(plan)) {
-	case "", "workspace", "byok", "cloud-workspace":
-		return "cloud-workspace", "workspace", "Cloud Workspace", "$9/mo (bring your own Claude/Codex)", true
-	case "agent", "hosted", "cloud-agent":
-		return "cloud-agent", "agent", "Cloud Agent", "$19/mo (included model)", true
+	case "", "relay", "relay-pro", "managed-relay":
+		return "relay-pro", "relay", "Relay Pro", "$9/mo", true
+	case "workspace", "cloud-workspace", "yaver-cloud", "compute":
+		return "cloud-workspace", "workspace", "Cloud Workspace", "$29/mo (BYO Claude/Codex/OpenCode)", true
 	default:
 		return "", "", "", "", false
 	}
@@ -144,14 +142,14 @@ func billingPlanMap(plan string) (planID, short, label, price string, ok bool) {
 func mcpYaverBillingCheckout(plan string) interface{} {
 	planID, short, label, price, ok := billingPlanMap(plan)
 	if !ok {
-		return mcpToolError(`plan must be "workspace" ($9 BYO) or "agent" ($19 included model)`)
+		return mcpToolError(`plan must be "relay" ($9/mo Relay Pro) or "workspace" ($29/mo Cloud Workspace)`)
 	}
 
 	if _, token := billingBaseURL(); token == "" {
 		return billingNotSignedIn()
 	}
-	reqBody, _ := json.Marshal(map[string]string{"region": "eu", "planId": planID})
-	code, body, err := billingRequest(http.MethodPost, "/billing/yaver-cloud/checkout", reqBody)
+	reqBody, _ := json.Marshal(map[string]string{"region": "eu", "productId": planID})
+	code, body, err := billingRequest(http.MethodPost, "/billing/checkout", reqBody)
 	if err != nil {
 		return mcpToolError(fmt.Sprintf("checkout: %v", err))
 	}
@@ -174,11 +172,11 @@ func mcpYaverBillingCheckout(plan string) interface{} {
 	case http.StatusForbidden:
 		return mcpToolJSON(map[string]interface{}{
 			"available":   false,
-			"next_action": "Yaver Cloud plans aren't enabled on your account yet (private preview).",
+			"next_action": "Yaver Cloud plans aren't enabled on your account yet.",
 		})
 	case http.StatusServiceUnavailable:
-		// e.g. the $19 hosted variant isn't configured yet — surface the
-		// server's message verbatim so the agent tells the human accurately.
+		// Surface the server's message verbatim so the agent tells the human
+		// accurately when a product variant is not configured.
 		return mcpToolJSON(map[string]interface{}{
 			"plan":        short,
 			"available":   false,

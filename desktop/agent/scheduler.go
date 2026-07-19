@@ -102,12 +102,15 @@ type OpsDispatcher func(req OpsRequest) OpsResult
 
 // Scheduler manages scheduled and recurring tasks.
 type Scheduler struct {
-	mu          sync.RWMutex
-	tasks       map[string]*ScheduledTask
-	taskMgr     *TaskManager
-	storePath   string
-	cancel      context.CancelFunc
-	opsDispatch OpsDispatcher
+	mu                sync.RWMutex
+	tasks             map[string]*ScheduledTask
+	taskMgr           *TaskManager
+	storePath         string
+	cancel            context.CancelFunc
+	opsDispatch       OpsDispatcher
+	placementBaseURL  string
+	placementToken    string
+	placementDeviceID string
 }
 
 // SetOpsDispatcher wires the verb dispatcher used by Verb-mode
@@ -118,6 +121,17 @@ func (s *Scheduler) SetOpsDispatcher(fn OpsDispatcher) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.opsDispatch = fn
+}
+
+func (s *Scheduler) SetPlacementBackend(baseURL, token, deviceID string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.placementBaseURL = strings.TrimSpace(baseURL)
+	s.placementToken = strings.TrimSpace(token)
+	s.placementDeviceID = strings.TrimSpace(deviceID)
 }
 
 // activeScheduler is the process-global scheduler, set by NewScheduler so
@@ -251,6 +265,9 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 		opts.ResumeLast = true
 		opts.ResumeSessionID = st.LastSessionID
 	}
+	if s.deferScheduledTaskForCloudPlacement(context.Background(), st, desc) {
+		return
+	}
 	task, err := s.taskMgr.CreateTaskWithOptions(st.Title, desc, st.Model, "scheduler", st.Runner, st.CustomCommand, nil, opts)
 	if err != nil {
 		// A schedule that cannot even CREATE its task is failing just as hard as
@@ -337,6 +354,86 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 			}
 		}
 	}()
+}
+
+func (s *Scheduler) deferScheduledTaskForCloudPlacement(ctx context.Context, st *ScheduledTask, desc string) bool {
+	if s == nil || st == nil || s.taskMgr == nil {
+		return false
+	}
+	s.mu.RLock()
+	baseURL := strings.TrimSpace(s.placementBaseURL)
+	token := strings.TrimSpace(s.placementToken)
+	deviceID := strings.TrimSpace(s.placementDeviceID)
+	s.mu.RUnlock()
+	client, err := newTaskPlacementBackendClient(baseURL, token)
+	if err != nil {
+		return false
+	}
+	meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		KindHint:       "unknown",
+		Title:          st.Title,
+		Description:    desc,
+		CustomCommand:  st.CustomCommand,
+		Source:         "scheduler",
+		Runner:         st.Runner,
+		WorkDir:        s.taskMgr.workDir,
+		TargetDeviceID: deviceID,
+	})
+	preview, err := client.postTaskPlacement(ctx, "/tasks/placement/preview", meta)
+	if err != nil {
+		log.Printf("[placement] scheduler preview skipped for %s: %v", st.ID, err)
+		return false
+	}
+	if !shouldDeferLocalTaskForPlacement(preview, deviceID) {
+		return false
+	}
+
+	pendingTaskID := newPendingCloudTaskID()
+	recordedPlacement := preview
+	if placement, rerr := client.postTaskPlacement(ctx, "/tasks/placement/record", func() taskPlacementRecordRequest {
+		meta.TaskID = pendingTaskID
+		return meta
+	}()); rerr != nil {
+		log.Printf("[placement] scheduler pending record skipped for %s: %v", pendingTaskID, rerr)
+	} else if placement != nil {
+		recordedPlacement = placement
+	}
+	var activation map[string]any
+	if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+		if result, aerr := client.activateTaskPlacement(ctx, recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+			activation = activationMapFromError(aerr)
+			log.Printf("[placement] scheduler activation skipped for %s: %v", pendingTaskID, aerr)
+		} else {
+			activation = result
+		}
+	}
+	blocker := cloudActivationBlockerMessage(activation)
+	reason := "cloud workspace required"
+	if blocker != "" {
+		reason += ": " + blocker
+	} else if recordedPlacement != nil && strings.TrimSpace(recordedPlacement.TargetDeviceID) != "" {
+		reason += ": target " + strings.TrimSpace(recordedPlacement.TargetDeviceID)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.mu.Lock()
+	st.LastRunAt = now
+	st.LastTaskID = pendingTaskID
+	st.RunCount++
+	st.Status = "paused"
+	st.NextRunAt = ""
+	st.PausedReason = "paused because " + reason + "; resume after the assigned Cloud Workspace can accept scheduled tasks"
+	st.History = append(st.History, ScheduleRun{
+		TaskID:    pendingTaskID,
+		Status:    "cloud_workspace_required",
+		StartedAt: now,
+	})
+	if len(st.History) > 50 {
+		st.History = st.History[len(st.History)-50:]
+	}
+	s.mu.Unlock()
+	s.save()
+	log.Printf("[scheduler] Paused schedule %s because %s", st.ID, reason)
+	return true
 }
 
 // maxConsecutiveFailures is how many times in a row a schedule may fail before

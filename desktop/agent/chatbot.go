@@ -14,21 +14,30 @@ import (
 // ChatBot manages bidirectional chat integrations (Telegram, Discord).
 // Runs inside the agent process — no external server needed.
 type ChatBot struct {
-	taskMgr  *TaskManager
-	execMgr  *ExecManager
+	taskMgr   *TaskManager
+	execMgr   *ExecManager
 	notifyMgr *NotificationManager
-	config   *NotificationConfig
-	cancel   context.CancelFunc
+	config    *NotificationConfig
+	placement TaskIngressPlacementConfig
+	cancel    context.CancelFunc
 }
 
+// ChatBotPlacementConfig lets chat ingress participate in the Cloud Workspace
+// placement layer without giving the chat bot direct provider controls.
+type ChatBotPlacementConfig = TaskIngressPlacementConfig
+
 // NewChatBot creates a chat bot manager.
-func NewChatBot(taskMgr *TaskManager, execMgr *ExecManager, notifyMgr *NotificationManager, config *NotificationConfig) *ChatBot {
-	return &ChatBot{
+func NewChatBot(taskMgr *TaskManager, execMgr *ExecManager, notifyMgr *NotificationManager, config *NotificationConfig, placement ...TaskIngressPlacementConfig) *ChatBot {
+	cb := &ChatBot{
 		taskMgr:   taskMgr,
 		execMgr:   execMgr,
 		notifyMgr: notifyMgr,
 		config:    config,
 	}
+	if len(placement) > 0 {
+		cb.placement = placement[0]
+	}
+	return cb
 }
 
 // Start begins listening for messages on all configured channels.
@@ -57,7 +66,7 @@ func (cb *ChatBot) UpdateConfig(ctx context.Context, config *NotificationConfig)
 // ── Telegram Bot ──────────────────────────────────────────────────
 
 type telegramUpdate struct {
-	UpdateID int `json:"update_id"`
+	UpdateID int              `json:"update_id"`
 	Message  *telegramMessage `json:"message"`
 }
 
@@ -227,6 +236,10 @@ func (cb *ChatBot) processCommand(text string) string {
 }
 
 func (cb *ChatBot) createTask(prompt string) string {
+	if msg, deferred := cb.deferTaskToCloudWorkspace(context.Background()); deferred {
+		return msg
+	}
+
 	task, err := cb.taskMgr.CreateTask(prompt, "", "", "telegram", "", "", nil, nil)
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to create task: %v", err)
@@ -272,6 +285,39 @@ func (cb *ChatBot) createTask(prompt string) string {
 	}()
 
 	return fmt.Sprintf("🚀 Task created: `%s`\nID: `%s`\nI'll send the result when it's done.", prompt, task.ID)
+}
+
+func (cb *ChatBot) deferTaskToCloudWorkspace(ctx context.Context) (string, bool) {
+	if cb == nil {
+		return "", false
+	}
+	deferral, deferred, err := deferIngressTaskToCloudWorkspace(ctx, cb.placement, "telegram", "unknown")
+	if err != nil && !deferred {
+		log.Printf("[placement] telegram preview skipped before task create: %v", err)
+		return "", false
+	}
+	if !deferred {
+		return "", false
+	}
+	if err != nil {
+		pendingTaskID := ""
+		if deferral != nil {
+			pendingTaskID = deferral.PendingTaskID
+		}
+		log.Printf("[placement] telegram cloud deferral failed for %s: %v", pendingTaskID, err)
+		return fmt.Sprintf("Cloud Workspace is selected for this task, but I could not queue the handoff yet: %v", err), true
+	}
+	if blocker := strings.TrimSpace(deferral.Blocker); blocker != "" {
+		return fmt.Sprintf("Cloud Workspace is selected for this task, but it needs your attention first: %s", blocker), true
+	}
+	target := ""
+	if deferral.Placement != nil {
+		target = strings.TrimSpace(deferral.Placement.TargetDeviceID)
+	}
+	if target == "" {
+		target = "Cloud Workspace"
+	}
+	return fmt.Sprintf("Cloud Workspace is selected for this task. I queued a pending handoff (`%s`) for %s, so I will not run it on the relay while the workspace wakes.", deferral.PendingTaskID, target), true
 }
 
 func (cb *ChatBot) execCommand(command string) string {

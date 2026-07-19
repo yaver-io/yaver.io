@@ -160,12 +160,13 @@ func (s *HTTPServer) startMachineActivityMonitor() {
 }
 
 // maybeSelfPark decides, locally and for free, whether this managed box should
-// scale itself to zero, and if so asks the server to snapshot+delete it. Opt-in
-// (YAVER_CLOUD_IDLE_ENABLE) and grace-confirmed — a notify arms a grace window;
-// any activity or a machine_keepalive during it cancels the park.
+// scale itself to zero, and if so asks the server to snapshot+delete it.
+// Auto-park is ON by default for managed boxes; YAVER_CLOUD_IDLE_DISABLE is the
+// operator emergency brake. Grace-confirmed — a notify arms a grace window; any
+// activity or a machine_keepalive during it cancels the park.
 func (s *HTTPServer) maybeSelfPark(ctx context.Context) {
-	if strings.TrimSpace(os.Getenv("YAVER_CLOUD_IDLE_ENABLE")) == "" {
-		return // auto-off is opt-in — mirrors the server-side gate
+	if managedCloudIdleDisabled() {
+		return
 	}
 	id := loadMachineIdentity()
 	if id == nil {
@@ -210,7 +211,8 @@ func (s *HTTPServer) maybeSelfPark(ctx context.Context) {
 
 // parkSelf asks the server to scale THIS managed box to zero (snapshot+delete).
 // Machine-token authed — the box parking itself. The server gates on
-// YAVER_CLOUD_IDLE_ENABLE + HCLOUD_TOKEN and snapshots before deleting.
+// HCLOUD_TOKEN and snapshots before deleting; YAVER_CLOUD_IDLE_DISABLE is the
+// operator emergency brake.
 func (s *HTTPServer) parkSelf(ctx context.Context, id *machineIdentity) {
 	url := id.ConvexSite + "/machine/park-self?machineId=" + id.MachineID
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte("{}")))
@@ -226,6 +228,15 @@ func (s *HTTPServer) parkSelf(ctx context.Context, id *machineIdentity) {
 	}
 	defer resp.Body.Close()
 	log.Printf("[machine-park] requested self-park (idle past threshold); server status %d", resp.StatusCode)
+}
+
+func managedCloudIdleDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("YAVER_CLOUD_IDLE_DISABLE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // managedDeviceIDFromMachineIdentity returns the deterministic device id a

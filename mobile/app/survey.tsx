@@ -558,10 +558,10 @@ export default function SurveyScreen() {
       >
         <View style={{ flex: 1 }}>
           <Text style={[styles.optionText, { color: relayOptOut ? "#fff" : c.textPrimary }]}>
-            I don't need a relay (LAN/Tailscale only)
+            Local-only lab setup
           </Text>
           <Text style={[{ fontSize: 11, color: relayOptOut ? "rgba(255,255,255,0.7)" : c.textMuted, marginTop: 2 }]}>
-            Skip if you're always on the same Wi-Fi or use Tailscale
+            Advanced: skip relay only when all devices stay on the same local network
           </Text>
         </View>
       </Pressable>

@@ -158,8 +158,8 @@ export default function YaverPiImageBlogPage() {
               </li>
             </ul>
             <p className="mt-4">
-              Optional extras you can layer on from the motd: <code>yaver install tailscale</code>,
-              <code> yaver install cloudflared</code>, <code>yaver install hybrid</code>
+              Optional extras you can layer on from the motd: <code>yaver relay add</code>,
+              <code>yaver relay test</code>, and <code>yaver install hybrid</code>
               (planner + local implementer mode).
             </p>
           </section>

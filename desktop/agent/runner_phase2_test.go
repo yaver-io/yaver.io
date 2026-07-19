@@ -22,6 +22,10 @@ package main
 //     at 80 chars with the "..." suffix.
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -147,6 +151,91 @@ func TestComposeAgentSessionPromptCapsHistory(t *testing.T) {
 	// Trailing messages should be present.
 	if !strings.Contains(prompt, "msg-29") {
 		t.Errorf("prompt should contain the most recent message:\n%s", prompt)
+	}
+}
+
+func TestAgentSessionDefersTaskWhenCloudPlacementSelected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const initialPrompt = "fix the login bug in auth.ts"
+	const followupPrompt = "now add a regression test for the login bug"
+	var seen []string
+	var bodies []string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/tasks/placement/preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-preview",
+				"lane":           "cloud_wake",
+				"targetDeviceId": "cloud-device",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/record":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-recorded",
+				"lane":           "cloud_wake",
+				"targetDeviceId": "cloud-device",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/activate":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":         true,
+				"activation": map[string]any{"status": "queued"},
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
+	mgr := NewAgentSessionManager(tm)
+	mgr.SetPlacementConfig(TaskIngressPlacementConfig{
+		ConvexURL:     backend.URL,
+		Token:         "owner-token",
+		LocalDeviceID: "relay-device",
+		WorkDir:       t.TempDir(),
+	})
+
+	sess, err := mgr.Create(AgentSessionStartOpts{
+		Prompt: initialPrompt,
+		Runner: "codex",
+	}, "owner")
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if sess.Status != AgentSessionAwaiting {
+		t.Fatalf("create status = %s, want %s", sess.Status, AgentSessionAwaiting)
+	}
+	if !strings.HasPrefix(sess.CurrentTask, "pending-cloud:") {
+		t.Fatalf("create current task = %q, want pending-cloud id", sess.CurrentTask)
+	}
+	if got := len(tm.ListTasks()); got != 0 {
+		t.Fatalf("local tasks after create = %d, want 0", got)
+	}
+
+	sess, err = mgr.Message(sess.ID, followupPrompt, "owner")
+	if err != nil {
+		t.Fatalf("Message error: %v", err)
+	}
+	if sess.Status != AgentSessionAwaiting {
+		t.Fatalf("message status = %s, want %s", sess.Status, AgentSessionAwaiting)
+	}
+	if got := len(tm.ListTasks()); got != 0 {
+		t.Fatalf("local tasks after message = %d, want 0", got)
+	}
+	if len(seen) != 6 {
+		t.Fatalf("backend calls = %v, want 6 placement calls", seen)
+	}
+	for _, body := range bodies {
+		for _, forbidden := range []string{initialPrompt, followupPrompt, "auth.ts", "login bug", "regression test"} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("placement body leaked prompt fragment %q: %s", forbidden, body)
+			}
+		}
 	}
 }
 

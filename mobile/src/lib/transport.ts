@@ -109,7 +109,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
   const tsIp = ips.find(isTailscaleIP);
   if (tsIp) {
     return {
-      primary: "tailscale", label: "Tailscale",
+      primary: "tailscale", label: "Private network",
       detail: `via ${tsIp}`,
       tone: "blue", url: `http://${tsIp}:${d.port ?? 18080}`,
     };

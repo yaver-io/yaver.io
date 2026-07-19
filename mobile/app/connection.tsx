@@ -65,7 +65,7 @@ type YaverDoctorReport = {
   auth: ProbeResult;
   relay: ProbeResult[];
   devices: { total: number; online: number; offline: number };
-  tailscaleHint: string;
+  relayHint: string;
 };
 
 async function timedFetch(
@@ -142,18 +142,12 @@ async function runYaverDoctor(
     }),
   );
   const online = devices.filter((d) => d?.online).length;
-  const tsDevices = devices.filter(
-    (d) => Array.isArray(d?.lanIps) && d.lanIps.some((ip: string) => typeof ip === "string" && ip.startsWith("100.")),
-  ).length;
   return {
     backend,
     auth,
     relay,
     devices: { total: devices.length, online, offline: devices.length - online },
-    tailscaleHint:
-      tsDevices > 0
-        ? `${tsDevices} device(s) advertise a Tailscale (100.x) address — reachable only while this phone's Tailscale is connected. On cellular without Tailscale, connect over the relay instead.`
-        : "No Tailscale-addressed devices detected. On cellular without Tailscale, devices connect over the relay.",
+    relayHint: "For remote access, keep Yaver Relay enabled. Direct local-network routes are used automatically when they are available.",
   };
 }
 
@@ -440,7 +434,7 @@ export default function ConnectionScreen() {
                 <DoctorRow key={i} c={c} s={s} p={{ ...r, label: `Relay · ${r.label}` }} />
               ))}
               <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 8, lineHeight: 17 }}>
-                {yaverDoc.tailscaleHint}
+                {yaverDoc.relayHint}
               </Text>
             </>
           ) : (

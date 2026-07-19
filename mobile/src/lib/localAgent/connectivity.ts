@@ -89,7 +89,7 @@ export function diagnoseConnectivity(i: ConnDiagnosisInput): ConnDiagnosis {
     case "offline":
       return {
         code: "device-offline",
-        say: "That machine has no recent heartbeat. I can run a deeper transport check, then tell you whether it is powered off, only reachable by Tailscale, or missing its Yaver relay.",
+        say: "That machine has no recent heartbeat. I can run a deeper transport check, then tell you whether it is powered off, only on a private route, or missing its Yaver relay.",
         action: "device.doctor",
         shellHint: "yaver serve",
       };

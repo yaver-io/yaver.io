@@ -1510,18 +1510,6 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if req.ProjectPath != "" {
-		// Guest callers must NOT mutate the global taskMgr.workDir —
-		// a concurrent owner request would silently inherit the guest's
-		// chosen path. Pass workDir through TaskCreateOptions instead
-		// so it stays local to this task.
-		if guestUID == "" {
-			s.taskMgr.mu.Lock()
-			s.taskMgr.workDir = req.ProjectPath
-			s.taskMgr.mu.Unlock()
-		}
-	}
-
 	info := DetectProjectInfo(req.ProjectPath)
 	target := DevServerTarget{}
 	if s.devServerMgr != nil {
@@ -1574,13 +1562,9 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	taskOpts := TaskCreateOptions{}
+	taskOpts := TaskCreateOptions{WorkDir: req.ProjectPath}
 	if guestUID != "" {
 		taskOpts.GuestUserID = guestUID
-		// Per-task workDir (instead of mutating the global taskMgr.workDir
-		// which would leak the guest's project choice to concurrent owner
-		// tasks). Empty string falls back to taskMgr.workDir as before.
-		taskOpts.WorkDir = req.ProjectPath
 		if s.guestConfigMgr != nil {
 			cfg := s.guestConfigMgr.GetConfig(guestUID)
 			// Force container isolation for feedback-only AND sdk-project
@@ -1597,6 +1581,49 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 				taskOpts.GuestCPULimitPercent = cfg.CPULimitPercent
 				taskOpts.GuestRAMLimitMB = cfg.RAMLimitMB
 			}
+		}
+	}
+
+	if guestUID == "" {
+		meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+			KindHint:       "vibe",
+			Title:          firstNonEmpty(req.Prompt, "Vibing request"),
+			Source:         "vibing",
+			Runner:         pickedRunner,
+			ProjectName:    req.ProjectName,
+			WorkDir:        firstNonEmpty(taskOpts.WorkDir, s.taskMgr.workDir),
+			TargetDeviceID: s.deviceID,
+		})
+		if previewPlacement, perr := s.previewTaskPlacement(r.Context(), meta); perr != nil {
+			log.Printf("[placement] vibing preview skipped before task create: %v", perr)
+		} else if shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
+			pendingTaskID := newPendingCloudTaskID()
+			recordedPlacement := previewPlacement
+			if placement, rerr := s.recordTaskPlacement(r.Context(), pendingTaskID, meta); rerr != nil {
+				log.Printf("[placement] vibing pending record skipped for %s: %v", pendingTaskID, rerr)
+			} else if placement != nil {
+				recordedPlacement = placement
+			}
+			var activation map[string]any
+			if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+				if result, aerr := s.activateTaskPlacement(r.Context(), recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+					activation = activationMapFromError(aerr)
+					log.Printf("[placement] vibing activation skipped for %s: %v", pendingTaskID, aerr)
+				} else {
+					activation = result
+				}
+			}
+			jsonReply(w, http.StatusConflict, map[string]interface{}{
+				"ok":            false,
+				"action":        "cloud_workspace_required",
+				"pendingTaskId": pendingTaskID,
+				"placement":     recordedPlacement,
+				"activation":    activation,
+				"reason":        "placement selected a Cloud Workspace for this vibing task; keep the prompt client-side and retry against the assigned workspace when it is ready",
+			})
+			return
+		} else if previewPlacement != nil {
+			taskOpts.Placement = previewPlacement
 		}
 	}
 

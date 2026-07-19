@@ -271,6 +271,44 @@ func (bm *BandwidthManager) SetDevicePaid(deviceID string, isPaid bool) {
 	}
 }
 
+// RemainingBytes reports how many more bytes a device may transfer today.
+//
+// Exists for streaming responses, where the usual "CheckAllowed once at request
+// start" guard is useless: a streaming GET has ContentLength 0, so it always
+// passes, and nothing re-checks while gigabytes flow. Callers pass this to
+// countingResponseWriter as a hard in-flight budget.
+//
+// Returns 0 for a device with no record yet, which callers MUST read as
+// "unmetered" (matching CheckAllowed, which always allows a new device's first
+// request) — never as "no bytes allowed". Returns 1 rather than 0 for a device
+// that is genuinely over its limit, so the two cases stay distinguishable and
+// an over-quota stream is cut on its first write instead of running free.
+func (bm *BandwidthManager) RemainingBytes(deviceID string) int64 {
+	bm.mu.RLock()
+	dev, exists := bm.devices[deviceID]
+	bm.mu.RUnlock()
+	if !exists {
+		return 0 // unmetered: no record yet
+	}
+
+	// A stale counter is about to be reset by the next RecordBytes/CheckAllowed;
+	// don't bill today's stream against yesterday's usage.
+	if dev.ResetDate != time.Now().Format("2006-01-02") {
+		return 0
+	}
+
+	limitMB := bm.config.FreeDeviceLimitMB
+	if dev.IsPaid {
+		limitMB = bm.config.PaidDeviceLimitMB
+	}
+	effective := int64(limitMB) * 1024 * 1024 * int64(bm.getCurrentMultiplier())
+	remaining := effective - (dev.BytesIn + dev.BytesOut)
+	if remaining <= 0 {
+		return 1
+	}
+	return remaining
+}
+
 // getCurrentMultiplier returns the bandwidth multiplier based on current load.
 // When server is idle (<30% load), limits are relaxed by RelaxMultiplier.
 // When server is busy (>80% load), strict limits (1x).

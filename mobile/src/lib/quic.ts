@@ -33,6 +33,14 @@ import { beaconListener } from "./beacon";
 import NetInfo from "@react-native-community/netinfo";
 import type { BuildInfo, BuildSummary } from "./builds";
 import type { RemoteSandboxRequest, RemoteSandboxResponse } from "./llmRemote";
+import { decodeCloudWorkspaceRequiredError } from "./cloudWorkspaceRequired";
+import { buildSendTaskRequestBody } from "./taskRequestBody";
+export {
+  CloudWorkspaceRequiredError,
+  decodeCloudWorkspaceRequiredError,
+  type CloudWorkspaceRequiredActivation,
+  type CloudWorkspaceRequiredPlacement,
+} from "./cloudWorkspaceRequired";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -391,6 +399,7 @@ export interface Task {
   placementId?: string;
   placementLane?: string;
   placementReason?: string;
+  placementCreditLabel?: string;
   autoRetry?: boolean;
   /** Number of auto-retries so far. */
   autoRetryCount?: number;
@@ -1801,7 +1810,7 @@ export class QuicClient {
    * HTTP, the runner pool, and the same Task type. The toggle only
    * changes which prompt-prefix the agent injects.
    */
-  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: SpeechContextInput, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }, codeMode?: boolean): Promise<Task> {
+  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: SpeechContextInput, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }, codeMode?: boolean, allowLocalFallback?: boolean): Promise<Task> {
     this.assertConnected();
     // Hard 30s timeout — without it, a stale relay tunnel (e.g. after a
     // failed device-switch attempt) makes this POST hang forever and
@@ -1825,7 +1834,7 @@ export class QuicClient {
     // timed out.)
     let res: Response;
     try {
-      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode);
+      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode, allowLocalFallback);
     } catch (e) {
       if (e instanceof Error && (e.name === "AbortError" || /abort/i.test(e.message))) {
         throw new Error(
@@ -1845,6 +1854,8 @@ export class QuicClient {
       );
     }
     if (!res.ok) {
+      const cloudRequired = await decodeCloudWorkspaceRequiredError(res);
+      if (cloudRequired) throw cloudRequired;
       throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
     }
     const data = await res.json();
@@ -1876,26 +1887,25 @@ export class QuicClient {
     mode: string | undefined,
     video: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" } | undefined,
     codeMode: boolean | undefined,
+    allowLocalFallback: boolean | undefined,
   ): Promise<Response> {
     return this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify(buildSendTaskRequestBody({
         title,
         description,
-        // codeMode flips the agent's prompt-wrapping. See the doc
-        // comment on sendTask above for the wrapping difference.
-        source: codeMode ? "mobile-code" : "mobile",
-        ...(model ? { model } : {}),
-        ...(runner ? { runner } : {}),
-        ...(mode ? { mode } : {}),
-        ...(customCommand ? { customCommand } : {}),
-        ...(sc ? { speechContext: sc } : {}),
-        ...(images?.length ? { images } : {}),
-        ...(workDir ? { workDir } : {}),
-        ...(video?.enabled ? { videoEnabled: true } : {}),
-        ...(video?.source ? { videoSource: video.source } : {}),
-      }),
+        model,
+        runner,
+        mode,
+        customCommand,
+        speechContext: sc,
+        images,
+        workDir,
+        video,
+        codeMode,
+        allowLocalFallback,
+      })),
     }, 30000);
   }
 
@@ -5301,6 +5311,71 @@ export class QuicClient {
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`managedGitCheckpoint ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitRelaySourcePlan(args: {
+    slug?: string;
+    workDir?: string;
+    branch?: string;
+    baseBranch?: string;
+    title?: string;
+    prompt?: string;
+    files?: Array<{ path: string; content: string }>;
+  }): Promise<{
+    ok: boolean;
+    repoId?: string;
+    branch?: string;
+    baseBranch?: string;
+    mode: string;
+    relayEligible: boolean;
+    canApply: boolean;
+    filesPlanned?: string[];
+    commitMessage?: string;
+    reasons?: string[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/relay-source/plan`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitRelaySourcePlan ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  async managedGitRelaySourceWorkOnce(args: {
+    slug?: string;
+    workDir?: string;
+    intentId?: string;
+    localTaskId?: string;
+    branch?: string;
+    baseBranch?: string;
+    relayId?: string;
+    title?: string;
+    prompt?: string;
+    message?: string;
+    files?: Array<{ path: string; content: string }>;
+  }): Promise<{
+    ok: boolean;
+    intent?: any;
+    plan?: any;
+    prepare?: any;
+    apply?: any;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/managed-git/relay-source/work-once`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`managedGitRelaySourceWorkOnce ${res.status}: ${text}`);
     }
     return res.json();
   }

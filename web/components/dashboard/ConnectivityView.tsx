@@ -22,8 +22,8 @@ function recommendationLabel(args: {
   tailscale?: TailscaleStatus | null;
   infra?: InfraSummary | null;
 }) {
-  if ((args.device?.publicEndpoints?.length || 0) > 0 || args.settings.tunnelUrl) return "Cloudflare Tunnel";
-  if (args.tailscale?.running) return "Tailscale";
+  if ((args.device?.publicEndpoints?.length || 0) > 0 || args.settings.tunnelUrl) return "Advanced HTTPS endpoint";
+  if (args.tailscale?.running) return "Private network";
   if ((args.infra?.relays?.length || 0) > 0 || args.settings.relayUrl) return "Yaver Relay";
   return "LAN";
 }
@@ -35,8 +35,8 @@ function transportOrder(args: {
   infra?: InfraSummary | null;
 }) {
   const out: string[] = ["LAN"];
-  if (args.tailscale?.running) out.push("Tailscale");
-  if ((args.device?.publicEndpoints?.length || 0) > 0 || args.settings.tunnelUrl) out.push("Cloudflare Tunnel");
+  if (args.tailscale?.running) out.push("Private network");
+  if ((args.device?.publicEndpoints?.length || 0) > 0 || args.settings.tunnelUrl) out.push("Advanced HTTPS endpoint");
   if ((args.infra?.relays?.length || 0) > 0 || args.settings.relayUrl) out.push("Yaver Relay");
   return out;
 }
@@ -369,8 +369,8 @@ export default function ConnectivityView({
 
             <div className="rounded-2xl border border-surface-800 bg-surface-950/60 p-4">
               <div className="mb-3">
-                <div className="font-medium text-surface-100">Cloudflare Tunnel</div>
-                <div className="text-xs text-surface-500">Best when you want HTTPS reachability through restrictive firewalls. This account field is a single default URL, not full tunnel management.</div>
+                <div className="font-medium text-surface-100">Advanced HTTPS endpoint</div>
+                <div className="text-xs text-surface-500">Optional compatibility field for an existing private endpoint. Yaver Relay is the normal remote path.</div>
               </div>
               <label className="text-xs text-surface-400">
                 Tunnel URL
@@ -387,7 +387,7 @@ export default function ConnectivityView({
                   disabled={saving || loading}
                   className="rounded-lg border border-surface-700 px-3 py-2 text-sm text-surface-200 hover:border-surface-500 disabled:opacity-40"
                 >
-                  {saving ? "Saving..." : "Save tunnel"}
+                  {saving ? "Saving..." : "Save endpoint"}
                 </button>
                 <button
                   onClick={() => testTarget("tunnel")}
@@ -413,7 +413,7 @@ export default function ConnectivityView({
 
             {!connectedDevice ? (
               <div className="rounded-2xl border border-surface-800 bg-surface-950/60 p-4 text-sm text-surface-500">
-                No device selected. Connect to a machine to inspect Tailscale, relays, and advertised public endpoints.
+                No device selected. Connect to a machine to inspect relays, private-network status, and advertised public endpoints.
               </div>
             ) : (
               <div className="space-y-4">
@@ -429,15 +429,15 @@ export default function ConnectivityView({
                   </div>
                 </div>
 
-                <StatusRow label="Cloudflared installed" value={cloudflaredInstalled ? "yes" : "no"} tone={cloudflaredInstalled ? "ok" : "muted"} />
-                <StatusRow label="Tailscale installed" value={tailscaleInstalled ? "yes" : "no"} tone={tailscaleInstalled ? "ok" : "muted"} />
-                <StatusRow label="Tailscale running" value={tailscale?.running ? "yes" : "no"} tone={tailscale?.running ? "ok" : "muted"} />
+                <StatusRow label="Custom tunnel helper installed" value={cloudflaredInstalled ? "yes" : "no"} tone={cloudflaredInstalled ? "ok" : "muted"} />
+                <StatusRow label="Private network helper installed" value={tailscaleInstalled ? "yes" : "no"} tone={tailscaleInstalled ? "ok" : "muted"} />
+                <StatusRow label="Private network running" value={tailscale?.running ? "yes" : "no"} tone={tailscale?.running ? "ok" : "muted"} />
                 <StatusRow label="Relay endpoints" value={String(infra?.relays?.length || 0)} tone={(infra?.relays?.length || 0) > 0 ? "ok" : "muted"} />
                 <StatusRow label="Advertised public endpoints" value={String(publicEndpoints.length)} tone={publicEndpoints.length > 0 ? "ok" : "muted"} />
 
                 {tailscale?.running && tailscale.self?.addrs?.length ? (
                   <div className="rounded-2xl border border-surface-800 bg-surface-950/60 p-4">
-                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Tailscale IPs</div>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Private network IPs</div>
                     <div className="flex flex-wrap gap-2">
                       {tailscale.self.addrs.map((addr) => (
                         <span key={addr} className="rounded-full border border-surface-700 bg-surface-900 px-3 py-1 text-xs font-mono text-surface-300">
@@ -461,7 +461,7 @@ export default function ConnectivityView({
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-surface-800 bg-surface-950/60 p-4 text-sm text-surface-500">
-                    No Cloudflare endpoint configured for this device yet. Set one up on the machine with the agent, then it will appear here.
+                    No custom endpoint configured for this device yet. Set one up on the machine with the agent, then it will appear here.
                   </div>
                 )}
               </div>
@@ -472,9 +472,8 @@ export default function ConnectivityView({
             <h3 className="text-lg font-semibold text-surface-100">What to use</h3>
             <div className="mt-4 space-y-3 text-sm text-surface-400">
               <ChoiceCard title="LAN" body="Best on the same Wi-Fi. Zero setup, lowest latency, but not useful once you leave the network." />
-              <ChoiceCard title="Tailscale" body="Best if both phone and machine are on your tailnet. Yaver detects it today, but onboarding is still outside web." />
-              <ChoiceCard title="Cloudflare Tunnel" body="Best for HTTPS reachability through strict firewalls. Agent-side setup exists; web currently stores only a single default URL." />
-              <ChoiceCard title="Yaver Relay" body="Best as a general remote fallback. Works well across networks and is already the transport the web dashboard prefers when available." />
+              <ChoiceCard title="Yaver Relay" body="Best as the normal remote path. Works well across networks and is already the transport the web dashboard prefers when available." />
+              <ChoiceCard title="Private network" body="Best when you already operate your own private network. Yaver can detect compatible addresses, but setup stays outside the Yaver onboarding path." />
             </div>
           </section>
         </div>

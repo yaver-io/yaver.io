@@ -382,13 +382,6 @@ export default function CLISetupManual() {
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200">yaver serve --work-dir ~/projects/my-app</span>
               </div>
-              <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Disable relay (only accept direct connections)</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">yaver serve --no-relay</span>
-              </div>
-              <div className="h-px bg-surface-800/60" />
               <div className="text-surface-500"># Wait for existing Claude sessions to finish</div>
               <div className="text-surface-500"># before starting new tasks</div>
               <div>
@@ -418,10 +411,6 @@ export default function CLISetupManual() {
                 <tr className="border-b border-surface-800/60">
                   <td className="py-3 pr-6 font-mono text-xs text-surface-300">--port</td>
                   <td className="py-3">HTTP server port. Default: 18080.</td>
-                </tr>
-                <tr className="border-b border-surface-800/60">
-                  <td className="py-3 pr-6 font-mono text-xs text-surface-300">--no-relay</td>
-                  <td className="py-3">Disable relay tunnels. Only accept direct connections on LAN.</td>
                 </tr>
                 <tr>
                   <td className="py-3 pr-6 font-mono text-xs text-surface-300">--wait-for-session</td>

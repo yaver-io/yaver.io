@@ -54,7 +54,8 @@ export default function WindowsSshCodingBoxManual() {
         </h1>
         <p className="mb-12 text-sm leading-relaxed text-surface-400">
           Turn a 32 GB Windows machine into an always-on coding box you can reach from macOS over
-          SSH, keep stable over Tailscale, and use for Ollama, Continue, Cursor, and OpenCode.
+          SSH on your local network, then control remotely through Yaver Relay for Yaver tasks.
+          Use it for Ollama, Continue, Cursor, and OpenCode.
           This is the practical setup for a stronger desk machine backing a lighter laptop.
         </p>
 
@@ -65,11 +66,11 @@ export default function WindowsSshCodingBoxManual() {
 {`MacBook
   -> Antigravity or Cursor
   -> Continue inside the editor
-  -> Windows PC over Tailscale
+  -> Windows PC over LAN for admin SSH
      -> Ollama on port 11434
      -> qwen2.5-coder:14b / 7b / 1.5b
      -> OpenCode for terminal agent loops
-  -> reachable over Tailscale
+  -> reachable from phone through Yaver Relay for Yaver tasks
   -> stays awake on AC power`}
             </pre>
           </div>
@@ -126,21 +127,22 @@ export default function WindowsSshCodingBoxManual() {
         </section>
 
         <section className="mb-12">
-          <h2 className="mb-3 text-lg font-semibold text-surface-100">3. Use Tailscale for the stable path</h2>
+          <h2 className="mb-3 text-lg font-semibold text-surface-100">3. Use Yaver Relay for remote tasks</h2>
           <p className="mb-4 text-sm leading-relaxed text-surface-400">
-            Tailscale gives the box a stable private address and MagicDNS name. That matters once
-            the MacBook is off the local LAN or the Windows box gets a new DHCP lease.
+            Keep OpenSSH for local admin access. For phone-to-box coding tasks,
+            run Yaver on the Windows box and let the relay handle remote
+            reachability without separate networking setup.
           </p>
           <Terminal title="windows powershell">
-            <WinCmd>tailscale ip -4</WinCmd>
-            <WinCmd>tailscale status</WinCmd>
+            <WinCmd>yaver auth --headless</WinCmd>
+            <WinCmd>yaver serve</WinCmd>
           </Terminal>
           <Terminal title="macos terminal">
-            <MacCmd>ssh user@your-box.tailnet.ts.net</MacCmd>
-            <MacCmd>ssh user@100.64.0.10</MacCmd>
+            <MacCmd>ssh user@192.168.1.50</MacCmd>
           </Terminal>
           <p className="text-sm leading-relaxed text-surface-400">
-            The Tailscale path does not replace OpenSSH. It gives OpenSSH a better network.
+            Yaver Relay is for the Yaver task/control path. SSH remains useful
+            when you are on the same LAN and need direct admin access.
           </p>
         </section>
 
@@ -175,29 +177,29 @@ export default function WindowsSshCodingBoxManual() {
           </p>
           <div className="rounded-lg bg-surface-900 p-4">
             <pre className="overflow-x-auto text-xs text-surface-300">
-{`name: Windows Remote Ollama (Tailscale)
+{`name: Windows Remote Ollama (LAN)
 version: "1.0.0"
 models:
-  - name: Qwen 14B Windows Tailscale
+  - name: Qwen 14B Windows LAN
     provider: ollama
     model: qwen2.5-coder:14b
-    apiBase: http://your-box.tailnet.ts.net:11434
+    apiBase: http://192.168.1.50:11434
     roles:
       - chat
       - edit
       - apply
-  - name: Qwen 7B Windows Tailscale
+  - name: Qwen 7B Windows LAN
     provider: ollama
     model: qwen2.5-coder:7b
-    apiBase: http://your-box.tailnet.ts.net:11434
+    apiBase: http://192.168.1.50:11434
     roles:
       - chat
       - edit
       - apply
-  - name: Qwen 1.5B Windows Tailscale
+  - name: Qwen 1.5B Windows LAN
     provider: ollama
     model: qwen2.5-coder:1.5b
-    apiBase: http://your-box.tailnet.ts.net:11434
+    apiBase: http://192.168.1.50:11434
     roles:
       - chat
       - edit
@@ -205,9 +207,10 @@ models:
             </pre>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
-            Keep Tailscale first. Add LAN variants later if raw
+            Use the LAN endpoint while the Mac and Windows box are on the same
+            network. For remote phone control, use Yaver Relay instead of
+            exposing Ollama directly.
             <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">192.168.1.50:11434</code>
-            access is reachable from the Mac.
           </p>
         </section>
 
@@ -255,7 +258,7 @@ models:
             <div className="text-surface-200">
               <pre className="overflow-x-auto whitespace-pre-wrap text-xs">
 {`Host windows-ai-box
-  HostName your-box.tailnet.ts.net
+  HostName 192.168.1.50
   User user
   IdentityFile ~/.ssh/id_ed25519`}
               </pre>
@@ -269,12 +272,12 @@ models:
         <section className="mb-12">
           <h2 className="mb-3 text-lg font-semibold text-surface-100">8. Daily workflow from the MacBook</h2>
           <Terminal title="macos terminal">
-            <MacCmd>curl http://your-box.tailnet.ts.net:11434/api/tags</MacCmd>
+            <MacCmd>curl http://192.168.1.50:11434/api/tags</MacCmd>
             <MacCmd>open -a Antigravity</MacCmd>
           </Terminal>
           <p className="text-sm leading-relaxed text-surface-400">
             Inside Antigravity, open Continue and pick
-            <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">Qwen 14B Windows Tailscale</code>.
+            <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">Qwen 14B Windows LAN</code>.
             If you prefer terminal agents, keep OpenCode pointed at the same Windows Ollama
             endpoint.
           </p>
@@ -285,13 +288,13 @@ models:
           <div className="rounded-lg border border-surface-800 bg-surface-900/50 p-5">
             <ul className="space-y-2 text-sm text-surface-400">
               <li>OpenSSH Server installed and on automatic startup</li>
-              <li>Tailscale signed in and showing a stable tailnet IP</li>
+              <li>Yaver signed in and serving for remote task control</li>
               <li>sleep and hibernate disabled on AC</li>
               <li>Ollama installed with <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">qwen2.5-coder:14b</code>, <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">7b</code>, and <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">1.5b</code></li>
               <li>Mac Continue config includes <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">version: "1.0.0"</code></li>
               <li>Continue inside Antigravity is the place where Qwen is selected</li>
               <li>Node LTS + OpenCode installed if you want a terminal agent</li>
-              <li>Mac SSH alias configured for the Tailscale hostname</li>
+              <li>Mac SSH alias configured for the LAN admin address</li>
             </ul>
           </div>
         </section>

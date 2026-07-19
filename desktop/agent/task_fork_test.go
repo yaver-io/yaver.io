@@ -261,6 +261,237 @@ func TestHandleTaskForkCreatesChildAndKeepsParentImmutable(t *testing.T) {
 	}
 }
 
+func TestHandleTaskForkDefersCloudPlacementInsteadOfCreatingLocalChild(t *testing.T) {
+	var seen []string
+	var metadataPayloads []map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		var body map[string]any
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		switch r.URL.Path {
+		case "/tasks/placement/preview":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-preview",
+				"lane":           "cloud_standard",
+				"resourceClass":  "standard",
+				"targetDeviceId": "cloud-dev",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/record":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-1",
+				"lane":           "cloud_standard",
+				"resourceClass":  "standard",
+				"targetDeviceId": "cloud-dev",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/activate":
+			metadataPayloads = append(metadataPayloads, body)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":             false,
+				"action":         "runner_auth_required",
+				"targetDeviceId": "cloud-dev",
+				"reason":         "Cloud Workspace is awake but Codex needs sign-in before forked tasks can run.",
+			})
+		case "/tasks/dispatch-intents":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":          "intent-1",
+				"localTaskId": body["localTaskId"],
+				"status":      "queued",
+			})
+		case "/tasks/dispatch-intents/status":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":          "intent-1",
+				"localTaskId": body["localTaskId"],
+				"status":      body["status"],
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	if err := SaveConfig(&Config{ConvexSiteURL: backend.URL, AuthToken: "owner-token"}); err != nil {
+		t.Fatal(err)
+	}
+	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
+	tm.DummyMode = true
+	s := &HTTPServer{
+		token:     "owner-token",
+		convexURL: backend.URL,
+		deviceID:  "local-dev",
+		taskMgr:   tm,
+	}
+	parent := mkParentTask(t)
+	parent.WorkDir = t.TempDir()
+	s.taskMgr.tasks[parent.ID] = parent
+
+	body := bytes.NewReader([]byte(`{
+		"runner":"codex",
+		"input":"continue from the private handoff and apply the fix",
+		"contextWords":800
+	}`))
+	r := httptest.NewRequest(http.MethodPost, "/tasks/parent-1/fork", body)
+	rr := httptest.NewRecorder()
+	s.handleTaskFork(rr, r, parent.ID)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status: got %d want 409 — body %s", rr.Code, rr.Body.String())
+	}
+	if tasks := tm.ListTasks(); len(tasks) != 1 {
+		t.Fatalf("expected only parent task, got %d tasks", len(tasks))
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["action"] != "cloud_workspace_required" || resp["pendingTaskId"] == "" {
+		t.Fatalf("response = %#v", resp)
+	}
+	for i, payload := range metadataPayloads {
+		for _, forbidden := range []string{"title", "description", "prompt", "userPrompt", "bodyJson", "workDir", "input"} {
+			if _, ok := payload[forbidden]; ok {
+				t.Fatalf("metadata payload %d leaked %q: %#v", i, forbidden, payload)
+			}
+		}
+	}
+	store, err := newPendingCloudTaskDispatchStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !strings.Contains(string(rows[0].BodyJSON), "private handoff") {
+		t.Fatalf("pending rows = %#v", rows)
+	}
+	if len(seen) < 5 || seen[0] != "/tasks/placement/preview" || seen[1] != "/tasks/placement/record" || seen[2] != "/tasks/placement/activate" {
+		t.Fatalf("backend paths = %#v", seen)
+	}
+}
+
+func TestMCPForkTaskDefersCloudPlacementInsteadOfCreatingLocalChild(t *testing.T) {
+	var seen []string
+	var metadataPayloads []map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		var body map[string]any
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		switch r.URL.Path {
+		case "/tasks/placement/preview":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-preview",
+				"lane":           "cloud_standard",
+				"resourceClass":  "standard",
+				"targetDeviceId": "cloud-dev",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/record":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":             "placement-1",
+				"lane":           "cloud_standard",
+				"resourceClass":  "standard",
+				"targetDeviceId": "cloud-dev",
+				"wakeRequired":   true,
+			})
+		case "/tasks/placement/activate":
+			metadataPayloads = append(metadataPayloads, body)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":             false,
+				"action":         "runner_auth_required",
+				"targetDeviceId": "cloud-dev",
+				"reason":         "Cloud Workspace is awake but Codex needs sign-in before MCP forked tasks can run.",
+			})
+		case "/tasks/dispatch-intents":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":          "intent-1",
+				"localTaskId": body["localTaskId"],
+				"status":      "queued",
+			})
+		case "/tasks/dispatch-intents/status":
+			metadataPayloads = append(metadataPayloads, body)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":          "intent-1",
+				"localTaskId": body["localTaskId"],
+				"status":      body["status"],
+			})
+		default:
+			t.Fatalf("unexpected backend path %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	if err := SaveConfig(&Config{ConvexSiteURL: backend.URL, AuthToken: "owner-token"}); err != nil {
+		t.Fatal(err)
+	}
+	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
+	tm.DummyMode = true
+	s := &HTTPServer{
+		token:     "owner-token",
+		convexURL: backend.URL,
+		deviceID:  "local-dev",
+		taskMgr:   tm,
+	}
+	parent := mkParentTask(t)
+	parent.WorkDir = t.TempDir()
+	s.taskMgr.tasks[parent.ID] = parent
+
+	rawArgs, _ := json.Marshal(map[string]any{
+		"name": "fork_task",
+		"arguments": map[string]any{
+			"task_id":       parent.ID,
+			"runner":        "codex",
+			"input":         "continue from the MCP private handoff and apply the fix",
+			"context_words": 800,
+		},
+	})
+	out := s.handleMCPToolCall(rawArgs)
+	text := billingToolText(t, out)
+	if !strings.Contains(text, "cloud_workspace_required") || !strings.Contains(text, "pending-cloud:") {
+		t.Fatalf("MCP output = %s", text)
+	}
+	if tasks := tm.ListTasks(); len(tasks) != 1 {
+		t.Fatalf("expected only parent task, got %d tasks", len(tasks))
+	}
+	for i, payload := range metadataPayloads {
+		for _, forbidden := range []string{"title", "description", "prompt", "userPrompt", "bodyJson", "workDir", "input"} {
+			if _, ok := payload[forbidden]; ok {
+				t.Fatalf("metadata payload %d leaked %q: %#v", i, forbidden, payload)
+			}
+		}
+	}
+	store, err := newPendingCloudTaskDispatchStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !strings.Contains(string(rows[0].BodyJSON), "MCP private handoff") {
+		t.Fatalf("pending rows = %#v", rows)
+	}
+	if len(seen) < 5 || seen[0] != "/tasks/placement/preview" || seen[1] != "/tasks/placement/record" || seen[2] != "/tasks/placement/activate" {
+		t.Fatalf("backend paths = %#v", seen)
+	}
+}
+
 func TestHandleTaskForkContextWordsClampedToBounds(t *testing.T) {
 	cases := []struct {
 		name string

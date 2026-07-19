@@ -1,6 +1,6 @@
 "use client";
 
-// NetworkView — the Yaver Mesh console (optional WireGuard overlay / Tailscale
+// NetworkView — the Yaver Mesh console (optional WireGuard overlay / private
 // alternative). Lists the user's mesh nodes with their overlay IPs + liveness,
 // and provides a port-level ACL editor (who → whom → which ports). Reads/writes
 // the control plane through the Convex /mesh/* HTTP routes using the session
@@ -59,11 +59,11 @@ function Icon({ path, className }: { path: string; className?: string }) {
     </svg>
   );
 }
-// Bridging a Tailnet means advertising Tailscale's CGNAT block as a mesh
+// Bridging a private overlay means advertising its CGNAT block as a mesh
 // subnet route on a node that sits on BOTH networks. Mesh peer /32s and the
 // 100.96/12 overlay are longer-prefix matches, so they still win — only real
 // Tailnet hosts (the rest of 100.64/10) route through the bridge. Lets mesh
-// peers reach a Tailnet without every node needing Tailscale installed.
+// peers reach private-overlay hosts without every node needing that helper installed.
 const TAILSCALE_BRIDGE_CIDR = "100.64.0.0/10";
 const ICON_GLOBE = "M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c2.5 2.5 2.5 15.5 0 18M12 3c-2.5 2.5-2.5 15.5 0 18";
 const ICON_SHIELD = "M12 3l7 3v6c0 4-3 6.5-7 9-4-2.5-7-5-7-9V6l7-3z";
@@ -240,8 +240,8 @@ export default function NetworkView({ token }: { token: string | null }) {
           <h1 className="text-2xl font-semibold">Mesh Network</h1>
         </div>
         <p className="max-w-3xl text-sm text-surface-400">
-          Yaver Mesh is an optional WireGuard overlay — a Tailscale alternative built
-          into your fleet. Bring a device on with <code className="text-surface-200">yaver mesh up</code>; it
+          Yaver Mesh is an optional WireGuard overlay built into your fleet.
+          Bring a device on with <code className="text-surface-200">yaver mesh up</code>; it
           gets a stable overlay IP and becomes reachable from every other node. Sharing a
           device to another person automatically extends the mesh to them.
         </p>
@@ -382,9 +382,9 @@ export default function NetworkView({ token }: { token: string | null }) {
                             ? "border-cyan-500/40 bg-cyan-500/15 text-cyan-700 dark:text-cyan-200"
                             : "border-surface-700 bg-surface-950 text-surface-400 hover:text-surface-200"
                         }`}
-                        title="If this node is also on a Tailscale tailnet, bridge it so mesh peers can reach Tailnet hosts (advertises 100.64.0.0/10)"
+                        title="If this node is also on a private overlay network, bridge it so mesh peers can reach compatible hosts (advertises 100.64.0.0/10)"
                       >
-                        {bridgingTailnet ? "✓ bridging Tailnet" : "bridge Tailnet"}
+                        {bridgingTailnet ? "✓ bridging private network" : "bridge private network"}
                       </button>
                       <button
                         onClick={() => void saveNodeConfig(p.deviceId, { wantEnabled: false })}

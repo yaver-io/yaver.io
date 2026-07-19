@@ -83,9 +83,47 @@ function normalizeMachineType(value: string | undefined | null): keyof typeof MA
   return "standard";
 }
 
+export function reusableSubscriptionMachineStatus(status: unknown): boolean {
+  return [
+    "active",
+    "provisioning",
+    "resuming",
+    "paused",
+    "suspended",
+    "grace",
+  ].includes(String(status || ""));
+}
+
 function envServerTypeFor(machineType: string): string | undefined {
   const key = `YAVER_CLOUD_${String(machineType || "standard").toUpperCase().replace(/[^A-Z0-9]/g, "_")}_TYPE`;
   return process.env[key] || undefined;
+}
+
+const HETZNER_API = "https://api.hetzner.cloud/v1";
+
+async function hetznerCreateVolume(
+  token: string,
+  name: string,
+  sizeGb: number,
+  location: string,
+): Promise<string> {
+  const r = await fetch(`${HETZNER_API}/volumes`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name, size: sizeGb, location, format: "ext4" }),
+  });
+  if (!r.ok) throw new Error(`Hetzner volume API ${r.status}: ${await r.text()}`);
+  const j = (await r.json()) as { volume?: { id?: number } };
+  if (!j.volume?.id) throw new Error("Hetzner volume API returned no id");
+  return String(j.volume.id);
+}
+
+async function hetznerDeleteVolume(token: string, volumeId: string): Promise<void> {
+  const r = await fetch(`${HETZNER_API}/volumes/${volumeId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok && r.status !== 404) throw new Error(`Hetzner delete volume API ${r.status}: ${await r.text()}`);
 }
 
 /**
@@ -134,14 +172,16 @@ type ManagedCloudBootstrapSpec = {
   // (browser path is relay-only) is this password. Baked into
   // config.json `relay_password`. Absent ⇒ omitted (no regression).
   relayPassword?: string;
-  // Per-box self-relay password (Phase 2A). When set, cloud-init runs
-  // a `yaver-relay` sidecar Docker container on the box itself —
-  // ghcr.io/kivanccakmak/yaver-relay:latest on QUIC 4433/UDP +
-  // HTTP 8443/TCP — and ufw opens those ports. The user's OTHER
-  // self-hosted devices then prefer this user-owned relay (set in
-  // userSettings.relayUrl/relayPassword) over the shared free
-  // platform relay. Absent ⇒ no sidecar (byte-identical no-relay).
+  // Per-box self-relay password (Phase 2A). When set, the yaver-cloud
+  // image starts its bundled relay on QUIC 4433/UDP + HTTP 8443/TCP and
+  // ufw opens those ports. The user's OTHER self-hosted devices then
+  // prefer this user-owned relay (set in userSettings.relayUrl/relayPassword)
+  // over the shared free platform relay. Absent ⇒ no relay listener.
   boxRelayPassword?: string;
+  // Hetzner Volume id for durable agent/container state. When present,
+  // cloud-init mounts it at /srv/yaver/state before writing config, auth,
+  // repos, and caches.
+  volumeId?: string;
 };
 
 type CreateCloudMachineArgs = {
@@ -306,6 +346,31 @@ ${optionalRepoClone}    SCRIPT
   const phasePost = (phase: string) =>
     `  - [ sh, -c, "curl -fsS -m 8 -X POST -H 'X-Machine-Token: ${spec.machineToken}' '${spec.convexSite}/machine/phase?machineId=${spec.machineId}&phase=${phase}' >/dev/null 2>&1 || true" ]\n`;
 
+  const persistentStateMount = spec.volumeId
+    ? `  # ── durable state volume (/root inside yaver-cloud container) ─────
+  - |
+    set -euo pipefail
+    dev=${shellSingleQuote(`/dev/disk/by-id/scsi-0HC_Volume_${spec.volumeId}`)}
+    for i in $(seq 1 30); do
+      [ -b "$dev" ] && break
+      sleep 2
+    done
+    if [ ! -b "$dev" ]; then
+      echo "[cloud-init] persistent volume ${spec.volumeId} did not appear; refusing ephemeral state"
+      exit 1
+    fi
+    if ! blkid "$dev" >/dev/null 2>&1; then
+      echo "[cloud-init] persistent volume ${spec.volumeId} has no filesystem; recreate it with format=ext4"
+      exit 1
+    fi
+    mkdir -p /srv/yaver/state
+    if ! grep -q " /srv/yaver/state " /etc/fstab; then
+      echo "$dev /srv/yaver/state ext4 discard,nofail,defaults 0 0 # yaver-state-volume" >> /etc/fstab
+    fi
+    mountpoint -q /srv/yaver/state || mount /srv/yaver/state
+`
+    : "";
+
   // Operator debug key — top-level cloud-config `ssh_authorized_keys`
   // (applies to the image default user, root on Hetzner Ubuntu). Only
   // emitted when the env-sourced key is present, so byok stays
@@ -441,6 +506,7 @@ ${phasePost("installing-docker")}  - curl -fsSL https://get.docker.com | sh
   - ufw allow 80/tcp
   - ufw allow 443/tcp
 ${relayUfwRules}  - ufw --force enable || true
+${persistentStateMount}
   # ── per-user config into the container's /root volume ──────────────
   - mkdir -p /srv/yaver/state/.yaver /etc/yaver
   - |
@@ -1046,8 +1112,9 @@ async function createCloudMachine(
 /** Create a new cloud machine and start provisioning. */
 // internalMutation, NOT public: it inserts a machine row + schedules a
 // billable Hetzner provision. Reachable only via server-side HTTP routes
-// (POST /machines, /billing/yaver-cloud/provision) that authenticate the
-// bearer + scope userId to the caller's own session. A public mutation here
+// and LemonSqueezy webhook/reconcile flows that authenticate the bearer +
+// scope userId to the caller's own session. The legacy wallet-funded
+// /billing/yaver-cloud/provision route is disabled. A public mutation here
 // would let anyone with the deployment URL create rows for any userId.
 export const create = internalMutation({
   args: {
@@ -1062,6 +1129,38 @@ export const create = internalMutation({
     tier: v.optional(v.union(v.literal("byok"), v.literal("hosted"))),
   },
   handler: async (ctx, args) => createCloudMachine(ctx, args),
+});
+
+// createPreviewSharedMachine registers the owner/dev preview server as a
+// cloudMachines row WITHOUT scheduling internal.cloudMachines.provision.
+// The preview path is for testing an already-running shared machine; it must
+// never allocate a fresh Hetzner server as a side effect.
+export const createPreviewSharedMachine = internalMutation({
+  args: {
+    userId: v.id("users"),
+    region: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const spec = MACHINE_SPECS.standard;
+    const now = Date.now();
+    return await ctx.db.insert("cloudMachines", {
+      userId: args.userId,
+      machineType: "standard",
+      origin: "managed",
+      status: "active",
+      multiUser: false,
+      region: args.region ?? "eu",
+      tools: [],
+      specs: {
+        vcpu: spec.vcpu,
+        ramGb: spec.ramGb,
+        diskGb: spec.diskGb,
+        arch: spec.arch,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
 });
 
 // adoptExisting registers an ALREADY-RUNNING Hetzner box as a managed
@@ -1130,8 +1229,7 @@ export const ensureForSubscription = internalMutation({
         (machine) =>
           machine.subscriptionId === args.subscriptionId &&
           machine.machineType === args.machineType &&
-          machine.status !== "stopped" &&
-          machine.status !== "error",
+          reusableSubscriptionMachineStatus(machine.status),
       );
     if (existing) {
       // Resubscribe during the hosted grace window → cancel the
@@ -1218,6 +1316,9 @@ export const setProvisioned = internalMutation({
     deviceId: v.optional(v.string()),
     bootImageSource: v.optional(v.string()),
     serverType: v.optional(v.string()),
+    volumeId: v.optional(v.string()),
+    volumeSizeGb: v.optional(v.number()),
+    baseImageId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {
@@ -1234,7 +1335,49 @@ export const setProvisioned = internalMutation({
     if (args.deviceId) patch.deviceId = args.deviceId;
     if (args.bootImageSource) patch.bootImageSource = args.bootImageSource;
     if (args.serverType) patch.serverType = args.serverType;
+    if (args.volumeId) patch.volumeId = args.volumeId;
+    if (typeof args.volumeSizeGb === "number") patch.volumeSizeGb = args.volumeSizeGb;
+    if (args.baseImageId) patch.baseImageId = args.baseImageId;
     await ctx.db.patch(args.machineId, patch);
+  },
+});
+
+export const setResizedProvisioned = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    targetMachineType: v.string(),
+    hetznerServerId: v.string(),
+    serverIp: v.string(),
+    hostname: v.string(),
+    serverType: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const machineType = normalizeMachineType(args.targetMachineType);
+    const specDef = MACHINE_SPECS[machineType];
+    const optionalSpec = specDef as { gpu?: string; vram?: number };
+    await ctx.db.patch(args.machineId, {
+      machineType,
+      specs: {
+        vcpu: specDef.vcpu,
+        ramGb: specDef.ramGb,
+        diskGb: specDef.diskGb,
+        arch: specDef.arch,
+        ...(optionalSpec.gpu ? { gpu: optionalSpec.gpu } : {}),
+        ...(typeof optionalSpec.vram === "number" ? { vram: optionalSpec.vram } : {}),
+      },
+      serverType: args.serverType,
+      hetznerServerId: args.hetznerServerId,
+      cloudResourceId: args.hetznerServerId,
+      serverIp: args.serverIp,
+      hostname: args.hostname,
+      resizeTargetMachineType: undefined,
+      resizeRequestedAt: undefined,
+      resizeReason: undefined,
+      resizePlacementId: undefined,
+      errorMessage: undefined,
+      updatedAt: Date.now(),
+    });
+    return { ok: true, machineType };
   },
 });
 
@@ -1419,15 +1562,53 @@ export const setStatus = internalMutation({
   },
 });
 
+export const requestResize = internalMutation({
+  args: {
+    userId: v.id("users"),
+    machineId: v.id("cloudMachines"),
+    targetMachineType: v.string(),
+    placementId: v.optional(v.id("taskPlacements")),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const machine = await ctx.db.get(args.machineId);
+    if (!machine) return { ok: false, error: "machine not found" };
+    if (String(machine.userId) !== String(args.userId)) {
+      return { ok: false, error: "not your machine" };
+    }
+    const targetMachineType = normalizeMachineType(args.targetMachineType);
+    if (!machine.volumeId || !machine.baseImageId) {
+      return { ok: false, error: "machine has no persistent volume-backed recovery source" };
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.machineId, {
+      resizeTargetMachineType: targetMachineType,
+      resizeRequestedAt: now,
+      resizeReason: args.reason?.slice(0, 200),
+      resizePlacementId: args.placementId,
+      provisionPhase: "resize-required",
+      provisionProgress: 0,
+      provisionPhaseAt: now,
+      provisionError: undefined,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.cloudLifecycle.resizeMachine, {
+      machineId: args.machineId,
+    });
+    return { ok: true, targetMachineType };
+  },
+});
+
 /**
- * isMachineWakeable — the ONE answer to "can this box be woken from a snapshot?"
+ * isMachineWakeable — the ONE answer to "can this box be woken?"
  *
  * Two conditions, and both matter:
  *   1. a resumable status — a `removed` or `error` box is gone, not asleep, and
  *      offering to wake (or worse, PAUSE) it is a nonsense action.
- *   2. something to recreate it FROM. Scale-to-zero DELETES the server (Hetzner
- *      bills stopped ones), so without a snapshot or base image the box cannot
- *      come back at any price.
+ *   2. something to recreate it FROM. Scale-to-zero DELETES the server
+ *      (Hetzner bills stopped ones), so a legacy row needs a full-disk
+ *      snapshot and a fast-path row needs both its data volume and slim
+ *      base image.
  *
  * This lives next to wakeMachine, its enforcement point, and is exported so the
  * device list can ship the same verdict to every client. The web previously
@@ -1439,18 +1620,20 @@ export const setStatus = internalMutation({
 export function isMachineWakeable(machine: {
   status?: string;
   lastSnapshotId?: string;
+  volumeId?: string;
   baseImageId?: string;
 }): boolean {
   const status = String(machine.status ?? "");
   const resumable = status === "stopped" || status === "paused" || status === "suspended";
   if (!resumable) return false;
-  return Boolean(machine.lastSnapshotId || machine.baseImageId);
+  return Boolean(machine.lastSnapshotId || (machine.volumeId && machine.baseImageId));
 }
 
-// seedParkedMachine records a PARKED, wakeable managed machine — a box that was
-// snapshotted + deleted (metered billing) so it accrues no server cost but can
-// be recreated from its snapshot on demand. Without a row here the mobile/web/
-// CLI surfaces render nothing for it (the box is invisible). listForUser returns
+// seedParkedMachine records a legacy PARKED, wakeable managed machine — a box
+// that was snapshotted + deleted (metered billing) so it accrues no server cost
+// but can be recreated from its snapshot on demand. New Cloud Workspace rows
+// prefer volume + base-image wake. Without a row here the mobile/web/CLI
+// surfaces render nothing for it (the box is invisible). listForUser returns
 // any-status row so every surface shows "Yaver-managed · Parked" with a Wake
 // action. Idempotent on (userId, lastSnapshotId).
 //
@@ -1528,8 +1711,9 @@ export const seedParkedMachine = internalMutation({
 });
 
 // wake — owner-scoped WAKE entry point for a PARKED managed box. A parked box
-// (stopped/paused/suspended) has snapshot+deleted its server; this recreates it
-// from the snapshot by delegating to the real, Hetzner-integrated recreate path
+// (stopped/paused/suspended) has deleted its server; this recreates it from the
+// recorded recovery source (volume + base image for fast-path rows, snapshot
+// for legacy rows) by delegating to the real, Hetzner-integrated recreate path
 // (cloudLifecycle.resumeMachine) — we deliberately do NOT reinvent the Hetzner
 // API calls here.
 //
@@ -1569,8 +1753,8 @@ export const wake = internalMutation({
       return { ok: true, status: "active", alreadyAwake: true };
     }
     if (!isMachineWakeable(machine)) {
-      if (!machine.lastSnapshotId && !machine.baseImageId) {
-        return { ok: false, error: "no snapshot recorded — cannot recreate the box" };
+      if (!machine.lastSnapshotId && !(machine.volumeId && machine.baseImageId)) {
+        return { ok: false, error: "no snapshot or volume-backed base image recorded — cannot recreate the box" };
       }
       return { ok: false, error: `not wakeable from status ${machine.status}` };
     }
@@ -1588,7 +1772,7 @@ export const wake = internalMutation({
       deviceId: machine.deviceId ?? managedDeviceIdFor(args.machineId.toString()),
       updatedAt: Date.now(),
     });
-    // Delegate to the real recreate-from-snapshot action (owns the wake ladder).
+    // Delegate to the real recovery-source action (owns the wake ladder).
     await ctx.scheduler.runAfter(0, internal.cloudLifecycle.resumeMachine, {
       machineId: args.machineId,
     });
@@ -1860,9 +2044,9 @@ export const setPhase = internalMutation({
 // can develop multi-box flows. Plan-tiered with an env-tunable fallback.
 const MANAGED_MACHINE_QUOTA: Record<string, number> = {
   "cloud-agent": 1,
-  "cloud-workspace": 2,
+  "cloud-workspace": 1,
 };
-function managedMachineLimit(plan?: string | null): number {
+export function managedMachineLimit(plan?: string | null): number {
   if (plan && MANAGED_MACHINE_QUOTA[plan] != null) return MANAGED_MACHINE_QUOTA[plan];
   const envN = parseInt(process.env.YAVER_MANAGED_MACHINE_LIMIT ?? "", 10);
   return Number.isFinite(envN) && envN > 0 ? envN : 1;
@@ -2050,15 +2234,15 @@ export const provision = internalAction({
       : [];
     // Phase 2A — per-box self-relay password. Generated unconditionally
     // (no env gate) for every managed box that has a subscription,
-    // because the relay sidecar is the whole point of the architecture:
-    // the box hosts a yaver-relay container so the user's OTHER
+    // because the bundled relay is the whole point of the architecture:
+    // the box runs yaver-relay from the yaver-cloud image so the user's OTHER
     // self-hosted devices can use it (managedRelays row + userSettings
     // pointers wired below, post-Hetzner). Dev-adopt boxes lacking a
-    // subscriptionId skip the sidecar (managedRelays.create requires
+    // subscriptionId skip the relay wiring (managedRelays.create requires
     // subId), so we only thread the password when both sides will land.
     const boxRelayPassword = machine.subscriptionId ? randomHex(24) : "";
 
-    const bootstrapSpec = {
+    const bootstrapSpec: ManagedCloudBootstrapSpec = {
       convexSite,
       machineId: machineIdStr,
       machineToken,
@@ -2078,7 +2262,7 @@ export const provision = internalAction({
       // inside buildManagedCloudInit. byok today (ensureForSubscription
       // doesn't thread tier yet); hosted once the SKU is wired.
       tier: machine.tier === "hosted" ? "hosted" : "byok",
-    } as const;
+    };
     // "yaver image" model: when YAVER_CLOUD_IMAGE is set, the thin
     // Docker cloud-init handles BOTH tiers — byok (agent container
     // only) and hosted (agent container + self-hosted-Convex sibling +
@@ -2106,13 +2290,41 @@ export const provision = internalAction({
     const bootImage: string | number = goldenImageId
       ? (/^\d+$/.test(goldenImageId) ? Number(goldenImageId) : goldenImageId)
       : "ubuntu-24.04";
+    const baseImageId = typeof bootImage === "number" ? String(bootImage) : bootImage;
+    let persistentVolumeId: string | undefined;
+    let persistentVolumeSizeGb: number | undefined;
 
     try {
-      // ── 1. Hetzner server ───────────────────────────────────────
+      // ── 1. Optional persistent data volume ──────────────────────
+      // The container/golden-image path keeps mutable state in
+      // /srv/yaver/state. Create that volume BEFORE the server so it can be
+      // attached on first boot and cloud-init never writes OAuth/repo/cache
+      // state onto a disposable boot disk. Legacy in-VM bootstrap keeps the
+      // explicit migration path instead.
+      if (cloudImage) {
+        await ctx.runMutation(internal.cloudMachines.setPhase, {
+          machineId: args.machineId,
+          phase: "preparing-volume",
+          progress: 12,
+        });
+        persistentVolumeSizeGb = Math.max(10, Math.round(specDef.diskGb));
+        persistentVolumeId = await hetznerCreateVolume(
+          HCLOUD_TOKEN,
+          `yaver-data-${machineIdStr}`.slice(0, 60),
+          persistentVolumeSizeGb,
+          location,
+        );
+        bootstrapSpec.volumeId = persistentVolumeId;
+      }
+
+      // ── 2. Hetzner server ───────────────────────────────────────
       // Cost/availability override per internal profile. Captured on the row so
       // resume recreates the exact same type; snapshots cannot restore onto a
       // smaller disk. Legacy "cpu" keeps YAVER_CLOUD_CPU_TYPE support.
       const createdServerType = envServerTypeFor(machineType) ?? specDef.hetznerType;
+      const finalCloudInit = cloudImage
+        ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
+        : cloudInit;
       const hetznerResp = await fetch("https://api.hetzner.cloud/v1/servers", {
         method: "POST",
         headers: {
@@ -2124,6 +2336,9 @@ export const provision = internalAction({
           server_type: createdServerType,
           image: bootImage,
           location,
+          ...(persistentVolumeId
+            ? { volumes: [Number(persistentVolumeId)], automount: false }
+            : {}),
           ...(bootSshKeyNames.length ? { ssh_keys: bootSshKeyNames } : {}),
           labels: {
             service: "yaver-cloud-machine",
@@ -2131,7 +2346,7 @@ export const provision = internalAction({
             user: machine.userId.toString().substring(0, 10),
             managed: "true",
           },
-          user_data: cloudInit,
+          user_data: finalCloudInit,
         }),
       });
       if (!hetznerResp.ok) {
@@ -2194,6 +2409,13 @@ export const provision = internalAction({
         bootImageSource: goldenImageId ? "golden" : "vanilla",
         // Persist the concrete type so resume-from-snapshot recreates on it.
         serverType: createdServerType,
+        ...(persistentVolumeId
+          ? {
+              volumeId: persistentVolumeId,
+              volumeSizeGb: persistentVolumeSizeGb,
+              baseImageId,
+            }
+          : {}),
       });
 
       // ── 4b. Phase 2B+2C — managed box doubles as this user's relay ──
@@ -2266,6 +2488,16 @@ export const provision = internalAction({
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[cloudMachines.provision] failed:", msg);
+      if (persistentVolumeId) {
+        try {
+          await hetznerDeleteVolume(HCLOUD_TOKEN, persistentVolumeId);
+        } catch (deleteErr) {
+          console.error(
+            "[cloudMachines.provision] cleanup volume failed:",
+            deleteErr instanceof Error ? deleteErr.message : String(deleteErr),
+          );
+        }
+      }
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId: args.machineId,
         status: "error",
@@ -2498,8 +2730,8 @@ export const resumeHealthCheck = internalAction({
     // How long a box that has NOT answered yet is given before we delete it.
     // The old cap was `attempt >= 10` — with the first check at +20s and 15s
     // between ticks that is ~2.6 minutes, which is SHORTER than this codebase's
-    // own documented boot times (a vanilla first boot is "~3-5 min", see
-    // subscription.ts; a snapshot restore is longer still). So a perfectly
+    // own documented boot times (a vanilla first boot can take several minutes;
+    // legacy snapshot restore is longer still). So a perfectly
     // healthy slow wake was deleted mid-boot and reported to the user as "never
     // became reachable" — and because abandonWake re-parks, the next attempt
     // hit the same wall. Scale the budget to what this box actually has to do.
@@ -2525,12 +2757,12 @@ export const resumeHealthCheck = internalAction({
 // errored/destroyed) leaving an active subscription with no live box
 // — the user paid for nothing. This reconciler (hourly cron + manual
 // owner trigger) re-provisions any active managed subscription that
-// has no machine in a healthy/in-flight state. Idempotent:
-// ensureForSubscription returns the existing row if one is already
-// {provisioning|active}, so a healthy box is never duplicated.
+// has no machine in a healthy/in-flight/wakeable state. Idempotent:
+// ensureForSubscription returns the existing row if one is reusable, so a
+// healthy or parked box is never duplicated.
 // project_managed_cloud_onboarding_gap (recovery).
 const HEALTHY_OR_INFLIGHT = new Set([
-  "provisioning", "active", "grace", "stopping",
+  "provisioning", "active", "grace", "stopping", "suspended",
 ]);
 
 export const reconcileSubscriptions = internalAction({
@@ -2603,12 +2835,11 @@ export const reconcileSubscriptions = internalAction({
 
 /** Update machine status (called by provisioning scripts via webhook). */
 /**
- * setAutoPark — owner toggle for auto-close (auto-park when idle).
+ * setAutoPark — customer-facing auto-close configuration.
  *
  * Default is ON (the field is undefined === enabled), so a forgotten box still
- * stops its own meter. Turning it OFF is an explicit, informed choice: the box
- * keeps running (and billing) until parked by hand. Enforced in
- * cloudLifecycle.listIdleCandidates.
+ * stops its own meter. Disabling is rejected at this lower mutation boundary as
+ * well as the HTTP validator; legacy OFF rows can only be turned back on.
  */
 /** Record the persistent data volume attached to a machine. */
 export const setVolume = internalMutation({
@@ -2681,9 +2912,12 @@ export const setAutoPark = internalMutation({
     const machine = await ctx.db.get(args.machineId);
     if (!machine) throw new Error("Machine not found");
     if (String(machine.userId) !== String(args.userDocId)) throw new Error("Not your machine");
+    if (args.enabled === false) {
+      throw new Error("Cloud Workspace auto-close is required to protect usage and compute costs");
+    }
 
     const patch: Record<string, unknown> = {
-      autoParkEnabled: args.enabled,
+      autoParkEnabled: true,
       updatedAt: Date.now(),
     };
     if (typeof args.idleMinutes === "number" && args.idleMinutes > 0) {
@@ -2692,7 +2926,7 @@ export const setAutoPark = internalMutation({
     await ctx.db.patch(args.machineId, patch);
     return {
       ok: true,
-      autoParkEnabled: args.enabled,
+      autoParkEnabled: true,
       autoParkMinutes: (patch.autoParkMinutes as number | undefined) ?? machine.autoParkMinutes ?? 45,
     };
   },

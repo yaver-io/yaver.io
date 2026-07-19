@@ -254,6 +254,36 @@ func createPullRequestGitHub(host, token, owner, repo, head, base, title, body s
 	return data.HTMLURL, data.Number, nil
 }
 
+func createIssueGitHub(host, token, owner, repo, title, body string) (string, int, error) {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"title": title,
+		"body":  body,
+	})
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/issues", githubAPIBase(host), owner, repo)
+	req, _ := http.NewRequest("POST", endpoint, strings.NewReader(string(payload)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", 0, fmt.Errorf("github %d: %s", resp.StatusCode, string(raw))
+	}
+	var data struct {
+		HTMLURL string `json:"html_url"`
+		Number  int    `json:"number"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return "", 0, err
+	}
+	return data.HTMLURL, data.Number, nil
+}
+
 func createMergeRequestGitLab(host, token, owner, repo, head, base, title, body string) (string, int, error) {
 	if host == "" {
 		host = "gitlab.com"
@@ -263,6 +293,38 @@ func createMergeRequestGitLab(host, token, owner, repo, head, base, title, body 
 		"source_branch": head, "target_branch": base, "title": title, "description": body,
 	})
 	endpoint := fmt.Sprintf("https://%s/api/v4/projects/%s/merge_requests", host, projectPath)
+	req, _ := http.NewRequest("POST", endpoint, strings.NewReader(string(payload)))
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", 0, fmt.Errorf("gitlab %d: %s", resp.StatusCode, string(raw))
+	}
+	var data struct {
+		WebURL string `json:"web_url"`
+		IID    int    `json:"iid"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return "", 0, err
+	}
+	return data.WebURL, data.IID, nil
+}
+
+func createIssueGitLab(host, token, owner, repo, title, body string) (string, int, error) {
+	if host == "" {
+		host = "gitlab.com"
+	}
+	projectPath := url.PathEscape(owner + "/" + repo)
+	payload, _ := json.Marshal(map[string]interface{}{
+		"title":       title,
+		"description": body,
+	})
+	endpoint := fmt.Sprintf("https://%s/api/v4/projects/%s/issues", host, projectPath)
 	req, _ := http.NewRequest("POST", endpoint, strings.NewReader(string(payload)))
 	req.Header.Set("PRIVATE-TOKEN", token)
 	req.Header.Set("Content-Type", "application/json")

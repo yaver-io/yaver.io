@@ -50,6 +50,8 @@ func parseTerminalCommand(line string) (terminalCommand, bool) {
 		return terminalCommand{Kind: "clear"}, true
 	case "tasks", "/tasks", "list", "/list":
 		return terminalCommand{Kind: "tasks"}, true
+	case "cloud", "/cloud", "cloud-pending", "/cloud-pending", "pending cloud", "/pending cloud":
+		return terminalCommand{Kind: "cloud-pending"}, true
 	case "agent", "/agent", "runner", "/runner", "get agent", "/get agent", "\\get agent", "which agent", "which agent is running", "which runner":
 		return terminalCommand{Kind: "agent"}, true
 	case "version", "/version", "\\version", "--version", "-v":
@@ -140,6 +142,7 @@ func printAttachHelp(info *attachInfo) {
 	fmt.Println("Local terminal commands")
 	fmt.Println("  help                  show this screen")
 	fmt.Println("  tasks                 list recent tasks")
+	fmt.Println("  cloud                 show queued Cloud Workspace handoffs")
 	if runnerLine := attachRunnerLine(info); runnerLine != "" {
 		fmt.Printf("  agent                 show current coding agent (%s)\n", runnerLine)
 	} else {

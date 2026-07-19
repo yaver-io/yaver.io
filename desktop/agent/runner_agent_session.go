@@ -25,6 +25,7 @@ package main
 // added to convex_privacy_test.go's forbidden list.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,6 +100,7 @@ type AgentSessionManager struct {
 	sessions  map[string]*AgentSession
 	taskMgr   *TaskManager
 	storePath string
+	placement TaskIngressPlacementConfig
 }
 
 // NewAgentSessionManager opens the on-disk store and rehydrates any
@@ -131,6 +133,15 @@ func NewAgentSessionManager(tm *TaskManager) *AgentSessionManager {
 	}
 	m.mu.Unlock()
 	return m
+}
+
+func (m *AgentSessionManager) SetPlacementConfig(cfg TaskIngressPlacementConfig) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.placement = cfg
 }
 
 func (m *AgentSessionManager) load() {
@@ -231,6 +242,22 @@ func (m *AgentSessionManager) Create(opts AgentSessionStartOpts, ownerUserID str
 
 	taskTitle := title
 	taskDescription := composeAgentSessionPrompt(sess, prompt)
+	if deferral, deferred := m.deferTaskToCloudWorkspace(context.Background(), runner, opts.WorkDir); deferred {
+		sess.CurrentTask = deferral.PendingTaskID
+		sess.Status = AgentSessionAwaiting
+		sess.Messages = append(sess.Messages, AgentSessionMessage{
+			Direction: "agent",
+			Text:      agentSessionCloudDeferralText(deferral),
+			TaskID:    deferral.PendingTaskID,
+			CreatedAt: now,
+		})
+		m.mu.Lock()
+		m.sessions[id] = sess
+		m.saveLocked()
+		m.mu.Unlock()
+		cp := *sess
+		return &cp, nil
+	}
 	task, err := m.taskMgr.CreateTaskWithOptions(taskTitle, taskDescription, opts.Model, "agent-session", runner, "", nil, TaskCreateOptions{
 		WorkDir: opts.WorkDir,
 	})
@@ -334,7 +361,29 @@ func (m *AgentSessionManager) Message(id, text, requireOwner string) (*AgentSess
 	workDir := s.WorkDir
 	model := s.Model
 	runner := s.Runner
+	placement := m.placement
 	m.mu.Unlock()
+
+	if deferral, deferred := deferAgentSessionTaskToCloudWorkspace(context.Background(), placement, runner, workDir); deferred {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		s = m.sessions[id]
+		if s == nil {
+			return nil, errors.New("session vanished mid-message")
+		}
+		s.CurrentTask = deferral.PendingTaskID
+		s.Status = AgentSessionAwaiting
+		s.UpdatedAt = time.Now().UnixMilli()
+		s.Messages = append(s.Messages, AgentSessionMessage{
+			Direction: "agent",
+			Text:      agentSessionCloudDeferralText(deferral),
+			TaskID:    deferral.PendingTaskID,
+			CreatedAt: s.UpdatedAt,
+		})
+		m.saveLocked()
+		cp := *s
+		return &cp, nil
+	}
 
 	task, err := taskMgr.CreateTaskWithOptions(firstLine(text), prompt, model, "agent-session", runner, "", nil, TaskCreateOptions{
 		WorkDir: workDir,
@@ -361,6 +410,60 @@ func (m *AgentSessionManager) Message(id, text, requireOwner string) (*AgentSess
 	m.saveLocked()
 	cp := *s
 	return &cp, nil
+}
+
+func (m *AgentSessionManager) deferTaskToCloudWorkspace(ctx context.Context, runner, workDir string) (*taskIngressCloudDeferral, bool) {
+	if m == nil {
+		return nil, false
+	}
+	m.mu.Lock()
+	cfg := m.placement
+	m.mu.Unlock()
+	return deferAgentSessionTaskToCloudWorkspace(ctx, cfg, runner, workDir)
+}
+
+func deferAgentSessionTaskToCloudWorkspace(ctx context.Context, cfg TaskIngressPlacementConfig, runner, workDir string) (*taskIngressCloudDeferral, bool) {
+	if strings.TrimSpace(workDir) != "" {
+		cfg.WorkDir = workDir
+	}
+	deferral, deferred, err := deferIngressTaskToCloudWorkspace(ctx, cfg, "agent-session", "unknown", runner)
+	if err != nil && !deferred {
+		log.Printf("[placement] agent-session preview skipped before task create: %v", err)
+		return nil, false
+	}
+	if !deferred {
+		return nil, false
+	}
+	if err != nil {
+		pendingTaskID := ""
+		if deferral != nil {
+			pendingTaskID = deferral.PendingTaskID
+		}
+		log.Printf("[placement] agent-session cloud deferral failed for %s runner=%s: %v", pendingTaskID, strings.TrimSpace(runner), err)
+		if deferral == nil {
+			deferral = &taskIngressCloudDeferral{}
+		}
+		deferral.Blocker = err.Error()
+		return deferral, true
+	}
+	return deferral, true
+}
+
+func agentSessionCloudDeferralText(deferral *taskIngressCloudDeferral) string {
+	if deferral == nil {
+		return "Cloud Workspace is selected for this agent session, but the handoff is not ready yet."
+	}
+	if blocker := strings.TrimSpace(deferral.Blocker); blocker != "" {
+		return "Cloud Workspace is selected for this agent session, but it needs your attention first: " + blocker
+	}
+	target := ""
+	if deferral.Placement != nil {
+		target = strings.TrimSpace(deferral.Placement.TargetDeviceID)
+	}
+	if target == "" {
+		target = "Cloud Workspace"
+	}
+	return "Cloud Workspace is selected for this agent session. A pending handoff was queued for " + target + ", so this relay will not run the coding task while the workspace wakes."
 }
 
 // Cancel stops the in-flight task and marks the session cancelled.

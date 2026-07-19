@@ -39,21 +39,51 @@ func TestBillingToolsRegistered(t *testing.T) {
 			t.Errorf("billing tool %q not registered in getMCPToolsList", name)
 		}
 	}
+	for _, name := range []string{"yaver_billing_topup", "yaver_billing_credits_checkout"} {
+		if have[name] {
+			t.Errorf("retired billing tool %q must not be registered in getMCPToolsList", name)
+		}
+	}
 }
 
-// billingPlanMap is the pure plan→variant mapping. The $19/$9 split is
-// security-relevant (wrong planId = wrong charge), so pin it exactly.
+func TestBillingToolDescriptionsStayFlatPlanOnly(t *testing.T) {
+	wrapper, ok := (&HTTPServer{}).getMCPToolsList().(map[string]interface{})
+	if !ok {
+		t.Fatal("getMCPToolsList did not return a map wrapper")
+	}
+	tools, ok := wrapper["tools"].([]map[string]interface{})
+	if !ok {
+		t.Fatal("tools key is not []map[string]interface{}")
+	}
+	for _, tl := range tools {
+		name, _ := tl["name"].(string)
+		if !strings.HasPrefix(name, "yaver_billing_") {
+			continue
+		}
+		desc, _ := tl["description"].(string)
+		lower := strings.ToLower(desc)
+		for _, forbidden := range []string{"top-up", "topup", "credit pack", "prepaid wallet", "cloud agent", "$19"} {
+			if strings.Contains(lower, forbidden) {
+				t.Errorf("%s description exposes retired billing language %q: %s", name, forbidden, desc)
+			}
+		}
+	}
+}
+
+// billingPlanMap is the pure plan→variant mapping. The $9/$29 split is
+// security-relevant (wrong productId = wrong charge), so pin it exactly.
 func TestBillingPlanMap(t *testing.T) {
 	cases := []struct {
 		in, planID, short string
 	}{
-		{"", "cloud-workspace", "workspace"},
+		{"", "relay-pro", "relay"},
+		{"relay", "relay-pro", "relay"},
+		{"relay-pro", "relay-pro", "relay"},
+		{"managed-relay", "relay-pro", "relay"},
 		{"workspace", "cloud-workspace", "workspace"},
-		{"byok", "cloud-workspace", "workspace"},
+		{"cloud-workspace", "cloud-workspace", "workspace"},
+		{"compute", "cloud-workspace", "workspace"},
 		{"Workspace", "cloud-workspace", "workspace"},
-		{"agent", "cloud-agent", "agent"},
-		{"hosted", "cloud-agent", "agent"},
-		{"AGENT", "cloud-agent", "agent"},
 	}
 	for _, c := range cases {
 		planID, short, _, _, ok := billingPlanMap(c.in)
@@ -63,6 +93,9 @@ func TestBillingPlanMap(t *testing.T) {
 	}
 	if _, _, _, _, ok := billingPlanMap("frontier"); ok {
 		t.Error("unknown plan should not be ok")
+	}
+	if _, _, _, _, ok := billingPlanMap("agent"); ok {
+		t.Error("retired Cloud Agent plan should not be ok")
 	}
 }
 

@@ -22,6 +22,10 @@ import { internalMutation, internalQuery, internalAction } from "./_generated/se
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { isOwnerUserId } from "./ownerAllowlist";
+import {
+  cloudWorkspaceProfilePolicy,
+  includedHoursForCloudWorkspaceProfile,
+} from "./cloudPlacementCapacity";
 
 function normalizeMachineType(value: string | undefined | null): string {
   const t = String(value || "").trim().toLowerCase();
@@ -44,7 +48,7 @@ export function markup(machineType: string): number {
 export const MARKUP_X = MARKUP_BY_TYPE.standard;
 
 // Raw Hetzner COGS basis. Managed SKU = cpx51 €54.90/mo (16 vCPU/32 GB,
-// the Talos-grade monorepo box — see MACHINE_SPECS in cloudMachines.ts).
+// the large-monorepo box — see MACHINE_SPECS in cloudMachines.ts).
 // Stopped = snapshot storage only (~€0.80/mo for the larger image, still
 // rounds to ~0c/h). Cents/hour; monthly ÷ 730. ⚠️ Keep this in sync with
 // MACHINE_SPECS.cpu.hetznerType and re-verify the price with
@@ -112,7 +116,13 @@ function billingPeriodUTC(now: number): string {
 // 0 / unknown plan ⇒ pure pay-as-you-go (legacy behaviour, unchanged).
 const INCLUDED_HOURS: Record<string, Record<string, number>> = {
   "cloud-agent": { cpu: 40, standard: 40, heavy: 20, build: 10, gpu: 0 },
-  "cloud-workspace": { standard: 40, heavy: 20, build: 10, cpu: 40, gpu: 0 },
+  "cloud-workspace": {
+    standard: includedHoursForCloudWorkspaceProfile("standard"),
+    heavy: includedHoursForCloudWorkspaceProfile("heavy"),
+    build: includedHoursForCloudWorkspaceProfile("build"),
+    cpu: includedHoursForCloudWorkspaceProfile("build"),
+    gpu: 0,
+  },
 };
 export function includedHoursForPlan(plan: string, machineType: string): number {
   const t = normalizeMachineType(machineType);
@@ -120,6 +130,60 @@ export function includedHoursForPlan(plan: string, machineType: string): number 
   const env = Number(process.env[envKey]);
   if (Number.isFinite(env) && env >= 0) return env;
   return INCLUDED_HOURS[plan]?.[t] ?? 0;
+}
+
+function isCloudWorkspaceAllowancePlan(plan: string | null | undefined): boolean {
+  const value = String(plan || "");
+  return value === "cloud-workspace" || value.startsWith("yaver-cloud");
+}
+
+export function cloudWorkspaceCreditWeightForMachineType(machineType: string): number {
+  const type = normalizeMachineType(machineType);
+  if (type === "gpu") return 0;
+  if (type === "build" || type === "cpu") return cloudWorkspaceProfilePolicy("build").standardCreditWeight;
+  if (type === "heavy") return cloudWorkspaceProfilePolicy("heavy").standardCreditWeight;
+  return cloudWorkspaceProfilePolicy("standard").standardCreditWeight;
+}
+
+export function weightedIncludedCoverage(args: {
+  seconds: number;
+  usedStandardCreditSeconds: number;
+  includedStandardCreditSeconds: number;
+  creditWeight: number;
+}): {
+  coveredSeconds: number;
+  usedStandardCreditSeconds: number;
+  remainingStandardCreditSeconds: number;
+} {
+  const seconds = Math.max(0, args.seconds);
+  const weight = Math.max(0, args.creditWeight);
+  const left = Math.max(0, args.includedStandardCreditSeconds - args.usedStandardCreditSeconds);
+  if (seconds <= 0 || weight <= 0 || left <= 0) {
+    return {
+      coveredSeconds: 0,
+      usedStandardCreditSeconds: 0,
+      remainingStandardCreditSeconds: left,
+    };
+  }
+  const coveredSeconds = Math.min(seconds, left / weight);
+  const usedStandardCreditSeconds = Math.ceil(coveredSeconds * weight);
+  return {
+    coveredSeconds,
+    usedStandardCreditSeconds,
+    remainingStandardCreditSeconds: Math.max(0, left - usedStandardCreditSeconds),
+  };
+}
+
+export function includedAllowanceCoversStart(args: {
+  machineType: string;
+  remainingStandardCreditSeconds: number;
+  minimumLiveSeconds?: number;
+}): boolean {
+  const weight = cloudWorkspaceCreditWeightForMachineType(args.machineType);
+  if (weight <= 0) return false;
+  const minimumLiveSeconds = Math.max(1, args.minimumLiveSeconds ?? 3600);
+  const remaining = Math.max(0, args.remainingStandardCreditSeconds);
+  return remaining >= Math.ceil(minimumLiveSeconds * weight);
 }
 
 // ── Wallet ───────────────────────────────────────────────────────────
@@ -179,8 +243,9 @@ async function ensureWalletRow(ctx: any, userId: string) {
   return await ctx.db.get(id);
 }
 
-// Top-up. Real money path (LemonSqueezy credit packs) is P6/Codex —
-// this is the internal primitive it (and owner-dev tooling) calls.
+// Internal wallet funding primitive. Current flat products do NOT sell
+// customer credit packs; this is used by owner-dev tooling and subscription
+// allowance grants that keep the reserve floor funded.
 export const topUp = internalMutation({
   args: {
     userId: v.id("users"),
@@ -202,11 +267,11 @@ export const topUp = internalMutation({
   },
 });
 
-// Idempotent real-money top-up. The web credit-pack checkout pays via
-// LemonSqueezy; its `order_created` webhook calls this with the provider
-// order id. LemonSqueezy re-delivers webhooks, so we key on orderId in
-// creditTopups and no-op on a duplicate — a re-delivery can never
-// double-credit the wallet. Returns the (possibly unchanged) balance.
+// Idempotent wallet grant. Current callers are subscription allowances and
+// owner/dev repair tooling; legacy LemonSqueezy credit-pack webhooks are
+// ignored for the flat product model. We still key on orderId in creditTopups
+// so replayed allowance grants can never double-credit the wallet. Returns the
+// (possibly unchanged) balance.
 export const topUpForOrder = internalMutation({
   args: {
     userId: v.id("users"),
@@ -410,34 +475,50 @@ export const recordUsageAndDeduct = internalMutation({
     const m = markup(machineType);
     const rateHour = rawRate(machineType, state);
 
-    // Included-hours first (live only). Consume the subscriber's monthly
-    // active-hour grant for THIS machineType before charging the prepaid
-    // overage wallet. A user with no allowance row (pay-as-you-go) covers
-    // 0 seconds, so everything below is byte-identical to the legacy
-    // wallet path. Stopped (snapshot) ticks never draw the grant — for
-    // cpx-class boxes the raw stopped rate already rounds to ~0c/h, so a
-    // parked workspace is effectively free and the base absorbs it.
+    // Included allowance first (live only). Current Cloud Workspace uses ONE
+    // standard-credit pool: standard=1x, heavy=2x, build/cpu=4x. Legacy plans
+    // keep their old per-machineType active-hour rows. A user with no
+    // allowance row (pay-as-you-go) covers 0 seconds, so everything below is
+    // byte-identical to the wallet path. Stopped ticks never draw the grant.
     let coveredSeconds = 0;
     let remainingIncluded = 0;
     if (state === "live") {
       const period = billingPeriodUTC(now);
       const type = normalizeMachineType(machineType);
-      const allow = await ctx.db
+      const standardAllow = await ctx.db
+        .query("includedAllowance")
+        .withIndex("by_user_period_type", (q: any) =>
+          q.eq("userId", userId).eq("period", period).eq("machineType", "standard"),
+        )
+        .unique();
+      const useSharedStandardCreditPool =
+        !!standardAllow &&
+        isCloudWorkspaceAllowancePlan(standardAllow.plan) &&
+        cloudWorkspaceCreditWeightForMachineType(type) > 0;
+      const allow = useSharedStandardCreditPool ? standardAllow : await ctx.db
         .query("includedAllowance")
         .withIndex("by_user_period_type", (q: any) =>
           q.eq("userId", userId).eq("period", period).eq("machineType", type),
         )
         .unique();
       if (allow) {
-        const left = Math.max(0, allow.includedSeconds - allow.usedSeconds);
-        coveredSeconds = Math.min(seconds, left);
+        const weight = useSharedStandardCreditPool ? cloudWorkspaceCreditWeightForMachineType(type) : 1;
+        const coverage = weightedIncludedCoverage({
+          seconds,
+          usedStandardCreditSeconds: allow.usedSeconds,
+          includedStandardCreditSeconds: allow.includedSeconds,
+          creditWeight: weight,
+        });
+        coveredSeconds = coverage.coveredSeconds;
         if (coveredSeconds > 0) {
           await ctx.db.patch(allow._id, {
-            usedSeconds: allow.usedSeconds + coveredSeconds,
+            usedSeconds: allow.usedSeconds + coverage.usedStandardCreditSeconds,
             updatedAt: now,
           });
         }
-        remainingIncluded = left - coveredSeconds;
+        remainingIncluded = useSharedStandardCreditPool
+          ? coverage.remainingStandardCreditSeconds / weight
+          : coverage.remainingStandardCreditSeconds;
       }
     }
 
@@ -501,10 +582,45 @@ export const canStart = internalQuery({
   handler: async (
     ctx,
     { userId, machineType },
-  ): Promise<{ ok: boolean; balanceCents: number; requiredCents: number }> => {
+  ): Promise<{
+    ok: boolean;
+    balanceCents: number;
+    requiredCents: number;
+    coveredByIncludedAllowance?: boolean;
+    remainingIncludedSeconds?: number;
+  }> => {
     const w = await getWalletInternalRow(ctx, userId);
     const need = minimumReserveCents(machineType);
     const have = w?.balanceCents ?? 0;
+    const type = normalizeMachineType(machineType);
+    if (cloudWorkspaceCreditWeightForMachineType(type) > 0) {
+      const period = billingPeriodUTC(Date.now());
+      const standardAllow = await ctx.db
+        .query("includedAllowance")
+        .withIndex("by_user_period_type", (q: any) =>
+          q.eq("userId", userId).eq("period", period).eq("machineType", "standard"),
+        )
+        .unique();
+      if (standardAllow && isCloudWorkspaceAllowancePlan(standardAllow.plan)) {
+        const remainingStandardCreditSeconds = Math.max(
+          0,
+          standardAllow.includedSeconds - standardAllow.usedSeconds,
+        );
+        if (includedAllowanceCoversStart({
+          machineType: type,
+          remainingStandardCreditSeconds,
+        })) {
+          return {
+            ok: true,
+            balanceCents: have,
+            requiredCents: need,
+            coveredByIncludedAllowance: true,
+            remainingIncludedSeconds:
+              remainingStandardCreditSeconds / cloudWorkspaceCreditWeightForMachineType(type),
+          };
+        }
+      }
+    }
     return { ok: have >= need, balanceCents: have, requiredCents: need };
   },
 });
@@ -927,8 +1043,9 @@ export const listMeterableMachines = internalQuery({
 
 // Cron entrypoint: meter every billable machine for the elapsed
 // interval and deduct. A live machine whose wallet drops below the
-// safe floor is marked "suspended" (the agent-side force-stop is
-// driven by a P3 route / the agent watchdog reacting to that status).
+// safe floor is parked immediately; if the provider stop path cannot
+// complete, the row is marked "suspended" with a loud error instead of
+// silently leaving a paid server open.
 export const meterTick = internalAction({
   args: { intervalSeconds: v.number(), dryRun: v.optional(v.boolean()) },
   handler: async (ctx, { intervalSeconds, dryRun }): Promise<MeterResult> => {
@@ -948,11 +1065,17 @@ export const meterTick = internalAction({
       });
       metered++;
       if (r.suspend && state === "live") {
-        await ctx.runMutation(internal.cloudMachines.setStatus, {
+        const park = await ctx.runAction(internal.cloudLifecycle.pauseMachine, {
           machineId: m.machineId,
-          status: "suspended",
-          errorMessage: "monthly included hours used up and prepaid overage balance below safe floor — auto-stopping (top up or wait for next period to resume)",
+          dryRun: sim,
         });
+        if (!park.ok) {
+          await ctx.runMutation(internal.cloudMachines.setStatus, {
+            machineId: m.machineId,
+            status: "suspended",
+            errorMessage: `monthly included hours used up and prepaid overage balance below safe floor — attempted auto-park but it did not complete (${park.reason || "unknown reason"}). Top up or wait for next period, then retry wake/park.`,
+          });
+        }
         suspended++;
       }
     }
@@ -960,9 +1083,9 @@ export const meterTick = internalAction({
   },
 });
 
-// PAUSE = snapshot (fail-closed) → delete the Hetzner server (a
-// powered-off server still bills full price; only delete stops it) →
-// status "paused", snapshot id persisted for resume. HCLOUD_TOKEN
+// PAUSE = preserve recoverable state → delete the Hetzner server (a powered-off
+// server still bills full price; only delete stops it) → status "paused".
+// Volume-backed boxes skip snapshots; legacy boxes snapshot first. HCLOUD_TOKEN
 // absent ⇒ dry-run state transition (prod default; no real spend).
 export const pauseMachine = internalAction({
   args: { machineId: v.id("cloudMachines"), dryRun: v.optional(v.boolean()) },
@@ -1113,15 +1236,16 @@ export const pauseMachine = internalAction({
 //
 // A running managed box bills Hetzner every hour even when nobody uses
 // it — the single biggest silent margin leak (and a violation of the
-// scale-to-zero rule). idleSweep pauses (snapshot+delete) any ACTIVE
-// managed box whose last MEANINGFUL activity (lastActivityAt — task /
-// exec / inference, NOT mere agent liveness) is older than the threshold.
+// scale-to-zero rule). idleSweep parks any ACTIVE managed box whose last
+// MEANINGFUL activity (lastActivityAt — task / exec / inference, NOT mere
+// agent liveness) is older than the threshold. Volume-backed boxes delete the
+// server directly; legacy boxes snapshot first.
 // The user resumes on demand (existing resumeMachine / web "resume").
 //
-// DEFAULT OFF (enabled=false) until the box agent reports activity via
-// /machine/activity — otherwise we'd pause boxes that ARE in use but not
-// yet reporting. pauseMachine is itself fail-closed on HCLOUD_TOKEN, so
-// even enabled it's a dry-run state transition until the token is set.
+// Auto-off is default-on for managed boxes. The running agent reports
+// /machine/activity while work is live; if it goes idle past the threshold, it
+// self-parks. YAVER_CLOUD_IDLE_DISABLE is the operator emergency brake.
+// pauseMachine is itself fail-closed on HCLOUD_TOKEN.
 
 // Read-only candidates: active managed boxes + their effective last-
 // activity stamp (fall back to provisionPhaseAt/createdAt for boxes that
@@ -1163,9 +1287,9 @@ export const idleSweep = internalAction({
     for (const c of candidates) {
       checked++;
       if (c.lastActivityAt > cutoff) continue; // still active recently
-      // pauseMachine snapshots then deletes; it is fail-closed on
-      // HCLOUD_TOKEN (dry-run state transition if unset) and aborts the
-      // delete if the snapshot fails — never loses the box.
+      // pauseMachine preserves state then deletes; it is fail-closed on
+      // HCLOUD_TOKEN (dry-run state transition if unset). Legacy snapshot
+      // fallback aborts the delete if the snapshot fails — never loses the box.
       await ctx.runAction(internal.cloudLifecycle.pauseMachine, {
         machineId: c.machineId,
         dryRun: sim,
@@ -1181,26 +1305,26 @@ export const idleSweep = internalAction({
 // to POST /crons/run) so the "never bill me for an idle box" guarantee can't
 // silently break if an external scheduler is down — the single most important
 // property here. Decoupled from the prepaid meter (YAVER_CLOUD_METER_LIVE): a
-// live snapshot+delete only needs YAVER_CLOUD_IDLE_ENABLE + a present
-// HCLOUD_TOKEN (pauseMachine stays token-fail-closed, and aborts the delete if
-// the snapshot fails — the box is never lost).
+// live park only needs auto-off not disabled + a present HCLOUD_TOKEN
+// (pauseMachine stays token-fail-closed, and legacy snapshot fallback aborts
+// the delete if the snapshot fails — the box is never lost).
 export const idleSweepCron = internalAction({
   args: {},
   handler: async (ctx): Promise<IdleSweepResult> => {
-    const raw = (process.env.YAVER_CLOUD_IDLE_ENABLE ?? "").trim().toLowerCase();
-    const enabled = raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+    const raw = (process.env.YAVER_CLOUD_IDLE_DISABLE ?? "").trim().toLowerCase();
+    const disabled = raw === "1" || raw === "true" || raw === "yes" || raw === "on";
     const mins = Number(process.env.YAVER_CLOUD_IDLE_MINUTES);
     return await ctx.runAction(internal.cloudLifecycle.idleSweep, {
-      enabled,
+      enabled: !disabled,
       idleMinutes: Number.isFinite(mins) && mins > 0 ? mins : 45,
       dryRun: false, // live; pauseMachine is HCLOUD_TOKEN fail-closed on its own
     });
   },
 });
 
-// RESUME = prepaid-floor gate → recreate the Hetzner server from the
-// pause snapshot → persist new id/ip → status "active". HCLOUD_TOKEN
-// absent ⇒ dry-run state transition.
+// RESUME = prepaid-floor gate → recreate the Hetzner server from the recorded
+// recovery source → persist new id/ip → status "active". HCLOUD_TOKEN absent
+// ⇒ dry-run state transition.
 /**
  * finalizePause — the SAFE half of scale-to-zero.
  *
@@ -1409,7 +1533,15 @@ export const purgeMachineResources = internalAction({
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
     if (!machine) return { ok: false, reason: "machine not found" };
     const token = process.env.HCLOUD_TOKEN;
-    if (!token) return { ok: false, reason: "HCLOUD_TOKEN unset" };
+    if (!token) {
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId,
+        status: "error",
+        errorMessage:
+          "Platform HCLOUD_TOKEN is not configured on this Convex deployment — the cloud resource was NOT purged. Set it, then retry decommission.",
+      });
+      return { ok: false, reason: "HCLOUD_TOKEN unset" };
+    }
     const done: string[] = [];
 
     if (machine.hetznerServerId) {
@@ -1534,12 +1666,12 @@ export const resumeMachine = internalAction({
       }).catch(() => {});
       return { ok: false, status: machine.status, dryRun: true, reason };
     }
-    if (!machine.lastSnapshotId) {
+    if (!machine.lastSnapshotId && !(machine.volumeId && machine.baseImageId)) {
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId, status: "error",
-        errorMessage: "Resume failed: no pause snapshot id recorded — cannot recreate the box.",
+        errorMessage: "Resume failed: no snapshot or volume-backed base image recorded — cannot recreate the box.",
       });
-      return { ok: false, reason: "no snapshot id" };
+      return { ok: false, reason: "no snapshot or volume-backed base image" };
     }
     await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "resuming" });
     // Clear any stale "ready" left from before the park so no surface
@@ -1552,7 +1684,9 @@ export const resumeMachine = internalAction({
     // there (snapshot lookup, volume detach, provider create), so a stuck wake
     // now names the step it is stuck on.
     await ctx.runMutation(internal.cloudMachines.setPhase, {
-      machineId, phase: "checking-snapshot", progress: 8,
+      machineId,
+      phase: machine.volumeId ? "preparing-volume" : "checking-snapshot",
+      progress: 8,
     });
     // Start the run clock and clear the PREVIOUS run's outcome — leaving a
     // stale "needs-auth" on a fresh wake would have every surface explaining
@@ -1588,7 +1722,7 @@ export const resumeMachine = internalAction({
         // attached". Detach it first so wake self-heals instead of dead-ending.
         if (vol.serverId) {
           // The detach poll below can burn 20s in silence. Name it, or the
-          // bar sits on "checking snapshot" while we're actually waiting on
+          // bar sits on the prior step while we're actually waiting on
           // Hetzner to release a volume.
           await ctx.runMutation(internal.cloudMachines.setPhase, {
             machineId, phase: "preparing-volume", progress: 14,
@@ -1612,6 +1746,9 @@ export const resumeMachine = internalAction({
       // the ~10min → ~1-2min win. Without a volume we fall back to the old
       // full-disk snapshot.
       const bootImage = (machine.volumeId && machine.baseImageId) || machine.lastSnapshotId;
+      if (!bootImage) {
+        throw new Error("no snapshot or volume-backed base image");
+      }
       // A row seeded from a bare snapshot (seedParkedMachine) carries no
       // hostname, and an empty hostname quietly disabled BOTH the DNS upsert
       // and the resume health check — so such a box could wake, run, bill, and
@@ -1686,10 +1823,13 @@ export const resumeMachine = internalAction({
       const transient =
         /image not yet available|not yet available|is locked|being created|resource_unavailable/i.test(msg);
       if (transient) {
+        const waitingOnSnapshot = Boolean(machine.lastSnapshotId);
         await ctx.runMutation(internal.cloudMachines.setStatus, {
           machineId,
           status: "paused",
-          errorMessage: `Snapshot ${machine.lastSnapshotId} is still finalizing on the provider — waking automatically as soon as it's ready.`,
+          errorMessage: waitingOnSnapshot
+            ? `Snapshot ${machine.lastSnapshotId} is still finalizing on the provider — waking automatically as soon as it's ready.`
+            : "Provider resource is temporarily unavailable — waking automatically as soon as capacity is available.",
         });
         // Self-retry with backoff until the image finalizes.
         const attempt = (args.resumeAttempt ?? 0) + 1;
@@ -1699,13 +1839,213 @@ export const resumeMachine = internalAction({
             resumeAttempt: attempt,
           });
         }
-        return { ok: false, reason: "snapshot still finalizing — wake will retry automatically", retryable: true };
+        return {
+          ok: false,
+          reason: waitingOnSnapshot
+            ? "snapshot still finalizing — wake will retry automatically"
+            : "provider temporarily unavailable — wake will retry automatically",
+          retryable: true,
+        };
       }
       await ctx.runMutation(internal.cloudMachines.setStatus, {
         machineId, status: "error",
-        errorMessage: `Resume failed: recreate-from-snapshot ${msg}. Snapshot ${machine.lastSnapshotId} retained — retry.`,
+        errorMessage: `Resume failed: recreate from recovery source ${msg}. Recovery source retained — retry.`,
       });
-      return { ok: false, reason: "recreate failed (snapshot retained)" };
+      return { ok: false, reason: "recreate failed (recovery source retained)" };
+    }
+  },
+});
+
+export const resizeMachine = internalAction({
+  args: {
+    machineId: v.id("cloudMachines"),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args): Promise<LifecycleResult> => {
+    const { machineId, dryRun } = args;
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
+    if (!machine) return { ok: false, reason: "machine not found" };
+    const targetMachineType = String((machine as any).resizeTargetMachineType || "").trim();
+    if (!targetMachineType) return { ok: false, reason: "no resize target recorded" };
+    if (!machine.volumeId || !machine.baseImageId) {
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "error",
+        progress: 0,
+        error: "Resize failed: no volume-backed base image recorded.",
+      });
+      return { ok: false, reason: "no volume-backed base image" };
+    }
+    const gate = await ctx.runQuery(internal.cloudLifecycle.canStart, {
+      userId: machine.userId,
+      machineType: targetMachineType,
+    });
+    if (!gate.ok) {
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "resize-required",
+        progress: 0,
+        error: "Resize blocked: insufficient prepaid balance.",
+      });
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "provision",
+        status: "blocked",
+        phase: "resize-required",
+        progress: 0,
+        error: "insufficient prepaid balance",
+      }).catch(() => {});
+      return {
+        ok: false,
+        reason: "insufficient prepaid balance",
+        balanceCents: gate.balanceCents,
+        requiredCents: gate.requiredCents,
+      };
+    }
+
+    const token = process.env.HCLOUD_TOKEN;
+    const live = !!token && dryRun !== true;
+    if (!live) {
+      const reason = token
+        ? "Dry-run resize requested — provider server was not recreated"
+        : "HCLOUD_TOKEN unset — fail-closed dry-run (provider server was not recreated)";
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "error",
+        progress: 0,
+        error: reason,
+      });
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "provision",
+        status: "failed",
+        phase: "dry-run",
+        progress: 0,
+        error: reason,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: machine.cloudResourceId ?? machine.hetznerServerId ?? machine.volumeId,
+        dryRun: true,
+      }).catch(() => {});
+      return { ok: false, status: machine.status, dryRun: true, reason };
+    }
+
+    const hostname = machine.hostname || `${String(machineId).substring(0, 8)}.cloud.yaver.io`;
+    const targetServerType = hetznerServerType(targetMachineType);
+    await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "resuming" });
+    await ctx.runMutation(internal.cloudMachines.setLifecycleTiming, {
+      machineId,
+      wakeStartedAt: Date.now(),
+      clearWakeOutcome: true,
+    });
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId,
+      phase: "resizing-machine",
+      progress: 8,
+    });
+    try {
+      if (machine.hetznerServerId) {
+        await ctx.runMutation(internal.cloudMachines.setPhase, {
+          machineId,
+          phase: "deleting-stateless-server",
+          progress: 14,
+        });
+        await hetznerDelete(token!, machine.hetznerServerId);
+        await ctx.runMutation(internal.cloudMachines.clearServerRef, { machineId });
+      }
+
+      let locationCandidates = Array.from(new Set([
+        hetznerLocation(machine.region),
+        ...resumeLocationCandidates(machine.region),
+      ]));
+      const vol = await hetznerVolumeInfo(token!, machine.volumeId);
+      if (vol.location) locationCandidates = [vol.location];
+      if (vol.serverId) {
+        await ctx.runMutation(internal.cloudMachines.setPhase, {
+          machineId,
+          phase: "preparing-volume",
+          progress: 20,
+        });
+        try {
+          await hetznerDetachVolume(token!, machine.volumeId);
+          for (let i = 0; i < 10; i++) {
+            const again = await hetznerVolumeInfo(token!, machine.volumeId);
+            if (!again.serverId) break;
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        } catch {
+          /* best-effort — create-with-volume reports the real failure if still attached */
+        }
+      }
+
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "creating-resized-server",
+        progress: 30,
+      });
+      const { serverId, ip, actionId } = await hetznerCreateFromImage(
+        token!,
+        hostname,
+        targetServerType,
+        locationCandidates,
+        machine.baseImageId,
+        resolveBootSshKeys(machine),
+        [machine.volumeId],
+      );
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "provision",
+        status: "running",
+        phase: "provider-create-accepted",
+        progress: 38,
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: serverId,
+        providerActionId: actionId,
+        providerStatus: "creating",
+        dryRun: false,
+      }).catch(() => {});
+      await ctx.runMutation(internal.cloudMachines.setResizedProvisioned, {
+        machineId,
+        targetMachineType,
+        hetznerServerId: serverId,
+        serverIp: ip,
+        hostname,
+        serverType: targetServerType,
+      });
+      await cloudflareUpsertA(hostname, ip);
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "booting",
+        progress: 45,
+      });
+      await ctx.scheduler.runAfter(20_000, internal.cloudMachines.resumeHealthCheck, {
+        machineId,
+        attempt: 1,
+      });
+      return { ok: true, status: "resuming", serverId, ip, dryRun: false };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId,
+        status: "paused",
+        errorMessage: `Resize failed: ${msg}. Data volume retained — retry resize.`,
+      });
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "error",
+        progress: 0,
+        error: "resize failed",
+      });
+      await ctx.runMutation(internal.wakeRuns.markProgress, {
+        machineId,
+        kind: "provision",
+        status: "failed",
+        phase: "error",
+        progress: 0,
+        error: "resize failed",
+        provider: machine.provider ?? "hetzner",
+        providerResourceId: machine.cloudResourceId ?? machine.hetznerServerId ?? machine.volumeId,
+      }).catch(() => {});
+      return { ok: false, reason: "resize failed" };
     }
   },
 });

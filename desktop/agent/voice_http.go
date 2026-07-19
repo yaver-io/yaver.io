@@ -387,6 +387,12 @@ loop:
 		Project: project,
 		Model:   start.Model,
 		Runner:  start.Runner,
+		Placement: TaskIngressPlacementConfig{
+			ConvexURL:     s.convexURL,
+			Token:         s.token,
+			LocalDeviceID: s.deviceID,
+			WorkDir:       s.taskMgr.workDir,
+		},
 		Viewport: &TaskViewport{
 			Surface:      start.Surface,
 			Interaction:  start.Interaction,

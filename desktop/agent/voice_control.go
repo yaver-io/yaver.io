@@ -39,6 +39,19 @@ type voiceAction struct {
 	Cmd     string // shell command for the "run" verb
 	Speak   string // short confirmation to speak before running
 	Confirm bool   // destructive — require a spoken "confirm" before running
+
+	// PayloadJSON is the verb's arguments. Before this existed, voice could
+	// only ever fire NULLARY verbs: runVoiceOpsVerb built opsCLIRequest{Verb}
+	// and never populated PayloadJSON, so "click Save" could match the verb
+	// ghost_click_element but arrived with no query and did nothing. Carrying
+	// arguments is what turns voice from a launcher into a control surface.
+	PayloadJSON string
+
+	// SpeakResult asks the runner to read the verb's result back instead of
+	// just "done". This is what makes SPEECH-ONLY operation work: with no
+	// video stream, hearing "three buttons: Save, Save As, Cancel" is the
+	// only way to know what is on screen.
+	SpeakResult bool
 }
 
 // voiceControlConfirmVerbs are consequential/destructive verbs that require
@@ -150,6 +163,14 @@ func routeVoiceCommand(transcript string, knownVerbs map[string]bool) voiceActio
 			}
 			return voiceAction{Kind: "ops", Verb: "run", Cmd: cmd, Speak: "running " + cmd, Confirm: isDestructiveRun(cmd)}
 		}
+	}
+	// Desktop control ("click Save", "open Safari", "what's on screen").
+	// Tried BEFORE the bare-verb match because these phrases carry arguments
+	// and would otherwise fall through to "none" — a bare-verb match can never
+	// express "which button". Returns false when nothing matches, so this only
+	// ever adds reachable phrases.
+	if act, ok := routeVoiceDesktopCommand(t); ok {
+		return act
 	}
 	// Explicit "ops <verb>" prefix, then a bare verb name. Multiword verbs
 	// like "git push" / "cloud status" are spoken with spaces and slugged
@@ -427,12 +448,16 @@ func runVoiceOpsVerb(ctx context.Context, token string, act voiceAction, speak b
 	if act.Verb == "run" {
 		req.RunCmd = act.Cmd
 	}
+	// Carry the routed arguments. Without this every verb fired nullary, so
+	// "click Save" reached ghost_click_element with no query and did nothing.
+	req.PayloadJSON = act.PayloadJSON
 	body, status := opsLocalRequest(ctx, "POST", "/ops", token, req.Marshal())
 
 	var parsed struct {
-		OK    bool   `json:"ok"`
-		Code  string `json:"code"`
-		Error string `json:"error"`
+		OK      bool        `json:"ok"`
+		Code    string      `json:"code"`
+		Error   string      `json:"error"`
+		Initial interface{} `json:"initial"`
 	}
 	_ = json.Unmarshal(body, &parsed)
 
@@ -450,12 +475,23 @@ func runVoiceOpsVerb(ctx context.Context, token string, act voiceAction, speak b
 		}
 		fmt.Printf("   \033[31m✗ %s\033[0m\n", msg)
 		if speak {
-			speakLocalGated(ctx, ttsSpeaking, act.Verb+" failed")
+			// A desktop refusal carries the information the user needs —
+			// especially "ambiguous", whose candidate list IS the prompt for
+			// what to say next. Speaking "ghost_click_element failed" instead
+			// would strand them.
+			speakLocalGated(ctx, ttsSpeaking,
+				desktopVoiceSpeech(act, OpsResult{Code: parsed.Code, Error: parsed.Error, Initial: parsed.Initial}))
 		}
 		return
 	}
 	if speak {
-		speakLocalGated(ctx, ttsSpeaking, "done")
+		if act.SpeakResult {
+			// Speech-only mode: the answer is the point, not "done".
+			speakLocalGated(ctx, ttsSpeaking,
+				desktopVoiceSpeech(act, OpsResult{OK: true, Initial: parsed.Initial}))
+		} else {
+			speakLocalGated(ctx, ttsSpeaking, "done")
+		}
 	}
 }
 

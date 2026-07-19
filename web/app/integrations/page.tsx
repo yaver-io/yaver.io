@@ -278,18 +278,6 @@ const CATEGORIES: Category[] = [
         status: "Built-in",
         docsLink: "/manuals/relay-setup",
       },
-      {
-        name: "Cloudflare Tunnel",
-        description: "Use cloudflared for zero-config public access",
-        status: "Configure in settings",
-        docsLink: "/docs/self-hosting",
-      },
-      {
-        name: "Tailscale",
-        description: "Connect via Tailscale mesh VPN, no relay needed",
-        status: "Configure in settings",
-        docsLink: "/docs/self-hosting",
-      },
     ],
   },
 ];

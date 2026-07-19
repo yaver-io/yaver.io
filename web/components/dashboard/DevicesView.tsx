@@ -311,7 +311,7 @@ function isVersionOutdated(current: string | undefined | null, latest: string | 
 function isUsablePublicEndpoint(ep: string): boolean {
   // The two-label-deep wildcard cert blocker. <id>.dev.yaver.io
   // is the format the relay auto-mints. Anything not matching
-  // that pattern (real Cloudflare tunnel, Tailscale serve URL,
+  // that pattern (custom tunnel, private-network serve URL,
   // user-configured custom domain) is fine and stays.
   if (/^https?:\/\/[^/]+\.dev\.yaver\.io(\/|$)/i.test(ep)) {
     return false;
@@ -2376,10 +2376,10 @@ export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
   },
   {
     id: "ollama-tailscale",
-    label: "Ollama (Tailscale)",
-    baseUrl: "http://yaver-gpu.tailscale.net:11434/v1",
+    label: "Ollama (private network)",
+    baseUrl: "http://remote-ollama.example:11434/v1",
     requiresKey: false,
-    blurb: "Remote Ollama over your tailnet. Edit the host in settings if needed.",
+    blurb: "Remote Ollama over a private network. Edit the host in settings if needed.",
     models: [
       { id: "qwen2.5-coder:14b", label: "Qwen Coder 14B" },
       { id: "qwen2.5-coder:32b", label: "Qwen Coder 32B" },
@@ -2626,7 +2626,7 @@ function useManagedMachines(
  * ManagedStateChip — says what a Yaver-hosted box actually IS right now.
  *
  * Every non-running managed box used to render as plain "Offline", so a box
- * parked to save money (wakeable in ~2-3 min) was indistinguishable from one
+ * parked to save money (wakeable later from saved state) was indistinguishable from one
  * that had been deleted and can never come back. That is the difference between
  * "click Wake" and "provision a new one", and the dashboard said neither.
  */
@@ -2655,9 +2655,9 @@ function ManagedStateChip({ device }: { device: Device }) {
 /**
  * ManagedPowerButton — Pause / Resume a Yaver-hosted box from the WEB dashboard.
  * Mobile has had this (Devices tab ⏸ Pause / ▶ Resume); web did not, so the only
- * way to stop the meter from a laptop was the phone. Pause = snapshot then DELETE
- * the server (Hetzner bills stopped servers, so scale-to-zero must delete);
- * Resume recreates it from the snapshot.
+ * way to stop the meter from a laptop was the phone. Pause deletes the server
+ * after preserving state (volume fast path, snapshot legacy path); Resume
+ * recreates it from the recorded recovery source.
  */
 function ManagedPowerButton({
   device,
@@ -2697,10 +2697,10 @@ function ManagedPowerButton({
 
   const act = async () => {
     if (!device.machineId || !token) return;
-    if (
-      !paused &&
-      !window.confirm(
-        `Pause ${device.name || "this box"}?\n\nYaver snapshots it, then DELETES the server so billing stops. Resume recreates it from the snapshot (~2-3 min).`,
+      if (
+        !paused &&
+        !window.confirm(
+        `Pause ${device.name || "this box"}?\n\nYaver preserves its state, then deletes the server so billing stops. Resume recreates it from the saved recovery source.`,
       )
     ) {
       return;
@@ -2731,8 +2731,8 @@ function ManagedPowerButton({
       }`}
       title={
         paused
-          ? "Wake this box — recreate it from its latest snapshot (~2-3 min)"
-          : "Pause this box — snapshot then delete the server so billing stops (scale to zero)"
+          ? "Wake this box — recreate it from its saved recovery source"
+          : "Pause this box — preserve state, then delete the server so billing stops"
       }
     >
       {busy ? "…" : paused ? "▶ Wake" : "⏸ Pause"}
@@ -2804,8 +2804,8 @@ export default function DevicesView({
   }, [managedMachines]);
   // Which managed box has a pause/resume call in flight (its machineId).
   const [boxBusy, setBoxBusy] = useState<string | null>(null);
-  // Pause (snapshot + delete the server to stop billing) / Resume
-  // (recreate from the snapshot) a managed box — the same Convex
+  // Pause (preserve state, then delete the server to stop billing) / Resume
+  // (recreate from the saved recovery source) a managed box — the same Convex
   // billing routes mobile and the Managed Cloud panel use.
   async function pauseResumeBox(machineId: string, action: "stop" | "start") {
     if (!token) return;
@@ -3266,7 +3266,7 @@ export default function DevicesView({
                         managedMachine.status === "suspended") ? (
                         <span
                           className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-                          title="Box is paused — snapshot kept, ~€0.50/mo. Resume to bring it back."
+                          title="Workspace is paused - state kept, active compute stopped. Resume to bring it back."
                         >
                           ⏸ Paused
                         </span>
@@ -3334,7 +3334,7 @@ export default function DevicesView({
                           can DO to it — "Offline" alone can't tell a parked box
                           from a deleted one. */}
                       <ManagedStateChip device={device} />
-                      {/* Yaver-managed box → Pause (snapshot+delete, meter stops)
+                      {/* Yaver-managed box → Pause (state preserved, meter stops)
                           / Wake, same control the mobile Devices tab has. Renders
                           nothing when neither action would succeed. */}
                       <ManagedPowerButton
@@ -3471,16 +3471,18 @@ export default function DevicesView({
                         onClick={() => {
                           if (
                             !window.confirm(
-                              "Pause this box? It snapshots the disk, then deletes the cloud " +
-                                "server so it stops billing — ~€0.50/mo while paused vs ~€30/mo " +
-                                "running. Resume recreates it from the snapshot in ~2-3 min (new IP).",
+                              managedMachine.hasVolume
+                                ? "Pause this box? Its data stays on the persistent volume, then Yaver deletes the cloud server so it stops billing. Resume starts a fresh server and re-attaches the volume."
+                                : "Pause this box? It snapshots the disk, then deletes the cloud server so it stops billing. Resume recreates it from the snapshot.",
                             )
                           )
                             return;
                           void pauseResumeBox(managedMachine!.id, "stop");
                         }}
                         className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-700 transition-colors hover:border-amber-400 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-                        title="Pause: snapshot + delete the server to stop billing — resumable"
+                        title={managedMachine.hasVolume
+                          ? "Pause: delete the server while keeping the persistent volume"
+                          : "Pause: snapshot + delete the server to stop billing — resumable"}
                       >
                         {boxBusy === managedMachine.id ? "…" : "⏸ Pause box"}
                       </button>
@@ -3490,7 +3492,9 @@ export default function DevicesView({
                         disabled={boxBusy === managedMachine.id}
                         onClick={() => void pauseResumeBox(managedMachine!.id, "start")}
                         className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 transition-colors hover:border-emerald-400 disabled:opacity-50 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
-                        title="Resume: recreate the box from its pause snapshot (~2-3 min)"
+                        title={managedMachine.hasVolume
+                          ? "Resume: create a server from the base image and re-attach the data volume"
+                          : "Resume: recreate the box from its pause snapshot"}
                       >
                         {boxBusy === managedMachine.id ? "…" : "▶ Resume box"}
                       </button>
@@ -4739,10 +4743,10 @@ function ConnectionSection({ device }: { device: Device }) {
             <span className="break-all text-right font-mono text-[11px] text-surface-200">{device.tunnelUrl}</span>
           </div>
         ) : null}
-        {/* Tailscale IP if present */}
+        {/* Private network IP if present */}
         {tailscaleIp ? (
           <div className="flex items-start justify-between gap-3 py-1">
-            <span className="text-surface-500">Tailscale IP</span>
+            <span className="text-surface-500">Private network IP</span>
             <span className="text-right font-mono text-surface-200">{tailscaleIp}:{device.port ?? 18080}</span>
           </div>
         ) : null}

@@ -75,6 +75,8 @@ func runAttach(args []string) {
 	// Track known tasks to detect new ones
 	knownTasks := make(map[string]bool)
 	lastOutputLen := make(map[string]int)
+	taskBases := make(map[string]string)
+	taskHeaders := make(map[string]map[string]string)
 
 	// Initial task fetch — populate known tasks
 	if tasks, err := attachListTasks(baseURL, cfg.AuthToken); err == nil {
@@ -172,11 +174,17 @@ func runAttach(args []string) {
 				}
 				taskID = task.ID
 			} else {
-				taskID, err = attachCreateTask(baseURL, cfg.AuthToken, payload, opts)
+				ref, createErr := attachCreateTask(baseURL, cfg.AuthToken, payload, opts)
+				err = createErr
 				if err != nil {
 					fmt.Printf("\033[31mError: %v\033[0m\n", err)
 					printPrompt()
 					continue
+				}
+				taskID = ref.ID
+				if ref.BaseURL != "" && ref.BaseURL != baseURL {
+					taskBases[taskID] = ref.BaseURL
+					taskHeaders[taskID] = ref.Headers
 				}
 			}
 			knownTasks[taskID] = true
@@ -189,6 +197,13 @@ func runAttach(args []string) {
 			tasks, err := attachListTasks(baseURL, cfg.AuthToken)
 			if err != nil {
 				continue
+			}
+			if activeTask != "" {
+				if remoteBase := strings.TrimSpace(taskBases[activeTask]); remoteBase != "" {
+					if remoteTask, remoteErr := attachGetTask(remoteBase, cfg.AuthToken, activeTask, taskHeaders[activeTask]); remoteErr == nil {
+						tasks = append(tasks, remoteTask)
+					}
+				}
 			}
 
 			for _, t := range tasks {
@@ -224,6 +239,9 @@ func runAttach(args []string) {
 					}
 					fmt.Println()
 					activeTask = ""
+					if strings.TrimSpace(taskBases[t.ID]) != "" {
+						sessionTask = ""
+					}
 					printPrompt()
 				}
 			}
@@ -252,6 +270,12 @@ type attachSessionOptions struct {
 	DefaultRunner string
 	DefaultModel  string
 	DefaultMode   string
+}
+
+type attachTaskRef struct {
+	ID      string
+	BaseURL string
+	Headers map[string]string
 }
 
 func attachGetInfo(baseURL, token string) (*attachInfo, error) {
@@ -289,7 +313,33 @@ func attachListTasks(baseURL, token string) ([]TaskInfo, error) {
 	return data.Tasks, nil
 }
 
-func attachCreateTask(baseURL, token string, prompt terminalPromptPayload, opts attachSessionOptions) (string, error) {
+func attachGetTask(baseURL, token, taskID string, headers map[string]string) (TaskInfo, error) {
+	req, _ := http.NewRequest("GET", strings.TrimRight(baseURL, "/")+"/tasks/"+taskID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	for k, v := range headers {
+		if strings.TrimSpace(v) != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return TaskInfo{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return TaskInfo{}, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var data struct {
+		Task TaskInfo `json:"task"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(body, &data); err != nil {
+		return TaskInfo{}, err
+	}
+	return data.Task, nil
+}
+
+func attachCreateTask(baseURL, token string, prompt terminalPromptPayload, opts attachSessionOptions) (*attachTaskRef, error) {
 	source := strings.TrimSpace(opts.Source)
 	if source == "" {
 		source = terminalLocalTaskSource
@@ -320,25 +370,44 @@ func attachCreateTask(baseURL, token string, prompt terminalPromptPayload, opts 
 	req.Header.Set("X-Yaver-Session-Mode", "terminal")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if err := decodeCloudWorkspaceRequiredError(resp.StatusCode, respBody); err != nil {
+		if cloudErr, ok := err.(*CloudWorkspaceRequiredError); ok {
+			fmt.Printf("[cloud] workspace selected; waiting for %s (pending %s)\n", attachCloudTargetLabel(cloudErr), firstNonEmpty(cloudErr.PendingTaskID, "n/a"))
+			chosen, result, handoffErr := createTaskOnCloudWorkspace(context.Background(), cloudErr, "Bearer "+token, body, 60*time.Second, newTerminalCloudHandoffProgressPrinter())
+			if handoffErr != nil {
+				return nil, handoffErr
+			}
+			fmt.Printf("[task %s] created on %s\n", result.TaskID, firstNonEmpty(chosen.Label, chosen.DeviceID, "cloud workspace"))
+			return &attachTaskRef{ID: result.TaskID, BaseURL: strings.TrimRight(chosen.BaseURL, "/"), Headers: chosen.Headers}, nil
+		}
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
 		var errData struct {
 			Error string `json:"error"`
 		}
 		json.Unmarshal(respBody, &errData)
 		if errData.Error != "" {
-			return "", fmt.Errorf("%s", errData.Error)
+			return nil, fmt.Errorf("%s", errData.Error)
 		}
-		return "", fmt.Errorf("status %d", resp.StatusCode)
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	var data struct {
 		TaskID string `json:"taskId"`
 	}
-	json.NewDecoder(resp.Body).Decode(&data)
-	return data.TaskID, nil
+	json.Unmarshal(respBody, &data)
+	return &attachTaskRef{ID: data.TaskID, BaseURL: baseURL}, nil
+}
+
+func attachCloudTargetLabel(err *CloudWorkspaceRequiredError) string {
+	if err != nil && err.Placement != nil && strings.TrimSpace(err.Placement.TargetDeviceID) != "" {
+		return strings.TrimSpace(err.Placement.TargetDeviceID)
+	}
+	return "assigned workspace"
 }
 
 func truncateStr(s string, max int) string {
@@ -376,6 +445,10 @@ func runAttachBuiltin(input string, info *attachInfo, baseURL, token string, opt
 			}
 			fmt.Printf("%-8s  %-10s  %-10s  %s\n", t.ID, t.Status, runner, t.Title)
 		}
+		fmt.Println()
+		return true, false
+	case "cloud-pending":
+		fmt.Println(renderPendingCloudTaskDispatchStatus(time.Now()))
 		fmt.Println()
 		return true, false
 	case "agent":

@@ -1,13 +1,12 @@
 # Buy & manage a Yaver plan from MCP (buyer-side billing)
 
-Status: DESIGN — awaiting sign-off before implementation (2026-06-27). Source
-is truth; this doc points at code, fix the code reference here if they drift.
+Status: SUPERSEDED BY FLAT PRODUCT MODEL. Source is truth; this doc points at
+old code paths and must not be used to rebuild credit-pack or prepaid compute
+flows.
 
-Goal: a Yaver user, from their terminal coding agent (Claude Code / Codex /
-opencode), can **check their plan, buy Workspace ($9) or Agent ($19), pay,
-change tier, and cancel** — all via Yaver MCP tools that return LemonSqueezy
-(LS) links. The agent never handles card data; LS hosts checkout + the customer
-portal.
+Current goal: a Yaver user can check Free, Relay Pro, or Cloud Workspace,
+open web checkout, manage payment, and cancel. Purchases are web-only; mobile
+and MCP may link to web but must not invent credit-pack checkout.
 
 ## Scope: buyer-side, NOT the existing seller-side tools
 
@@ -26,7 +25,7 @@ such tool exists today.
 | Entitlements | ✅ `applyPlanEntitlements` byok($9)/hosted($19): 40h + wallet + gateway flag | `plans.ts:61` |
 | Tier swap (in-app) | ✅ `updateLemonSqueezyVariant` | `http.ts:298` |
 | Status data | ✅ `getAllowance` (hours), `prepaidCredits` (wallet), `subscriptions` table, `/billing/yaver-cloud/balance` | `cloudLifecycle.ts:329` |
-| Credit top-up | ✅ `/billing/credits/checkout` + `/billing/credits/packs` | `http.ts:4360` |
+| Credit top-up | Retired | Public credit-pack endpoints return HTTP 410 |
 
 ## Attribution (the make-or-break detail)
 
@@ -92,9 +91,6 @@ to every user).
     `updateLemonSqueezyVariant`), not a second subscription.
 - **`yaver_billing_manage`** → customer-portal URL (update payment / change /
   cancel). Single answer for cancel + failed-payment.
-- **`yaver_billing_topup { amount }`** → credit-pack checkout for prepaid
-  overage (reuses `/billing/credits/checkout`).
-
 Lifecycle coverage: **create** (checkout) · **pay / fix payment** (checkout +
 portal) · **change tier** (checkout detects existing → swap) · **cancel /
 resume** (portal; webhook reconciles) · **status** (always-first read).

@@ -51,7 +51,12 @@ export default function RemoteRuntimeScreen() {
   }, [clearConnectionTimers]);
 
   const load = useCallback(async () => {
-    if (!path || !framework) {
+    // framework="desktop" streams the MACHINE, not a project, so it has no
+    // workDir. Every other framework still requires one — a missing path there
+    // is a navigation bug we want surfaced, not defaulted away. The agent
+    // enforces the same rule (remote_runtime.go handleRemoteRuntimeCapabilities).
+    const isDesktop = framework === "desktop";
+    if (!framework || (!path && !isDesktop)) {
       setError("Missing project path or framework.");
       setLoading(false);
       return;

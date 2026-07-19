@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Recovery centralises the prompts we hand to the wrapped AI agent (Claude
@@ -290,15 +292,91 @@ func (s *HTTPServer) handleRecover(w http.ResponseWriter, r *http.Request) {
 	}
 	title, prompt := BuildRecoveryPrompt(ctx)
 
-	// Pin the project workdir for the task so runner tooling lands in the
-	// right place even when the client only sends a project name.
-	if wd := strings.TrimSpace(ctx.WorkDir); wd != "" && s.taskMgr != nil {
-		s.taskMgr.mu.Lock()
-		s.taskMgr.workDir = wd
-		s.taskMgr.mu.Unlock()
+	workDir := strings.TrimSpace(ctx.WorkDir)
+	if workDir == "" && s.taskMgr != nil {
+		workDir = s.taskMgr.workDir
+	}
+	taskOpts := TaskCreateOptions{WorkDir: strings.TrimSpace(ctx.WorkDir)}
+	meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		KindHint:       "build",
+		Title:          title,
+		Description:    prompt,
+		Source:         "recover",
+		ProjectName:    ctx.Project,
+		WorkDir:        workDir,
+		TargetDeviceID: s.deviceID,
+	})
+	if previewPlacement, perr := s.previewTaskPlacement(r.Context(), meta); perr != nil {
+		log.Printf("[placement] recover preview skipped before task create: %v", perr)
+	} else if shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
+		pendingTaskID := newPendingCloudTaskID()
+		recordedPlacement := previewPlacement
+		if placement, rerr := s.recordTaskPlacement(r.Context(), pendingTaskID, meta); rerr != nil {
+			log.Printf("[placement] recover pending record skipped for %s: %v", pendingTaskID, rerr)
+		} else if placement != nil {
+			recordedPlacement = placement
+		}
+		var activation map[string]any
+		if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+			if result, aerr := s.activateTaskPlacement(r.Context(), recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+				activation = activationMapFromError(aerr)
+				log.Printf("[placement] recover activation skipped for %s: %v", pendingTaskID, aerr)
+			} else {
+				activation = result
+			}
+		}
+		bodyJSON, _ := json.Marshal(map[string]any{
+			"title":         title,
+			"description":   prompt,
+			"source":        "recover",
+			"workDir":       taskOpts.WorkDir,
+			"projectName":   strings.TrimSpace(ctx.Project),
+			"placementKind": meta.Kind,
+		})
+		cloudErr := &CloudWorkspaceRequiredError{
+			PendingTaskID: pendingTaskID,
+			Placement:     recordedPlacement,
+			Activation:    activation,
+			Reason:        "placement selected a Cloud Workspace for this recovery task",
+		}
+		authHeader := "Bearer " + strings.TrimSpace(s.token)
+		if _, remoteTask, herr := createTaskOnCloudWorkspace(r.Context(), cloudErr, authHeader, bodyJSON, 20*time.Second); herr == nil && remoteTask != nil {
+			targetDeviceID := ""
+			if recordedPlacement != nil {
+				targetDeviceID = recordedPlacement.TargetDeviceID
+			}
+			jsonReply(w, http.StatusAccepted, map[string]interface{}{
+				"ok":             true,
+				"mode":           "cloud_workspace",
+				"taskId":         remoteTask.TaskID,
+				"status":         remoteTask.Status,
+				"pendingTaskId":  pendingTaskID,
+				"targetDeviceId": targetDeviceID,
+				"placement":      recordedPlacement,
+				"title":          title,
+			})
+			return
+		} else {
+			reason := "Cloud Workspace is waking or needs attention before this recovery can run."
+			if herr != nil {
+				reason = herr.Error()
+			}
+			jsonReply(w, http.StatusConflict, map[string]interface{}{
+				"ok":            false,
+				"action":        "cloud_workspace_required",
+				"pendingTaskId": pendingTaskID,
+				"placement":     recordedPlacement,
+				"activation":    activation,
+				"reason":        reason,
+				"title":         title,
+			})
+			return
+		}
+	} else if previewPlacement != nil {
+		taskOpts.Placement = previewPlacement
 	}
 
-	task, err := s.taskMgr.CreateTask(title, prompt, "", "recover", "", "", nil)
+	task, err := s.taskMgr.CreateTaskWithOptions(title, prompt, "", "recover", "", "", nil, taskOpts)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

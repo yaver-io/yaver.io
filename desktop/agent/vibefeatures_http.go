@@ -22,12 +22,16 @@ func (s *HTTPServer) handleChainCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Tasks         []ChainedTaskInput `json:"tasks"`
-		Model         string             `json:"model,omitempty"`
-		Runner        string             `json:"runner,omitempty"`
-		Source        string             `json:"source,omitempty"`
-		AutoRetry     bool               `json:"autoRetry,omitempty"`
-		SpeechContext *struct {
+		Tasks              []ChainedTaskInput `json:"tasks"`
+		Model              string             `json:"model,omitempty"`
+		Runner             string             `json:"runner,omitempty"`
+		Source             string             `json:"source,omitempty"`
+		PlacementKind      string             `json:"placementKind,omitempty"`
+		ForceCloud         bool               `json:"forceCloud,omitempty"`
+		ForceRelaySource   bool               `json:"forceRelaySource,omitempty"`
+		AllowLocalFallback bool               `json:"allowLocalFallback,omitempty"`
+		AutoRetry          bool               `json:"autoRetry,omitempty"`
+		SpeechContext      *struct {
 			InputFromSpeech bool   `json:"inputFromSpeech,omitempty"`
 			STTProvider     string `json:"sttProvider,omitempty"`
 			TTSEnabled      bool   `json:"ttsEnabled,omitempty"`
@@ -73,6 +77,51 @@ func (s *HTTPServer) handleChainCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	vp = mergeClientVoiceHints(r, vp, source)
+
+	chainTitle := strings.TrimSpace(body.Tasks[0].Title)
+	if len(body.Tasks) > 1 {
+		chainTitle = fmt.Sprintf("%s (+%d chained)", chainTitle, len(body.Tasks)-1)
+	}
+	meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		KindHint:         firstNonEmpty(strings.TrimSpace(body.PlacementKind), "chain"),
+		Title:            chainTitle,
+		Description:      body.Tasks[0].Description,
+		Source:           source,
+		Runner:           body.Runner,
+		WorkDir:          s.taskMgr.workDir,
+		TargetDeviceID:   s.deviceID,
+		ForceCloud:       body.ForceCloud,
+		ForceRelaySource: body.ForceRelaySource,
+	})
+	if previewPlacement, perr := s.previewTaskPlacement(r.Context(), meta); perr != nil {
+		log.Printf("[placement] chain preview skipped before task create: %v", perr)
+	} else if !body.AllowLocalFallback && shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
+		pendingTaskID := newPendingCloudTaskID()
+		recordedPlacement := previewPlacement
+		if placement, rerr := s.recordTaskPlacement(r.Context(), pendingTaskID, meta); rerr != nil {
+			log.Printf("[placement] chain pending record skipped for %s: %v", pendingTaskID, rerr)
+		} else if placement != nil {
+			recordedPlacement = placement
+		}
+		var activation map[string]any
+		if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+			if result, aerr := s.activateTaskPlacement(r.Context(), recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+				activation = activationMapFromError(aerr)
+				log.Printf("[placement] chain activation skipped for %s: %v", pendingTaskID, aerr)
+			} else {
+				activation = result
+			}
+		}
+		jsonReply(w, http.StatusConflict, map[string]interface{}{
+			"ok":            false,
+			"action":        "cloud_workspace_required",
+			"pendingTaskId": pendingTaskID,
+			"placement":     recordedPlacement,
+			"activation":    activation,
+			"reason":        "placement selected a Cloud Workspace for this chain; keep the chain client-side and retry against the assigned workspace when it is ready",
+		})
+		return
+	}
 
 	created, err := s.taskMgr.CreateChainedTasks(body.Tasks, body.Model, source, body.Runner, body.AutoRetry, vp)
 	if err != nil {
@@ -208,7 +257,84 @@ func (s *HTTPServer) handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	// Create a task for the deploy
 	deployTitle := fmt.Sprintf("Deploy to %s", target.Name)
-	task, err := s.taskMgr.CreateTask(deployTitle, "", "", "mobile", "", target.Command, nil)
+	taskOpts := TaskCreateOptions{WorkDir: workDir}
+	meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		KindHint:       "deploy",
+		Title:          deployTitle,
+		CustomCommand:  target.Command,
+		Source:         "mobile",
+		WorkDir:        workDir,
+		TargetDeviceID: s.deviceID,
+	})
+	if previewPlacement, perr := s.previewTaskPlacement(r.Context(), meta); perr != nil {
+		log.Printf("[placement] deploy preview skipped before task create: %v", perr)
+	} else if shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
+		pendingTaskID := newPendingCloudTaskID()
+		recordedPlacement := previewPlacement
+		if placement, rerr := s.recordTaskPlacement(r.Context(), pendingTaskID, meta); rerr != nil {
+			log.Printf("[placement] deploy pending record skipped for %s: %v", pendingTaskID, rerr)
+		} else if placement != nil {
+			recordedPlacement = placement
+		}
+		var activation map[string]any
+		if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+			if result, aerr := s.activateTaskPlacement(r.Context(), recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+				activation = activationMapFromError(aerr)
+				log.Printf("[placement] deploy activation skipped for %s: %v", pendingTaskID, aerr)
+			} else {
+				activation = result
+			}
+		}
+		bodyJSON, _ := json.Marshal(map[string]any{
+			"title":         deployTitle,
+			"source":        "mobile",
+			"workDir":       workDir,
+			"customCommand": target.Command,
+			"placementKind": meta.Kind,
+		})
+		cloudErr := &CloudWorkspaceRequiredError{
+			PendingTaskID: pendingTaskID,
+			Placement:     recordedPlacement,
+			Activation:    activation,
+			Reason:        "placement selected a Cloud Workspace for this deploy task",
+		}
+		authHeader := "Bearer " + strings.TrimSpace(s.token)
+		if _, remoteTask, herr := createTaskOnCloudWorkspace(r.Context(), cloudErr, authHeader, bodyJSON, 20*time.Second); herr == nil && remoteTask != nil {
+			targetDeviceID := ""
+			if recordedPlacement != nil {
+				targetDeviceID = recordedPlacement.TargetDeviceID
+			}
+			log.Printf("[HTTP] Deploy triggered on Cloud Workspace: %s (task %s)", target.Name, remoteTask.TaskID)
+			jsonReply(w, http.StatusAccepted, map[string]interface{}{
+				"ok":             true,
+				"mode":           "cloud_workspace",
+				"taskId":         remoteTask.TaskID,
+				"status":         remoteTask.Status,
+				"pendingTaskId":  pendingTaskID,
+				"targetDeviceId": targetDeviceID,
+				"placement":      recordedPlacement,
+				"target":         target.Name,
+			})
+			return
+		} else {
+			reason := "Cloud Workspace is waking or needs attention before this deploy can run."
+			if herr != nil {
+				reason = herr.Error()
+			}
+			jsonReply(w, http.StatusConflict, map[string]interface{}{
+				"ok":            false,
+				"action":        "cloud_workspace_required",
+				"pendingTaskId": pendingTaskID,
+				"placement":     recordedPlacement,
+				"activation":    activation,
+				"reason":        reason,
+			})
+			return
+		}
+	} else if previewPlacement != nil {
+		taskOpts.Placement = previewPlacement
+	}
+	task, err := s.taskMgr.CreateTaskWithOptions(deployTitle, "", "", "mobile", "", target.Command, nil, taskOpts)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("deploy failed: %v", err))
 		return

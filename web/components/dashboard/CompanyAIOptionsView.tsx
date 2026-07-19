@@ -130,7 +130,7 @@ export default function CompanyAIOptionsView() {
         <div>
           <h2 className="text-lg font-semibold text-surface-100">Company AI</h2>
           <p className="mt-1 text-sm text-surface-500">
-            Configure the hidden Yaver runtime that Talos uses for company chat, MCP tools, runners, previews, and artifacts.
+            Configure the hidden Yaver runtime for company chat, MCP tools, runners, previews, and artifacts.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -165,7 +165,7 @@ export default function CompanyAIOptionsView() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-surface-100">Runtime</h3>
-              <p className="mt-1 text-xs text-surface-500">Company-bound compute behind Talos Yaver mode.</p>
+              <p className="mt-1 text-xs text-surface-500">Company-bound compute behind Yaver mode.</p>
             </div>
             <label className="flex items-center gap-2 text-xs text-surface-300">
               <input

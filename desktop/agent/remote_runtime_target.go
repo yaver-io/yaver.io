@@ -129,6 +129,10 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 		return iosDeviceTarget{}, nil
 	case "browser-window":
 		return browserWindowTarget{}, nil
+	case desktopScreenTargetID:
+		// The host's own desktop (remote_runtime_desktop.go). Gated by the
+		// Remote Desktop consent policy, not `--ghost`.
+		return desktopScreenTarget{}, nil
 	}
 	// "stream-<source>" — a Yaver stream source (capture/screen/scene/<pushed>)
 	// exposed as a one-way H264 capture for the self-contained WebRTC path

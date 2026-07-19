@@ -138,10 +138,16 @@ called with a non-empty `device_id`:
 ### C. New convenience tools
 
 - `list_machines` — thin wrapper over `listAllMachines` + `MachineCapabilities`.
-- `run_project_in_sandbox(project_dir, device_id?, api_keys?)` — builds the
-  yaver-sandbox image if needed, mounts the project, injects only the listed
-  API keys as env vars, starts the dev server inside, pushes Hermes bundle
-  to the paired phone. Wraps existing `ContainerRunner` + `DevServer`.
+  Implemented as a compatibility alias for `agent_machine_inventory`.
+- `sandbox_run(device_id?, prompt, files, framework?, schema?, runner?, timeoutMs?)`
+  — headless MCP wrapper over `POST /sandbox/run`. It ships a phone-style source
+  tree to the local or remote OpenCode/GLM runner and returns an EditPlan-shaped
+  diff; the GLM key stays on the machine that runs the tool.
+- `run_project_in_sandbox(project_dir, device_id?, api_keys?)` — still planned:
+  build the yaver-sandbox image if needed, mount an existing checkout, inject
+  only the listed API keys as env vars, start the dev server inside, and push
+  the Hermes bundle to the paired phone. Wraps existing `ContainerRunner` +
+  `DevServer`.
 
 ## The hot path — Hermes push-to-device
 
@@ -204,7 +210,9 @@ Same tool, same signature, only `device_id` differs.
 **Phase 1 — hot path (Hermes + sandbox + list_machines + proxy)**:
 
 - [ ] `desktop/agent/mcp_remote_proxy.go` — `proxyToDevice()` (~50 LOC)
-- [ ] `desktop/agent/mcp_tools.go` — `list_machines` tool
+- [x] `desktop/agent/mcp_tools.go` — `list_machines` tool
+- [x] `desktop/agent/mcp_tools.go` — `sandbox_run` tool for headless
+      phone-sandbox edits
 - [ ] `desktop/agent/mcp_tools.go` — `run_project_in_sandbox` tool
 - [ ] `desktop/agent/mcp_tools.go` — `device_id` on Layer 1 tools only
 - [ ] Guest-token rejection unit test

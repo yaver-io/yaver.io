@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -35,20 +36,31 @@ type IncomingMessage struct {
 	Mode        string            `json:"mode,omitempty"`
 	TaskID      string            `json:"taskId,omitempty"`
 	Input       string            `json:"input,omitempty"`
-	Source      string            `json:"source,omitempty"` // "mobile" or "cli"
+	Source      string            `json:"source,omitempty"`
+	ProjectName string            `json:"projectName,omitempty"`
 	Images      []ImageAttachment `json:"images,omitempty"`
+
+	PlacementKind      string `json:"placementKind,omitempty"`
+	ForceCloud         bool   `json:"forceCloud,omitempty"`
+	ForceRelaySource   bool   `json:"forceRelaySource,omitempty"`
+	AllowLocalFallback bool   `json:"allowLocalFallback,omitempty"`
 }
 
 // OutgoingMessage is a JSON message sent back to the mobile client.
 type OutgoingMessage struct {
-	Type       string     `json:"type"`
-	DeviceName string     `json:"deviceName,omitempty"`
-	TaskID     string     `json:"taskId,omitempty"`
-	Status     string     `json:"status,omitempty"`
-	Text       string     `json:"text,omitempty"`
-	Final      bool       `json:"final,omitempty"`
-	Tasks      []TaskInfo `json:"tasks,omitempty"`
-	Message    string     `json:"message,omitempty"`
+	Type          string                 `json:"type"`
+	DeviceName    string                 `json:"deviceName,omitempty"`
+	TaskID        string                 `json:"taskId,omitempty"`
+	PendingTaskID string                 `json:"pendingTaskId,omitempty"`
+	Status        string                 `json:"status,omitempty"`
+	Text          string                 `json:"text,omitempty"`
+	Final         bool                   `json:"final,omitempty"`
+	Tasks         []TaskInfo             `json:"tasks,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	Action        string                 `json:"action,omitempty"`
+	Reason        string                 `json:"reason,omitempty"`
+	Placement     *TaskPlacementMetadata `json:"placement,omitempty"`
+	Activation    map[string]any         `json:"activation,omitempty"`
 }
 
 // QUICServer wraps a QUIC listener and dispatches incoming messages to a
@@ -58,16 +70,150 @@ type QUICServer struct {
 	taskManager *TaskManager
 	authToken   string // expected token from mobile clients
 	deviceName  string
+	deviceID    string
+	convexURL   string
 	listener    *quic.Listener
 }
 
 // NewQUICServer creates a QUICServer.
-func NewQUICServer(port int, authToken, deviceName string, tm *TaskManager) *QUICServer {
-	return &QUICServer{
+func NewQUICServer(port int, authToken, deviceName string, tm *TaskManager, opts ...QUICServerOption) *QUICServer {
+	s := &QUICServer{
 		port:        port,
 		taskManager: tm,
 		authToken:   authToken,
 		deviceName:  deviceName,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
+}
+
+type QUICServerOption func(*QUICServer)
+
+func WithQUICPlacementBackend(convexURL, deviceID string) QUICServerOption {
+	return func(s *QUICServer) {
+		s.convexURL = convexURL
+		s.deviceID = deviceID
+	}
+}
+
+func (s *QUICServer) placementClient() (*taskPlacementBackendClient, error) {
+	if s == nil {
+		return nil, fmt.Errorf("server unavailable")
+	}
+	return newTaskPlacementBackendClient(s.convexURL, s.authToken)
+}
+
+func (s *QUICServer) previewTaskPlacement(ctx context.Context, meta taskPlacementRecordRequest) (*TaskPlacementMetadata, error) {
+	client, err := s.placementClient()
+	if err != nil {
+		return nil, err
+	}
+	meta.TaskID = ""
+	return client.postTaskPlacement(ctx, "/tasks/placement/preview", meta)
+}
+
+func (s *QUICServer) recordTaskPlacement(ctx context.Context, taskID string, meta taskPlacementRecordRequest) (*TaskPlacementMetadata, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return nil, fmt.Errorf("missing backend auth")
+	}
+	client, err := s.placementClient()
+	if err != nil {
+		return nil, err
+	}
+	meta.TaskID = strings.TrimSpace(taskID)
+	return client.postTaskPlacement(ctx, "/tasks/placement/record", meta)
+}
+
+func (s *QUICServer) activateTaskPlacement(ctx context.Context, placementID, taskID string) (map[string]any, error) {
+	client, err := s.placementClient()
+	if err != nil {
+		return nil, err
+	}
+	return client.activateTaskPlacement(ctx, placementID, taskID)
+}
+
+func (s *QUICServer) cloudRequiredMessage(ctx context.Context, msg IncomingMessage, meta taskPlacementRecordRequest) (*OutgoingMessage, *TaskPlacementMetadata) {
+	previewPlacement, err := s.previewTaskPlacement(ctx, meta)
+	if err != nil {
+		log.Printf("[placement] QUIC preview skipped before task create: %v", err)
+		return nil, nil
+	}
+	if msg.AllowLocalFallback || !shouldDeferLocalTaskForPlacement(previewPlacement, s.deviceID) {
+		return nil, previewPlacement
+	}
+	pendingTaskID := newPendingCloudTaskID()
+	recordedPlacement := previewPlacement
+	if placement, perr := s.recordTaskPlacement(ctx, pendingTaskID, meta); perr != nil {
+		log.Printf("[placement] QUIC pending record skipped for %s: %v", pendingTaskID, perr)
+	} else if placement != nil {
+		recordedPlacement = placement
+	}
+	var activation map[string]any
+	if recordedPlacement != nil && (recordedPlacement.PlacementID != "" || pendingTaskID != "") {
+		if result, aerr := s.activateTaskPlacement(ctx, recordedPlacement.PlacementID, pendingTaskID); aerr != nil {
+			activation = activationMapFromError(aerr)
+			log.Printf("[placement] QUIC activation skipped for %s: %v", pendingTaskID, aerr)
+		} else {
+			activation = result
+		}
+	}
+	return &OutgoingMessage{
+		Type:          "error",
+		Message:       "cloud workspace required",
+		Action:        "cloud_workspace_required",
+		PendingTaskID: pendingTaskID,
+		Placement:     recordedPlacement,
+		Activation:    activation,
+		Reason:        "placement selected a Cloud Workspace that is not ready on this agent; keep the prompt client-side, wait for activation, then dispatch to the assigned workspace",
+	}, recordedPlacement
+}
+
+func (s *QUICServer) recordCreatedTaskPlacement(ctx context.Context, task *Task, meta taskPlacementRecordRequest) {
+	if s == nil || task == nil {
+		return
+	}
+	placement, err := s.recordTaskPlacement(ctx, task.ID, meta)
+	if err != nil {
+		log.Printf("[placement] QUIC record skipped for task %s: %v", task.ID, err)
+		return
+	}
+	if placement == nil {
+		return
+	}
+	s.taskManager.mu.Lock()
+	task.Placement = placement
+	s.taskManager.persist()
+	s.taskManager.mu.Unlock()
+}
+
+func quicTaskPlacementRequest(msg IncomingMessage, source, workDir, targetDeviceID string) taskPlacementRecordRequest {
+	return taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
+		KindHint:         msg.PlacementKind,
+		Title:            msg.Title,
+		Description:      msg.Description,
+		Source:           source,
+		Runner:           msg.Runner,
+		ProjectName:      msg.ProjectName,
+		WorkDir:          workDir,
+		TargetDeviceID:   targetDeviceID,
+		ForceCloud:       msg.ForceCloud,
+		ForceRelaySource: msg.ForceRelaySource,
+	})
+}
+
+func quicCloudRequiredErrorFromMessage(resp OutgoingMessage) *CloudWorkspaceRequiredError {
+	if resp.Type != "error" || strings.TrimSpace(resp.Action) != "cloud_workspace_required" {
+		return nil
+	}
+	return &CloudWorkspaceRequiredError{
+		PendingTaskID: strings.TrimSpace(resp.PendingTaskID),
+		Placement:     resp.Placement,
+		Activation:    resp.Activation,
+		Reason:        firstNonEmpty(resp.Reason, resp.Message),
 	}
 }
 
@@ -189,14 +335,24 @@ func (s *QUICServer) handleTaskCreate(stream quic.Stream, msg IncomingMessage) {
 	if source == "" {
 		source = "mobile"
 	}
+	placementMeta := quicTaskPlacementRequest(msg, source, s.taskManager.workDir, s.deviceID)
+	var previewPlacement *TaskPlacementMetadata
+	if cloudMsg, placement := s.cloudRequiredMessage(context.Background(), msg, placementMeta); cloudMsg != nil {
+		s.sendMessage(stream, *cloudMsg)
+		return
+	} else {
+		previewPlacement = placement
+	}
 	task, err := s.taskManager.CreateTaskWithOptions(msg.Title, msg.Description, msg.Model, source, msg.Runner, "", msg.Images, TaskCreateOptions{
 		InitialUserPrompt: msg.UserPrompt,
 		Mode:              msg.Mode,
+		Placement:         previewPlacement,
 	})
 	if err != nil {
 		s.sendMessage(stream, OutgoingMessage{Type: "error", Message: err.Error()})
 		return
 	}
+	s.recordCreatedTaskPlacement(context.Background(), task, placementMeta)
 
 	s.sendMessage(stream, OutgoingMessage{
 		Type:   "task_created",

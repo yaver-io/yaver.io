@@ -17,13 +17,13 @@ export interface ManagedCloudMachineSummary {
   // (project_managed_cloud_onboarding_gap).
   provisionPhase?: string | null;
   provisionProgress?: number | null;
-  /** "golden" = booted from a prebuilt snapshot (fast); "vanilla" =
-   *  ubuntu-24.04 first-boot build (~3-5 min). */
+  /** "golden" = booted from a prebuilt image (fast); "vanilla" =
+   *  ubuntu-24.04 first-boot setup. */
   bootImageSource?: string | null;
   runnersAuthorized?: boolean;
   stoppedAt?: number | null;
   /** True when a persistent volume holds the box's data, so wake skips the fat
-   *  disk restore (~1-2 min instead of ~10). Surfaced by /subscription. */
+   *  disk restore. Surfaced by /subscription. */
   hasVolume?: boolean;
   /** Concrete provider server type the box was created on (e.g. "cx43"). */
   serverType?: string | null;
@@ -64,6 +64,16 @@ export interface ManagedCloudMachineSummary {
   snapshotCreatedAt?: number | null;
   prepaidBalanceCents?: number | null;
   estimatedHourlyCents?: number | null;
+  allowance?: {
+    plan?: string | null;
+    unit?: "standard_credits" | string;
+    includedStandardCredits?: number;
+    usedStandardCredits?: number;
+    remainingStandardCredits?: number;
+    includedSeconds?: number;
+    usedSeconds?: number;
+    remainingSeconds?: number;
+  } | null;
   /** Auto-park (auto-close) when idle. Undefined === ON (the default), so a
    *  forgotten box always stops its own meter. Only an explicit false keeps it
    *  running while idle. */
@@ -79,6 +89,16 @@ export interface ManagedCloudBalanceSummary {
   estimatedHourlyCents?: number;
   lowBalance?: boolean;
   reservedCents?: number;
+  allowance?: {
+    plan?: string | null;
+    unit?: "standard_credits" | string;
+    includedStandardCredits?: number;
+    usedStandardCredits?: number;
+    remainingStandardCredits?: number;
+    includedSeconds?: number;
+    usedSeconds?: number;
+    remainingSeconds?: number;
+  } | null;
 }
 
 export interface ManagedCloudUsageEntry {
@@ -172,7 +192,7 @@ async function managedCloudPost<T>(
 }
 
 export function stopManagedCloudMachine(token: string, machineId: string) {
-  return managedCloudPost<{ ok: boolean; machineId?: string }>(
+  return managedCloudPost<{ ok: boolean; machineId?: string; wakeRunId?: string | null }>(
     token,
     "/billing/yaver-cloud/stop",
     { machineId },
@@ -181,8 +201,8 @@ export function stopManagedCloudMachine(token: string, machineId: string) {
 
 /**
  * Auto-park (auto-close): the box parks itself when idle so it stops billing.
- * ON by default — turning it OFF means the box keeps running (and charging)
- * until you park it by hand.
+ * ON by default and required for customer-facing Cloud Workspace traffic; the
+ * product API accepts enable/tune requests but rejects disabling cost protection.
  */
 export function setManagedCloudAutoPark(
   token: string,
@@ -198,7 +218,7 @@ export function setManagedCloudAutoPark(
 }
 
 export function startManagedCloudMachine(token: string, machineId: string) {
-  return managedCloudPost<{ ok: boolean; machineId?: string }>(
+  return managedCloudPost<{ ok: boolean; machineId?: string; wakeRunId?: string | null }>(
     token,
     "/billing/yaver-cloud/start",
     { machineId },

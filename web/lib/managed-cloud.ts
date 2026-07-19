@@ -1,14 +1,14 @@
 /**
  * Managed-cloud machine lifecycle from the web dashboard.
  *
- * Mirrors mobile/src/lib/subscription.ts — the same two Convex HTTP routes the
- * mobile Devices tab already uses, so a Yaver-hosted box can be Paused
- * (snapshot + delete → meter stops) or Resumed (recreate from snapshot) from
- * the web UI too, not just the phone.
+ * Mirrors mobile/src/lib/subscription.ts — the same Convex HTTP routes the
+ * mobile Devices tab uses, so a Yaver-hosted box can be Paused (server deleted
+ * while state stays durable) or Resumed (server recreated from its recovery
+ * source) from the web UI too, not just the phone.
  *
  * Pause is the scale-to-zero path: Hetzner bills a *stopped* server, so the
- * backend snapshots then DELETES the server. Resume recreates it from that
- * snapshot (~2-3 min).
+ * backend DELETES the server. New workspaces keep state on a persistent volume
+ * and wake from a slim base image; legacy rows may still use full snapshots.
  */
 import { CONVEX_URL } from "./constants";
 
@@ -32,18 +32,18 @@ async function managedCloudPost<T>(
   return data as T;
 }
 
-/** Pause a Yaver-hosted box: snapshot then delete the server (stops billing). */
+/** Pause a Yaver-hosted box: preserve state, then delete the server so billing stops. */
 export function stopManagedCloudMachine(token: string, machineId: string) {
-  return managedCloudPost<{ ok: boolean; machineId?: string }>(
+  return managedCloudPost<{ ok: boolean; machineId?: string; wakeRunId?: string | null }>(
     token,
     "/billing/yaver-cloud/stop",
     { machineId },
   );
 }
 
-/** Resume a paused box: recreate it from its latest snapshot. */
+/** Resume a paused box from its recorded recovery source. */
 export function startManagedCloudMachine(token: string, machineId: string) {
-  return managedCloudPost<{ ok: boolean; machineId?: string }>(
+  return managedCloudPost<{ ok: boolean; machineId?: string; wakeRunId?: string | null }>(
     token,
     "/billing/yaver-cloud/start",
     { machineId },
@@ -52,8 +52,8 @@ export function startManagedCloudMachine(token: string, machineId: string) {
 
 /**
  * Auto-close (auto-park): the box parks itself when idle so it stops billing.
- * ON by default — turning it OFF means it keeps running (and charging) until
- * you pause it by hand.
+ * ON by default and required for customer-facing Cloud Workspace traffic; the
+ * product API accepts enable/tune requests but rejects disabling cost protection.
  */
 export function setManagedCloudAutoPark(
   token: string,
@@ -81,9 +81,9 @@ export function isManagedCloudDevice(d: {
  * True when the box is currently parked (paused) rather than running.
  *
  * NOTE: this answers "is it parked", NOT "can it be woken" — a parked box with
- * no snapshot cannot come back, and only the backend knows that. For anything
- * that offers a wake action, read `device.machineWakeable` (the backend's own
- * isMachineWakeable verdict) instead of calling this.
+ * no recovery source cannot come back, and only the backend knows that. For
+ * anything that offers a wake action, read `device.machineWakeable` (the
+ * backend's own isMachineWakeable verdict) instead of calling this.
  */
 export function isMachinePaused(machineStatus?: string): boolean {
   const s = String(machineStatus ?? "").toLowerCase();
@@ -112,23 +112,23 @@ export function describeMachineState(
     return { label: "Running", tone: "running", hint: "The box is up and billing." };
   }
   if (s === "resuming" || s === "starting") {
-    return { label: "Waking…", tone: "busy", hint: "Recreating from snapshot — usually 2-3 min." };
+    return { label: "Waking…", tone: "busy", hint: "Starting the workspace from its saved state." };
   }
   if (s === "stopping" || s === "pausing" || s === "snapshotting") {
-    return { label: "Parking…", tone: "busy", hint: "Snapshotting, then deleting the server so billing stops." };
+    return { label: "Parking…", tone: "busy", hint: "Preserving state, then deleting compute so billing stops." };
   }
   if (wakeable) {
     return {
       label: "Asleep",
       tone: "asleep",
-      hint: "Parked to stop billing. Wake recreates it from its snapshot (~2-3 min).",
+      hint: "Parked to stop billing. Wake recreates compute from saved state.",
     };
   }
   if (s === "removed" || s === "deleted") {
     return {
       label: "Gone",
       tone: "gone",
-      hint: "This box was deleted and has no snapshot to restore — it cannot be woken. Provision a new one.",
+      hint: "This box was deleted and has no recovery source — it cannot be woken. Provision a new one.",
     };
   }
   if (s === "error") {

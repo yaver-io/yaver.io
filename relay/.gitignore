@@ -8,4 +8,5 @@ yaver-relay-*
 # never track it.
 /relay
 /relay-*
+/relay.exe
 !/relay-*.go

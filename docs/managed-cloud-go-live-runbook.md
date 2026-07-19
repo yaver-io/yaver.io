@@ -46,28 +46,34 @@ Verify it's gone in `yaver devices` + Hetzner console. (A pre-delete
 snapshot is kept by the fail-closed invariant — delete that snapshot
 too if you don't want the ~€0.50/mo, via `cloud_snapshot_delete`.)
 
-## C. Provision a fresh box + full REAL stop/start test
+## C. Provision a fresh Cloud Workspace + full REAL stop/start test
 
-1. Buy/adopt a new managed box (ManagedCloudPanel → Buy, or
-   `dev-activate`/`dev-adopt`). Wait for `status:active`.
-2. Top up the wallet: `POST $SITE/billing/yaver-cloud/topup-dev {"amountCents":N}`.
-3. **Real STOP** (snapshot+destroy — money-safe, recover-safe):
+1. Subscribe to Cloud Workspace from the web billing UI. Do not use mobile
+   checkout. The subscription webhook/reconcile path creates the managed row.
+   Owner-only `dev-activate` remains a developer bypass and now requires the
+   local `YAVER_CLOUD_DEV_BYPASS=1` CLI flag path before it is reachable from
+   the CLI.
+2. Wait for `status:active`, then verify auto-park is enabled for the row.
+3. **Real STOP** (volume-backed delete, or legacy snapshot+destroy —
+   money-safe, recover-safe):
    `POST $SITE/billing/yaver-cloud/stop {"machineId":"<new id>"}`
    - With HCLOUD_TOKEN set ⇒ NOT dry-run. Expect `status:"paused"`,
-     `snapshotId:"<image>"`, server gone in Hetzner, billing stopped.
+     server gone in Hetzner, billing stopped.
+   - Volume-backed rows keep data on the attached volume and skip slow
+     snapshotting. Legacy rows snapshot before delete.
    - Fail-closed invariant: if the snapshot fails the server is NOT
      deleted (status:error, data safe).
-4. **Real START** (recreate from snapshot):
+4. **Real START** (recreate from volume/base image or legacy snapshot):
    `POST $SITE/billing/yaver-cloud/start {"machineId":"<new id>"}`
-   - `canStart` gate first (402 if balance < reserve). Then a new
-     Hetzner server from the pause snapshot; row gets new id/ip;
-     `status:"active"`.
-5. **Meter**: external Hetzner systemd timer should
-   `POST $SITE/crons/run {"name":"cloudMeter"}` hourly. For the test,
-   fire it manually and watch `balance` drop. The cron is `dryRun:true`
-   until launch by design; flip it live with a single Convex env (no
-   code change): `npx convex env set YAVER_CLOUD_METER_LIVE true --prod`.
-6. Agent-side BYO stop/start (separate path): on the box,
+   - `canStart` gate first. Included Cloud Workspace standard credits can
+     satisfy the gate; once exhausted, prepaid/internal reserve logic must
+     still prevent unaffordable wake.
+   - The row gets a new provider server id/ip; health checks decide when it is
+     actually usable.
+5. **Meter and idle park**: Convex-native idle sweep is live by default and
+   independent of wallet meter simulation. `YAVER_CLOUD_IDLE_DISABLE=true` is
+   the emergency brake. Do not disable it for customer workspaces.
+6. Agent-side BYO stop/start (separate path): on a user-owned BYO box,
    `YAVER_CLOUD_STOPSTART_LIVE=1` then `yaver` ops `cloud_stop` /
    `cloud_start` with `confirm:true` — uses the box's OWN vault token.
 
@@ -77,54 +83,43 @@ too if you don't want the ~€0.50/mo, via `cloud_snapshot_delete`.)
   destroyed. Setting it is the single deliberate go-live switch.
 - Snapshot-before-delete is mandatory and fail-closed (failed snapshot
   aborts the delete).
-- Prepaid floor (`canStart`, two-part reserve) blocks starting a box
-  the wallet can't afford to safely stop again.
-- Meter defaults `dryRun:true` until you flip it — wallets don't burn
-  pre-launch.
-- Roll back: a paused box is recoverable from its snapshot; resume
-  recreates it. cloudMachines.ts (parallel session) untouched.
+- Included allowance + internal reserve gates block starting a box that cannot
+  be safely parked again once the monthly Cloud Workspace allowance is exhausted.
+- Legacy credit-pack checkout and prepaid workspace provisioning are retired:
+  `/billing/credits/checkout` and `/billing/yaver-cloud/provision` return HTTP
+  410. Do not create LemonSqueezy one-time credit-pack products for this model.
+- Roll back: a paused box is recoverable from its volume/base image or legacy
+  snapshot; resume recreates it.
 
-## E. Prepaid credit front door (OpenAI-style top-up) + go-live flags
+## E. Flat-product go-live flags
 
-The wallet is now fundable with REAL money via web credit packs (no
-Apple/Google IAP — compute is remote IaaS, sold on the web). Flow:
-buy a pack → LemonSqueezy one-time order → `order_created` webhook →
-`topUpForOrder` credits the wallet idempotently (keyed on order id).
+The public catalog has only Free, Relay Pro, and Cloud Workspace. Purchases and
+unsubscribe/update-payment flows are web-only.
 
-1. **Create the LS one-time products** (one per pack: $10/$25/$50/$100)
-   in the LemonSqueezy store, then wire each variant id:
-   ```bash
-   npx convex env set LEMONSQUEEZY_CREDIT_PACK_P10_VARIANT_ID  <vid> --prod
-   npx convex env set LEMONSQUEEZY_CREDIT_PACK_P25_VARIANT_ID  <vid> --prod
-   npx convex env set LEMONSQUEEZY_CREDIT_PACK_P50_VARIANT_ID  <vid> --prod
-   npx convex env set LEMONSQUEEZY_CREDIT_PACK_P100_VARIANT_ID <vid> --prod
-   ```
-   Catalog (amounts) is server-side in `http.ts:CREDIT_PACKS` — the
-   webhook never trusts an amount from the payload.
-2. **Test checkout**: `POST $SITE/billing/credits/checkout {"packId":"p25"}`
-   → returns a LemonSqueezy URL (503 until the variant env is set).
-   Pay it (sandbox first) → webhook credits the wallet → balance rises.
-3. **Spin up from prepaid** (no subscription): `POST
-   $SITE/billing/yaver-cloud/provision {"machineType":"cpu"}` — 402 if
-   balance < reserve; otherwise creates + provisions a wallet-funded box.
-4. **Open it to all users** (leave private-preview): set the launch flag
-   `npx convex env set YAVER_CLOUD_PUBLIC true --prod`. Until then only
-   the owner allowlist can touch the prepaid surfaces. Every money route
-   stays independently gated (HCLOUD_TOKEN for spend, balance for debit),
-   so opening access never lets a stranger spend Yaver's money — only
-   their own credit.
+1. **Relay Pro**: set the LemonSqueezy variant env for Relay Pro and test
+   `/billing/checkout {"productId":"relay-pro"}` from web.
+2. **Cloud Workspace**: set the Cloud Workspace variant env and test
+   `/billing/checkout {"productId":"cloud-workspace"}` from web. The active
+   subscription webhook or `/billing/yaver-cloud/reconcile` provisions the
+   managed workspace row.
+3. **Open Cloud Workspace controls**: set
+   `npx convex env set YAVER_CLOUD_PUBLIC true --prod` only when the web
+   billing flow, unsubscribe flow, auto-park, and reconcile tests pass.
+4. **Keep mobile purchase-free**: mobile may show entitlement/status and route
+   users to web; it must not call checkout, portal, cancel, or plan-change APIs.
 
 ### Env-flag summary (all default to safe/off)
 
 | Env (Convex `--prod`) | Default | Effect when set |
 |---|---|---|
 | `HCLOUD_TOKEN` | unset | real Hetzner create/snapshot/delete (else dry-run) |
-| `YAVER_CLOUD_METER_LIVE` | false | wallet meter burns real balance (else dryRun ledger) |
-| `YAVER_CLOUD_PUBLIC` | false | prepaid surfaces open to all authed users (else owner-only) |
-| `YAVER_CLOUD_MARKUP_CPU` | 2 | per-SKU markup over raw COGS (cpu) |
-| `YAVER_CLOUD_MARKUP_GPU` | 3 | per-SKU markup over raw COGS (gpu) |
-| `LEMONSQUEEZY_CREDIT_PACK_*_VARIANT_ID` | unset | enables that credit pack's checkout |
+| `YAVER_CLOUD_IDLE_DISABLE` | false | emergency brake that disables auto-park when true |
+| `YAVER_CLOUD_PUBLIC` | false | Cloud Workspace controls open to all authed users (else owner-only) |
+| `YAVER_CLOUD_WORKSPACE_VARIANT_ID` | unset | enables Cloud Workspace checkout |
+| `YAVER_RELAY_PRO_VARIANT_ID` | unset | enables Relay Pro checkout |
+| `YAVER_CLOUD_MARKUP_STANDARD` | 2 | internal margin model for standard workspace overage |
+| `YAVER_CLOUD_DEV_BYPASS` | unset | local CLI-only developer bypass gate; never set for users |
 
-Going fully live = set all four (token, meter-live, public, pack
-variants). Any subset is a valid intermediate (e.g. owner-only real
-test = HCLOUD_TOKEN + METER_LIVE, leave PUBLIC off).
+Going fully live = set provider token, product variant ids, and public access
+after the web billing/unsubscribe/reconcile tests pass. Do not re-enable credit
+packs or direct prepaid provisioning.

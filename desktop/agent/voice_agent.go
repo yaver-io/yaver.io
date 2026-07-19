@@ -15,7 +15,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -149,7 +148,7 @@ func runVoiceAgent(args []string) {
 				}
 				fmt.Printf("\r\033[K\033[1m▸ you:\033[0m %s\n", text)
 				busy.Store(true)
-				taskID, cerr := createVoiceAgentTask(cfg.AuthToken, text, runner, model, provider, !noSpeak)
+				task, remote, cerr := createVoiceAgentTask(cfg.AuthToken, text, runner, model, provider, !noSpeak)
 				if cerr != nil {
 					fmt.Printf("   \033[31m✗ %v\033[0m\n", cerr)
 					if !noSpeak {
@@ -161,7 +160,7 @@ func runVoiceAgent(args []string) {
 					}
 					continue
 				}
-				result, _ := streamVoiceTask(cfg.AuthToken, taskID)
+				result, _ := streamVoiceTaskRef(cfg.AuthToken, task.TaskID, remote)
 				if !noSpeak {
 					if spoken := voiceBudget(result); spoken != "" {
 						speakLocal(ctx, spoken)
@@ -203,7 +202,7 @@ Say "stop" to end. STT defaults to the free local engine. Ctrl-C to stop.`)
 // (so the runner knows it has the MCP toolset) + the voice viewport (so the
 // answer is tuned for a short spoken headline). speechContext carries the
 // STT/TTS state into the prompt wrapper.
-func createVoiceAgentTask(authToken, transcript, runner, model, sttProvider string, ttsEnabled bool) (string, error) {
+func createVoiceAgentTask(authToken, transcript, runner, model, sttProvider string, ttsEnabled bool) (*taskCreateHTTPResponse, *RemoteAgentCandidate, error) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"title":  transcript,
 		"runner": runner,
@@ -215,35 +214,35 @@ func createVoiceAgentTask(authToken, transcript, runner, model, sttProvider stri
 			"ttsEnabled":      ttsEnabled,
 		},
 	})
-	req, _ := http.NewRequest("POST", "http://127.0.0.1:18080/tasks", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Yaver-Source", "voice")
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	task, remote, err := createHTTPTaskWithCloudHandoff(context.Background(), &http.Client{Timeout: 30 * time.Second}, "http://127.0.0.1:18080", "Bearer "+authToken, body, 60*time.Second, newTerminalCloudHandoffProgressPrinter())
 	if err != nil {
-		return "", fmt.Errorf("is the agent running? start it with 'yaver serve' (%w)", err)
-	}
-	defer resp.Body.Close()
-	var result struct {
-		OK     bool   `json:"ok"`
-		TaskID string `json:"taskId"`
-		Error  string `json:"error"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&result)
-	if !result.OK || result.TaskID == "" {
-		if result.Error != "" {
-			return "", fmt.Errorf("%s", result.Error)
+		if strings.Contains(err.Error(), "connect") {
+			return nil, nil, fmt.Errorf("is the agent running? start it with 'yaver serve' (%w)", err)
 		}
-		return "", fmt.Errorf("task create failed (status %d)", resp.StatusCode)
 	}
-	return result.TaskID, nil
+	return task, remote, err
 }
 
 // streamVoiceTask streams the task output to the terminal and returns the
 // accumulated text so the caller can read a budgeted headline back.
 func streamVoiceTask(authToken, taskID string) (string, error) {
-	req, _ := http.NewRequestWithContext(context.Background(), "GET", "http://127.0.0.1:18080/tasks/"+taskID+"/output", nil)
+	return streamVoiceTaskRef(authToken, taskID, nil)
+}
+
+func streamVoiceTaskRef(authToken, taskID string, remote *RemoteAgentCandidate) (string, error) {
+	baseURL := "http://127.0.0.1:18080"
+	extraHeaders := map[string]string(nil)
+	if remote != nil && strings.TrimSpace(remote.BaseURL) != "" {
+		baseURL = strings.TrimRight(remote.BaseURL, "/")
+		extraHeaders = remote.Headers
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), "GET", baseURL+"/tasks/"+taskID+"/output", nil)
 	req.Header.Set("Authorization", "Bearer "+authToken)
+	for k, v := range extraHeaders {
+		if strings.TrimSpace(v) != "" {
+			req.Header.Set(k, v)
+		}
+	}
 	resp, err := (&http.Client{Timeout: 30 * time.Minute}).Do(req)
 	if err != nil {
 		return "", err

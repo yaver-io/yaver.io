@@ -9,6 +9,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { validateSessionInternal } from "./auth";
+import { shouldPreserveDispatchUserActionBlock } from "./taskDispatchIntents";
 
 const runKinds = v.union(v.literal("provision"), v.literal("wake"), v.literal("park"));
 const runStatuses = v.union(
@@ -30,6 +31,89 @@ async function userFromToken(ctx: any, tokenHash: string): Promise<Id<"users">> 
 function trimLabel(value: string | undefined, max: number): string | undefined {
   const text = String(value || "").trim();
   return text ? text.slice(0, max) : undefined;
+}
+
+function dispatchStatusForWake(status: string | undefined): "queued" | "blocked" {
+  return status === "blocked" || status === "failed" || status === "cancelled" ? "blocked" : "queued";
+}
+
+export function blockedActionForWakeProgress(args: {
+  status?: string;
+  phase?: string;
+}): string | undefined {
+  const phase = String(args.phase || "").trim();
+  if (phase === "awaiting-yaver-auth") return "yaver_auth_required";
+  if (phase === "authorizing-runners") return "runner_auth_required";
+  if (phase === "resize-required") return "resize_required";
+  if (args.status === "failed" || args.status === "cancelled") return "wake_failed";
+  return undefined;
+}
+
+function wakeProgressReason(args: {
+  status?: string;
+  phase?: string;
+  progress?: number;
+  reason?: string;
+  error?: string;
+}): string | undefined {
+  if (args.error) return trimLabel(args.error, 240);
+  if (args.status === "blocked" && args.reason) return trimLabel(args.reason, 240);
+  const phase = trimLabel(args.phase, 80);
+  if (!phase) return trimLabel(args.reason, 240);
+  const pct = typeof args.progress === "number" && Number.isFinite(args.progress)
+    ? ` (${Math.max(0, Math.min(100, Math.round(args.progress)))}%)`
+    : "";
+  return trimLabel(`Cloud Workspace wake: ${phase}${pct}`, 240);
+}
+
+async function syncDispatchIntentsForWake(ctx: any, args: {
+  userId: Id<"users">;
+  placementId?: Id<"taskPlacements">;
+  targetDeviceId?: string;
+  wakeStatus?: string;
+  phase?: string;
+  progress?: number;
+  reason?: string;
+  error?: string;
+}) {
+  if (!args.placementId) return;
+  const rows = await ctx.db
+    .query("taskDispatchIntents")
+    .withIndex("by_placement", (q: any) => q.eq("placementId", args.placementId))
+    .collect();
+  const status = dispatchStatusForWake(args.wakeStatus);
+  const reason = wakeProgressReason(args);
+  const now = Date.now();
+  await Promise.all(rows.map(async (row: any) => {
+    if (String(row.userId) !== String(args.userId)) return;
+    if (row.status === "dispatching" || row.status === "dispatched" || row.status === "cancelled" || row.status === "expired") {
+      return;
+    }
+    const patch: Record<string, unknown> = { status, updatedAt: now };
+    const blockedAction = status === "blocked"
+      ? blockedActionForWakeProgress({ status: args.wakeStatus, phase: args.phase })
+      : undefined;
+    if (shouldPreserveDispatchUserActionBlock({
+      currentStatus: row.status,
+      currentBlockedAction: row.blockedAction,
+      nextStatus: status,
+      nextBlockedAction: blockedAction,
+    })) {
+      patch.status = row.status;
+      patch.blockedAction = row.blockedAction;
+      patch.reason = row.reason;
+      patch.lastError = row.lastError;
+    } else if (status === "blocked" && blockedAction) {
+      patch.blockedAction = blockedAction;
+    } else if (status !== "blocked") {
+      patch.blockedAction = undefined;
+    }
+    const targetDeviceId = trimLabel(args.targetDeviceId, 120);
+    if (targetDeviceId) patch.targetDeviceId = targetDeviceId;
+    if (reason && patch.reason === undefined) patch.reason = reason;
+    if (status === "blocked" && args.error && patch.lastError === undefined) patch.lastError = trimLabel(args.error, 240);
+    await ctx.db.patch(row._id, patch);
+  }));
 }
 
 async function latestOpenRun(
@@ -93,12 +177,31 @@ export const start = internalMutation({
     };
     if (existing) {
       await ctx.db.patch(existing._id, patch);
+      await syncDispatchIntentsForWake(ctx, {
+        userId: args.userId,
+        placementId: args.placementId,
+        targetDeviceId: trimLabel(args.targetDeviceId, 120),
+        wakeStatus: patch.status,
+        phase: patch.phase,
+        progress: patch.progress,
+        reason: patch.reason,
+      });
       return existing._id;
     }
-    return await ctx.db.insert("wakeRuns", {
+    const id = await ctx.db.insert("wakeRuns", {
       ...patch,
       startedAt: now,
     });
+    await syncDispatchIntentsForWake(ctx, {
+      userId: args.userId,
+      placementId: args.placementId,
+      targetDeviceId: trimLabel(args.targetDeviceId, 120),
+      wakeStatus: patch.status,
+      phase: patch.phase,
+      progress: patch.progress,
+      reason: patch.reason,
+    });
+    return id;
   },
 });
 
@@ -124,7 +227,7 @@ export const markProgress = internalMutation({
       (String(machine.status || "") === "stopping" || String(machine.status || "") === "paused" ? "park" : "wake");
     const existing = await latestOpenRun(ctx, args.machineId, kind);
     if (!existing) {
-      await ctx.db.insert("wakeRuns", {
+      const inserted = {
         userId: machine.userId,
         machineId: args.machineId,
         kind,
@@ -143,6 +246,17 @@ export const markProgress = internalMutation({
         startedAt: Date.now(),
         updatedAt: Date.now(),
         completedAt: args.status === "succeeded" || args.status === "failed" || args.status === "cancelled" ? Date.now() : undefined,
+      };
+      await ctx.db.insert("wakeRuns", inserted);
+      await syncDispatchIntentsForWake(ctx, {
+        userId: machine.userId,
+        placementId: undefined,
+        targetDeviceId: inserted.targetDeviceId,
+        wakeStatus: inserted.status,
+        phase: inserted.phase,
+        progress: inserted.progress,
+        reason: inserted.reason,
+        error: inserted.error,
       });
       return { ok: true, inserted: true };
     }
@@ -161,6 +275,16 @@ export const markProgress = internalMutation({
       patch.completedAt = Date.now();
     }
     await ctx.db.patch(existing._id, patch);
+    await syncDispatchIntentsForWake(ctx, {
+      userId: existing.userId,
+      placementId: existing.placementId,
+      targetDeviceId: existing.targetDeviceId,
+      wakeStatus: typeof patch.status === "string" ? patch.status : existing.status,
+      phase: typeof patch.phase === "string" ? patch.phase : existing.phase,
+      progress: typeof patch.progress === "number" ? patch.progress : existing.progress,
+      reason: typeof patch.reason === "string" ? patch.reason : existing.reason,
+      error: typeof patch.error === "string" ? patch.error : existing.error,
+    });
     return { ok: true, id: existing._id };
   },
 });

@@ -160,6 +160,121 @@ func TestProcessSandboxRun_FakeRunnerEdits(t *testing.T) {
 	}
 }
 
+func TestProcessSandboxRun_TodoRNAppDevelopmentFixture(t *testing.T) {
+	req := sandboxRunRequest{
+		Prompt:    "turn this into a todo app with add, toggle, and delete support",
+		Framework: "React Native (Expo)",
+		Files: []sandboxFile{
+			{
+				Path: "package.json",
+				Content: `{
+  "scripts": {
+    "start": "expo start"
+  },
+  "dependencies": {
+    "expo": "~53.0.0",
+    "react": "19.0.0",
+    "react-native": "0.79.0"
+  }
+}`,
+			},
+			{
+				Path: "App.tsx",
+				Content: `import React from "react";
+import { Text, View } from "react-native";
+
+export default function App() {
+  return (
+    <View>
+      <Text>Hello sandbox</Text>
+    </View>
+  );
+}
+`,
+			},
+		},
+	}
+
+	fakeOpenCodeTodo := func(ctx context.Context, workDir, prompt string) (sandboxRunMeta, error) {
+		if !strings.Contains(prompt, "todo app") {
+			t.Fatalf("prompt did not include user request:\n%s", prompt)
+		}
+		app := `import React, { useState } from "react";
+import { Button, FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+
+type Todo = { id: string; title: string; done: boolean };
+
+export default function App() {
+  const [text, setText] = useState("");
+  const [todos, setTodos] = useState<Todo[]>([]);
+
+  const addTodo = () => {
+    const title = text.trim();
+    if (!title) return;
+    setTodos((items) => [{ id: Date.now().toString(), title, done: false }, ...items]);
+    setText("");
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Todos</Text>
+      <View style={styles.row}>
+        <TextInput value={text} onChangeText={setText} placeholder="New todo" style={styles.input} />
+        <Button title="Add" onPress={addTodo} />
+      </View>
+      <FlatList
+        data={todos}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <View style={styles.todo}>
+            <Pressable onPress={() => setTodos((items) => items.map((todo) => todo.id === item.id ? { ...todo, done: !todo.done } : todo))}>
+              <Text style={[styles.todoText, item.done && styles.done]}>{item.title}</Text>
+            </Pressable>
+            <Button title="Delete" onPress={() => setTodos((items) => items.filter((todo) => todo.id !== item.id))} />
+          </View>
+        )}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 24, paddingTop: 72 },
+  title: { fontSize: 32, fontWeight: "700", marginBottom: 16 },
+  row: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  input: { borderWidth: 1, borderColor: "#999", flex: 1, padding: 8 },
+  todo: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
+  todoText: { fontSize: 18 },
+  done: { textDecorationLine: "line-through", color: "#777" },
+});
+`
+		if err := os.WriteFile(filepath.Join(workDir, "App.tsx"), []byte(app), 0o644); err != nil {
+			return sandboxRunMeta{}, err
+		}
+		return sandboxRunMeta{rationale: "implemented todo flow", model: "zai-coding-plan/glm-4.7"}, nil
+	}
+
+	resp := processSandboxRun(context.Background(), req, fakeOpenCodeTodo)
+	if !resp.OK {
+		t.Fatalf("resp not OK: %+v", resp)
+	}
+	if resp.Runner != "opencode" || resp.Model != "zai-coding-plan/glm-4.7" {
+		t.Fatalf("runner/model not threaded: %+v", resp)
+	}
+	if len(resp.Edits) != 1 {
+		t.Fatalf("expected one App.tsx update, got %+v", resp.Edits)
+	}
+	edit := resp.Edits[0]
+	if edit.Action != "update" || edit.Path != "App.tsx" {
+		t.Fatalf("unexpected edit: %+v", edit)
+	}
+	for _, want := range []string{"useState", "FlatList", "addTodo", "Delete", "textDecorationLine"} {
+		if !strings.Contains(edit.Content, want) {
+			t.Fatalf("todo App.tsx missing %q:\n%s", want, edit.Content)
+		}
+	}
+}
+
 func TestProcessSandboxRun_NoChangeNoEdits(t *testing.T) {
 	req := sandboxRunRequest{
 		Prompt: "do nothing",

@@ -354,6 +354,45 @@ struct BoxTarget: Codable, Identifiable, Equatable {
     var managed: Bool? = nil
     var machineId: String? = nil
 
+    /// Relay reachability. Until these existed the TV was LAN-ONLY: AgentClient
+    /// hardcoded `http://<host>:<port>/ops`, so a box on another network — or
+    /// this Apple TV on a different subnet from the box — was simply
+    /// unreachable, even though every other surface could get there over the
+    /// relay. Both decode to nil for boxes persisted before these fields
+    /// existed, and a nil relay just means "LAN only", exactly as before.
+    ///
+    /// `relayBaseUrl` is the relay's HTTPS origin (e.g. "https://relay.yaver.io");
+    /// the proxy path `/d/<deviceId>/ops` is built from [id].
+    var relayBaseUrl: String? = nil
+    var relayPassword: String? = nil
+
     /// True when this box can be resumed from the TV (managed + has a machineId).
     var wakeable: Bool { (managed ?? false) && (machineId?.isEmpty == false) }
+
+    /// Ordered ops endpoints to try: LAN first, relay second.
+    ///
+    /// Direct-first / relay-fallback is Yaver's documented connection strategy
+    /// (CLAUDE.md "Connection strategy"), and it matters for cost as well as
+    /// latency — a LAN hop costs nothing, while every relay byte is metered
+    /// against the device's daily allowance.
+    var opsEndpoints: [URL] {
+        var out: [URL] = []
+        if !host.isEmpty, let lan = URL(string: "http://\(host):\(port)/ops") {
+            out.append(lan)
+        }
+        if let base = relayBaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !base.isEmpty, !id.isEmpty {
+            let trimmed = base.hasSuffix("/") ? String(base.dropLast()) : base
+            var path = "\(trimmed)/d/\(id)/ops"
+            // The relay accepts its password as `__rp` when a header cannot be
+            // set; we DO set the header too, this is the documented fallback
+            // (relay/server.go handleProxy).
+            if let pw = relayPassword, !pw.isEmpty,
+               let esc = pw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+                path += "?__rp=\(esc)"
+            }
+            if let relay = URL(string: path) { out.append(relay) }
+        }
+        return out
+    }
 }

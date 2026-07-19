@@ -52,6 +52,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 	printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode}})
+	printPendingCloudTaskDispatchRetries(retryPendingCloudTaskDispatches(ctx, "Bearer "+token, 5*time.Second))
 
 	// Interactive loop
 	reader := bufio.NewReader(os.Stdin)
@@ -100,6 +101,10 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 				if err := clientListTasks(ctx, conn); err != nil {
 					fmt.Printf("error: %v\n", err)
 				}
+				continue
+			case "cloud-pending":
+				fmt.Println(renderPendingCloudTaskDispatchStatus(time.Now()))
+				fmt.Println()
 				continue
 			case "agent":
 				if strings.TrimSpace(opts.DefaultRunner) != "" || strings.TrimSpace(opts.DefaultModel) != "" {
@@ -163,7 +168,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 
 		payload := buildTerminalPromptPayload(line)
 		printTerminalUserInput(payload)
-		if err := clientCreateTask(ctx, conn, payload, opts); err != nil {
+		if err := clientCreateTask(ctx, conn, token, payload, opts); err != nil {
 			fmt.Printf("error: %v\n", err)
 		}
 	}
@@ -183,7 +188,7 @@ func clientAuth(ctx context.Context, conn quic.Connection, token string) (string
 }
 
 // clientCreateTask sends a task and streams the output.
-func clientCreateTask(ctx context.Context, conn quic.Connection, prompt terminalPromptPayload, opts TerminalClientOptions) error {
+func clientCreateTask(ctx context.Context, conn quic.Connection, token string, prompt terminalPromptPayload, opts TerminalClientOptions) error {
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
@@ -202,6 +207,16 @@ func clientCreateTask(ctx context.Context, conn quic.Connection, prompt terminal
 	}
 
 	data, _ := json.Marshal(msg)
+	httpBody, _ := json.Marshal(map[string]interface{}{
+		"title":       prompt.Prompt,
+		"description": prompt.Prompt,
+		"userPrompt":  prompt.OriginalText,
+		"images":      prompt.Images,
+		"source":      firstNonEmpty(opts.Source, terminalRemoteTaskSource),
+		"runner":      opts.DefaultRunner,
+		"model":       opts.DefaultModel,
+		"mode":        opts.DefaultMode,
+	})
 	stream.Write(data)
 	stream.Close() // signal we're done writing
 
@@ -227,6 +242,20 @@ func clientCreateTask(ctx context.Context, conn quic.Connection, prompt terminal
 				return nil
 			}
 		case "error":
+			if cloudErr := quicCloudRequiredErrorFromMessage(resp); cloudErr != nil {
+				target := "assigned workspace"
+				if cloudErr.Placement != nil && strings.TrimSpace(cloudErr.Placement.TargetDeviceID) != "" {
+					target = strings.TrimSpace(cloudErr.Placement.TargetDeviceID)
+				}
+				authHeader := "Bearer " + token
+				fmt.Printf("[cloud] workspace selected; waiting for %s (pending %s)\n", target, firstNonEmpty(cloudErr.PendingTaskID, "n/a"))
+				chosen, result, handoffErr := createTaskOnCloudWorkspace(ctx, cloudErr, authHeader, httpBody, 60*time.Second, newTerminalCloudHandoffProgressPrinter())
+				if handoffErr != nil {
+					return handoffErr
+				}
+				fmt.Printf("[task %s] created on %s\n", result.TaskID, firstNonEmpty(chosen.Label, chosen.DeviceID, "cloud workspace"))
+				return streamHTTPTaskOutput(ctx, &http.Client{Timeout: 10 * time.Minute}, strings.TrimRight(chosen.BaseURL, "/"), authHeader, chosen.Headers, result.TaskID)
+			}
 			return fmt.Errorf("%s", resp.Message)
 		}
 	}
@@ -363,6 +392,7 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 		}
 		printAttachWelcome(infoSnapshot)
 	}
+	printPendingCloudTaskDispatchRetries(retryPendingCloudTaskDispatches(ctx, authHeader, 5*time.Second))
 
 	// Interactive loop
 	reader := bufio.NewReader(os.Stdin)
@@ -426,6 +456,10 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 				if err := httpListTasks(ctx, client, baseURL, authHeader); err != nil {
 					fmt.Printf("error: %v\n", err)
 				}
+				continue
+			case "cloud-pending":
+				fmt.Println(renderPendingCloudTaskDispatchStatus(time.Now()))
+				fmt.Println()
 				continue
 			case "agent":
 				if runnerLine := attachRunnerLine(infoSnapshot); runnerLine != "" {
@@ -538,26 +572,97 @@ func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeade
 	}
 	defer resp.Body.Close()
 
+	raw, _ := io.ReadAll(resp.Body)
+	if err := decodeCloudWorkspaceRequiredError(resp.StatusCode, raw); err != nil {
+		if cloudErr, ok := err.(*CloudWorkspaceRequiredError); ok {
+			target := "assigned workspace"
+			if cloudErr.Placement != nil && strings.TrimSpace(cloudErr.Placement.TargetDeviceID) != "" {
+				target = strings.TrimSpace(cloudErr.Placement.TargetDeviceID)
+			}
+			fmt.Printf("[cloud] workspace selected; waiting for %s (pending %s)\n", target, firstNonEmpty(cloudErr.PendingTaskID, "n/a"))
+			chosen, result, handoffErr := createTaskOnCloudWorkspace(ctx, cloudErr, authHeader, body, 60*time.Second, newTerminalCloudHandoffProgressPrinter())
+			if handoffErr != nil {
+				return "", handoffErr
+			}
+			fmt.Printf("[task %s] created on %s\n", result.TaskID, firstNonEmpty(chosen.Label, chosen.DeviceID, "cloud workspace"))
+			if streamErr := streamHTTPTaskOutput(ctx, &http.Client{Timeout: 10 * time.Minute}, strings.TrimRight(chosen.BaseURL, "/"), authHeader, chosen.Headers, result.TaskID); streamErr != nil {
+				return result.TaskID, streamErr
+			}
+			return result.TaskID, nil
+		}
+		return "", err
+	}
 	var result struct {
 		OK     bool   `json:"ok"`
 		TaskID string `json:"taskId"`
 		Error  string `json:"error"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	json.Unmarshal(raw, &result)
 	if !result.OK {
 		return "", fmt.Errorf("create task: %s", result.Error)
 	}
 
 	fmt.Printf("[task %s] created\n", result.TaskID)
 
-	// Stream output via SSE
-	sseClient := &http.Client{Timeout: 10 * time.Minute}
-	sseReq, _ := http.NewRequestWithContext(ctx, "GET", baseURL+"/tasks/"+result.TaskID+"/output", nil)
-	sseReq.Header.Set("Authorization", authHeader)
+	if err := streamHTTPTaskOutput(ctx, &http.Client{Timeout: 10 * time.Minute}, baseURL, authHeader, nil, result.TaskID); err != nil {
+		return result.TaskID, err
+	}
+	return result.TaskID, nil
+}
 
-	sseResp, err := sseClient.Do(sseReq)
+func printPendingCloudTaskDispatchRetries(results []pendingCloudTaskDispatchRetryResult) {
+	for _, result := range results {
+		if result.Err != nil {
+			fmt.Printf("[cloud] pending task %s is still waiting: %v\n", result.LocalTaskID, result.Err)
+			continue
+		}
+		fmt.Printf("[cloud] pending task %s resumed as %s on %s\n", result.LocalTaskID, result.TaskID, firstNonEmpty(result.TargetLabel, "cloud workspace"))
+	}
+}
+
+func newTerminalCloudHandoffProgressPrinter() cloudTaskHandoffProgressFunc {
+	lastKey := ""
+	return func(p cloudTaskHandoffProgress) {
+		status := firstNonEmpty(strings.TrimSpace(p.Status), "queued")
+		target := firstNonEmpty(strings.TrimSpace(p.TargetLabel), strings.TrimSpace(p.TargetDeviceID), "assigned workspace")
+		key := fmt.Sprintf("%s:%s:%d:%s", p.LocalTaskID, status, p.Attempt, p.LastError)
+		if key == lastKey {
+			return
+		}
+		lastKey = key
+		switch status {
+		case "queued":
+			if strings.TrimSpace(p.LastError) != "" {
+				fmt.Printf("[cloud] waiting for %s; attempt %d will retry (%s)\n", target, p.Attempt, truncateStr(p.LastError, 160))
+			} else {
+				fmt.Printf("[cloud] waiting for %s\n", target)
+			}
+		case "dispatching":
+			fmt.Printf("[cloud] %s reachable; sending task (attempt %d)\n", target, p.Attempt)
+		case "dispatched":
+			fmt.Printf("[cloud] %s accepted the task\n", target)
+		case "blocked":
+			if strings.TrimSpace(p.LastError) != "" {
+				fmt.Printf("[cloud] still waiting for %s; queued locally (%s)\n", target, truncateStr(p.LastError, 160))
+			} else {
+				fmt.Printf("[cloud] still waiting for %s; queued locally\n", target)
+			}
+		}
+	}
+}
+
+func streamHTTPTaskOutput(ctx context.Context, client *http.Client, baseURL, authHeader string, extraHeaders map[string]string, taskID string) error {
+	sseReq, _ := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(baseURL, "/")+"/tasks/"+taskID+"/output", nil)
+	sseReq.Header.Set("Authorization", authHeader)
+	for k, v := range extraHeaders {
+		if strings.TrimSpace(v) != "" {
+			sseReq.Header.Set(k, v)
+		}
+	}
+
+	sseResp, err := client.Do(sseReq)
 	if err != nil {
-		return result.TaskID, fmt.Errorf("stream output: %w", err)
+		return fmt.Errorf("stream output: %w", err)
 	}
 	defer sseResp.Body.Close()
 
@@ -582,10 +687,10 @@ func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeade
 			fmt.Print(event.Text)
 		case "done":
 			fmt.Println()
-			return result.TaskID, nil
+			return nil
 		}
 	}
-	return result.TaskID, scanner.Err()
+	return scanner.Err()
 }
 
 func httpListTasks(ctx context.Context, client *http.Client, baseURL, authHeader string) error {

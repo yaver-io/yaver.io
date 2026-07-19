@@ -425,6 +425,21 @@ func init() {
 			// writes the specs itself. Best-effort — the plan is still returned.
 			if req.Author && len(plan.Uncovered) > 0 && c.Server != nil && c.Server.taskMgr != nil {
 				title := "Grow tests: " + filepath.Base(plan.ProjectDir)
+				ctx := c.Ctx
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				if deferral, deferred, derr := c.Server.deferIngressTaskToCloudWorkspace(ctx, "testkit-grow", "test", req.Runner, plan.ProjectDir); deferred {
+					if deferral != nil {
+						plan.TaskID = deferral.PendingTaskID
+					}
+					if derr != nil {
+						plan.AuthorPrompt = ""
+						return OpsResult{OK: false, Code: "cloud_workspace_required", Error: derr.Error(), Initial: plan}
+					}
+					plan.AuthorPrompt = ""
+					return OpsResult{OK: true, Initial: plan}
+				}
 				if t, terr := c.Server.taskMgr.CreateTask(title, plan.AuthorPrompt, "", "testkit-grow", req.Runner, "", nil); terr == nil && t != nil {
 					plan.TaskID = t.ID
 				}

@@ -131,9 +131,9 @@ export default function RaspberryPiManual() {
             <code> sqlite3</code>, <code>vercel</code>, <code>convex</code>,{" "}
             <code>postgresql</code>, <code>redis</code>, <code>supabase</code>, and{" "}
             <code>mosquitto</code>. Premium runner sign-in such as Codex or Claude Code is
-            still left to you. Add <code>yaver install tailscale</code> or{" "}
-            <code>yaver install cloudflared</code> if you want remote connectivity modules
-            after the base node comes up.
+            still left to you. Use Yaver Relay for remote access after the base
+            node comes up; upgrade to Relay Pro when that Pi becomes part of
+            daily work.
           </p>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
             For Pi 3B/3B+ IoT edge nodes, keep the install smaller: use

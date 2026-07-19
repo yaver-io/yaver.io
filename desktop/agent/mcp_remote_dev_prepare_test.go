@@ -59,6 +59,19 @@ func TestMCPRemoteDevelopmentToolSchemas(t *testing.T) {
 		t.Fatal("exec_command missing device_id property")
 	}
 
+	listMachines := findMCPToolForTest(t, tools, "list_machines")
+	if got := listMachines["description"]; !strings.Contains(got.(string), "agent_machine_inventory") {
+		t.Fatalf("list_machines should document its compatibility alias, got %q", got)
+	}
+
+	sandboxRun := findMCPToolForTest(t, tools, "sandbox_run")
+	sandboxProps := mcpToolPropertiesForTest(t, sandboxRun)
+	for _, key := range []string{"device_id", "prompt", "files", "framework", "schema", "runner", "timeoutMs"} {
+		if _, ok := sandboxProps[key]; !ok {
+			t.Fatalf("sandbox_run missing property %q", key)
+		}
+	}
+
 	for _, name := range []string{"mobile_project_status", "mobile_project_prepare", "mobile_project_build"} {
 		tool := findMCPToolForTest(t, tools, name)
 		if _, ok := mcpToolPropertiesForTest(t, tool)["device_id"]; !ok {
