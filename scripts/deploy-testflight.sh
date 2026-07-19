@@ -44,6 +44,31 @@ AUTH_KEY="${APP_STORE_KEY_PATH:?APP_STORE_KEY_PATH unset. Likely cause: the Yave
 AUTH_KEY_ID="${APP_STORE_KEY_ID:?Set APP_STORE_KEY_ID (env or yaver vault)}"
 AUTH_KEY_ISSUER="${APP_STORE_KEY_ISSUER:?Set APP_STORE_KEY_ISSUER (env or yaver vault)}"
 
+# Deploy lease (AUTORUN_STORE.md §6.1) — refuse if a sibling autorun is already
+# deploying TestFlight, so two runs can't race the same archive/upload and burn
+# the ~18/day cap (the 2026-07-19 incident this store exists to prevent). Also
+# refuses when the daily quota is exhausted. Best-effort: skipped if the yaver
+# CLI isn't on PATH. Stable id across acquire/release = this script's pid.
+DEPLOY_ID="deploy-testflight-$$"
+LEASE_HELD=0
+DEPLOY_OUTCOME=failure
+if command -v yaver >/dev/null 2>&1; then
+  BR="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  if yaver autorun deploy-lease acquire --target testflight --autorun "$DEPLOY_ID" --workdir "$ROOT" --branch "$BR"; then
+    LEASE_HELD=1
+  else
+    rc=$?
+    [ "$rc" -eq 3 ] && { echo "Another autorun holds the TestFlight deploy lease — aborting to avoid a race."; exit 3; }
+    [ "$rc" -eq 4 ] && { echo "TestFlight daily upload quota exhausted — wait a day."; exit 4; }
+    echo "WARN: could not acquire deploy lease (rc=$rc) — continuing without coordination."
+  fi
+fi
+release_lease() {
+  [ "$LEASE_HELD" = 1 ] && command -v yaver >/dev/null 2>&1 && \
+    yaver autorun deploy-lease release --target testflight --autorun "$DEPLOY_ID" --outcome "$DEPLOY_OUTCOME" >/dev/null 2>&1 || true
+}
+trap release_lease EXIT
+
 # Bump build number.
 #
 # BUG FIX (2026-07-19): this used to bump from the LOCAL Info.plist only. The
@@ -83,6 +108,9 @@ with open(path, "w") as f:
     f.write(s2)
 PYEOF
 echo "Build $CURRENT_BUILD → $NEW_BUILD"
+# Record the real build number in the lease (same id re-acquires + overwrites).
+[ "$LEASE_HELD" = 1 ] && command -v yaver >/dev/null 2>&1 && \
+  yaver autorun deploy-lease acquire --target testflight --autorun "$DEPLOY_ID" --workdir "$ROOT" --build "$NEW_BUILD" >/dev/null 2>&1 || true
 
 # Clean stale archive so a failed build can't silently reuse it
 ls -la /tmp/Yaver.xcarchive 2>/dev/null || true
@@ -163,6 +191,7 @@ if [ "$EXPORT_EXIT" -ne 0 ] && ! grep -q "Redundant Binary Upload" "$EXPORT_LOG"
   exit 1
 fi
 
+DEPLOY_OUTCOME=success   # the trap releases the lease with this outcome + quota++
 echo "✓ TestFlight build $NEW_BUILD uploaded"
 
 mobile-cache-cleanup.sh mark-deployed yaver || true
