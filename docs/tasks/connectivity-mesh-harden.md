@@ -182,10 +182,38 @@ Gate before any deploy:
   false green for RN screens.
 - `cd web && npm run build` — `tsc --noEmit` alone is a known false green.
 
-Then deploy, in this order, **once**:
+Then **commit and push everything** (pathspec commits only), and deploy every
+target the change actually touches, **once each**, in this order. "If required"
+means: deploy a target only if this change touched it — but do not skip one you
+did touch. Given the phases above, expect Convex and mobile to be required.
 
-1. **Go agent** — build + publish per the repo's normal path.
-2. **TestFlight** — `$(yaver vault env --project mobile)` then
+0. **Commit + push first.** Nothing deploys from an unpushed tree. Verify with
+   `git status` that nothing you authored is left behind, and re-`grep` the
+   source for a symbol you added after pushing — a green deploy is not evidence
+   the code survived a concurrent session.
+
+1. **Convex backend** — **required**, Phase 2 edits `backend/convex/devices.ts`
+   and Phase 1 edits `backend/convex/mesh.ts`.
+   `cd backend && npx convex deploy --yes`. This is develop-in-production; there
+   is no staging deployment. Deploy this **before** the clients, so a phone
+   running the new build never talks to an old `devices.ts`.
+
+2. **Go agent** — required (Phases 1–3 are agent + relay code). Build and
+   publish per the repo's normal release path.
+
+3. **npm `yaver-cli`** — required only if `cli/` changed. **Do not try to create
+   a `cli/v*` tag**: tag creation has been broken since the org transfer (the
+   ruleset lost its owner bypass). Use `gh workflow run release-cli.yml`
+   instead. If `cli/` is untouched, skip and say so.
+
+4. **Cloudflare web** — required only if `web/` changed (Phase 2 item 5 and the
+   `web/lib/transport.ts` / `NetworkView.tsx` mesh-labelling fixes touch it).
+   Prefer local: `./scripts/deploy-web.sh`. If there is no local
+   `CLOUDFLARE_API_TOKEN` on this box, fall back to
+   `gh workflow run release-web.yml` and say which path you used. Mind the
+   **15 MB** size guard.
+
+5. **TestFlight** — `$(yaver vault env --project mobile)` then
    `./scripts/deploy-testflight.sh`; if the vault is locked, `source
    ~/.appstoreconnect/yaver.env` instead. Run `mobile-cache-cleanup.sh preflight`
    first (hard-fails under 20 GB). Headless codesign on this box needs BOTH
@@ -197,9 +225,14 @@ Then deploy, in this order, **once**:
      archiving; do not let it silently ride along.
    - Respect the daily upload cap. If "Upload limit reached", **stop and report**
      — do not retry.
-3. Report what actually shipped. If a deploy failed, say so with the output. Do
-   not report a deploy as done because the command exited 0 — verify the build
-   appears in TestFlight.
+6. **Android / Play** — only if you changed something Android-specific and it is
+   genuinely warranted. Otherwise skip; do not burn a build for nothing.
+
+**Report what actually shipped, per target.** A command exiting 0 is not proof:
+verify the TestFlight build appears, verify the Convex functions are live,
+verify the Worker responds. If a deploy failed, say so with the output. If you
+skipped a target, name it and give the reason. Never report a target as
+deployed when you only ran the command.
 
 ## Definition of done
 
@@ -208,6 +241,9 @@ Then deploy, in this order, **once**:
 - Mesh guard on all bring-up paths, with tests.
 - Voice UX: live STT text visible in mic mode; symmetric mic↔text switching.
 - Disk ≥ 40 GB free.
-- Gates green, agent + TestFlight deployed once, outcome reported honestly.
+- All work committed and pushed (pathspec commits only).
+- Gates green. Every touched target deployed exactly once — Convex first, then
+  Go agent, then npm/web if touched, then TestFlight — with the outcome of each
+  reported honestly and verified, not assumed from an exit code.
 - Tailscale on this Mac mini still up and reachable. **Verify this last, and
   verify it explicitly** — `tailscale status` plus an actual inbound check.
