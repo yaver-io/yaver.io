@@ -485,6 +485,76 @@ func autorunStatusForFinish(reason string) string {
 	}
 }
 
+// autorunTaskNameFromSession strips the autorun tmux prefix/suffix to recover a
+// readable task label from a bare session name (yaver-autorun-nightly-codex ->
+// nightly-codex).
+func autorunTaskNameFromSession(name string) string {
+	n := strings.TrimSpace(name)
+	low := strings.ToLower(n)
+	for _, p := range autorunTmuxPrefixes {
+		if strings.HasPrefix(low, p) {
+			n = n[len(p):]
+			break
+		}
+	}
+	low = strings.ToLower(n)
+	for _, s := range autorunTmuxSuffixes {
+		if strings.HasSuffix(low, s) {
+			n = n[:len(n)-len(s)]
+			break
+		}
+	}
+	if n = strings.TrimSpace(n); n == "" {
+		return strings.TrimSpace(name)
+	}
+	return n
+}
+
+func tmuxCreatedMillis(created string) int64 {
+	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(created)); err == nil {
+		return t.UnixMilli()
+	}
+	return time.Now().UnixMilli()
+}
+
+// augmentRunsWithDiscoveredTmux appends rows for autorun-shaped tmux sessions
+// that no cache row already represents (matched by tmux session name). These are
+// loops still live in tmux whose retained bus state expired, or that were started
+// by hand — the beach workflow: ssh in, tmux, claude /goal, detach. Without this
+// they vanish from autorun_runs the moment the bus event ages out even though the
+// session is still attachable. Pure (tmux read is done by the caller) so it unit-tests.
+func augmentRunsWithDiscoveredTmux(rows []autorunRunCacheRow, discovered []AutorunTmuxSession, deviceID string) []autorunRunCacheRow {
+	have := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		if r.TmuxSession != "" {
+			have[r.TmuxSession] = true
+		}
+	}
+	for _, s := range discovered {
+		name := strings.TrimSpace(s.Name)
+		if name == "" || have[name] {
+			continue
+		}
+		have[name] = true
+		at := tmuxCreatedMillis(s.CreatedAt)
+		age := time.Now().UnixMilli() - at
+		if age < 0 {
+			age = 0
+		}
+		rows = append(rows, autorunRunCacheRow{
+			DeviceID:    deviceID,
+			Slot:        recapSlotLabel(name),
+			Task:        autorunTaskNameFromSession(name),
+			Kind:        "tmux",
+			Status:      "running",
+			TmuxSession: name,
+			At:          at,
+			AgeMs:       age,
+		})
+	}
+	return rows
+}
+
 func opsAutorunRunsHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	var p struct {
 		Machine string `json:"machine"`
@@ -496,6 +566,14 @@ func opsAutorunRunsHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		}
 	}
 	rows, ages := autorunRunsFromCache(p.Machine)
+	// Surface locally-discovered autorun tmux sessions the cache doesn't already
+	// represent (bus-expired or hand-started loops). tmux is a LOCAL read, so only
+	// augment when asking about this machine.
+	if p.Machine == "" || p.Machine == "local" || p.Machine == localDeviceID() {
+		if discovered, derr := discoverAutorunTmuxSessions(nil); derr == nil && len(discovered) > 0 {
+			rows = augmentRunsWithDiscoveredTmux(rows, discovered, localDeviceID())
+		}
+	}
 	refreshed := []string{}
 	if p.Refresh {
 		refreshed = autorunRefreshTargets(p.Machine, rows)

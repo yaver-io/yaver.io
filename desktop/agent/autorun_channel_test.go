@@ -77,6 +77,36 @@ func TestAutorunRunsReadsRetainedCache(t *testing.T) {
 	}
 }
 
+// A2 (Epic 7): autorun-shaped tmux sessions the cache doesn't already represent
+// (bus-expired or hand-started beach loops) must be surfaced so they stay
+// visible + attachable, while sessions already represented are not duplicated.
+func TestAugmentRunsWithDiscoveredTmux(t *testing.T) {
+	rows := []autorunRunCacheRow{
+		{DeviceID: "dev", TmuxSession: "yaver-autorun-nightly-codex", Task: "nightly", Status: "running"},
+	}
+	discovered := []AutorunTmuxSession{
+		{Name: "yaver-autorun-nightly-codex", CreatedAt: "2026-07-19T10:00:00Z"}, // already represented
+		{Name: "yaver-autorun-beach-claude", CreatedAt: "2026-07-19T12:00:00Z"},  // new, must appear
+		{Name: "yaver-autorun-beach-claude"},                                     // duplicate within discovered
+	}
+	out := augmentRunsWithDiscoveredTmux(rows, discovered, "dev")
+	if len(out) != 2 {
+		t.Fatalf("rows = %d, want 2 (no dup for already-represented or repeated session)", len(out))
+	}
+	var beach *autorunRunCacheRow
+	for i := range out {
+		if out[i].TmuxSession == "yaver-autorun-beach-claude" {
+			beach = &out[i]
+		}
+	}
+	if beach == nil {
+		t.Fatal("discovered beach session was not surfaced")
+	}
+	if beach.Task != "beach-claude" || beach.Kind != "tmux" || beach.Status != "running" || beach.DeviceID != "dev" {
+		t.Fatalf("beach row = %+v, want Task=beach-claude Kind=tmux Status=running DeviceID=dev", *beach)
+	}
+}
+
 // A1 (Epic 7): the tmux session name must ride the autorun state event and
 // survive the bus-event -> cache-row conversion every surface reads, so cards
 // can label the run and the user can `tmux attach -t <name>`.
