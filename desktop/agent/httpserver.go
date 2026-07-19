@@ -357,6 +357,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/bus/retained", s.auth(s.handleBusRetained))
 	mux.HandleFunc("/bus/events", s.auth(s.handleBusEvents))
 	mux.HandleFunc("/bus/publish", s.auth(s.handleBusPublish))
+	mux.HandleFunc("/autoruns/deploy-status", s.auth(s.handleAutorunDeployStatus))
 	mux.HandleFunc("/agent/status", s.auth(s.handleAgentStatus))
 	mux.HandleFunc("/agent/capabilities", s.auth(s.handleAgentCapabilities))
 	// Multi-source yaver-binary reconcile (apt/brew/npm/manual/auto-update).
@@ -10905,11 +10906,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}))
 	case "runner_auth_browser_start":
 		var a struct {
-			DeviceID string `json:"device_id"`
-			Runner   string `json:"runner"`
+			DeviceID    string `json:"device_id"`
+			Runner      string `json:"runner"`
+			WaitSeconds int    `json:"wait_seconds"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerBrowserAuthStart(a.DeviceID, a.Runner))
+		return mcpToolJSON(mcpRunnerBrowserAuthStart(a.DeviceID, a.Runner, a.WaitSeconds))
 	case "runner_auth_browser_status":
 		var a struct {
 			DeviceID  string `json:"device_id"`
