@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
-
-	"github.com/yaver-io/agent/mesh"
 )
 
 func (s *HTTPServer) registerMeshRoutes(mux *http.ServeMux) {
@@ -32,6 +30,16 @@ func (s *HTTPServer) handleMeshUp(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.AuthToken == "" || cfg.ConvexSiteURL == "" || cfg.DeviceID == "" {
 		jsonError(w, http.StatusBadRequest, "not signed in")
+		return
+	}
+
+	// Safety guard: refuse to bring the overlay up on a host where another
+	// interface already carries a 100.64/10 route (Tailscale). Without this,
+	// one tap of "enable mesh on all machines" from the phone installs
+	// 100.96/12 on the mini and can shadow Tailscale peers that landed in
+	// 100.96–100.111. Audit §4c, 2026-07-19.
+	if reason := s.meshBringUpBlocked(); reason != "" {
+		jsonError(w, http.StatusConflict, reason)
 		return
 	}
 
@@ -171,15 +179,10 @@ func (s *HTTPServer) autoEnableMesh(cfg *Config) (warning string) {
 	// unconditionally would start that fight on every Tailscale user's machine
 	// at upgrade, breaking working connectivity to "enable" a feature they
 	// never asked for. Defer instead: the box keeps working over LAN/relay and
-	// `mesh status` says exactly why.
-	ifaceName := ""
-	s.meshMu.Lock()
-	if s.meshMgr != nil {
-		ifaceName = s.meshMgr.Status().IfaceName
-	}
-	s.meshMu.Unlock()
-	if conflict, cErr := mesh.SubnetRouteConflict(ifaceName); cErr == nil && conflict != nil {
-		return conflict.Reason()
+	// `mesh status` says exactly why. Single guard, called from every bring-up
+	// path — see mesh_safety.go.
+	if reason := s.meshBringUpBlocked(); reason != "" {
+		return reason
 	}
 
 	if cfg.AuthToken == "" || cfg.ConvexSiteURL == "" || cfg.DeviceID == "" {

@@ -281,6 +281,15 @@ func (s *HTTPServer) ensureMeshManagerLocked(deviceID string) (*mesh.Manager, er
 // node's DESIRED config from the console and applies it — the Tailscale model
 // where the control plane holds intent and the node reconciles to it. Started
 // from /mesh/up and the serve-time restore.
+//
+// Also arms the periodic endpoint re-registration goroutine (audit §4e,
+// 2026-07-19 — largest single mesh stability defect). meshRegisterJoin was
+// called from three places, and the one in meshConvergeDesired sat inside an
+// `if !changed { return }` guard, so a node that roamed Wi-Fi→cellular kept
+// advertising a dead public endpoint forever until either the desired-state
+// changed or the process restarted. Tailscale re-STUNs on every link event;
+// we do the coarser thing — re-register every 2 minutes — so a stale
+// endpoint has a bounded lifetime whether we notice the link change or not.
 func (s *HTTPServer) startMeshDesiredLoop(deviceID string) {
 	s.meshMu.Lock()
 	if s.meshDesiredStarted {
@@ -297,6 +306,44 @@ func (s *HTTPServer) startMeshDesiredLoop(deviceID string) {
 			s.meshConvergeDesired(deviceID)
 		}
 	}()
+	go func() {
+		defer func() { _ = recover() }()
+		// Slower cadence than the desired-state loop — control-plane intent
+		// changes are rare, but our advertised endpoint drifts only on link
+		// change. Two minutes bounds the "peer dials a dead endpoint" window
+		// without becoming a control-plane pressure source. The initial 15s
+		// delay lets startup settle before the first re-register.
+		time.Sleep(15 * time.Second)
+		t := time.NewTicker(2 * time.Minute)
+		defer t.Stop()
+		s.meshReregisterEndpoint(deviceID)
+		for range t.C {
+			s.meshReregisterEndpoint(deviceID)
+		}
+	}()
+}
+
+// meshReregisterEndpoint re-advertises this device's current public endpoints
+// to the control plane. Idempotent — if nothing has changed, the mutation is
+// a no-op on the Convex side. Fails silently on transient control-plane
+// errors; the next tick retries. Never brings the data plane up (only
+// advertises), so it does not need the safety guard.
+func (s *HTTPServer) meshReregisterEndpoint(deviceID string) {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || cfg.Mesh == nil || !cfg.Mesh.Enabled {
+		return
+	}
+	if cfg.Mesh.PublicKey == "" {
+		return
+	}
+	endpoints := meshLocalEndpoints()
+	if _, err := meshRegisterJoin(cfg, cfg.Mesh.PublicKey, endpoints); err != nil {
+		// Not fatal — the next tick tries again. Log once so a persistently
+		// failing register is diagnosable without spamming.
+		s.meshMu.Lock()
+		s.meshAutoWarn = "endpoint re-registration: " + err.Error()
+		s.meshMu.Unlock()
+	}
 }
 
 // meshConvergeDesired applies any console-set desired config that differs from
@@ -354,6 +401,18 @@ func (s *HTTPServer) meshConvergeDesired(deviceID string) {
 		return
 	}
 	if err := SaveConfig(cfg); err != nil {
+		return
+	}
+	// Safety guard: this convergence loop re-enters Start() every 30s on any
+	// console-driven desired-state change, so it can undo a correct boot-time
+	// deferral (audit §4c, 2026-07-19). Refuse to restart the data plane when
+	// another interface holds a route in 100.64/10 — persist the desired-state
+	// change (already saved above) so it is honoured the next time the guard
+	// clears, but do not fight Tailscale for routes now.
+	if reason := s.meshBringUpBlocked(); reason != "" {
+		s.meshMu.Lock()
+		s.meshAutoWarn = reason
+		s.meshMu.Unlock()
 		return
 	}
 	// Restart the data plane so forwarding/NAT + AllowedIPs re-apply, then

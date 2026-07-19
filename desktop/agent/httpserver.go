@@ -11288,12 +11288,11 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}))
 	case "runner_auth_browser_start":
 		var a struct {
-			DeviceID    string `json:"device_id"`
-			Runner      string `json:"runner"`
-			WaitSeconds int    `json:"wait_seconds"`
+			DeviceID string `json:"device_id"`
+			Runner   string `json:"runner"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpRunnerBrowserAuthStart(a.DeviceID, a.Runner, a.WaitSeconds))
+		return mcpToolJSON(mcpRunnerBrowserAuthStart(a.DeviceID, a.Runner))
 	case "runner_auth_browser_status":
 		var a struct {
 			DeviceID  string `json:"device_id"`

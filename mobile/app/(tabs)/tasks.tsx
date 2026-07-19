@@ -4966,6 +4966,39 @@ export default function TasksScreen() {
                     >
                       <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
                     </Pressable>
+                    {/* Symmetric mic↔text switch (audit §4.2, 2026-07-19).
+                        Vibe has a "Prefer to type?" pill; the composer needs
+                        the mirror. Tapping this closes the composer, seeds
+                        Vibe with whatever the user just typed (preserved as
+                        lastHeardRef on the Vibe side — the same channel
+                        that carries speech going the other direction), and
+                        navigates to /vibe so the loop reopens. Quiet by
+                        design — voice is the primary path, this pill is
+                        the escape hatch back to it. */}
+                    <Pressable
+                      style={({ pressed }) => [
+                        s.composerActionButton,
+                        { backgroundColor: c.bgCard },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                      onPress={() => {
+                        const seed = newTaskText.trim();
+                        Keyboard.dismiss();
+                        setShowNewTask(false);
+                        setNewTaskText("");
+                        setAttachedImages([]);
+                        setInputFromSpeech(false);
+                        setPendingTarget(null);
+                        taskRouter.push({
+                          pathname: "/vibe",
+                          params: seed ? { prompt: seed } : {},
+                        } as any);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Switch to voice — reopens Vibe with your typed text preserved"
+                    >
+                      <Ionicons name="chatbubble-ellipses-outline" size={20} color={c.textMuted} />
+                    </Pressable>
                     {/* ⚡ Reload — one-tap Hermes bundle push to this phone
                         from the selected machine. Needs the native bundle
                         loader (iOS + Android); hidden on builds without it. */}

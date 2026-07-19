@@ -120,9 +120,26 @@ class ConnectionManager {
     if (this.latestSessionTunnels.length > 0) {
       try { fresh.setSessionTunnelServers(this.latestSessionTunnels); } catch {}
     }
+    // Audit §5c (2026-07-19): every client minted in this pool needs the
+    // relay-repair rung so scheduleReconnect can auto-heal a stale relay
+    // credential. Registered by DeviceContext via setRelayRepairHook.
+    if (this.relayRepairHook) {
+      try { fresh.setRelayRepairHook(this.relayRepairHook); } catch {}
+    }
     this.clients.set(id, fresh);
     this.notify();
     return fresh;
+  }
+
+  private relayRepairHook: (() => Promise<void>) | null = null;
+  setRelayRepairHook(fn: (() => Promise<void>) | null): void {
+    this.relayRepairHook = fn;
+    // Also install on every already-minted client so a mid-session
+    // register (e.g. after DeviceContext remounts) reaches the pool.
+    for (const c of this.clients.values()) {
+      try { c.setRelayRepairHook(fn); } catch {}
+    }
+    try { this.fallback.setRelayRepairHook(fn); } catch {}
   }
 
   /** Make `deviceId` the focus that the Proxy resolves to. Pass null

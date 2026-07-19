@@ -1450,18 +1450,26 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setAgentAuthExpired(false);
 
       // If the per-device client already has a live connection (the
-      // user is bouncing back to a box they recently were on), skip
-      // the connect+timeout dance and just refresh state.
+      // user is bouncing back to a box they recently were on), verify
+      // it is STILL live on the wire before claiming. The pre-2026-07-19
+      // behaviour trusted a pure in-memory flag set once after a single
+      // /health 200, so "Already connected" was being reported for up
+      // to 15-40s after the box actually went unreachable (audit §5).
+      // A 1.5s /health probe is cheap and eliminates the UI lie.
       if (client.isConnected) {
-        sendTelemetry(token, "connect-resume", `Already connected to ${device.name}`, JSON.stringify({
-          device: device.name, deviceId: device.id.slice(0, 8),
-          mode: client.connectionMode,
-        }));
-        setConnectionStatus("connected");
-        setLastError(null);
-        setAgentAuthExpired(client.agentAuthExpired);
-        clearDeviceUnreachable(device.id);
-        return;
+        const stillUp = await client.verifyStillConnected(1500);
+        if (stillUp) {
+          sendTelemetry(token, "connect-resume", `Already connected to ${device.name}`, JSON.stringify({
+            device: device.name, deviceId: device.id.slice(0, 8),
+            mode: client.connectionMode,
+          }));
+          setConnectionStatus("connected");
+          setLastError(null);
+          setAgentAuthExpired(client.agentAuthExpired);
+          clearDeviceUnreachable(device.id);
+          return;
+        }
+        appLog("warn", `[connect-resume] isConnected flag was stale for ${device.name}; running a fresh attempt`);
       }
 
       try {
@@ -1996,7 +2004,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           );
         } else {
           setConnectionStatus("error");
-          setLastError(`Reconnecting (${attempt}/${max})...`);
+          // Carry the underlying transport cause so the self-heal effect
+          // (which greps for "relay password" / "invalid relay" /
+          // "sign in again to reconnect") can actually fire during a
+          // ladder. The pre-2026-07-19 behaviour overwrote lastError
+          // with a bare "Reconnecting (n/max)…" that matched no self-heal
+          // string, so a relay-token failure looped forever silently.
+          const cause = quicClient.lastTransportError || "";
+          setLastError(
+            cause
+              ? `Reconnecting (${attempt}/${max}) — ${cause}`
+              : `Reconnecting (${attempt}/${max})...`,
+          );
         }
       } else if (state === "disconnected") {
         // QUIC client fully disconnected (e.g., via disconnect() call)
@@ -2418,6 +2437,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const repairRelayRef = useRef(repairRelay);
   repairRelayRef.current = repairRelay;
 
+  // Register the repair rung into every QuicClient that gets minted, so
+  // scheduleReconnect can invoke repairRelay ONCE per failure streak
+  // (audit §5c, 2026-07-19). Before this, the reconnect ladder had no
+  // repair rung at all — the manual switch modal and the auto-connect
+  // sweep did, but the code path a phone actually spends most of its time
+  // in did not.
+  useEffect(() => {
+    const hook = () => repairRelayRef.current().then(() => {});
+    connectionManager.setRelayRepairHook(hook);
+    return () => connectionManager.setRelayRepairHook(null);
+  }, []);
+
   // Seamless relay self-heal. When connections fail with a relay-auth-shaped
   // error — the stale per-user-password symptom where every box reads "no
   // reachable transport" — silently repair the credential ONCE per failure
@@ -2433,11 +2464,23 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
     if (!token || relaySelfHealRef.current || connectionStatus !== "error") return;
     const err = (lastError || "").toLowerCase();
+    // Audit §3 (2026-07-19): the relay now emits distinct reason codes so
+    // the client can pick the right remedy. reason=bad_password → refetch
+    // the password (repairRelay does exactly that). reason=dead_token →
+    // this device's session expired, and refetching the password is a
+    // provable no-op — the caller must re-auth. We still ROUTE both to
+    // repairRelay's auto-heal (which no-ops when it can't help), and the
+    // dead-token path also opens the re-auth affordance via the
+    // AuthContext extend-only refresh watcher.
     const relayAuthShaped =
       err.includes("relay password") ||
       err.includes("invalid relay") ||
       err.includes("no reachable transport") ||
-      err.includes("sign in again to reconnect");
+      err.includes("sign in again to reconnect") ||
+      err.includes("reason=bad_password") ||
+      err.includes("reason=dead_token") ||
+      err.includes("session expired") ||
+      err.includes("relay session expired");
     if (!relayAuthShaped) return;
     relaySelfHealRef.current = true;
     (async () => {

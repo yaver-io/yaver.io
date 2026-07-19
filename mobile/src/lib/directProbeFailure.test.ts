@@ -14,7 +14,7 @@
 // Native, which cannot be transformed by plain tsx.
 
 
-import { describeDirectProbeFailure } from "./directProbeFailure";
+import { describeDirectProbeFailure, isUnroutableFailure } from "./directProbeFailure";
 
 let failures = 0;
 function check(label: string, actual: string, expectSubstring: string) {
@@ -70,6 +70,36 @@ check("unknown error is passed through verbatim", unknown, "socket hang up");
 if (unknown.includes("blocked by the OS")) {
   failures++;
   console.error("FAIL unknown error must not be classified blocked");
+}
+
+// --- Unroutable: instant "Network request failed" from RN ------------------
+// This is the classification added 2026-07-19 (audit §2). Getting this wrong
+// is exactly how the phone racing nine dead addresses looked identical to a
+// transient failure, so an impossible leg was retried forever.
+check(
+  "bare 'Network request failed' is classified unroutable",
+  describeDirectProbeFailure(new Error("Network request failed")),
+  "unroutable",
+);
+if (!isUnroutableFailure(new Error("Network request failed"))) {
+  failures++;
+  console.error("FAIL isUnroutableFailure must return true for RN's 'Network request failed'");
+}
+if (isUnroutableFailure(Object.assign(new Error("Aborted"), { name: "AbortError" }))) {
+  failures++;
+  console.error("FAIL isUnroutableFailure must NOT flag an abort/timeout — those are transient");
+}
+if (isUnroutableFailure(new Error("The resource could not be loaded (-1022)"))) {
+  failures++;
+  console.error("FAIL isUnroutableFailure must NOT flag ATS-blocked — that's a different remedy");
+}
+if (isUnroutableFailure(new Error("socket hang up"))) {
+  failures++;
+  console.error("FAIL unknown errors must NOT be flagged unroutable — over-claiming silences retryable legs");
+}
+if (!isUnroutableFailure(new Error("EHOSTUNREACH"))) {
+  failures++;
+  console.error("FAIL genuine EHOSTUNREACH must be flagged unroutable");
 }
 
 if (failures > 0) {

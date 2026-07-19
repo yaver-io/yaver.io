@@ -75,17 +75,22 @@ export function buildDirectProbeTargets(args: {
   lanIps?: (string | null | undefined)[] | null;
 }): string[] {
   const port = args.port || 18080;
-  const hostLegs =
-    args.host && !isMdnsName(args.host)
-      ? [
-          `http://${args.host}:${port}`,
-          // Probe the agent's real HTTP port too — a stale/mismatched Convex
-          // quicPort shouldn't hide a reachable box.
-          `http://${args.host}:18080`,
-        ]
-      : [];
+  // Fallback port when the row's quicPort disagrees with the agent's real
+  // HTTP server. Only push the fallback when port !== 18080 — otherwise every
+  // candidate was emitted TWICE with the same base, one plain and one via
+  // the Set dedup (audit §2.4, 2026-07-19), and iOS's ~6-per-host socket
+  // pool spent half its budget on duplicates.
+  const hostLegs = args.host && !isMdnsName(args.host)
+    ? (port === 18080
+        ? [`http://${args.host}:${port}`]
+        : [`http://${args.host}:${port}`, `http://${args.host}:18080`])
+    : [];
   const lanLegs = (args.lanIps || [])
     .filter((ip): ip is string => !!ip)
-    .flatMap((ip) => [`http://${ip}:${port}`, `http://${ip}:18080`]);
+    .flatMap((ip) =>
+      port === 18080
+        ? [`http://${ip}:${port}`]
+        : [`http://${ip}:${port}`, `http://${ip}:18080`],
+    );
   return Array.from(new Set([...hostLegs, ...lanLegs]));
 }

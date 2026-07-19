@@ -4934,8 +4934,15 @@ http.route({
         action: typeof body.action === "string" ? body.action : undefined,
         tokenHash,
       });
-      if (!result) {
-        return jsonResponse({ ok: false }, 401);
+      // Audit §3 (2026-07-19): reason distinguishes bad-password from
+      // dead-token from device-mismatch. The relay maps that to a distinct
+      // client-facing rejection so the desktop's recovery routes to re-auth
+      // instead of a hopeless password refetch.
+      if (!result || result.ok !== true) {
+        return jsonResponse(
+          { ok: false, reason: result?.reason ?? "bad_password" },
+          401,
+        );
       }
       return jsonResponse({
         ok: true,
