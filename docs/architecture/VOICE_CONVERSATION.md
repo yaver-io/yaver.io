@@ -132,6 +132,16 @@ is the groundwork. The core is already barge-in-ready; only the trigger is v1.
   end-to-end loop can only be confirmed on a real CarPlay route. From repo root:
   `yaver wireless push` (or `yaver wire push`), connect CarPlay, speak.
 
+## Surfaces built on the core
+
+- **Car / glass** — `mobile/app/car-voice-coding.tsx` (surface `"car"` / `"glass"`).
+- **Phone (Vibe)** — `mobile/app/vibe.tsx` (surface `"phone"`), launched from the
+  Tasks-tab mic FAB. Adds the phone-only `loadAppInterceptor` (*"load me the app
+  with Hermes"* → load a guest app into the container) and a summarized,
+  checklist-style turn UI. See **`VIBE_FROM_TASKS.md`** for the full "talk to
+  build, load the app, keep vibing" design (incl. the autorun / protected-build /
+  voice-deploy roadmap).
+
 ## Roadmap
 
 - **v2 native barge-in:** an `AVAudioEngine.setVoiceProcessingEnabled` capture

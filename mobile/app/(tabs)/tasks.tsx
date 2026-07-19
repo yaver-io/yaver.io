@@ -4217,6 +4217,32 @@ export default function TasksScreen() {
           </Pressable>
         )}
 
+        {/* Vibe FAB — voice-first "just talk to build". Stacked above the
+            compose +. Texting a coding agent from a phone is a poor vibing
+            experience; this drops you into the hands-free STT/TTS loop where
+            you can also say "load me the app with Hermes" mid-flow. */}
+        {canComposeTask && (
+          <Pressable
+            hitSlop={12}
+            style={({ pressed }) => [
+              s.fab,
+              {
+                backgroundColor: c.bgCard,
+                borderWidth: 1,
+                borderColor: c.accent,
+                bottom: Math.max(insets.bottom + 16, 24) + 68,
+                shadowColor: c.shadowMd,
+              },
+              pressed && s.fabPressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Vibe — talk to build"
+            onPress={() => taskRouter.navigate("/vibe" as any)}
+          >
+            <Ionicons name="mic" size={24} color={c.accent} />
+          </Pressable>
+        )}
+
         {/* Video summary player — opens when a task's "▶ Watch demo"
             chip is tapped. Plays the clip through the authenticated
             agent path, including relay/direct headers and Range seeks. */}
