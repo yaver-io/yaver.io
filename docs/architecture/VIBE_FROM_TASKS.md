@@ -7,6 +7,32 @@ roadmap · 2026-07-19
 > `mobile/app/vibe.tsx`, `mobile/src/lib/voice/*`, the code wins — fix the doc in
 > the same change.
 
+## Design principle — Yaver is a remote AI runner; keep the mobile UI tiny
+
+Yaver's job, on **every** surface, is to be a **remote AI runner + build
+system** you drive by voice while you *watch the result*. The mobile app is not
+a control panel with hundreds of screens — it is a thin lens on that loop:
+
+> **talk → runner builds on your box → Hermes/WebRTC-load the result →
+> feel it via the feedback SDK → talk again.**
+
+Concretely, the mobile surfaces should collapse toward:
+
+1. **Tasks (mostly STT/TTS)** — the home of the app. You describe work; it runs
+   on the box; output comes back **summarized and clear** (checklist cards, one
+   line per turn), never a raw log/diff dump.
+2. **Load & feel** — Hermes / WebRTC load + the feedback SDK reload, by voice.
+   The visual experience of the running app is the point; make it perfect.
+3. **Optional extras, only when asked** — recap videos of what happened while you
+   were away; MCP tool support; deploy/CI status. These are opt-in, not
+   permanent chrome.
+
+Everything else in `mobile/app/` is a candidate for removal or for hiding behind
+"More". When adding a mobile screen, ask: *does this serve the runner loop?* If
+not, it probably shouldn't be a top-level surface. This principle holds for
+phone, tablet, watch, TV, car, and glass/AR-VR alike — one simple loop, many
+lenses.
+
 ## The problem
 
 Texting a coding agent from a phone is a terrible "vibing" experience: there's
