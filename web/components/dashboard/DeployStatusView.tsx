@@ -83,9 +83,9 @@ export function DeployStatusView() {
             <div className="flex items-center justify-between">
               <span className="font-semibold">{TARGET_LABELS[r.target] || r.target}</span>
               {r.deploying ? (
-                <Badge variant="info">● {r.stage || "deploying"}</Badge>
+                <Badge tone="info">● {r.stage || "deploying"}</Badge>
               ) : (
-                <Badge variant="neutral">idle</Badge>
+                <Badge tone="muted">idle</Badge>
               )}
             </div>
 
