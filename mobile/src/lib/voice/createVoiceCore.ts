@@ -17,6 +17,7 @@ import { createLocalJudge } from "./adapters/localJudge";
 import {
   machineSwitchInterceptor,
   surfaceIntentInterceptor,
+  loadAppInterceptor,
   carRiskPolicy,
   type MachineOption,
 } from "./adapters/interceptors";
@@ -25,6 +26,7 @@ import type {
   VoiceCoreListener,
   VoiceSurface,
 } from "./types";
+import type { LoadAppIntent } from "./loadAppIntent";
 import type { SessionTurnDep } from "../carSessionTurn";
 
 export interface CreateVoiceCoreOptions {
@@ -36,6 +38,9 @@ export interface CreateVoiceCoreOptions {
   onSwitchMachine?: (deviceId: string) => void;
   /** Runtime ops for surface intents (mail/meeting/maps…). Omit to disable. */
   callOps?: (verb: string, payload: Record<string, unknown>) => Promise<unknown>;
+  /** "load me the app with Hermes" → load a guest app into the container. Omit
+   *  to disable (car/watch don't load apps; phone/vibe does). */
+  onLoadApp?: (intent: LoadAppIntent) => void | Promise<void>;
   /** TTS provider config (defaults to on-device expo-speech). */
   tts?: DeviceTtsConfig;
   /** BCP-47 locale, e.g. "en-US" / "tr-TR". */
@@ -53,6 +58,12 @@ export function createVoiceCore(o: CreateVoiceCoreOptions): VoiceConversationCor
   // over surface intents and coding dispatch.
   if (o.machines && o.onSwitchMachine) {
     interceptors.push(machineSwitchInterceptor(o.machines, o.onSwitchMachine));
+  }
+  // Load-app runs before surface intents and coding dispatch: "load me the app"
+  // is a container action, not a coding instruction — it must never reach the
+  // runner as a prompt.
+  if (o.onLoadApp) {
+    interceptors.push(loadAppInterceptor(o.onLoadApp));
   }
   if (o.callOps) {
     interceptors.push(surfaceIntentInterceptor(o.callOps));

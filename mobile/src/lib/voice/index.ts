@@ -26,9 +26,16 @@ export { realClock, realScheduler, FakeTime } from "./scheduler";
 export {
   machineSwitchInterceptor,
   surfaceIntentInterceptor,
+  loadAppInterceptor,
   carRiskPolicy,
   type MachineOption,
 } from "./adapters/interceptors";
+export {
+  classifyLoadApp,
+  spokenForLoad,
+  type LoadAppIntent,
+  type LoadMode,
+} from "./loadAppIntent";
 export type {
   VoiceSurface,
   VoiceState,

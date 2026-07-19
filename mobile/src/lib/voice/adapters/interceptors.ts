@@ -16,6 +16,7 @@ import {
 } from "../../carMachineSwitch";
 import { executeCarSurfaceIntent } from "../../carSurfaceIntent";
 import { assessRisk, interpretConfirmReply } from "../../carVoiceConfirm";
+import { classifyLoadApp, type LoadAppIntent } from "../loadAppIntent";
 
 export interface MachineOption {
   id: string;
@@ -73,6 +74,26 @@ export function surfaceIntentInterceptor(
         // the runner (or surface a spoken error there).
         return { spoken: "I couldn't reach that service." };
       }
+    },
+  };
+}
+
+/**
+ * "load me the app with Hermes" — the vibing loop's phone interceptor. Loads a
+ * guest app into the Yaver container (with the feedback overlay) WITHOUT hitting
+ * the runner, so you can keep talking to code while the running thing is right
+ * there. The side-effect (publish to openAppBus + open Hot Reload) is injected
+ * by the screen; this adapter never imports the container/router. Runs after
+ * machine-switch (retarget wins) and before the coding dispatch.
+ */
+export function loadAppInterceptor(
+  onLoad: (intent: LoadAppIntent) => void | Promise<void>,
+): InstructionInterceptor {
+  return {
+    async intercept(text): Promise<InterceptResult | null> {
+      const intent = classifyLoadApp(text);
+      if (!intent) return null;
+      return { spoken: intent.spoken, effect: () => onLoad(intent) };
     },
   };
 }
