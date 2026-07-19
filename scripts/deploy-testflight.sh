@@ -82,10 +82,27 @@ AUTH_KEY="${APP_STORE_KEY_PATH:?APP_STORE_KEY_PATH unset. Likely cause: the Yave
 AUTH_KEY_ID="${APP_STORE_KEY_ID:?Set APP_STORE_KEY_ID (env or yaver vault)}"
 AUTH_KEY_ISSUER="${APP_STORE_KEY_ISSUER:?Set APP_STORE_KEY_ISSUER (env or yaver vault)}"
 
-# Bump build number
+# Bump build number.
+#
+# BUG FIX (2026-07-19): this used to bump from the LOCAL Info.plist only. The
+# local number drifts from reality — three autorun clones on one box sat at 445,
+# 446, 447 while App Store Connect already had all of 441–447 from a prior day —
+# so every upload collided (ITMS "build number already used") and burned a slot
+# of the ~18/day TestFlight cap. Bump from max(local, ASC-highest) + 1 so a new
+# build can never collide. The ASC query is best-effort: if the crypto libs or
+# network aren't there, fall back to local+1 and warn (the export-error handler
+# below now surfaces a collision clearly either way).
 PLIST="Yaver/Info.plist"
 CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$PLIST")
-NEW_BUILD=$((CURRENT_BUILD + 1))
+ASC_MAX=$(APP_STORE_KEY_PATH="$AUTH_KEY" APP_STORE_KEY_ID="$AUTH_KEY_ID" APP_STORE_KEY_ISSUER="$AUTH_KEY_ISSUER" \
+  python3 "$ROOT/scripts/asc-max-build.py" 2>/dev/null || echo "")
+if [ -n "$ASC_MAX" ] && [ "$ASC_MAX" -ge "$CURRENT_BUILD" ] 2>/dev/null; then
+  echo "ASC highest build is $ASC_MAX (local $CURRENT_BUILD) — bumping from max"
+  NEW_BUILD=$((ASC_MAX + 1))
+else
+  [ -z "$ASC_MAX" ] && echo "WARN: could not read ASC max build — bumping from local $CURRENT_BUILD"
+  NEW_BUILD=$((CURRENT_BUILD + 1))
+fi
 # PlistBuddy rewrites the whole plist and DROPS XML COMMENTS. Info.plist
 # carries a long comment explaining why NSAllowsArbitraryLoads is set (the
 # 100.64/10 CGNAT range that NSAllowsLocalNetworking does not exempt) — that
@@ -145,21 +162,42 @@ cat > /tmp/ExportOptions.plist <<EOF
 </plist>
 EOF
 
-# Export & upload (destination=upload sends directly to App Store Connect)
+# Export & upload (destination=upload sends directly to App Store Connect).
+#
+# BUG FIX (2026-07-19): this used to be `EXPORT_OUTPUT=$(xcodebuild …)`. Under
+# `set -eo pipefail` (line 2), a FAILED command substitution aborts the script
+# AT that assignment — so the diagnostic below and the "Redundant Binary Upload"
+# tolerance were unreachable dead code, and every real failure surfaced as a
+# bare `exit 70/65` with no message. That masked a full day of debugging (the
+# actual cause was a build-number collision + a locked signing keychain).
+# Stream to a log with `set +e` so the exit code is captured AND the error is
+# visible.
 echo "Exporting & uploading..."
-EXPORT_OUTPUT=$(xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
+EXPORT_LOG=/tmp/yaver_export.log
+set +e
+xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
   -exportOptionsPlist /tmp/ExportOptions.plist \
   -exportPath /tmp/YaverExport -allowProvisioningUpdates \
   -authenticationKeyPath "$AUTH_KEY" \
   -authenticationKeyID "$AUTH_KEY_ID" \
-  -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" 2>&1)
-EXPORT_EXIT=$?
+  -authenticationKeyIssuerID "$AUTH_KEY_ISSUER" 2>&1 | tee "$EXPORT_LOG"
+EXPORT_EXIT=${PIPESTATUS[0]}
+set -e
 
-echo "$EXPORT_OUTPUT" | tail -3
-
-# Check for success: either exit 0, or "Redundant Binary" (already uploaded)
-if [ $EXPORT_EXIT -ne 0 ] && ! echo "$EXPORT_OUTPUT" | grep -q "Redundant Binary Upload"; then
-  echo "ERROR: Export/upload failed (exit $EXPORT_EXIT)"
+# Success = exit 0, OR "Redundant Binary" (build already uploaded — treat as ok).
+if [ "$EXPORT_EXIT" -ne 0 ] && ! grep -q "Redundant Binary Upload" "$EXPORT_LOG"; then
+  echo "ERROR: Export/upload failed (exit $EXPORT_EXIT). Diagnosis:"
+  # Surface the two most common real causes explicitly (learned 2026-07-19):
+  if grep -q "errSecInternalComponent" "$EXPORT_LOG"; then
+    echo "  → codesign errSecInternalComponent: a signing keychain is LOCKED to this"
+    echo "    (headless) session. Unlock BOTH yaver-ci.keychain-db and login.keychain-db"
+    echo "    + set-key-partition-list. See CLAUDE.md → 'Headless codesign'."
+  fi
+  if grep -qiE "bundle version.*already|redundant|The build.*has already been used|ITMS-4238" "$EXPORT_LOG"; then
+    echo "  → build number $NEW_BUILD collides with an existing App Store Connect build."
+    echo "    Bump CFBundleVersion above the ASC max and retry."
+  fi
+  grep -iE "error|errSec|EXPORT FAILED|ITMS-" "$EXPORT_LOG" | tail -8
   exit 1
 fi
 
