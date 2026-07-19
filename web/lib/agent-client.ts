@@ -2060,6 +2060,31 @@ export class AgentClient {
     return res.json();
   }
 
+  /** Live deploy board from the box's autorun store (GET /autoruns/deploy-status).
+   *  Powers the web DeployStatusView, mirroring the mobile screen. Returns an
+   *  empty board on an older agent that lacks the endpoint (never throws hard). */
+  async getDeployStatus(): Promise<{
+    targets: {
+      target: string;
+      deploying: boolean;
+      holder?: string;
+      build?: string;
+      stage?: string;
+      startedAt?: number;
+      elapsedSecs?: number;
+      uploadsToday: number;
+      quota: number;
+    }[];
+    at: number;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/autoruns/deploy-status`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`deploy-status: ${res.status}`);
+    return res.json();
+  }
+
   /** Classify the connected agent's working directory into one of
    *  mobile / web / backend / generic — used by the workspace route
    *  to pick the right default pane set. Returns generic on any
@@ -2188,7 +2213,7 @@ export class AgentClient {
    * machine than the one the dashboard is connected to — the same code
    * path mobile uses from DeviceDetailsModal.
    */
-  async startRunnerBrowserAuth(runner: string, target?: string): Promise<RunnerBrowserAuthSession> {
+  async startRunnerBrowserAuth(runner: string, target?: string, waitSeconds = 5): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
     const url = target
       ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/start`
@@ -2196,7 +2221,7 @@ export class AgentClient {
     const res = await fetch(url, {
       method: "POST",
       headers: this.authHeaders,
-      body: JSON.stringify({ runner }),
+      body: JSON.stringify({ runner, wait_seconds: waitSeconds }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -2252,7 +2277,7 @@ export class AgentClient {
     const res = await fetch(url, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ session_id: sessionId, code }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -2495,7 +2520,7 @@ export class AgentClient {
   }
 
   async runnerBrowserAuthStart(
-    params: { runner: "claude" | "codex" },
+    params: { runner: "claude" | "codex"; waitSeconds?: number },
     target?: string,
   ): Promise<{ ok: boolean; session?: RunnerBrowserAuthSession; error?: string }> {
     this.assertConnected();
@@ -2505,7 +2530,7 @@ export class AgentClient {
     const res = await fetch(base, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ runner: params.runner }),
+      body: JSON.stringify({ runner: params.runner, wait_seconds: params.waitSeconds ?? 5 }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
