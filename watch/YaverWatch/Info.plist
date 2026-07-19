@@ -1,45 +1,164 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>CFBundleDisplayName</key>
-	<string>Yaver</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Yaver connects to a machine on your network running the Yaver agent when you use the watch without your phone.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Yaver listens to your spoken command so it can run it on your remote box and read back a one-sentence result.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Yaver transcribes what you say on your wrist into a command for your Yaver agent.</string>
-	<key>WKApplication</key>
-	<true/>
-	<key>WKCompanionAppBundleIdentifier</key>
-	<string>io.yaver.mobile</string>
-	<key>YaverNativeAppManifestSchemaVersion</key>
-	<string>1</string>
-	<key>YaverNativeOAuthProvider</key>
-	<string>yaver-oauth</string>
-	<key>YaverNativeRuntimeKind</key>
-	<string>hosted-yaver-companion</string>
-	<key>YaverNativeRuntimeSurfaces</key>
-	<array>
-		<string>watch</string>
-	</array>
-</dict>
+  <dict>
+    <key>AppGroupIdentifier</key>
+    <string>group.io.yaver.mobile</string>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
+    <key>CFBundleDisplayName</key>
+    <string>Yaver</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.18.150</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>yaver</string>
+        </array>
+      </dict>
+    </array>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+      <string>airmail</string>
+      <string>message</string>
+      <string>bluemail</string>
+      <string>canary</string>
+      <string>edisonmail</string>
+      <string>szn-email</string>
+      <string>fastmail</string>
+      <string>x-gmxmail-netid-v1</string>
+      <string>googlegmail</string>
+      <string>mailrumail</string>
+      <string>ms-outlook</string>
+      <string>protonmail</string>
+      <string>ctxmail</string>
+      <string>readdle-spark</string>
+      <string>superhuman</string>
+      <string>telekommail</string>
+      <string>tutanota</string>
+      <string>x-webdemail-netid-v1</string>
+      <string>ymail</string>
+      <string>yandexmail</string>
+      <string>appcenter-f45b4c0b-75c9-2d01-7ab6-41f6a6015be2</string>
+      <string>mymail-mailto</string>
+    </array>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsArbitraryLoads</key>
+      <true/>
+      <key>NSAllowsLocalNetworking</key>
+      <true/>
+    </dict>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Yaver provides Bluetooth access to apps you run for testing.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>Yaver provides Bluetooth access to apps you run for testing.</string>
+    <key>NSBonjourServices</key>
+    <array>
+      <string>_yaver._udp</string>
+      <string>_yaver._tcp</string>
+    </array>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your calendars</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your calendars</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Yaver needs camera access to take photos for tasks.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your contacts</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to use Face ID</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Yaver discovers your Mac on the same Wi-Fi so your phone can connect directly for lowest-latency, end-to-end encrypted control of your AI coding sessions.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Yaver provides location access to apps you run for testing.</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your location</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Yaver provides location access to apps you run for testing.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Yaver uses your microphone for voice input — send tasks by speaking instead of typing.</string>
+    <key>NSMotionUsageDescription</key>
+    <string>Yaver provides motion sensor access to apps you run for testing.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Yaver needs photo access to attach images to tasks.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your reminders</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your reminders</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Yaver uses speech recognition to transcribe your voice into task descriptions.</string>
+    <key>NSSupportsLiveActivities</key>
+    <true/>
+    <key>NSUserActivityTypes</key>
+    <array>
+      <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>
+    </array>
+    <key>RCTNewArchEnabled</key>
+    <true/>
+    <key>UIApplicationShortcutItems</key>
+    <array>
+      <dict>
+        <key>UIApplicationShortcutItemType</key>
+        <string>io.yaver.mobile.carVoice</string>
+        <key>UIApplicationShortcutItemTitle</key>
+        <string>Car Voice Runtime</string>
+        <key>UIApplicationShortcutItemSubtitle</key>
+        <string>Start a hands-free Yaver task</string>
+        <key>UIApplicationShortcutItemIconType</key>
+        <string>UIApplicationShortcutIconTypeAudio</string>
+      </dict>
+    </array>
+    <key>UIBackgroundModes</key>
+    <array>
+      <string>fetch</string>
+      <string>audio</string>
+    </array>
+    <key>UILaunchStoryboardName</key>
+    <string>SplashScreen</string>
+    <key>UIRequiresFullScreen</key>
+    <false/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+      <string>UIInterfaceOrientationPortrait</string>
+      <string>UIInterfaceOrientationPortraitUpsideDown</string>
+      <string>UIInterfaceOrientationLandscapeLeft</string>
+      <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+      <string>UIInterfaceOrientationPortrait</string>
+      <string>UIInterfaceOrientationPortraitUpsideDown</string>
+      <string>UIInterfaceOrientationLandscapeLeft</string>
+      <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UIUserInterfaceStyle</key>
+    <string>Automatic</string>
+    <key>WKApplication</key>
+    <true/>
+    <key>WKCompanionAppBundleIdentifier</key>
+    <string>io.yaver.mobile</string>
+    <key>YaverNativeAppManifestSchemaVersion</key>
+    <string>1</string>
+    <key>YaverNativeOAuthProvider</key>
+    <string>yaver-oauth</string>
+    <key>YaverNativeRuntimeKind</key>
+    <string>hosted-yaver-companion</string>
+    <key>YaverNativeRuntimeSurfaces</key>
+    <array>
+      <string>watch</string>
+    </array>
+  </dict>
 </plist>
