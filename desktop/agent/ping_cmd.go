@@ -122,7 +122,10 @@ func fetchRemoteAgentPingByHint(ctx context.Context, deviceHint string) (*remote
 	if derr != nil {
 		return nil, fmt.Errorf("list devices: %w", derr)
 	}
-	hint := normalizeDeviceHint(deviceHint)
+	hint, err := resolveReachPingLookupHint(ctx, cfg, deviceHint)
+	if err != nil {
+		return nil, err
+	}
 	var target *DeviceInfo
 	for i := range devices {
 		d := &devices[i]
@@ -139,6 +142,34 @@ func fetchRemoteAgentPingByHint(ctx context.Context, deviceHint string) (*remote
 		return nil, fmt.Errorf("device %q not found", deviceHint)
 	}
 	return fetchRemoteAgentPing(ctx, candidates, token, target)
+}
+
+func resolveReachPingLookupHint(ctx context.Context, cfg *Config, deviceHint string) (string, error) {
+	hint := normalizeDeviceHint(deviceHint)
+	switch strings.ToLower(strings.TrimSpace(hint)) {
+	case "primary":
+		current, err := primaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
+		if err != nil {
+			return "", fmt.Errorf("read primary device: %w", err)
+		}
+		current = strings.TrimSpace(current)
+		if current == "" {
+			return "", fmt.Errorf("no primary device set — run `yaver primary set <deviceId>` first")
+		}
+		return current, nil
+	case "secondary":
+		current, err := secondaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
+		if err != nil {
+			return "", fmt.Errorf("read secondary device: %w", err)
+		}
+		current = strings.TrimSpace(current)
+		if current == "" {
+			return "", fmt.Errorf("no secondary device set — run `yaver secondary set <deviceId>` first")
+		}
+		return current, nil
+	default:
+		return hint, nil
+	}
 }
 
 func fetchRemoteAgentPingByDeviceID(ctx context.Context, deviceID string) (*remoteAgentStatusReport, error) {

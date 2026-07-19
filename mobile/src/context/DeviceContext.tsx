@@ -3805,16 +3805,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (lastType && lastType !== currentType) {
           console.log(`[DeviceContext] Network changed: ${lastType} → ${currentType}`);
           sendTelemetry(token, "network-change", `${lastType} → ${currentType}`);
-          quicClient.fullReconnect();
+          connectionManager.fullReconnectFocused();
         } else if (lastType && lastType === currentType && lastIp && currentIp && lastIp !== currentIp) {
           // Same type but IP changed — Wi-Fi roam, VPN toggle, DHCP renew.
           // Stale tunnel will hang on the old route; reprobe.
           console.log(`[DeviceContext] IP changed (${currentType}): ${lastIp} → ${currentIp}`);
           sendTelemetry(token, "network-ip-change", `${currentType} ${lastIp}→${currentIp}`);
-          quicClient.fullReconnect();
+          connectionManager.fullReconnectFocused();
         } else if (!lastType) {
           // First event after mount or reconnection — just probe to be safe
-          quicClient.triggerReconnect();
+          connectionManager.triggerReconnectFocused();
         }
       }
       lastType = currentType;
@@ -3838,11 +3838,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (!activeDevice || userDisconnected) return;
       if (quicClient.connectionState === "connected" || connectionStatus === "connecting") return;
       if (quicClient.reconnectAttempt > 0) {
-        quicClient.triggerReconnect();
+        connectionManager.triggerReconnectFocused();
         return;
       }
       if (connectionStatus === "error" || connectionStatus === "disconnected") {
-        quicClient.triggerReconnect();
+        connectionManager.triggerReconnectFocused();
         return;
       }
       selectDevice(activeDevice).catch(() => {});

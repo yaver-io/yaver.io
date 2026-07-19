@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Sanity test for projectBundleIDMatches. We write representative
@@ -658,6 +659,109 @@ targets:
 	appPath := filepath.Join(todoKt, "app")
 	if _, leaked := got[filepath.Clean(appPath)]; leaked {
 		t.Errorf("kotlin :app sub-module leaked into projects: %v", got)
+	}
+}
+
+func TestScanMobileProjects_DiscoversStandaloneTodoRepos(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	workspace := filepath.Join(tmp, "Workspace")
+
+	web := filepath.Join(workspace, "yaver-todo-web")
+	mustMkdirAllMobileScan(t, filepath.Join(web, ".git"))
+	writeManifestFile(t, filepath.Join(web, "package.json"), `{"name":"yaver-todo-web","dependencies":{"next":"15.0.0"}}`)
+
+	flutter := filepath.Join(workspace, "yaver-todo-flutter")
+	mustMkdirAllMobileScan(t, filepath.Join(flutter, ".git"))
+	writeManifestFile(t, filepath.Join(flutter, "pubspec.yaml"), "name: yaver_todo_flutter\n")
+
+	swift := filepath.Join(workspace, "yaver-todo-swift")
+	mustMkdirAllMobileScan(t, filepath.Join(swift, ".git"))
+	writeManifestFile(t, filepath.Join(swift, "project.yml"), `
+name: YaverTodoSwift
+targets:
+  YaverTodoSwift:
+    platform: iOS
+    settings:
+      base:
+        INFOPLIST_KEY_CFBundleDisplayName: "Yaver Todo Swift"
+`)
+
+	kotlin := filepath.Join(workspace, "yaver-todo-kt")
+	mustMkdirAllMobileScan(t, filepath.Join(kotlin, ".git"))
+	writeManifestFile(t, filepath.Join(kotlin, "settings.gradle.kts"), `rootProject.name = "yaver-todo-kt"
+include(":app")`)
+	writeManifestFile(t, filepath.Join(kotlin, "build.gradle.kts"), `plugins { id("com.android.application") apply false }`)
+	writeManifestFile(t, filepath.Join(kotlin, "app", "build.gradle.kts"), `plugins { id("com.android.application") }`)
+	writeManifestFile(t, filepath.Join(kotlin, "app", "src", "main", "AndroidManifest.xml"), `<manifest><application android:label="Yaver Todo Kt"/></manifest>`)
+
+	projects := scanMobileProjects()
+
+	assertProjectFramework(t, projects, flutter, "flutter")
+	assertProjectFramework(t, projects, swift, "swift")
+	assertProjectFramework(t, projects, kotlin, "kotlin")
+
+	for _, p := range mobileCapableProjects(projects) {
+		if filepath.Clean(p.Path) == filepath.Clean(web) {
+			t.Fatalf("pure web todo repo leaked into mobile projects: %+v", p)
+		}
+	}
+}
+
+func TestMobileProjectsPersistentCacheRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	scannedAt := time.Now().UTC().Truncate(time.Second)
+	stats := mobileScanStats{ElapsedMs: 123}
+	want := []MobileProject{
+		{
+			Name:           "yaver-todo-flutter / mobile",
+			Path:           filepath.Join(tmp, "Workspace", "yaver-todo-flutter"),
+			Framework:      "flutter",
+			MobileCapable:  true,
+			ExecutionMode:  "native-webrtc",
+			PrimarySurface: "webrtc",
+		},
+		{
+			Name:          "yaver-todo-web / web",
+			Path:          filepath.Join(tmp, "Workspace", "yaver-todo-web"),
+			Framework:     "next",
+			WebCapable:    true,
+			MobileCapable: false,
+		},
+	}
+
+	savePersistedMobileProjectsCache(want, scannedAt, stats)
+
+	mobileProjectCache.mu.Lock()
+	mobileProjectCache.projects = nil
+	mobileProjectCache.scannedAt = time.Time{}
+	mobileProjectCache.stats = mobileScanStats{}
+	mobileProjectCache.scanning = false
+	mobileProjectCache.mu.Unlock()
+
+	if !hydrateMobileProjectCacheFromDisk() {
+		t.Fatal("expected persisted mobile project cache to hydrate")
+	}
+
+	mobileProjectCache.mu.RLock()
+	gotProjects := append([]MobileProject(nil), mobileProjectCache.projects...)
+	gotScannedAt := mobileProjectCache.scannedAt
+	gotStats := mobileProjectCache.stats
+	mobileProjectCache.mu.RUnlock()
+
+	if !gotScannedAt.Equal(scannedAt) {
+		t.Fatalf("scannedAt = %s, want %s", gotScannedAt, scannedAt)
+	}
+	if gotStats.ElapsedMs != stats.ElapsedMs {
+		t.Fatalf("elapsedMs = %d, want %d", gotStats.ElapsedMs, stats.ElapsedMs)
+	}
+
+	mobileOnly := mobileCapableProjects(gotProjects)
+	if len(mobileOnly) != 1 || mobileOnly[0].Framework != "flutter" {
+		t.Fatalf("mobileCapableProjects = %+v, want only flutter", mobileOnly)
 	}
 }
 

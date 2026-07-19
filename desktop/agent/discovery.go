@@ -124,13 +124,13 @@ func projectDiscoveryRoots() []string {
 	}
 
 	candidates := []string{
-		home,
 		filepath.Join(home, "Workspace"),
 		filepath.Join(home, "Projects"),
 		filepath.Join(home, "Code"),
 		filepath.Join(home, "src"),
 		filepath.Join(home, "work"),
 		filepath.Join(home, "dev"),
+		home,
 	}
 
 	if isWSLHost() {

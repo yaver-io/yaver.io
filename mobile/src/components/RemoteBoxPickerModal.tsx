@@ -24,6 +24,7 @@ import { eligibleRemoteBoxDevices, versionPatchDistance } from "../lib/devicePic
 import {
   lastSeenLabel,
   probeMobileDeviceStatus,
+  type CodingRunnersProbeState,
   type CodingRunnerProbe,
 } from "../lib/deviceStatus";
 import { probeDeviceWithRepair } from "../lib/probeWithRepair";
@@ -45,6 +46,7 @@ interface Props {
 type CodingStatus = {
   ready: boolean;
   runners: CodingRunnerProbe[];
+  probeState?: CodingRunnersProbeState;
   path?: "relay" | "direct";
   error?: string;
 };
@@ -574,11 +576,13 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               ? {
                   ready: probe.codingReady,
                   runners: probe.codingRunners,
+                  probeState: probe.codingRunnersProbe,
                   path: probe.path,
                 }
               : {
                   ready: false,
                   runners: [],
+                  probeState: "network-error",
                   error: probe.error || "Coding agent status unavailable",
                 },
           }));
@@ -589,6 +593,7 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
             [device.id]: {
               ready: false,
               runners: [],
+              probeState: "network-error",
               error: err?.message || "Coding agent status unavailable",
             },
           }));
@@ -1171,6 +1176,14 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                               );
                             })()}
                           </View>
+                        ) : codingStatus?.probeState && codingStatus.probeState !== "ok" ? (
+                          <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>
+                            {codingStatus.probeState === "timed-out"
+                              ? "Runner status timed out · agent is up but busy"
+                              : codingStatus.probeState === "http-error"
+                                ? "Runner status unavailable · agent HTTP error"
+                                : "Runner status unavailable · network error"}
+                          </Text>
                         ) : (
                           <Text style={{ color: c.warn, fontSize: 11, marginTop: 4, fontWeight: "600" }} numberOfLines={1}>
                             {codingStatus?.error || "No coding agents ready"}
