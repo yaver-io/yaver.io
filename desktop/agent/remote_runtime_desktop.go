@@ -182,6 +182,33 @@ func (t desktopScreenTarget) Key(_ context.Context, _ string, key string) error 
 	return eng.Input.KeyCombo(keys...)
 }
 
+// Pinch has no ghost primitive: ghost.Input is a single-pointer interface
+// (Click/Drag/MoveMouse) built on XTest and SendInput, neither of which
+// synthesizes a second simultaneous contact. Refusing explicitly beats a
+// silent no-op — see errPinchUnsupported.
+func (t desktopScreenTarget) Pinch(_ context.Context, _ string, _, _ int, _ float64, _ int) error {
+	return fmt.Errorf("%w: ghost drives a single pointer (XTest/SendInput), not multi-touch", errPinchUnsupported)
+}
+
+// Navigate opens the URL in the desktop's default browser. Unlike the device
+// targets there is no deep-link primitive here — the entry point is the OS
+// opener (open/xdg-open/start), which is exactly what a person sitting at this
+// machine would do with a link.
+//
+// It is gated on desktopControlAllowed, not desktopViewAllowed: launching an
+// application is an input action on the user's real desktop, not a read of it.
+func (t desktopScreenTarget) Navigate(_ context.Context, _, rawURL string) error {
+	if err := desktopControlAllowed(); err != nil {
+		return err
+	}
+	target, err := validateNavigateURL(rawURL)
+	if err != nil {
+		return err
+	}
+	openBrowser(target)
+	return nil
+}
+
 // Screenshot is the JPEG/PNG data-channel fallback used when the host can't
 // produce an RTP H.264 track (no ffmpeg). It is also what the still-frame
 // verbs read.
