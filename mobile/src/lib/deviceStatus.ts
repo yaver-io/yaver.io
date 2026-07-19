@@ -1,6 +1,13 @@
 import { Platform } from "react-native";
 import { quicClient } from "./quic";
+import {
+  classifyRunnerFetchOutcome,
+  type CodingRunnersProbeState as InternalCodingRunnersProbeState,
+} from "./deviceStatusRunnerProbe";
 import { buildDirectProbeTargets, isCredentialSafeBase } from "./probeTargets";
+
+export type { CodingRunnersProbeState } from "./deviceStatusRunnerProbe";
+export { classifyRunnerFetchOutcome } from "./deviceStatusRunnerProbe";
 
 export type MobileDeviceStatusProbe = {
   reachable: boolean;
@@ -8,6 +15,7 @@ export type MobileDeviceStatusProbe = {
   authExpired: boolean;
   codingReady: boolean;
   codingRunners: CodingRunnerProbe[];
+  codingRunnersProbe: InternalCodingRunnersProbeState;
   lifecycleState?: MobileDeviceLifecycleState | null;
   checkedAt: number;
   path?: "relay" | "direct";
@@ -158,18 +166,41 @@ async function fetchCodingRunnersAt(
   url: string,
   headers: Record<string, string>,
   timeoutMs: number,
-): Promise<CodingRunnerProbe[]> {
+): Promise<{ state: InternalCodingRunnersProbeState; runners: CodingRunnerProbe[] }> {
   try {
     const res = await fetch(`${url}/agent/runners`, {
       headers,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      return {
+        state: classifyRunnerFetchOutcome({ status: res.status }),
+        runners: [],
+      };
+    }
     const data = await res.json().catch(() => null);
-    const rows = Array.isArray(data?.runners) ? data.runners : [];
-    return rows.map(normalizeRunner).filter((r: CodingRunnerProbe | null): r is CodingRunnerProbe => !!r);
-  } catch {
-    return [];
+    if (!Array.isArray(data?.runners)) {
+      return {
+        state: "http-error",
+        runners: [],
+      };
+    }
+    return {
+      state: "ok",
+      runners: data.runners
+        .map(normalizeRunner)
+        .filter((r: CodingRunnerProbe | null): r is CodingRunnerProbe => !!r),
+    };
+  } catch (err: any) {
+    const aborted =
+      err?.name === "AbortError" ||
+      err?.name === "TimeoutError" ||
+      err?.code === "AbortError" ||
+      err?.code === "TimeoutError";
+    return {
+      state: classifyRunnerFetchOutcome(aborted ? { aborted: true } : { networkError: err }),
+      runners: [],
+    };
   }
 }
 
@@ -251,8 +282,9 @@ export async function probeMobileDeviceStatus(
       reachable: true,
       bootstrap: parsed.bootstrap,
       authExpired: parsed.authExpired,
-      codingReady: codingReady(codingRunners),
-      codingRunners,
+      codingReady: codingReady(codingRunners.runners),
+      codingRunners: codingRunners.runners,
+      codingRunnersProbe: codingRunners.state,
       lifecycleState: parsed.lifecycleState,
       checkedAt,
       path: winner.a.path,
@@ -266,6 +298,7 @@ export async function probeMobileDeviceStatus(
     authExpired: false,
     codingReady: false,
     codingRunners: [],
+    codingRunnersProbe: "network-error",
     lifecycleState: null,
     checkedAt,
     error:

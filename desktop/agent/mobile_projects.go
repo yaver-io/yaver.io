@@ -283,6 +283,83 @@ type mobileScanStats struct {
 	Err        string        `json:"error,omitempty"`
 }
 
+const mobileProjectsCacheFileName = "mobile-projects.json"
+
+type persistedMobileProjectsCache struct {
+	Projects  []MobileProject `json:"projects"`
+	ScannedAt string          `json:"scannedAt"`
+	Stats     mobileScanStats `json:"stats"`
+}
+
+func mobileProjectsCachePath() (string, error) {
+	dir, err := yaverDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, mobileProjectsCacheFileName), nil
+}
+
+func loadPersistedMobileProjectsCache() ([]MobileProject, time.Time, mobileScanStats, bool) {
+	path, err := mobileProjectsCachePath()
+	if err != nil {
+		return nil, time.Time{}, mobileScanStats{}, false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, time.Time{}, mobileScanStats{}, false
+	}
+	var cached persistedMobileProjectsCache
+	if err := json.Unmarshal(raw, &cached); err != nil {
+		return nil, time.Time{}, mobileScanStats{}, false
+	}
+	scannedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(cached.ScannedAt))
+	if err != nil {
+		return nil, time.Time{}, mobileScanStats{}, false
+	}
+	return cached.Projects, scannedAt, cached.Stats, true
+}
+
+func savePersistedMobileProjectsCache(projects []MobileProject, scannedAt time.Time, stats mobileScanStats) {
+	path, err := mobileProjectsCachePath()
+	if err != nil {
+		log.Printf("[mobile-scan] cache path unavailable: %v", err)
+		return
+	}
+	payload, err := json.MarshalIndent(persistedMobileProjectsCache{
+		Projects:  projects,
+		ScannedAt: scannedAt.UTC().Format(time.RFC3339),
+		Stats:     stats,
+	}, "", "  ")
+	if err != nil {
+		log.Printf("[mobile-scan] marshal cache: %v", err)
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
+		log.Printf("[mobile-scan] write cache: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("[mobile-scan] rename cache: %v", err)
+		_ = os.Remove(tmp)
+	}
+}
+
+func hydrateMobileProjectCacheFromDisk() bool {
+	projects, scannedAt, stats, ok := loadPersistedMobileProjectsCache()
+	if !ok {
+		return false
+	}
+	mobileProjectCache.mu.Lock()
+	if mobileProjectCache.projects == nil || len(mobileProjectCache.projects) == 0 || mobileProjectCache.scannedAt.Before(scannedAt) {
+		mobileProjectCache.projects = projects
+		mobileProjectCache.scannedAt = scannedAt
+		mobileProjectCache.stats = stats
+	}
+	mobileProjectCache.mu.Unlock()
+	return true
+}
+
 // mobileScanTimeout bounds a single scan. The walk checks the deadline on
 // every directory so `scanning` ALWAYS resolves to false — a slow or
 // permission-blocked home-directory walk can no longer leave the mobile
@@ -652,10 +729,12 @@ func runMobileScan(reason string) {
 
 	mobileProjectCache.mu.Lock()
 	mobileProjectCache.projects = projects
-	mobileProjectCache.scannedAt = time.Now()
+	scannedAt := time.Now()
+	mobileProjectCache.scannedAt = scannedAt
 	mobileProjectCache.scanning = false
 	mobileProjectCache.stats = stats
 	mobileProjectCache.mu.Unlock()
+	savePersistedMobileProjectsCache(projects, scannedAt, stats)
 
 	log.Printf("[mobile-scan] %s: %d projects in %dms (permDenied=%d timedOut=%v)",
 		reason, len(projects), stats.ElapsedMs, stats.PermDenied, stats.TimedOut)
@@ -988,11 +1067,15 @@ func expoConfigHasBundleID(projectPath, bundleID string) bool {
 func PrewarmMobileProjects() {
 	log.Println("[mobile-scan] Scanning for mobile projects...")
 	projects := scanMobileProjects()
+	stats := mobileScanStats{}
 
 	mobileProjectCache.mu.Lock()
 	mobileProjectCache.projects = projects
-	mobileProjectCache.scannedAt = time.Now()
+	scannedAt := time.Now()
+	mobileProjectCache.scannedAt = scannedAt
+	mobileProjectCache.stats = stats
 	mobileProjectCache.mu.Unlock()
+	savePersistedMobileProjectsCache(projects, scannedAt, stats)
 
 	log.Printf("[mobile-scan] Found %d mobile projects", len(projects))
 
@@ -1423,6 +1506,13 @@ func (s *HTTPServer) handleProjectsByCapability(w http.ResponseWriter, r *http.R
 	scannedAt := mobileProjectCache.scannedAt
 	scanning := mobileProjectCache.scanning
 	mobileProjectCache.mu.RUnlock()
+	if (projects == nil || len(projects) == 0) && hydrateMobileProjectCacheFromDisk() {
+		mobileProjectCache.mu.RLock()
+		projects = mobileProjectCache.projects
+		scannedAt = mobileProjectCache.scannedAt
+		scanning = mobileProjectCache.scanning
+		mobileProjectCache.mu.RUnlock()
+	}
 	// Honest empty-state for first-call: kick a scan and tell the
 	// caller it's still running so the UI can render a spinner.
 	if (projects == nil || len(projects) == 0) && time.Since(scannedAt) > 10*time.Minute {
@@ -1515,6 +1605,14 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 	scanning := mobileProjectCache.scanning
 	stats := mobileProjectCache.stats
 	mobileProjectCache.mu.RUnlock()
+	if (projects == nil || len(projects) == 0) && hydrateMobileProjectCacheFromDisk() {
+		mobileProjectCache.mu.RLock()
+		projects = mobileProjectCache.projects
+		scannedAt = mobileProjectCache.scannedAt
+		scanning = mobileProjectCache.scanning
+		stats = mobileProjectCache.stats
+		mobileProjectCache.mu.RUnlock()
+	}
 
 	if projects != nil && len(projects) > 0 && time.Since(scannedAt) < 10*time.Minute {
 		jsonReply(w, http.StatusOK, mobileProjectsReply(mobileCapableProjects(projects), scannedAt, scanning, stats))

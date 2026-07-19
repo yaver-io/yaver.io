@@ -293,6 +293,21 @@ class ConnectionManager {
     this.latestSessionTunnels = [...tunnels];
     this.applyToAll((c) => c.setSessionTunnelServers(tunnels));
   }
+
+  /** Re-probe the currently focused device after a network path change.
+   * Calling the legacy quicClient proxy usually lands here, but the mobile
+   * connectivity handlers are exactly where focus drift is most painful: if
+   * focus briefly clears during Wi-Fi to cellular, the proxy hits the fallback
+   * client and the real Mac mini client keeps its stale path. */
+  fullReconnectFocused(): void {
+    this.active().fullReconnect();
+  }
+
+  /** Trigger an immediate retry on the focused device, matching
+   * QuicClient.triggerReconnect but through the pool's current focus. */
+  triggerReconnectFocused(): void {
+    this.active().triggerReconnect();
+  }
 }
 
 export const connectionManager = new ConnectionManager();

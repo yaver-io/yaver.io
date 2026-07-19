@@ -3471,7 +3471,16 @@ export default function TasksScreen() {
   };
 
   const handleDeleteAll = async () => {
-    try { await quicClient.deleteAllTasks(); setTasks([]); await fetchTasks(); } catch {}
+    const deletable = tasks.filter((t) => t.status !== "running" && t.status !== "queued");
+    if (deletable.length === 0) return;
+    setTasks((prev) => prev.filter((t) => t.status === "running" || t.status === "queued"));
+    await Promise.all(deletable.map((t) => markTaskDeleted(t.id)));
+    try {
+      await quicClient.deleteAllTasks();
+      await fetchTasks();
+    } catch (e) {
+      console.warn("[Tasks] Clear failed (kept local deletions):", e);
+    }
   };
 
   // Ship It — one-tap deploy
@@ -4010,7 +4019,7 @@ export default function TasksScreen() {
         )}
 
         {/* Filter chips + action bar */}
-        {isEffectivelyConnected && (
+        {(isEffectivelyConnected || tasks.length > 0) && (
           <View style={[s.actionBar, { borderBottomColor: c.border }]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingLeft: 2, paddingRight: 8 }}>
               {([
@@ -4036,7 +4045,7 @@ export default function TasksScreen() {
                 </Pressable>
               ))}
               <View style={[s.actionDivider, { backgroundColor: c.borderSubtle }]} />
-              {tasks.some(t => t.status === "running") && (
+              {isEffectivelyConnected && tasks.some(t => t.status === "running") && (
                 <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleStopAll}>
                   <Text style={[s.actionButtonText, { color: "#ef4444" }]}>Stop All</Text>
                 </Pressable>
@@ -4046,18 +4055,24 @@ export default function TasksScreen() {
                   <Text style={[s.actionButtonText, { color: c.textMuted }]}>Clear</Text>
                 </Pressable>
               )}
-              <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleOpenTmuxSessions}>
-                <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
-              </Pressable>
+              {isEffectivelyConnected && (
+                <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleOpenTmuxSessions}>
+                  <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
+                </Pressable>
+              )}
               <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={() => setShowLogs(true)}>
                 <Text style={[s.actionButtonText, { color: "#94a3b8" }]}>Logs</Text>
               </Pressable>
-              <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleShipIt}>
-                <Text style={[s.actionButtonText, { color: "#f97316" }]}>Ship It</Text>
-              </Pressable>
-              <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleShowSummary}>
-                <Text style={[s.actionButtonText, { color: "#06b6d4" }]}>Summary</Text>
-              </Pressable>
+              {isEffectivelyConnected && (
+                <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleShipIt}>
+                  <Text style={[s.actionButtonText, { color: "#f97316" }]}>Ship It</Text>
+                </Pressable>
+              )}
+              {isEffectivelyConnected && (
+                <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleShowSummary}>
+                  <Text style={[s.actionButtonText, { color: "#06b6d4" }]}>Summary</Text>
+                </Pressable>
+              )}
             </ScrollView>
             <View pointerEvents="none" style={[s.actionBarFade, { backgroundColor: c.bg }]} />
           </View>
