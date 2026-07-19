@@ -200,8 +200,13 @@ run_step() { # name, guard, command...
   if "$@"; then ok "$name deployed"; else bad "$name FAILED"; FAILED+=("$name"); fi
 }
 
-run_step convex "$CONVEX_OK" bash -c 'cd backend && npx convex deploy --yes'
-run_step web    "$CF_OK"     ./scripts/deploy-web.sh
+# A pulled clone has source but no node_modules, and `git pull` never brings
+# them. Left implicit, convex dies with a baffling `Could not resolve
+# "convex/server"` (esbuild, not Convex, and nothing about the message says
+# "run npm install"). Each step installs its own deps first — idempotent and
+# nearly free once warm.
+run_step convex "$CONVEX_OK" bash -c 'cd backend && npm install --silent && npx convex deploy --yes'
+run_step web    "$CF_OK"     bash -c 'cd web && npm install --silent && cd .. && ./scripts/deploy-web.sh'
 run_step testflight "$ASC_OK" ./scripts/deploy-testflight.sh
 run_step playstore  "$PLAY_OK" bash -c 'JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py'
 
