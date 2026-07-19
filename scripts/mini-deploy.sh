@@ -148,11 +148,29 @@ else
 fi
 
 # Convex — deliberately does NOT run `convex env list`: that prints SECRET
-# VALUES to stdout. Presence of the CLI + a stored token is the safe probe.
-if [ -f "$HOME/.convex/config.json" ] && (cd backend && npx --no-install convex --version >/dev/null 2>&1); then
-  CONVEX_OK=1; ok "convex — CLI + stored credential present"
+# VALUES to stdout.
+#
+# Credentials are only half the question. The first version of this check
+# passed on CLI+token alone and the deploy then died with "No CONVEX_DEPLOYMENT
+# set" — a false green in the very script written to stop false greens. A fresh
+# clone has no backend/.env.local (gitignored), so it is authenticated to
+# Convex and pointed at nothing. Both halves, or it is not ready.
+CONVEX_DEPLOYMENT_SET=0
+if [ -n "${CONVEX_DEPLOYMENT:-}" ]; then
+  CONVEX_DEPLOYMENT_SET=1
+elif [ -f backend/.env.local ] && grep -q '^CONVEX_DEPLOYMENT=' backend/.env.local; then
+  CONVEX_DEPLOYMENT_SET=1
+fi
+if [ ! -f "$HOME/.convex/config.json" ]; then
+  bad "convex — not logged in (run: npx convex login)"
+elif ! (cd backend && npx --no-install convex --version >/dev/null 2>&1); then
+  bad "convex — CLI unavailable in backend/ (run: npm install)"
+elif [ "$CONVEX_DEPLOYMENT_SET" != "1" ]; then
+  bad "convex — authenticated but NO DEPLOYMENT configured; a fresh clone has no backend/.env.local"
+  note "fix: copy it from a working checkout on this box —"
+  note "  cp ~/Workspace/yaver.io/backend/.env.local $CLONE/backend/.env.local && chmod 600 $CLONE/backend/.env.local"
 else
-  bad "convex — no ~/.convex/config.json or CLI unavailable (run: npx convex login)"
+  CONVEX_OK=1; ok "convex — logged in and deployment configured"
 fi
 
 if [ "$CHECK_ONLY" = "1" ]; then
