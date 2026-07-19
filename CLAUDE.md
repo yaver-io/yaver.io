@@ -467,6 +467,58 @@ xcodebuild -exportArchive -archivePath /tmp/Yaver.xcarchive \
 treats missing dSYMs as a fatal export error; `rnwhisper` ships without
 dSYMs. Apple symbolicates server-side from bitcode anyway.
 
+#### Headless codesign — unlocking the keychain from an SSH/agent session
+
+The single hardest failure for an **autonomous (SSH / yaver-agent) deploy** is
+`CodeSign … errSecInternalComponent`. It is NOT "cert missing" — `security
+find-identity` happily lists the identities. It means the signing **private key**
+is in a **locked** keychain that a non-GUI session can't open. Two facts learned
+the hard way (2026-07-19), verified with per-cert `codesign -s <SHA1>` probes:
+
+1. **The signing identity spans two keychains.** The **Apple Distribution**
+   (SIMKAB, team `5SJZ4KA39A`) cert+key live in a dedicated
+   `~/Library/Keychains/yaver-ci.keychain-db`; the **Apple Development** cert
+   *private keys* live in `login.keychain-db`. During an App Store archive,
+   Xcode signs the app-extension/watch intermediates with the **development**
+   identity and re-signs with distribution at export — so **both** keychains
+   must be unlocked, or the archive dies at `CodeSign …/*.appex`.
+2. **Unlock is not enough — you must set the partition list.** For codesign to
+   use a key *without a GUI prompt* you must run, per keychain:
+   ```bash
+   security unlock-keychain      -p "<pw>" "$KC"
+   security set-keychain-settings          "$KC"   # no flags = never auto-lock
+   security set-key-partition-list -S apple-tool:,apple: -s -k "<pw>" "$KC"
+   ```
+   Do this for **both** `yaver-ci.keychain-db` AND `login.keychain-db` before
+   `deploy-testflight.sh`. `launchctl asuser` / gui-domain LaunchAgents do NOT
+   help (they still hit the locked key); only the password does.
+
+The passwords come from the secure local store below — never hard-code them, and
+`deploy-testflight.sh` sources them so a headless run self-unlocks. `set-keychain-settings`
+with no flags disables auto-lock so the ~20-min archive can't relock mid-build.
+
+### Local privileged credential store (`~/.yaver/local-secrets.env`)
+
+Some autonomous ops need **local-machine unlock secrets** a human would normally
+type at a GUI: the **signing-keychain password**, the **login-keychain / macOS
+login password**, and **sudo**. These live in `~/.yaver/local-secrets.env`:
+
+- **`chmod 600`, owner-only. NEVER committed, NEVER synced to a cloud/GH secret.**
+  A macOS login/sudo password in GitHub secrets would *widen* the attack surface —
+  the exact opposite of the goal. It stays on the box, protected by filesystem
+  perms + FileVault at-rest encryption, and never leaves it.
+- A CI-scoped signing-keychain password MAY also go in GH Actions secrets
+  (`YAVER_CI_KEYCHAIN_PASSWORD`) because CI needs it and it only unlocks the
+  disposable signing keychain — but the **login/sudo** password must not.
+- Canonical home is the encrypted **`yaver vault`**; this env file is the
+  fallback used when the vault is unavailable (mirrors `~/.appstoreconnect/yaver.env`).
+  If `yaver vault` reports "corrupted vault", repair with `yaver vault reset --yes`
+  then re-add, or restore `~/.yaver/master.key`.
+- Keys: `YAVER_CI_KEYCHAIN_PATH/PASSWORD`, `YAVER_LOGIN_KEYCHAIN_PATH`,
+  `YAVER_LOGIN_PASSWORD`, `YAVER_SUDO_PASSWORD`. The yaver agent reads these to
+  unlock keychains / run sudo headlessly; a hostile process can only read them
+  with local FS access, which already implies the box is compromised.
+
 ### Android — Play Store
 
 CI handles it via `release-mobile.yml` on `mobile/v*` tags using
