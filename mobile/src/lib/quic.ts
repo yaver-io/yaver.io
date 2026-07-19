@@ -28,9 +28,36 @@ import { cacheTaskList, cacheTaskOutput, getCachedTaskList, getDeletedTaskIds } 
 // the banner counted "reconnect 1/5". logger.ts is dependency-free and lazily
 // loads AsyncStorage, so importing it here is import-safe.
 import { appLog } from "./logger";
-import { describeDirectProbeFailure } from "./directProbeFailure";
+import { describeDirectProbeFailure, isUnroutableFailure } from "./directProbeFailure";
+import {
+  isKnownUnroutable,
+  observedTailnetUp,
+  rememberReachable,
+  rememberUnroutable,
+  setNetworkIdentity,
+} from "./unroutableCache";
 import { beaconListener } from "./beacon";
-import NetInfo from "@react-native-community/netinfo";
+import NetInfo, { type NetInfoState } from "@react-native-community/netinfo";
+
+// deriveNetworkIdentity returns a stable string that identifies the phone's
+// current L3 network for the purposes of the direct-probe negative cache.
+// Wi-Fi → "wifi:<ssid>", Cellular → "cellular:<carrier>", anything else the
+// bare type. When NetInfo reports the same type twice with the same details
+// this must return the same string — the cache treats a change as "network
+// flipped, forget everything". Extracted here (not inlined) so the identity
+// derivation is trivially test-visible.
+function deriveNetworkIdentity(state: NetInfoState): string {
+  if (!state || !state.isConnected) return "disconnected";
+  if (state.type === "wifi") {
+    const ssid = (state.details as any)?.ssid ?? "";
+    return `wifi:${ssid || "unknown"}`;
+  }
+  if (state.type === "cellular") {
+    const carrier = (state.details as any)?.carrier ?? "";
+    return `cellular:${carrier || "unknown"}`;
+  }
+  return String(state.type || "other");
+}
 import type { BuildInfo, BuildSummary } from "./builds";
 import type { RemoteSandboxRequest, RemoteSandboxResponse } from "./llmRemote";
 import { decodeCloudWorkspaceRequiredError } from "./cloudWorkspaceRequired";
@@ -1243,6 +1270,9 @@ export class QuicClient {
   private _networkType: string | null = null; // "wifi" | "cellular" | etc.
   private _connectingInProgress = false; // guard against concurrent attemptConnect calls
   private _lastTransportError: string | null = null;
+  // Wall-clock millis of the last /health 200 through the current baseUrl.
+  // See lastHealthOkAt / verifyStillConnected. 0 means "never".
+  private _lastHealthOkAt = 0;
   // Extra LAN/Tailscale/Ethernet IPs that the agent advertised in heartbeat.
   // Raced in parallel against the beacon IP and the primary host so the
   // session attaches via whichever address the phone can actually route to
@@ -1357,6 +1387,62 @@ export class QuicClient {
 
   get isConnected(): boolean {
     return this._connectionState === "connected";
+  }
+
+  /**
+   * Public accessor for the last transport-level failure string (audit §5,
+   * 2026-07-19). DeviceContext uses this to keep the UI's lastError
+   * honest during a reconnect ladder — the pre-fix behaviour overwrote it
+   * with a bare "Reconnecting (n/max)…" that matched none of the self-heal
+   * substrings and defeated the auto-repair effect at the exact moment the
+   * repair was needed. Falsy when no transport error has been captured yet.
+   */
+  get lastTransportError(): string | null {
+    return this._lastTransportError;
+  }
+
+  /**
+   * Timestamp (ms) of the last time /health returned 200 through THIS
+   * client's current base URL. Populated by _doAttemptConnect's success
+   * path and refreshed by verifyStillConnected(). Callers use this to
+   * decide whether the isConnected getter is fresh enough to be trusted
+   * without an on-the-wire re-check. Audit §5 (2026-07-19): the pre-fix
+   * behaviour re-used a 15-40 s stale flag, so "Already connected" was
+   * being claimed while every leg was silently failing.
+   */
+  get lastHealthOkAt(): number {
+    return this._lastHealthOkAt;
+  }
+
+  /**
+   * On-the-wire "am I still connected" probe. Hits /health on the current
+   * base URL with a short timeout and returns true only on 200. Used by
+   * DeviceContext's connect() before it short-circuits on isConnected.
+   *
+   * Never throws — a timeout, an error, or a 5xx all return false. Never
+   * mutates connection state; the caller decides what to do with the
+   * verdict. Cheap enough (single fetch, 1.5s wall) to run on every
+   * user-initiated navigation to a device.
+   */
+  async verifyStillConnected(timeoutMs = 1500): Promise<boolean> {
+    if (!this.baseUrl || !this.deviceId) return false;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${this.baseUrl}/health`, {
+        headers: this.authHeaders,
+        signal: ctrl.signal,
+      });
+      if (res.ok) {
+        this._lastHealthOkAt = Date.now();
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   get connectionState(): ConnectionState {
@@ -6130,10 +6216,35 @@ export class QuicClient {
     // Heartbeat-advertised IPs from Convex. Port is whatever the agent is
     // listening on (same port for every interface — single HTTP server).
     const port = this.port ?? 18080;
+    // Gate tailnet/mesh legs on OBSERVED membership, not on the user
+    // preference (audit §2). `policy.allowTailnet` says the user allows
+    // tailnet legs; `observedTailnetUp()` says the phone actually reached a
+    // tailnet address on this network. When there is no evidence yet we
+    // permit one tailnet candidate to probe (so we can LEARN the network
+    // has tailnet), but we do not spam every 100.x IP the mini reported.
+    const tailnetProven = observedTailnetUp();
+    let tailnetProbesRemaining = tailnetProven ? Infinity : 1;
+    // Audit §4d (2026-07-19): the mobile mesh data plane is not shipped —
+    // `withMeshTunnel` is missing from `mobile/app.json`'s plugins array, so
+    // NativeModules.YaverMesh is absent in every current build and
+    // `yaverMesh.isMeshTunnelSupported()` returns false. Racing lan-mesh
+    // candidates that CAN'T possibly succeed is the same shape as the
+    // tailnet-off-tailnet failure — an instant "Network request failed"
+    // that used to fall through every classifier. Skip them here entirely
+    // until the extension ships. When it lands, gate on the native module's
+    // presence instead of skipping unconditionally.
+    let meshDataPlaneUp = false;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      meshDataPlaneUp = require("./yaverMesh").isMeshTunnelSupported();
+    } catch {
+      meshDataPlaneUp = false;
+    }
     for (const ip of this._lanIps) {
       // Tag overlay IPs distinctly so the log shows which path actually won.
       const path: ConnectionPath = this.isMeshOverlayIP(ip) ? "lan-mesh" : this.isTailscaleIP(ip) ? "lan-tailscale" : "lan-heartbeat";
       const isPriv = this.isPrivateIP(ip);
+      if (path === "lan-mesh" && !meshDataPlaneUp) continue;
       if ((path === "lan-mesh" || path === "lan-tailscale") && !policy.allowTailnet) continue;
       // A private RFC1918 LAN IP is always cheap + safe to probe and is
       // bounded by DIRECT_PHASE_DEADLINE_MS below — so never let a
@@ -6142,12 +6253,27 @@ export class QuicClient {
       // Only gate NON-private (public) heartbeat IPs behind the explicit
       // direct preference.
       if (path === "lan-heartbeat" && !isPriv && !policy.allowPrivateDirect) continue;
+      // Skip tailnet/mesh legs once we've spent our exploration budget for
+      // an unconfirmed network — one probe is enough to learn whether the
+      // phone is on the tailnet, and racing nine 100.x candidates from a
+      // 5G cellular phone is exactly the storm audit §2 diagnosed.
+      if (path === "lan-mesh" || path === "lan-tailscale") {
+        if (tailnetProbesRemaining <= 0) continue;
+        tailnetProbesRemaining -= 1;
+      }
+      // Skip candidates the negative cache proved unroutable on this
+      // network. Cleared on network flip so a real move (Wi-Fi → cellular,
+      // Wi-Fi → tailnet) never leaves us stuck.
+      if (isKnownUnroutable(path, ip, port)) continue;
       push(ip, port, path);
       // Port fallback: the agent's HTTP server is on 18080, but `port` here
       // is quicPort/port from the Convex row, which can differ. Probe 18080
       // too for private LAN candidates so a stale/mismatched quicPort doesn't
-      // silently defeat an otherwise-reachable box.
-      if (isPriv && port !== 18080) push(ip, 18080, path);
+      // silently defeat an otherwise-reachable box. Cache-check as well so
+      // the fallback also honours a prior unroutable verdict.
+      if (isPriv && port !== 18080 && !isKnownUnroutable(path, ip, 18080)) {
+        push(ip, 18080, path);
+      }
     }
 
     // Convex-stored primary IP last — kept for backwards-compat with agents
@@ -6177,10 +6303,21 @@ export class QuicClient {
           clearTimeout(timer);
           if (!res.ok) throw new Error(`status ${res.status}`);
           const body = await res.json().catch(() => ({}));
+          // Positive proof: this path label works on the current network.
+          // Enables observedTailnetUp() to relax the exploration budget on
+          // the NEXT race (audit §2).
+          if (cand.path) rememberReachable(cand.path);
           return { ip: cand.ip, port: cand.port, path: cand.path, authExpired: !!body.authExpired };
         })
         .catch((e) => {
           clearTimeout(timer);
+          // Negative-cache legs that reject INSTANTLY with an unroutable
+          // signature (audit §2). Do NOT cache timeouts or ATS-blocked —
+          // those have different remedies. See isUnroutableFailure for the
+          // exact classifier.
+          if (isUnroutableFailure(e) && cand.path) {
+            rememberUnroutable(cand.path, cand.ip, cand.port);
+          }
           // Say WHY this leg failed, per candidate. Promise.any below collapses
           // every rejection into a single null, so without this the user sees
           // "probe found no route" with no cause — which is exactly how an
@@ -6313,6 +6450,12 @@ export class QuicClient {
       const netState = await NetInfo.fetch();
       const isWifi = netState.type === "wifi" || netState.type === "ethernet";
       this._networkType = netState.type;
+      // Feed the direct-probe negative cache with a stable identity for the
+      // current network — SSID for Wi-Fi, carrier for cellular, plain type
+      // for anything else. When this changes the cache wipes prior entries
+      // so a leg that was unroutable on the last network gets a fresh chance
+      // on the next. See lib/unroutableCache.ts.
+      setNetworkIdentity(deriveNetworkIdentity(netState));
       const policy = this.transportPolicy();
 
       // Strategy: direct-first on WiFi (lowest latency), relay-fallback.
@@ -6514,6 +6657,8 @@ export class QuicClient {
       this.setReconnectAttempt(0);
       this.setConnectionState("connected");
       this._hadSuccessfulConnect = true;
+      this._lastHealthOkAt = Date.now();
+      this._reconnectRepairAttempted = false; // arm a fresh repair streak
       this.startPolling();
       // Persist the exact coordinates that worked so the next session can
       // try them first instead of waiting through the candidate race
@@ -6716,6 +6861,23 @@ export class QuicClient {
       "warn",
       `[reconnect] ${this.host} attempt ${this._reconnectAttempt} failed; retrying in ${Math.round(delay / 100) / 10}s`,
     );
+    // Repair rung (audit §5c, 2026-07-19): the manual switch modal and the
+    // auto-connect sweep already run repairRelay when they see a stale
+    // relay password, but scheduleReconnect — the reconnect path that
+    // actually loops on the box the user is trying to reach — had none.
+    // Fire the repair once per failure streak. Idempotent + per-user, so
+    // safe on the shared relay. No-op when the transport error is not
+    // relay-auth-shaped.
+    const cause = (this._lastTransportError || "").toLowerCase();
+    const isRelayAuthShaped =
+      cause.includes("reason=bad_password") ||
+      cause.includes("reason=dead_token") ||
+      cause.includes("invalid relay") ||
+      cause.includes("relay password");
+    if (isRelayAuthShaped && !this._reconnectRepairAttempted) {
+      this._reconnectRepairAttempted = true;
+      this._relayRepairHook?.().catch(() => {});
+    }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this._reconnectStopped) return;
@@ -6724,6 +6886,17 @@ export class QuicClient {
         // Reconnection failure is handled inside attemptConnect.
       });
     }, delay);
+  }
+
+  // The QuicClient has no session/token/Convex context of its own — the
+  // relay-repair endpoint lives on the DeviceContext side (calls Convex's
+  // /settings/repair-relay). DeviceContext registers a hook here so
+  // scheduleReconnect can invoke the repair without importing Convex into
+  // the pure transport module.
+  private _relayRepairHook: (() => Promise<void>) | null = null;
+  private _reconnectRepairAttempted = false;
+  setRelayRepairHook(fn: (() => Promise<void>) | null): void {
+    this._relayRepairHook = fn;
   }
 
   /**

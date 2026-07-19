@@ -27,7 +27,7 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useColors } from "../src/context/ThemeContext";
 import { useDevice } from "../src/context/DeviceContext";
@@ -63,6 +63,15 @@ export default function VibeScreen() {
   const router = useRouter();
   const { activeDevice, devices, selectDevice } = useDevice() as any;
   const { token } = useAuth();
+  // Route params — the composer's "back to Vibe" pill hands the currently-
+  // typed text over as `?prompt=…` so the mic↔text switch is symmetric
+  // (bc81f993e set up the mic-only FAB; audit follow-up 2026-07-19 closed
+  // the loop). Seeding lastHeardRef with whatever the user just typed makes
+  // "Prefer to type?" on this screen bring the SAME text back if they change
+  // their mind again — exactly how lastHeardRef preserved speech going
+  // Vibe → composer.
+  const params = useLocalSearchParams<{ prompt?: string }>();
+  const initialPrompt = typeof params.prompt === "string" ? params.prompt : "";
 
   const [turns, setTurns] = useState<VibeTurn[]>([]);
   const [live, setLive] = useState(""); // in-progress transcript / status line
@@ -70,7 +79,7 @@ export default function VibeScreen() {
   // Last thing we actually HEARD the user say, as opposed to whatever is on the
   // live line (which also carries spoken results and confirm prompts). Only the
   // heard text is safe to hand to the composer when they switch to typing.
-  const lastHeardRef = useRef("");
+  const lastHeardRef = useRef(initialPrompt);
   const liveMounted = useRef(true);
   useEffect(() => () => { liveMounted.current = false; }, []);
 
@@ -294,9 +303,31 @@ export default function VibeScreen() {
           <Text style={{ color: c.textPrimary, fontSize: 17, fontWeight: "700", marginTop: 14, textAlign: "center" }}>
             {statusLabel}
           </Text>
-          {!!live && (
+          {/* Live STT transcript — while listening the recognised text has to
+              be UNMISTAKABLY visible so the user can see whether the phone
+              actually heard them (audit §4.1, 2026-07-19). Bigger, higher-
+              contrast text, quotes around the partial to make it read like
+              speech. While judging/speaking/confirming we drop back to a
+              quieter, muted line so the mic status still dominates. */}
+          {!!live && listening && (
+            <Text
+              style={{
+                color: c.textPrimary,
+                fontSize: 18,
+                fontWeight: "600",
+                lineHeight: 24,
+                marginTop: 10,
+                textAlign: "center",
+                paddingHorizontal: 8,
+              }}
+              numberOfLines={4}
+            >
+              {`“${live}”`}
+            </Text>
+          )}
+          {!!live && !listening && (
             <Text style={{ color: c.textMuted, fontSize: 14, marginTop: 6, textAlign: "center" }} numberOfLines={3}>
-              {listening ? `“${live}”` : live}
+              {live}
             </Text>
           )}
           {!activeDevice && (

@@ -335,6 +335,49 @@ function listedDeviceEndpointKey(device: ListedDevice): string | null {
   return `${normalizedHost}:${device.quicPort || 0}`;
 }
 
+// STALE_LAN_IP_WINDOW_MS bounds how old a row's heartbeat can be before we stop
+// trusting the localIps IT reported. Audit §1 (2026-07-19): the storm cause was
+// dead rows donating their frozen localIps snapshot forever through this merge,
+// including a Docker-bridge IP the agent had stopped reporting builds ago. The
+// heartbeat REPLACES localIps per row, but no rule prevented the READ path
+// from unioning IPs across old rows. 5 minutes matches the heartbeat cadence
+// (15s) times a slack factor and is deliberately shorter than the
+// duplicate-row detection window at devices.ts:806-834.
+const STALE_LAN_IP_WINDOW_MS = 5 * 60 * 1000;
+// Cap the union so pathological duplication (say, a hardwareId flip) cannot
+// grow the array without bound between merge passes; the mobile ladder pushes
+// each IP twice (with and without :18080) so any real device has < 8 useful
+// legs to race in parallel anyway.
+const MAX_LOCAL_IPS_PER_DEVICE = 8;
+
+// selectLocalIps is the recency-aware replacement for the naive `[...a, ...b]`
+// union that produced fault §1 in the connectivity audit. Rules:
+//   1. Prefer localIps only from a row that is online AND heartbeated within
+//      STALE_LAN_IP_WINDOW_MS. That row can vouch for its addresses.
+//   2. If neither row is fresh, keep the freshest row's IPs — the UI still
+//      needs *something* to display, but never the accumulated union.
+//   3. Cap at MAX_LOCAL_IPS_PER_DEVICE so a merge cannot manufacture a
+//      probe-storm-sized set.
+// Never unions from an offline row: an offline row's IPs are, by definition,
+// unreachable from the same network the online row proves is reachable.
+function selectLocalIps(a: ListedDevice, b: ListedDevice, now: number): string[] {
+  const isFresh = (d: ListedDevice) =>
+    !!d.isOnline && (now - (d.lastHeartbeat || 0)) < STALE_LAN_IP_WINDOW_MS;
+  const aFresh = isFresh(a);
+  const bFresh = isFresh(b);
+  const parts: string[] = [];
+  if (aFresh) parts.push(...(a.localIps || []));
+  if (bFresh) parts.push(...(b.localIps || []));
+  if (parts.length === 0) {
+    // Neither row is fresh — pick the freshest of the two by lastHeartbeat,
+    // deliberately NOT the union. If the last heartbeat was hours ago the IPs
+    // are stale but at least the caller sees a single coherent snapshot.
+    const preferred = (b.lastHeartbeat || 0) >= (a.lastHeartbeat || 0) ? b : a;
+    parts.push(...(preferred.localIps || []));
+  }
+  return [...new Set(parts.filter(Boolean))].slice(0, MAX_LOCAL_IPS_PER_DEVICE);
+}
+
 function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
   const incomingWins =
     (!!a.needsAuth && !b.needsAuth) ||
@@ -342,6 +385,7 @@ function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
     (!!b.isOnline && !a.isOnline);
   const base = incomingWins ? b : a;
   const other = incomingWins ? a : b;
+  const now = Date.now();
   return {
     ...other,
     ...base,
@@ -361,7 +405,7 @@ function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
         if (bAt === 0) return a.lastTunnelEvent;
         return bAt > aAt ? b.lastTunnelEvent : a.lastTunnelEvent;
       })(),
-    localIps: [...new Set([...(a.localIps || []), ...(b.localIps || [])].filter(Boolean))],
+    localIps: selectLocalIps(a, b, now),
     publicEndpoints: [...new Set([...(a.publicEndpoints || []), ...(b.publicEndpoints || [])].filter(Boolean))],
     runners: (base.runners && base.runners.length > 0) ? base.runners : other.runners,
     installedRunnerIds:

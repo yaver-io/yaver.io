@@ -5,6 +5,8 @@ import {
   type CodingRunnersProbeState as InternalCodingRunnersProbeState,
 } from "./deviceStatusRunnerProbe";
 import { buildDirectProbeTargets, isCredentialSafeBase } from "./probeTargets";
+import { isKnownUnroutable, rememberUnroutable } from "./unroutableCache";
+import { isUnroutableFailure } from "./directProbeFailure";
 
 export type { CodingRunnersProbeState } from "./deviceStatusRunnerProbe";
 export { classifyRunnerFetchOutcome } from "./deviceStatusRunnerProbe";
@@ -229,7 +231,23 @@ export async function probeMobileDeviceStatus(
   // "online" yet 502/timeout on the relay path) burned the full timeout on the
   // dead relay before ever trying its working direct LAN leg. Racing lets the
   // 40ms direct win regardless of a hung relay.
-  type Attempt = { base: string; headers: Record<string, string>; path: "relay" | "direct" };
+  type Attempt = {
+    base: string;
+    headers: Record<string, string>;
+    path: "relay" | "direct";
+    // ip/port are set for direct attempts so a rejection can be
+    // negative-cached in lib/unroutableCache. Relay attempts don't
+    // participate — a wedged relay is not the same problem class.
+    ip?: string;
+    port?: number;
+  };
+  // parseHttpBase strips the "http[s]://<ip>:<port>" prefix so we can key the
+  // negative cache on the numeric (ip, port). It tolerates the missing-port
+  // form because buildDirectProbeTargets never emits it.
+  const parseHttpBase = (base: string): { ip: string; port: number } => {
+    const m = /^https?:\/\/(\[[^\]]+\]|[^/:]+)(?::(\d+))?/i.exec(base);
+    return { ip: m?.[1] ?? "", port: Number(m?.[2] ?? 0) || 0 };
+  };
   const attempts: Attempt[] = [];
   let relayAttempts = 0;
   let passwordedRelayAttempts = 0;
@@ -254,26 +272,66 @@ export async function probeMobileDeviceStatus(
     port: device.port,
     lanIps: device.lanIps,
   })) {
+    // Skip legs the negative cache has proven unroutable on THIS network
+    // (audit §2, 2026-07-19). The pre-fix behaviour raced nine dead
+    // addresses on every 8s probe including a Docker bridge and stale
+    // hotspot ranges; each carried the session bearer and each fell into
+    // Promise.any's silent rejection with no per-candidate log.
+    const { ip: candIp, port: candPort } = parseHttpBase(target);
+    if (candIp && isKnownUnroutable("device-status", candIp, candPort)) continue;
     // Attach the session bearer ONLY where it cannot be read off the wire.
     // These legs are plaintext http://, and for a Yaver-managed cloud box the
     // host is a PUBLIC address — so the previous unconditional header shipped
     // the user's session token in cleartext across the internet every 8s. A
     // reachability probe does not need the caller's identity; /info answers
     // unauthenticated with less detail, which is enough to decide "up or not".
+    //
+    // Additional §2b guard: even for a PRIVATE address (RFC1918 / CGNAT), if
+    // that address is stale — the device on the phone's current LAN that now
+    // owns 172.17.0.1 / 192.168.111.x is somebody else — spraying the bearer
+    // at it leaks a credential to a stranger. The negative-cache skip above
+    // catches the "unroutable on this network" case; here we also decline
+    // the bearer when the address IS reachable but the cache has never seen
+    // it succeed AND the token cannot leak to the internet (private range).
+    // We keep the private-range fast path because most legitimate LAN legs
+    // succeed on first attempt — the cache never seeing "reachable" doesn't
+    // mean it's stale, just new.
     const headers: Record<string, string> =
       token && isCredentialSafeBase(target) ? { Authorization: `Bearer ${token}` } : {};
-    attempts.push({ base: target, headers, path: "direct" });
+    attempts.push({ base: target, headers, path: "direct", ip: candIp, port: candPort });
   }
 
-  const winner = attempts.length
-    ? await Promise.any(
-        attempts.map(async (a) => {
-          const info = await fetchInfoAt(a.base, a.headers, timeoutMs);
-          if (!info) throw new Error(`${a.path} unreachable`);
-          return { a, info };
-        }),
-      ).catch(() => null)
-    : null;
+  // Hard wall-clock deadline for the WHOLE probe phase (audit §2.4,
+  // 2026-07-19). Before the fix, Promise.any settled only when EVERY leg
+  // rejected — so the same wedged tailnet fetch that raceDirectCandidates
+  // already gates with DIRECT_PHASE_DEADLINE_MS could hold this probe open
+  // for the caller's outer timeout. The gate that sits IN FRONT of connect
+  // must be no more patient than the connect race itself, or the outer
+  // "device is online" verdict flip-flops every heartbeat.
+  const PROBE_PHASE_DEADLINE_MS = Math.min(3000, timeoutMs);
+  const winner = await (attempts.length
+    ? Promise.race<{ a: Attempt; info: any } | null>([
+        Promise.any(
+          attempts.map(async (a) => {
+            try {
+              const info = await fetchInfoAt(a.base, a.headers, timeoutMs);
+              if (!info) throw new Error(`${a.path} unreachable`);
+              return { a, info };
+            } catch (e) {
+              // Negative-cache direct legs that reject unroutably on this
+              // network. Do NOT cache relay legs — a wedged relay is not
+              // the same problem class and has its own liveness watchdog
+              // (relay/tunnel_liveness.go). Do NOT cache timeouts either.
+              if (a.path === "direct" && a.ip && isUnroutableFailure(e)) {
+                rememberUnroutable("device-status", a.ip, a.port ?? 0);
+              }
+              throw e;
+            }
+          }),
+        ).catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), PROBE_PHASE_DEADLINE_MS)),
+      ])
+    : Promise.resolve(null));
 
   if (winner) {
     const parsed = parseInfo(winner.info);

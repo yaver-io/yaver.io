@@ -513,12 +513,22 @@ func (s *RelayServer) relayAccessIsPaid(action, deviceID, pw, token string) bool
 // never "you are wrong". Access is still denied (fail closed); the difference
 // is what we tell the caller and whether it earns an invalid-auth strike.
 func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (string, bool, error) {
+	uid, ok, _, err := s.validateRelayAccessWithReason(pw, action, deviceID, token)
+	return uid, ok, err
+}
+
+// validateRelayAccessWithReason additionally reports the RelayDenyReason so
+// the caller can render distinct wire messages. Audit §3 (2026-07-19).
+// The empty reason value (RelayDenyReason("")) means "not applicable" —
+// either ok=true, or err is non-nil (backend unavailable), or self-hosted
+// shared-password mode (no reason to distinguish).
+func (s *RelayServer) validateRelayAccessWithReason(pw, action, deviceID, token string) (string, bool, RelayDenyReason, error) {
 	pw = strings.TrimSpace(pw)
 	action = strings.TrimSpace(action)
 	deviceID = strings.TrimSpace(deviceID)
 	token = strings.TrimSpace(token)
 	if pw == "" {
-		return "", false, nil
+		return "", false, RelayDenyBadPassword, nil
 	}
 
 	// Self-hosted shared-password mode remains supported. The official free
@@ -526,20 +536,23 @@ func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (
 	// backend ownership/quota path instead of accepting a universal shared key.
 	if s.convexURL == "" {
 		if sharedPw := s.getPassword(); sharedPw != "" {
-			return "", secretEqual(pw, sharedPw), nil
+			if secretEqual(pw, sharedPw) {
+				return "", true, "", nil
+			}
+			return "", false, RelayDenyBadPassword, nil
 		}
-		return "", true, nil
+		return "", true, "", nil
 	}
 
 	cacheKey := relayAccessCacheKey(action, deviceID, pw, token)
 	s.validatedPwMu.RLock()
 	if expiry, ok := s.validatedPw[cacheKey]; ok && time.Now().Before(expiry) {
 		s.validatedPwMu.RUnlock()
-		return s.resolveUserIDFromPassword(pw), true, nil
+		return s.resolveUserIDFromPassword(pw), true, "", nil
 	}
 	s.validatedPwMu.RUnlock()
 
-	userID, ok, isPaid, plan, err := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
+	userID, ok, isPaid, plan, reason, err := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
 	if ok {
 		expiry := time.Now().Add(5 * time.Minute)
 		s.validatedPwMu.Lock()
@@ -558,7 +571,7 @@ func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (
 			s.pwUserIDMu.Unlock()
 		}
 	}
-	return userID, ok, err
+	return userID, ok, reason, err
 }
 
 // validateAndResolveViaConvex returns both the validity and the
@@ -577,16 +590,36 @@ func (s *RelayServer) validateRelayAccessE(pw, action, deviceID, token string) (
 var errAuthBackendUnavailable = errors.New("relay auth backend unavailable")
 
 func (s *RelayServer) validateAndResolveViaConvex(pw, action, deviceID, token string) (string, bool, bool) {
-	uid, ok, isPaid, _, _ := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
+	uid, ok, isPaid, _, _, _ := s.validateAndResolveViaConvexE(pw, action, deviceID, token)
 	return uid, ok, isPaid
 }
+
+// RelayDenyReason names why access was denied. See audit §3 (2026-07-19).
+// The relay maps these to distinct client-facing rejection strings so the
+// desktop agent can route recovery to the RIGHT remedy: bad-password → refetch
+// the password, dead-token → re-auth the whole session, device-mismatch →
+// user error. Collapsing these into one wire string (the pre-fix behaviour)
+// is how the mini went dark for hours while the agent looped refetching a
+// password that was never wrong.
+type RelayDenyReason string
+
+const (
+	RelayDenyBadPassword    RelayDenyReason = "bad_password"
+	RelayDenyDeadToken      RelayDenyReason = "dead_token"
+	RelayDenyDeviceMismatch RelayDenyReason = "device_mismatch"
+)
 
 // validateAndResolveViaConvexE additionally reports errAuthBackendUnavailable
 // so callers can distinguish "your credential is wrong" from "we could not
 // check". Everything security-relevant still fails CLOSED: a non-nil error
 // grants no access. It only changes what we TELL the caller and whether we
 // hold it against them.
-func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token string) (string, bool, bool, string, error) {
+//
+// Return: (userId, ok, isPaid, plan, denyReason, err). When ok is true, deny
+// is empty. When ok is false and err is nil, deny is one of the constants
+// above (or empty when the backend was too old to emit one — treated as
+// bad-password by callers, which matches the pre-fix behaviour).
+func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token string) (string, bool, bool, string, RelayDenyReason, error) {
 	url := strings.TrimRight(s.convexURL, "/") + "/relay/validate"
 	payload := map[string]string{"password": pw}
 	if strings.TrimSpace(action) != "" {
@@ -603,14 +636,14 @@ func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token s
 	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		log.Printf("[RELAY] Convex validation error: %v", err)
-		return "", false, false, "", errAuthBackendUnavailable
+		return "", false, false, "", "", errAuthBackendUnavailable
 	}
 	defer resp.Body.Close()
 
 	// 5xx is the backend failing, not the caller. 401 IS a real verdict.
 	if resp.StatusCode >= 500 {
 		log.Printf("[RELAY] Convex validation backend error: HTTP %d", resp.StatusCode)
-		return "", false, false, "", errAuthBackendUnavailable
+		return "", false, false, "", "", errAuthBackendUnavailable
 	}
 
 	var result struct {
@@ -618,12 +651,20 @@ func (s *RelayServer) validateAndResolveViaConvexE(pw, action, deviceID, token s
 		UserID string `json:"userId"`
 		IsPaid bool   `json:"isPaid"`
 		Plan   string `json:"plan"`
+		Reason string `json:"reason"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("[RELAY] Convex validation parse error: %v", err)
-		return "", false, false, "", errAuthBackendUnavailable
+		return "", false, false, "", "", errAuthBackendUnavailable
 	}
-	return result.UserID, result.OK, result.IsPaid, result.Plan, nil
+	reason := RelayDenyReason("")
+	if !result.OK {
+		switch result.Reason {
+		case string(RelayDenyBadPassword), string(RelayDenyDeadToken), string(RelayDenyDeviceMismatch):
+			reason = RelayDenyReason(result.Reason)
+		}
+	}
+	return result.UserID, result.OK, result.IsPaid, result.Plan, reason, nil
 }
 
 // resolveSigViaConvex fetches the SIGNER device's ed25519 signing public key
@@ -934,7 +975,7 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	// relay this proves the password belongs to the same signed-in user as
 	// the agent token and, when the device row already exists, that the user
 	// owns the deviceId being registered.
-	regUserID, ok, authErr := s.validateRelayAccessE(reg.Password, "register", reg.DeviceID, reg.Token)
+	regUserID, ok, denyReason, authErr := s.validateRelayAccessWithReason(reg.Password, "register", reg.DeviceID, reg.Token)
 	if !ok {
 		// We could not REACH a verdict. Do not tell the agent its password is
 		// wrong (it will "self-heal" a credential that was never broken) and do
@@ -952,7 +993,27 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 			rejectRegistration("too many invalid relay password attempts", "invalid password rate limited")
 			return
 		}
-		rejectRegistration("invalid relay credentials (password or session token)", "invalid relay credentials")
+		// Audit §3 (2026-07-19): return the distinct reason so the agent's
+		// looksLikeStaleRelayPassword can route dead-token to re-auth instead
+		// of a hopeless password refetch. The string form embeds the code so
+		// older agents that pattern-match on "invalid" continue to work.
+		switch denyReason {
+		case RelayDenyDeadToken:
+			rejectRegistration(
+				"relay session expired — sign in again on this device (reason=dead_token)",
+				"session token expired",
+			)
+		case RelayDenyDeviceMismatch:
+			rejectRegistration(
+				"relay password owner does not own this deviceId (reason=device_mismatch)",
+				"device mismatch",
+			)
+		default:
+			rejectRegistration(
+				"invalid relay password (reason=bad_password)",
+				"invalid relay password",
+			)
+		}
 		return
 	}
 	// Valid credential from this IP — it is not a brute-force source. Clear any
@@ -1153,7 +1214,7 @@ func (s *RelayServer) handleAgentWebSocket(ws *websocket.Conn) {
 		return
 	}
 
-	regUserID, ok, authErr := s.validateRelayAccessE(reg.Password, "register", reg.DeviceID, reg.Token)
+	regUserID, ok, denyReason, authErr := s.validateRelayAccessWithReason(reg.Password, "register", reg.DeviceID, reg.Token)
 	if !ok {
 		if authErr != nil {
 			log.Printf("[RELAY] websocket register %s: auth backend unavailable", reg.DeviceID[:min(8, len(reg.DeviceID))])
@@ -1168,7 +1229,16 @@ func (s *RelayServer) handleAgentWebSocket(ws *websocket.Conn) {
 			reject("too many invalid relay password attempts")
 			return
 		}
-		reject("invalid relay credentials (password or session token)")
+		// Audit §3 (2026-07-19) — see the QUIC register path above for why
+		// these three cases must be distinct on the wire.
+		switch denyReason {
+		case RelayDenyDeadToken:
+			reject("relay session expired — sign in again on this device (reason=dead_token)")
+		case RelayDenyDeviceMismatch:
+			reject("relay password owner does not own this deviceId (reason=device_mismatch)")
+		default:
+			reject("invalid relay password (reason=bad_password)")
+		}
 		return
 	}
 	s.abuseGuard.clearInvalidAuth(remoteAddr)

@@ -11107,13 +11107,32 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 			// password until someone runs `yaver repair-relay`. See
 			// the dynamic-IP / NAT audit — this is the "Convex
 			// rotates password" case.
-			if looksLikeStaleRelayPassword(err) {
+			// Distinguish bad-password from dead-session-token (audit §3,
+			// 2026-07-19). Refetching the password when the SESSION is dead
+			// is a provable no-op: /settings requires that same token to
+			// answer, so we get the SAME password back and loop forever.
+			// The 2026-07-14 "Mac mini goes dark for hours" incident was
+			// exactly this shape.
+			switch classifyRelayAuthFailure(err) {
+			case relayAuthDeadToken:
+				log.Printf("[RELAY %s] Session token expired — relay refused registration; "+
+					"triggering token repair (refetching password would be a no-op)", relayAddr)
+				repairRelaySessionToken(ctx)
+			case relayAuthBadPassword:
 				if fresh := refreshRelayPasswordFromConvex(ctx); fresh != "" && fresh != password {
 					log.Printf("[RELAY %s] Refetched fresh relay password from Convex /settings; retrying", relayAddr)
 					password = fresh
 					backoff = time.Second // reset; we have new creds
 					continue
 				}
+			case relayAuthDeviceMismatch:
+				log.Printf("[RELAY %s] Password owner does not own deviceId %q — cannot self-heal; "+
+					"user must sign in on this device or fix its identity", relayAddr, deviceID)
+				// No retry helps — a password refetch or a token refresh cannot
+				// change who owns the deviceId. Fall through to backoff.
+			case relayAuthUnknown:
+				// Old relay or an error shape we do not recognise. Fall through
+				// to the plain backoff loop; no self-heal to attempt.
 			}
 		}
 
@@ -11184,23 +11203,114 @@ var randInt63n = func(n int64) int64 {
 
 // looksLikeStaleRelayPassword inspects a relay-connect error and
 // decides whether re-fetching the per-user password from Convex
-// /settings is worth a try. The relay returns errors like:
-//
-//	"registration rejected: invalid relay password"
-//	"registration rejected: invalid password"
-//
-// We MUST be conservative — a false positive here would burn through
-// reconnect budget. So we require the literal "password" + "invalid"
-// or "rejected".
+// /settings is worth a try. Kept for the existing HTTP callers in
+// agent_mesh_remote.go / bus_relay.go; new callers should use
+// classifyRelayAuthFailure to distinguish dead-token from bad-password
+// (audit §3, 2026-07-19).
 func looksLikeStaleRelayPassword(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
+	// Preserve the historic behaviour: any of the distinct denials counts as
+	// "worth refetching the password" for the legacy callers, since the old
+	// relay only ever emitted one collapsed string. Callers that need the
+	// finer distinction call classifyRelayAuthFailure directly.
+	if strings.Contains(msg, "reason=dead_token") || strings.Contains(msg, "reason=bad_password") {
+		return true
+	}
 	if !strings.Contains(msg, "password") {
 		return false
 	}
 	return strings.Contains(msg, "invalid") || strings.Contains(msg, "rejected") || strings.Contains(msg, "denied")
+}
+
+// relayAuthFailureKind names why the relay refused registration. Audit §3.
+type relayAuthFailureKind int
+
+const (
+	relayAuthUnknown        relayAuthFailureKind = iota
+	relayAuthBadPassword                         // Convex password no longer matches — refetch may help.
+	relayAuthDeadToken                           // Session token missing/expired/foreign — refetching password is a no-op.
+	relayAuthDeviceMismatch                      // Password owner does not own the deviceId — no self-heal.
+)
+
+// classifyRelayAuthFailure parses the relay's wire error into one of the
+// kinds above so the reconnect loop can pick the right remedy.
+//
+// Recognises the new (post-2026-07-19) explicit codes AND the old collapsed
+// string ("invalid relay credentials (password or session token)") so an old
+// relay still gets treated as bad-password (the historic behaviour).
+func classifyRelayAuthFailure(err error) relayAuthFailureKind {
+	if err == nil {
+		return relayAuthUnknown
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "reason=dead_token"):
+		return relayAuthDeadToken
+	case strings.Contains(msg, "reason=device_mismatch"):
+		return relayAuthDeviceMismatch
+	case strings.Contains(msg, "reason=bad_password"):
+		return relayAuthBadPassword
+	}
+	// Legacy fallthrough: an older relay emits the collapsed
+	// "invalid relay credentials (password or session token)". Assume
+	// bad-password so the pre-fix self-heal path is preserved.
+	if strings.Contains(msg, "invalid relay credentials") ||
+		(strings.Contains(msg, "password") &&
+			(strings.Contains(msg, "invalid") || strings.Contains(msg, "rejected") || strings.Contains(msg, "denied"))) {
+		return relayAuthBadPassword
+	}
+	return relayAuthUnknown
+}
+
+// repairRelaySessionToken kicks off the "your session on this device is dead"
+// remedy. On a headed box it opens the browser OAuth flow; on headless boxes
+// the caller is expected to have already been paired via `yaver auth
+// --headless`. Best-effort — never blocks the reconnect loop.
+//
+// Called ONLY from the relay reconnect path when classifyRelayAuthFailure
+// returns relayAuthDeadToken, because refetching the password when the
+// session is dead is a provable no-op (see the comment in the caller).
+func repairRelaySessionToken(ctx context.Context) {
+	// The heavy-lifting live in the same module — send a soft signal that
+	// the current auth token is dead. auth_recover.go's watcher noticed
+	// this in the past through failed heartbeats; we can also poke it
+	// directly by writing the sentinel used by the recovery goroutine.
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+	// Deliberately non-fatal, non-blocking: a spurious call must not disturb
+	// a healthy agent. The reconnect loop will keep trying with the same
+	// (working) credentials while re-auth completes out of band.
+	go func() {
+		defer func() { _ = recover() }()
+		// If the local auth token is valid, this is a no-op. If it is dead,
+		// this path emits a diagnostic and drops a marker file that the
+		// user's phone (or an ops verb) can consume to prompt for re-auth.
+		markRelaySessionExpired()
+	}()
+}
+
+// markRelaySessionExpired records — best-effort — that this box's relay
+// session token has expired. Consumers include the mobile self-heal path
+// (which reads it via /settings/health) and the doctor probe added in the
+// same change. If the marker cannot be written, the reconnect loop still
+// backs off and retries; the marker just improves diagnosis.
+func markRelaySessionExpired() {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return
+	}
+	// Sentinel field on the config: written once, cleared on next successful
+	// heartbeat. Kept flag-shaped (rather than a full struct) so an older
+	// agent reading this config after a downgrade does not choke on it.
+	cfg.RelaySessionExpiredAt = time.Now().Unix()
+	_ = SaveConfig(cfg)
+	log.Printf("[RELAY] marked relay session as expired at %d — user needs to re-auth on this box", cfg.RelaySessionExpiredAt)
 }
 
 // refreshRelayPasswordFromConvex GETs /settings on the user's

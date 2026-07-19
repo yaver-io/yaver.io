@@ -32,9 +32,20 @@ async function webUser(ctx: any, tokenHash: string): Promise<Id<"users">> {
   return session.user._id;
 }
 
-// Yaver's overlay address space. Deliberately OUTSIDE Tailscale's 100.64.0.0/10
-// CGNAT range so a machine can run both Tailscale and Yaver Mesh side by side.
-// 100.96.0.0/12 = 100.96.0.0 .. 100.111.255.255 (~1M hosts).
+// Yaver's overlay address space. 100.96.0.0/12 = 100.96.0.0 .. 100.111.255.255
+// (~1M hosts).
+//
+// CORRECTION (2026-07-19): this range is INSIDE Tailscale's 100.64.0.0/10 CGNAT
+// range, not outside it. The old "deliberately outside" comment was
+// arithmetically false and it is what makes a Tailscale host silently shadow
+// mesh addresses (any Tailscale peer landing in 100.96.0.0–100.111.255.255
+// becomes unreachable while mesh is up). The desktop guard
+// (mesh.SubnetRouteConflict, wired into every mesh bring-up path in
+// desktop/agent/mesh_safety.go) refuses to bring mesh up when Tailscale is
+// present, and the retraction in desktop/agent/mesh/device.go:33-55 explains
+// why the ranges cannot be moved without a coordinated migration. Fixing this
+// allocator comment does NOT change the allocator behaviour — it stops the
+// next reader from re-deriving a plan against a false axiom.
 const MESH_BASE = (100 << 24) | (96 << 16); // 100.96.0.0
 const MESH_HOST_MIN = 2; // skip .0 (network) and .1 (reserved gateway)
 const MESH_HOST_MAX = (1 << 20) - 2; // /12 host space

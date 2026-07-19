@@ -53,6 +53,13 @@ type Config struct {
 	HeadlessKeepAwake *bool               `json:"headless_keep_awake,omitempty"`
 	RelayPassword     string              `json:"relay_password,omitempty"`
 	RelayServers      []RelayServerConfig `json:"relay_servers,omitempty"`
+	// RelaySessionExpiredAt records the last time the relay refused
+	// registration with reason=dead_token (audit §3, 2026-07-19). Cleared on
+	// the next successful heartbeat. Consumers include the doctor probe and
+	// the mobile self-heal path: refetching the password on a dead-token
+	// error is a provable no-op, so we surface "the SESSION expired" as a
+	// distinct state rather than looping on the password.
+	RelaySessionExpiredAt int64 `json:"relay_session_expired_at,omitempty"`
 	// Cached relay settings come from Convex/user settings and are used as a
 	// reboot-safe fallback when the agent's auth token has expired.
 	CachedRelayPassword string                   `json:"cached_relay_password,omitempty"`

@@ -699,26 +699,41 @@ export const validateRelayPassword = internalQuery({
     action: v.optional(v.string()),
     tokenHash: v.optional(v.string()),
   },
+  // Return shape (audit §3, 2026-07-19):
+  //   { ok: true,  userId, plan?, isPaid? }                — allowed
+  //   { ok: false, reason: "bad_password" }                — no userSettings row matches
+  //   { ok: false, reason: "dead_token" }                  — the session token is missing/expired/foreign;
+  //                                                          the password itself may still be correct
+  //   { ok: false, reason: "device_mismatch" }             — password owner is not the deviceId owner
+  // Previously EVERY failure returned bare `null`, which merged bad-password
+  // and dead-token into one wire-string ("invalid relay credentials (password
+  // or session token)") and misrouted the desktop's recovery into a password
+  // refetch that could not possibly help. The extra reason field is the whole
+  // point of this API change — the client uses it to pick the right remedy.
   handler: async (ctx, args) => {
-    if (!args.password) return null;
+    if (!args.password) return { ok: false, reason: "bad_password" } as const;
     const match = await ctx.db
       .query("userSettings")
       .withIndex("by_relayPassword", (q) => q.eq("relayPassword", args.password))
       .first();
-    if (!match) return null;
+    if (!match) return { ok: false, reason: "bad_password" } as const;
     const action = (args.action || "").trim().toLowerCase();
     const deviceId = (args.deviceId || "").trim();
 
     if (action === "register") {
-      if (!args.tokenHash) return null;
+      if (!args.tokenHash) return { ok: false, reason: "dead_token" } as const;
       const session = await validateSessionInternal(ctx, args.tokenHash);
-      if (!session || session.user._id !== match.userId) return null;
+      if (!session || session.user._id !== match.userId) {
+        return { ok: false, reason: "dead_token" } as const;
+      }
       if (deviceId) {
         const device = await ctx.db
           .query("devices")
           .withIndex("by_deviceId", (q) => q.eq("deviceId", deviceId))
           .first();
-        if (device && device.userId !== match.userId) return null;
+        if (device && device.userId !== match.userId) {
+          return { ok: false, reason: "device_mismatch" } as const;
+        }
         // Phone mesh nodes have no devices row, so bind them to their meshNodes
         // owner instead — otherwise anyone could register (and intercept the
         // DERP frame stream for) another user's phone deviceId.
@@ -727,23 +742,39 @@ export const validateRelayPassword = internalQuery({
             .query("meshNodes")
             .withIndex("by_device", (q) => q.eq("deviceId", deviceId))
             .first();
-          if (node && node.userId !== match.userId) return null;
+          if (node && node.userId !== match.userId) {
+            return { ok: false, reason: "device_mismatch" } as const;
+          }
         }
       }
-      return { userId: match.userId, ...(await relayEntitlementForUser(ctx, match.userId)) };
+      return {
+        ok: true as const,
+        userId: match.userId,
+        ...(await relayEntitlementForUser(ctx, match.userId)),
+      };
     }
 
     if (action === "proxy") {
-      if (!deviceId) return null;
+      if (!deviceId) return { ok: false, reason: "device_mismatch" } as const;
       const device = await ctx.db
         .query("devices")
         .withIndex("by_deviceId", (q) => q.eq("deviceId", deviceId))
         .first();
-      if (!device || device.userId !== match.userId) return null;
-      return { userId: match.userId, ...(await relayEntitlementForUser(ctx, match.userId)) };
+      if (!device || device.userId !== match.userId) {
+        return { ok: false, reason: "device_mismatch" } as const;
+      }
+      return {
+        ok: true as const,
+        userId: match.userId,
+        ...(await relayEntitlementForUser(ctx, match.userId)),
+      };
     }
 
-    return { userId: match.userId, ...(await relayEntitlementForUser(ctx, match.userId)) };
+    return {
+      ok: true as const,
+      userId: match.userId,
+      ...(await relayEntitlementForUser(ctx, match.userId)),
+    };
   },
 });
 
