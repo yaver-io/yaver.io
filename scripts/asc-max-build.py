@@ -50,11 +50,16 @@ def main() -> int:
         if not apps:
             return 0
         app_id = apps[0]["id"]
-        # Highest build across all uploaded builds (they sort by version string,
-        # so pull a page and max() numerically to be safe).
+        # CFBundleVersion monotonicity is per (platform, marketing version), so
+        # the max must be scoped to THIS platform — otherwise a visionOS/tvOS
+        # build with a date-based number (e.g. 2607160313) poisons an iOS bump.
+        # Default to iOS; override with ASC_PLATFORM.
+        platform = os.environ.get("ASC_PLATFORM", "IOS")
         r = requests.get("https://api.appstoreconnect.apple.com/v1/builds",
-                         headers=h, params={"filter[app]": app_id, "sort": "-uploadedDate",
-                                            "limit": "50", "fields[builds]": "version"}, timeout=20)
+                         headers=h, params={"filter[app]": app_id,
+                                            "filter[preReleaseVersion.platform]": platform,
+                                            "sort": "-uploadedDate", "limit": "100",
+                                            "fields[builds]": "version"}, timeout=20)
         r.raise_for_status()
         vals = []
         for b in r.json().get("data", []):
