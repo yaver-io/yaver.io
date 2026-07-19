@@ -245,7 +245,15 @@ run_step testflight "$ASC_OK" bash -c '
   set -e
   if [ ! -d mobile/ios/Pods ]; then
     ( cd mobile && npm install --legacy-peer-deps )
-    ( cd mobile && npx expo prebuild --platform ios --no-install )
+    # --clean is REQUIRED, not optional. A clone has a PARTIAL mobile/ios/
+    # (only the force-added overlays), so without it prebuild takes its
+    # "modify an existing project" path and dies on the first generated file
+    # the clone does not carry:
+    #   [ios.expoPlist]: ENOENT ... mobile/ios/Yaver/Supporting/Expo.plist
+    # --clean regenerates ios/ whole; the checkout below then puts the
+    # force-tracked overlays back over it. Safe here because this clone is
+    # disposable and mobile/ios/ is gitignored anyway.
+    ( cd mobile && npx expo prebuild --platform ios --clean --no-install )
     git checkout -- mobile/ios/
     cp mobile/sdk-manifest.json mobile/ios/Yaver/sdk-manifest.json
     ( cd mobile/ios && pod install )
