@@ -48,7 +48,23 @@ AUTH_KEY_ISSUER="${APP_STORE_KEY_ISSUER:?Set APP_STORE_KEY_ISSUER (env or yaver 
 PLIST="Yaver/Info.plist"
 CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$PLIST")
 NEW_BUILD=$((CURRENT_BUILD + 1))
-/usr/libexec/PlistBuddy -c "Set CFBundleVersion $NEW_BUILD" "$PLIST"
+# PlistBuddy rewrites the whole plist and DROPS XML COMMENTS. Info.plist
+# carries a long comment explaining why NSAllowsArbitraryLoads is set (the
+# 100.64/10 CGNAT range that NSAllowsLocalNetworking does not exempt) — that
+# reasoning was being silently deleted on every single deploy. Patch the one
+# value as text instead so the documentation survives.
+python3 - "$PLIST" "$NEW_BUILD" <<'PYEOF'
+import re, sys
+path, new_build = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    s = f.read()
+s2 = re.sub(r'(<key>CFBundleVersion</key>\s*\n\s*<string>)[^<]*(</string>)',
+            lambda m: m.group(1) + new_build + m.group(2), s, count=1)
+if s2 == s:
+    sys.exit("deploy-testflight: could not patch CFBundleVersion in " + path)
+with open(path, "w") as f:
+    f.write(s2)
+PYEOF
 echo "Build $CURRENT_BUILD → $NEW_BUILD"
 
 # Clean stale archive so a failed build can't silently reuse it
