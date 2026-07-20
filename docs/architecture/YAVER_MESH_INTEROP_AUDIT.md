@@ -592,11 +592,11 @@ yaver net explain <device>
 
 | # | Defect | Location |
 |---|---|---|
-| 1 | `unreachable` declared then dropped; no `contradicted` gate on mobile | `deviceStatus.ts:382` vs `:384` |
+| 1 | ✅ FIXED 2026-07-20 — `unreachable` declared then dropped; no `contradicted` gate on mobile | `deviceStatus.ts:382` vs `:384` |
 | 2 | Local Network denial classified `unroutable`, cached, never detected | `directProbeFailure.ts:79`, `:53` |
-| 3 | `HEARTBEAT_STALE_MS` 900 s mobile vs 90 s shared | `_core/constants.ts:66` |
-| 4 | `observedTailnetUp` never expires, survives network flip | `unroutableCache.ts:120,144` |
-| 5 | `setNetworkIdentity` has one caller; SSID→`wifi:unknown` collapses networks | `quic.ts:6460`, `:49` |
+| 3 | ~~`HEARTBEAT_STALE_MS` 900 s mobile vs 90 s shared~~ **CORRECTED**: the authority is `backend/convex/devices.ts:112` = `900 * 1000`; mobile matched it and **shared/client-core was the outlier**. Fixed in shared. Verify the named authority before believing a drift report. | `shared/client-core/src/constants.ts:58` |
+| 4 | ✅ FIXED 2026-07-20 — `observedTailnetUp` never expires, survives network flip | `unroutableCache.ts:120,144` |
+| 5 | ⚠️ PARTIAL — tunnel legs now re-armed per connect (2026-07-20); still one caller, and SSID→`wifi:unknown` still collapses distinct networks | `quic.ts:6460`, `:49` |
 | 6 | Relay 200 logged as "agent answered"; `authExpired` ignored on fallback | `quic.ts:6402`, `:7042` |
 | 7 | Unbounded per-device probe fan-out vs iOS ~6/host | `RemoteBoxPickerModal.tsx:559` |
 | 8 | Sticky `isConnected` outranks contradicting evidence | `quic.ts:1388`, `deviceStatus.ts:394` |
