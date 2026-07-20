@@ -22,11 +22,16 @@ describe("nativeBuild UI mapping", () => {
     });
   });
 
-  it("maps compatibility-family codes to Compatibility Blocked", () => {
-    expect(nativeBuildFailureTitle({ code: "NATIVE_MODULE_INCOMPATIBLE" })).toBe("Compatibility Blocked");
+  it("maps version/family drift to Compatibility Blocked (fatal — corrupts the JSI contract)", () => {
     expect(nativeBuildFailureTitle({ code: "NATIVE_MODULE_VERSION_MISMATCH" })).toBe("Compatibility Blocked");
     expect(nativeBuildFailureTitle({ code: "REACT_VERSION_MISMATCH" })).toBe("Compatibility Blocked");
     expect(nativeBuildFailureTitle({ code: "FRAMEWORK_VERSION_MISMATCH" })).toBe("Compatibility Blocked");
+  });
+
+  it("maps a MISSING module to a non-blocking title (warning-only as of 2026-07-20)", () => {
+    // A module absent from the host throws only if called unguarded — the app
+    // still loads. The title must not read as a hard block.
+    expect(nativeBuildFailureTitle({ code: "NATIVE_MODULE_INCOMPATIBLE" })).toBe("Some Features Unavailable");
   });
 
   it("maps Hermes bytecode mismatch distinctly", () => {
@@ -67,7 +72,7 @@ describe("nativeBuild UI mapping", () => {
       output: "Done writing bundle output",
     })).toBe(
       "phase: compat\n" +
-      "Yaver blocked restart because the project uses native modules the mobile host does not include.\n" +
+      "Some native modules this project declares are not in Yaver's mobile host. The app still loads; those features may be unavailable if it calls them.\n" +
       "Missing in Yaver: react-native-yaver-fictional-test-module\n" +
       "---\n" +
       "Done writing bundle output"

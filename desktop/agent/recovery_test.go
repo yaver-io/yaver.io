@@ -108,6 +108,53 @@ func TestBuildRecoveryPrompt_IncludesContext(t *testing.T) {
 	}
 }
 
+// The compat-blocked fix prompt must name the EXACT blocking modules and their
+// version pairs from the structured report — that precision is the whole reason
+// RecoveryContext.Compat exists. A generic "align your versions" prompt sends the
+// runner guessing; naming `react-native-foo 3.0.0 vs 2.0.0` does not.
+func TestBuildRecoveryPrompt_HermesCompatBlocked_NamesModulesAndVersions(t *testing.T) {
+	_, prompt := BuildRecoveryPrompt(RecoveryContext{
+		Kind:      RecoveryHermesCompatBlocked,
+		Framework: "expo",
+		WorkDir:   "/Users/kivanc/repo/talos/mobile",
+		Compat: &CompatReport{
+			Incompatible: []string{"expo-gl"},
+			VersionMismatches: []NativeModuleMismatch{
+				{Name: "react-native-foo", ProjectVersion: "3.0.0", HostVersion: "2.0.0", Reason: "major bump"},
+			},
+			RuntimeFamily: &RuntimeFamilySelection{
+				Selected:      RuntimeFamily{Label: "Family A"},
+				SupportedHint: "Expo 54 / RN 0.81",
+			},
+			GuestRuntime: RuntimeFingerprint{ExpoVersion: "54.0.33", ReactNativeVersion: "0.81.5", ReactVersion: "19.1.0"},
+		},
+	})
+	for _, want := range []string{
+		"react-native-foo",     // the fatal module
+		"3.0.0",                // project version
+		"2.0.0",                // host version — align DOWN to this
+		"expo-gl",              // the warning-only module
+		"Cell3D",               // the gold-standard guard pattern
+		"try {",                // the actual guard snippet
+		"align the GUEST DOWN", // the constraint that matters most
+		"POST /dev/build-native",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("compat fix prompt missing %q\n--- prompt ---\n%s", want, prompt)
+		}
+	}
+	// It must explicitly FORBID the wrong fix (bumping/adding to the shared host),
+	// not suggest it. Assert the prohibition is present rather than trying to
+	// detect a suggestion — the words "host" and "add" legitimately appear in the
+	// prohibition itself.
+	if !strings.Contains(prompt, "never bump the host") && !strings.Contains(prompt, "align the GUEST DOWN to the host, never the host up") {
+		t.Error("compat fix prompt must explicitly forbid bumping the shared host")
+	}
+	if !strings.Contains(prompt, "do NOT add a native module the host lacks") && !strings.Contains(prompt, "shared across every user") {
+		t.Error("compat fix prompt must forbid adding native deps to the shared host")
+	}
+}
+
 func TestBuildRecoveryPrompt_NeverForbidsHermesRunIos(t *testing.T) {
 	// The Hermes path must keep telling the agent not to fall back to
 	// expo run:ios — that was a real regression before.

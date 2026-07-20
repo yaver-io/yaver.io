@@ -78,7 +78,7 @@ export function nativeBuildFailureMessage(buildResult: any): string {
 }
 
 export function nativeBuildFailureTitle(buildResult: any): string {
-  if (buildResult?.code === "NATIVE_MODULE_INCOMPATIBLE") return "Compatibility Blocked";
+  if (buildResult?.code === "NATIVE_MODULE_INCOMPATIBLE") return "Some Features Unavailable";
   if (buildResult?.code === "NATIVE_MODULE_VERSION_MISMATCH") return "Compatibility Blocked";
   if (buildResult?.code === "REACT_VERSION_MISMATCH") return "Compatibility Blocked";
   if (buildResult?.code === "FRAMEWORK_VERSION_MISMATCH") return "Compatibility Blocked";
@@ -89,7 +89,12 @@ export function nativeBuildFailureTitle(buildResult: any): string {
 
 function compatibilitySummary(buildResult: any): string | null {
   if (buildResult?.code === "NATIVE_MODULE_INCOMPATIBLE") {
-    return "Yaver blocked restart because the project uses native modules the mobile host does not include.";
+    // Missing modules are warning-only as of 2026-07-20 (agent gate + doctor):
+    // a module absent from the host throws only if the app calls it unguarded, so
+    // a guarded require() loads fine. This code only reaches a phone talking to an
+    // OLDER agent; keep the copy honest either way — it may be unavailable, not
+    // "would crash".
+    return "Some native modules this project declares are not in Yaver's mobile host. The app still loads; those features may be unavailable if it calls them.";
   }
   if (buildResult?.code === "NATIVE_MODULE_VERSION_MISMATCH") {
     return "Yaver blocked restart because the project's native runtime contract does not match the mobile host.";

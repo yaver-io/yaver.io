@@ -29,6 +29,7 @@ type RecoveryKind string
 
 const (
 	RecoveryHermesBuildFailed     RecoveryKind = "hermes-build-failed"
+	RecoveryHermesCompatBlocked   RecoveryKind = "hermes-compat-blocked"
 	RecoveryMetroNotStarting      RecoveryKind = "metro-not-starting"
 	RecoveryFlutterFlushFailed    RecoveryKind = "flutter-flush-failed"
 	RecoveryFlutterDeviceMissing  RecoveryKind = "flutter-device-missing"
@@ -56,6 +57,12 @@ type RecoveryContext struct {
 	Hint      string       `json:"hint,omitempty"`     // caller's best guess at what's wrong
 	UserGoal  string       `json:"userGoal,omitempty"` // short human sentence
 	Surface   string       `json:"surface,omitempty"`  // "mobile"/"web"/"desktop"
+
+	// Compat is the structured Hermes compatibility report, present only for
+	// RecoveryHermesCompatBlocked. It carries the exact incompatible modules,
+	// version pairs, guest runtime, and family selection so the fix prompt can
+	// name them precisely instead of pasting free-text error output.
+	Compat *CompatReport `json:"compat,omitempty"`
 }
 
 // BuildRecoveryPrompt produces a single, runner-neutral prompt the AI agent
@@ -96,6 +103,9 @@ func BuildRecoveryPrompt(ctx RecoveryContext) (title, prompt string) {
 			"",
 			"Do not run `expo run:ios`, `xcodebuild`, `gradlew`, or `expo run:android` — Yaver loads the app via Hermes push, so Metro + a fresh bundle is what matters.",
 		)
+	case RecoveryHermesCompatBlocked:
+		t = fmt.Sprintf("Make %s Hermes-reloadable in Yaver", project)
+		p = buildHermesCompatFixPrompt(project, fw, wd, hostOS, ctx.Compat, errText)
 	case RecoveryMetroNotStarting:
 		t = fmt.Sprintf("Fix Metro dev server for %s", project)
 		p = joinLines(
@@ -234,6 +244,105 @@ func BuildRecoveryPrompt(ctx RecoveryContext) (title, prompt string) {
 		p += "\n\n(Triggered from Yaver " + s + ".)"
 	}
 	return t, p
+}
+
+// buildHermesCompatFixPrompt turns a structured CompatReport into a task the
+// remote runner can execute to make a guest app Hermes-reloadable. It names the
+// exact blocking modules and version pairs so the runner does not have to
+// reverse-engineer them from free text, cites the talos Cell3D try/catch pattern
+// as the gold standard for guarding an absent module, and forbids the two wrong
+// fixes we keep seeing: bumping the shared host, or adding a heavy native dep.
+//
+// Precedence matches the gate: VERSION / framework / family drift is fatal and
+// must be aligned; a MISSING module is warning-only and only needs a guard if
+// its require is currently unguarded.
+func buildHermesCompatFixPrompt(project, fw, wd, hostOS string, compat *CompatReport, errText string) string {
+	lines := []string{
+		fmt.Sprintf("The Yaver mobile host compiled a Hermes bundle for %s (%s) at %s, but blocked the on-phone reload because the guest app's native runtime contract does not match the host.",
+			project, fallback(fw, "react-native/expo"), fallback(wd, "(unknown)")),
+		fmt.Sprintf("Dev machine OS: %s.", hostOS),
+		"",
+	}
+
+	if compat != nil && compat.RuntimeFamily != nil {
+		lines = append(lines,
+			fmt.Sprintf("Host runtime family: %s. Host supports: %s.",
+				fallback(compat.RuntimeFamily.Selected.Label, "(nearest family)"),
+				fallback(compat.RuntimeFamily.SupportedHint, "(see host manifest)")))
+	}
+	if compat != nil {
+		g := compat.GuestRuntime
+		if g.ExpoVersion != "" || g.ReactNativeVersion != "" || g.ReactVersion != "" {
+			lines = append(lines, fmt.Sprintf("Guest runtime: Expo %s / React Native %s / React %s.",
+				fallback(g.ExpoVersion, "?"), fallback(g.ReactNativeVersion, "?"), fallback(g.ReactVersion, "?")))
+		}
+	}
+	lines = append(lines, "")
+
+	// The fatal set — what actually blocked the load.
+	fatal := []string{}
+	if compat != nil {
+		for _, m := range compat.VersionMismatches {
+			fatal = append(fatal, fmt.Sprintf("- Native module `%s`: project %s vs host %s — %s",
+				m.Name, fallback(m.ProjectVersion, "?"), fallback(m.HostVersion, "?"), fallback(m.Reason, "version boundary")))
+		}
+		if compat.ReactVersionMismatch != nil {
+			fatal = append(fatal, fmt.Sprintf("- React: project %s vs host %s",
+				compat.ReactVersionMismatch.ProjectVersion, compat.ReactVersionMismatch.HostVersion))
+		}
+		if compat.ExpoVersionMismatch != nil {
+			fatal = append(fatal, fmt.Sprintf("- Expo: project %s vs host %s",
+				compat.ExpoVersionMismatch.ProjectVersion, compat.ExpoVersionMismatch.HostVersion))
+		}
+		if compat.RNVersionMismatch != nil {
+			fatal = append(fatal, fmt.Sprintf("- React Native: project %s vs host %s",
+				compat.RNVersionMismatch.ProjectVersion, compat.RNVersionMismatch.HostVersion))
+		}
+	}
+	if len(fatal) > 0 {
+		lines = append(lines, "What blocked the load (FATAL — fix these):")
+		lines = append(lines, fatal...)
+		lines = append(lines, "")
+	}
+
+	if compat != nil && len(compat.Incompatible) > 0 {
+		lines = append(lines,
+			fmt.Sprintf("Warning-only (do NOT block on these, but guard any UNGUARDED usage): the following native modules are declared but not registered in the Yaver host: %s. They throw only if the app calls them at runtime; a require() wrapped in try/catch never reaches the throw.",
+				strings.Join(compat.Incompatible, ", ")),
+			"")
+	}
+
+	if len(fatal) == 0 && (compat == nil || len(compat.Incompatible) == 0) && errText != "" {
+		lines = append(lines, "Error reported to the user:", errText, "")
+	}
+
+	lines = append(lines,
+		fmt.Sprintf("Your job: make this app load into the Yaver Hermes host without changing what it does. Work ONLY inside %s. Choose the smallest change per issue:", fallback(wd, "the project directory")),
+		"",
+		"1. For each version/family mismatch above — align the GUEST DOWN to the host, never the host up. Pin the project's dependency to the host version shown (a package.json `overrides`/`resolutions` entry, plus Expo/RN/React set to the host family), then run the package manager once (detect it from the lockfile). Do NOT bump the Yaver host, and do NOT add a native module the host lacks — the host binary is fixed and shared across every user.",
+		"",
+		"2. For each unguarded native require()/import of an unsupported module — wrap it so a missing module renders a fallback instead of crashing. This is the gold-standard pattern already used in talos/mobile's src/screens/more/Cell3D.tsx and SpatialBackdrop.tsx: the expo-gl require is wrapped in try/catch and the component renders a graceful fallback when the module is absent, so the throw lands in the guest's own catch and never reaches the host. Mirror it exactly:",
+		"     let NativeMod = null;",
+		"     try { NativeMod = require('the-module'); } catch { NativeMod = null; }",
+		"     // at the call site: if (!NativeMod) return <Fallback />;",
+		"   Grep for every unguarded top-level import of the modules listed above and apply this. A guarded require of an absent module is fully allowed by the host — only an UNGUARDED top-level one is a risk.",
+		"",
+		"3. If a mismatch cannot be safely aligned (the app genuinely needs a native API the host does not provide and no JS fallback is possible), stop and report which module, why, and what the host would need — do not force it.",
+		"",
+		"Constraints: NO native builds (`expo run:ios`, `xcodebuild`, `gradlew`, `expo run:android`) — Yaver loads via Hermes push, so a fresh Metro bundle is all that matters. No destructive git. All changes stay inside the project directory; never touch the Yaver host repo.",
+		"",
+		"When done — re-trigger the reload to verify. Rebuild the Hermes bundle (POST /dev/build-native, or the mobile_project_build MCP verb) and confirm it returns status:ok, not a 409 compat block. If it still 409s, read the new nativeModuleVersionMismatches / runtimeFamilySelection in the response and iterate. Report the exact files changed and the final compat result.",
+	)
+	return joinLines(toIfaceLines(lines)...)
+}
+
+// toIfaceLines adapts a []string to joinLines's []interface{} signature.
+func toIfaceLines(lines []string) []interface{} {
+	out := make([]interface{}, len(lines))
+	for i, l := range lines {
+		out[i] = l
+	}
+	return out
 }
 
 func fallback(s, fb string) string {

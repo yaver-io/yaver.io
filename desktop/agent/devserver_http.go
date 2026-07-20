@@ -3639,6 +3639,11 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"code":                          respCode,
 					"error":                         errMsg,
 					"helpHint":                      helpHint,
+					// recoverKind tells the phone which recovery task to open if the
+					// user taps "Try to fix" — it round-trips back as
+					// RecoveryContext.Kind so the runner gets the compat-specific
+					// fix prompt (buildHermesCompatFixPrompt), not a generic one.
+					"recoverKind":                   string(RecoveryHermesCompatBlocked),
 					"platform":                      req.Platform,
 					"moduleName":                    moduleName,
 					"incompatibleNativeModules":     compatIncompatible,

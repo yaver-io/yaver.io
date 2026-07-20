@@ -2055,6 +2055,7 @@ export class QuicClient {
   async recover(ctx: {
     kind:
       | "hermes-build-failed"
+      | "hermes-compat-blocked"
       | "metro-not-starting"
       | "flutter-flush-failed"
       | "flutter-device-missing"
@@ -2075,6 +2076,10 @@ export class QuicClient {
     tool?: string;
     hint?: string;
     userGoal?: string;
+    // Structured Hermes compatibility report, forwarded verbatim to the agent
+    // for kind:"hermes-compat-blocked" so the fix task names the exact modules
+    // and versions. Shape mirrors the agent's CompatReport; passed through as-is.
+    compat?: unknown;
   }): Promise<{ taskId: string; title: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/recover`, {

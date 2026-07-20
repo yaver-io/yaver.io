@@ -394,11 +394,12 @@ export default function AppsScreen() {
     title: string,
     body: string,
     ctx: Parameters<typeof quicClient.recover>[0],
+    actionLabel?: string,
   ) => {
     Alert.alert(title, body, [
       { text: "Close", style: "cancel" },
       {
-        text: "Ask AI to Fix",
+        text: actionLabel || "Ask AI to Fix",
         onPress: async () => {
           try {
             const r = await quicClient.recover(ctx);
@@ -1455,6 +1456,39 @@ export default function AppsScreen() {
       const title = buildResult
         ? nativeBuildFailureTitle(buildResult)
         : (loadAfterBuild ? "Open in Yaver Failed" : "Hermes Build Failed");
+
+      // Compatibility blocks are the one failure a remote runner can actually
+      // repair (guard an unguarded require, align a version down to the host).
+      // Every other framework failure already routes through offerAgentFix; the
+      // compat dialog used to dead-end in a bare alert. Wire it to the same
+      // self-heal path, threading the STRUCTURED report through so the fix task
+      // names the exact modules and versions — the agent builds the prompt from
+      // ctx.compat (RecoveryHermesCompatBlocked), the phone does not.
+      const compatCodes = [
+        "NATIVE_MODULE_INCOMPATIBLE",
+        "NATIVE_MODULE_VERSION_MISMATCH",
+        "REACT_VERSION_MISMATCH",
+        "FRAMEWORK_VERSION_MISMATCH",
+        "RUNTIME_FAMILY_MISMATCH",
+        "BC_VERSION_MISMATCH",
+      ];
+      if (buildResult && compatCodes.includes(buildResult.code)) {
+        offerAgentFix(title, `${raw}${hint}`, {
+          kind: "hermes-compat-blocked",
+          framework: devStatus?.framework || undefined,
+          workDir: buildResult.workDir || devStatus?.workDir || undefined,
+          platform: Platform.OS,
+          project: buildResult.projectName || undefined,
+          error: raw,
+          // Forward the whole 409 payload as the compat report — its top-level
+          // keys (incompatibleNativeModules, nativeModuleVersionMismatches,
+          // guestRuntime, runtimeFamilySelection, …) match the agent's
+          // CompatReport JSON, so the agent decodes what it needs and ignores
+          // the rest.
+          compat: buildResult,
+        }, "Try to Fix");
+        return;
+      }
       Alert.alert(title, `${raw}${hint}`);
       return;
     }
