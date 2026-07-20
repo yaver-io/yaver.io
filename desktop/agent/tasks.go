@@ -348,6 +348,16 @@ func GetCachedModels() []BackendModel {
 	return cachedModels
 }
 
+type runnerBinaryCheckEntry struct {
+	path string
+	at   time.Time
+}
+
+var (
+	runnerBinaryCheckCache    sync.Map // map[string]runnerBinaryCheckEntry
+	runnerBinaryCheckCacheTTL = 30 * time.Second
+)
+
 // ClaudeEvent represents a top-level line of stream-json output from Claude CLI.
 // With --include-partial-messages, events include:
 //
@@ -1860,6 +1870,14 @@ func expandedPath() string {
 // CheckRunnerBinary checks if a runner binary is available in PATH or common locations.
 // If found outside PATH, logs a hint about adding it to PATH.
 func CheckRunnerBinary(command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return fmt.Errorf("runner command is empty")
+	}
+	if _, ok := cachedRunnerBinaryPath(command); ok {
+		return nil
+	}
+
 	// First try standard PATH
 	path, err := exec.LookPath(command)
 	if err != nil {
@@ -1898,6 +1916,7 @@ func CheckRunnerBinary(command string) error {
 		if ctx.Err() == context.DeadlineExceeded && looksLikeRunnerVersion(out) {
 			log.Printf("[runner-check] %s at %s — answered %q but did not exit within %s; treating as ready",
 				command, path, strings.TrimSpace(string(out)), runnerVersionProbeTimeout)
+			storeRunnerBinaryPath(command, path)
 			return nil
 		}
 		return fmt.Errorf("%s found but not working: %v (output: %s)", command, err, strings.TrimSpace(string(out)))
@@ -1907,6 +1926,7 @@ func CheckRunnerBinary(command string) error {
 	} else {
 		log.Printf("[runner-check] %s at %s — %s", command, path, strings.TrimSpace(string(out)))
 	}
+	storeRunnerBinaryPath(command, path)
 	return nil
 }
 
@@ -1914,6 +1934,39 @@ func CheckRunnerBinary(command string) error {
 // bound, not a correctness one: a runner that answers and lingers is still a
 // working runner (see the DeadlineExceeded branch above).
 const runnerVersionProbeTimeout = 10 * time.Second
+
+func cachedRunnerBinaryPath(command string) (string, bool) {
+	v, ok := runnerBinaryCheckCache.Load(command)
+	if !ok {
+		return "", false
+	}
+	entry, _ := v.(runnerBinaryCheckEntry)
+	if time.Since(entry.at) >= runnerBinaryCheckCacheTTL {
+		runnerBinaryCheckCache.Delete(command)
+		return "", false
+	}
+	if entry.path == "" || !isExecutableFile(entry.path) {
+		runnerBinaryCheckCache.Delete(command)
+		return "", false
+	}
+	return entry.path, true
+}
+
+func storeRunnerBinaryPath(command, path string) {
+	command = strings.TrimSpace(command)
+	path = strings.TrimSpace(path)
+	if command == "" || path == "" {
+		return
+	}
+	runnerBinaryCheckCache.Store(command, runnerBinaryCheckEntry{
+		path: path,
+		at:   time.Now(),
+	})
+}
+
+func clearRunnerBinaryCheckCache() {
+	runnerBinaryCheckCache = sync.Map{}
+}
 
 // looksLikeRunnerVersion reports whether a probe's output is a real answer rather
 // than noise. Deliberately narrow: a version has a digit in it. A binary that
