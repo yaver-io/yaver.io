@@ -25,7 +25,7 @@ const TOOL_META: Record<string, { emoji: string; tagline: string }> = {
   codex: { emoji: "🧠", tagline: "OpenAI Codex CLI — token-efficient daily driver." },
   opencode: { emoji: "🪄", tagline: "Open-source coding agent — use local Ollama or a preconfigured provider on the box." },
   ollama: { emoji: "🦙", tagline: "Local LLM runtime — install on the dev box, then point OpenCode at it for free local coding." },
-  docker: { emoji: "🐳", tagline: "Containerise tasks — required for guest isolation + sandbox mode." },
+  docker: { emoji: "🐳", tagline: "Container runtime for optional infra workloads." },
   node: { emoji: "🟢", tagline: "Node.js — required for Expo / Vite / Next.js." },
   python: { emoji: "🐍", tagline: "Python 3 — ML tooling and some CLIs." },
   go: { emoji: "🐹", tagline: "Go toolchain — rebuild the agent / relay from source." },

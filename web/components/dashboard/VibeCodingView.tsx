@@ -1014,6 +1014,7 @@ export default function VibeCodingView({
           projectName: selectedProject.name,
           workDir: selectedProject.path,
           videoEnabled: videoSummaryEnabled,
+          placementKind,
           askMode: detectAskIntent(composer.trim()),
         },
         createdAt: now,
@@ -1084,6 +1085,7 @@ export default function VibeCodingView({
       projectName: selectedProject.name,
       workDir: selectedProject.path,
       videoEnabled: videoSummaryEnabled,
+      placementKind,
       // Console auto-detect: a natural-language question ("how do I test
       // STT/TTS?") routes to ask mode — deep grounded analysis, explain-first
       // — instead of a work run. High-precision; imperative build prompts are
@@ -1270,6 +1272,7 @@ export default function VibeCodingView({
       projectName: selectedProject.name,
       workDir: selectedProject.path,
       videoEnabled: videoSummaryEnabled,
+      placementKind: "deploy",
     });
     setActiveGraphRunId(null);
     setActiveTaskId(task.id);

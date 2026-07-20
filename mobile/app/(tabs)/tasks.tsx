@@ -50,7 +50,7 @@ import TaskTargetWizard, { type TaskTarget } from "../../src/components/TaskTarg
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { appTag } from "../../src/lib/appVersion";
 import * as ExpoClipboard from "expo-clipboard";
-import { getLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
+import { appLog, getLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
 import {
   AgentStatus,
   CloudWorkspaceRequiredError,
@@ -60,6 +60,7 @@ import {
   ModelInfo,
   quicClient,
   RunnerInfo,
+  RunnerFetchResult,
   Task,
   TaskStatus,
   TmuxSession,
@@ -781,14 +782,20 @@ function PhaseStatusLine({ task }: { task: Task }) {
 
 type RunnerBannerKind =
   | "ok"
+  | "checking"
+  | "unknown"
   | "authNeeded"
   | "needsConfig"
   | "notRunnable"
   | "notInstalled"
   | "blocked";
 
+type RunnerFetchUIState = RunnerFetchResult["state"] | "idle" | "loading";
+
 const RUNNER_BANNER_TONES: Record<RunnerBannerKind, string> = {
   ok: "#4ade80",
+  checking: "#60a5fa",
+  unknown: "#fbbf24",
   authNeeded: "#fbbf24",
   needsConfig: "#fbbf24",
   notRunnable: "#fbbf24",
@@ -799,6 +806,7 @@ const RUNNER_BANNER_TONES: Record<RunnerBannerKind, string> = {
 function deriveRunnerBannerState(
   runners: RunnerInfo[],
   agentStatus: AgentStatus | null,
+  runnerFetchState: RunnerFetchUIState,
   // The runner the user is ACTUALLY about to run on this device: the
   // resolved selection (composer chip → per-device primary → default),
   // NOT the agent's hardcoded defaultRunner. Ids are normalized here
@@ -813,11 +821,6 @@ function deriveRunnerBannerState(
   // "OpenAI Codex not installed" while the task ran fine on Claude Code.
   selectedRunnerId?: string,
 ): { text: string; tone: string; kind: RunnerBannerKind; runnerId?: string } | null {
-  if (runners.length === 0 && !agentStatus) return null;
-
-  const installed = runners.filter((runner) => runner.installed);
-  const runnable = installed.filter((runner) => !runner.error);
-  const authed = installed.filter((runner) => runner.authConfigured);
   // runnerId rides along so the banner can OFFER THE FIX, not just name the
   // problem. Without it the "needs sign-in" state had no id to hand
   // openRunnerAuthModal, so it was the one banner state with no action at all:
@@ -832,6 +835,17 @@ function deriveRunnerBannerState(
     kind,
     runnerId,
   });
+
+  if (runnerFetchState === "idle" || runnerFetchState === "disconnected") return null;
+  if (runnerFetchState === "loading") return make("checking", "checking runners...");
+  if (runnerFetchState === "failed" && runners.length === 0) {
+    return make("unknown", "runners unavailable");
+  }
+  if (runners.length === 0 && !agentStatus) return null;
+
+  const installed = runners.filter((runner) => runner.installed);
+  const runnable = installed.filter((runner) => !runner.error);
+  const authed = installed.filter((runner) => runner.authConfigured);
 
   // Selected-runner-first: the header must describe the runner the user
   // is about to run, by NAME, using the agent's authoritative per-runner
@@ -1497,7 +1511,20 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
   };
 
   if (task.turns && task.turns.length > 0) {
-    for (const turn of task.turns) {
+    // WhatsApp-order guarantee: if the agent finalises an assistant turn
+    // after the user has already sent a follow-up (optimistic user turn
+    // sits at the tail), a naive iteration would insert that assistant
+    // turn BEFORE the follow-up on the next poll — the on-screen sequence
+    // would jump around. Sorting by timestamp keeps everything strictly
+    // chronological. Turns without a timestamp fall through to insertion
+    // order (stable).
+    const ordered = [...task.turns].sort((a, b) => {
+      const ta = a.timestamp ? Date.parse(a.timestamp) : 0;
+      const tb = b.timestamp ? Date.parse(b.timestamp) : 0;
+      if (!ta || !tb) return 0;
+      return ta - tb;
+    });
+    for (const turn of ordered) {
       pushMessage(turn.role, turn.content);
     }
   } else {
@@ -1592,6 +1619,16 @@ export default function TasksScreen() {
     }) || null;
   }, [devices]);
   const [showNewTask, setShowNewTask] = useState(false);
+  // Optional "select project" step shown before the composer when no
+  // ?dir= scope came in via the route. Skippable — see the effect right
+  // after this that decides whether to open on the project step or jump
+  // straight to compose.
+  const [newTaskStep, setNewTaskStep] = useState<"project" | "compose">("compose");
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
+  const [selectedProjectName, setSelectedProjectName] = useState<string | null>(null);
+  const [discoveredProjects, setDiscoveredProjects] = useState<{ name: string; path: string; framework?: string }[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [projectsLoadError, setProjectsLoadError] = useState<string | null>(null);
   // Multi-target wizard state. Only used when DeviceContext.multiTargetMode
   // is true: the FAB opens the wizard first, the wizard sets pendingTarget
   // (and switches the QUIC client to that device via selectDevice), then
@@ -1651,6 +1688,8 @@ export default function TasksScreen() {
   const [showPingResult, setShowPingResult] = useState(false);
   const [isRestartingRunner, setIsRestartingRunner] = useState(false);
   const [availableRunners, setAvailableRunners] = useState<RunnerInfo[]>([]);
+  const [runnerFetchState, setRunnerFetchState] = useState<RunnerFetchUIState>("idle");
+  const [taskListError, setTaskListError] = useState<string | null>(null);
   const [selectedRunner, setSelectedRunner] = useState<string>(""); // "" = default
   // OpenCode-only: which agent (build / plan / custom) drives the
   // task. Forwarded as `mode` on the task POST and turned into
@@ -1704,6 +1743,11 @@ export default function TasksScreen() {
   const [isLoadingTmux, setIsLoadingTmux] = useState(false);
   const [isAdopting, setIsAdopting] = useState<string | null>(null); // session name being adopted
   const chatScrollRef = useRef<FlatList>(null);
+  // WhatsApp-style scroll: only auto-scroll when the user is already near
+  // the bottom, otherwise leave them where they are and surface a "New
+  // messages" pill so they can pull the new content into view on demand.
+  const isNearBottomRef = useRef(true);
+  const [hasNewChatContent, setHasNewChatContent] = useState(false);
   const pendingOpenTaskRef = useRef<Task | null>(null);
   /** AbortController per in-flight yaver-agent run, keyed by synthetic
    *  task id. handleStopTask aborts the matching controller; the
@@ -1784,6 +1828,10 @@ export default function TasksScreen() {
   const realtimeRef = useRef<{ stop: () => Promise<string> } | null>(null);
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [preRecordText, setPreRecordText] = useState(""); // text before recording started
+  // Per-task voice-mode memory: if the last accepted input for a task
+  // came from STT, the next follow-up auto-starts recording. Cleared on the
+  // task when the user manually types into the follow-up composer.
+  const voiceModeTasksRef = useRef<Set<string>>(new Set());
 
   // Load speech settings from Convex (default: on-device whisper). We track
   // the whisper init error so the mic button can warn up-front instead of
@@ -1863,12 +1911,19 @@ export default function TasksScreen() {
     if (connectionStatus !== "connected") {
       setAvailableRunners([]);
       setAvailableModels([]);
+      setRunnerFetchState("disconnected");
       return;
     }
     let cancelled = false;
-    quicClient.getRunners().then((r) => {
+    setRunnerFetchState("loading");
+    quicClient.getRunnersState().then((result) => {
       if (cancelled) return;
-      if (r.length > 0) setAvailableRunners(r);
+      setRunnerFetchState(result.state);
+      if (result.state === "loaded") {
+        setAvailableRunners(result.runners);
+      }
+    }).catch(() => {
+      if (!cancelled) setRunnerFetchState("failed");
     });
     return () => {
       cancelled = true;
@@ -2050,14 +2105,18 @@ export default function TasksScreen() {
   const refreshRunnerState = useCallback(async () => {
     if (connectionStatus !== "connected") return;
     try {
-      const [runners, status] = await Promise.all([
-        quicClient.getRunners(),
+      setRunnerFetchState("loading");
+      const [runnerResult, status] = await Promise.all([
+        quicClient.getRunnersState(),
         quicClient.getAgentStatus(),
       ]);
-      setAvailableRunners(runners);
+      setRunnerFetchState(runnerResult.state);
+      if (runnerResult.state === "loaded") {
+        setAvailableRunners(runnerResult.runners);
+      }
       if (status) setAgentStatus(status);
     } catch {
-      // best-effort
+      setRunnerFetchState("failed");
     }
   }, [connectionStatus]);
 
@@ -2144,6 +2203,7 @@ export default function TasksScreen() {
   const fetchTasks = useCallback(async () => {
     try {
       const list = await quicClient.listTasks();
+      setTaskListError(null);
       const focusedDeviceId = quicClient.attachedDeviceId || activeDevice?.id || "";
       const focusedDeviceName = devices.find((d) => d.id === focusedDeviceId)?.name || activeDevice?.name || "";
       // Filter out locally-deleted tasks and internal vibing-cache tasks
@@ -2171,7 +2231,11 @@ export default function TasksScreen() {
         if (!prev) return null;
         return nextTasks.find((t) => t.id === prev.id) || prev;
       });
-    } catch {}
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setTaskListError(msg);
+      appLog("warn", `[tasks] listTasks failed: ${msg}`);
+    }
   }, [activeDevice?.id, activeDevice?.name, devices]);
 
   useEffect(() => {
@@ -2295,11 +2359,15 @@ export default function TasksScreen() {
     : effectiveFilter === "completed" ? tasks.filter(t => t.status === "completed")
     : tasks.filter(t => t.status === "failed" || t.status === "stopped");
   useEffect(() => {
+    if (isSubmitting) return;
     fetchTasks();
-    // Poll less frequently when a task is running (streaming handles live output)
+    // Poll less frequently when a task is running (streaming handles live
+    // output), and stop polling entirely while POST /tasks is in flight. The
+    // Mac mini 5G relay incident proved that list polling can occupy the same
+    // constrained relay path the send needs.
     const interval = setInterval(fetchTasks, hasRunningTask ? 10000 : 3000);
     return () => clearInterval(interval);
-  }, [fetchTasks, hasRunningTask]);
+  }, [fetchTasks, hasRunningTask, isSubmitting]);
 
   // Listen for streaming output — buffer updates to avoid UI freezing
   const outputBufferRef = useRef<Record<string, string[]>>({});
@@ -2522,10 +2590,16 @@ export default function TasksScreen() {
     return () => clearInterval(interval);
   }, [selectedTask?.id, selectedTask?.status]);
 
-  // Auto-scroll chat when output changes
+  // Auto-scroll chat when output changes — but only if the user was
+  // already reading at the tail. If they've scrolled up to inspect prior
+  // messages, respect their position and flag the new content via the
+  // "New messages" pill above the composer.
   useEffect(() => {
-    if (selectedTask) {
+    if (!selectedTask) return;
+    if (isNearBottomRef.current) {
       setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 100);
+    } else {
+      setHasNewChatContent(true);
     }
   }, [selectedTask?.output.length, selectedTask?.resultText, selectedTask?.status]);
 
@@ -2751,6 +2825,9 @@ export default function TasksScreen() {
           const base = preRecordText;
           setText(base ? base + " " + finalText : finalText);
           setInputFromSpeech(true);
+          if (recordingTargetRef.current === "followup" && selectedTask) {
+            voiceModeTasksRef.current.add(selectedTask.id);
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -2773,6 +2850,9 @@ export default function TasksScreen() {
       if (result.text) {
         setText((prev) => (prev ? prev + " " + result.text : result.text));
         setInputFromSpeech(true);
+        if (recordingTargetRef.current === "followup" && selectedTask) {
+          voiceModeTasksRef.current.add(selectedTask.id);
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2781,6 +2861,21 @@ export default function TasksScreen() {
       setIsTranscribing(false);
     }
   };
+
+  // Voice-mode continuity: if the initial task or the previous follow-up
+  // for this task was submitted via STT, re-open the follow-up composer
+  // straight into recording mode. Kept as a ref (voiceModeTasksRef) so it
+  // survives across renders without triggering extra effects.
+  useEffect(() => {
+    if (!followUpExpanded || !selectedTask) return;
+    if (!voiceModeTasksRef.current.has(selectedTask.id)) return;
+    if (!speechProvider || isRecording || isTranscribing) return;
+    startRecording("followup");
+    // startRecording is stable within a render (no deps on state it reads
+    // via closure), so we intentionally omit it from deps to avoid re-firing
+    // on every keystroke into followUpText.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followUpExpanded, selectedTask?.id, speechProvider]);
 
   // ── Image picker ─────────────────────────────────────────────────
 
@@ -3140,26 +3235,75 @@ export default function TasksScreen() {
         customCommand: effectiveRunner === "custom" ? customCommand.trim() || undefined : undefined,
         speechContext: speechCtx,
         images: attachedImages.length > 0 ? attachedImages : undefined,
-        workDir: projectDir || undefined,
+        workDir: projectDir || selectedProjectPath || undefined,
         mode: effectiveRunner === "opencode" && effectiveOpencodeMode ? effectiveOpencodeMode : undefined,
         video: videoSummaryEnabled ? { enabled: true } : undefined,
         codeMode: true,
         allowLocalFallback: false,
       };
       pendingCloudTaskParams = taskParams;
-      const rawTask = await sendClient.sendTask(
-        taskParams.title,
-        taskParams.description,
-        taskParams.model,
-        taskParams.runner,
-        taskParams.customCommand,
-        taskParams.speechContext,
-        taskParams.images,
-        taskParams.workDir,
-        taskParams.mode,
-        taskParams.video,
-        taskParams.codeMode,
-      );
+
+      // WhatsApp-style optimistic paint: create a local placeholder task
+      // and open it immediately so the user sees their message the moment
+      // they tap Send — even if the round-trip to the agent + relay takes
+      // a couple of seconds. When sendTask resolves we swap the placeholder
+      // for the real task (same id -> real id); on failure we roll back.
+      const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const optimisticIso = new Date().toISOString();
+      const optimisticText = inputFromSpeech;
+      const optimisticTask: Task = {
+        id: optimisticId,
+        title,
+        description: "",
+        status: "queued" as TaskStatus,
+        runnerId: effectiveRunner === "custom" ? "custom" : effectiveRunner,
+        output: [],
+        resultText: "",
+        turns: [{ role: "user", content: title, timestamp: optimisticIso }],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        deviceId: pendingTarget?.deviceId || activeDevice?.id,
+        deviceName: pendingTarget?.deviceName || activeDevice?.name,
+        model: effectiveRunner !== "custom" ? effectiveModel : undefined,
+      };
+      const restoreTitle = title;
+      setTasks((prev) => [optimisticTask, ...prev]);
+      pendingOpenTaskRef.current = optimisticTask;
+      setNewTaskText("");
+      setAttachedImages([]);
+      setInputFromSpeech(false);
+      setPendingTarget(null);
+      setShowNewTask(false);
+
+      let rawTask;
+      try {
+        rawTask = await sendClient.sendTask(
+          taskParams.title,
+          taskParams.description,
+          taskParams.model,
+          taskParams.runner,
+          taskParams.customCommand,
+          taskParams.speechContext,
+          taskParams.images,
+          taskParams.workDir,
+          taskParams.mode,
+          taskParams.video,
+          taskParams.codeMode,
+        );
+      } catch (sendErr) {
+        // Roll the optimistic entry back so the user isn't left staring at
+        // a "queued" task that will never move. Restore the composer text
+        // so a retry is one tap away.
+        setTasks((prev) => prev.filter((t) => t.id !== optimisticId));
+        setSelectedTask((prev) => (prev && prev.id === optimisticId ? null : prev));
+        if (pendingOpenTaskRef.current?.id === optimisticId) {
+          pendingOpenTaskRef.current = null;
+        }
+        setNewTaskText(restoreTitle);
+        setShowNewTask(true);
+        throw sendErr;
+      }
+
       // Stamp the task with the device + model we KNOW we sent it to
       // (sendTask response doesn't always echo deviceName; with the
       // pool the legitimate source is whichever client we picked).
@@ -3171,20 +3315,18 @@ export default function TasksScreen() {
         deviceName: pendingTarget?.deviceName || activeDevice?.name || rawTask.deviceName,
         model: rawTask.model || (effectiveRunner !== "custom" ? effectiveModel : undefined),
       };
-      setNewTaskText("");
-      setAttachedImages([]);
-      setInputFromSpeech(false);
-      setPendingTarget(null);
-      setTasks((prev) => [task, ...prev]);
-      // Stage the task; iOS onDismiss (line 3299) and Android effect
-      // (line 2155) hand it to setSelectedTask once the compose
-      // Modal's slide-down completes. We can't open the chat-detail
-      // Modal in parallel — React Native's native <Modal> doesn't
-      // reliably present a second one while the first is on screen,
-      // which is why Send used to land you on the list instead of in
-      // the chat.
-      pendingOpenTaskRef.current = task;
-      setShowNewTask(false);
+      if (optimisticText) voiceModeTasksRef.current.add(task.id);
+      // Swap the placeholder for the real task in both the list and the
+      // currently-selected chat, and update pendingOpenTaskRef so iOS's
+      // onDismiss hands off the real id, not the optimistic one.
+      setTasks((prev) => {
+        const withoutOpt = prev.filter((t) => t.id !== optimisticId);
+        return [task, ...withoutOpt];
+      });
+      setSelectedTask((prev) => (prev && prev.id === optimisticId ? task : prev));
+      if (pendingOpenTaskRef.current?.id === optimisticId) {
+        pendingOpenTaskRef.current = task;
+      }
       fetchTasks();
     } catch (e) {
       if (e instanceof CloudWorkspaceRequiredError && pendingCloudTaskParams) {
@@ -3850,6 +3992,34 @@ export default function TasksScreen() {
   // same action — the old copy pointed at a + button that scrolls off-screen
   // on short viewports. Both call sites are gated on canComposeTask, so the
   // action can never be rendered in a state where it wouldn't work.
+  // Two-step new-task flow: when the modal opens without a ?dir= route
+  // scope, show the "pick project (optional)" step first and load the
+  // discovered project list. When the modal closes, reset the step state
+  // so the next open starts fresh instead of remembering the last pick.
+  useEffect(() => {
+    if (!showNewTask) {
+      setNewTaskStep("compose");
+      setSelectedProjectPath(null);
+      setSelectedProjectName(null);
+      setDiscoveredProjects([]);
+      setProjectsLoadError(null);
+      setIsLoadingProjects(false);
+      return;
+    }
+    if (projectDir) {
+      setNewTaskStep("compose");
+      return;
+    }
+    setNewTaskStep("project");
+    setIsLoadingProjects(true);
+    setProjectsLoadError(null);
+    quicClient
+      .listProjects()
+      .then((list) => setDiscoveredProjects(list))
+      .catch((e) => setProjectsLoadError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setIsLoadingProjects(false));
+  }, [showNewTask, projectDir]);
+
   const openCreateTask = useCallback(() => {
     // Defensive reset — guarantees the modal opens cleanly even if a previous
     // cancel/backdrop-dismiss left stale state around.
@@ -3956,8 +4126,8 @@ export default function TasksScreen() {
     [activeDevice?.id, primaryRunnerByDevice, selectedRunner],
   );
   const runnerBannerState = useMemo(
-    () => deriveRunnerBannerState(availableRunners, agentStatus, bannerRunnerId),
-    [availableRunners, agentStatus, bannerRunnerId]
+    () => deriveRunnerBannerState(availableRunners, agentStatus, runnerFetchState, bannerRunnerId),
+    [availableRunners, agentStatus, runnerFetchState, bannerRunnerId]
   );
 
   return (
@@ -4150,6 +4320,18 @@ export default function TasksScreen() {
             </>
           }
         />
+
+        {taskListError && isEffectivelyConnected ? (
+          <Pressable
+            style={[s.bannerActionRow, { marginTop: 10, backgroundColor: c.warnBg, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }]}
+            onPress={() => { void fetchTasks(); }}
+          >
+            <Ionicons name="warning-outline" size={14} color={c.warn} />
+            <Text style={[s.bannerStatusCopy, { color: c.warn, flex: 1 }]} numberOfLines={2}>
+              Tasks unavailable. Tap to retry.
+            </Text>
+          </Pressable>
+        ) : null}
 
         {/* Dev server preview banner */}
         {isEffectivelyConnected && <View style={{ marginTop: 12 }}><DevPreview /></View>}
@@ -4352,22 +4534,11 @@ export default function TasksScreen() {
                   onDeviceChange={() => { void fetchTasks(); }}
                 />
 
-                {/* Escape hatches NoMachineEmpty can't own. Only shown with a
-                    zero-device roster, where its action is the pairing flow:
-                    the phone sandbox needs no machine, and a blank roster often
-                    means the boxes live under a different sign-in. Both are
-                    quiet links, never a second primary. */}
+                {/* Escape hatch NoMachineEmpty can't own. Only shown with a
+                    zero-device roster, where a blank roster often means the
+                    boxes live under a different sign-in. */}
                 {hasZeroDevices ? (
                   <View style={s.emptyEscapeHatches}>
-                    <Pressable
-                      hitSlop={8}
-                      style={s.emptyEscapeLink}
-                      onPress={() => taskRouter.navigate("/phone-projects" as any)}
-                    >
-                      <Text style={[s.emptyEscapeText, { color: c.accent }]}>
-                        Or build on this phone
-                      </Text>
-                    </Pressable>
                     <Pressable
                       hitSlop={8}
                       style={s.emptyEscapeLink}
@@ -4894,6 +5065,96 @@ export default function TasksScreen() {
                   )}
                 </View>
               </View>
+              {newTaskStep === "project" ? (
+                <View style={[s.composerShell, { backgroundColor: c.bg, borderColor: c.border, paddingVertical: 12 }]}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 12, paddingBottom: 8 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }}>Pick a project</Text>
+                    <Text style={{ color: c.textMuted, fontSize: 12 }}>optional</Text>
+                  </View>
+                  <Text style={{ color: c.textMuted, fontSize: 12, paddingHorizontal: 12, paddingBottom: 10 }}>
+                    Scope this task to a discovered project, or skip to run without a scope.
+                  </Text>
+                  {isLoadingProjects ? (
+                    <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8 }}>
+                      <ActivityIndicator size="small" color={c.accent} />
+                      <Text style={{ color: c.textMuted, fontSize: 13, marginLeft: 8 }}>Loading projects…</Text>
+                    </View>
+                  ) : projectsLoadError ? (
+                    <Text style={{ color: c.error, fontSize: 12, paddingHorizontal: 12, paddingBottom: 8 }}>
+                      Couldn't load projects: {projectsLoadError}
+                    </Text>
+                  ) : discoveredProjects.length === 0 ? (
+                    <Text style={{ color: c.textMuted, fontSize: 13, paddingHorizontal: 12, paddingBottom: 8 }}>
+                      No scanned projects on this machine yet.
+                    </Text>
+                  ) : (
+                    <ScrollView style={{ maxHeight: 260 }} keyboardShouldPersistTaps="handled">
+                      {discoveredProjects.map((proj) => (
+                        <Pressable
+                          key={proj.path || proj.name}
+                          style={({ pressed }) => [
+                            { paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.border },
+                            pressed && { backgroundColor: c.bgCardElevated },
+                          ]}
+                          onPress={() => {
+                            setSelectedProjectPath(proj.path || null);
+                            setSelectedProjectName(proj.name || null);
+                            setNewTaskStep("compose");
+                          }}
+                        >
+                          <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }} numberOfLines={1}>
+                            {proj.name || proj.path}
+                          </Text>
+                          {(proj.framework || proj.path) && (
+                            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                              {[proj.framework, proj.path].filter(Boolean).join(" · ")}
+                            </Text>
+                          )}
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  )}
+                  <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingTop: 12 }}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: c.bgCardElevated, alignItems: "center", borderWidth: 1, borderColor: c.border },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                      onPress={() => {
+                        setSelectedProjectPath(null);
+                        setSelectedProjectName(null);
+                        setNewTaskStep("compose");
+                      }}
+                    >
+                      <Text style={{ color: c.textSecondary, fontSize: 14, fontWeight: "600" }}>Skip</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+              {newTaskStep === "compose" && selectedProjectPath ? (
+                <Pressable
+                  onPress={() => setNewTaskStep("project")}
+                  style={({ pressed }) => [
+                    { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, marginBottom: 8, borderRadius: 8, backgroundColor: c.bgCardElevated, borderWidth: 1, borderColor: c.border },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Ionicons name="folder-outline" size={14} color={c.textSecondary} />
+                  <Text style={{ color: c.textSecondary, fontSize: 12, marginLeft: 6, flex: 1 }} numberOfLines={1}>
+                    Project: {selectedProjectName || selectedProjectPath}
+                  </Text>
+                  <Pressable
+                    hitSlop={8}
+                    onPress={() => {
+                      setSelectedProjectPath(null);
+                      setSelectedProjectName(null);
+                    }}
+                  >
+                    <Text style={{ color: c.textMuted, fontSize: 12 }}>Clear</Text>
+                  </Pressable>
+                </Pressable>
+              ) : null}
+              {newTaskStep === "compose" && (
               <View
                 style={[
                   s.composerShell,
@@ -5061,6 +5322,7 @@ export default function TasksScreen() {
                   </View>
                 </View>
               </View>
+              )}
             </View>
           </KeyboardAvoidingView>
         </Modal>
@@ -5503,6 +5765,7 @@ export default function TasksScreen() {
                     if (!fallbackId) return undefined;
                     return availableModels.find((m) => m.id === fallbackId)?.name || fallbackId;
                   })()}
+                  tmuxSession={selectedTask.tmuxSession}
                   onBack={() => { setSelectedTask(null); setFollowUpText(""); }}
                   onOpenLogs={() => setShowLogs(true)}
                   primaryAction={
@@ -5677,6 +5940,14 @@ export default function TasksScreen() {
                     style={s.chatScroll}
                     contentContainerStyle={s.chatScrollContent}
                     keyboardShouldPersistTaps="handled"
+                    onScroll={(e) => {
+                      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+                      const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+                      const near = distanceFromBottom < 80;
+                      isNearBottomRef.current = near;
+                      if (near) setHasNewChatContent(false);
+                    }}
+                    scrollEventThrottle={64}
                     initialNumToRender={20}
                     maxToRenderPerBatch={10}
                     windowSize={10}
@@ -5822,6 +6093,39 @@ export default function TasksScreen() {
                     }
                   />
 
+                {hasNewChatContent ? (
+                  <Pressable
+                    onPress={() => {
+                      chatScrollRef.current?.scrollToEnd({ animated: true });
+                      setHasNewChatContent(false);
+                    }}
+                    style={({ pressed }) => [
+                      {
+                        position: "absolute",
+                        alignSelf: "center",
+                        bottom: 88,
+                        paddingHorizontal: 14,
+                        paddingVertical: 8,
+                        borderRadius: 999,
+                        backgroundColor: c.accent,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        shadowColor: "#000",
+                        shadowOpacity: 0.2,
+                        shadowRadius: 6,
+                        elevation: 4,
+                      },
+                      pressed && { opacity: 0.85 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Jump to latest messages"
+                  >
+                    <Ionicons name="arrow-down" size={14} color="#fff" />
+                    <Text style={{ color: "#fff", fontWeight: "600", fontSize: 12 }}>New messages</Text>
+                  </Pressable>
+                ) : null}
+
                 {/* Follow-up input: compact bar, expands to full card on tap */}
                 {followUpExpanded ? (
                   <View style={[s.modalContent, { backgroundColor: c.bgCard, borderTopWidth: 1, borderTopColor: c.border }]}>
@@ -5876,7 +6180,11 @@ export default function TasksScreen() {
                       placeholder={isRunning ? "Send follow-up while it works" : "Follow up — or send another command"}
                       placeholderTextColor={c.textMuted}
                       value={followUpText}
-                      onChangeText={(t) => { setFollowUpText(t); setInputFromSpeech(false); }}
+                      onChangeText={(t) => {
+                        setFollowUpText(t);
+                        setInputFromSpeech(false);
+                        if (selectedTask) voiceModeTasksRef.current.delete(selectedTask.id);
+                      }}
                       multiline numberOfLines={4} textAlignVertical="top" autoFocus
                     />
                     {isTranscribing && (

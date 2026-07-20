@@ -76,7 +76,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   // ── Phone-first backend (Section 4) ─────────────────────────────────
   {
     q: "Can I build a backend without provisioning a server first?",
-    a: "Yes. Phone-first projects let you scaffold a SQLite-backed backend with schema, auth personas, seed data, and CRUD routes from the mobile app or web dashboard. The whole project lives in ~/.yaver/phone-projects/<slug>/ until you decide to move it. No cloud account, no server, no DNS.",
+    a: "Yes. Greenfield apps start from the same Tasks flow and run on a selected remote box: your self-hosted Yaver machine or Yaver Managed Cloud. Unless you choose another provider, Yaver creates the repo in Yaver Git, uses a Yaver monorepo layout, and provisions Yaver Serverless for backend/data.",
   },
   {
     q: "Can I move my project to my own machine or to the cloud later?",
@@ -1507,12 +1507,12 @@ export default function HomePage() {
             {/* Left: numbered list */}
             <ol className="space-y-6">
               {[
-                { n: 1, t: "Phone sandbox first", d: "Create a phone project with schema, auth personas, seed data, CRUD, and local persistence." },
-                { n: 2, t: "Run the same project on your hardware", d: "Push it to `yaver serve` on macOS, Linux, WSL, a Pi, or a VPS without changing the backend shape." },
-                { n: 3, t: "Use a remote coding box", d: "Treat that machine as the web UI + backend box, run Claude Code / Codex / similar agents there, and watch runs or tests from phone, web, watch, TV, car, or AR/VR surfaces." },
-                { n: 4, t: "Promote without rewrites", d: "Use the same portable project bundle and the same agent binary when you move from phone to your own hardware." },
-                { n: 5, t: "Wire in third-party apps", d: "Mint per-project tokens and let a React Native, web, or Node app call the Yaver runtime API while the project stays local-first." },
-                { n: 6, t: "Keep exports as escape hatches", d: "Supabase, Convex, and other systems remain optional exits, not the default destination." },
+                { n: 1, t: "Remote box first", d: "Pick a self-hosted Yaver machine or Yaver Managed Cloud from the task screen." },
+                { n: 2, t: "Yaver stack by default", d: "Greenfield apps use Yaver Git, a Yaver monorepo, and Yaver Serverless unless you choose GitHub, GitLab, Supabase, Convex, or another stack." },
+                { n: 3, t: "Build full products", d: "Create web UI + backend, mobile + backend, or both in one monorepo, with shared types and one task history." },
+                { n: 4, t: "Preview from any surface", d: "Use Hermes reload for React Native, web preview for browser apps, and remote runtime sessions for simulators and devices." },
+                { n: 5, t: "Use voice naturally", d: "Speak the idea from phone, car, watch, or web; Yaver turns it into the same remote-box task and reads useful status back." },
+                { n: 6, t: "Keep exits open", d: "Push to GitHub/GitLab or deploy to other providers when requested, but the default app path stays Yaver-owned and portable." },
               ].map((s) => (
                 <li key={s.n} className="flex gap-4">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6366f1]/10 text-sm font-bold text-[#6366f1]">{s.n}</span>
@@ -1812,7 +1812,7 @@ return (
             Start local. Keep the footprint small.
           </h2>
           <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
-            The default path is still the simplest one: phone sandbox first, then your own machine. From there the same runtime can reach web, watch, TV, car, and AR/VR surfaces.
+            The default path is remote-box first: Yaver Mesh to your self-hosted machine, Relay Pro when you need managed reachability, or Yaver Cloud Workspace when you want the box managed for you. The phone, web, watch, TV, car, and AR/VR surfaces control and preview the same workspace.
           </p>
 
           <div className="overflow-hidden rounded-xl border border-surface-800">
@@ -1829,8 +1829,8 @@ return (
                   ["Yaver CLI + Agent", "Your dev machine", "$0"],
                   ["Yaver Surface Apps", "iOS / Android / watch / TV / car / AR/VR", "$0"],
                   ["Web UI (yaver.io)", "Browser", "$0"],
-                  ["Local phone sandbox backend", "Inside the mobile app", "$0"],
-                  ["Promoted backend on your own machine", "Your Mac / Linux / WSL / VPS", "$0 + your hardware"],
+                  ["Self-hosted Yaver box", "Your Mac / Linux / WSL / VPS", "$0 + your hardware"],
+                  ["Yaver Managed Cloud", "Saved remote workspace", "Optional"],
                   ["Yaver Relay", "Free shared relay or Relay Pro", "Free / $9"],
                   ["AI models (Ollama)", "Your GPU or CPU", "$0"],
                   ["Store / CI release plumbing", "Hosted distribution surfaces", "Optional"],
@@ -1847,7 +1847,7 @@ return (
 
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
             <p><strong className="text-surface-100">A solo developer can run the open-source stack at $0.</strong></p>
-            <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi, with control surfaces expanding across mobile, watch, TV, car, and AR/VR.</p>
+            <p>The wedge is remote-box-first: self-hosted or managed cloud compute, with control surfaces expanding across mobile, watch, TV, car, and AR/VR.</p>
             <p>The CLI, agent, relay, and backend remain source-available for advanced operators. Normal remote access should use Yaver Relay; your code stays P2P and the hosted plane carries identity and device discovery.</p>
             <p className="mt-4 text-surface-500">
               The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}

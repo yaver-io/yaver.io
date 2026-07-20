@@ -54,16 +54,18 @@ export default function AgentModeScreen() {
     if (!isConnected) return;
     setRefreshing(true);
     try {
-      const [graphs, availableRunners, machineInventory] = await Promise.all([
+      const [graphs, runnerResult, machineInventory] = await Promise.all([
         quicClient.agentGraphs(),
-        quicClient.getRunners(),
+        quicClient.getRunnersState(),
         quicClient.consoleMachines(),
       ]);
       setRuns(graphs);
-      const installed = availableRunners.filter((r) => r.installed);
-      setRunners(installed);
+      const installed = runnerResult.state === "loaded" ? runnerResult.runners.filter((r) => r.installed) : [];
+      if (runnerResult.state === "loaded") {
+        setRunners(installed);
+      }
       setMachines((machineInventory.machines || []).filter((m) => m.isOnline));
-      if (!runner) {
+      if (!runner && runnerResult.state === "loaded") {
         const preferred = installed.find((r) => r.isDefault) ?? installed[0];
         if (preferred) setRunner(preferred.id);
       }

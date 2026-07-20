@@ -132,6 +132,13 @@ their own always-reachable box.
 | `demo-videos/` | Source notes for the landing/demo clips |
 | `docs/` | Architecture notes, setup guides, audits, handoffs, and planning material |
 
+Greenfield app development starts from Tasks/MCP on a selected remote box:
+self-hosted Yaver mesh or Yaver Managed Cloud. Unless the user chooses another
+provider, Yaver defaults to Yaver Git, a Yaver monorepo, and Yaver Serverless;
+mobile previews reload through Hermes. The core product stack is Yaver Mesh,
+Relay Pro, Cloud Workspace, Yaver Git, Yaver Serverless, Hermes/WebRTC preview,
+and the Feedback SDK loop.
+
 ## This repo is the monorepo
 
 **Yaver is one monorepo — this one.** Agent, CLI, mobile, watch, TV, car,

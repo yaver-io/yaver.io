@@ -887,6 +887,11 @@ export interface RunnerInfo {
   models: ModelInfo[];
 }
 
+export type RunnerFetchResult =
+  | { state: "loaded"; runners: RunnerInfo[] }
+  | { state: "failed"; runners: RunnerInfo[]; error: string }
+  | { state: "disconnected"; runners: RunnerInfo[]; error: string };
+
 /**
  * Wire shape for `POST /agent/runners/test`. Mirrors the Go agent's
  * `runnerTestResult` (see desktop/agent/runner_test_http.go) and the
@@ -1896,7 +1901,7 @@ export class QuicClient {
    * HTTP, the runner pool, and the same Task type. The toggle only
    * changes which prompt-prefix the agent injects.
    */
-  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: SpeechContextInput, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }, codeMode?: boolean, allowLocalFallback?: boolean): Promise<Task> {
+  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: SpeechContextInput, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }, codeMode?: boolean, allowLocalFallback?: boolean, placementKind?: "vibe" | "build" | "deploy" | "test" | "source" | "autorun" | "unknown"): Promise<Task> {
     this.assertConnected();
     // Hard 30s timeout — without it, a stale relay tunnel (e.g. after a
     // failed device-switch attempt) makes this POST hang forever and
@@ -1920,7 +1925,7 @@ export class QuicClient {
     // timed out.)
     let res: Response;
     try {
-      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode, allowLocalFallback);
+      res = await this.sendTaskRequest(title, description, model, runner, customCommand, sc, images, workDir, mode, video, codeMode, allowLocalFallback, placementKind);
     } catch (e) {
       if (e instanceof Error && (e.name === "AbortError" || /abort/i.test(e.message))) {
         throw new Error(
@@ -1974,6 +1979,7 @@ export class QuicClient {
     video: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" } | undefined,
     codeMode: boolean | undefined,
     allowLocalFallback: boolean | undefined,
+    placementKind: "vibe" | "build" | "deploy" | "test" | "source" | "autorun" | "unknown" | undefined,
   ): Promise<Response> {
     return this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
@@ -1991,6 +1997,7 @@ export class QuicClient {
         video,
         codeMode,
         allowLocalFallback,
+        placementKind,
       })),
     }, 30000);
   }
@@ -2216,16 +2223,15 @@ export class QuicClient {
     };
   }
 
-  /** List all tasks from the desktop agent, falling back to cache on failure. */
+  /** List all live tasks from the desktop agent. */
   async listTasks(): Promise<Task[]> {
     if (!this.isConnected) {
-      // Return cached data when offline
-      return getCachedTaskList();
+      throw new Error("Task list unavailable: this device is not connected to the agent.");
     }
     try {
-      const res = await fetch(`${this.baseUrl}/tasks`, {
+      const res = await this.fetchWithTimeout(`${this.baseUrl}/tasks?limit=50`, {
         headers: this.authHeaders,
-      });
+      }, 10000);
       if (!res.ok) throw new Error(`Failed to list tasks: ${res.status}`);
       const data = await res.json();
       // Agent returns { ok, tasks: [...] } with output as a string
@@ -2267,9 +2273,10 @@ export class QuicClient {
       // Persist to local cache for offline access
       cacheTaskList(filtered);
       return filtered;
-    } catch {
-      // Network error — serve from cache
-      return getCachedTaskList();
+    } catch (error) {
+      const cached = await getCachedTaskList().catch(() => []);
+      const suffix = cached.length > 0 ? ` (${cached.length} cached task${cached.length === 1 ? "" : "s"} available locally, not shown as live)` : "";
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${suffix}`);
     }
   }
 
@@ -3502,9 +3509,9 @@ export class QuicClient {
   async getAgentStatus(): Promise<AgentStatus | null> {
     if (!this.isConnected && !this.hasConnectionInfo) return null;
     try {
-      const res = await fetch(`${this.baseUrl}/agent/status`, {
+      const res = await this.fetchWithTimeout(`${this.baseUrl}/agent/status`, {
         headers: this.authHeaders,
-      });
+      }, 7000);
       if (!res.ok) return null;
       const data = await res.json();
       return data.status || null;
@@ -3514,15 +3521,38 @@ export class QuicClient {
   }
 
   /** Get available runners from the agent with install status. */
+  async getRunnersState(): Promise<RunnerFetchResult> {
+    if (!this.isConnected && !this.hasConnectionInfo) {
+      return { state: "disconnected", runners: [], error: "agent not connected" };
+    }
+    let lastError = "runner state unavailable";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const res = await this.fetchWithTimeout(`${this.baseUrl}/agent/runners`, {
+          headers: this.authHeaders,
+        }, attempt === 0 ? 4000 : 7000);
+        if (!res.ok) {
+          lastError = `HTTP ${res.status}`;
+          continue;
+        }
+        const data = await res.json();
+        return { state: "loaded", runners: Array.isArray(data.runners) ? data.runners : [] };
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    return { state: "failed", runners: [], error: lastError };
+  }
+
   async getRunners(): Promise<RunnerInfo[]> {
-    if (!this.isConnected && !this.hasConnectionInfo) return [];
+    const result = await this.getRunnersState();
+    if (result.state !== "loaded") throw new Error(result.error);
+    return result.runners;
+  }
+
+  async getRunnersOrEmpty(): Promise<RunnerInfo[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/agent/runners`, {
-        headers: this.authHeaders,
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.runners || [];
+      return await this.getRunners();
     } catch {
       return [];
     }

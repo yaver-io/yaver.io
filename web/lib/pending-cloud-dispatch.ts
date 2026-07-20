@@ -7,6 +7,7 @@ import {
   placementCreditLabel,
   type TaskDispatchIntent,
   type TaskPlacementActivation,
+  type TaskPlacementKind,
   type TaskPlacementStatus,
 } from "./task-placement";
 
@@ -24,6 +25,7 @@ export type PendingCloudTaskParams = {
   workDir?: string;
   videoEnabled?: boolean;
   askMode?: boolean;
+  placementKind?: TaskPlacementKind;
   allowLocalFallback?: boolean;
 };
 

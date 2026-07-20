@@ -53,6 +53,8 @@ type MobileAiProvider = "openai" | "glm";
 type GitProvider = "github" | "gitlab";
 type RepoVisibility = "private" | "public";
 
+const SHOW_PHONE_PROJECTS_SURFACE = false;
+
 // Survey is the optional Step 3. Questions are intentionally short
 // + multiple-choice so the user can finish in 30 s on a phone, and
 // each answer maps to a paragraph that gets concatenated into the
@@ -194,6 +196,41 @@ function pickDevMachines(all: Device[], currentId: string | undefined): Device[]
 // and desktop/agent/phone_backend.go.
 
 export default function PhoneProjectsScreen() {
+  const c = useColors();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  if (!SHOW_PHONE_PROJECTS_SURFACE) {
+    return (
+      <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top }}>
+        <AppScreenHeader
+          title="Remote App Tasks"
+          onBack={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/tasks" as any))}
+        />
+        <View style={{ padding: 16, gap: 12 }}>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Text style={[styles.h1, { color: c.textPrimary }]}>Yaver stack first</Text>
+            <Text style={[styles.muted, { color: c.textMuted }]}>
+              Fresh apps start from Tasks with Yaver Git, Yaver Serverless, and a Yaver monorepo.
+              Use Hermes/WebRTC preview and Feedback SDK loops to keep iterating from any surface.
+            </Text>
+            <Pressable
+              onPress={() => router.replace("/(tabs)/tasks" as any)}
+              style={[styles.btn, { backgroundColor: c.accent }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.btnText, { color: "#fff" }]}>Open Tasks</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return <PhoneProjectsLegacyScreen />;
+}
+
+function PhoneProjectsLegacyScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -510,7 +547,7 @@ export default function PhoneProjectsScreen() {
 
   async function create() {
     if (!name.trim() && !importedBrief?.suggestedName) {
-      Alert.alert("Phone Backend", "Project name is required");
+      Alert.alert("Legacy project", "Project name is required");
       return;
     }
     // Survey answers (when not skipped) get prepended to the prompt
@@ -739,7 +776,7 @@ export default function PhoneProjectsScreen() {
     } catch (e: any) {
       const raw = e instanceof Error ? e.message : "";
       Alert.alert(
-        "Phone Backend",
+        "Legacy project",
         `Couldn't create the project. Check your connection and try again.${raw ? `\n\n${raw}` : ""}`,
       );
     } finally {
@@ -760,7 +797,7 @@ export default function PhoneProjectsScreen() {
           } catch (e: any) {
             const raw = e instanceof Error ? e.message : "";
             Alert.alert(
-              "Phone Backend",
+              "Legacy project",
               `Couldn't delete the project. Try again in a moment.${raw ? `\n\n${raw}` : ""}`,
             );
           }

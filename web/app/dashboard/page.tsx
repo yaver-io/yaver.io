@@ -52,7 +52,6 @@ import ArmCellView from "@/components/dashboard/ArmCellView";
 import AppleTVCellView from "@/components/dashboard/AppleTVCellView";
 import SchedulesView from "@/components/dashboard/SchedulesView";
 import PackagesView from "@/components/dashboard/PackagesView";
-import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import VibePreviewView from "@/components/dashboard/VibePreviewView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
@@ -2059,6 +2058,7 @@ export default function DashboardPage() {
               model: selectedModel || undefined,
               mode: selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
               workDir: preferredSurfaceProjectPath || undefined,
+              placementKind,
             },
             createdAt: now,
             updatedAt: now,
@@ -2122,6 +2122,7 @@ export default function DashboardPage() {
           model: selectedModel || undefined,
           mode: selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
           workDir: preferredSurfaceProjectPath || undefined,
+          placementKind,
         };
         fallbackPendingCloudTask = {
           localTaskId: "",
@@ -2356,6 +2357,17 @@ export default function DashboardPage() {
   // mirrors the daemon-side gate (mcp_owner_gate.go).
   const isOwnerAccount = user?.isOwner === true;
   const OWNER_ONLY_TABS = new Set(["arm", "appletv", "robot", "circuit", "printer"]);
+  const LEAN_DASHBOARD_TABS = true;
+  const CORE_TABS = new Set([
+    "devices",
+    "cloud",
+    "chat",
+    "vibe",
+    "feedback",
+    "webview",
+    "vibe-preview",
+    "settings",
+  ]);
   const tabs: { id: typeof activeTab; label: string; icon: string; badge?: number }[] = ([
     { id: "devices", label: "Devices", icon: "\uD83D\uDCBB" },
     { id: "build", label: "Build", icon: "\uD83D\uDEE0\uFE0F" },
@@ -2391,7 +2403,6 @@ export default function DashboardPage() {
     { id: "apikeys", label: "Yaver Tokens", icon: "\uD83D\uDD11" },
     { id: "schedules", label: "Schedules", icon: "\u23F0" },
     { id: "packages", label: "Packages", icon: "\uD83D\uDCE6" },
-    { id: "phone", label: "Phone Backend", icon: "\u26A1" },
     { id: "companion", label: "Companion", icon: "\u23F0" },
     { id: "vibe-preview", label: "Vibe Preview", icon: "\uD83C\uDFAC" },
     { id: "domains", label: "Domains", icon: "\uD83C\uDF10" },
@@ -2403,6 +2414,7 @@ export default function DashboardPage() {
   ] as { id: typeof activeTab; label: string; icon: string; badge?: number }[]).filter(
     (t) =>
       (isOwnerAccount || !OWNER_ONLY_TABS.has(t.id)) &&
+      (!LEAN_DASHBOARD_TABS || CORE_TABS.has(t.id)) &&
       // HN-LAUNCH-HIDE-PAID: drop the paid managed-cloud + metered build tabs.
       !(HIDE_PAID_UI && (t.id === "build" || t.id === "cloud")),
   );
@@ -3269,8 +3281,6 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><SchedulesView /></div>
           ) : activeTab === "packages" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto overflow-y-auto"><PackagesView /></div>
-          ) : activeTab === "phone" ? (
-            <div className="flex-1 min-h-0 w-full max-w-6xl mx-auto overflow-auto p-4"><PhoneProjectsView /></div>
           ) : activeTab === "companion" ? (
             <div className="flex-1 min-h-0 w-full overflow-auto"><CompanionView /></div>
           ) : activeTab === "vibe-preview" ? (

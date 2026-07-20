@@ -138,11 +138,13 @@ export default function ShortcutsScreen() {
   }, [connected]);
 
   // Pull the connected box's installed agents + their models for the
-  // runner picker. Best-effort; empty → only "Off" is offered.
+  // runner picker. Best-effort; failed fetch keeps the previous truth.
   const loadRunners = useCallback(async () => {
     if (!connected) return;
     try {
-      const list = await quicClient.getRunners();
+      const result = await quicClient.getRunnersState();
+      if (result.state !== "loaded") return;
+      const list = result.runners;
       setRunners(
         list.map((r) => ({
           id: r.id,

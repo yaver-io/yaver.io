@@ -2206,8 +2206,8 @@ export default defineSchema({
     .index("by_user", ["userId", "updatedAt"]),
 
   // Durable task-placement decisions. This is the central ledger for "where
-  // should this work run?" across phone sandbox, relay source runner, owned
-  // machines, and managed cloud. It deliberately stores decision metadata only:
+  // should this work run?" across relay source runners, owned remote machines,
+  // and managed cloud. It deliberately stores decision metadata only:
   // no prompt, stdout, repo path, branch diff, generated artifact, or secret.
   taskPlacements: defineTable({
     userId: v.id("users"),
@@ -2217,6 +2217,8 @@ export default defineSchema({
     requestedRunner: v.optional(v.string()),
     kind: v.string(), // vibe | build | deploy | test | source | autorun | unknown
     lane: v.union(
+      // Legacy stored value kept for old placement rows; new placement does not
+      // route app development to a phone-local lane.
       v.literal("phone_sandbox"),
       v.literal("relay_source"),
       v.literal("owned_machine"),

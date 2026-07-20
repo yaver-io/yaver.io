@@ -67,6 +67,8 @@ function makeWatchDeps(deviceId: string) {
         undefined,
         undefined,
         true,
+        undefined,
+        "vibe",
       );
       return { id: t.id };
     },

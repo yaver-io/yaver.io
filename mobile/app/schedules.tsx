@@ -88,8 +88,10 @@ export default function SchedulesScreen() {
   useEffect(() => {
     if (!connected) return;
     quicClient
-      .getRunners()
-      .then((rs) => setRunners(rs.filter((r) => r.installed)))
+      .getRunnersState()
+      .then((result) => {
+        if (result.state === "loaded") setRunners(result.runners.filter((r) => r.installed));
+      })
       .catch(() => {});
   }, [connected]);
 

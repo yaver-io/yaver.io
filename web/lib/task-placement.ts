@@ -12,7 +12,6 @@ export type TaskPlacementKind =
   | "unknown";
 
 export type TaskPlacementLane =
-  | "phone_sandbox"
   | "relay_source"
   | "owned_machine"
   | "cloud_standard"
@@ -370,7 +369,7 @@ async function placementFetch<T>(token: string, path: string, init: RequestInit 
 export function placementLaneLabel(lane?: string | null): string | null {
   switch (lane) {
     case "phone_sandbox":
-      return "Phone sandbox";
+      return "Legacy local lane";
     case "relay_source":
       return "Relay source";
     case "owned_machine":

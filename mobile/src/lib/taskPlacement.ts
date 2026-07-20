@@ -37,7 +37,6 @@ export type TaskPlacementKind =
   | "unknown";
 
 export type TaskPlacementLane =
-  | "phone_sandbox"
   | "relay_source"
   | "owned_machine"
   | "cloud_standard"

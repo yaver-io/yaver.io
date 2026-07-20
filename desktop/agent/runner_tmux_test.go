@@ -66,12 +66,27 @@ func TestShortTaskKeyClampAndSanitize(t *testing.T) {
 	}
 }
 
-func TestTmuxRunnerReadyOffByDefault(t *testing.T) {
-	// Ensure no env leakage promotes the feature on by default.
+func TestTmuxRunnerReadyDefaultsToAutoSession(t *testing.T) {
+	// With no explicit YAVER_TMUX_RUNNER, tmuxRunnerReady() falls back to
+	// the auto-provisioned default session on hosts where tmux is available
+	// (so every task can be attached to via `tmux attach -t yaver-tasks`).
+	// On hosts without tmux it must still return "" so callers exec directly.
 	t.Setenv(tmuxRunnerEnvVar, "")
-	if got := tmuxRunnerReady(); got != "" {
-		t.Fatalf("tmuxRunnerReady() with empty env: want empty, got %q", got)
+	got := tmuxRunnerReady()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		if got != "" {
+			t.Fatalf("tmuxRunnerReady() without tmux available: want empty, got %q", got)
+		}
+		return
 	}
+	if got != defaultTmuxRunnerSession {
+		t.Fatalf("tmuxRunnerReady() with tmux available: want %q, got %q", defaultTmuxRunnerSession, got)
+	}
+	// Best-effort cleanup — the auto-create above may have started a real
+	// session on the developer's machine.
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "kill-session", "-t", defaultTmuxRunnerSession).Run()
+	})
 }
 
 func TestTmuxRunnerReadyAbsentSession(t *testing.T) {
@@ -98,13 +113,16 @@ func TestTmuxRunnerEligibleClaudeOnly(t *testing.T) {
 }
 
 func TestBuildTmuxRunnerCommandShape(t *testing.T) {
-	cmd, env := buildTmuxRunnerCommand(
+	cmd, env, win := buildTmuxRunnerCommand(
 		context.Background(),
 		"yaver-claude",
 		"task-abc-def-ghi-jkl",
 		"claude",
 		[]string{"-p", "say hi"},
 	)
+	if win == "" || !strings.HasPrefix(win, "yaver-task-") {
+		t.Errorf("expected window name yaver-task-<short>, got %q", win)
+	}
 	if cmd.Args[0] != "sh" || cmd.Args[1] != "-c" {
 		t.Fatalf("expected sh -c invocation, got %v", cmd.Args)
 	}

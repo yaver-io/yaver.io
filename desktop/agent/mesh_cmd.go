@@ -446,10 +446,31 @@ func printMeshDaemonStatus(res map[string]interface{}) {
 		// actually happened instead.
 		optedOut, _ := res["optedOut"].(bool)
 		warn, _ := res["autoEnableWarning"].(string)
+		// A standing conflict is NOT a transient failure, and must never be
+		// reported as one. Both of the branches below used to be able to say
+		// "trying" / "could not start" on a box where the honest answer is
+		// "will not start, by design, while that VPN is up" — which is why
+		// mesh being off fleet-wide went unnoticed for weeks (2026-07-20).
+		//
+		// Re-detect here rather than trusting `autoEnableWarning`: that string
+		// is only populated when auto-enable actually ran and failed. A box
+		// whose retry has not fired yet has an empty warning and a very real
+		// conflict, and that is exactly the case that lied.
+		conflict, _ := mesh.SubnetRouteConflict("")
 		switch {
 		case optedOut:
 			fmt.Println("  state      : off (you opted out with `yaver mesh down`)")
 			fmt.Println("  turn on    : `yaver mesh up`")
+		case conflict != nil:
+			// Deferring is the correct outcome, not a fault. Yaver Mesh is a
+			// fallback overlay: when an incumbent tunnel already connects these
+			// machines, fighting it for routes would be strictly worse than
+			// standing down. Say that plainly so nobody debugs a non-problem.
+			fmt.Println("  state      : off — deferring to an existing VPN (this is correct, not a fault)")
+			fmt.Printf("  reason     : %s\n", conflict.Reason())
+			fmt.Println("  effect     : none on connectivity — that VPN already carries these devices;")
+			fmt.Println("               Yaver uses it, your LAN, or the relay.")
+			fmt.Println("  to use mesh: turn the other VPN off, or keep using it — both are supported.")
 		case warn != "":
 			fmt.Println("  state      : off — default-on tried and could not start")
 			fmt.Printf("  reason     : %s\n", warn)

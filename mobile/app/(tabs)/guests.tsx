@@ -560,7 +560,7 @@ export default function GuestsScreen() {
                         Let them improve it with AI (vibe)
                       </Text>
                       <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                        Runs sandboxed on GLM/BYO — never your Claude/Codex plan. Changes commit straight to your branch.
+                        Runs on the selected remote box with scoped guest access. Changes commit straight to your branch.
                       </Text>
                     </View>
                   </Pressable>

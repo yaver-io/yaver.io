@@ -13,7 +13,7 @@ Android, tvOS, or Play builds without explicit user confirmation.
 - Yaver billing ownership required for official in-Yaver catalog release.
 - Source/package sharing required only for official Yaver catalog release, not
   for development, private testing, self-hosting, or remote-runner previews.
-- Third-party developer lifecycle baseline: mobile sandbox first, source in
+- Third-party developer lifecycle baseline: remote box first, source in
   Yaver Git/GitHub/GitLab/self-hosted Git/local repo, private deploy before
   optional Yaver catalog publish, and full exit rights.
 - SFMG owner workflow: Kivanc and Serhat can develop SFMG through Yaver, allocate

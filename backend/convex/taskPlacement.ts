@@ -1,8 +1,8 @@
 // taskPlacement.ts — privacy-safe machine placement policy.
 //
 // This module is the central decision layer for "where should this task run?"
-// across phone sandbox, Yaver Relay source runner, owned machines, and managed
-// cloud. It stores only coarse labels/counters/reasons in Convex. Task prompts,
+// across Yaver Relay source runners, owned remote machines, and managed cloud.
+// It stores only coarse labels/counters/reasons in Convex. Task prompts,
 // stdout, repo paths, files, package names, and secrets stay on the user's
 // devices.
 
@@ -25,6 +25,8 @@ import {
 } from "./taskPlacementClassifier";
 
 const lanes = v.union(
+  // Legacy stored value kept for old placement rows; new placement does not
+  // route app development to a phone-local lane.
   v.literal("phone_sandbox"),
   v.literal("relay_source"),
   v.literal("owned_machine"),

@@ -139,7 +139,7 @@ function providerKeyStatusLabel(state?: ProviderKeyState): string {
 
 export default function SettingsScreen() {
   const LEAN_SETTINGS_SURFACE = true;
-  const KEEP_SANDBOX_SURFACE = true;
+  const KEEP_SANDBOX_SURFACE = false;
   const SHOW_HOST_NOTIFICATION_CHANNELS = false;
   // "wide" clamp (960pt) instead of "regular" (720pt) — Settings on
   // a 1340pt landscape tablet had 4-5 sub-sections rendering as a
@@ -2261,42 +2261,10 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Mobile Sandbox coding */}
+        {/* App development tools */}
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Sandbox</Text>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>App Development</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-            <Pressable
-              style={styles.aboutRow}
-              onPress={() => router.push("/sandbox-ai")}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Sandbox AI</Text>
-                <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                  On-device model or your own Claude / OpenAI / GLM key for phone coding
-                </Text>
-              </View>
-              <Text style={[styles.aboutValue, { color: c.accent }]}>Configure ›</Text>
-            </Pressable>
-
-            {Platform.OS === "android" && (
-              <>
-                <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
-                <Pressable
-                  style={styles.aboutRow}
-                  onPress={() => router.push("/local-box")}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>This phone as a box</Text>
-                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                      Run a Linux userland on-device — terminal, coding agents & Hermes reload, no machine
-                    </Text>
-                  </View>
-                  <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
-                </Pressable>
-              </>
-            )}
-
-            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
             <Pressable
               style={styles.aboutRow}
               onPress={() => router.push("/studio")}
@@ -2323,24 +2291,6 @@ export default function SettingsScreen() {
               </View>
               <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
             </Pressable>
-
-            {Platform.OS === "android" && (
-              <>
-                <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
-                <Pressable
-                  style={styles.aboutRow}
-                  onPress={() => router.push("/local-box")}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>This phone as a box</Text>
-                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                      Run a Linux userland on-device — terminal, coding agents & Hermes reload, no machine
-                    </Text>
-                  </View>
-                  <Text style={[styles.aboutValue, { color: c.accent }]}>Open ›</Text>
-                </Pressable>
-              </>
-            )}
 
             <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
 

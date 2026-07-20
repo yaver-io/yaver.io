@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import * as ExpoClipboard from "expo-clipboard";
 import { useColors } from "../context/ThemeContext";
 import { spacing } from "../theme/tokens";
 
@@ -26,6 +27,10 @@ export interface TaskHeaderProps {
   /** Model display name (e.g. "GPT-5.4"). Paired with runnerLabel in
    *  the same chip. Renders only when runnerLabel is also present. */
   modelLabel?: string;
+  /** tmux "session:window" address for this task, when the runner is
+   *  dispatched into tmux. Rendered as a copy-on-tap chip so the user can
+   *  attach from a terminal (`tmux attach -t <session>` then Ctrl-b w). */
+  tmuxSession?: string;
   /** Tap "Logs" — already wired in tasks.tsx. */
   onOpenLogs?: () => void;
   onBack: () => void;
@@ -43,6 +48,7 @@ export function TaskHeader({
   deviceName,
   runnerLabel,
   modelLabel,
+  tmuxSession,
   onOpenLogs,
   onBack,
   primaryAction,
@@ -221,6 +227,29 @@ export function TaskHeader({
               ) : null}
             </Text>
           </View>
+        </View>
+      ) : null}
+      {tmuxSession ? (
+        <View style={styles.chipRow}>
+          <Pressable
+            onPress={() => { void ExpoClipboard.setStringAsync(tmuxSession); }}
+            style={({ pressed }) => [
+              styles.runnerChip,
+              { backgroundColor: c.surfaceElevated, borderColor: c.border },
+              pressed && { opacity: 0.7 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Copy tmux session ${tmuxSession}`}
+          >
+            <Ionicons name="terminal-outline" size={11} color={c.textTertiary} />
+            <Text
+              style={[styles.runnerChipText, { color: c.textPrimary, fontFamily: "Menlo" }]}
+              numberOfLines={1}
+            >
+              {tmuxSession}
+            </Text>
+            <Ionicons name="copy-outline" size={10} color={c.textTertiary} />
+          </Pressable>
         </View>
       ) : null}
     </View>

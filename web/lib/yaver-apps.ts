@@ -89,7 +89,9 @@ export type YaverAppStateAuthority =
   | "tool-authoritative";
 
 export type YaverDeveloperLifecycleStage =
-  | "mobile-sandbox"
+  | "remote-box"
+  | "yaver-git"
+  | "yaver-serverless"
   | "private-repo"
   | "private-deploy"
   | "catalog-review"
@@ -105,8 +107,8 @@ export type YaverSourceProvider =
   | "signed-package";
 
 export type YaverDeploymentTarget =
-  | "phone-sandbox"
   | "self-hosted-yaver"
+  | "yaver-managed-cloud"
   | "yaver-cloud-hetzner"
   | "developer-vps"
   | "web-preview"
@@ -235,7 +237,9 @@ const catalogRevenueShare = {
 
 const defaultDeveloperWorkspace = {
   lifecycle: [
-    "mobile-sandbox",
+    "remote-box",
+    "yaver-git",
+    "yaver-serverless",
     "private-repo",
     "private-deploy",
     "catalog-review",
@@ -244,8 +248,8 @@ const defaultDeveloperWorkspace = {
   ],
   sourceProviders: ["yaver-git", "github", "gitlab", "self-hosted-git", "local-folder", "signed-package"],
   deploymentTargets: [
-    "phone-sandbox",
     "self-hosted-yaver",
+    "yaver-managed-cloud",
     "yaver-cloud-hetzner",
     "developer-vps",
     "web-preview",
@@ -582,8 +586,8 @@ export const PERSONAL_RUNTIME_APP: YaverAppManifest = {
   },
   developerWorkspace: {
     ...defaultDeveloperWorkspace,
-    lifecycle: ["mobile-sandbox", "private-repo", "private-deploy", "external-exit"],
-    deploymentTargets: ["phone-sandbox", "self-hosted-yaver", "yaver-cloud-hetzner", "developer-vps", "web-preview"],
+    lifecycle: ["remote-box", "yaver-git", "yaver-serverless", "private-deploy", "external-exit"],
+    deploymentTargets: ["self-hosted-yaver", "yaver-managed-cloud", "yaver-cloud-hetzner", "developer-vps", "web-preview"],
   },
   publishPolicy: {
     externalRelease: "allowed",
@@ -659,8 +663,8 @@ export const PERSONAL_HEALTH_AGENT_APP: YaverAppManifest = {
   },
   developerWorkspace: {
     ...defaultDeveloperWorkspace,
-    lifecycle: ["mobile-sandbox", "private-repo", "private-deploy", "external-exit"],
-    deploymentTargets: ["phone-sandbox", "self-hosted-yaver", "yaver-cloud-hetzner", "developer-vps"],
+    lifecycle: ["remote-box", "yaver-git", "yaver-serverless", "private-deploy", "external-exit"],
+    deploymentTargets: ["self-hosted-yaver", "yaver-managed-cloud", "yaver-cloud-hetzner", "developer-vps"],
     cloudAllocation: {
       ...defaultDeveloperWorkspace.cloudAllocation,
       notes:

@@ -11,9 +11,22 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"type":     "object",
 				"required": []string{"prompt"},
 				"properties": map[string]interface{}{
+					"device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional owned Yaver mesh device id/name/alias to create the task on. Use this for new app development: pick a self-hosted remote box or Yaver Managed Cloud, then run the task there.",
+					},
 					"prompt": map[string]interface{}{
 						"type":        "string",
 						"description": "The task prompt describing what the AI should do",
+					},
+					"work_dir": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional absolute work directory on the target machine. For a brand-new app, omit this and let the remote runner create/clone under the machine's Yaver workspace.",
+					},
+					"placement_kind": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "vibe", "build", "deploy", "test", "source", "autorun", "unknown"},
+						"description": "Optional placement hint. For greenfield app development use vibe/source unless the first step is a native build or deploy.",
 					},
 					"verbosity": map[string]interface{}{
 						"type":        "integer",
@@ -5018,6 +5031,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// appletv/capture) are hidden from non-owners so the default product
 	// surface stays the AI coding/preview/deploy loop. See mcp_owner_gate.go.
 	tools = filterOwnerOnlyTools(tools, currentUserIsOwner())
+
+	// Sandbox app-development tools are dormant while Yaver requires a real
+	// remote box (self-hosted or managed cloud) for new apps. The implementation
+	// remains for a future phone-local LLM path, but it should not be shown.
+	tools = filterHiddenSandboxTools(tools)
 
 	// HN-LAUNCH-HIDE-PAID: drop Yaver's own paid-plan buyer tools at launch.
 	tools = filterPaidToolsAtLaunch(tools)

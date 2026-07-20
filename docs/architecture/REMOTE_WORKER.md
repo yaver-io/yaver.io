@@ -3,7 +3,32 @@
 This doc specs Yaver's plug-in mode, where Yaver acts as an MCP tool server
 for an existing Claude Code / Codex / Cursor / Windsurf / Zed install. In
 this mode the coding agent drives and Yaver provides capabilities (builds,
-deploys, Hermes push, containerization, remote workers).
+deploys, Hermes push, Yaver Git, Yaver Serverless, remote workers).
+
+Current product policy (2026-07-19): new app development always depends on a
+real remote box — either a self-hosted Yaver mesh machine or Yaver Managed
+Cloud. The phone/web/car/watch surfaces are control, voice, feedback, and
+preview surfaces; they are not the development sandbox. The old phone/browser
+sandbox code remains in-tree for a future phone-local LLM path, but it is not
+shown in UI or MCP discovery.
+
+Greenfield defaults unless the user says otherwise:
+
+- Yaver product stack: Yaver Mesh, Relay Pro, Cloud Workspace, Yaver Git,
+  Yaver Serverless, Hermes/WebRTC preview, Feedback SDK
+- repo home: Yaver Git
+- layout: Yaver monorepo
+- backend/data: Yaver Serverless
+- execution: selected remote box (`device_id`) or Cloud Workspace placement
+- infra/transport: Yaver Mesh by default, compatible with direct LAN, Yaver
+  Relay, and Tailscale-style private addresses when present
+- mobile preview: Hermes reload through Yaver
+- web preview: Yaver web preview / remote runtime
+- control surfaces: phone, web, watch, car, TV, and AR/VR all create/continue
+  the same remote-box tasks with STT/TTS hints when present
+- feedback loop: newly-created apps should wire the Yaver Feedback SDK when
+  appropriate so shake, voice notes, screenshots, crashes, and black-box context
+  feed follow-up tasks back into the same remote repo
 
 ## What this doc adds (scope)
 
@@ -11,8 +36,8 @@ deploys, Hermes push, containerization, remote workers).
    and every coding agent on the machine sees Yaver's MCP tools on next launch.
 2. A `device_id` parameter on build / deploy / dev-loop MCP tools so a
    laptop's Claude Code can offload work to another Yaver box.
-3. A handful of new convenience tools (`list_machines`,
-   `run_project_in_sandbox`, `git_clone` with `device_id`, `public_url`, …).
+3. A handful of convenience tools (`list_machines`, `create_task` with
+   `device_id`, `git_clone` with `device_id`, `public_url`, …).
 4. New layers surfaced through the existing MCP dispatcher (tokens, vault,
    projects, tunnels) — all thin wrappers over things that already exist
    on the HTTP side.
@@ -48,7 +73,7 @@ Verified by reading the code:
 | Auto-register at end of `yaver auth` | `main.go` calls `autoSetupMCP()` at lines 602 / 639 / 735 / 1527 | **Exists** |
 | Auto-start daemon after auth | `main.go::startServeIfStopped` | **Exists** |
 | MCP dispatcher | `mcp_tools.go` | **Exists** |
-| Container sandbox runtime | `container_runner.go`, `Dockerfile.sandbox` | **Exists** |
+| Legacy container sandbox runtime | `container_runner.go`, `Dockerfile.sandbox` | **Exists but hidden from UI/MCP** |
 | Hermes bundle compile + push | `/dev/build-native`, `yaver-cli`'s bundled `hermesc` | **Exists** |
 | Dev server manager (Expo / Flutter / Vite / Next) | `devserver.go` | **Exists** |
 | Machine enumeration + capabilities | `console_machines.go::listAllMachines`, `MachineCapabilities` | **Exists** |
@@ -116,7 +141,9 @@ Tool layers (ship in this order):
 `git_fetch`, `git_branch_*`, `git_stash_*`, `github_pr_*`, `gitlab_mr_*`.
 
 **Layer 5 — Projects / scaffolding:**
-`project_list`, `project_scaffold`, `project_switch_backend`, `phone_project_*`.
+`project_list`, `project_scaffold`, `project_switch_backend`, Yaver Git
+repo creation, Yaver Serverless setup. `phone_project_*` stays legacy/hidden
+unless the phone-local LLM path is deliberately re-enabled.
 
 **Layer 6 — Tunnels / local exposure:**
 `tunnel_expose`, `tunnel_list`, `tunnel_close`, `public_url`.
@@ -139,44 +166,36 @@ called with a non-empty `device_id`:
 
 - `list_machines` — thin wrapper over `listAllMachines` + `MachineCapabilities`.
   Implemented as a compatibility alias for `agent_machine_inventory`.
-- `sandbox_run(device_id?, prompt, files, framework?, schema?, runner?, timeoutMs?)`
-  — headless MCP wrapper over `POST /sandbox/run`. It ships a phone-style source
-  tree to the local or remote OpenCode/GLM runner and returns an EditPlan-shaped
-  diff; the GLM key stays on the machine that runs the tool.
-- `run_project_in_sandbox(project_dir, device_id?, api_keys?)` — still planned:
-  build the yaver-sandbox image if needed, mount an existing checkout, inject
-  only the listed API keys as env vars, start the dev server inside, and push
-  the Hermes bundle to the paired phone. Wraps existing `ContainerRunner` +
-  `DevServer`.
+- `create_task(device_id?, work_dir?, placement_kind?, prompt, …)` — direct
+  remote-box task creation. This is the MCP entry for a dreamer saying "I want
+  a mobile app for dentists": select/wake a box, create the task there, and let
+  the runner scaffold the Yaver monorepo with Yaver Git + Yaver Serverless.
+- `sandbox_run` / `run_project_in_sandbox` — dormant legacy ideas. Do not expose
+  or use them for app development unless the product explicitly re-enables
+  phone-local development after local LLMs become good enough.
 
 ## The hot path — Hermes push-to-device
 
 This is what the vibe-coder will *feel*. Every few keystrokes, not every few
 days. Budget: under 2 seconds end to end.
 
-**Local flow (Shape A — plug-in mode, one machine):**
+**Remote-box flow (primary shape):**
 
-1. Claude Code edits `App.tsx` on the laptop
-2. Claude Code calls `dev_reload(mode="bundle", work_dir="<project-dir>")`
-3. Local Yaver daemon runs `hermesc`, POSTs the bundle to the paired
-   phone on port 8347
-4. Phone reloads under 2s
-
-**Remote flow (Shape B — plug-in + remote worker, two machines):**
-
-1. Claude Code edits `App.tsx` on the laptop; source is mirrored to the
-   Mac mini via git / rsync
-2. Claude Code calls `dev_reload(device_id="mac-mini", mode="bundle", work_dir="…")`
-3. Laptop's Yaver daemon proxies to `{relay}/d/mac-mini/dev/build-native`
-4. Mini compiles Hermes, pushes to the phone on its LAN
-5. Phone reloads under 2s; laptop's fans never spin up
+1. User speaks/types a product idea from Tasks (phone, car, watch, TV, AR/VR,
+   web, CLI, MCP).
+2. Surface chooses a self-hosted Yaver box or Yaver Managed Cloud.
+3. Agent/MCP calls `create_task(device_id="box", prompt="…")`.
+4. The box runner creates or clones the Yaver Git repo, scaffolds the Yaver
+   monorepo, wires Yaver Serverless, and commits progress.
+5. For React Native / Expo, the box compiles Hermes and pushes reloads to the
+   paired phone. For web, it starts a Yaver web preview / remote runtime.
 
 Same tool, same signature, only `device_id` differs.
 
 ## Use cases, by frequency
 
-1. **Hermes push-to-device** (every few keystrokes — the dominant case)
-2. **Third-party project containerization** (`run_project_in_sandbox`)
+1. **Greenfield app task on a remote box** (`create_task(device_id=…)`)
+2. **Hermes push-to-device** (every few keystrokes for mobile apps)
 3. **Remote dev server** (`dev_start(device_id=…)` for Metro / Vite / Next / Flutter)
 4. **Remote build** (native changes only — `xcodebuild_archive`, `gradle_build`)
 5. **Remote deploy** (TestFlight / Play / Cloudflare / npm — secrets on worker)
@@ -207,13 +226,12 @@ Same tool, same signature, only `device_id` differs.
       same six config files
 - [ ] `cli/package.json` — `preuninstall` script runs `yaver mcp unregister`
 
-**Phase 1 — hot path (Hermes + sandbox + list_machines + proxy)**:
+**Phase 1 — hot path (Hermes + remote box + list_machines + proxy)**:
 
 - [ ] `desktop/agent/mcp_remote_proxy.go` — `proxyToDevice()` (~50 LOC)
 - [x] `desktop/agent/mcp_tools.go` — `list_machines` tool
-- [x] `desktop/agent/mcp_tools.go` — `sandbox_run` tool for headless
-      phone-sandbox edits
-- [ ] `desktop/agent/mcp_tools.go` — `run_project_in_sandbox` tool
+- [x] `desktop/agent/mcp_tools.go` — `create_task.device_id` for direct remote task creation
+- [x] `desktop/agent/mcp_tools.go` — hide sandbox MCP tools while remote-box-first is active
 - [ ] `desktop/agent/mcp_tools.go` — `device_id` on Layer 1 tools only
 - [ ] Guest-token rejection unit test
 - [ ] Layer 4 refusal unit test (passing `device_id` returns error)
@@ -265,21 +283,25 @@ Signed in successfully.
 
 Restart Claude Code. Without any config editing, say:
 
-> "clone github.com/some/rn-app, open it in a sandboxed container, push the
->  Hermes bundle to my phone"
+> "I have an idea for a mobile app for dentists. Build the first version and
+>  show it on my phone."
 
 Claude Code calls (no user intervention):
 
-1. `list_machines` → sees the local box; Docker + phone pairing present
-2. `git_clone(repo="…", target_dir="/tmp/rn-app")`
-3. `run_project_in_sandbox(project_dir="/tmp/rn-app")`
-4. Container spins up, dev server starts inside, Hermes bundle lands on
-   phone, phone reloads in under 3s
-5. Host toolchain untouched: no `npm install` on the host, no leaked env
+1. `list_machines` → sees a self-hosted Yaver box or Yaver Managed Cloud
+2. `create_task(device_id="box", placement_kind="vibe", prompt="…")`
+3. The box creates the Yaver Git repo, Yaver monorepo, and Yaver Serverless
+   backend/data defaults
+4. The box starts the mobile/web dev loop and pushes Hermes/web-preview updates
+   to the user's selected surface
+5. The app includes Yaver Feedback SDK wiring when appropriate, so shake/voice
+   feedback, screenshots, crashes, and black-box events create follow-up tasks
+6. The task commits progress on the remote box and reports the preview/reload
+   URL or phone status
 
 Same afternoon the vibe-coder edits their own RN app — Claude Code calls
-`dev_reload(mode="bundle")` dozens of times, each round-trip under 2s. Fans
-stay quiet.
+`dev_reload(device_id="box", mode="bundle")` dozens of times, each round-trip
+under 2s. The laptop/phone remain control surfaces; the box does the work.
 
 Next week they add a Mac mini, run `yaver auth` on it, and Claude Code on
 the laptop starts offloading builds with `device_id="mac-mini"` — no new

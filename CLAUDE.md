@@ -840,10 +840,10 @@ matters.
 | Deploy script generator + doctor | `desktop/agent/deploy_script_gen.go`, `doctor_build.go`, `deploy_script_http.go` |
 | Store tester/build management (TestFlight + Play) | `desktop/agent/appstoreconnect.go` (ASC API: beta testers/groups/builds), `playpublish_api.go` (Play tracks/testers/rollout), `ops_store.go` (`store_*` MCP verbs, multi-tenant per-project vault, runs on managed cloud). Web `StoresView.tsx` Testers tab; mobile `app/store-testers.tsx` + `src/lib/storeTestersClient.ts`. Reuses Store Studio auth (`resolveAppleASCCreds`/`mintASCJWT`, `resolveGoogleSA`/`getGoogleAccessToken`). Apple=per-email testers; Google=track Google-Groups + rollout (per-email = Console-only). Doc `docs/yaver-store-tester-management.md`, blog `/blog/mobile-beta-testing-apple-google`. |
 | Guest access | `backend/convex/guests.ts`; `desktop/agent/guest_*.go`. Scopes: `full` / `feedback-only` / `deploy` |
-| Container sandbox (deferred) | `desktop/agent/container_runner.go`, `Dockerfile.sandbox`. End-to-end testing TODO — see `docs/guides/DOCKER_REMAINED.md` |
+| Legacy container sandbox (hidden) | `desktop/agent/container_runner.go`, `Dockerfile.sandbox`. Implementation is kept for future phone-local LLM work, but new app development is remote-box-first. |
 | Multi-user | `desktop/agent/multiuser.go`, `multiuser_http.go`; `backend/convex/teams.ts` |
 | Account linking + merge | `backend/convex/auth.ts::mergeUserInto`; `desktop/agent/account_cmd.go`, `mcp_auth_link_tools.go` |
-| Phone-first mini backend | `desktop/agent/phone_backend.go`, `phone_backend_http.go`; mobile `app/phone-projects*` |
+| Greenfield app development | Tasks/MCP on a selected remote box: self-hosted Yaver mesh or Yaver Managed Cloud. Defaults: Yaver Git, Yaver monorepo, Yaver Serverless; mobile preview uses Hermes reload. |
 | Switch engine (target migrations) | `desktop/agent/switch_*.go` — 19 targets, snapshots, 7-day rollback |
 | Session transfer | `desktop/agent/session_*.go`, `transfer.go` |
 | Hands-free voice (all surfaces) | `mobile/src/lib/voice/` — one surface-agnostic `VoiceConversationCore` (streaming STT → semantic endpointing → runner dispatch → TTS → barge-in) + adapters; `useHandsFreeVoice` React seam; car wired in `app/car-voice-coding.tsx`. Semantic "when to submit" = timing trigger (`endpointer.ts`) → on-device judge (`completenessJudge.ts`, free llama.rn). Runner-only (no Flux). Doc `docs/architecture/VOICE_CONVERSATION.md`. tsx tests. |

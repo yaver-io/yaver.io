@@ -35,7 +35,49 @@ import { ROOTFS_MANIFEST, ROOTFS_PUBLISHED } from "../src/lib/sandboxRootfsManif
 
 type Busy = "idle" | "installing" | "starting" | "hosting" | "stopping";
 
+const SHOW_LOCAL_BOX_SURFACE = false;
+
 export default function LocalBoxScreen() {
+  const c = useColors();
+  const router = useRouter();
+  const { token } = useAuth();
+
+  if (!SHOW_LOCAL_BOX_SURFACE) {
+    return (
+      <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+        <Stack.Screen options={{ title: "Remote boxes" }} />
+        <Pressable
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/tasks" as any))}
+          hitSlop={12}
+          style={{ flexDirection: "row", alignItems: "center", marginTop: 12, marginHorizontal: 16, alignSelf: "flex-start" }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Ionicons name="chevron-back" size={22} color={c.textSecondary} />
+          <Text style={{ color: c.textSecondary, fontSize: 16, marginLeft: 2, fontWeight: "600" }}>Back</Text>
+        </Pressable>
+        <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, margin: 16 }]}>
+          <Text style={[styles.h, { color: c.textPrimary }]}>Use a Yaver remote box</Text>
+          <Text style={[styles.p, { color: c.textMuted }]}>
+            New app development now runs on a self-hosted Yaver mesh box or Yaver Managed Cloud.
+            Start from Tasks to create the app in Yaver Git, Yaver Serverless, and the Yaver monorepo.
+          </Text>
+          <Pressable
+            onPress={() => router.replace("/(tabs)/tasks" as any)}
+            style={[styles.btn, { backgroundColor: c.accent, borderColor: c.accent }]}
+            accessibilityRole="button"
+          >
+            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>Open Tasks</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return <LocalBoxLegacyScreen />;
+}
+
+function LocalBoxLegacyScreen() {
   const c = useColors();
   const router = useRouter();
   const { token } = useAuth();
@@ -146,7 +188,7 @@ export default function LocalBoxScreen() {
   if (!supported) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
-        <Stack.Screen options={{ title: "This phone as a box" }} />
+        <Stack.Screen options={{ title: "Legacy local box" }} />
         <Pressable
           onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
           hitSlop={12}
@@ -188,7 +230,7 @@ export default function LocalBoxScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
-      <Stack.Screen options={{ title: "This phone as a box" }} />
+      <Stack.Screen options={{ title: "Legacy local box" }} />
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
         <Pressable
           onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}

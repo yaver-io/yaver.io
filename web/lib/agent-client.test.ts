@@ -14,10 +14,12 @@ test("web createTask body defaults allowLocalFallback to false", () => {
     description: "",
     userPrompt: "secret prompt",
     runner: "codex",
+    placementKind: "build",
   });
   assert.equal(body.source, "web");
   assert.equal(body.allowLocalFallback, false);
   assert.equal(body.userPrompt, "secret prompt");
+  assert.equal(body.placementKind, "build");
 });
 
 test("web createTask body can mark final Cloud Workspace handoff", () => {
@@ -26,6 +28,8 @@ test("web createTask body can mark final Cloud Workspace handoff", () => {
     description: "",
     runner: "codex",
     allowLocalFallback: true,
+    placementKind: "build",
   });
   assert.equal(body.allowLocalFallback, true);
+  assert.equal(body.placementKind, "build");
 });

@@ -15,11 +15,23 @@ import (
 // Who sees the full surface:
 //   - Owners (currentUserIsOwner) — so this account never loses tools.
 //   - Anyone who sets YAVER_MCP_PROFILE=full (explicit opt-in).
+//
 // Everyone else (the HN normie) gets the lean core by default.
 //
 // Reverse the whole lean-down by setting mcpCoreProfileDefault below to
 // "full", or per-machine with YAVER_MCP_PROFILE=full.
 const mcpCoreProfileDefault = "core"
+
+// Sandbox app-development tools are intentionally hidden while the product
+// requires a real remote box (self-hosted Yaver mesh or Yaver Managed Cloud).
+// Keep the implementation on disk for a future phone-local LLM path, but do
+// not advertise it to MCP clients or let models choose it as the happy path.
+var hiddenSandboxMCPTools = map[string]bool{
+	"sandbox_run":        true,
+	"sandbox_status":     true,
+	"sandbox_config":     true,
+	"sandbox_quickstart": true,
+}
 
 // peripheralToolFamilies are hidden from the lean "core" profile. Key = the
 // tool-name family (the segment before the first underscore, or the whole name
@@ -104,6 +116,18 @@ func filterToCoreProfile(tools []map[string]interface{}) []map[string]interface{
 	for _, t := range tools {
 		name, _ := t["name"].(string)
 		if peripheralToolFamilies[mcpToolFamily(name)] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func filterHiddenSandboxTools(tools []map[string]interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(tools))
+	for _, t := range tools {
+		name, _ := t["name"].(string)
+		if hiddenSandboxMCPTools[name] {
 			continue
 		}
 		out = append(out, t)

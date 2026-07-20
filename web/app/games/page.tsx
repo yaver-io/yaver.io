@@ -48,7 +48,7 @@ export default function GamesPage() {
             <p className="text-sm font-semibold text-surface-100">Launch boundary</p>
             <dl className="mt-4">
               <ContractRow label="Catalog" value={`${YAVER_FIRST_PARTY_GAMES.length} first-party game plus Carrotbet as a developer-owned import target`} />
-              <ContractRow label="Developer path" value="Mobile sandbox -> private repo -> deploy/private preview -> optional Yaver catalog review." />
+              <ContractRow label="Developer path" value="Remote box -> Yaver Git/private repo -> deploy/private preview -> optional Yaver catalog review." />
               <ContractRow label="Billing" value="Free at launch; Yaver owns future IAP, Play Billing, and web entitlements." />
               <ContractRow label="Auth" value="Yaver OAuth/session required. No standalone SFMG account in the Yaver build." />
               <ContractRow label="Runtime" value="Server-authoritative commands, event log, AI intent parser, remote-runner testing." />

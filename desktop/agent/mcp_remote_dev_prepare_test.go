@@ -64,11 +64,18 @@ func TestMCPRemoteDevelopmentToolSchemas(t *testing.T) {
 		t.Fatalf("list_machines should document its compatibility alias, got %q", got)
 	}
 
-	sandboxRun := findMCPToolForTest(t, tools, "sandbox_run")
-	sandboxProps := mcpToolPropertiesForTest(t, sandboxRun)
-	for _, key := range []string{"device_id", "prompt", "files", "framework", "schema", "runner", "timeoutMs"} {
-		if _, ok := sandboxProps[key]; !ok {
-			t.Fatalf("sandbox_run missing property %q", key)
+	createTask := findMCPToolForTest(t, tools, "create_task")
+	createProps := mcpToolPropertiesForTest(t, createTask)
+	for _, key := range []string{"device_id", "prompt", "work_dir", "placement_kind"} {
+		if _, ok := createProps[key]; !ok {
+			t.Fatalf("create_task missing property %q", key)
+		}
+	}
+	for _, hidden := range []string{"sandbox_run", "sandbox_status", "sandbox_config", "sandbox_quickstart"} {
+		for _, tool := range tools {
+			if tool["name"] == hidden {
+				t.Fatalf("%s should be hidden while app development is remote-box-first", hidden)
+			}
 		}
 	}
 

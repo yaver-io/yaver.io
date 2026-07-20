@@ -46,7 +46,8 @@ export function RunningTasksPill() {
         const open = list.filter((t) => t.status === "running" || t.status === "queued");
         if (mounted) setRunning(open);
       } catch {
-        if (mounted) setRunning([]);
+        // Preserve the last known live rows. A failed /tasks poll is unknown,
+        // not proof that the machine has zero running work.
       }
     };
     poll();

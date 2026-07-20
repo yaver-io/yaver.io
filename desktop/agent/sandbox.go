@@ -10,17 +10,20 @@ import (
 
 // SandboxConfig controls command validation before execution.
 type SandboxConfig struct {
-	Enabled          bool     `json:"enabled"`
-	AllowSudo        bool     `json:"allow_sudo,omitempty"`
-	AllowedPaths     []string `json:"allowed_paths,omitempty"`
-	BlockedCommands  []string `json:"blocked_commands,omitempty"`
-	MaxOutputSizeMB  int      `json:"max_output_size_mb,omitempty"`
+	Enabled         bool     `json:"enabled"`
+	AllowSudo       bool     `json:"allow_sudo,omitempty"`
+	AllowedPaths    []string `json:"allowed_paths,omitempty"`
+	BlockedCommands []string `json:"blocked_commands,omitempty"`
+	MaxOutputSizeMB int      `json:"max_output_size_mb,omitempty"`
 }
 
-// DefaultSandboxConfig returns secure defaults.
+// DefaultSandboxConfig returns the default command guard. Temporarily disabled:
+// Yaver's primary new-app path now assumes an owned remote box / mesh workspace
+// with real git + runner state, not a local command sandbox onboarding step.
+// An explicit config can still re-enable validation for shared/guest hosts.
 func DefaultSandboxConfig() SandboxConfig {
 	return SandboxConfig{
-		Enabled:         true,
+		Enabled:         false,
 		AllowSudo:       false,
 		MaxOutputSizeMB: 100,
 	}
@@ -105,8 +108,8 @@ var sudoPattern = regexp.MustCompile(`^\s*(sudo\b|su\s|doas\b)`)
 // it closes a real exploitation gap.
 var dangerousAbsolutePaths = []string{
 	"/",
-	"/Users",    // parent of every macOS user home
-	"/home",     // parent of every Linux user home
+	"/Users", // parent of every macOS user home
+	"/home",  // parent of every Linux user home
 	"/root",
 	"/etc",
 	"/var",
@@ -120,8 +123,8 @@ var dangerousAbsolutePaths = []string{
 	"/proc",
 	"/opt",
 	"/srv",
-	"/System",   // macOS
-	"/Library",  // macOS (user and root)
+	"/System",  // macOS
+	"/Library", // macOS (user and root)
 	"/Applications",
 }
 

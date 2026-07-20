@@ -5,8 +5,21 @@ import (
 	"testing"
 )
 
-func TestSandboxBlocksDangerousCommands(t *testing.T) {
+func enabledSandboxConfig() SandboxConfig {
 	cfg := DefaultSandboxConfig()
+	cfg.Enabled = true
+	return cfg
+}
+
+func TestDefaultSandboxConfigDisabledWhileRemoteBoxFirst(t *testing.T) {
+	cfg := DefaultSandboxConfig()
+	if cfg.Enabled {
+		t.Fatal("default sandbox should stay disabled while app development is remote-box-first")
+	}
+}
+
+func TestSandboxBlocksDangerousCommands(t *testing.T) {
+	cfg := enabledSandboxConfig()
 
 	blocked := []struct {
 		cmd    string
@@ -81,7 +94,7 @@ func TestSandboxBlocksDangerousCommands(t *testing.T) {
 }
 
 func TestSandboxAllowsSafeCommands(t *testing.T) {
-	cfg := DefaultSandboxConfig()
+	cfg := enabledSandboxConfig()
 
 	allowed := []string{
 		"ls -la",
@@ -135,7 +148,7 @@ func TestSandboxDisabled(t *testing.T) {
 }
 
 func TestSandboxAllowSudo(t *testing.T) {
-	cfg := DefaultSandboxConfig()
+	cfg := enabledSandboxConfig()
 	cfg.AllowSudo = true
 
 	err := ValidateCommand("sudo apt-get update", cfg)
@@ -145,7 +158,7 @@ func TestSandboxAllowSudo(t *testing.T) {
 }
 
 func TestSandboxCustomBlockedCommands(t *testing.T) {
-	cfg := DefaultSandboxConfig()
+	cfg := enabledSandboxConfig()
 	cfg.BlockedCommands = []string{"terraform destroy", "kubectl delete namespace"}
 
 	err := ValidateCommand("terraform destroy -auto-approve", cfg)
@@ -165,7 +178,7 @@ func TestSandboxCustomBlockedCommands(t *testing.T) {
 }
 
 func TestSandboxWorkDirValidation(t *testing.T) {
-	cfg := DefaultSandboxConfig()
+	cfg := enabledSandboxConfig()
 	cfg.AllowedPaths = []string{"/home/user/projects", "/tmp"}
 
 	if err := ValidateWorkDir("/home/user/projects/myapp", cfg); err != nil {
@@ -206,7 +219,7 @@ func TestSandboxCaseInsensitiveHomeDeletion(t *testing.T) {
 	home := "/tmp/yaver-sandbox-test-home"
 	t.Setenv("HOME", home)
 
-	cfg := DefaultSandboxConfig()
+	cfg := enabledSandboxConfig()
 
 	blocked := []struct {
 		cmd    string
@@ -254,7 +267,7 @@ func TestSandboxAllowsLegitimateSubpathDeletion(t *testing.T) {
 	home := "/tmp/yaver-sandbox-test-home"
 	t.Setenv("HOME", home)
 
-	cfg := DefaultSandboxConfig()
+	cfg := enabledSandboxConfig()
 
 	allowed := []string{
 		"rm -rf ~/Workspace/yaver.io/dist",

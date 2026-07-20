@@ -11,6 +11,7 @@ export type SendTaskRequestBodyArgs = {
   video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" };
   codeMode?: boolean;
   allowLocalFallback?: boolean;
+  placementKind?: "vibe" | "build" | "deploy" | "test" | "source" | "autorun" | "unknown";
 };
 
 export function buildSendTaskRequestBody(args: SendTaskRequestBodyArgs): Record<string, unknown> {
@@ -28,5 +29,6 @@ export function buildSendTaskRequestBody(args: SendTaskRequestBodyArgs): Record<
     ...(args.video?.enabled ? { videoEnabled: true } : {}),
     ...(args.video?.source ? { videoSource: args.video.source } : {}),
     ...(args.allowLocalFallback ? { allowLocalFallback: true } : {}),
+    ...(args.placementKind ? { placementKind: args.placementKind } : {}),
   };
 }

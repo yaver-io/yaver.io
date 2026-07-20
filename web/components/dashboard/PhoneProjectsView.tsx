@@ -516,7 +516,7 @@ export default function PhoneProjectsView() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-3">
-        <h1 className="text-xl font-semibold text-surface-100">Phone Backend</h1>
+        <h1 className="text-xl font-semibold text-surface-100">Legacy Projects</h1>
         {modeBar}
       </div>
       <div>

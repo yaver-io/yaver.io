@@ -26,6 +26,7 @@ function fmtUptime(seconds?: number) {
 }
 
 export default function InfraView() {
+  const SHOW_SANDBOX_UI = false;
   const [summary, setSummary] = useState<InfraSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyService, setBusyService] = useState<string | null>(null);
@@ -210,6 +211,7 @@ export default function InfraView() {
       </Section>
 
       <div className="grid gap-6 lg:grid-cols-2">
+        {SHOW_SANDBOX_UI && (
         <Section title="Containerization" subtitle="Whether remote Yaver tasks run on the host or in Docker">
           <div className="grid gap-3 md:grid-cols-2">
             <Metric
@@ -252,6 +254,7 @@ export default function InfraView() {
             </div>
           )}
         </Section>
+        )}
 
         <Section title="Relay" subtitle="Configured and cached relay endpoints">
           <div className="space-y-3">

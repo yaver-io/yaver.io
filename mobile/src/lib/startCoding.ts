@@ -1,9 +1,7 @@
 // startCoding.ts — the ONE "Start coding" brain. Today the app scatters coding
-// across three disjoint surfaces (the audit's #1 UX gap): tasks.tsx (remote
-// runner), apps.tsx/phone-projects (Hermes SQLite backend), and sandbox-ai.tsx
-// (phone-local code). A new user must guess which tab. This module collapses
-// that into one decision: given what the user wants + the live environment,
-// route to exactly one surface and explain why. PURE + RN-free (tsx-tested).
+// across several historical surfaces. New app development now routes through
+// Tasks and a selected remote box; older project-specific code routes remain
+// only for compatibility. PURE + RN-free (tsx-tested).
 //
 // It composes codingSession.ts (engine×target) for the CODE surfaces and adds
 // the one axis codingSession doesn't model: "is this a data/backend app?" →
@@ -20,10 +18,10 @@ import {
 
 /** Where the request lands. Each maps to a concrete screen. */
 export type CodingSurface =
-  | "sandbox" // phone-local code editor (sandbox-ai / phone-project/code)
+  | "sandbox" // legacy phone-local code editor; hidden for new app development
   | "remote-task" // real CLI runner on a box (tasks.tsx)
   | "hermes-remote" // phone brain drives an auth-free box (code editor, target=box)
-  | "phone-backend" // Hermes SQLite app (apps.tsx / phone-projects)
+  | "phone-backend" // legacy Hermes SQLite app; hidden for new app development
   | "needs-setup"; // nothing usable — prompt the user
 
 /** What the user is making. "backend" = a data/CRUD/fullstack app that wants the
@@ -59,29 +57,28 @@ export interface CodingRoute {
 /**
  * Route a coding request to a single surface. Deterministic; no I/O.
  *
- *  - appKind "backend" → the Hermes phone-backend (apps.tsx). The DB-app path.
- *  - otherwise resolve codingSession(intent) where intent is "project" when a box
- *    is reachable or the user preferRemote, else "sandbox", then map the
+ *  - all new app development requires a remote box: self-hosted Yaver mesh or
+ *    Yaver Managed Cloud. The phone is the control/voice/preview surface, not
+ *    the development sandbox.
+ *  - resolve codingSession("project") and map the
  *    engine×target onto a surface:
- *      target phone                  → "sandbox"      (local editor)
  *      target box + engine hermes    → "hermes-remote" (editor, auth-free box)
  *      target box + engine cli-on-box→ "remote-task"   (tasks.tsx runner)
  *    A null engine (no backend at all) → "needs-setup".
  */
 export function routeCoding(req: StartCodingRequest): CodingRoute {
-  if (req.appKind === "backend") {
+  const boxReachable = req.env.online !== false && !!req.env.boxDeviceId;
+  if (!boxReachable && !req.preferRemote) {
     return {
-      surface: "phone-backend",
-      screen: req.slug ? `phone-project/${req.slug}` : "phone-projects",
-      label: "Hermes app (data + backend)",
-      reason: "a data/CRUD app — created on the on-device Hermes backend, promotable to Convex/Supabase later",
+      surface: "needs-setup",
+      screen: "tasks",
+      label: "Choose a remote box",
+      reason: "new app development runs on a self-hosted Yaver box or Yaver Managed Cloud; pick or wake a box to start",
     };
   }
 
-  const boxReachable = req.env.online !== false && !!req.env.boxDeviceId;
-  const intent = boxReachable || req.preferRemote ? "project" : "sandbox";
-  const session = resolveCodingSession(intent, req.env, req.prefs);
-  const codeScreen = req.slug ? `phone-project/code/${req.slug}` : "sandbox-ai";
+  const session = resolveCodingSession("project", req.env, req.prefs);
+  const codeScreen = req.slug ? `phone-project/code/${req.slug}` : "tasks";
 
   // Box target.
   if (session.target.kind === "box") {
@@ -113,44 +110,24 @@ export function routeCoding(req: StartCodingRequest): CodingRoute {
       surface: "needs-setup",
       session,
       deviceId: sessionEndpointDeviceId(session),
-      screen: "sandbox-ai",
+      screen: "tasks",
       label: "Set up a coding backend",
       reason:
-        "the box has no authorized runner and the phone has no compliant backend (GLM/BYO/on-device) to drive it — add one",
+        "the selected box has no authorized runner; sign in a runner there or pick Yaver Managed Cloud",
     };
   }
 
   // Phone-local target. A hermes engine with no usable backend is the "set up
-  // something" case (resolveCodingSession returns a placeholder subscription
-  // engine but the availability is empty).
-  if (!phoneHasUsableEngine(req)) {
-    return {
-      surface: "needs-setup",
-      session,
-      screen: "sandbox-ai",
-      label: "Set up a coding backend",
-      reason: "no on-device model, no mirrored plan, and no box — add one to start coding",
-    };
-  }
-
+  // something" case. We do not start app development on the phone-local
+  // sandbox anymore; the user must select/wake a real box first.
   return {
-    surface: "sandbox",
+    surface: "needs-setup",
     session,
     deviceId: null,
-    screen: codeScreen,
-    label: session.label,
-    reason: session.reason,
+    screen: "tasks",
+    label: "Choose a remote box",
+    reason: "new app development requires a self-hosted Yaver box or Yaver Managed Cloud",
   };
-}
-
-/** True when the phone can actually run SOMETHING locally: the Android proot CLI,
- *  an on-device model, a mirrored plan, or a configured fallback backend. Mirrors the inputs
- *  codingSession uses, so the two never disagree. */
-function phoneHasUsableEngine(req: StartCodingRequest): boolean {
-  const { env } = req;
-  if (env.platform === "android" && env.onDeviceCliReady && req.prefs?.onDeviceEngine !== "hermes") return true;
-  const b = env.backend;
-  return !!(b.localModelReady || b.claudeSubscription || b.anthropicKey || b.openaiKey || b.glmKey);
 }
 
 /** A one-line, user-facing explanation for the chosen route — for a confirmation
@@ -158,7 +135,7 @@ function phoneHasUsableEngine(req: StartCodingRequest): boolean {
 export function describeRoute(r: CodingRoute): string {
   switch (r.surface) {
     case "sandbox":
-      return `Edit on this phone · ${r.label}`;
+      return `Legacy local editor · ${r.label}`;
     case "hermes-remote":
       return `Drive your box from the phone (no box auth) · ${r.label}`;
     case "remote-task":

@@ -46,17 +46,8 @@ struct DashboardView: View {
                             NavigationLink(destination: RuntimeDashboardView()) {
                                 Tile(icon: "terminal", title: "Runtime", detail: "Claude · Codex · reload")
                             }
-                            NavigationLink(destination: AppleTVRemoteView()) {
-                                Tile(icon: "appletv", title: "Apple TV", detail: "Remote · now playing")
-                            }
-                            NavigationLink(destination: AppleTVRemoteView(captureFirst: true)) {
-                                Tile(icon: "video", title: "Capture", detail: "Capture card view")
-                            }
                             NavigationLink(destination: FeedbackView()) {
                                 Tile(icon: "bubble.left.and.text.bubble.right", title: "Feedback", detail: "Reports from test devices")
-                            }
-                            NavigationLink(destination: DroidStreamView()) {
-                                Tile(icon: "iphone.gen3", title: "Android", detail: "Watch the redroid screen live")
                             }
                             Button { showPicker = true } label: {
                                 Tile(icon: "server.rack", title: store.selectedBox?.name ?? "Box", detail: "Switch machine")
@@ -66,12 +57,6 @@ struct DashboardView: View {
                             // that most need an update are the ones it can't
                             // select. UpdateAgentView asks the account, not the
                             // box — see its header.
-                            Button { showUpdateAgent = true } label: {
-                                Tile(icon: "arrow.down.circle", title: "Update agent", detail: "Ask a machine to update")
-                            }
-                            Button { showSharedGuests = true } label: {
-                                Tile(icon: "person.2.fill", title: "Shared with", detail: "See guests and remove access")
-                            }
                             Button { store.signOut() } label: {
                                 Tile(icon: "rectangle.portrait.and.arrow.right", title: "Sign out", detail: "")
                             }

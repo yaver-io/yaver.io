@@ -908,6 +908,7 @@ export function WebReloadView({
         userPrompt: prompt,
         projectName,
         workDir,
+        placementKind: "vibe",
       });
       setActiveTaskStream({
         id: task.id,
@@ -1027,6 +1028,7 @@ export function WebReloadView({
             userPrompt: prompt,
             projectName: activeProject?.name || selectedProject?.name,
             workDir,
+            placementKind: "source",
           });
           setActiveTaskStream({ id: task.id, title: task.title, status: task.status, lines: [] });
           taskStreamStopRef.current = agentClient.streamTaskOutput(task.id, (line) => {

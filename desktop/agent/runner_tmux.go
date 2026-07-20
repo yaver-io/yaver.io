@@ -41,10 +41,22 @@ import (
 
 const tmuxRunnerEnvVar = "YAVER_TMUX_RUNNER"
 
-// tmuxRunnerSession returns the opt-in session name from the daemon's env
-// (empty string = feature off).
+// defaultTmuxRunnerSession is the auto-provisioned session used when the
+// daemon has no YAVER_TMUX_RUNNER override. Each task lives in its own
+// window inside this session (yaver-task-<short>), so the mobile UI can
+// surface a stable "session:window" address for `tmux attach`.
+const defaultTmuxRunnerSession = "yaver-tasks"
+
+// tmuxRunnerSession returns the session used for task dispatch. If
+// YAVER_TMUX_RUNNER is set, that name wins (explicit override); otherwise
+// we fall back to defaultTmuxRunnerSession so tmux mode is on-by-default
+// wherever tmux itself is available. tmuxRunnerReady() is responsible for
+// deciding whether that session actually usable (existence, auto-create).
 func tmuxRunnerSession() string {
-	return strings.TrimSpace(os.Getenv(tmuxRunnerEnvVar))
+	if v := strings.TrimSpace(os.Getenv(tmuxRunnerEnvVar)); v != "" {
+		return v
+	}
+	return defaultTmuxRunnerSession
 }
 
 // tmuxRunnerEligible: which runners benefit from tmux dispatch. Claude
@@ -68,9 +80,10 @@ func tmuxRunnerEligible(runnerID string) bool {
 }
 
 // tmuxRunnerReady checks that tmux is available and the configured session
-// exists. Returns the session name on success, "" on any failure (so the
-// caller can fall through to the direct exec path without surfacing an
-// error to the user). Cheap enough to call on every task start.
+// exists (or can be auto-created for the default session). Returns the
+// session name on success, "" on any failure so the caller falls through
+// to the direct exec path without surfacing an error to the user. Cheap
+// enough to call on every task start.
 func tmuxRunnerReady() string {
 	session := tmuxRunnerSession()
 	if session == "" {
@@ -79,7 +92,17 @@ func tmuxRunnerReady() string {
 	if !tmuxAvailable() {
 		return ""
 	}
-	if exec.Command(tmuxCmdName(), "has-session", "-t", session).Run() != nil {
+	if exec.Command(tmuxCmdName(), "has-session", "-t", session).Run() == nil {
+		return session
+	}
+	// Session absent. Only auto-create it when the caller didn't pin a
+	// specific session via YAVER_TMUX_RUNNER — respect explicit intent
+	// (that env-var flow is meant to attach to a session the user runs
+	// themselves, e.g. one holding a Keychain-unlocked claude login).
+	if strings.TrimSpace(os.Getenv(tmuxRunnerEnvVar)) != "" {
+		return ""
+	}
+	if err := exec.Command(tmuxCmdName(), "new-session", "-d", "-s", session).Run(); err != nil {
 		return ""
 	}
 	return session
@@ -187,7 +210,7 @@ func buildTmuxRunnerCommand(
 	taskID string,
 	runnerCmd string,
 	runnerArgs []string,
-) (*exec.Cmd, []string) {
+) (*exec.Cmd, []string, string) {
 	short := shortTaskKey(taskID)
 	win := "yaver-task-" + short
 	sig := "yaver-done-" + short
@@ -202,5 +225,5 @@ func buildTmuxRunnerCommand(
 		"YAVER_TMUX_LOG=" + logPath,
 		"YAVER_TMUX_INNER=" + inner,
 	}
-	return cmd, envAdditions
+	return cmd, envAdditions, win
 }

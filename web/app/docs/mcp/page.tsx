@@ -822,9 +822,11 @@ my-plugin            1.0.0      1        healthy`}</Output>
         <section className="mb-20">
           <SectionHeading id="security">Security</SectionHeading>
           <Prose>
-            Yaver includes a sandbox that restricts what AI agents can do on
-            your machine. The sandbox is enabled by default and blocks
-            dangerous operations.
+            Yaver MCP is designed around owned remote boxes: a self-hosted
+            Yaver mesh machine or Yaver Managed Cloud. For new app development,
+            choose the box with <InlineCode>list_machines</InlineCode>, then
+            create the task on that box with <InlineCode>create_task</InlineCode>{" "}
+            and <InlineCode>device_id</InlineCode>.
           </Prose>
 
           <div className="mb-8 rounded-xl border border-surface-800 bg-surface-900 p-6">
@@ -833,9 +835,9 @@ my-plugin            1.0.0      1        healthy`}</Output>
             </h3>
             <ul className="space-y-2 text-sm text-surface-400">
               <li>
-                &bull; <strong className="text-surface-300">Filesystem destruction</strong>{" "}
-                &mdash; blocks <InlineCode>rm -rf /</InlineCode> and similar
-                destructive patterns
+                &bull; <strong className="text-surface-300">Machine boundary</strong>{" "}
+                &mdash; app development runs on the selected Yaver box, not in
+                a phone or browser sandbox
               </li>
               <li>
                 &bull; <strong className="text-surface-300">Privilege escalation</strong>{" "}
@@ -854,9 +856,12 @@ my-plugin            1.0.0      1        healthy`}</Output>
             </ul>
           </div>
 
-          <SubHeading>Configuration</SubHeading>
+          <SubHeading>Optional Legacy Guard</SubHeading>
           <Prose>
-            Customize the sandbox in your Yaver config file.
+            The old command sandbox implementation remains in the agent for
+            explicit local/shared-host experiments, but it is not shown in MCP
+            discovery and is not the default new-app path. It can be re-enabled
+            later if phone-local LLMs become good enough for full development.
           </Prose>
 
           <div className="mb-8">
@@ -891,7 +896,7 @@ my-plugin            1.0.0      1        healthy`}</Output>
               <ul className="space-y-2 text-sm text-surface-400">
                 <li>
                   &bull; <InlineCode>enabled</InlineCode> &mdash; Enable or
-                  disable the sandbox (default: <InlineCode>true</InlineCode>)
+                  disable the legacy command sandbox (default: <InlineCode>false</InlineCode>)
                 </li>
                 <li>
                   &bull; <InlineCode>allow_sudo</InlineCode> &mdash; Allow
@@ -909,9 +914,9 @@ my-plugin            1.0.0      1        healthy`}</Output>
                 Warning
               </h4>
               <p className="text-sm leading-relaxed text-surface-400">
-                Disabling the sandbox or allowing sudo gives AI agents full
-                access to your system. Only do this if you understand the
-                risks and trust the AI agent you&apos;re using.
+                Enabling the legacy sandbox is an advanced path. The supported
+                app-development path is still a selected remote Yaver box with
+                normal git history, runner auth, and Yaver Serverless defaults.
               </p>
             </div>
           </div>

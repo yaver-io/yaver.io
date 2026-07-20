@@ -186,6 +186,8 @@ export default function CarVoiceCodingScreen() {
           undefined,
           undefined,
           true,
+          undefined,
+          "vibe",
         );
         return { id: t.id };
       },

@@ -3124,16 +3124,16 @@ export default function MoreScreen() {
               shadowColor: c.accent,
             },
           ]}
-          onPress={() => router.navigate("/phone-projects" as any)}
+          onPress={() => router.navigate("/(tabs)/tasks" as any)}
         >
           <View style={[s.heroIconWrap, { backgroundColor: c.accent + "18", borderColor: c.accent + "35" }]}>
             <Text style={[s.heroIcon, { color: c.accent }]}>{"\u26A1"}</Text>
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[s.eyebrow, { color: c.accent }]}>Start here</Text>
-            <Text style={[s.heroLabel, { color: c.textPrimary }]}>Mobile Sandbox</Text>
+            <Text style={[s.heroLabel, { color: c.textPrimary }]}>New App Task</Text>
             <Text style={[s.heroDesc, { color: c.textMuted }]} numberOfLines={2}>
-              Create a phone-first app, then move it to your agent or cloud later.
+              Build on a self-hosted Yaver box or Yaver Managed Cloud with Yaver Git and Serverless.
             </Text>
           </View>
           <Text style={{ color: c.accent, fontSize: 20, fontWeight: "700" }}>{"\u203A"}</Text>
@@ -3207,19 +3207,15 @@ export default function MoreScreen() {
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
         </Pressable>
 
-        {/* Both routes named in the copy are now pressable: the pill opens the
-            same pairing sheet the "Pair Device" quick card does, the link goes
-            to the same Mobile Sandbox the hero card does. This used to be a
-            bordered card that named two moves and offered neither. */}
         {!connected ? (
           <EmptyState
             icon="desktop-outline"
             title="No remote machine connected"
-            body="Pair a Yaver machine for remote coding, builds, and infra tools — or start right here on this phone."
+            body="Pair a self-hosted Yaver machine or use Yaver Managed Cloud for remote coding, builds, preview, git, and backend work."
             action={{ label: "Pair a machine", onPress: openPair }}
             link={{
-              label: "Start in Mobile Sandbox",
-              onPress: () => router.navigate("/phone-projects" as any),
+              label: "Open Tasks",
+              onPress: () => router.navigate("/(tabs)/tasks" as any),
             }}
           />
         ) : null}

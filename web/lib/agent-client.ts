@@ -9,6 +9,7 @@
 import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 import { CONVEX_URL } from "@/lib/constants";
 import { decodeCloudWorkspaceRequiredError } from "@/lib/cloud-workspace-required";
+import type { TaskPlacementKind } from "@/lib/task-placement";
 import webPkg from "../package.json";
 
 // X-Yaver-Caller surface identifier sent on every agent request.
@@ -1608,6 +1609,7 @@ export type CreateTaskParams = {
   videoEnabled?: boolean;
   videoSource?: "browser" | "sim-ios" | "sim-android" | "phone" | "";
   askMode?: boolean;
+  placementKind?: TaskPlacementKind;
   allowLocalFallback?: boolean;
 };
 
@@ -1625,6 +1627,7 @@ export function buildCreateTaskBody(params: CreateTaskParams): Record<string, un
     videoEnabled: params.videoEnabled ?? false,
     videoSource: params.videoSource ?? "",
     askMode: params.askMode ?? false,
+    placementKind: params.placementKind ?? "unknown",
     allowLocalFallback: params.allowLocalFallback ?? false,
     source: "web",
   };
@@ -1822,6 +1825,7 @@ export class AgentClient {
      *  instead of a work run. The console sets this when the typed input is
      *  a natural-language question rather than a build instruction. */
     askMode?: boolean;
+    placementKind?: TaskPlacementKind;
     /** Internal handoff guard: true only when posting a client-held task body
      *  to the assigned Cloud Workspace after placement/activation already
      *  selected that target. Prevents the target agent from re-deferring the

@@ -5898,10 +5898,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	switch call.Name {
 	case "create_task":
 		var args struct {
-			Prompt    string `json:"prompt"`
-			Verbosity *int   `json:"verbosity"`
-			Runner    string `json:"runner"`
-			Model     string `json:"model"`
+			DeviceID      string `json:"device_id"`
+			Prompt        string `json:"prompt"`
+			WorkDir       string `json:"work_dir"`
+			PlacementKind string `json:"placement_kind"`
+			Verbosity     *int   `json:"verbosity"`
+			Runner        string `json:"runner"`
+			Model         string `json:"model"`
 			// Mode is the runner-specific subcommand selector. Currently
 			// honored by opencode where it maps to `--agent <mode>` —
 			// e.g. "build" / "plan" / any custom agent the user has
@@ -5919,6 +5922,29 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.Prompt == "" {
 			return mcpToolError("prompt is required")
 		}
+		if strings.TrimSpace(args.DeviceID) != "" {
+			body := map[string]any{
+				"title":         args.Prompt,
+				"description":   "",
+				"source":        "mcp",
+				"runner":        strings.TrimSpace(args.Runner),
+				"model":         strings.TrimSpace(args.Model),
+				"mode":          strings.TrimSpace(args.Mode),
+				"workDir":       strings.TrimSpace(args.WorkDir),
+				"videoEnabled":  args.VideoEnabled,
+				"videoSource":   strings.TrimSpace(args.VideoSource),
+				"askFreely":     args.AskFreely,
+				"placementKind": strings.TrimSpace(args.PlacementKind),
+				// This is already the selected machine. Avoid a second placement
+				// deferral loop on the receiver.
+				"allowLocalFallback": true,
+			}
+			out, err := proxyToDeviceJSON(context.Background(), "create_task", strings.TrimSpace(args.DeviceID), http.MethodPost, "/tasks", body)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("create_task: %v", err))
+			}
+			return mcpToolJSON(out)
+		}
 		var vc *TaskVerbosity
 		if args.Verbosity != nil {
 			vc = &TaskVerbosity{Verbosity: args.Verbosity}
@@ -5930,12 +5956,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			AskFreely:    args.AskFreely,
 		}
 		meta := taskPlacementRequestFromTaskBody(taskPlacementRequestInput{
-			KindHint:       "",
+			KindHint:       strings.TrimSpace(args.PlacementKind),
 			Title:          args.Prompt,
 			Description:    "",
 			Source:         "mcp",
 			Runner:         args.Runner,
-			WorkDir:        s.taskMgr.workDir,
+			WorkDir:        firstNonEmpty(strings.TrimSpace(args.WorkDir), s.taskMgr.workDir),
 			TargetDeviceID: s.deviceID,
 		})
 		if previewPlacement, perr := s.previewTaskPlacement(context.Background(), meta); perr != nil {
@@ -5963,6 +5989,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				"runner":        strings.TrimSpace(args.Runner),
 				"model":         strings.TrimSpace(args.Model),
 				"mode":          strings.TrimSpace(args.Mode),
+				"workDir":       strings.TrimSpace(args.WorkDir),
 				"videoEnabled":  args.VideoEnabled,
 				"videoSource":   strings.TrimSpace(args.VideoSource),
 				"askFreely":     args.AskFreely,
@@ -6009,6 +6036,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		} else if previewPlacement != nil {
 			taskOpts.Placement = previewPlacement
 		}
+		taskOpts.WorkDir = strings.TrimSpace(args.WorkDir)
 		task, err := s.taskMgr.CreateTaskWithOptions(args.Prompt, "", strings.TrimSpace(args.Model), "mcp", strings.TrimSpace(args.Runner), "", nil, taskOpts, vc)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("failed to create task: %v", err))
@@ -8704,6 +8732,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(out)
 	case "sandbox_run":
+		return mcpToolError("sandbox_run is hidden while Yaver requires a self-hosted or managed remote box for app development; use create_task with device_id, dev_* and mobile_* tools on the selected box")
+	case "sandbox_run_disabled":
 		var args struct {
 			DeviceID  string          `json:"device_id"`
 			Prompt    string          `json:"prompt"`
@@ -14453,9 +14483,11 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(fmt.Sprintf("Config updated for %s", args.Email))
 
 	case "sandbox_status":
-		return mcpToolJSON(s.sandboxSummary())
+		return mcpToolError("sandbox_status is hidden while sandbox UI/setup is disabled; use a self-hosted Yaver box or Yaver Managed Cloud")
 
 	case "sandbox_config":
+		return mcpToolError("sandbox_config is hidden while sandbox UI/setup is disabled; use a self-hosted Yaver box or Yaver Managed Cloud")
+	case "sandbox_config_disabled":
 		var args struct {
 			ContainerizeGuests *bool  `json:"containerize_guests"`
 			ContainerizeHost   *bool  `json:"containerize_host"`
@@ -14516,6 +14548,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(s.sandboxSummary())
 
 	case "sandbox_quickstart":
+		return mcpToolError("sandbox_quickstart is hidden while sandbox UI/setup is disabled; use a self-hosted Yaver box or Yaver Managed Cloud")
+	case "sandbox_quickstart_disabled":
 		var args struct {
 			Mode       string `json:"mode"`
 			BuildImage *bool  `json:"build_image"`

@@ -31,7 +31,7 @@ const TOOL_META: Record<string, { emoji: string; tagline: string }> = {
   "claude-code": { emoji: "🤖", tagline: "Anthropic's CLI agent — the frontier-quality runner." },
   codex: { emoji: "🧠", tagline: "OpenAI Codex CLI — token-efficient daily driver." },
   opencode: { emoji: "🪄", tagline: "Open-source coding agent — BYOK Anthropic / OpenAI / OpenRouter / GLM / Ollama, or any other provider." },
-  docker: { emoji: "🐳", tagline: "Containerise tasks — required for guest isolation + sandbox mode." },
+  docker: { emoji: "🐳", tagline: "Container runtime for optional infra workloads." },
   node: { emoji: "🟢", tagline: "Node.js runtime — required for Expo, Vite, Next.js builds." },
   python: { emoji: "🐍", tagline: "Python 3 — required for ML tooling, some CLIs." },
   go: { emoji: "🐹", tagline: "Go toolchain — needed to rebuild the agent or relay from source." },
@@ -63,6 +63,7 @@ function fmtUptime(seconds?: number) {
 
 type InstallEntry = { name: string; installed: boolean; description: string };
 export default function InfraScreen() {
+  const SHOW_SANDBOX_UI = false;
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -966,6 +967,7 @@ export default function InfraScreen() {
             </Pressable>
           </Section>
 
+          {SHOW_SANDBOX_UI && (
           <Section c={c} title="Containerization" subtitle="Whether remote Yaver tasks run directly on the host or inside Docker">
             <View style={styles.metricGrid}>
               <Metric
@@ -1046,6 +1048,7 @@ export default function InfraScreen() {
               <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Open advanced sandbox settings</Text>
             </Pressable>
           </Section>
+          )}
 
           <Section c={c} title="Network" subtitle="Interfaces visible to the agent">
             {(summary.network || []).slice(0, 8).map((iface) => (

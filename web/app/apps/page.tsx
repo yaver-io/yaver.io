@@ -101,10 +101,10 @@ export default function AppsPage() {
         <section className="mt-10 rounded-xl border border-surface-800 bg-surface-900 p-6">
           <h2 className="text-xl font-bold text-surface-50">Revenue posture</h2>
           <p className="mt-3 max-w-4xl text-sm leading-relaxed text-surface-400">
-            Yaver should not trap developers. A developer can start in the mobile sandbox, keep code in
-            Yaver Git, GitHub, GitLab, self-hosted Git, or a local repo, deploy private builds, and leave
-            with the project intact. Yaver monetizes cloud inference, managed runners, relay, feedback,
-            MCP hosting, testing, release automation, and optional catalog distribution. The catalog build
+            Yaver should not trap developers. A developer can start from Tasks on a self-hosted Yaver box
+            or Yaver Managed Cloud, keep code in Yaver Git, GitHub, GitLab, self-hosted Git, or a local repo,
+            deploy private builds, and leave with the project intact. Yaver monetizes cloud inference,
+            managed runners, relay, feedback, MCP hosting, testing, release automation, and optional catalog distribution. The catalog build
             is where Yaver OAuth, Yaver billing, reviewed MCP packs, multi-surface placement, and revenue
             share apply.
           </p>

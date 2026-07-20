@@ -14,8 +14,10 @@ test("mobile task request body omits allowLocalFallback for initial sends", () =
     description: "",
     runner: "codex",
     codeMode: true,
+    placementKind: "vibe",
   });
   assert.equal(body.source, "mobile-code");
+  assert.equal(body.placementKind, "vibe");
   assert.equal(Object.prototype.hasOwnProperty.call(body, "allowLocalFallback"), false);
 });
 
@@ -26,6 +28,8 @@ test("mobile task request body includes allowLocalFallback only for final handof
     runner: "codex",
     codeMode: true,
     allowLocalFallback: true,
+    placementKind: "build",
   });
   assert.equal(body.allowLocalFallback, true);
+  assert.equal(body.placementKind, "build");
 });

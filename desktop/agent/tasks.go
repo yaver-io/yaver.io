@@ -2652,7 +2652,11 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			} else {
 				log.Printf("[task %s] tmux mode: dispatching %s into session %q",
 					task.ID, runner.Command, session)
-				cmd, tmuxEnvAdditions = buildTmuxRunnerCommand(ctx, session, task.ID, runner.Command, args)
+				var tmuxWin string
+				cmd, tmuxEnvAdditions, tmuxWin = buildTmuxRunnerCommand(ctx, session, task.ID, runner.Command, args)
+				// Stamp the tmux address on the task so the mobile UI can
+				// surface "session:window" and the user can `tmux attach`.
+				task.TmuxSession = session + ":" + tmuxWin
 			}
 		} else {
 			if tenantRT.Enabled {
