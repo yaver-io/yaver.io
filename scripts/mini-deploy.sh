@@ -49,6 +49,34 @@ for d in "$HOME/.rbenv/shims" "$HOME/.asdf/shims" /opt/homebrew/bin /usr/local/b
 done
 export PATH
 
+# MUTUAL EXCLUSION. Two concurrent runs of this script are not merely wasteful,
+# they corrupt each other: the churn-reset below does `git checkout` on
+# Info.plist and project.pbxproj, and doing that underneath a running xcodebuild
+# kills the archive ~20 minutes in. Observed exactly that on 2026-07-20 —
+# `mini-deploy.sh npm` was started while TestFlight was archiving, the archive
+# died, and its xcodebuild then ORPHANED itself (parent gone, child still
+# running, still holding the deploy lease) so the next attempt was refused too.
+# One build lost to the race, a second to the lease it left behind.
+#
+# flock(1) does not exist on macOS, so use mkdir: atomic on every POSIX fs.
+LOCK_DIR="${TMPDIR:-/tmp}/yaver-mini-deploy.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  HOLDER_PID="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo '?')"
+  # Reclaim a lock whose holder is gone — a killed run must not block the box
+  # forever. This is the same liveness check the deploy LEASE is missing.
+  if [ "$HOLDER_PID" != "?" ] && ! kill -0 "$HOLDER_PID" 2>/dev/null; then
+    echo "  reclaiming stale lock from dead pid $HOLDER_PID"
+    rm -rf "$LOCK_DIR"; mkdir "$LOCK_DIR" 2>/dev/null || { echo "lost the race for the lock; try again"; exit 1; }
+  else
+    echo "Another mini-deploy is running (pid $HOLDER_PID). Deploys on this box are"
+    echo "SEQUENTIAL by design — parallel Xcode/Gradle builds exhaust its RAM and SSD,"
+    echo "and a concurrent git checkout kills a running archive. Wait for it."
+    exit 1
+  fi
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$*"; }
 bad()  { printf '  \033[31mBLOCKED\033[0m %s\n' "$*"; }
