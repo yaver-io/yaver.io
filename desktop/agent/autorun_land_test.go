@@ -130,3 +130,42 @@ func TestAutorunLandUsesRebaseNotFfOnlyAndCleansUp(t *testing.T) {
 		t.Error("landing must take the queue lock; concurrent autoruns on one box are our own worst racer")
 	}
 }
+
+// The final bookkeeping commit is pushed by autorunPushBranch, NOT by
+// autorunLandOntoMain — and until 2026-07-20 it was a single unretried push.
+// That is how the tasklist run on the mini converged, passed its gate, wrote its
+// final note, and was still recorded failed:
+//
+//	push final commit: git push origin main: ! [rejected] main -> main (fetch first)
+//
+// The retry lived twenty lines away the whole time. This test exists so the two
+// post-work pushes cannot drift apart again: whatever landing is hardened
+// against, this path must be hardened against too.
+func TestAutorunFinalCommitPushRetriesALostRace(t *testing.T) {
+	src := readSourceFile(t, "autorun.go")
+	fn := sliceFunc(t, src, "func autorunPushBranch(")
+
+	if !strings.Contains(fn, "autorunLandAttempts") {
+		t.Error("the final-commit push must retry a lost race; one unretried push is what recorded a converged run as failed")
+	}
+	// Retrying must be gated on the SAME hinge landing uses. Without it, a
+	// protected-branch or auth failure becomes four rejected pushes.
+	if !strings.Contains(fn, "autorunPushWasRejected(") {
+		t.Error("retry must be gated on autorunPushWasRejected, or auth/network/protected-branch failures get hammered four times")
+	}
+	// Rebase, not --ff-only: our final commit is already on the local branch, so
+	// once the remote moves the two have genuinely diverged.
+	if !strings.Contains(fn, `"pull", "--rebase", pushRemote, name`) {
+		t.Error("the retry must rebase onto whatever was pushed first; --ff-only cannot resolve a diverged branch")
+	}
+	if strings.Contains(fn, `"pull", "--ff-only"`) {
+		t.Error("--ff-only in the final-commit retry re-creates the diverged-clone failure")
+	}
+	// Same remote-resolution rule as landing: this repo's remote is `github`.
+	if !strings.Contains(fn, "pushRemote := autorunRemoteOrOrigin(") {
+		t.Error("the push remote must be resolved, not hardcoded: `origin` does not exist in this repo")
+	}
+	if !strings.Contains(fn, `"rebase", "--abort"`) {
+		t.Error("a rebase that stops mid-way must be aborted, or the clone is stranded for every future run")
+	}
+}

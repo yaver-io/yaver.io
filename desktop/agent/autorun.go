@@ -717,6 +717,26 @@ func selectAutorunRunnerWith(workDir, requested string, ready func(RunnerConfig,
 	return RunnerConfig{}, fmt.Errorf("no authenticated runner is ready (%s)", strings.Join(failures, "; "))
 }
 
+// autorunPushBranch pushes the run's final bookkeeping commit, re-basing onto
+// whatever landed while the run was working.
+//
+// This used to be a single unretried push, and that is how a CONVERGED run got
+// recorded as failed on 2026-07-20: the tasklist run on the mini finished its
+// work, wrote its final note, and died with
+//
+//	push final commit: git push origin main: ! [rejected] main -> main (fetch first)
+//
+// autorunLandOntoMain — twenty lines below — already handles exactly this, with
+// a mutex, a fleet lease and four rebase-and-retry attempts. The hardening was
+// never extended here, so the run's WORK landed and its BOOKKEEPING did not.
+// Worse, autorunLandingError's comment reads "Landing is retried now
+// (autorunLandOntoMain), so reaching here means the retries were exhausted" —
+// which was simply untrue for this path, and reading a failure through that
+// comment sends you looking for exhausted retries that never ran. A doc that
+// claims coverage the code does not have is a false green.
+//
+// Same rule as landing: only a lost race is retryable. Auth, network and
+// protected branches must fail on the first attempt rather than four times.
 func autorunPushBranch(ctx context.Context, workDir string) error {
 	branch := autorunExec(ctx, "git", []string{"branch", "--show-current"}, workDir)
 	if branch.Err != nil {
@@ -727,11 +747,36 @@ func autorunPushBranch(ctx context.Context, workDir string) error {
 		return fmt.Errorf("push requires a named branch, got %q", name)
 	}
 	pushRemote := autorunRemoteOrOrigin(ctx, workDir)
-	push := autorunExec(ctx, "git", []string{"push", "--set-upstream", pushRemote, name}, workDir)
-	if push.Err != nil {
-		return fmt.Errorf("git push %s %s: %w: %s", pushRemote, name, push.Err, strings.TrimSpace(push.Output))
+
+	var lastErr error
+	for attempt := 1; attempt <= autorunLandAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return fmt.Errorf("pushing %s cancelled: %w", name, ctx.Err())
+		}
+		push := autorunExec(ctx, "git", []string{"push", "--set-upstream", pushRemote, name}, workDir)
+		if push.Err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("git push %s %s: %w: %s", pushRemote, name, push.Err, strings.TrimSpace(push.Output))
+		if !autorunPushWasRejected(push.Output) {
+			return lastErr
+		}
+
+		// Someone landed first. Replay our own not-yet-pushed commits on top of
+		// theirs — --rebase, not --ff-only, for the same reason landing uses it:
+		// once our commit sits on the local branch the two have genuinely
+		// diverged, and --ff-only is correct to refuse.
+		sync := autorunExec(ctx, "git", []string{"pull", "--rebase", pushRemote, name}, workDir)
+		if sync.Err != nil {
+			// A half-finished rebase would strand this clone for every future
+			// run, so put the checkout back before giving up.
+			autorunExec(ctx, "git", []string{"rebase", "--abort"}, workDir)
+			return fmt.Errorf("git pull --rebase %s %s: %w: %s", pushRemote, name, sync.Err, strings.TrimSpace(sync.Output))
+		}
+		log.Printf("[autorun] final commit: push of %s rejected (attempt %d/%d) — someone pushed first; rebasing and retrying",
+			name, attempt, autorunLandAttempts)
 	}
-	return nil
+	return fmt.Errorf("could not push %s after %d attempts: %w", name, autorunLandAttempts, lastErr)
 }
 
 // autorunLandingError marks a failure that happened AFTER the loop did its work:
@@ -744,8 +789,12 @@ func autorunPushBranch(ctx context.Context, workDir string) error {
 // backwards: the iterations ran, the gate passed, the commits exist. Only the
 // bookkeeping didn't land.
 //
-// Landing is retried now (autorunLandOntoMain), so reaching here means the retries
-// were exhausted — worth reporting loudly, but never as "the work failed".
+// Both post-work pushes retry a lost race now — autorunLandOntoMain for the
+// merge onto main, autorunPushBranch for the final bookkeeping commit — so
+// reaching here means the retries were exhausted, not that they never ran. That
+// distinction matters: until 2026-07-20 only landing retried, and this comment
+// claimed otherwise, which made an unretried push look like an exhausted one.
+// Still worth reporting loudly, but never as "the work failed".
 type autorunLandingError struct{ err error }
 
 func (e *autorunLandingError) Error() string { return e.err.Error() }
