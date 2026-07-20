@@ -42,6 +42,11 @@ type DERPManager struct {
 	mu     sync.Mutex
 	peers  map[string]*derpPeer // deviceId -> shim
 	closed bool
+
+	// onDisco receives signalling frames (see disco.go). Separate from the
+	// WireGuard path on purpose: disco is how peers find each other, so it
+	// MUST work before any peer shim exists.
+	onDisco func(srcDeviceID string, msg *DiscoMsg)
 }
 
 type derpPeer struct {
@@ -120,6 +125,31 @@ func (m *DERPManager) pumpOutbound(p *derpPeer) {
 // WireGuard device by writing it from that peer's loopback socket. Called by the
 // transport's receive loop. A frame for an unknown peer is dropped (no shim yet).
 func (m *DERPManager) DeliverFrame(srcDeviceID string, payload []byte) {
+	// Disco is checked FIRST, before the peer lookup, and the order is
+	// load-bearing. The lookup below drops frames from a device with no shim
+	// yet — but signalling is precisely what arrives BEFORE a shim exists: it
+	// is how the two sides discover each other and decide to build one.
+	// Checking disco after the lookup would silently drop every first contact
+	// and leave the protocol working only between peers that were already
+	// talking, which is the one case it is not needed for.
+	if IsDisco(payload) {
+		m.mu.Lock()
+		h := m.onDisco
+		m.mu.Unlock()
+		if h == nil {
+			return
+		}
+		msg, err := DecodeDisco(payload)
+		if err != nil || msg == nil {
+			// Unparseable, or a version from the future: ignore. Never feed a
+			// disco frame to WireGuard as a fallback — that is exactly the
+			// confusion the magic exists to prevent.
+			return
+		}
+		h(srcDeviceID, msg)
+		return
+	}
+
 	m.mu.Lock()
 	p, ok := m.peers[srcDeviceID]
 	m.mu.Unlock()
@@ -127,6 +157,32 @@ func (m *DERPManager) DeliverFrame(srcDeviceID string, payload []byte) {
 		return
 	}
 	_, _ = p.conn.WriteToUDP(payload, p.wgAddr)
+}
+
+// SetDiscoHandler registers the callback for inbound signalling frames.
+func (m *DERPManager) SetDiscoHandler(fn func(srcDeviceID string, msg *DiscoMsg)) {
+	m.mu.Lock()
+	m.onDisco = fn
+	m.mu.Unlock()
+}
+
+// SendDisco sends a signalling message to a peer over the relay.
+//
+// Needs no peer shim and no WireGuard state: it rides the same addressed relay
+// stream the data path uses, which is why signalling survives exactly as long
+// as the relay session — the floor under every topology.
+func (m *DERPManager) SendDisco(dstDeviceID string, msg DiscoMsg) error {
+	m.mu.Lock()
+	t := m.transport
+	m.mu.Unlock()
+	if t == nil {
+		return fmt.Errorf("no relay transport: signalling needs the relay session")
+	}
+	payload, err := EncodeDisco(msg)
+	if err != nil {
+		return err
+	}
+	return t.SendFrame(dstDeviceID, payload)
 }
 
 // RemovePeer tears down a peer's shim (e.g. it became directly reachable or was
