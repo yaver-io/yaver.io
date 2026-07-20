@@ -357,10 +357,18 @@ run_step npm "$NPM_OK" bash -c '
     exit 1
   fi
   cd cli && npm ci --silent && npm publish --access public
-  cd .. && sleep 5
-  GOT=$(npm view yaver-cli version 2>/dev/null || echo none)
-  [ "$GOT" = "$VERSION" ] || { echo "npm still serves $GOT after publish"; exit 1; }
-  echo "npm serves $GOT"'
+  cd ..
+  # Retry: the registry takes a few seconds to serve a new version, and a
+  # single immediate check reports FAILED on a publish that plainly succeeded
+  # (observed on 1.99.327 — "+ yaver-cli@1.99.327" followed by "still serves
+  # 1.99.326"). A verification that cries wolf trains people to ignore it.
+  for i in 1 2 3 4 5 6; do
+    GOT=$(npm view yaver-cli version 2>/dev/null || echo none)
+    [ "$GOT" = "$VERSION" ] && { echo "npm serves $GOT"; exit 0; }
+    sleep 5
+  done
+  echo "npm serves $GOT, expected $VERSION — publish reported success but the registry disagrees"
+  exit 1'
 
 run_step convex "$CONVEX_OK" bash -c 'cd backend && npm install --silent && npx convex deploy --yes'
 run_step web    "$CF_OK"     bash -c 'cd web && npm install --silent && cd .. && ./scripts/deploy-web.sh'
