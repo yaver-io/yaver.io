@@ -45,6 +45,7 @@ type Manager struct {
 	aclSource  ACLSource
 	forwarding bool
 	derp       *DERPManager
+	lastHello  map[string]time.Time // deviceID -> last HELLO sent
 	// noHsSince tracks, per peer public-key (lowercase hex), when we first saw
 	// it without a live handshake — used to fall a peer over to the DERP relay
 	// after a direct-path grace period (H2). Cleared when the peer goes live or
@@ -59,6 +60,9 @@ func (m *Manager) SetRelayTransport(t RelayTransport) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.derp = NewDERPManager(m.listenPort, t)
+	if m.lastHello == nil {
+		m.lastHello = map[string]time.Time{}
+	}
 	t.SetReceiver(m.derp.DeliverFrame)
 }
 
@@ -122,6 +126,17 @@ func (m *Manager) applyPeers(dev *Device, peers []Peer) error {
 			if ep, derr := m.derp.EndpointFor(peers[i].DeviceID); derr == nil {
 				peers[i].Endpoint = ep
 				derpKeep[peers[i].DeviceID] = true
+				// Falling back to the relay is exactly when a better path is
+				// worth looking for, so this is where signalling starts. HELLO
+				// tells the peer what overlays we are on; both sides then run
+				// the same negotiation and reach the same verdict.
+				//
+				// Rate-limited per peer: reconcile runs every 20s and a HELLO
+				// per peer per cycle would be chatter, not discovery. Failure
+				// is ignored on purpose — the relay bridge above already works,
+				// and signalling is an OPTIMISATION that must never be able to
+				// break the floor it rides on.
+				m.maybeSendHello(peers[i].DeviceID, now)
 			}
 		}
 	}
@@ -387,4 +402,34 @@ func (m *Manager) Status() Status {
 		}
 	}
 	return st
+}
+
+// helloEvery bounds how often we re-introduce ourselves to one peer. Reconcile
+// runs every 20s; re-sending a HELLO each cycle would be chatter rather than
+// discovery, and the information in it changes on the order of minutes.
+const helloEvery = 2 * time.Minute
+
+// maybeSendHello introduces this device to a peer over the relay, at most once
+// per helloEvery.
+//
+// Best-effort by design: the relay bridge is already carrying the peer when
+// this runs, so a failure here costs a slower path and never a lost one.
+func (m *Manager) maybeSendHello(deviceID string, now time.Time) {
+	if m.derp == nil || deviceID == "" {
+		return
+	}
+	if m.lastHello == nil {
+		m.lastHello = map[string]time.Time{}
+	}
+	if last, ok := m.lastHello[deviceID]; ok && now.Sub(last) < helloEvery {
+		return
+	}
+	m.lastHello[deviceID] = now
+	// SrcDevice is left empty on purpose: the relay already tells the receiver
+	// which device a frame came from, and carrying an unverified second copy
+	// would invite trusting the body over the envelope.
+	_ = m.derp.SendDisco(deviceID, DiscoMsg{
+		Type:         DiscoHello,
+		SentAtUnixMs: now.UnixMilli(),
+	})
 }

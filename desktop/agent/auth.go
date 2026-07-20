@@ -1800,6 +1800,13 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	// target. macOS does both (Xcode + Gradle); Linux does Android only;
 	// iOS is Mac-only, forever. Static + privacy-safe.
 	payload["publishCapabilities"] = computePublishCapabilities()
+	// Connectivity shape + intent, for peers to act on when this box drops.
+	// Sent ONLY when something actually changed: connStatusForHeartbeat
+	// returns nil otherwise and the field is omitted, so a stable device costs
+	// exactly what it cost before this existed. See conn_status.go.
+	if cs := connStatusForHeartbeat(context.Background()); cs != nil {
+		payload["connStatus"] = cs
+	}
 	// Real, PROBED deploy capability — the honest counterpart to the line
 	// above. publishCapabilities is a GOOS switch and will happily claim a Mac
 	// with no Xcode can ship iOS; this one asked the toolchain. Cached and

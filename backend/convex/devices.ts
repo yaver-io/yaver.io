@@ -1069,6 +1069,16 @@ export const heartbeat = mutation({
     agentVersion: v.optional(v.string()),
     publishCapabilities: v.optional(v.array(v.string())),
     // Probed deploy capability (see schema.ts). Names only.
+    connStatus: v.optional(
+      v.object({
+        intent: v.string(),
+        tier: v.optional(v.string()),
+        onTailnet: v.optional(v.boolean()),
+        meshOk: v.optional(v.boolean()),
+        nat: v.optional(v.string()),
+        at: v.optional(v.number()),
+      }),
+    ),
     deployCapabilities: v.optional(v.array(v.string())),
     deployCapabilitiesBlocked: v.optional(v.array(v.string())),
     deployCapabilitiesAt: v.optional(v.string()),
@@ -1214,6 +1224,11 @@ export const heartbeat = mutation({
     // Probe result rides the heartbeat but refreshes on a ~6h cadence, so
     // most beats carry it unchanged and many carry it not at all. Only
     // patch when present — an absent field must never blank a good result.
+    // Omitted means unchanged — the agent only sends this when it differs, so
+    // an absent field must never blank a good status.
+    if (args.connStatus !== undefined) {
+      patch.connStatus = args.connStatus;
+    }
     if (args.deployCapabilities !== undefined) {
       patch.deployCapabilities = args.deployCapabilities;
     }
@@ -1756,6 +1771,7 @@ export const listMyDevices = query({
       voiceHints: d.voiceHints,
       platform: d.platform,
       publishCapabilities: d.publishCapabilities,
+      connStatus: d.connStatus,
       deployCapabilities: d.deployCapabilities,
       deployCapabilitiesBlocked: d.deployCapabilitiesBlocked,
       deployCapabilitiesAt: d.deployCapabilitiesAt,

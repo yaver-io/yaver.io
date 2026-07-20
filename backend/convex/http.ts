@@ -2485,6 +2485,8 @@ http.route({
       // null->[] coercion: the agent omits these entirely until its first
       // probe completes, and an omitted field must leave the stored result
       // alone rather than clear it.
+      connStatus:
+        body.connStatus && typeof body.connStatus === "object" ? body.connStatus : undefined,
       deployCapabilities: Array.isArray(body.deployCapabilities)
         ? body.deployCapabilities
         : undefined,

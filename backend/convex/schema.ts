@@ -372,6 +372,20 @@ export default defineSchema({
     // paths (they carry the home-dir username), versions, secret names, or
     // reason strings. The detail lives behind the device's own P2P
     // GET /deploy/capabilities and never reaches our servers.
+    // Connectivity shape + intent, published only on CHANGE (see
+    // desktop/agent/conn_status.go). Scalars only — endpoints and candidate
+    // addresses are volatile AND forbidden here; they travel peer-to-peer over
+    // the relay. This is the SHAPE of the network, never its addresses.
+    connStatus: v.optional(
+      v.object({
+        intent: v.string(),
+        tier: v.optional(v.string()),
+        onTailnet: v.optional(v.boolean()),
+        meshOk: v.optional(v.boolean()),
+        nat: v.optional(v.string()),
+        at: v.optional(v.number()),
+      }),
+    ),
     deployCapabilities: v.optional(v.array(v.string())),
     deployCapabilitiesBlocked: v.optional(v.array(v.string())),
     // RFC3339, when the probe last ran. Refreshed every ~6h, so the UI must
