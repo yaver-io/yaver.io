@@ -261,3 +261,38 @@ func TestHandleRemoteRuntimeSessionCommandLaunchFeedback(t *testing.T) {
 		t.Fatalf("session note = %q, expected source", gotSession.Note)
 	}
 }
+
+// The RN→simulator build command must be `expo run` in DEV mode (Metro + Fast
+// Refresh) — never a release build, which would throw away the sub-second
+// hot-reload that is the entire reason to stream a sim instead of Hermes.
+func TestRNExpoRunCommand(t *testing.T) {
+	ios, err := rnExpoRunCommand("ios-simulator", "UDID-123")
+	if err != nil {
+		t.Fatalf("ios command: %v", err)
+	}
+	got := strings.Join(ios, " ")
+	if got != "npx expo run:ios --device UDID-123" {
+		t.Errorf("ios run command = %q", got)
+	}
+	// tvOS/watch/ipad all go through expo run:ios with their device udid.
+	for _, tgt := range []string{"tvos-simulator", "ipados-simulator", "watchos-simulator", "visionos-simulator"} {
+		cmd, err := rnExpoRunCommand(tgt, "X")
+		if err != nil {
+			t.Errorf("%s: %v", tgt, err)
+		}
+		if len(cmd) == 0 || cmd[2] != "run:ios" {
+			t.Errorf("%s should build via expo run:ios, got %v", tgt, cmd)
+		}
+	}
+	and, err := rnExpoRunCommand("android-emulator", "")
+	if err != nil {
+		t.Fatalf("android command: %v", err)
+	}
+	if strings.Join(and, " ") != "npx expo run:android" {
+		t.Errorf("android run command = %q", strings.Join(and, " "))
+	}
+	// A non-sim target must be refused, not silently mis-built.
+	if _, err := rnExpoRunCommand("browser-window", "X"); err == nil {
+		t.Error("browser target must not resolve an RN build command")
+	}
+}

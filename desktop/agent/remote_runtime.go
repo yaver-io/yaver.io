@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -620,6 +621,64 @@ func (m *RemoteRuntimeManager) Create(workDir, framework, targetID, transportMod
 	m.live[session.ID] = &remoteRuntimeLiveState{sessionID: session.ID, targetID: selected.ID, platform: selected.Platform}
 	m.mu.Unlock()
 	return session, nil
+}
+
+// rnExpoRunCommand returns the `npx expo run:<platform>` invocation that builds
+// an RN/Expo project into a booted simulator/emulator and launches it CONNECTED
+// TO METRO in dev mode — which is the whole speed win: once running, a code patch
+// hot-reloads via Metro Fast Refresh sub-second (see the design doc), instead of
+// rebuilding a Hermes bundle. Debug/dev build on purpose; a release build would
+// throw away Fast Refresh.
+//
+// Split out (not inlined) so it is unit-testable without a simulator: the command
+// string is the contract, the shell-out is trivial.
+func rnExpoRunCommand(targetID, udid string) ([]string, error) {
+	switch targetID {
+	case "ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator":
+		// --device <udid> targets the exact booted sim; expo builds + installs +
+		// launches there, wiring Metro automatically.
+		return []string{"npx", "expo", "run:ios", "--device", udid}, nil
+	case "android-emulator", "android-device", "android-wear", "android-tv", "android-xr", "android-auto":
+		// expo picks the single attached emulator/device; adb serial targeting is
+		// implicit when one is up.
+		return []string{"npx", "expo", "run:android"}, nil
+	}
+	return nil, fmt.Errorf("RN simulator build not supported for target %q", targetID)
+}
+
+// buildAndLaunchRNInSimulator builds the RN/Expo project at workDir into the
+// session's booted simulator and launches it in dev mode against Metro. Long
+// running (a cold build is minutes); the caller runs it off the request path and
+// streams progress. Returns when the build+launch finishes or ctx is cancelled.
+func (s *HTTPServer) buildAndLaunchRNInSimulator(ctx context.Context, session RemoteRuntimeSession, workDir string) error {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return fmt.Errorf("RN simulator run needs a workDir")
+	}
+	args, err := rnExpoRunCommand(session.TargetID, session.DeviceID)
+	if err != nil {
+		return err
+	}
+	if s != nil && s.devServerMgr != nil {
+		s.devServerMgr.EmitLog(fmt.Sprintf("[rn-sim] building %s into %s (%s) — dev mode, Fast Refresh on",
+			basename(workDir), session.TargetLabel, session.DeviceID))
+	}
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Dir = workDir
+	// Force a non-interactive expo and keep Metro in dev mode.
+	cmd.Env = append(os.Environ(), "CI=1", "EXPO_NO_TELEMETRY=1")
+	out, runErr := cmd.CombinedOutput()
+	if s != nil && s.devServerMgr != nil {
+		tail := strings.TrimSpace(string(out))
+		if len(tail) > 600 {
+			tail = tail[len(tail)-600:]
+		}
+		s.devServerMgr.EmitLog("[rn-sim] " + tail)
+	}
+	if runErr != nil {
+		return fmt.Errorf("expo run failed: %w", runErr)
+	}
+	return nil
 }
 
 // launchAppOnRuntimeTarget dispatches a `launch-app` session command to
