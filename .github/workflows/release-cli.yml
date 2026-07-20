@@ -5,6 +5,12 @@ on:
     tags:
       - "cli/v*"
   workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: "Publish to npm from CI. Leave false to publish from the mac mini instead (the standing deploy path)."
+        type: boolean
+        default: false
+        required: false
 
 # Only repo owner can push tags (configure tag protection rules in GitHub).
 # Release/deploy jobs require the "production" environment (configure required reviewers in GitHub).
@@ -69,6 +75,13 @@ jobs:
           echo "npm authenticated as: $WHO"
 
   publish-npm:
+    # Skipped by default: the standing deploy path is that the MAC MINI
+    # publishes, after CI has produced the signed binaries. CI kept winning the
+    # race and publishing first, so `mini-deploy.sh npm` always found the
+    # version already live and correctly no-op'd — the mini could never actually
+    # be the publisher. Set publish_npm=true to publish from CI (e.g. the mini
+    # is unavailable); a tag push still publishes, since nothing is watching it.
+    if: github.event_name != 'workflow_dispatch' || inputs.publish_npm
     # Runs AFTER `release` on purpose. cli/src/postinstall.js downloads the
     # platform tarballs from the GitHub Release with no retry, so a package
     # that is live on npm before its release exists is an install that hard
