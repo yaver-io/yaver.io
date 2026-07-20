@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,9 +31,84 @@ func newListTasksServer(t *testing.T, n int) *HTTPServer {
 			ID:        id,
 			Title:     id,
 			CreatedAt: base.Add(time.Duration(i) * time.Minute),
+			// Rows must carry REALISTIC bodies. The fixtures here used to set
+			// only ID/Title/CreatedAt, so 4000 tasks serialised to a few
+			// hundred KB and every assertion below passed while the real
+			// endpoint shipped megabytes. That false green is why the 2026-07-20
+			// recurrence shipped: the guard measured row count, and row count
+			// was never the thing that broke.
+			ResultText: strings.Repeat("r", 40_000),
+			Output:     strings.Repeat("o", 40_000),
 		}
 	}
 	return &HTTPServer{taskMgr: tm}
+}
+
+// TestListTasksResponseIsBoundedInBytes is the guard the previous fix lacked.
+// The budget itself (listTasksMaxResponseBytes) is defined next to the handler
+// that must honour it — a test-local copy would let the two drift apart, which
+// is how a guard silently stops guarding.
+//
+// On 2026-07-20 a box with 50 tasks — inside every row-count limit — served
+// 2.2 MB because ONE task had a 1.8 MB ResultText. The phone polls this list
+// every 1-3s, which saturated the relay so the task-create POST timed out at
+// 30s and reported the machine as unreachable. Bounding rows does not bound
+// bytes; only bytes bound bytes.
+func TestListTasksResponseIsBoundedInBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		n    int
+		url  string
+	}{
+		{"default limit, fat rows", 4000, "/tasks"},
+		{"explicit max limit", 4000, "/tasks?limit=99999"},
+		// The real-world shape: few tasks, one enormous answer.
+		{"few tasks, huge bodies", 50, "/tasks"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newListTasksServer(t, tc.n)
+			rec := httptest.NewRecorder()
+			s.listTasks(rec, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			if got := rec.Body.Len(); got > listTasksMaxResponseBytes {
+				t.Fatalf("GET %s returned %d bytes (%.1f MB), limit %d — this is the "+
+					"response the relay cannot carry, which the phone renders as "+
+					"\"the machine accepted the connection but never answered\"",
+					tc.url, got, float64(got)/(1<<20), listTasksMaxResponseBytes)
+			}
+		})
+	}
+}
+
+// TestListTasksTruncatesResultText pins the specific field that caused the
+// 2026-07-20 recurrence. It must be trimmed AND visibly marked, so a client
+// never renders a cut-off answer as the complete one.
+func TestListTasksTruncatesResultText(t *testing.T) {
+	tm := &TaskManager{tasks: map[string]*Task{}}
+	tm.tasks["t1"] = &Task{
+		ID: "t1", Title: "t1", CreatedAt: time.Now(),
+		ResultText: strings.Repeat("x", 1_800_000), // the size seen on the real box
+	}
+	s := &HTTPServer{taskMgr: tm}
+
+	rec := httptest.NewRecorder()
+	s.listTasks(rec, httptest.NewRequest(http.MethodGet, "/tasks", nil))
+	var out map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	tasks, _ := out["tasks"].([]interface{})
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	got, _ := tasks[0].(map[string]interface{})["resultText"].(string)
+	if len(got) > listTasksMaxResultText*2 {
+		t.Fatalf("resultText is %d bytes — a single unbounded field rebuilds the "+
+			"whole unservable response", len(got))
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Error("a truncated resultText must SAY it was truncated — a silently " +
+			"cut answer looks like the complete answer")
+	}
 }
 
 func itoaPad(i int) string {
