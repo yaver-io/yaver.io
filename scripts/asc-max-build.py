@@ -6,9 +6,20 @@ never collide with an existing one (ITMS "build number already used") and burn a
 TestFlight upload slot. See CLAUDE.md → iOS TestFlight.
 
 BEST-EFFORT by design: if PyJWT / cryptography / requests aren't importable, or
-the network/API errors, this prints NOTHING and exits 0 — the deploy script then
-falls back to local+1 (and its export-error handler surfaces any collision
-clearly). Never let a build-number lookup block a deploy.
+the network/API errors, this prints NOTHING to STDOUT and exits 0 — the deploy
+script then falls back to local+1 (and its export-error handler surfaces any
+collision clearly). Never let a build-number lookup block a deploy.
+
+But best-effort must never mean SILENT. On 2026-07-20 no python on the mac mini
+could import PyJWT, so this returned nothing on every run; the deploy bumped from
+local 450 while ASC already had 451, the upload collided, and the retry cost a
+slot out of the ~15-20/day TestFlight cap. The operator saw only "WARN: could not
+read ASC max build" — which names no cause and no remedy, so nobody fixed it.
+Degrading is fine; degrading without saying why is how a metered quota leaks.
+
+Every early return therefore explains itself on STDERR, naming the interpreter
+that came up short so the fix can be applied to the RIGHT one of this box's
+several python3s. stdout stays contractual: the number, or nothing.
 
 Env (same names the deploy script already exports):
   APP_STORE_KEY_PATH   path to the .p8 App Store Connect API key
@@ -21,19 +32,41 @@ import sys
 import time
 
 
+def why(msg: str) -> int:
+    """Explain a degraded lookup on stderr, keeping stdout contractual."""
+    print("asc-max-build: %s" % msg, file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     try:
         import jwt  # PyJWT
         import requests
-    except Exception:
-        return 0  # libs absent → silent fallback
+    except Exception as e:
+        return why(
+            "cannot query App Store Connect (%s) using %s — build number will be "
+            "bumped from the LOCAL plist, which collides if ASC is ahead. Fix: "
+            "%s -m pip install --break-system-packages PyJWT cryptography requests"
+            % (e, sys.executable, sys.executable)
+        )
 
     key_path = os.environ.get("APP_STORE_KEY_PATH", "")
     kid = os.environ.get("APP_STORE_KEY_ID", "")
     iss = os.environ.get("APP_STORE_KEY_ISSUER", "")
     bundle = os.environ.get("ASC_BUNDLE_ID", "io.yaver.mobile")
     if not (key_path and kid and iss and os.path.exists(key_path)):
-        return 0
+        missing = [
+            n
+            for n, v in (
+                ("APP_STORE_KEY_PATH", key_path),
+                ("APP_STORE_KEY_ID", kid),
+                ("APP_STORE_KEY_ISSUER", iss),
+            )
+            if not v
+        ]
+        if not missing and not os.path.exists(key_path):
+            return why("APP_STORE_KEY_PATH points at %s, which does not exist" % key_path)
+        return why("missing credentials: %s" % ", ".join(missing))
 
     try:
         key = open(key_path).read()
@@ -48,7 +81,7 @@ def main() -> int:
         r.raise_for_status()
         apps = r.json().get("data", [])
         if not apps:
-            return 0
+            return why("App Store Connect knows no app with bundle id %s" % bundle)
         app_id = apps[0]["id"]
         # CFBundleVersion monotonicity is per (platform, marketing version), so
         # the max must be scoped to THIS platform — otherwise a visionOS/tvOS
@@ -70,8 +103,13 @@ def main() -> int:
                 continue
         if vals:
             print(max(vals))
-    except Exception:
-        return 0
+            return 0
+        return why(
+            "App Store Connect returned no numeric %s build for this app — "
+            "falling back to the local plist" % platform
+        )
+    except Exception as e:
+        return why("App Store Connect query failed (%s: %s)" % (type(e).__name__, e))
     return 0
 
 

@@ -119,13 +119,40 @@ trap release_lease EXIT
 # below now surfaces a collision clearly either way).
 PLIST="Yaver/Info.plist"
 CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$PLIST")
-ASC_MAX=$(APP_STORE_KEY_PATH="$AUTH_KEY" APP_STORE_KEY_ID="$AUTH_KEY_ID" APP_STORE_KEY_ISSUER="$AUTH_KEY_ISSUER" \
-  python3 "$ROOT/scripts/asc-max-build.py" 2>/dev/null || echo "")
+
+# This box has SEVERAL python3s (/usr/local, /opt/homebrew, Xcode's), and which
+# one answers `python3` depends on PATH order — the same trap mini-deploy.sh
+# already pins around for google-auth. On 2026-07-20 the one that answered here
+# had no PyJWT, so the ASC lookup returned nothing on every run, the build was
+# bumped from local 450 while ASC held 451, and the collision retry burned a slot
+# of the ~15-20/day cap. Pick an interpreter that can actually do the query
+# rather than the one that happens to be first.
+ASC_PY=""
+for cand in "${YAVER_PYTHON:-}" python3 /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python3; do
+  [ -n "$cand" ] || continue
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import jwt, requests' >/dev/null 2>&1; then
+    ASC_PY="$cand"; break
+  fi
+done
+if [ -z "$ASC_PY" ]; then
+  echo "WARN: no python3 here can import PyJWT+requests, so the App Store Connect"
+  echo "      build-number lookup CANNOT run. Bumping from the local plist, which"
+  echo "      collides (and burns an upload slot) whenever ASC is ahead of it."
+  echo "      Fix: $(command -v python3 || echo python3) -m pip install --break-system-packages PyJWT cryptography requests"
+  ASC_MAX=""
+else
+  # stderr is NOT swallowed: asc-max-build.py explains every degraded lookup
+  # there, and hiding that is what let this fail silently for a whole day.
+  ASC_MAX=$(APP_STORE_KEY_PATH="$AUTH_KEY" APP_STORE_KEY_ID="$AUTH_KEY_ID" APP_STORE_KEY_ISSUER="$AUTH_KEY_ISSUER" \
+    "$ASC_PY" "$ROOT/scripts/asc-max-build.py" || echo "")
+fi
+
 if [ -n "$ASC_MAX" ] && [ "$ASC_MAX" -ge "$CURRENT_BUILD" ] 2>/dev/null; then
   echo "ASC highest build is $ASC_MAX (local $CURRENT_BUILD) — bumping from max"
   NEW_BUILD=$((ASC_MAX + 1))
 else
-  [ -z "$ASC_MAX" ] && echo "WARN: could not read ASC max build — bumping from local $CURRENT_BUILD"
+  [ -n "$ASC_PY" ] && [ -z "$ASC_MAX" ] && \
+    echo "WARN: ASC max build unreadable (reason above) — bumping from local $CURRENT_BUILD"
   NEW_BUILD=$((CURRENT_BUILD + 1))
 fi
 # PlistBuddy rewrites the whole plist and DROPS XML COMMENTS. Info.plist
