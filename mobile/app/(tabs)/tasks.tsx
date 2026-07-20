@@ -2540,6 +2540,27 @@ export default function TasksScreen() {
   // target: which text field to write into ("task" = new task, "followup" = follow-up input)
   const recordingTargetRef = useRef<"task" | "followup">("task");
 
+  // Sticky input mode. Rule (from the user, 2026-07-20): the initial mode is
+  // voice/STT unless the user changes it, and a follow-up should default to
+  // whatever method the user submitted the PRIOR message with. So this starts
+  // at "voice", every submit records how it was actually sent (inputFromSpeech),
+  // and opening the follow-up composer re-arms dictation when the last send was
+  // voice. A ref, not state — it must be read synchronously inside the open
+  // handler without forcing a re-render.
+  const lastSubmitModeRef = useRef<"voice" | "text">("voice");
+
+  // Open the follow-up composer, honouring the sticky mode: re-arm dictation
+  // when the previous message went out by voice. startRecording is deferred a
+  // tick so the expanded composer is mounted first (mirrors
+  // openCreateTaskDictating), otherwise the recording UI attaches to a view
+  // that is about to unmount.
+  const openFollowUpComposer = () => {
+    setFollowUpExpanded(true);
+    if (lastSubmitModeRef.current === "voice") {
+      setTimeout(() => { void startRecording("followup"); }, 250);
+    }
+  };
+
   const startRecording = async (target: "task" | "followup" = "task") => {
     try {
       if (!speechProvider) {
@@ -2774,6 +2795,10 @@ export default function TasksScreen() {
 
   const handleCreateTask = async () => {
     if (!newTaskText.trim() && attachedImages.length === 0) return;
+
+    // Remember how this task went out so the follow-up composer defaults to the
+    // same input mode (voice ↔ text).
+    lastSubmitModeRef.current = inputFromSpeech ? "voice" : "text";
 
     // Hermes-reload fast-path: a bare "reload"/"hot reload"/"hermes"
     // command — typed or dictated into the composer — shouldn't spin up a
@@ -3226,6 +3251,8 @@ export default function TasksScreen() {
 
   const handleFollowUp = async () => {
     if (!selectedTask || (!followUpText.trim() && followUpImages.length === 0)) return;
+    // Remember how this went out so the NEXT follow-up defaults to the same mode.
+    lastSubmitModeRef.current = inputFromSpeech ? "voice" : "text";
     // Stop any active recording before sending
     if (isRecording) {
       try { await stopRecordingAndTranscribe(); } catch {}
@@ -5961,7 +5988,7 @@ export default function TasksScreen() {
                   >
                     <Pressable
                       style={{ flex: 1 }}
-                      onPress={() => setFollowUpExpanded(true)}
+                      onPress={openFollowUpComposer}
                     >
                       <View
                         style={[
@@ -6018,7 +6045,7 @@ export default function TasksScreen() {
                           },
                           pressed && { opacity: 0.7, transform: [{ scale: 0.96 }] },
                         ]}
-                        onPress={() => setFollowUpExpanded(true)}
+                        onPress={openFollowUpComposer}
                         accessibilityRole="button"
                         accessibilityLabel="Send command"
                       >
