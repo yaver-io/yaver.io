@@ -263,3 +263,44 @@ func TestListTasksOmitsTranscriptButKeepsCount(t *testing.T) {
 			"the turn count without downloading the transcript", got)
 	}
 }
+
+type blockingTaskStore struct {
+	saveDelay time.Duration
+	saved     chan struct{}
+}
+
+func (s *blockingTaskStore) Load() map[string]*Task { return map[string]*Task{} }
+func (s *blockingTaskStore) Save(tasks map[string]*Task) {}
+func (s *blockingTaskStore) SaveRecords(records []persistedTask) {
+	time.Sleep(s.saveDelay)
+	select {
+	case s.saved <- struct{}{}:
+	default:
+	}
+}
+
+func TestCreateTaskDoesNotWaitForSlowTaskStore(t *testing.T) {
+	store := &blockingTaskStore{
+		saveDelay: 750 * time.Millisecond,
+		saved:     make(chan struct{}, 1),
+	}
+	tm := NewTaskManager(t.TempDir(), store, defaultRunner)
+	tm.DummyMode = true
+
+	start := time.Now()
+	task, err := tm.CreateTask("Hello hello", "Reply with exactly BEACH_OK", "", "mobile", "", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if task == nil {
+		t.Fatal("CreateTask returned nil task")
+	}
+	if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
+		t.Fatalf("CreateTask took %v with a slow task store — task history rewrites are blocking POST /tasks again", elapsed)
+	}
+	select {
+	case <-store.saved:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background task-store save never completed")
+	}
+}

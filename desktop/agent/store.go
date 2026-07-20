@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -31,6 +32,7 @@ type persistedTask struct {
 // TaskStore persists task metadata to a JSON file under ~/.yaver/.
 type TaskStore struct {
 	path string
+	mu   sync.Mutex
 }
 
 // NewTaskStore creates a TaskStore that reads/writes ~/.yaver/tasks.json.
@@ -47,6 +49,10 @@ func NewTaskStore() (*TaskStore, error) {
 // Save writes the current task map to disk. Only the serializable fields are
 // persisted, and output is truncated to the last 2000 characters.
 func (s *TaskStore) Save(tasks map[string]*Task) {
+	s.SaveRecords(snapshotPersistedTasks(tasks))
+}
+
+func snapshotPersistedTasks(tasks map[string]*Task) []persistedTask {
 	records := make([]persistedTask, 0, len(tasks))
 	for _, t := range tasks {
 		output := t.Output
@@ -65,18 +71,26 @@ func (s *TaskStore) Save(tasks map[string]*Task) {
 			Output:      output,
 			ResultText:  t.ResultText,
 			CostUSD:     t.CostUSD,
-			Turns:       t.Turns,
+			Turns:       append([]ConversationTurn(nil), t.Turns...),
 			CreatedAt:   t.CreatedAt,
 			StartedAt:   t.StartedAt,
 			FinishedAt:  t.FinishedAt,
 		})
 	}
+	return records
+}
 
+func (s *TaskStore) SaveRecords(records []persistedTask) {
+	if s == nil {
+		return
+	}
 	data, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
 		log.Printf("task store: marshal error: %v", err)
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := os.WriteFile(s.path, data, 0600); err != nil {
 		log.Printf("task store: write error: %v", err)
 	}
