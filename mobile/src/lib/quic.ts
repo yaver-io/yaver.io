@@ -34,6 +34,8 @@ import {
   observedTailnetUp,
   rememberReachable,
   rememberUnroutable,
+  forgetTunnelLegs,
+  ttlForPath,
   setNetworkIdentity,
 } from "./unroutableCache";
 import { beaconListener } from "./beacon";
@@ -6316,7 +6318,11 @@ export class QuicClient {
           // those have different remedies. See isUnroutableFailure for the
           // exact classifier.
           if (isUnroutableFailure(e) && cand.path) {
-            rememberUnroutable(cand.path, cand.ip, cand.port);
+            // Tunnel legs (tailscale/mesh) get a much shorter TTL: their
+            // reachability depends on a daemon that can come up without the
+            // network identity changing at all, so caching them like a LAN
+            // address strands the phone on the relay. See unroutableCache.ts.
+            rememberUnroutable(cand.path, cand.ip, cand.port, Date.now(), ttlForPath(cand.path));
           }
           // Say WHY this leg failed, per candidate. Promise.any below collapses
           // every rejection into a single null, so without this the user sees
@@ -6456,6 +6462,15 @@ export class QuicClient {
       // so a leg that was unroutable on the last network gets a fresh chance
       // on the next. See lib/unroutableCache.ts.
       setNetworkIdentity(deriveNetworkIdentity(netState));
+      // A connect attempt is the user saying "try again", and the single most
+      // common reason it now works is that they just brought Tailscale up —
+      // which does NOT change the identity above (same SSID), so nothing was
+      // wiped. Drop tunnel legs explicitly or we re-skip the exact address
+      // that would have succeeded.
+      {
+        const dropped = forgetTunnelLegs();
+        if (dropped > 0) appLog("info", `[direct] re-arming ${dropped} tunnel leg(s) for this attempt`);
+      }
       const policy = this.transportPolicy();
 
       // Strategy: direct-first on WiFi (lowest latency), relay-fallback.

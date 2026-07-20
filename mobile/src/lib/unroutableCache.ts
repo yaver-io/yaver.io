@@ -35,6 +35,43 @@
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Tunnel-dependent legs (Tailscale / Yaver Mesh) expire much faster, and can be
+ * dropped outright by forgetTunnelLegs().
+ *
+ * THE BUG THIS FIXES (2026-07-20). The header above promises this cache will
+ * "never keep a leg from being retried after a real network change" and names
+ * "VPN up" as such a change. It cannot keep that promise, because the identity
+ * it is keyed on — deriveNetworkIdentity() in quic.ts — sees only Wi-Fi SSID
+ * and cellular carrier. Bringing Tailscale up changes NEITHER: the phone stays
+ * on the same SSID. So setNetworkIdentity() early-returns on an unchanged id,
+ * nothing is wiped, and every 100.x leg that failed while the tunnel was down
+ * stays marked unroutable — while the tailnet is now genuinely up. Observed
+ * exactly that: phone and mac mini both on the tailnet, `mobiles-mac-mini`
+ * green in the Tailscale app, and the log still reading
+ *   lan-tailscale 100.89.155.25:18080 failed — unroutable
+ * on repeat, forcing every request onto a flaky relay.
+ *
+ * A LAN address is a property of the network you are on; a tunnel address is a
+ * property of a daemon that can come up at any instant without the network
+ * changing at all. They must not share a cache lifetime.
+ */
+const TUNNEL_TTL_MS = 45 * 1000;
+
+/** Path-family prefixes whose reachability depends on a VPN/tunnel daemon. */
+const TUNNEL_PATH_PREFIXES = ["lan-tailscale", "lan-mesh", "tailscale", "mesh"];
+
+/** True when this candidate's reachability depends on a tunnel being up. */
+export function isTunnelPath(path: string): boolean {
+  const p = (path || "").toLowerCase();
+  return TUNNEL_PATH_PREFIXES.some((prefix) => p.startsWith(prefix));
+}
+
+/** TTL to use for a leg on this path family. */
+export function ttlForPath(path: string): number {
+  return isTunnelPath(path) ? TUNNEL_TTL_MS : DEFAULT_TTL_MS;
+}
+
 type Entry = { expiresAt: number };
 
 type Store = Map<string, Map<string, Entry>>; // networkId → candidateKey → Entry
@@ -151,6 +188,34 @@ export function observedTailnetUp(): boolean {
  * Reset the cache — for tests only. Named `_forTest` so a codebase grep for
  * production callers finds nothing.
  */
+/**
+ * Drop every negative entry for tunnel-dependent legs, on every network.
+ *
+ * The TTL above bounds the damage; this removes it. Call whenever the user has
+ * plausibly just changed tunnel state and is asking us to try again — app
+ * foreground, an explicit Retry/Connect tap, or a NetInfo change event (even
+ * one that leaves the identity unchanged, which is precisely the Tailscale
+ * case). Cheap: a handful of map deletes over an in-memory store.
+ *
+ * Returns how many entries were dropped so the caller can log it — a silent
+ * cache clear is indistinguishable from a no-op when you are debugging why a
+ * leg is not being retried.
+ */
+export function forgetTunnelLegs(): number {
+  let dropped = 0;
+  for (const inner of store.values()) {
+    for (const key of [...inner.keys()]) {
+      // key is "path=ip:port" — see keyForCandidate.
+      const path = key.split("=")[0] ?? "";
+      if (isTunnelPath(path)) {
+        inner.delete(key);
+        dropped++;
+      }
+    }
+  }
+  return dropped;
+}
+
 export function _resetForTest(): void {
   store.clear();
   knownPathsUp.clear();
