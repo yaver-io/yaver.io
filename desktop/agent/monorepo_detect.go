@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // DetectedProject is one project found inside a monorepo (or a standalone
@@ -148,8 +149,36 @@ func DetectMonorepo(rootDir string, opts DetectOpts) (*Monorepo, error) {
 // walkAndClassify recursively descends from dir, classifying each level. Each
 // classified project's RN inner platform subdirs (android/, ios/) are NOT
 // recursed into so we don't double-count them.
+// monorepoWalkBudget bounds the whole classification walk.
+//
+// 2026-07-20: POST /tasks hung forever on a Mac mini and reported the machine
+// as unreachable from the phone. The goroutine dump put the block here —
+// createTask -> taskPlacementRequestFromTaskBody -> taskPlacementStackLabel ->
+// DetectMonorepo -> walkAndClassify -> classifyDir -> hasXcodeProj ->
+// os.ReadDir. The workDir had defaulted to "." which was the agent's CWD: the
+// user's HOME directory. So every task creation tried to classify the entire
+// home tree — ~/Library, several full repo clones, node_modules, git worktrees.
+// A plain `find ~ -maxdepth 4 -type d` on that box did not finish in 120s.
+//
+// depth alone is not a bound: breadth at depth 4 under a home directory is
+// effectively unbounded. Only wall-clock is a real bound, so the walk carries a
+// deadline and returns what it has when the budget is spent. Partial project
+// metadata is fine — this feeds a placement LABEL. Nothing here is worth
+// blocking task creation for, which is the actual lesson: never let advisory
+// metadata sit in the critical path of the operation it merely annotates.
+const monorepoWalkBudget = 3 * time.Second
+
 func walkAndClassify(root, dir string, depth, maxDepth int, skip map[string]bool) []DetectedProject {
+	return walkAndClassifyUntil(root, dir, depth, maxDepth, skip, time.Now().Add(monorepoWalkBudget))
+}
+
+func walkAndClassifyUntil(root, dir string, depth, maxDepth int, skip map[string]bool, deadline time.Time) []DetectedProject {
 	if depth > maxDepth {
+		return nil
+	}
+	// Checked before every directory read, because a single ReadDir on a huge
+	// or network-backed directory is where the time actually goes.
+	if !time.Now().Before(deadline) {
 		return nil
 	}
 
@@ -190,7 +219,10 @@ func walkAndClassify(root, dir string, depth, maxDepth int, skip map[string]bool
 			}
 		}
 		child := filepath.Join(dir, name)
-		results = append(results, walkAndClassify(root, child, depth+1, maxDepth, skip)...)
+		results = append(results, walkAndClassifyUntil(root, child, depth+1, maxDepth, skip, deadline)...)
+		if !time.Now().Before(deadline) {
+			break
+		}
 	}
 
 	return results
