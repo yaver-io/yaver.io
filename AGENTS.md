@@ -41,6 +41,8 @@ After reading the docs, **grep the code for the symbols the docs name** before r
 - **Never use WebView to load third-party React Native apps** — use the Hermes bundle push path (`/dev/build-native`).
 - **Never commit credentials, customer IPs, relay hostnames, or any secret** — the repo is public on GitHub.
 - **Never deploy mobile / publish npm / push a tag without confirming with the user first.**
+- **Yaver is not single-user. Never hardcode a path, username, or home directory** — and never let the daemon's CWD stand in for a missing one. A remote box can be any OS, any user, any layout. Resolve at runtime (`os.UserHomeDir()`, `filepath.Abs`, explicit config); a literal `/Users/<name>` or `/home/<name>` outside of a deliberately-fixed system path (`/home/linuxbrew`, a container tenant root) is a bug. On 2026-07-20 `workDir` defaulted to `"."`, which was the agent's CWD — the user's HOME — so every `POST /tasks` recursively classified the entire home tree and never returned. The phone reported the machine unreachable while it was idle and healthy. See `desktop/agent/task_placement_scan_bounds_test.go`.
+- **Never put advisory work in the critical path of the operation it annotates.** Placement labels, project classification, telemetry and metrics must be bounded by wall-clock and must degrade to empty, never block. Depth limits are not bounds — breadth defeats them; only a deadline bounds wall-clock.
 
 ## Every incident must leave the product harder than it found it
 

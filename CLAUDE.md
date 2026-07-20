@@ -178,6 +178,24 @@ changing those.
 - **Never WebView for third-party RN apps.** Use the Hermes-bundle native load
   path (`/dev/build-native` → ExpoReactNativeFactory). WebView is OK for plain
   web content (landing pages, docs).
+- **Yaver is not single-user — never hardcode a path, username, or home dir.**
+  A remote box can be any OS, any user, any layout. Resolve at runtime
+  (`os.UserHomeDir()`, `filepath.Abs`, explicit config). A literal
+  `/Users/<name>` or `/home/<name>` outside a deliberately-fixed system path
+  (`/home/linuxbrew`, a container tenant root) is a bug. **And never let the
+  daemon's CWD stand in for a missing path** — "unspecified" means *unknown*,
+  not "use whatever directory I happen to be sitting in". On 2026-07-20
+  `workDir` defaulted to `"."`, which was the agent's CWD — the user's HOME —
+  so every `POST /tasks` recursively classified the whole home tree and never
+  returned. The phone showed "the machine accepted the connection but never
+  answered" while the box was idle with three ready runners.
+  Guard: `desktop/agent/task_placement_scan_bounds_test.go`.
+- **Advisory work must never sit in the critical path of the operation it
+  annotates.** Placement labels, project classification, repo metrics and
+  telemetry must carry a wall-clock deadline and degrade to empty rather than
+  block. A depth limit is not a bound — breadth defeats it; only a deadline
+  bounds wall-clock. Same lesson as the `/tasks` payload incident: bounding the
+  proxy (rows, depth) never bounds the thing that actually hurts (bytes, time).
 - **Never commit credentials, infra IPs, or hostnames.** The repo is public on
   GitHub. Apple keys, Hetzner IPs, npm tokens, Play service-account JSON,
   relay passwords, Tailscale IPs — all gitignored / GH secrets only. If a
