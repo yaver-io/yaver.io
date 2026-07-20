@@ -789,6 +789,7 @@ func (s *HTTPServer) handleRemoteRuntimeSessionCommand(w http.ResponseWriter, r 
 		Command  string `json:"command"`
 		Source   string `json:"source,omitempty"`
 		BundleID string `json:"bundleId,omitempty"`
+		WorkDir  string `json:"workDir,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json body")
@@ -879,6 +880,55 @@ func (s *HTTPServer) handleRemoteRuntimeSessionCommand(w http.ResponseWriter, r 
 			"source":    source,
 			"session":   updated,
 			"note":      updated.Note,
+		})
+	case "run-guest":
+		// Build the RN/Expo guest app into the booted sim and launch it in dev
+		// mode (Metro + Fast Refresh). A cold build is minutes, so it runs OFF the
+		// request path in a goroutine and streams progress to the dev-server log;
+		// the response returns immediately with status "building". The viewer polls
+		// the session / watches the stream for readiness.
+		if session.DeviceID == "" {
+			jsonError(w, http.StatusBadRequest, "session has no device; run boot first")
+			return
+		}
+		workDir := strings.TrimSpace(session.WorkDir)
+		if workDir == "" {
+			workDir = strings.TrimSpace(req.WorkDir)
+		}
+		if workDir == "" {
+			jsonError(w, http.StatusBadRequest, "run-guest needs a workDir (the RN project root)")
+			return
+		}
+		if _, err := rnExpoRunCommand(session.TargetID, session.DeviceID); err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		mgr.Update(session.ID, func(current *RemoteRuntimeSession) {
+			current.Status = "building"
+			current.LastCommand = "run-guest"
+			current.Note = "Building the guest app into the simulator (dev mode, Fast Refresh)…"
+		})
+		go func() {
+			bctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 20*time.Minute)
+			defer cancel()
+			err := s.buildAndLaunchRNInSimulator(bctx, session, workDir)
+			s.ensureRemoteRuntimeManager().Update(session.ID, func(current *RemoteRuntimeSession) {
+				if err != nil {
+					current.Status = "build-failed"
+					current.Note = "Guest build failed: " + err.Error()
+					return
+				}
+				current.Status = "running"
+				current.Note = "Guest app running in the simulator; Metro Fast Refresh live. Streaming."
+			})
+		}()
+		updated, _ := mgr.Update(session.ID, func(_ *RemoteRuntimeSession) {})
+		jsonReply(w, http.StatusAccepted, map[string]interface{}{
+			"ok":        true,
+			"sessionId": session.ID,
+			"command":   "run-guest",
+			"status":    "building",
+			"session":   updated,
 		})
 	case "shake":
 		// Client→server feedback trigger. The viewer (phone shake or a web
