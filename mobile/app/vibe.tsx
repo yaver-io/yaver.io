@@ -261,6 +261,10 @@ export default function VibeScreen() {
       <AppScreenHeader title="Vibe" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         {/* Active box */}
+        {/* Just the box. The "Apps" button that sat here was removed
+            (2026-07-20): Projects is a top-level tab, so this was a second
+            door to the same room — and on a voice screen every control that
+            is not the mic is a distraction from the one thing you came to do. */}
         <View style={[card, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: c.textMuted, fontSize: 11 }}>Vibing on</Text>
@@ -268,12 +272,6 @@ export default function VibeScreen() {
               {activeDevice?.name || activeDevice?.id || "No box connected"}
             </Text>
           </View>
-          <Pressable
-            onPress={() => router.push("/(tabs)/apps")}
-            style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: c.bgCard, borderRadius: 10, borderWidth: 1, borderColor: c.border }}
-          >
-            <Text style={{ color: c.accent, fontSize: 13, fontWeight: "600" }}>Apps</Text>
-          </Pressable>
         </View>
 
         {/* Big mic — start / stop / barge-in */}

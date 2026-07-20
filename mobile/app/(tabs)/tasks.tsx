@@ -3867,6 +3867,29 @@ export default function TasksScreen() {
     }
   }, [multiTargetMode, activeDevice, isEffectivelyConnected]);
 
+  // The mic FAB: open the composer AND start dictating in one tap.
+  //
+  // Deliberately reuses startRecording("task") rather than inventing a second
+  // capture path — that function already streams whisper partials into the
+  // very input the user is about to send, which IS the requested behaviour:
+  // watch the words land, correct them, press send. A parallel implementation
+  // would drift from it.
+  //
+  // Recording starts only once the composer is actually up. When
+  // multiTargetMode has no connection, openCreateTask opens the target wizard
+  // instead, and a mic that was already hot behind a modal would record the
+  // user picking a machine — five minutes of audio they never asked for.
+  const openCreateTaskDictating = useCallback(() => {
+    openCreateTask();
+    const composerWillOpen = !(multiTargetMode && (!activeDevice || !isEffectivelyConnected));
+    if (!composerWillOpen) return;
+    // One frame, so the modal is mounted before the mic opens; otherwise the
+    // first partials land in an input nobody is looking at yet.
+    requestAnimationFrame(() => {
+      void startRecording("task");
+    });
+  }, [openCreateTask, multiTargetMode, activeDevice, isEffectivelyConnected]);
+
   // Transient zero-device state for a user who HAS had devices (VPN flap,
   // network drop, token drift). Kept OUT of NoMachineEmpty: with an empty
   // roster its "Choose machine" picker would open onto nothing, so the only
@@ -4400,9 +4423,17 @@ export default function TasksScreen() {
         />
 
         {/* Single FAB: voice. Texting a coding agent from a phone is a poor
-            vibing experience, so the mic is the one primary action here — it
-            drops you into the hands-free STT/TTS loop where you can also say
-            "load me the app with Hermes" mid-flow.
+            vibing experience, so the mic is the one primary action here.
+
+            It opens THIS screen's composer and starts dictating — it does not
+            navigate to Vibe. Vibe is a hands-free conversation loop: it decides
+            when you finished talking and dispatches on its own, so there is no
+            moment where you read what you are about to send. Speaking into a
+            coding agent without seeing the text first is not something anyone
+            wants (2026-07-20): STT mangles paths, flags and identifiers, and
+            the whole point is to fix it before it runs. The composer already
+            streams whisper partials straight into the input, so you watch the
+            words land and press send yourself. Vibe stays reachable from More.
 
             The compose "+" that used to sit below this was removed on the
             user's ask (2026-07-19). Typing is NOT a dead end: the "All Clear"
@@ -4428,8 +4459,8 @@ export default function TasksScreen() {
               pressed && s.fabPressed,
             ]}
             accessibilityRole="button"
-            accessibilityLabel="Vibe — talk to build"
-            onPress={() => taskRouter.navigate("/vibe" as any)}
+            accessibilityLabel="Dictate a new task"
+            onPress={openCreateTaskDictating}
           >
             <Ionicons name="mic" size={26} color="#ffffff" />
           </Pressable>

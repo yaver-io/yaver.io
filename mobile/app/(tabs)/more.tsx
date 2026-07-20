@@ -16,7 +16,6 @@ import * as Clipboard from "expo-clipboard";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
-import EmptyState from "../../src/components/EmptyState";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -3207,21 +3206,32 @@ export default function MoreScreen() {
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
         </Pressable>
 
-        {/* Both routes named in the copy are now pressable: the pill opens the
-            same pairing sheet the "Pair Device" quick card does, the link goes
-            to the same Mobile Sandbox the hero card does. This used to be a
-            bordered card that named two moves and offered neither. */}
+        {/* A row in a list of rows, not a full-height hero.
+            
+            This was a centred EmptyState with an icon, a paragraph and two
+            buttons, wedged between MCP Servers and Home Control — it broke the
+            rhythm of the card list around it and pushed everything below the
+            fold (2026-07-20). Pairing is one action; it gets one card, in the
+            same shape as every other card here.
+
+            The "Start in Mobile Sandbox" link is gone: new app development is
+            remote-box-first, so offering the phone sandbox as a co-equal first
+            move contradicts the product path. The route still exists for
+            anything already using it. */}
         {!connected ? (
-          <EmptyState
-            icon="desktop-outline"
-            title="No remote machine connected"
-            body="Pair a Yaver machine for remote coding, builds, and infra tools — or start right here on this phone."
-            action={{ label: "Pair a machine", onPress: openPair }}
-            link={{
-              label: "Start in Mobile Sandbox",
-              onPress: () => router.navigate("/phone-projects" as any),
-            }}
-          />
+          <Pressable
+            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+            onPress={openPair}
+          >
+            <Text style={[s.icon, { color: c.textMuted }]}>{"🖥️"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.label, { color: c.textPrimary }]}>Pair a machine</Text>
+              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                No machine connected {"·"} remote coding, builds, infra tools
+              </Text>
+            </View>
+            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"›"}</Text>
+          </Pressable>
         ) : null}
 
         {LEAN_MORE_SURFACE ? (
