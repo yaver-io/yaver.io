@@ -70,3 +70,13 @@ func disableForwarding(iface, meshCIDR string) error {
 	deleteRule("filter", "FORWARD", "-o", iface, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT")
 	return nil
 }
+
+// addPeerHostRoute installs a /32 for ONE peer — see the darwin implementation
+// for why this exists instead of a blanket subnet route.
+func addPeerHostRoute(iface, peerIP string) error {
+	return runCmd("ip", "route", "replace", peerIP+"/32", "dev", iface)
+}
+
+func delPeerHostRoute(peerIP string) error {
+	return runCmd("ip", "route", "del", peerIP+"/32")
+}

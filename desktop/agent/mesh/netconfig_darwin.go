@@ -52,3 +52,20 @@ func configureInterface(name, selfIPv4, meshCIDR string) error {
 	// -q quiets "route already in table"; harmless on re-up.
 	return runCmd("route", "-q", "-n", "add", "-inet", "-net", meshCIDR, "-interface", name)
 }
+
+// addPeerHostRoute installs a /32 for ONE peer instead of claiming the whole
+// mesh subnet.
+//
+// This is what lets Yaver Mesh coexist with Tailscale rather than fight it.
+// Claiming 100.96.0.0/12 collides with Tailscale's single 100.64.0.0/10 route,
+// so mesh has to stand down entirely on any box running it. A /32 is the
+// longest possible prefix: it wins for exactly one address and touches nothing
+// else, so both overlays can run on the same host, each serving the peers it
+// can reach.
+func addPeerHostRoute(iface, peerIP string) error {
+	return runCmd("route", "-q", "-n", "add", "-inet", "-host", peerIP, "-interface", iface)
+}
+
+func delPeerHostRoute(peerIP string) error {
+	return runCmd("route", "-q", "-n", "delete", "-inet", "-host", peerIP)
+}

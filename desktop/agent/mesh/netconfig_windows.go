@@ -36,3 +36,11 @@ func cleanStaleArtifacts()                {}
 // should run Linux); the data plane still works as a client.
 func enableForwarding(iface, meshCIDR string) error  { return nil }
 func disableForwarding(iface, meshCIDR string) error { return nil }
+
+func addPeerHostRoute(iface, peerIP string) error {
+	return fmt.Errorf("mesh: per-peer host routes are not implemented on this platform; route %s via %s manually", peerIP, iface)
+}
+
+func delPeerHostRoute(peerIP string) error {
+	return fmt.Errorf("mesh: per-peer host routes are not implemented on this platform; remove the route for %s manually", peerIP)
+}
