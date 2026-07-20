@@ -118,6 +118,7 @@ import { MessageBubble } from "../../src/components/MessageBubble";
 import { openTaskBus } from "../../src/lib/runningTasksBus";
 import { ErrorMessage, detectSmartRetry } from "../../src/components/ErrorMessage";
 import { AgentContextPanel, type AgentContextRow } from "../../src/components/AgentContextPanel";
+import { deriveRunnerBannerState, type RunnerFetchState } from "../../src/lib/runnerBannerState";
 import { TaskHeader } from "../../src/components/TaskHeader";
 import {
   displayRunnerLabel,
@@ -776,143 +777,6 @@ function PhaseStatusLine({ task }: { task: Task }) {
         · {elapsedSec >= 10 ? "still working " : ""}{elapsedSec}s
       </Text>
     </Animated.View>
-  );
-}
-
-type RunnerBannerKind =
-  | "ok"
-  | "authNeeded"
-  | "needsConfig"
-  | "notRunnable"
-  | "notInstalled"
-  | "blocked";
-
-const RUNNER_BANNER_TONES: Record<RunnerBannerKind, string> = {
-  ok: "#4ade80",
-  authNeeded: "#fbbf24",
-  needsConfig: "#fbbf24",
-  notRunnable: "#fbbf24",
-  notInstalled: "#f87171",
-  blocked: "#fbbf24",
-};
-
-function deriveRunnerBannerState(
-  runners: RunnerInfo[],
-  agentStatus: AgentStatus | null,
-  // The runner the user is ACTUALLY about to run on this device: the
-  // resolved selection (composer chip → per-device primary → default),
-  // NOT the agent's hardcoded defaultRunner. Ids are normalized here
-  // ("claude-code" → "claude") so they match runner rows regardless of
-  // which id form the caller passes.
-  //
-  // This is the crux of the "OpenAI Codex not installed" bug on box
-  // "magara": the old code matched `r.id === primaryRunnerId` (raw, no
-  // normalization) AND only ever considered primaryRunnerByDevice — never
-  // the in-session chip pick. When that lookup missed it fell back to
-  // `agentStatus.runner` (the agent's default, Codex), so the header said
-  // "OpenAI Codex not installed" while the task ran fine on Claude Code.
-  selectedRunnerId?: string,
-): { text: string; tone: string; kind: RunnerBannerKind; runnerId?: string } | null {
-  if (runners.length === 0 && !agentStatus) return null;
-
-  const installed = runners.filter((runner) => runner.installed);
-  const runnable = installed.filter((runner) => !runner.error);
-  const authed = installed.filter((runner) => runner.authConfigured);
-  // runnerId rides along so the banner can OFFER THE FIX, not just name the
-  // problem. Without it the "needs sign-in" state had no id to hand
-  // openRunnerAuthModal, so it was the one banner state with no action at all:
-  // it told the user their runner was signed out and left them to find the
-  // sign-in flow themselves, on a remote machine they may not have shell
-  // access to. Verified against a real box whose Claude Code reported
-  // authConfigured=false while codex ran fine — the sign-in flow existed and
-  // worked, it just was not reachable from the message announcing it.
-  const make = (kind: RunnerBannerKind, text: string, runnerId?: string) => ({
-    text,
-    tone: RUNNER_BANNER_TONES[kind],
-    kind,
-    runnerId,
-  });
-
-  // Selected-runner-first: the header must describe the runner the user
-  // is about to run, by NAME, using the agent's authoritative per-runner
-  // health — never an aggregate and never the agent's default runner.
-  const wantId = normalizeTaskRunnerId(selectedRunnerId);
-  if (wantId && wantId !== "custom") {
-    const selectedRow = runners.find(
-      (r) => normalizeTaskRunnerId(r.id) === wantId,
-    );
-    // Always-distinct label ("Claude Code" / "OpenAI Codex" / "OpenCode")
-    // even when the runner has no row yet (not installed on this box).
-    // Prefer the agent's own name; fall back to the id map.
-    const label = selectedRow?.name || displayRunnerLabel(wantId);
-    if (!selectedRow || selectedRow.installed === false) {
-      // Say so for THIS runner + offer its setup — don't imply another
-      // agent. (e.g. user on Claude sees "Claude Code not installed",
-      // not "OpenAI Codex not installed".)
-      return make("notInstalled", `${label} not installed`);
-    }
-    if (selectedRow.authConfigured === false) {
-      return make("authNeeded", `${label} needs sign-in`, selectedRow.id);
-    }
-    if (selectedRow.error) {
-      // OpenCode's "error" is almost always a provider/model config gap (the
-      // configured model points at a provider with no key). That's fixable
-      // right here via OpenCodeConfigModal, so route it to a distinct
-      // "needsConfig" kind with a Configure CTA rather than a dead "blocked".
-      if (wantId === "opencode") {
-        return make("needsConfig", `${label} needs setup`);
-      }
-      // Installed + authed but the runner reported a fault.
-      return make("blocked", `${label} blocked`);
-    }
-    if (selectedRow.ready === false) {
-      // The agent reports authoritative health (ready). Honor it —
-      // otherwise the banner says "ready" while the runner can't start a
-      // task, and the user only finds out when it aborts.
-      return make("blocked", `${label} not ready`);
-    }
-    return make(
-      "ok",
-      `${label} ready${agentStatus?.runningTasks ? ` · ${agentStatus.runningTasks} running` : ""}`,
-    );
-  }
-
-  // No explicit selection resolved (rare): fall back to an aggregate view
-  // plus the agent's reported current runner.
-  if (installed.length === 0) {
-    return make("notInstalled", "No agents available");
-  }
-  if (runnable.length === 0 && authed.length === 0) {
-    return make("authNeeded", "Agents available, none authenticated");
-  }
-  if (runnable.length === 0) {
-    return make("notRunnable", "Agents available, none runnable");
-  }
-  const current = agentStatus?.runner;
-  if (current?.installed === false) {
-    return make("notInstalled", `${current.name} not installed`);
-  }
-  if (current?.error && !current?.authConfigured) {
-    return make("authNeeded", `${current.name} needs sign-in`, current.id);
-  }
-  if (current?.error) {
-    return make("blocked", `${current.name} blocked`);
-  }
-  if (current?.name) {
-    if (current.authConfigured === false) {
-      return make("authNeeded", `${current.name} needs sign-in`, current.id);
-    }
-    if (current.ready === false) {
-      return make("blocked", `${current.name} not ready`);
-    }
-    return make(
-      "ok",
-      `${current.name} ready${agentStatus?.runningTasks ? ` · ${agentStatus.runningTasks} running` : ""}`,
-    );
-  }
-  return make(
-    "ok",
-    `${runnable.length} agent${runnable.length > 1 ? "s" : ""} ready`,
   );
 }
 
@@ -1651,6 +1515,7 @@ export default function TasksScreen() {
   const [showPingResult, setShowPingResult] = useState(false);
   const [isRestartingRunner, setIsRestartingRunner] = useState(false);
   const [availableRunners, setAvailableRunners] = useState<RunnerInfo[]>([]);
+  const [runnersFetchState, setRunnersFetchState] = useState<RunnerFetchState>("idle");
   const [selectedRunner, setSelectedRunner] = useState<string>(""); // "" = default
   // OpenCode-only: which agent (build / plan / custom) drives the
   // task. Forwarded as `mode` on the task POST and turned into
@@ -1836,45 +1701,6 @@ export default function TasksScreen() {
     return () => { unsub1(); unsub2(); unsub3(); };
   }, [activeDevice?.id]);
 
-  // Fetch agent status when connected
-  useEffect(() => {
-    if (connectionStatus !== "connected") {
-      setAgentStatus(null);
-      return;
-    }
-    const fetchStatus = () => {
-      quicClient.getAgentStatus().then(s => { if (s) setAgentStatus(s); });
-    };
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 30000);
-    return () => clearInterval(interval);
-  }, [connectionStatus]);
-
-  // Fetch available runners — runs once per (connection, device). Splitting
-  // this from the seeding effect below matters: previously they were one
-  // effect with `selectedRunner` and `primaryRunnerByDevice` in its dep
-  // array, so every chip tap (which calls setSelectedRunner +
-  // setPrimaryRunnerForDevice) triggered a fresh GET /agent/runners and
-  // a setAvailableRunners replacement. The new array identity caused the
-  // chip Pressables to re-mount mid-tap, which on Android can swallow the
-  // gesture so the picker selection appears to revert. Now we only refetch
-  // when the connection or device changes.
-  useEffect(() => {
-    if (connectionStatus !== "connected") {
-      setAvailableRunners([]);
-      setAvailableModels([]);
-      return;
-    }
-    let cancelled = false;
-    quicClient.getRunners().then((r) => {
-      if (cancelled) return;
-      if (r.length > 0) setAvailableRunners(r);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeDevice?.id, connectionStatus]);
-
   // Pull the connected device's opencode.json agent list whenever the
   // user has opencode picked. Falls back to [] (which means the
   // composer chip rail will use just the stock build/plan pair).
@@ -2049,17 +1875,38 @@ export default function TasksScreen() {
 
   const refreshRunnerState = useCallback(async () => {
     if (connectionStatus !== "connected") return;
+    setRunnersFetchState((prev) => (prev === "ok" ? prev : "loading"));
     try {
-      const [runners, status] = await Promise.all([
-        quicClient.getRunners(),
+      const [probe, status] = await Promise.all([
+        quicClient.getRunnersProbe(),
         quicClient.getAgentStatus(),
       ]);
-      setAvailableRunners(runners);
+      setAvailableRunners(probe.runners);
+      setRunnersFetchState(probe.state);
       if (status) setAgentStatus(status);
     } catch {
-      // best-effort
+      setRunnersFetchState("network-error");
     }
   }, [connectionStatus]);
+
+  // Refresh runner + agent state on connect and keep retrying quickly until
+  // the runner fetch is healthy. Once healthy, slow back down to background
+  // polling so the banner stays honest without spamming the box.
+  useEffect(() => {
+    if (connectionStatus !== "connected") {
+      setAgentStatus(null);
+      setAvailableRunners([]);
+      setAvailableModels([]);
+      setRunnersFetchState("idle");
+      return;
+    }
+    void refreshRunnerState();
+    const cadenceMs = runnersFetchState === "ok" ? 30000 : 5000;
+    const interval = setInterval(() => {
+      void refreshRunnerState();
+    }, cadenceMs);
+    return () => clearInterval(interval);
+  }, [activeDevice?.id, connectionStatus, refreshRunnerState, runnersFetchState]);
 
   const openRunnerAuthModal = useCallback((runnerId: string, targetDeviceId?: string | null) => {
     const normalized = String(runnerId || "").trim().toLowerCase();
@@ -3979,8 +3826,8 @@ export default function TasksScreen() {
     [activeDevice?.id, primaryRunnerByDevice, selectedRunner],
   );
   const runnerBannerState = useMemo(
-    () => deriveRunnerBannerState(availableRunners, agentStatus, bannerRunnerId),
-    [availableRunners, agentStatus, bannerRunnerId]
+    () => deriveRunnerBannerState(availableRunners, agentStatus, bannerRunnerId, runnersFetchState),
+    [availableRunners, agentStatus, bannerRunnerId, runnersFetchState]
   );
 
   return (
@@ -4156,6 +4003,8 @@ export default function TasksScreen() {
                       </Pressable>
                     ) : runnerBannerState &&
                       runnerBannerState.kind !== "ok" &&
+                      runnerBannerState.kind !== "loading" &&
+                      runnerBannerState.kind !== "failed" &&
                       (availableRunners.length > 0 || agentStatus) ? (
                       <Pressable
                         onPress={handleRestartRunner}
@@ -4165,6 +4014,15 @@ export default function TasksScreen() {
                         <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>
                           {isRestartingRunner ? "Restarting..." : "Restart"}
                         </Text>
+                      </Pressable>
+                    ) : runnerBannerState?.kind === "failed" ? (
+                      <Pressable
+                        onPress={() => {
+                          void refreshRunnerState();
+                        }}
+                        style={[s.bannerInlineBtn, { backgroundColor: c.accentSoft }]}
+                      >
+                        <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>Retry</Text>
                       </Pressable>
                     ) : null}
                   </View>

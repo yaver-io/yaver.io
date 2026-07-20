@@ -63,6 +63,7 @@ function deriveNetworkIdentity(state: NetInfoState): string {
 import type { BuildInfo, BuildSummary } from "./builds";
 import type { RemoteSandboxRequest, RemoteSandboxResponse } from "./llmRemote";
 import { decodeCloudWorkspaceRequiredError } from "./cloudWorkspaceRequired";
+import { classifyRunnerFetchOutcome, type CodingRunnersProbeState } from "./deviceStatusRunnerProbe";
 import { buildSendTaskRequestBody } from "./taskRequestBody";
 export {
   CloudWorkspaceRequiredError,
@@ -219,6 +220,11 @@ export interface EnvironmentRunnerSummary {
   authSource?: string;
   warning?: string;
   error?: string;
+}
+
+export interface RunnerFetchProbe {
+  state: CodingRunnersProbeState;
+  runners: RunnerInfo[];
 }
 
 export interface EnvironmentSyncSummary {
@@ -3517,16 +3523,35 @@ export class QuicClient {
 
   /** Get available runners from the agent with install status. */
   async getRunners(): Promise<RunnerInfo[]> {
-    if (!this.isConnected && !this.hasConnectionInfo) return [];
+    const probe = await this.getRunnersProbe();
+    return probe.runners;
+  }
+
+  /** Get runners with an honest fetch outcome so callers can distinguish loading/failure from "[]". */
+  async getRunnersProbe(timeoutMs = 15000): Promise<RunnerFetchProbe> {
+    if (!this.isConnected && !this.hasConnectionInfo) {
+      return { state: "network-error", runners: [] };
+    }
     try {
-      const res = await fetch(`${this.baseUrl}/agent/runners`, {
+      const res = await this.fetchWithTimeout(`${this.baseUrl}/agent/runners`, {
         headers: this.authHeaders,
-      });
-      if (!res.ok) return [];
+      }, timeoutMs);
+      if (!res.ok) return { state: classifyRunnerFetchOutcome({ status: res.status }), runners: [] };
       const data = await res.json();
-      return data.runners || [];
-    } catch {
-      return [];
+      if (!Array.isArray(data?.runners)) {
+        return { state: "http-error", runners: [] };
+      }
+      return { state: "ok", runners: data.runners || [] };
+    } catch (err: any) {
+      const aborted =
+        err?.name === "AbortError" ||
+        err?.name === "TimeoutError" ||
+        err?.code === "AbortError" ||
+        err?.code === "TimeoutError";
+      return {
+        state: classifyRunnerFetchOutcome(aborted ? { aborted: true } : { networkError: err }),
+        runners: [],
+      };
     }
   }
 
