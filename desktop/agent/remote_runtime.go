@@ -47,6 +47,7 @@ type RemoteRuntimeCapabilities struct {
 	RemoteRuntimeEligible   bool                  `json:"remoteRuntimeEligible"`
 	FeedbackSDKCompatible   bool                  `json:"feedbackSdkCompatible"`
 	FeedbackSDKNote         string                `json:"feedbackSdkNote,omitempty"`
+	FeedbackSurface         string                `json:"feedbackSurface,omitempty"` // "viewer-overlay" (RN sim stream) | "in-app-sdk" (native)
 	FeedbackControlProtocol string                `json:"feedbackControlProtocol,omitempty"`
 	SupportedTransports     []string              `json:"supportedTransports,omitempty"`
 	CurrentHostClass        string                `json:"currentHostClass,omitempty"`
@@ -180,21 +181,74 @@ func runtimeHostClassForAndroid() string {
 	return runtime.GOOS + "-android"
 }
 
+// frameworkStreamsRNViaSimulator reports whether an RN/Expo project can ALSO be
+// run in a real simulator/emulator and streamed over WebRTC — the alternative to
+// Hermes push. Hermes stays the PRIMARY surface for RN (fast bytecode reload into
+// the Yaver container); this path exists for when you want the guest app running
+// standalone in a booted simulator — e.g. to exercise native modules the Yaver
+// host lacks (the expo-gl class), or to test the app's OWN Yaver Feedback SDK
+// (react-native), which the Hermes container deliberately suppresses. In a real
+// simulator that SDK is live, so shake-to-feedback works natively.
+func frameworkStreamsRNViaSimulator(framework string) bool {
+	switch strings.ToLower(strings.TrimSpace(framework)) {
+	case "expo", "react-native":
+		return true
+	}
+	return false
+}
+
 func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntimeCapabilities {
 	mode := executionModeForFramework(framework)
+	rnSim := frameworkStreamsRNViaSimulator(framework)
+	// Eligibility is decoupled from the PRIMARY execution mode: a native app is
+	// WebRTC-primary, while an RN app is Hermes-primary but ALSO simulator-
+	// streamable. Both are remote-runtime eligible; PrimarySurface records which
+	// is the default so the UI can present Hermes first and WebRTC as "also".
+	eligible := mode == ExecutionModeNativeWebRTC || rnSim
 	caps := RemoteRuntimeCapabilities{
-		WorkDir:                 strings.TrimSpace(workDir),
-		Framework:               strings.TrimSpace(framework),
-		ExecutionMode:           mode,
-		PrimarySurface:          primarySurfaceForFramework(framework),
-		RemoteRuntimeEligible:   mode == ExecutionModeNativeWebRTC,
-		FeedbackSDKCompatible:   mode == ExecutionModeNativeWebRTC,
-		FeedbackSDKNote:         "Remote runtime is intended to coexist with Yaver Feedback SDK instrumentation in native apps; session transport and feedback transport remain separate.",
+		WorkDir:               strings.TrimSpace(workDir),
+		Framework:             strings.TrimSpace(framework),
+		ExecutionMode:         mode,
+		PrimarySurface:        primarySurfaceForFramework(framework),
+		RemoteRuntimeEligible: eligible,
+		// The RN app in a booted simulator carries its OWN feedback SDK, which is
+		// live there (unlike the suppressed-in-container Hermes path), so shake +
+		// feedback work natively. For native apps the note is unchanged.
+		FeedbackSDKCompatible: mode == ExecutionModeNativeWebRTC || rnSim,
+		FeedbackSDKNote: func() string {
+			if rnSim {
+				return "Feedback flows client→server: the phone owns shake detection (it already has ShakeDetector), and in a WebRTC session a shake sends the `shake` session command to the remote box, which injects a hardware shake into the simulator (simctl for iOS, adb sensor for Android). The guest app's OWN Yaver Feedback SDK — live in the real simulator — then fires its overlay inside the sim, and that overlay streams back to the phone over the same WebRTC video. Yaver can also push a launch-feedback control message down the events channel to trigger it directly."
+			}
+			return "Remote runtime is intended to coexist with Yaver Feedback SDK instrumentation in native apps; session transport and feedback transport remain separate."
+		}(),
+		// FeedbackSurface tells the client HOW feedback is captured for this
+		// session: "viewer-overlay" = the phone draws the feedback UI over the
+		// WebRTC video (RN sim streaming); "in-app-sdk" = the running app carries
+		// its own SDK (native). The mobile RemoteRuntimeViewer switches on this.
+		FeedbackSurface: func() string {
+			if rnSim {
+				return "client-shake-remote-sim"
+			}
+			return "in-app-sdk"
+		}(),
 		FeedbackControlProtocol: "remote-runtime-feedback-v1",
 		SupportedTransports:     []string{"direct-webrtc", "relay-jpeg-poll"},
 		CurrentHostClass:        detectRuntimeHostClass(),
 	}
 	if !caps.RemoteRuntimeEligible {
+		return caps
+	}
+	// RN/Expo streams into the same iOS simulators / Android emulators the native
+	// path uses; only the BUILD command differs (expo run:ios / run:android,
+	// resolved in native_build.go). Offer both platforms, capability-probed.
+	if rnSim {
+		caps.Targets = []RemoteRuntimeTarget{
+			probeIOSSimulatorTarget(appleRuntimeFamiliesForCaps()),
+			probeAndroidEmulatorTarget(),
+			probeAndroidDeviceTarget(),
+			probeIOSDeviceTarget(),
+		}
+		caps.RemoteBuilders = collectIOSBuilderSummaries()
 		return caps
 	}
 	// One probe per capabilities call — five `simctl list runtimes` shells
@@ -755,7 +809,97 @@ func (s *HTTPServer) handleRemoteRuntimeSessionCommand(w http.ResponseWriter, r 
 			"session":   updated,
 			"note":      updated.Note,
 		})
+	case "shake":
+		// Client→server feedback trigger. The viewer (phone shake or a web
+		// "Shake" button — works with or without the Yaver mobile app) sends
+		// this; the agent injects a hardware shake into the remote simulator so
+		// the guest app's OWN Yaver Feedback SDK — live and standalone in the
+		// real sim — fires its overlay, which streams back over the same WebRTC
+		// video. Also emits a feedback-launch-request on the events channel so a
+		// viewer-side overlay (or an SDK subscribed to it) can trigger even if the
+		// hardware-shake injection is a no-op on this host.
+		source := strings.TrimSpace(req.Source)
+		if source == "" {
+			source = "viewer-shake"
+		}
+		injErr := injectSimulatorShake(r.Context(), session)
+		if live, ok := mgr.getLive(session.ID); ok {
+			live.sendEventJSON(map[string]any{
+				"type":      "feedback-launch-request",
+				"protocol":  "remote-runtime-feedback-v1",
+				"sessionId": session.ID,
+				"source":    source,
+				"trigger":   "shake",
+				"ts":        time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
+		note := "Shake injected into the simulator; the guest app's feedback SDK should open."
+		if injErr != nil {
+			note = "Hardware-shake injection unavailable on this host (" + injErr.Error() + "); sent feedback-launch-request instead."
+		}
+		updated, _ := mgr.Update(session.ID, func(current *RemoteRuntimeSession) {
+			current.Status = "feedback-pending"
+			current.LastCommand = "shake"
+			current.Note = note
+		})
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":             true,
+			"sessionId":      session.ID,
+			"command":        "shake",
+			"source":         source,
+			"injected":       injErr == nil,
+			"injectionError": errString(injErr),
+			"session":        updated,
+			"note":           note,
+		})
 	default:
 		jsonError(w, http.StatusBadRequest, fmt.Sprintf("unsupported command %q", req.Command))
 	}
+}
+
+// injectSimulatorShake sends a hardware shake gesture to the session's booted
+// simulator/emulator so the guest app's motion-based shake detector (the Yaver
+// Feedback SDK's accelerometer path) fires. Best-effort and platform-specific:
+//   - iOS simulator: the Simulator app's Device ▸ Shake menu, driven via
+//     osascript (there is no `simctl shake` verb).
+//   - Android emulator: an accelerometer burst via `adb emu sensor set`.
+//
+// Returns an error the caller degrades on (it still emits a launch-feedback
+// event), never a panic — an unsupported host is a normal, expected outcome.
+func injectSimulatorShake(ctx context.Context, session RemoteRuntimeSession) error {
+	switch session.TargetID {
+	case "ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator":
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("iOS simulator shake needs macOS")
+		}
+		script := `tell application "Simulator" to activate
+tell application "System Events" to tell process "Simulator" to click menu item "Shake" of menu "Device" of menu bar 1`
+		out, err := exec.CommandContext(ctx, "osascript", "-e", script).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("osascript shake failed: %s", strings.TrimSpace(string(out)))
+		}
+		return nil
+	case "android-emulator", "android-device", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
+		dev := strings.TrimSpace(session.DeviceID)
+		if dev == "" {
+			return fmt.Errorf("android session has no device id")
+		}
+		// A short accelerometer burst: a hard jolt then rest. `adb -s <emu>
+		// emu sensor set acceleration x:y:z` injects raw accelerometer values;
+		// alternating peaks cross the SDK's 1.8g shake threshold.
+		for _, v := range []string{"20:20:20", "-20:-20:-20", "20:20:20", "0:9.8:0"} {
+			if out, err := exec.CommandContext(ctx, "adb", "-s", dev, "emu", "sensor", "set", "acceleration", v).CombinedOutput(); err != nil {
+				return fmt.Errorf("adb emu sensor failed: %s", strings.TrimSpace(string(out)))
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("shake injection not supported for target %q", session.TargetID)
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

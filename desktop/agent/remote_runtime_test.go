@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,60 @@ func TestExecutionModeForFramework(t *testing.T) {
 		if got := primarySurfaceForFramework(tc.framework); got != tc.wantSurf {
 			t.Fatalf("%s surface = %s, want %s", tc.framework, got, tc.wantSurf)
 		}
+	}
+}
+
+// RN/Expo is Hermes-primary but ALSO simulator-streamable over WebRTC — the
+// alternative fast-iteration surface. Eligibility must not have flipped the
+// PRIMARY surface (Hermes stays the default), and feedback in this mode is the
+// client-shake→remote-sim flow.
+func TestRemoteRuntimeCapabilitiesForRNIsWebRTCEligibleButHermesPrimary(t *testing.T) {
+	for _, fw := range []string{"expo", "react-native"} {
+		caps := remoteRuntimeCapabilitiesForProject(t.TempDir(), fw)
+		if !caps.RemoteRuntimeEligible {
+			t.Fatalf("%s should be WebRTC-eligible as a secondary surface", fw)
+		}
+		if caps.PrimarySurface != "hermes" {
+			t.Errorf("%s primary surface = %q, want hermes (WebRTC is the alternative, not the default)", fw, caps.PrimarySurface)
+		}
+		if caps.ExecutionMode != ExecutionModeRNHermes {
+			t.Errorf("%s execution mode = %q, want rn-hermes", fw, caps.ExecutionMode)
+		}
+		if caps.FeedbackSurface != "client-shake-remote-sim" {
+			t.Errorf("%s feedback surface = %q, want client-shake-remote-sim", fw, caps.FeedbackSurface)
+		}
+		if !caps.FeedbackSDKCompatible {
+			t.Errorf("%s streamed sim runs the app's own live feedback SDK — must be compatible", fw)
+		}
+		// Must offer at least an iOS sim + Android emulator target.
+		ids := map[string]bool{}
+		for _, tg := range caps.Targets {
+			ids[tg.ID] = true
+		}
+		if !ids["ios-simulator"] || !ids["android-emulator"] {
+			t.Errorf("%s should offer ios-simulator + android-emulator targets, got %v", fw, ids)
+		}
+	}
+}
+
+// A native (non-RN) framework keeps in-app-sdk feedback and its WebRTC-primary
+// surface — the RN change must not have leaked into it.
+func TestRemoteRuntimeNativeFeedbackSurfaceUnchanged(t *testing.T) {
+	caps := remoteRuntimeCapabilitiesForProject("/tmp/swift-app", "swift")
+	if caps.FeedbackSurface != "in-app-sdk" {
+		t.Errorf("swift feedback surface = %q, want in-app-sdk", caps.FeedbackSurface)
+	}
+	if caps.PrimarySurface != "webrtc" {
+		t.Errorf("swift primary surface = %q, want webrtc", caps.PrimarySurface)
+	}
+}
+
+// injectSimulatorShake must refuse a target it cannot drive rather than claim
+// success — the caller degrades to the events-channel path on error.
+func TestInjectSimulatorShakeRejectsUnknownTarget(t *testing.T) {
+	err := injectSimulatorShake(context.Background(), RemoteRuntimeSession{TargetID: "browser-window"})
+	if err == nil {
+		t.Fatal("shake into a browser target must error, not silently succeed")
 	}
 }
 
