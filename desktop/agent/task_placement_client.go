@@ -245,6 +245,58 @@ func newTaskPlacementBackendClient(baseURL, token string) (*taskPlacementBackend
 	return &taskPlacementBackendClient{baseURL: baseURL, token: token}, nil
 }
 
+// isScannableProjectDir reports whether dir is worth recursively classifying.
+//
+// The rule is narrow on purpose: only scan somewhere that actually looks like a
+// project root. Everything about this is resolved at runtime — a remote box can
+// be any OS, any username, any layout — so nothing here may hardcode a path.
+//
+// Rejects, in order:
+//   - empty / "." — an unspecified workDir means "we don't know", and the
+//     daemon's CWD is not a safe stand-in. This is the exact default that made
+//     POST /tasks scan a home directory and hang forever (2026-07-20).
+//   - the user's home directory, and the filesystem root — neither is a repo,
+//     and both are unbounded to walk.
+//   - anything that is not a directory.
+//   - a directory with no project marker at all.
+//
+// Callers that need metadata for an unscannable directory get empty values, and
+// must treat that as "unknown", never as "no projects found".
+func isScannableProjectDir(dir string) bool {
+	d := strings.TrimSpace(dir)
+	if d == "" || d == "." {
+		return false
+	}
+	abs, err := filepath.Abs(d)
+	if err != nil {
+		return false
+	}
+	abs = filepath.Clean(abs)
+	if abs == string(filepath.Separator) {
+		return false
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if h := filepath.Clean(home); h != "" && abs == h {
+			return false
+		}
+	}
+	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
+		return false
+	}
+	// Require a marker so we never recurse through an arbitrary directory that
+	// merely happens to be named as a workDir.
+	for _, marker := range []string{
+		".git", "package.json", "go.mod", "pubspec.yaml", "Cargo.toml",
+		"pyproject.toml", "requirements.txt", "Gemfile", "pom.xml",
+		"build.gradle", "build.gradle.kts", "yaver.workspace.yaml",
+	} {
+		if _, err := os.Stat(filepath.Join(abs, marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func taskPlacementRequestFromTaskBody(in taskPlacementRequestInput) taskPlacementRecordRequest {
 	workDir := strings.TrimSpace(in.WorkDir)
 	if workDir == "" {
@@ -252,8 +304,25 @@ func taskPlacementRequestFromTaskBody(in taskPlacementRequestInput) taskPlacemen
 	}
 	projectSlug := basenameSlug(firstNonEmpty(strings.TrimSpace(in.ProjectName), workDir))
 	project := DetectProjectInfo(workDir)
-	stackLabel := taskPlacementStackLabel(project, workDir)
-	appCount, fileCount, repoSizeMb := boundedRepoMetrics(workDir)
+
+	// Only classify a directory that is plausibly a project root.
+	//
+	// 2026-07-20: workDir defaulted to "." — the agent's CWD — which on a real
+	// box was the user's HOME directory. taskPlacementStackLabel then ran
+	// DetectMonorepo across the entire home tree on EVERY task creation, and
+	// POST /tasks never returned. The phone reported the machine unreachable
+	// while it was perfectly healthy.
+	//
+	// Resolved dynamically, never against a hardcoded path: a remote box can be
+	// any OS, any user, any layout. A home directory is not a monorepo, and an
+	// unspecified workDir is not a licence to scan whatever the daemon happens
+	// to be sitting in.
+	var stackLabel string
+	var appCount, fileCount, repoSizeMb int
+	if isScannableProjectDir(workDir) {
+		stackLabel = taskPlacementStackLabel(project, workDir)
+		appCount, fileCount, repoSizeMb = boundedRepoMetrics(workDir)
+	}
 	return taskPlacementRecordRequest{
 		Kind:             inferPlacementTaskKind(in.KindHint, in.Title, in.Description, in.CustomCommand, in.Source),
 		SourceSurface:    strings.TrimSpace(in.Source),

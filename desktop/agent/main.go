@@ -5211,27 +5211,60 @@ func checkAutoUpdate(cfg *Config) {
 	//   - Foreground (no supervisor): the user started us manually.
 	//     Don't exit from under them — they'll see the "take effect
 	//     on next restart" line and can CTRL-C when they like.
-	if os.Getenv("INVOCATION_ID") != "" {
-		log.Println("[auto-update] Running under systemd — exiting for automatic restart with new binary.")
-		os.Exit(0)
+	// Re-exec into the new binary IN PLACE rather than exiting and hoping a
+	// supervisor respawns us.
+	//
+	// 2026-07-20: an agent updated itself, logged "Running under launchd —
+	// exiting for automatic restart", exited — and nothing restarted it. Port
+	// 18080 went dead and the box was unusable until a human intervened. It was
+	// NOT under launchd: it had been started with nohup, its parent shell had
+	// exited, and the process was re-parented to init. isUnderLaunchd's
+	// getppid()==1 check reads that orphan state as proof of supervision.
+	// getppid()==1 means "my parent died", NOT "launchd owns me" — every
+	// daemonized process on the box satisfies it.
+	//
+	// That is the whole class of bug this file must not repeat: exiting on an
+	// INFERRED supervisor is a bet that costs the user their agent when the
+	// inference is wrong. syscall.Exec does not need the inference to be right.
+	// It replaces the process image with the new binary, keeping the same pid,
+	// so it is correct whether or not a supervisor exists — launchd/systemd see
+	// a live process and stay happy, and an unsupervised process still comes
+	// back on the new code. There is no window in which nothing is serving.
+	execArgv := append([]string{exePath}, os.Args[1:]...)
+	log.Println("[auto-update] Re-executing into the new binary (same pid, no supervisor required).")
+	if err := syscall.Exec(exePath, execArgv, os.Environ()); err != nil {
+		// Exec failed, so we are still the old binary and still serving. Only
+		// now consider exiting, and only when a supervisor is PROVEN — never on
+		// the orphan heuristic that caused the outage above.
+		log.Printf("[auto-update] (warn) re-exec failed: %v", err)
+		if os.Getenv("INVOCATION_ID") != "" {
+			log.Println("[auto-update] Running under systemd — exiting for automatic restart with new binary.")
+			os.Exit(0)
+		}
+		if runtime.GOOS == "darwin" && isSupervisedByLaunchd() {
+			log.Println("[auto-update] Running under launchd — exiting for automatic restart with new binary.")
+			os.Exit(0)
+		}
+		log.Println("[auto-update] No proven supervisor — staying up on the OLD binary rather than exiting into nothing. New version takes effect on next restart.")
 	}
-	if runtime.GOOS == "darwin" && isUnderLaunchd() {
-		log.Println("[auto-update] Running under launchd — exiting for automatic restart with new binary.")
-		os.Exit(0)
-	}
-	log.Println("[auto-update] New version will take effect on next restart.")
 }
 
-// isUnderLaunchd reports whether the current process was spawned by
-// launchd (so KeepAlive=true will respawn us on clean exit). We
-// check three cheap signals in order of reliability:
-//  1. XPC_SERVICE_NAME — set by launchd for anything it launches.
-//  2. LaunchDaemons set LAUNCHD_SOCKET / LAUNCH_DAEMON_SOCKET_NAME.
-//  3. getppid() == 1 — classic launchd-owned parent; works for
-//     user LaunchAgents that were re-parented to launchd.
+// isSupervisedByLaunchd reports whether launchd will respawn this process if it
+// exits. Only signals that PROVE launchd owns us count.
 //
-// Any one of these being true is enough.
-func isUnderLaunchd() bool {
+// This used to also return true when getppid() == 1, described as "classic
+// launchd-owned parent". That check is wrong and it cost a user their agent on
+// 2026-07-20: a process started with nohup whose parent shell had exited was
+// re-parented to init, satisfied getppid()==1, concluded launchd would restart
+// it, exited — and nothing restarted it. ppid 1 means "my parent died", which
+// is true of every orphaned and daemonized process on the machine; it says
+// nothing about who will respawn us.
+//
+// The remaining signals are set by launchd itself for processes it launches, so
+// a true result means launchd really is our supervisor. Callers must treat a
+// FALSE result as "do not exit" — see the auto-update path, which re-execs in
+// place instead of betting on this answer at all.
+func isSupervisedByLaunchd() bool {
 	if runtime.GOOS != "darwin" {
 		return false
 	}
@@ -5239,9 +5272,6 @@ func isUnderLaunchd() bool {
 		return true
 	}
 	if os.Getenv("LAUNCHD_SOCKET") != "" || os.Getenv("LAUNCH_DAEMON_SOCKET_NAME") != "" {
-		return true
-	}
-	if os.Getppid() == 1 {
 		return true
 	}
 	return false

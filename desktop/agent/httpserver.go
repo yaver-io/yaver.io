@@ -3960,6 +3960,76 @@ const listTasksDefaultLimit = 50
 // carry.
 const listTasksMaxLimit = 500
 
+// listTasksMaxResultText bounds the per-row answer text in the LIST.
+//
+// 2026-07-20: the "accepted the connection but never answered" bug came BACK,
+// on a box with only 50 tasks — well inside every limit above. One task held a
+// 1.8 MB ResultText, so GET /tasks was 2.2 MB, and the phone polls that list
+// every 1-3s: ~45 MB/40s over a 5G relay. The POST that creates a task then sat
+// unanswered behind it and timed out at 30s, so a healthy machine (load 1.80,
+// /agent/runners in 0.57s, three ready runners) reported itself unreachable —
+// the identical misattribution the block above was written to prevent.
+//
+// The lesson the first fix missed: bounding ROW COUNT and nilling Turns does
+// not bound the RESPONSE. Any single unbounded string field reintroduces the
+// whole bug. Output was capped, Turns was nilled, ResultText was not — and one
+// row was enough. Cap every free-text field here, and assert BYTES in the test
+// (see tasks_list_bounds_test.go), never row count alone.
+const listTasksMaxResultText = 4000
+
+// listTasksMaxOutput bounds the per-row output tail in the LIST for the same
+// reason. taskInfoFromTask keeps 10 KB for the DETAIL view; the list needs far
+// less, and 500 rows x 10 KB is a 5 MB response on its own.
+const listTasksMaxOutput = 2000
+
+// listTasksMaxResponseBytes is the invariant the per-field caps exist to serve.
+// Fixed per-row caps are NOT sufficient on their own: 500 rows x (4000+2000)
+// is still a 3 MB response. The per-row budget is therefore derived from the
+// row count so the total holds at ANY limit — which is the only form of this
+// cap that cannot be reintroduced by a future field or a larger ?limit=.
+const listTasksMaxResponseBytes = 1 << 20 // 1 MiB
+
+// listTasksTextBudget splits the response byte budget across rows, returning
+// the per-row cap for resultText and output. Two thirds go to resultText (the
+// answer, which is what a list preview shows) and one third to output.
+// Floors keep a huge list from degrading previews to nothing; the ceilings are
+// the fixed caps above for the common small-list case.
+func listTasksTextBudget(rows int) (resultText, output int) {
+	if rows < 1 {
+		rows = 1
+	}
+	// Leave ~40% headroom for JSON overhead, titles, ids, timestamps and the
+	// project/todo envelope.
+	perRow := (listTasksMaxResponseBytes * 6 / 10) / rows
+
+	resultText = perRow * 2 / 3
+	output = perRow - resultText
+
+	if resultText > listTasksMaxResultText {
+		resultText = listTasksMaxResultText
+	}
+	if resultText < 256 {
+		resultText = 256
+	}
+	if output > listTasksMaxOutput {
+		output = listTasksMaxOutput
+	}
+	if output < 128 {
+		output = 128
+	}
+	return resultText, output
+}
+
+// trimForList truncates a free-text field to n bytes, keeping the TAIL (the
+// most recent output is what a list preview should show) and marking the cut so
+// a client never renders a silent truncation as the whole answer.
+func trimForList(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "…[truncated — open the task for the full text]\n" + s[len(s)-n:]
+}
+
 func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := s.taskMgr.ListTasks()
 	total := len(tasks)
@@ -3987,6 +4057,7 @@ func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 
 	// Enrich AFTER limiting. Doing it first did per-task work for every task on
 	// the box to build rows that were then thrown away.
+	maxResultText, maxOutput := listTasksTextBudget(len(tasks))
 	for i := range tasks {
 		s.enrichTaskInfoVideo(&tasks[i], r)
 		// Drop the full conversation transcript from the LIST. ListTasks copies
@@ -4001,6 +4072,14 @@ func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 		// that function and some legitimately read turns.
 		tasks[i].TurnCount = len(tasks[i].Turns)
 		tasks[i].Turns = nil
+
+		// Bound the remaining free-text fields. See listTasksMaxResultText:
+		// nilling Turns alone let a single 1.8 MB ResultText rebuild the same
+		// unservable response that reads to the user as "machine never
+		// answered". The detail endpoint (getTask -> taskMgr.GetTask) is
+		// untouched and still returns the full text.
+		tasks[i].ResultText = trimForList(tasks[i].ResultText, maxResultText)
+		tasks[i].Output = trimForList(tasks[i].Output, maxOutput)
 	}
 
 	resp := map[string]interface{}{
