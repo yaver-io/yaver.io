@@ -324,6 +324,21 @@ run_step() { # name, guard, command...
 # refuse unless the release is already there with assets — CI builds them
 # (signed + notarized for darwin, which this box cannot do for linux/windows
 # anyway). npm last, always.
+# cli-build — build, sign and notarize the binaries HERE, then cut the release.
+# CLAUDE.md is local-first: this Mac has the Developer ID identity, so there is
+# no reason to spend CI minutes and mirror signing material into GitHub secrets.
+# Runs BEFORE npm, because postinstall downloads these tarballs with no retry.
+run_step cli-build "$ASC_OK" bash -c '
+  set -e
+  VERSION=$(python3 -c "import json;print(json.load(open(\"versions.json\"))[\"cli\"])")
+  if [ "$(gh release view "v$VERSION" --json assets -q ".assets|length" 2>/dev/null || echo 0)" -ge 5 ]; then
+    echo "release v$VERSION already has its binaries — skipping build"; exit 0
+  fi
+  ./scripts/build-cli-native.sh
+  gh release create "v$VERSION" --title "Yaver CLI v$VERSION" --generate-notes dist/cli-$VERSION/* \
+    || gh release upload "v$VERSION" dist/cli-$VERSION/* --clobber
+  echo "release v$VERSION published with native-built binaries"'
+
 run_step npm "$NPM_OK" bash -c '
   set -e
   VERSION=$(python3 -c "import json;print(json.load(open(\"versions.json\"))[\"cli\"])")
