@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -623,62 +624,262 @@ func (m *RemoteRuntimeManager) Create(workDir, framework, targetID, transportMod
 	return session, nil
 }
 
-// rnExpoRunCommand returns the `npx expo run:<platform>` invocation that builds
-// an RN/Expo project into a booted simulator/emulator and launches it CONNECTED
-// TO METRO in dev mode — which is the whole speed win: once running, a code patch
-// hot-reloads via Metro Fast Refresh sub-second (see the design doc), instead of
-// rebuilding a Hermes bundle. Debug/dev build on purpose; a release build would
-// throw away Fast Refresh.
+// iosSimBuildArgs returns the xcodebuild invocation that builds an RN/Expo iOS
+// app for a SIMULATOR. Deliberately expo-CLI-independent — we drive xcodebuild +
+// simctl directly, both first-party Apple tools, so nothing hinges on a
+// third-party CLI's licensing or version churn.
 //
-// Split out (not inlined) so it is unit-testable without a simulator: the command
-// string is the contract, the shell-out is trivial.
-func rnExpoRunCommand(targetID, udid string) ([]string, error) {
-	switch targetID {
-	case "ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator":
-		// --device <udid> targets the exact booted sim; expo builds + installs +
-		// launches there, wiring Metro automatically.
-		return []string{"npx", "expo", "run:ios", "--device", udid}, nil
-	case "android-emulator", "android-device", "android-wear", "android-tv", "android-xr", "android-auto":
-		// expo picks the single attached emulator/device; adb serial targeting is
-		// implicit when one is up.
-		return []string{"npx", "expo", "run:android"}, nil
+// The destination is the GENERIC `platform=iOS Simulator`, never a specific
+// device udid: on Xcode 26.4 `-destination id=<udid>` fails to enumerate a
+// simctl-booted device ("Unable to find a destination matching …"), but the
+// generic destination resolves and produces a Debug-iphonesimulator .app we then
+// `simctl install` onto the exact booted device. Debug config keeps the app on
+// Metro so a code patch Fast-Refreshes sub-second — the whole point of streaming
+// a sim. CODE_SIGNING_ALLOWED=NO because simulator builds don't need signing.
+//
+// Split out for unit-testing: the arg vector is the contract.
+//
+// ARCHS is pinned to the HOST's native simulator arch (arm64 on Apple Silicon,
+// x86_64 on Intel). The generic destination otherwise builds BOTH slices, and on
+// an Apple Silicon Mac the x86_64 sim slice fails to compile (some pods — fmt,
+// etc. — don't build x86_64 under this toolchain), which is a real cold-build
+// failure the hardware test caught. The booted sim runs the host arch anyway, so
+// a single-arch build is both correct and faster.
+func iosSimBuildArgs(workspace, scheme, derivedData, arch string) []string {
+	return []string{
+		"xcodebuild",
+		"-workspace", workspace,
+		"-scheme", scheme,
+		"-configuration", "Debug",
+		"-destination", "generic/platform=iOS Simulator",
+		"-derivedDataPath", derivedData,
+		"ARCHS=" + arch,
+		"ONLY_ACTIVE_ARCH=NO",
+		"CODE_SIGNING_ALLOWED=NO",
+		"build",
 	}
-	return nil, fmt.Errorf("RN simulator build not supported for target %q", targetID)
 }
 
-// buildAndLaunchRNInSimulator builds the RN/Expo project at workDir into the
-// session's booted simulator and launches it in dev mode against Metro. Long
-// running (a cold build is minutes); the caller runs it off the request path and
-// streams progress. Returns when the build+launch finishes or ctx is cancelled.
+// hostSimulatorArch maps the Go host arch to the xcodebuild ARCHS value for the
+// native simulator slice.
+func hostSimulatorArch() string {
+	if runtime.GOARCH == "amd64" {
+		return "x86_64"
+	}
+	return "arm64"
+}
+
+// discoverIOSWorkspaceScheme finds the .xcworkspace under <workDir>/ios and the
+// scheme to build. For an Expo/RN prebuild the scheme name equals the workspace
+// basename (e.g. Talos.xcworkspace → scheme "Talos"); we return that and let
+// xcodebuild validate it.
+func discoverIOSWorkspaceScheme(workDir string) (workspace, scheme string, err error) {
+	iosDir := filepath.Join(workDir, "ios")
+	entries, err := os.ReadDir(iosDir)
+	if err != nil {
+		return "", "", fmt.Errorf("no ios/ dir in %s: %w", workDir, err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".xcworkspace") {
+			ws := filepath.Join(iosDir, e.Name())
+			return ws, strings.TrimSuffix(e.Name(), ".xcworkspace"), nil
+		}
+	}
+	return "", "", fmt.Errorf("no .xcworkspace under %s/ios (run prebuild first)", workDir)
+}
+
+// isRNSimulatorTarget reports whether a target is an RN sim/emulator we can
+// build-and-launch a guest RN app into (Apple sims via xcodebuild+simctl on
+// macOS; Android emulator/redroid via gradle+adb, which also runs on the Linux
+// Cloud Workspace so an Apple client can stream a Linux-hosted Android runtime).
+func isRNSimulatorTarget(targetID string) bool {
+	switch targetID {
+	case "ios-simulator", "ipados-simulator", "watchos-simulator", "tvos-simulator", "visionos-simulator",
+		"android-emulator", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
+		return true
+	}
+	return false
+}
+
+// buildAndLaunchRNInSimulator dispatches the guest RN build to the platform path:
+// Apple sims → xcodebuild+simctl (macOS); Android emulator/redroid → gradle+adb
+// (runs on Linux too, which is the Cloud-Workspace normie case — an iPhone client
+// streaming a Linux-hosted redroid Android). First-party tools only, no expo CLI.
 func (s *HTTPServer) buildAndLaunchRNInSimulator(ctx context.Context, session RemoteRuntimeSession, workDir string) error {
 	workDir = strings.TrimSpace(workDir)
 	if workDir == "" {
 		return fmt.Errorf("RN simulator run needs a workDir")
 	}
-	args, err := rnExpoRunCommand(session.TargetID, session.DeviceID)
+	switch session.TargetID {
+	case "android-emulator", "android-wear", "android-tv", "android-xr", "android-auto", remoteRuntimeRedroidTargetID:
+		return s.buildAndLaunchRNAndroid(ctx, session, workDir)
+	}
+	return s.buildAndLaunchRNiOS(ctx, session, workDir)
+}
+
+// buildAndLaunchRNiOS builds the RN project into the session's booted Apple
+// simulator and launches it in dev mode via first-party Apple tools only
+// (xcodebuild + simctl, no expo CLI): build for the generic simulator
+// destination, find the produced .app, `simctl install` it onto the exact booted
+// device, read its bundle id, and `simctl launch`. Long running (a cold build is
+// minutes); the caller runs it off the request path and streams progress.
+func (s *HTTPServer) buildAndLaunchRNiOS(ctx context.Context, session RemoteRuntimeSession, workDir string) error {
+	udid := strings.TrimSpace(session.DeviceID)
+	if udid == "" {
+		return fmt.Errorf("session has no booted simulator device id")
+	}
+	if runtime.GOOS != "darwin" {
+		return fmt.Errorf("iOS simulator builds need macOS")
+	}
+
+	workspace, scheme, err := discoverIOSWorkspaceScheme(workDir)
 	if err != nil {
 		return err
 	}
-	if s != nil && s.devServerMgr != nil {
-		s.devServerMgr.EmitLog(fmt.Sprintf("[rn-sim] building %s into %s (%s) — dev mode, Fast Refresh on",
-			basename(workDir), session.TargetLabel, session.DeviceID))
+	derivedData := filepath.Join(os.TempDir(), "yaver-rnsim-"+scheme)
+	emit := func(msg string) {
+		if s != nil && s.devServerMgr != nil {
+			s.devServerMgr.EmitLog("[rn-sim] " + msg)
+		}
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir = workDir
-	// Force a non-interactive expo and keep Metro in dev mode.
-	cmd.Env = append(os.Environ(), "CI=1", "EXPO_NO_TELEMETRY=1")
-	out, runErr := cmd.CombinedOutput()
-	if s != nil && s.devServerMgr != nil {
+	emit(fmt.Sprintf("building %s (scheme %s) for %s — Debug, Metro Fast Refresh", basename(workDir), scheme, session.TargetLabel))
+
+	args := iosSimBuildArgs(workspace, scheme, derivedData, hostSimulatorArch())
+	build := exec.CommandContext(ctx, args[0], args[1:]...)
+	build.Dir = workDir
+	if out, err := build.CombinedOutput(); err != nil {
 		tail := strings.TrimSpace(string(out))
 		if len(tail) > 600 {
 			tail = tail[len(tail)-600:]
 		}
-		s.devServerMgr.EmitLog("[rn-sim] " + tail)
+		emit("xcodebuild failed: " + tail)
+		return fmt.Errorf("xcodebuild simulator build failed: %w", err)
 	}
-	if runErr != nil {
-		return fmt.Errorf("expo run failed: %w", runErr)
+
+	// Find the built .app in the simulator products dir.
+	productsDir := filepath.Join(derivedData, "Build", "Products", "Debug-iphonesimulator")
+	appPath, err := findFirstDotApp(productsDir)
+	if err != nil {
+		return fmt.Errorf("locate built .app: %w", err)
 	}
+	emit("built " + filepath.Base(appPath) + "; installing into the simulator")
+
+	if out, err := exec.CommandContext(ctx, "xcrun", "simctl", "install", udid, appPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("simctl install failed: %s", strings.TrimSpace(string(out)))
+	}
+	bundleID, err := bundleIDFromApp(appPath)
+	if err != nil {
+		return fmt.Errorf("read bundle id: %w", err)
+	}
+	if out, err := exec.CommandContext(ctx, "xcrun", "simctl", "launch", udid, bundleID).CombinedOutput(); err != nil {
+		return fmt.Errorf("simctl launch %s failed: %s", bundleID, strings.TrimSpace(string(out)))
+	}
+	emit("launched " + bundleID + " — running in the simulator, streaming; edit code and Metro Fast Refresh applies it live")
 	return nil
+}
+
+// findFirstDotApp returns the first *.app bundle directly under dir.
+func findFirstDotApp(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".app") {
+			return filepath.Join(dir, e.Name()), nil
+		}
+	}
+	return "", fmt.Errorf("no .app in %s", dir)
+}
+
+// bundleIDFromApp reads CFBundleIdentifier from a built .app's Info.plist.
+func bundleIDFromApp(appPath string) (string, error) {
+	out, err := exec.Command("defaults", "read", filepath.Join(appPath, "Info"), "CFBundleIdentifier").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// androidGradleAssembleArgs is the first-party (Android SDK, no expo CLI) build
+// of a debug APK. Debug keeps the app on Metro so a code patch Fast-Refreshes
+// live. Runs on Linux too — which is the Cloud Workspace path where a redroid
+// Android is streamed to an Apple client.
+func androidGradleAssembleArgs() []string {
+	return []string{"./gradlew", ":app:assembleDebug"}
+}
+
+// buildAndLaunchRNAndroid builds a debug APK with gradle and installs+launches it
+// on the session's adb-reachable device — an Android emulator (macOS/local) OR a
+// redroid container (Linux Cloud Workspace). Both are just an adb serial once
+// connected, so this one path serves the "Apple client, Linux server" case.
+func (s *HTTPServer) buildAndLaunchRNAndroid(ctx context.Context, session RemoteRuntimeSession, workDir string) error {
+	serial := strings.TrimSpace(session.DeviceID)
+	if serial == "" {
+		return fmt.Errorf("android session has no adb device serial (emulator/redroid not attached)")
+	}
+	androidDir := filepath.Join(workDir, "android")
+	if _, err := os.Stat(filepath.Join(androidDir, "gradlew")); err != nil {
+		return fmt.Errorf("no android/gradlew in %s (run prebuild first): %w", workDir, err)
+	}
+	emit := func(msg string) {
+		if s != nil && s.devServerMgr != nil {
+			s.devServerMgr.EmitLog("[rn-sim/android] " + msg)
+		}
+	}
+	emit(fmt.Sprintf("gradle assembleDebug for %s → %s (Metro Fast Refresh)", basename(workDir), session.TargetLabel))
+
+	args := androidGradleAssembleArgs()
+	build := exec.CommandContext(ctx, args[0], args[1:]...)
+	build.Dir = androidDir
+	build.Env = append(os.Environ(), "GRADLE_OPTS=-Dorg.gradle.daemon=false")
+	if out, err := build.CombinedOutput(); err != nil {
+		tail := strings.TrimSpace(string(out))
+		if len(tail) > 600 {
+			tail = tail[len(tail)-600:]
+		}
+		emit("gradle failed: " + tail)
+		return fmt.Errorf("gradle assembleDebug failed: %w", err)
+	}
+	apk, err := findFirstDebugAPK(androidDir)
+	if err != nil {
+		return fmt.Errorf("locate debug apk: %w", err)
+	}
+	emit("built " + filepath.Base(apk) + "; adb install onto " + serial)
+	if out, err := exec.CommandContext(ctx, "adb", "-s", serial, "install", "-r", apk).CombinedOutput(); err != nil {
+		return fmt.Errorf("adb install failed: %s", strings.TrimSpace(string(out)))
+	}
+	pkg, activity := readAndroidLaunchInfo(apk)
+	if pkg == "" {
+		return fmt.Errorf("could not read package name from %s", apk)
+	}
+	comp := pkg + "/" + activity
+	if activity == "" {
+		comp = pkg
+	}
+	if out, err := exec.CommandContext(ctx, "adb", "-s", serial, "shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1").CombinedOutput(); err != nil {
+		// monkey-launch failed; try an explicit component start.
+		if out2, err2 := exec.CommandContext(ctx, "adb", "-s", serial, "shell", "am", "start", "-n", comp).CombinedOutput(); err2 != nil {
+			return fmt.Errorf("adb launch failed: %s / %s", strings.TrimSpace(string(out)), strings.TrimSpace(string(out2)))
+		}
+	}
+	emit("launched " + pkg + " — running on the Android device, streaming; edit code and Metro Fast Refresh applies it live")
+	return nil
+}
+
+// findFirstDebugAPK returns the first debug APK gradle produced.
+func findFirstDebugAPK(androidDir string) (string, error) {
+	dir := filepath.Join(androidDir, "app", "build", "outputs", "apk", "debug")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".apk") {
+			return filepath.Join(dir, e.Name()), nil
+		}
+	}
+	return "", fmt.Errorf("no .apk in %s", dir)
 }
 
 // launchAppOnRuntimeTarget dispatches a `launch-app` session command to
@@ -899,8 +1100,8 @@ func (s *HTTPServer) handleRemoteRuntimeSessionCommand(w http.ResponseWriter, r 
 			jsonError(w, http.StatusBadRequest, "run-guest needs a workDir (the RN project root)")
 			return
 		}
-		if _, err := rnExpoRunCommand(session.TargetID, session.DeviceID); err != nil {
-			jsonError(w, http.StatusBadRequest, err.Error())
+		if !isRNSimulatorTarget(session.TargetID) {
+			jsonError(w, http.StatusBadRequest, fmt.Sprintf("run-guest not supported for target %q", session.TargetID))
 			return
 		}
 		mgr.Update(session.ID, func(current *RemoteRuntimeSession) {

@@ -262,37 +262,59 @@ func TestHandleRemoteRuntimeSessionCommandLaunchFeedback(t *testing.T) {
 	}
 }
 
-// The RN→simulator build command must be `expo run` in DEV mode (Metro + Fast
-// Refresh) — never a release build, which would throw away the sub-second
-// hot-reload that is the entire reason to stream a sim instead of Hermes.
-func TestRNExpoRunCommand(t *testing.T) {
-	ios, err := rnExpoRunCommand("ios-simulator", "UDID-123")
-	if err != nil {
-		t.Fatalf("ios command: %v", err)
-	}
-	got := strings.Join(ios, " ")
-	if got != "npx expo run:ios --device UDID-123" {
-		t.Errorf("ios run command = %q", got)
-	}
-	// tvOS/watch/ipad all go through expo run:ios with their device udid.
-	for _, tgt := range []string{"tvos-simulator", "ipados-simulator", "watchos-simulator", "visionos-simulator"} {
-		cmd, err := rnExpoRunCommand(tgt, "X")
-		if err != nil {
-			t.Errorf("%s: %v", tgt, err)
+// The iOS simulator build must use FIRST-PARTY tools (xcodebuild + simctl, no
+// expo CLI): a GENERIC simulator destination (a specific-udid destination fails
+// to enumerate a simctl-booted device on Xcode 26.4), a single HOST arch (the
+// x86_64 slice fails to compile on Apple Silicon), Debug config (keeps Metro Fast
+// Refresh), and no code signing.
+func TestIOSSimBuildArgs(t *testing.T) {
+	args := iosSimBuildArgs("/p/ios/Talos.xcworkspace", "Talos", "/tmp/dd", "arm64")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"xcodebuild",
+		"-workspace /p/ios/Talos.xcworkspace",
+		"-scheme Talos",
+		"-configuration Debug",           // Fast Refresh, not release
+		"generic/platform=iOS Simulator", // NOT id=<udid> — that fails on 26.4
+		"ARCHS=arm64",                    // single host slice; x86_64 fails on Apple Silicon
+		"CODE_SIGNING_ALLOWED=NO",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("iosSimBuildArgs missing %q\ngot: %s", want, joined)
 		}
-		if len(cmd) == 0 || cmd[2] != "run:ios" {
-			t.Errorf("%s should build via expo run:ios, got %v", tgt, cmd)
+	}
+	// Must never target a specific udid (the enumeration-failure form).
+	if strings.Contains(joined, "id=") {
+		t.Error("build must use the generic destination, never a specific udid")
+	}
+}
+
+func TestHostSimulatorArch(t *testing.T) {
+	got := hostSimulatorArch()
+	if got != "arm64" && got != "x86_64" {
+		t.Errorf("host sim arch = %q, want arm64 or x86_64", got)
+	}
+}
+
+// The Android build is first-party gradle (assembleDebug) so it runs on the Linux
+// Cloud Workspace too — the Apple-client / Linux-server redroid case. Debug keeps
+// Metro Fast Refresh.
+func TestAndroidGradleAssembleArgs(t *testing.T) {
+	got := strings.Join(androidGradleAssembleArgs(), " ")
+	if got != "./gradlew :app:assembleDebug" {
+		t.Errorf("android build = %q, want ./gradlew :app:assembleDebug", got)
+	}
+}
+
+func TestIsRNSimulatorTarget(t *testing.T) {
+	for _, ok := range []string{"ios-simulator", "tvos-simulator", "android-emulator", "android-redroid"} {
+		if !isRNSimulatorTarget(ok) {
+			t.Errorf("%s should be an RN sim target", ok)
 		}
 	}
-	and, err := rnExpoRunCommand("android-emulator", "")
-	if err != nil {
-		t.Fatalf("android command: %v", err)
-	}
-	if strings.Join(and, " ") != "npx expo run:android" {
-		t.Errorf("android run command = %q", strings.Join(and, " "))
-	}
-	// A non-sim target must be refused, not silently mis-built.
-	if _, err := rnExpoRunCommand("browser-window", "X"); err == nil {
-		t.Error("browser target must not resolve an RN build command")
+	for _, no := range []string{"browser-window", "desktop-screen", ""} {
+		if isRNSimulatorTarget(no) {
+			t.Errorf("%s should NOT be an RN sim target", no)
+		}
 	}
 }
