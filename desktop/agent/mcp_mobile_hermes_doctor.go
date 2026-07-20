@@ -110,20 +110,34 @@ func mobileHermesDoctor(req mobileHermesDoctorInput) map[string]interface{} {
 
 	if compat, err := BuildNativeModuleCompatReportWith(projectDir, req.SupportedRuntimeSets, nativeModuleOverlay(req)); err == nil {
 		out["nativeCompatibility"] = compat
+		// This MUST mirror the build gate in devserver_http.go
+		// (handleBuildNativeBundle), or the doctor becomes a false green in the
+		// opposite direction: until 2026-07-20 it BLOCKED on missing modules and
+		// merely WARNED on version drift — exactly backwards from what the build
+		// path enforces. A doctor that says "blocked" for a load the build path
+		// now allows (a guarded require of an absent module renders a fallback)
+		// sends the agent to fix the wrong thing. Whatever the gate blocks on, the
+		// doctor blocks on; whatever the gate warns on, the doctor warns on.
+		//
+		// Missing module = WARNING: it throws only if the guest calls it unguarded.
 		if len(compat.Incompatible) > 0 {
-			addBlocker("Native modules not present in the Yaver phone runtime: " + strings.Join(compat.Incompatible, ", ") + ".")
+			addWarning("Native modules declared by the project are not in the Yaver phone runtime: " +
+				strings.Join(compat.Incompatible, ", ") +
+				". They throw only if called unguarded — a require() wrapped in try/catch renders a fallback and loads fine.")
 		}
+		// Version / framework drift = BLOCKER: it corrupts the JSI/TurboModule
+		// contract for a module the host DOES register, which no guest guard fixes.
 		if len(compat.VersionMismatches) > 0 {
-			addWarning(fmt.Sprintf("%d native module version mismatch(es) may fail at runtime.", len(compat.VersionMismatches)))
+			addBlocker(fmt.Sprintf("%d native module version mismatch(es) at a likely-breaking boundary.", len(compat.VersionMismatches)))
 		}
 		if compat.ReactVersionMismatch != nil {
-			addWarning("React version differs from the selected Yaver phone runtime.")
+			addBlocker("React version differs from the selected Yaver phone runtime family.")
 		}
 		if compat.ExpoVersionMismatch != nil {
-			addWarning("Expo version differs from the selected Yaver phone runtime.")
+			addBlocker("Expo version differs from the selected Yaver phone runtime family.")
 		}
 		if compat.RNVersionMismatch != nil {
-			addWarning("React Native version differs from the selected Yaver phone runtime.")
+			addBlocker("React Native version differs from the selected Yaver phone runtime family.")
 		}
 	} else {
 		addWarning("Native-module compatibility could not be checked: " + err.Error())
