@@ -81,6 +81,45 @@ func TestDecidePullBeforeBuild_NoUpstream(t *testing.T) {
 	}
 }
 
+// A guest checkout on a fresh branch with NO upstream, but a remote whose main
+// has moved ahead, should fast-forward to origin/main rather than silently
+// skip. This is the "pull main before a Hermes reload" gap: without it, a guest
+// reload looked like it ignored the latest code.
+func TestDecidePullBeforeBuild_NoUpstreamFastForwardsToDefault(t *testing.T) {
+	remote := initBareRemote(t)
+	a := cloneAndConfig(t, remote)
+	gitCommitFile(t, a, "src/index.js", "x", "init")
+	gitInDir(t, a, "push", "-q", "-u", "origin", "main")
+
+	// Guest clone, then move onto a NEW branch with no upstream set.
+	guest := cloneAndConfig(t, remote)
+	gitInDir(t, guest, "checkout", "-q", "-b", "feature-no-upstream")
+
+	// origin/main moves ahead.
+	gitCommitFile(t, a, "src/feature.js", "y", "feature in a")
+	gitInDir(t, a, "push", "-q")
+
+	d := decidePullBeforeBuild(guest, false, false)
+	if d.Action != pullActionFFTarget {
+		t.Fatalf("no-upstream clean+behind default should ff-target, got %+v", d)
+	}
+	if !strings.Contains(d.Target, "/main") {
+		t.Errorf("target should be the remote's main; got %q", d.Target)
+	}
+	// And it must actually execute cleanly.
+	if summary, err := executePullDecision(guest, d); err != nil {
+		t.Fatalf("ff-target execution failed: %v (%s)", err, summary)
+	}
+	if !fileExistsInDir(guest, "src/feature.js") {
+		t.Error("after ff-target the guest should have the new file from origin/main")
+	}
+}
+
+func fileExistsInDir(dir, rel string) bool {
+	_, err := os.Stat(filepath.Join(dir, rel))
+	return err == nil
+}
+
 func TestDecidePullBeforeBuild_CleanUpToDate(t *testing.T) {
 	remote := initBareRemote(t)
 	clone := cloneAndConfig(t, remote)
