@@ -120,6 +120,21 @@ func deploySyncGit(ctx context.Context, repo string, commitPaths []string, messa
 		remote = strings.Fields(out)[0]
 	}
 
+	// This verb deploys MAIN. Pushing HEAD:main from a feature branch would
+	// land work nobody reviewed under a name nobody expects, and the deploy box
+	// would then ship it — so the branch is checked, never assumed. Refuse
+	// loudly instead of guessing what the caller meant.
+	branch, err := gitOut(ctx, repo, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return log, fmt.Errorf("git rev-parse: %s", branch)
+	}
+	if branch != "main" {
+		return log, fmt.Errorf(
+			"refusing to deploy: this checkout is on %q, not main — deploy_from_machine always ships main. "+
+				"Merge %s into main yourself (so the merge is yours, not a side effect of a deploy), then run this again",
+			branch, branch)
+	}
+
 	if out, err := gitOut(ctx, repo, "fetch", remote, "main"); err != nil {
 		return log, fmt.Errorf("git fetch: %s", out)
 	}
@@ -134,7 +149,24 @@ func deploySyncGit(ctx context.Context, repo string, commitPaths []string, messa
 	case behind != "0" && ahead != "0":
 		out, err := gitOut(ctx, repo, "pull", "--rebase", remote, "main")
 		if err != nil {
-			return log, fmt.Errorf("git pull --rebase (diverged by %s/%s): %s — resolve by hand, this verb will not force", ahead, behind, out)
+			// A failed rebase leaves the repo MID-REBASE: detached HEAD, a
+			// conflicted index, and every later git command in this shared
+			// checkout failing in a way nobody connects back to a deploy. Put
+			// it back exactly as we found it before reporting.
+			conflicted, _ := gitOut(ctx, repo, "diff", "--name-only", "--diff-filter=U")
+			if _, abortErr := gitOut(ctx, repo, "rebase", "--abort"); abortErr != nil {
+				return log, fmt.Errorf(
+					"rebase onto %s/main failed AND could not be aborted — this checkout is stranded mid-rebase, "+
+						"fix it by hand with `git rebase --abort`: %s", remote, out)
+			}
+			log = append(log, "rebase failed; checkout restored (rebase --abort)")
+			if strings.TrimSpace(conflicted) != "" {
+				return log, fmt.Errorf(
+					"cannot deploy: %s local commit(s) conflict with %s/main in %s. "+
+						"Resolve it as its own commit — a deploy must never invent a merge resolution on your behalf",
+					ahead, remote, strings.Join(strings.Fields(conflicted), ", "))
+			}
+			return log, fmt.Errorf("git pull --rebase (diverged %s ahead / %s behind): %s", ahead, behind, out)
 		}
 		log = append(log, fmt.Sprintf("rebased %s local commit(s) onto %s/main", ahead, remote))
 	case behind != "0":
