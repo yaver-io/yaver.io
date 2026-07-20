@@ -287,6 +287,38 @@ run_step() { # name, guard, command...
 # "convex/server"` (esbuild, not Convex, and nothing about the message says
 # "run npm install"). Each step installs its own deps first — idempotent and
 # nearly free once warm.
+# npm — publish the CLI. This step existed as a PREFLIGHT with no deploy, so
+# the script would cheerfully report "npm OK" and then never publish anything.
+#
+# ORDER IS LOAD-BEARING: cli/src/postinstall.js downloads the platform tarballs
+# from the GitHub Release for this exact version, with NO retry. Publishing to
+# npm before that release exists hard-fails every install in the window. So we
+# refuse unless the release is already there with assets — CI builds them
+# (signed + notarized for darwin, which this box cannot do for linux/windows
+# anyway). npm last, always.
+run_step npm "$NPM_OK" bash -c '
+  set -e
+  VERSION=$(python3 -c "import json;print(json.load(open(\"versions.json\"))[\"cli\"])")
+  PKG=$(python3 -c "import json;print(json.load(open(\"cli/package.json\"))[\"version\"])")
+  if [ "$VERSION" != "$PKG" ]; then
+    echo "versions.json ($VERSION) != cli/package.json ($PKG) — refusing to publish a mismatched version"; exit 1
+  fi
+  LIVE=$(npm view yaver-cli version 2>/dev/null || echo none)
+  if [ "$LIVE" = "$VERSION" ]; then
+    echo "npm already serves $VERSION — nothing to publish"; exit 0
+  fi
+  ASSETS=$(gh release view "v$VERSION" --json assets -q ".assets|length" 2>/dev/null || echo 0)
+  if [ "${ASSETS:-0}" -lt 5 ]; then
+    echo "GitHub release v$VERSION has ${ASSETS:-0} asset(s); postinstall needs the platform tarballs."
+    echo "Run the build+release first:  gh workflow run release-cli.yml --ref main"
+    exit 1
+  fi
+  cd cli && npm ci --silent && npm publish --access public
+  cd .. && sleep 5
+  GOT=$(npm view yaver-cli version 2>/dev/null || echo none)
+  [ "$GOT" = "$VERSION" ] || { echo "npm still serves $GOT after publish"; exit 1; }
+  echo "npm serves $GOT"'
+
 run_step convex "$CONVEX_OK" bash -c 'cd backend && npm install --silent && npx convex deploy --yes'
 run_step web    "$CF_OK"     bash -c 'cd web && npm install --silent && cd .. && ./scripts/deploy-web.sh'
 # mobile/ios/ is gitignored apart from a few force-added overlays, so a FRESH
