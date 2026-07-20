@@ -170,6 +170,38 @@ function runnerAuthIssue(
   return null;
 }
 
+function runnerFetchAlertMessage(fetchState: RunnerFetchState): string | undefined {
+  if (fetchState === "loading" || fetchState === "idle") {
+    return "Still reading this machine's agents — the list may be incomplete.";
+  }
+  if (fetchState === "timed-out") {
+    return "Agent status timed out — showing fallback choices while the machine retries.";
+  }
+  if (fetchState === "http-error") {
+    return "Agent status unavailable — the machine returned an HTTP error, so the list may be incomplete.";
+  }
+  if (fetchState === "network-error") {
+    return "Agent status unavailable — the machine could not be reached, so the list may be incomplete.";
+  }
+  return undefined;
+}
+
+function runnerPickerEmptyStateText(fetchState: RunnerFetchState): string {
+  if (fetchState === "loading" || fetchState === "idle") {
+    return "Loading agents… if this persists, make sure your dev machine has a coding agent installed (claude, codex, opencode).";
+  }
+  if (fetchState === "timed-out") {
+    return "Agent status timed out. Retry and check the machine connection if this keeps happening.";
+  }
+  if (fetchState === "http-error") {
+    return "Agent status unavailable because the machine returned an HTTP error. Retry, then check the logs if it keeps failing.";
+  }
+  if (fetchState === "network-error") {
+    return "Agent status unavailable because the machine could not be reached. Retry once the connection is back.";
+  }
+  return "No coding agents available on this machine yet. Install claude, codex, or opencode and retry.";
+}
+
 // ── Typing indicator ─────────────────────────────────────────────────
 
 function TypingIndicator({ color }: { color: string }) {
@@ -4754,9 +4786,7 @@ export default function TasksScreen() {
                         const choices = installed.length > 0 ? installed : fallback;
                         Alert.alert(
                           "Coding agent",
-                          haveRunnerData
-                            ? undefined
-                            : "Still reading this machine's agents — the list may be incomplete.",
+                          haveRunnerData ? undefined : runnerFetchAlertMessage(runnersFetchState),
                           [
                             ...choices.map((r) => ({
                               text:
@@ -4974,9 +5004,27 @@ export default function TasksScreen() {
               </Pressable>
             </View>
             {availableRunners.length === 0 && availableModels.length === 0 && (
-              <Text style={{ color: c.textMuted, fontSize: 13, paddingHorizontal: 16, paddingVertical: 20, textAlign: "center" }}>
-                Loading agents… if this persists, make sure your dev machine has a coding agent installed (claude, codex, opencode).
-              </Text>
+              <View style={{ paddingHorizontal: 16, paddingVertical: 20, gap: 12 }}>
+                <Text style={{ color: c.textMuted, fontSize: 13, textAlign: "center" }}>
+                  {runnerPickerEmptyStateText(runnersFetchState)}
+                </Text>
+                {runnersFetchState !== "loading" && runnersFetchState !== "idle" ? (
+                  <Pressable
+                    onPress={() => { void refreshRunnerState(); }}
+                    style={[
+                      s.bannerInlineBtn,
+                      {
+                        backgroundColor: c.accentSoft,
+                        alignSelf: "center",
+                        minWidth: 92,
+                        justifyContent: "center",
+                      },
+                    ]}
+                  >
+                    <Text style={[s.bannerInlineBtnText, { color: c.accent, textAlign: "center" }]}>Retry</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             )}
             {availableRunners.length > 0 && (() => {
               // Always surface the three first-class coding agents — the
