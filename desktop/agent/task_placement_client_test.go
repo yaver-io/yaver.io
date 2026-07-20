@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInferPlacementTaskKind(t *testing.T) {
@@ -164,6 +165,30 @@ func TestActivateTaskPlacementPreservesStructuredBlocker(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "runner_auth_required") || !strings.Contains(err.Error(), "Codex needs sign-in") {
 		t.Fatalf("error text = %q", err.Error())
+	}
+}
+
+func TestPreviewTaskPlacementTimesOutFast(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tasks/placement/preview" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		time.Sleep(taskPlacementHTTPTimeout + 250*time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer backend.Close()
+
+	s := &HTTPServer{
+		convexURL: backend.URL,
+		token:     "owner-token",
+	}
+	start := time.Now()
+	_, err := s.previewTaskPlacement(context.Background(), taskPlacementRecordRequest{Kind: "unknown"})
+	if err == nil {
+		t.Fatal("previewTaskPlacement unexpectedly succeeded against a slow backend")
+	}
+	if elapsed := time.Since(start); elapsed > taskPlacementPreviewHTTPTimeout+300*time.Millisecond {
+		t.Fatalf("previewTaskPlacement took %v, want <= %v", elapsed, taskPlacementPreviewHTTPTimeout+300*time.Millisecond)
 	}
 }
 

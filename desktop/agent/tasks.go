@@ -1159,12 +1159,18 @@ type TaskInfo struct {
 	Placement      *TaskPlacementMetadata `json:"placement,omitempty"`
 }
 
+type taskStore interface {
+	Save(tasks map[string]*Task)
+	SaveRecords(records []persistedTask)
+	Load() map[string]*Task
+}
+
 // TaskManager manages the lifecycle of tasks.
 type TaskManager struct {
 	mu          sync.RWMutex
 	tasks       map[string]*Task
 	workDir     string
-	store       *TaskStore
+	store       taskStore
 	runner      RunnerConfig
 	TmuxMgr     *TmuxManager  // manages tmux session adoption (nil if tmux unavailable)
 	Sandbox     SandboxConfig // Command sandbox configuration
@@ -1200,7 +1206,7 @@ type TaskManager struct {
 
 // NewTaskManager creates a new TaskManager. If store is non-nil, previously
 // persisted tasks are loaded from disk (running/queued ones become stopped).
-func NewTaskManager(workDir string, store *TaskStore, runner RunnerConfig) *TaskManager {
+func NewTaskManager(workDir string, store taskStore, runner RunnerConfig) *TaskManager {
 	tasks := make(map[string]*Task)
 	if store != nil {
 		tasks = store.Load()
@@ -1425,6 +1431,17 @@ func (tm *TaskManager) persist() {
 	}
 }
 
+// persistAsync snapshots the task store state while the caller holds tm.mu,
+// then writes it in the background. This keeps large historical task stores
+// off the POST /tasks critical path.
+func (tm *TaskManager) persistAsync() {
+	if tm.store == nil {
+		return
+	}
+	records := snapshotPersistedTasks(tm.tasks)
+	go tm.store.SaveRecords(records)
+}
+
 // CheckRunner verifies that the configured runner binary exists and is callable.
 // Returns nil if the runner is healthy, or an error with a user-friendly message.
 func (tm *TaskManager) CheckRunner() error {
@@ -1626,7 +1643,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 
 	tm.mu.Lock()
 	tm.tasks[id] = task
-	tm.persist()
+	tm.persistAsync()
 	tm.mu.Unlock()
 
 	// Dummy mode: stream fake response without launching a real process.
@@ -1651,7 +1668,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		task.ResultText = strings.TrimSpace(failureMsg)
 		task.FinishedAt = &now
 		tm.mu.Lock()
-		tm.persist()
+		tm.persistAsync()
 		tm.mu.Unlock()
 		// Best-effort emit so any already-subscribed SSE stream sees
 		// the failure line; the channel may be closed if nobody opened

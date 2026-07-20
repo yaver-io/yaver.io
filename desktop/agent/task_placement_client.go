@@ -17,7 +17,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const taskPlacementHTTPTimeout = 1500 * time.Millisecond
+const (
+	taskPlacementHTTPTimeout        = 1500 * time.Millisecond
+	taskPlacementPreviewHTTPTimeout = 250 * time.Millisecond
+)
 
 type CloudWorkspaceRequiredError struct {
 	PendingTaskID        string
@@ -363,7 +366,7 @@ func (s *HTTPServer) previewTaskPlacement(ctx context.Context, meta taskPlacemen
 		return nil, err
 	}
 	meta.TaskID = ""
-	return client.postTaskPlacement(ctx, "/tasks/placement/preview", meta)
+	return client.postTaskPlacementWithTimeout(ctx, "/tasks/placement/preview", meta, taskPlacementPreviewHTTPTimeout)
 }
 
 func (s *HTTPServer) activateTaskPlacement(ctx context.Context, placementID, taskID string) (map[string]any, error) {
@@ -1070,6 +1073,10 @@ func claimRelaySourceIntent(ctx context.Context, authHeader, projectSlug, relayI
 }
 
 func (c *taskPlacementBackendClient) postTaskPlacement(ctx context.Context, path string, meta taskPlacementRecordRequest) (*TaskPlacementMetadata, error) {
+	return c.postTaskPlacementWithTimeout(ctx, path, meta, taskPlacementHTTPTimeout)
+}
+
+func (c *taskPlacementBackendClient) postTaskPlacementWithTimeout(ctx context.Context, path string, meta taskPlacementRecordRequest, timeout time.Duration) (*TaskPlacementMetadata, error) {
 	if c == nil || strings.TrimSpace(c.baseURL) == "" || strings.TrimSpace(c.token) == "" {
 		return nil, fmt.Errorf("missing backend auth")
 	}
@@ -1077,14 +1084,17 @@ func (c *taskPlacementBackendClient) postTaskPlacement(ctx context.Context, path
 	if err != nil {
 		return nil, err
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, taskPlacementHTTPTimeout)
+	if timeout <= 0 {
+		timeout = taskPlacementHTTPTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := newBearerRequest(http.MethodPost, c.baseURL+path, c.token, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req = req.WithContext(reqCtx)
-	resp, err := (&http.Client{Timeout: taskPlacementHTTPTimeout}).Do(req)
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
 		return nil, err
 	}
