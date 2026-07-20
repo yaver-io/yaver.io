@@ -177,3 +177,28 @@ exist in `testkit/`: `Boot`, `Install`, `Launch`, `Shutdown`, `list devices`,
 
 These are a focused follow-up: they need a booted simulator to exercise, which the
 build box can provide once free.
+
+## Real-hardware finding (2026-07-21) — the expo→sim destination issue
+
+Running the actual flow against the mac mini (Xcode 26.4, a `simctl`-booted
+iOS 26.4 iPhone, talos target 15.5 — a compatible runtime) surfaced a concrete
+integration bug that only real testing catches:
+
+```
+xcodebuild: error: Unable to find a destination matching the provided
+destination specifier: { id:3D94A65E-… }
+Available destinations for the "Talos" scheme:
+  { platform:macOS … My Mac }, { … Any iOS Device }, { … Any iOS Simulator Device }
+```
+
+xcodebuild listed **only placeholders — no concrete simulator** — even after
+`open -a Simulator` and with the device booted and runtime-compatible. So
+`expo run:ios --device <udid>` (which shells to `xcodebuild -destination
+id=<udid>`) can't resolve the booted sim on this box. This is a
+CoreSimulator/xcodebuild enumeration issue (Xcode 26.4), not a code bug in the
+flow — the flow ran correctly up to xcodebuild. The fix is on-box iteration:
+likely `xcrun simctl` lifecycle ordering (shut the device and let expo boot it),
+a `-destination 'platform=iOS Simulator,id=<udid>'` full specifier, or an
+`xcodebuild -downloadPlatform iOS` / CoreSimulator refresh. Tracked here rather
+than guessed at blind. `rnExpoRunCommand` is the single seam to adjust once the
+working invocation is confirmed against the box.
