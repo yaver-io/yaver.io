@@ -94,6 +94,10 @@ export function setNetworkIdentity(id: string | null | undefined, now: number = 
   if (next === currentNetworkId) return;
   // Wipe everything from the old network entirely. Not just expire — drop.
   store.delete(currentNetworkId);
+  // Positive evidence is scoped to a network exactly like negative evidence.
+  // Leaving it behind is how "tailnet is up" survived a flip to a network with
+  // no tunnel at all.
+  knownPathsUp.delete(currentNetworkId);
   currentNetworkId = next;
   // Also GC any expired entries left over from previous flips.
   gc(now);
@@ -154,14 +158,28 @@ export function isKnownUnroutable(
  * whatever path label won can be trusted here, so we forget any prior
  * negative for that path family. Used by observedTailnetUp() below.
  */
-const knownPathsUp: Map<string, Set<string>> = new Map();
-export function rememberReachable(path: string): void {
+//
+// POSITIVE EVIDENCE EXPIRES TOO (2026-07-20). This was a Set with no
+// timestamps, and setNetworkIdentity() cleared `store` but never this map. So
+// negative evidence died after 5 minutes while positive evidence was immortal
+// AND survived a network change. One successful tailnet reach — ever, on any
+// network — made observedTailnetUp() true forever, which hands the racer
+// `Infinity` tailnet probes (quic.ts) and re-races every 100.x candidate at
+// full rate long after the user has disabled the VPN. That is precisely the
+// storm this cache was introduced to stop, running on the other polarity.
+//
+// A reachability observation is evidence about a moment, not a property of the
+// network. It gets a TTL like everything else here.
+const REACHABLE_TTL_MS = 10 * 60 * 1000;
+
+const knownPathsUp: Map<string, Map<string, number>> = new Map();
+export function rememberReachable(path: string, now: number = Date.now()): void {
   let s = knownPathsUp.get(currentNetworkId);
   if (!s) {
-    s = new Set();
+    s = new Map();
     knownPathsUp.set(currentNetworkId, s);
   }
-  s.add(path);
+  s.set(path, now + REACHABLE_TTL_MS);
 }
 
 /**
@@ -178,10 +196,16 @@ export function rememberReachable(path: string): void {
  * The old default let 100.x candidates race indefinitely on cellular; the new
  * default keeps the ladder honest by requiring proof.
  */
-export function observedTailnetUp(): boolean {
+export function observedTailnetUp(now: number = Date.now()): boolean {
   const paths = knownPathsUp.get(currentNetworkId);
   if (!paths) return false;
-  return paths.has("lan-tailscale") || paths.has("lan-mesh");
+  for (const family of ["lan-tailscale", "lan-mesh"]) {
+    const expiresAt = paths.get(family);
+    if (expiresAt === undefined) continue;
+    if (expiresAt > now) return true;
+    paths.delete(family); // expired — forget it rather than re-check forever
+  }
+  return false;
 }
 
 /**

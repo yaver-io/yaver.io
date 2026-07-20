@@ -381,7 +381,7 @@ export function deriveMobileDeviceLifecycleState(args: {
   authExpired?: boolean;
   unreachable?: boolean;
 }): MobileDeviceLifecycleState {
-  const { device, probe, isConnected = false, authExpired = false } = args;
+  const { device, probe, isConnected = false, authExpired = false, unreachable = false } = args;
   // Auth state is independent of transport. Even when this mobile reached
   // the agent (isConnected=true), the agent's own yaver session can be
   // expired — manifests as 401 on subsequent requests (agentAuthExpired)
@@ -401,13 +401,28 @@ export function deriveMobileDeviceLifecycleState(args: {
   // magara render "READY · reachable" while a connect attempt timed out. Let
   // those fall through to "offline" so the card shows the honest
   // "No recent heartbeat" copy instead.
-  if (
+  //
+  // `unreachable` is the caller's PROOF that a reachability probe just failed.
+  // It outranks every optimistic signal below, because those are all claims
+  // rather than evidence: `device.online` is a Convex heartbeat up to
+  // HEARTBEAT_STALE_MS old (15 min — see _core/constants.ts, which mirrors the
+  // backend), `peerState` is a server-side sighting, and `hasRecentLiveSignal`
+  // is a tunnel event, none of which prove THIS phone has a route right now.
+  //
+  // This param was declared and then dropped on the floor (2026-07-20): the
+  // destructure above omitted it, so `devices.tsx` passed it in good faith and
+  // it did nothing — which is exactly the "magara renders READY while connect
+  // times out" bug the comment above claims to have fixed. Web has had the
+  // equivalent guard all along (`web/lib/device-lifecycle.ts` `contradicted`).
+  const optimistic =
     probe?.reachable ||
     device.online ||
     device.peerState === "online" ||
-    hasRecentLiveSignal(device)
-  ) {
-    return "ready-to-connect";
-  }
+    hasRecentLiveSignal(device);
+
+  // A live probe that SUCCEEDED is itself evidence and beats a stale
+  // `unreachable` verdict from an earlier sweep; anything weaker does not.
+  if (unreachable && !probe?.reachable) return "offline";
+  if (optimistic) return "ready-to-connect";
   return "offline";
 }

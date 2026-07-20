@@ -142,6 +142,30 @@ assert("lan-convex-ip is not a tunnel path", isTunnelPath("lan-convex-ip") === f
 
 // Summary LAST. It used to sit mid-file, so every assert appended after it
 // ran but could never fail the run — a test suite that cannot go red.
+// ── Positive evidence must expire, and must not survive a network flip ──────
+// It was a Set with no timestamps that setNetworkIdentity never cleared, so one
+// successful tailnet reach ever made observedTailnetUp() true forever — handing
+// the racer Infinity tailnet probes long after the VPN was switched off.
+
+_resetForTest();
+setNetworkIdentity("wifi:home");
+const rt0 = 7_000_000;
+rememberReachable("lan-tailscale", rt0);
+assert("a fresh tailnet reach counts as tailnet-up", observedTailnetUp(rt0 + 1_000) === true);
+assert(
+  "tailnet-up expires — it is evidence about a moment, not a property",
+  observedTailnetUp(rt0 + 11 * 60 * 1000) === false,
+);
+
+_resetForTest();
+setNetworkIdentity("wifi:home");
+rememberReachable("lan-tailscale", rt0);
+setNetworkIdentity("cellular:carrier");
+assert(
+  "tailnet-up does NOT survive a network flip",
+  observedTailnetUp(rt0 + 1_000) === false,
+);
+
 if (failures > 0) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

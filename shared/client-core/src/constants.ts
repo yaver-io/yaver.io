@@ -54,8 +54,18 @@ export const DEFAULT_BEACON_UDP_PORT = 19837;
  * How old an agent's last heartbeat can be before the device is
  * considered offline. Mirrors `backend/convex/devices.ts` so
  * Convex + every client agree on the same threshold.
+ *
+ * 900_000, not 90_000. This file said 90_000 while the authority named in the
+ * comment — `backend/convex/devices.ts:112`, `const HEARTBEAT_STALE_MS = 900 *
+ * 1000` — and `mobile/src/_core/constants.ts` both said 900_000. A 10x drift in
+ * the constant whose own docstring promises it does not drift is exactly the
+ * "green on one, yellow on the other" glitch described above (2026-07-20).
+ *
+ * Sub-minute death detection is not this threshold's job — it comes from the
+ * P2P bus and from an actual reachability probe. Shortening this here would
+ * only make a live box flap offline between 5-minute heartbeats.
  */
-export const HEARTBEAT_STALE_MS = 90_000;
+export const HEARTBEAT_STALE_MS = 900_000;
 
 /**
  * How long after the last UDP beacon an agent is still considered
