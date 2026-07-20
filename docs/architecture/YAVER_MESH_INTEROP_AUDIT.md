@@ -619,3 +619,98 @@ yaver net explain <device>
   claim (§3.2), the `>1 relay breaks mesh` bug (§3.3), and the console's
   tailnet-bridge button emitting a CIDR the backend rejects
   (`NetworkView.tsx:67` vs `backend/convex/mesh.ts:139`).
+
+---
+
+## 9. Relay tiers × Mesh × the three topologies (2026-07-20)
+
+Two facts first, both verified in code, because the plan depends on them:
+
+- **There is no Free/Pro relay tier.** `grep` for a relay tier model returns
+  nothing; `"pro"` in this repo is a *cloud VM plan* (`cloud_deploy.go:115`).
+  The relay has free-tier *quota/ownership* validation (`relay/server.go:452`)
+  but one hardcoded host (`builtinRelayPins`) and no paid lane.
+- **Mesh deferral is host-global, not per-peer.** `SubnetRouteConflict`
+  (`mesh/subnet_conflict.go:25`) enumerates every interface and, on any hit,
+  mesh refuses to `Start()` **at all**.
+
+### 9.1 The hybrid case is the one that exposes the design error
+
+| Topology | Mini | Phone | Today | Should be |
+|---|---|---|---|---|
+| **A. Neither on a VPN** | mesh may start | no mobile mesh data plane | relay only | mesh direct, relay while it forms |
+| **B. Both on Tailscale** | mesh defers | tailnet works | tailnet (if legs not miscached) | **defer — correct** |
+| **C. Hybrid** — mini on Tailscale, phone not | **mesh refuses to start** | not on tailnet | **relay only** | **mesh SHOULD serve this pair** |
+
+Case C is the important one, and it is currently wrong for a precise reason:
+
+> Tailscale **cannot carry the phone↔mini pair at all** — the phone is not on
+> the tailnet. Yet mesh stands down on the mini because of a conflict that only
+> concerns *tailnet peers*. Mesh defers to an incumbent that cannot serve the
+> very peer it is deferring about.
+
+The deferral question is **per-peer** — "can the incumbent reach *this* peer?" —
+but the code asks it **per-host**: "does a conflicting interface exist anywhere?"
+A host-global answer to a per-peer question is why every Yaver device on a
+Tailscale box loses mesh for *all* peers, including the ones Tailscale never had.
+
+### 9.2 The fix: /32 host routes, not a /12 claim
+
+The conflict exists only because mesh claims the whole `100.96.0.0/12`, which
+collides with Tailscale's single `100.64.0.0/10` route. It does not need to.
+
+**Install a `/32` host route per mesh peer instead of one `/12` blanket route.**
+
+- A `/32` is the longest possible prefix, so it wins for exactly that address
+  and touches nothing else — no fight with Tailscale's `/10`.
+- Install a `/32` **only** for peers the incumbent cannot reach. If Tailscale
+  already carries a peer, do not route it: that is deferral, correctly scoped.
+- Case C resolves: the mini installs a `/32` for the phone (which Tailscale
+  cannot reach) and no route for tailnet peers. Both overlays coexist on the
+  same host, each serving the peers it can.
+- The start-order blackhole (§3.1) disappears too: mesh never owns a range wide
+  enough to swallow a Tailscale address it doesn't know about.
+
+This is strictly less invasive than today and it is the intermediate step
+toward §6.2 (allocate no range at all). If mesh keeps addresses, per-peer `/32`
+is how it stops being a competitor for the routing table.
+
+### 9.3 What the relay tiers should be
+
+The relay is the **only** path that works in every topology, and measurements
+say 10–25% of pairs will live there permanently (§6.1). It is therefore product
+surface, not failure surface — and today it is one box, `relayCount: 1`, which
+the client can get itself banned from (§4.1).
+
+**Yaver Free Relay** — the default, and it must be *correct*, not merely
+present:
+- multi-region with latency-based home selection (§6.1 P1), because one host in
+  fsn1 is a latency floor for every non-EU user;
+- fair-use quota that **degrades honestly** — a throttled relay must say
+  "throttled, upgrade or wait", never time out and let the client conclude
+  "no path left to this device";
+- the rate-limit fix from §7 P0-3: a ban is a distinct state, not a timeout.
+
+**Yaver Relay Pro** — the paid lane. What legitimately belongs behind it is
+*capacity and placement*, never *connectivity*:
+- dedicated/regional egress, higher or no throughput cap, priority under load;
+- self-hostable relay with the same protocol (already supported — keep it);
+- **not** "your devices can connect at all". Connectivity is the product's
+  promise; metering it turns an outage into a sales page, and the free tier is
+  what makes direct-path failures survivable for everyone else.
+
+Ordering note: **fix the client's self-inflicted ban (§7 P0-1..3) before adding
+relay capacity.** Today more relays make things *worse* — `mesh_derp_transport.go:79`
+keeps a single global `t.stream`, so N relays means last-attach-wins and every
+reconnect flips which relay carries mesh.
+
+### 9.4 The rule, stated once
+
+> **Relay is the floor; mesh is an optimisation; the incumbent VPN is a peer,
+> not a rival.** Every pair gets a working path immediately via the relay, then
+> upgrades to the best available: incumbent tunnel if it reaches, else mesh
+> direct, else stay. Deferral is decided per peer, never per host.
+
+Case A gets mesh. Case B gets Tailscale. Case C gets mesh for the pair Tailscale
+cannot serve and Tailscale for the pairs it can — on the same machine, at the
+same time.
