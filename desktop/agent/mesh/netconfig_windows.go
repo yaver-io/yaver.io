@@ -2,7 +2,10 @@
 
 package mesh
 
-import "net"
+import (
+	"fmt"
+	"net"
+)
 
 // Windows: wintun adapters are configured via netsh. Assign the overlay IP with
 // the mesh subnet mask (which installs the on-link route) and bring it up. Needs
