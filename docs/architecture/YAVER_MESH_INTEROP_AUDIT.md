@@ -809,3 +809,83 @@ mean computing a better address that nothing can deliver.
 Sequence: signalling frames → candidate exchange → validated `/32` install →
 *then* STUN-from-the-data-socket, port mapping, and IPv6 to raise the direct-hit
 rate. Each step is useful alone, and each makes the next one measurable.
+
+---
+
+## 11. Ask Tailscale, don't guess — and seed hints without a Convex bill
+
+Two sources of truth, each used for what it is actually good at.
+
+### 11.1 Tailscale already knows, and the agent already parses it
+
+`diagnose_checks_v2.go:103` shells `tailscale status` and parses its JSON —
+**for diagnostics only.** Nothing in the mesh or connect path consults it. The
+capability is built and unwired, which is the same shape as every other defect
+in this document.
+
+`tailscale status --json` gives, live and authoritative:
+
+- every peer, its tailnet IPs, and `Online`,
+- `CurAddr` / `Relay` — whether that peer is **direct or DERP-relayed**,
+- `LastHandshake` — proof the path is real, not merely configured.
+
+That is strictly better than any inference Yaver can make. A heartbeat-published
+`100.x` address says a peer *had* a tailnet address; `tailscale status` says
+whether this machine **can reach it right now**. The entire §1.2 log — tailnet
+legs failing instantly while the tailnet was healthy — is Yaver guessing at a
+question Tailscale would have answered for free.
+
+Wire it into the per-peer decision (§9.1):
+
+```
+peerReachableViaIncumbent(peer):
+    st := tailscale status --json        # cached ~10 s; no network I/O
+    p  := st.Peer[peer.tailnetKey]
+    return p != nil && p.Online && p.LastHandshake recent
+```
+
+- **true**  → defer. Use the tailnet address, install no mesh `/32`.
+- **false** → the incumbent cannot serve this pair. Mesh may route it — which
+  is exactly the hybrid case, decided by evidence rather than an interface scan.
+
+Same call fixes §4.2's misdiagnosis: if Tailscale reports the peer online and
+Yaver's dial to it fails in 0 ms, that is **not** "no route" — it is ATS or the
+Local Network permission, and the remedy string can finally say so.
+
+Cost: zero. It is a local socket to a daemon already running.
+
+### 11.2 Convex seeding — coarse hints only, and no new bill
+
+Convex should carry the facts that are *stable and cheap*, so a cold client can
+skip impossible legs before it probes anything:
+
+```
+onTailnet:        bool     # is this box on a tailnet at all
+natClass:         "easy" | "hard" | "unknown"    # EIM vs EDM (RFC 8489 §…)
+hasPublicEndpoint:bool     # reachable without traversal
+meshCapable:      bool     # data plane present AND not deferring
+```
+
+**Rules that keep this from costing anything:**
+
+1. **Ride the existing heartbeat. No new table, no new mutation, no new
+   function calls.** These are four scalars on a payload that already fires —
+   the same trick `publishCapabilities` and `deployCapabilities` use. Convex
+   bills per function call, so the marginal cost of four more fields on an
+   existing call is nil.
+2. **Only send on change.** `natClass` and `onTailnet` move on the order of
+   hours; sending them every beat is waste. Diff and omit.
+3. **Never exact addresses.** No LAN IPs, no tailnet IPs, no endpoints — those
+   are forbidden by the privacy contract *and* they are the volatile part.
+   Exact candidates go peer-to-peer over the relay (§10.2). Convex gets the
+   *shape* of the network; the relay carries the *addresses*.
+
+The division that falls out, and it is the whole design in one line:
+
+> **Tailscale = live truth about the incumbent. Relay = exact, volatile
+> candidates. Convex = coarse, slow-moving shape, free on a heartbeat that
+> already runs.**
+
+Each is queried where it is authoritative, and none of them is asked to be a
+source it isn't. Notably, none of this needs a new Convex table — the cheapest
+change of the three is the one that improves the cold-start case most.
