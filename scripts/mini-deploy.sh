@@ -64,9 +64,32 @@ if [ ! -d "$CLONE/.git" ]; then
 fi
 cd "$CLONE"
 REMOTE="$(git remote | head -1)"
+
+# Deploying DIRTIES this clone, so the next pull refuses and every run after
+# the first one dies at "Your local changes would be overwritten by merge":
+#   - deploy-testflight.sh bumps CFBundleVersion in Info.plist (and pbxproj),
+#   - npm install rewrites package-lock.json in mobile/ and web/.
+# All of it is machine-generated churn, none of it is anyone's work, and the
+# build number is re-derived from max(local, App Store Connect) on every run.
+# Discard exactly those paths — an explicit allowlist, never a blanket
+# `git reset --hard`, because a surprise modification ANYWHERE ELSE is a real
+# signal (someone edited the deploy clone) and must still stop the run.
+DEPLOY_CHURN=(
+  mobile/ios/Yaver/Info.plist
+  mobile/ios/Yaver.xcodeproj/project.pbxproj
+  mobile/android/app/build.gradle
+  mobile/package-lock.json
+  web/package-lock.json
+)
+for f in "${DEPLOY_CHURN[@]}"; do
+  if [ -n "$(git status --porcelain -- "$f" 2>/dev/null)" ]; then
+    git checkout -- "$f" 2>/dev/null && echo "  reset deploy churn: $f"
+  fi
+done
+
 # --ff-only on purpose: this clone must never carry local commits. If this
-# fails, someone edited the deploy clone, and that is the bug to fix — not
-# something to force past.
+# still fails, something outside the churn list was edited here, and that is
+# the bug to fix — not something to force past.
 git fetch -q "$REMOTE" main
 git checkout -q main
 git pull -q --ff-only "$REMOTE" main
