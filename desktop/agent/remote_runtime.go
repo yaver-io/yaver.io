@@ -96,6 +96,11 @@ type RemoteRuntimeSession struct {
 	// the agent's on-disk registry and never appear in any payload
 	// returned by the agent.
 	RemoteBuilderId string `json:"remoteBuilderId,omitempty"`
+	// Runner is the remote-side coding runner (claude / codex / opencode / …)
+	// that services feedback→prompt→patch for this session. Like tasks, it
+	// defaults to the box's primary runner but the viewer can change it mid-
+	// session via the same picker UX. Empty means "use the primary".
+	Runner string `json:"runner,omitempty"`
 	// DeviceDims carries the booted device's logical resolution +
 	// rotation so the web viewer can scale pointer coordinates back
 	// to device space. Populated on Attach by ProbeDeviceDims; updated
@@ -941,12 +946,18 @@ func (s *HTTPServer) handleRemoteRuntimeSessions(w http.ResponseWriter, r *http.
 			Framework string `json:"framework"`
 			TargetID  string `json:"targetId"`
 			Transport string `json:"transportMode"`
+			Runner    string `json:"runner,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid json body")
 			return
 		}
 		session, err := mgr.Create(req.WorkDir, req.Framework, req.TargetID, req.Transport)
+		if err == nil && strings.TrimSpace(req.Runner) != "" {
+			// Optional runner override at create; empty defaults to the box's
+			// primary (resolved when a feedback fix task is dispatched).
+			session, _ = mgr.Update(session.ID, func(cur *RemoteRuntimeSession) { cur.Runner = strings.TrimSpace(req.Runner) })
+		}
 		if err != nil {
 			jsonError(w, http.StatusBadRequest, err.Error())
 			return

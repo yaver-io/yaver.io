@@ -196,9 +196,27 @@ xcodebuild listed **only placeholders — no concrete simulator** — even after
 `expo run:ios --device <udid>` (which shells to `xcodebuild -destination
 id=<udid>`) can't resolve the booted sim on this box. This is a
 CoreSimulator/xcodebuild enumeration issue (Xcode 26.4), not a code bug in the
-flow — the flow ran correctly up to xcodebuild. The fix is on-box iteration:
-likely `xcrun simctl` lifecycle ordering (shut the device and let expo boot it),
-a `-destination 'platform=iOS Simulator,id=<udid>'` full specifier, or an
-`xcodebuild -downloadPlatform iOS` / CoreSimulator refresh. Tracked here rather
-than guessed at blind. `rnExpoRunCommand` is the single seam to adjust once the
-working invocation is confirmed against the box.
+flow — the flow ran correctly up to xcodebuild.
+
+**Resolved 2026-07-21 — the flow is now expo-free and first-party:** dropped the
+expo CLI entirely for `xcodebuild` (iOS) + `simctl`, and `gradlew` + `adb`
+(Android). Two findings from iterating on the mini fixed the exact invocation:
+
+1. **Generic destination, not `id=<udid>`.** `-destination
+   'generic/platform=iOS Simulator'` resolves cleanly (bundle id + build dir),
+   then `simctl install` puts the .app on the exact booted device. The
+   udid-specific destination form is what failed to enumerate.
+2. **Single host arch.** The generic destination builds both slices; the x86_64
+   slice fails to compile on Apple Silicon (`fmt` etc.), so `ARCHS=<host arch>`.
+
+Both are encoded in `iosSimBuildArgs` and proven on the box (generic destination
++ arm64 compiles the arm64 slice; earlier it died on x86_64).
+
+**Remaining proof blocker is the GUEST project, not the flow:** talos/mobile's
+`fmt` pod hits a `consteval … is not a constant expression` compile error under
+Xcode 26.4's clang — a stale-pod / new-toolchain mismatch in talos itself, which
+any Xcode-26.4 build of that project hits regardless of Yaver. The flow is
+correct; a guest whose pods compile under the host Xcode (or talos with an
+updated `fmt`) builds through. This is guest maintenance, tracked separately, not
+a Yaver bug. `iosSimBuildArgs` / `buildAndLaunchRNiOS` need no further change for
+the happy path.
