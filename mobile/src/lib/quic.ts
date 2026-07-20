@@ -1263,6 +1263,15 @@ export class QuicClient {
   private _reconnectStopped = false;
   private _isForeground = true;
   private readonly baseBackoffMs = 1000;
+  // Flap detection. When a peer accepts a connection and then drops it seconds
+  // later — the classic self-disconnecting-relay symptom — onConnected resets
+  // _reconnectAttempt to 0, so the exponential backoff restarts at ~1s and the
+  // phone hammers a flapping box ~30× per outage. _connectedAt + _flapStreak
+  // survive that reset and put a growing floor under the delay so a flap is
+  // retried at a humane cadence instead of a tight loop.
+  private _connectedAt = 0;
+  private _flapStreak = 0;
+  private readonly flapWindowMs = 12_000; // "up" shorter than this counts as a flap
   private readonly _maxReconnectAttempts = 5;
   // True once we've successfully reached this device's agent at least
   // once — either earlier this session OR persisted from a prior session
@@ -6699,10 +6708,20 @@ export class QuicClient {
         throw new Error(`Could not reach agent — ${legs.join("; ")}`);
       }
 
+      // Flap check BEFORE resetting the attempt counter: if the previous
+      // connection lasted less than flapWindowMs, this is a flapping peer — keep
+      // a floor under the next backoff rather than dropping back to ~1s.
+      const now = Date.now();
+      if (this._connectedAt > 0 && now - this._connectedAt < this.flapWindowMs) {
+        this._flapStreak = Math.min(this._flapStreak + 1, 6);
+      } else {
+        this._flapStreak = 0;
+      }
+      this._connectedAt = now;
       this.setReconnectAttempt(0);
       this.setConnectionState("connected");
       this._hadSuccessfulConnect = true;
-      this._lastHealthOkAt = Date.now();
+      this._lastHealthOkAt = now;
       this._reconnectRepairAttempted = false; // arm a fresh repair streak
       this.startPolling();
       // Persist the exact coordinates that worked so the next session can
@@ -6900,7 +6919,14 @@ export class QuicClient {
       this.baseBackoffMs * Math.pow(2, this._reconnectAttempt - 1),
       30_000
     );
-    const delay = baseDelay + Math.floor(Math.random() * 500);
+    // Flap floor: a peer that keeps accepting then dropping within flapWindowMs
+    // resets _reconnectAttempt to 0 each cycle, so baseDelay collapses to ~1s and
+    // we hammer it. Raise a floor that grows with the flap streak (≈2s, 4s, 8s…
+    // capped at 30s) so a flapping box is retried calmly, not in a tight loop.
+    const flapFloor = this._flapStreak > 0
+      ? Math.min(2000 * Math.pow(2, this._flapStreak - 1), 30_000)
+      : 0;
+    const delay = Math.max(baseDelay, flapFloor) + Math.floor(Math.random() * 500);
 
     appLog(
       "warn",
