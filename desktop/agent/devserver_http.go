@@ -3535,15 +3535,35 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				compatRNVersionMismatch.ProjectVersion, compatRNVersionMismatch.HostVersion, compatRNVersionMismatch.Reason)
 		}
 		if len(compatIncompatible) > 0 {
-			log.Printf("[super-host] native-module compat: %d incompatible (%v)",
+			log.Printf("[super-host] native-module compat: %d missing (%v) — warning, not fatal",
 				len(compatIncompatible), compatIncompatible)
 			s.devServerMgr.EmitLog(fmt.Sprintf(
 				"⚠ %d native module(s) declared in this project are NOT in Yaver's super-host: %s. "+
-					"They will throw at runtime if called.",
+					"They throw only if the guest actually calls them; a guarded require() never reaches that throw.",
 				len(compatIncompatible), strings.Join(compatIncompatible, ", "),
 			))
 		}
-		if len(compatIncompatible) > 0 || len(compatVersionMismatches) > 0 || compatReactVersionMismatch != nil || compatExpoVersionMismatch != nil || compatRNVersionMismatch != nil {
+		// A MISSING module is a warning; a MISMATCHED one is fatal.
+		//
+		// These were one condition until 2026-07-20, and it made the gate lie. A
+		// module Yaver does not register throws only WHEN CALLED — and a guest
+		// that wraps its require() in try/catch never reaches the throw at all.
+		// talos/mobile is exactly that: `expo-gl` is declared, both call sites
+		// (Cell3D.tsx, SpatialBackdrop.tsx) guard the require, and expo-gl binds
+		// its native module at import time — so the throw lands inside the guest's
+		// own catch and it renders a fallback. The bundle was blocked anyway, with
+		// "it would crash at runtime", which was simply false for that project.
+		//
+		// Worse, the remedy the dialog printed — "guard unsupported call sites
+		// before retrying" — was ALREADY DONE. A gate that rejects the fix it
+		// recommends teaches people the gate is noise. The inventory (is the module
+		// registered?) was standing in for the operation (would it actually crash?).
+		//
+		// Version and family drift stay fatal, because those DO corrupt the
+		// JSI/TurboModule contract for modules the host genuinely registers — that
+		// is a real crash, not a conditional one, and no guard in the guest helps.
+		blocksLoad := len(compatVersionMismatches) > 0 || compatReactVersionMismatch != nil || compatExpoVersionMismatch != nil || compatRNVersionMismatch != nil
+		if blocksLoad {
 			if !req.AllowUnsafeNativeModules {
 				metaJSON := meta.JSON()
 				s.devServerMgr.SetBundleMetadata(metaJSON)
@@ -3551,7 +3571,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				helpHint := "Align the project's native-module versions with Yaver's host, add missing modules to Yaver, or guard unsupported call sites before retrying."
 				title := "Compatibility blocked"
 				userMsg := "The bundle compiled, but Yaver blocked restart because the project's native runtime contract does not match the mobile host."
-				respCode := "NATIVE_MODULE_INCOMPATIBLE"
+				respCode := "NATIVE_MODULE_VERSION_MISMATCH"
 				payload := map[string]interface{}{
 					"platform":                      req.Platform,
 					"incompatibleNativeModules":     compatIncompatible,
@@ -3565,15 +3585,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"guestRuntime":                  report.GuestRuntime,
 					"runtimeFamilySelection":        report.RuntimeFamily,
 				}
-				if len(compatIncompatible) > 0 {
-					errMsg = fmt.Sprintf(
-						"Blocked native Hermes load: this project declares %d native module(s) Yaver does not register: %s",
-						len(compatIncompatible), strings.Join(compatIncompatible, ", "),
-					)
-					title = "Incompatible native modules"
-					userMsg = "The bundle compiled, but it would crash at runtime because the project declares native modules missing from Yaver's mobile host."
-				} else if len(compatVersionMismatches) > 0 {
-					respCode = "NATIVE_MODULE_VERSION_MISMATCH"
+				if len(compatVersionMismatches) > 0 {
 					parts := make([]string, 0, len(compatVersionMismatches))
 					for _, mismatch := range compatVersionMismatches {
 						parts = append(parts, fmt.Sprintf("%s project %s vs host %s", mismatch.Name, mismatch.ProjectVersion, mismatch.HostVersion))
