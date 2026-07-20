@@ -753,19 +753,58 @@ func mcpDeviceReauthWait(deviceHint, recoveryID, waitToken string, timeoutSecond
 	}
 }
 
-func mcpRunnerBrowserAuthStart(deviceID, runner string) map[string]interface{} {
+func decorateRunnerBrowserAuthMCP(out map[string]interface{}) map[string]interface{} {
+	if out == nil {
+		return out
+	}
+	sess, _ := out["session"].(map[string]interface{})
+	if sess == nil {
+		return out
+	}
+	status := strings.TrimSpace(anyString(sess["status"]))
+	openURL := strings.TrimSpace(anyString(sess["openUrl"]))
+	code := strings.TrimSpace(anyString(sess["code"]))
+	authConfigured, _ := sess["authConfigured"].(bool)
+	var next string
+	switch {
+	case authConfigured || status == "completed":
+		next = "done: runner subscription OAuth is configured; call runner_auth_status to verify if needed."
+	case status == "failed":
+		next = "failed: surface session.error/detail and restart runner_auth_browser_start if the user wants to retry."
+	case status == "cancelled":
+		next = "cancelled: restart runner_auth_browser_start when the user is ready."
+	case status == "verifying":
+		next = "wait: call runner_auth_browser_status until completed or failed."
+	case openURL != "":
+		next = "open_url: show session.openUrl to the user, ask them to finish provider login, then submit the copied code with runner_auth_browser_submit_code."
+	case code != "":
+		next = "show_code: show session.code to the user and ask them to complete the provider device-auth page, then poll runner_auth_browser_status."
+	default:
+		next = "wait_for_url: call runner_auth_browser_status shortly; the runner process is still printing its OAuth instructions."
+	}
+	out["next_action"] = next
+	out["subscription_oauth_only"] = true
+	out["never_api_key"] = true
+	return out
+}
+
+func mcpRunnerBrowserAuthStart(deviceID, runner string, waitSeconds int) map[string]interface{} {
+	body := map[string]interface{}{"runner": runner}
+	if waitSeconds != 0 {
+		body["wait_seconds"] = waitSeconds
+	}
 	if strings.TrimSpace(deviceID) != "" {
-		out, err := proxyToDeviceJSON(context.Background(), "runner_auth_browser_start", strings.TrimSpace(deviceID), http.MethodPost, "/runner-auth/browser/start", map[string]string{"runner": runner})
+		out, err := proxyToDeviceJSON(context.Background(), "runner_auth_browser_start", strings.TrimSpace(deviceID), http.MethodPost, "/runner-auth/browser/start", body)
 		if err != nil {
 			return map[string]interface{}{"ok": false, "error": err.Error()}
 		}
-		return out
+		return decorateRunnerBrowserAuthMCP(out)
 	}
-	out, err := localAgentRequest(http.MethodPost, "/runner-auth/browser/start", map[string]interface{}{"runner": runner})
+	out, err := localAgentRequest(http.MethodPost, "/runner-auth/browser/start", body)
 	if err != nil {
 		return map[string]interface{}{"ok": false, "error": err.Error()}
 	}
-	return out
+	return decorateRunnerBrowserAuthMCP(out)
 }
 
 func mcpRunnerBrowserAuthStatus(deviceID, sessionID string) map[string]interface{} {
@@ -781,7 +820,7 @@ func mcpRunnerBrowserAuthStatus(deviceID, sessionID string) map[string]interface
 	if err != nil {
 		return map[string]interface{}{"ok": false, "error": err.Error()}
 	}
-	return out
+	return decorateRunnerBrowserAuthMCP(out)
 }
 
 func mcpRunnerBrowserAuthSubmitCode(deviceID, sessionID, code string) map[string]interface{} {
@@ -797,7 +836,7 @@ func mcpRunnerBrowserAuthSubmitCode(deviceID, sessionID, code string) map[string
 	if err != nil {
 		return map[string]interface{}{"ok": false, "error": err.Error()}
 	}
-	return out
+	return decorateRunnerBrowserAuthMCP(out)
 }
 
 func mcpRunnerBrowserAuthCancel(deviceID, sessionID string) map[string]interface{} {
@@ -813,7 +852,7 @@ func mcpRunnerBrowserAuthCancel(deviceID, sessionID string) map[string]interface
 	if err != nil {
 		return map[string]interface{}{"ok": false, "error": err.Error()}
 	}
-	return out
+	return decorateRunnerBrowserAuthMCP(out)
 }
 
 // mcpRunnerAuthCredentialsImport copies a subscription token blob to the

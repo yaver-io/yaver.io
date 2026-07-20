@@ -182,10 +182,10 @@ func (s *HTTPServer) maybeSelfPark(ctx context.Context) {
 		Tier:           HostingManaged, // identity file present ⇒ managed
 		ActiveSessions: 0,              // machineInUse() already returned false
 		IdleFor:        durSince(now, lastActive),
-		IdleTimeout:    parkEnvMinutes("YAVER_CLOUD_IDLE_MINUTES", 45),
+		IdleTimeout:    resolveIdleParkMinutes(),
 		GraceNotified:  !notifiedAt.IsZero(),
 		GraceFor:       durSince(now, notifiedAt),
-		GraceWindow:    parkEnvMinutes("YAVER_CLOUD_IDLE_GRACE_MINUTES", 2),
+		GraceWindow:    resolveParkGraceMinutes(),
 		KeepAlive:      now.Before(keepUntil),
 	}
 	switch scaleToZeroDecision(in) {
@@ -199,7 +199,7 @@ func (s *HTTPServer) maybeSelfPark(ctx context.Context) {
 		// delivered push is a refinement. Say `yaver machine keepalive` or use
 		// the box to cancel.
 		log.Printf("[machine-park] idle past threshold — parking in ~%s unless kept alive",
-			parkEnvMinutes("YAVER_CLOUD_IDLE_GRACE_MINUTES", 2))
+			resolveParkGraceMinutes())
 	case ParkExecute:
 		s.parkSelf(ctx, id)
 		// Reset the idle clock so a delayed teardown doesn't re-request every

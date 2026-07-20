@@ -63,6 +63,11 @@ FROM node:22-bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/usr/local/go/bin:/root/go/bin:/root/.cargo/bin:/usr/local/bin:${PATH}"
 ENV HOME=/root
+# Dispatch coding-runner tasks into a persistent tmux session on this headless
+# box. The agent self-creates the "yaver" session at boot (ensureTmuxRunnerSession)
+# so runner panes are inspectable + adoptable from the phone (tmux_adopt_session)
+# and survive a daemon restart. tmux is installed below.
+ENV YAVER_TMUX_RUNNER=yaver
 
 # ── System packages ──────────────────────────────────────────────────
 # chromium + ffmpeg power the browser-video recorder (browser_video.go): a

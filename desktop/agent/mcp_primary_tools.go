@@ -94,7 +94,7 @@ func mcpPrimaryAuth(runner string) map[string]interface{} {
 			"primaryDeviceId": deviceID,
 		}
 	}
-	out := mcpRunnerBrowserAuthStart(deviceID, runner)
+	out := mcpRunnerBrowserAuthStart(deviceID, runner, 0)
 	if out == nil {
 		out = map[string]interface{}{}
 	}

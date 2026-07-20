@@ -85,6 +85,35 @@ func tmuxRunnerReady() string {
 	return session
 }
 
+// ensureTmuxRunnerSession self-bootstraps the runner tmux session named by
+// YAVER_TMUX_RUNNER. If the env is set, tmux is installed, and the session does
+// not yet exist, it creates a detached session. This is what makes a headless
+// cloud / managed box actually USE tmux for coding-runner dispatch: the daemon
+// runs there with no interactive login session, so nothing else would ever
+// create the session and tmuxRunnerReady() would forever return "" (the feature
+// silently dormant). Called once at serve boot. Returns the session name it
+// ensured, or "" when the feature is off or tmux is unavailable — both
+// non-errors, since the direct-exec path still works. Idempotent.
+func ensureTmuxRunnerSession() string {
+	session := tmuxRunnerSession()
+	if session == "" {
+		return "" // feature off
+	}
+	if !tmuxAvailable() {
+		logWarn("tmux-runner", "YAVER_TMUX_RUNNER=%q set but tmux is not installed — runner dispatch falls back to direct exec", session)
+		return ""
+	}
+	if exec.Command(tmuxCmdName(), "has-session", "-t", session).Run() == nil {
+		return session // already exists (e.g. an interactive login already made it)
+	}
+	if err := exec.Command(tmuxCmdName(), "new-session", "-d", "-s", session).Run(); err != nil {
+		logWarn("tmux-runner", "could not create runner tmux session %q: %v", session, err)
+		return ""
+	}
+	logInfo("tmux-runner", "created runner tmux session %q — coding-runner tasks will dispatch into tmux (adoptable via tmux_adopt_session)", session)
+	return session
+}
+
 // shellQuoteStrict single-quotes a value safely for sh, escaping any embedded
 // single quotes with the standard POSIX shell sequence.
 func shellQuoteStrict(s string) string {

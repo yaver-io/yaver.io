@@ -55,6 +55,34 @@ func parkEnvMinutes(key string, def int) time.Duration {
 	return time.Duration(def) * time.Minute
 }
 
+// Canonical idle → scale-to-zero timings. resolveIdleParkMinutes /
+// resolveParkGraceMinutes are the SINGLE source of truth shared by BOTH the
+// control-plane decision (machine_park_check) and the in-agent self-park loop
+// (machine_activity.go::maybeSelfPark). Before this, the two diverged — 45 vs
+// 30 idle minutes, and different env vars (YAVER_CLOUD_IDLE_MINUTES vs
+// YAVER_PARK_IDLE_MIN) — so a box could be told to park by one path while the
+// other still considered it active, giving unpredictable sleep timing.
+// Canonical env is YAVER_PARK_IDLE_MIN / YAVER_PARK_GRACE_MIN; the older
+// YAVER_CLOUD_IDLE_* names are honored as a fallback for existing deployments.
+const (
+	defaultIdleParkMinutes  = 30
+	defaultParkGraceMinutes = 2
+)
+
+func resolveIdleParkMinutes() time.Duration {
+	if strings.TrimSpace(os.Getenv("YAVER_PARK_IDLE_MIN")) != "" {
+		return parkEnvMinutes("YAVER_PARK_IDLE_MIN", defaultIdleParkMinutes)
+	}
+	return parkEnvMinutes("YAVER_CLOUD_IDLE_MINUTES", defaultIdleParkMinutes)
+}
+
+func resolveParkGraceMinutes() time.Duration {
+	if strings.TrimSpace(os.Getenv("YAVER_PARK_GRACE_MIN")) != "" {
+		return parkEnvMinutes("YAVER_PARK_GRACE_MIN", defaultParkGraceMinutes)
+	}
+	return parkEnvMinutes("YAVER_CLOUD_IDLE_GRACE_MINUTES", defaultParkGraceMinutes)
+}
+
 // durSince is now.Sub(t), or 0 when t is the zero time (never set).
 func durSince(now, t time.Time) time.Duration {
 	if t.IsZero() {
@@ -93,8 +121,8 @@ func init() {
 func opsMachineParkCheckHandler(_ OpsContext, _ json.RawMessage) OpsResult {
 	cfg, _ := LoadConfig()
 	tier := resolveLocalHostingTier(cfg)
-	idleTimeout := parkEnvMinutes("YAVER_PARK_IDLE_MIN", 30)
-	graceWindow := parkEnvMinutes("YAVER_PARK_GRACE_MIN", 2)
+	idleTimeout := resolveIdleParkMinutes()
+	graceWindow := resolveParkGraceMinutes()
 
 	now := time.Now()
 	activeSessions := len(listRunnerPTYSessions())
@@ -145,7 +173,7 @@ func opsMachineParkCheckHandler(_ OpsContext, _ json.RawMessage) OpsResult {
 }
 
 func opsMachineKeepAliveHandler(_ OpsContext, _ json.RawMessage) OpsResult {
-	grace := parkEnvMinutes("YAVER_PARK_GRACE_MIN", 2)
+	grace := resolveParkGraceMinutes()
 	now := time.Now()
 	parkMu.Lock()
 	parkKeepAliveUntil = now.Add(grace)

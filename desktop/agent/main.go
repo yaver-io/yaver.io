@@ -3862,6 +3862,16 @@ func runServe(args []string) {
 	// notice, on resume, that time passed while we were not running.
 	go watchFlightSleepWake(ctx)
 
+	// "Time of wakeup": bring parked managed/BYO boxes back on a time-of-day
+	// schedule (wake_schedule.go). Runs on this always-on daemon — a parked box
+	// is deleted and cannot wake itself. No-op until the user sets a schedule.
+	startWakeScheduler(ctx.Done())
+
+	// If YAVER_TMUX_RUNNER is set (the cloud image sets it), self-create the
+	// runner tmux session so a headless box actually dispatches coding runners
+	// into tmux — inspectable + adoptable from the phone. No-op when unset.
+	ensureTmuxRunnerSession()
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 

@@ -660,9 +660,9 @@ func runRemoteHeadlessYaverAuthOverSSH(targetHint string) error {
 // We `yaver ssh` into the target, ask bash to load the user's login
 // environment (`bash -lc`), and run the runner CLI directly. stdio is
 // piped straight through to the local terminal — the runner itself
-// prints the OAuth URL or the device-code, waits for the user, and (for
-// claude) prompts for the pasted-back token. No URL/code parsing on our
-// side; we are just a transparent pipe over SSH.
+// prints the subscription OAuth URL or the device-code, waits for the
+// user, and (for claude) prompts for the pasted-back code. No URL/code
+// parsing on our side; we are just a transparent pipe over SSH.
 //
 // This intentionally bypasses the agent: it's the recovery path when the
 // agent can't see the binary AT ALL. The HTTP-based flow is still the
@@ -673,7 +673,7 @@ func runRemoteHeadlessRunnerAuthOverSSH(targetHint, runner string) error {
 	var remoteCmd string
 	switch runner {
 	case "claude":
-		remoteCmd = "claude auth login --console"
+		remoteCmd = "claude auth login --claudeai"
 	case "codex":
 		remoteCmd = "codex login --device-auth"
 	default:

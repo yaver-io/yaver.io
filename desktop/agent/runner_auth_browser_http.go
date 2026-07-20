@@ -31,7 +31,8 @@ func runnerAuthDebugEnabled() bool {
 }
 
 type runnerBrowserAuthStartRequest struct {
-	Runner string `json:"runner"`
+	Runner      string `json:"runner"`
+	WaitSeconds int    `json:"wait_seconds,omitempty"`
 }
 
 type runnerBrowserAuthSession struct {
@@ -58,12 +59,11 @@ type runnerBrowserAuthSessionState struct {
 	cancel context.CancelFunc
 	// stdin is the spawned CLI's stdin pipe, captured at start time so
 	// the dashboard / mobile / Yaver mobile app can forward a pasted
-	// authentication code (`claude auth login --console` flow shows a
-	// URL, the user signs in on platform.claude.com, gets a long token,
-	// pastes it back). The token is forwarded once and discarded — it
-	// never lands in Convex, the bus, or any persistent log. Closing
-	// the writer signals EOF so a CLI that wraps a single-shot read
-	// terminates cleanly.
+	// subscription OAuth code (`claude auth login --claudeai` shows a
+	// claude.com URL; Codex shows a ChatGPT device code). The code is
+	// forwarded once and discarded — it never lands in Convex, the bus,
+	// or any persistent log. Closing the writer signals EOF so a CLI
+	// that wraps a single-shot read terminates cleanly.
 	stdin io.WriteCloser
 }
 
@@ -138,6 +138,41 @@ func (s *runnerBrowserAuthSessionState) update(fn func(*runnerBrowserAuthSession
 	defer s.mu.Unlock()
 	fn(&s.runnerBrowserAuthSession)
 	s.runnerBrowserAuthSession.UpdatedAt = time.Now().UnixMilli()
+}
+
+func runnerBrowserAuthWaitSeconds(raw int) int {
+	if raw < 0 {
+		return 0
+	}
+	if raw == 0 {
+		return 5
+	}
+	if raw > 30 {
+		return 30
+	}
+	return raw
+}
+
+func runnerBrowserAuthHasUserAction(snap runnerBrowserAuthSession) bool {
+	switch strings.TrimSpace(snap.Status) {
+	case "completed", "failed", "cancelled", "awaiting_browser", "verifying":
+		return true
+	}
+	return strings.TrimSpace(snap.OpenURL) != "" || strings.TrimSpace(snap.Code) != ""
+}
+
+func waitForRunnerBrowserAuthUserAction(sess *runnerBrowserAuthSessionState, seconds int) runnerBrowserAuthSession {
+	if sess == nil {
+		return runnerBrowserAuthSession{}
+	}
+	deadline := time.Now().Add(time.Duration(runnerBrowserAuthWaitSeconds(seconds)) * time.Second)
+	for {
+		snap := sess.snapshot()
+		if runnerBrowserAuthHasUserAction(snap) || !time.Now().Before(deadline) {
+			return snap
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func runnerBrowserAuthCommand(runner string, tr tenantRuntime) (method string, cmd *exec.Cmd, err error) {
@@ -486,9 +521,11 @@ func (s *HTTPServer) handleRunnerBrowserAuthStart(w http.ResponseWriter, r *http
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	snap := waitForRunnerBrowserAuthUserAction(sess, req.WaitSeconds)
+	recordRunnerBrowserAuthOperation(snap)
 	jsonReply(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"session": sess.snapshot(),
+		"session": snap,
 	})
 }
 
@@ -528,11 +565,12 @@ func (s *HTTPServer) handleRunnerBrowserAuthStatus(w http.ResponseWriter, r *htt
 	})
 }
 
-// handleRunnerBrowserAuthSubmitCode forwards a user-pasted token to the
-// running CLI's stdin. Used by the Claude device-auth flow: the user
-// signs in on platform.claude.com, copies the long authentication code,
-// pastes it into the Yaver dashboard / mobile UI, and we feed it through
-// to `claude auth login --console` (which is blocked on its read).
+// handleRunnerBrowserAuthSubmitCode forwards a user-pasted subscription
+// OAuth code to the running CLI's stdin. Used by Claude Code's
+// `claude auth login --claudeai` flow and Codex's `login --device-auth`
+// flow: the user signs in with their plan account in a browser, copies
+// the one-shot code, pastes it into Yaver, and we feed it to the runner
+// process blocked on its read.
 //
 // Privacy contract: the code is forwarded once to the spawned CLI's
 // stdin and immediately discarded. It is NEVER persisted, never logged,
@@ -543,16 +581,21 @@ func (s *HTTPServer) handleRunnerBrowserAuthSubmitCode(w http.ResponseWriter, r 
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
 		return
 	}
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	if id == "" {
-		jsonError(w, http.StatusBadRequest, "missing id")
-		return
-	}
 	var body struct {
-		Code string `json:"code"`
+		ID        string `json:"id"`
+		SessionID string `json:"session_id"`
+		Code      string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		id = strings.TrimSpace(firstNonEmptyBrowserAuth(body.SessionID, body.ID))
+	}
+	if id == "" {
+		jsonError(w, http.StatusBadRequest, "missing id")
 		return
 	}
 	code := strings.TrimSpace(body.Code)

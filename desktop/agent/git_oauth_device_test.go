@@ -154,24 +154,44 @@ func TestGitOAuthClientID_EnvOverride(t *testing.T) {
 	}
 }
 
-// TestGitOAuthClientID_NoConfigErrorsHelpfully ensures a fresh box with
-// no client ID configured returns a descriptive error pointing the user
-// at the registration page + vault entry, not a cryptic crash.
-func TestGitOAuthClientID_NoConfigErrorsHelpfully(t *testing.T) {
+// TestGitOAuthClientID_CompiledDefaultEnablesZeroConfigBootstrap is the
+// regression guard for zero-config OAuth on a freshly provisioned cloud box:
+// with NO vault entry and NO env override, github/gitlab must still resolve a
+// working client ID from the compiled default (byo=false = the shipped Yaver
+// Device-Flow app). This is what makes "super-fast OAuth bootstrap" work on a
+// brand-new managed box that has never been configured. If someone blanks the
+// compiled defaults, this fails loudly rather than silently regressing boot.
+func TestGitOAuthClientID_CompiledDefaultEnablesZeroConfigBootstrap(t *testing.T) {
 	t.Setenv("YAVER_GITHUB_OAUTH_CLIENT_ID", "")
+	t.Setenv("YAVER_GITLAB_OAUTH_CLIENT_ID", "")
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 	t.Setenv("YAVER_VAULT_PASSPHRASE", "")
 
-	_, _, err := gitOAuthClientID("github")
-	if err == nil {
-		t.Fatal("expected error when no client id configured")
-	}
-	msg := err.Error()
-	for _, want := range []string{"github.com/settings/developers", "github-oauth-client-id", "YAVER_GITHUB_OAUTH_CLIENT_ID"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error message missing %q hint: %s", want, msg)
+	for _, provider := range []string{"github", "gitlab"} {
+		id, byo, err := gitOAuthClientID(provider)
+		if err != nil {
+			t.Fatalf("%s: expected compiled default (zero-config bootstrap), got error: %v", provider, err)
 		}
+		if strings.TrimSpace(id) == "" {
+			t.Errorf("%s: expected non-empty compiled default client id", provider)
+		}
+		if byo {
+			t.Errorf("%s: expected byo=false for the shipped default client id", provider)
+		}
+	}
+}
+
+// TestGitOAuthClientID_UnsupportedProviderErrors keeps the helpful-error path
+// covered: an unknown provider (no compiled default) must return a clear
+// error, not a cryptic crash.
+func TestGitOAuthClientID_UnsupportedProviderErrors(t *testing.T) {
+	_, _, err := gitOAuthClientID("bitbucket")
+	if err == nil {
+		t.Fatal("expected error for unsupported provider")
+	}
+	if !strings.Contains(err.Error(), "unsupported provider") {
+		t.Errorf("error should name the unsupported provider, got: %s", err.Error())
 	}
 }
 

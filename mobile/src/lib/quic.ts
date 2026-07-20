@@ -3472,13 +3472,14 @@ export class QuicClient {
   async startRunnerBrowserAuth(
     runner: string,
     target?: string,
+    waitSeconds = 5,
   ): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
     const base = this.peerEndpoint(target, "/runner-auth/browser/start");
     const res = await fetch(base, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ runner }),
+      body: JSON.stringify({ runner, wait_seconds: waitSeconds }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -3523,16 +3524,15 @@ export class QuicClient {
       throw new Error("submitRunnerBrowserAuthCode requires sessionId");
     }
     const base = this.peerEndpoint(target, "/runner-auth/browser/submit-code");
-    // Agent's handleRunnerBrowserAuthSubmitCode reads `id` from the URL
-    // query string — only `code` comes from the JSON body. Putting id in
-    // the body alone made the agent answer 400 "missing id" on every
-    // Claude paste-back attempt.
+    // Keep the id in both places. Older agents require the query
+    // string; newer agents also accept `session_id` in the JSON body so
+    // MCP/UI callers do not need to remember this transport detail.
     const url = new URL(base);
     url.searchParams.set("id", sessionId);
     const res = await fetch(url.toString(), {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ session_id: sessionId, code }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {

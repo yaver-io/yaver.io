@@ -85,6 +85,7 @@ func opsRunnerAuthHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 		SessionID       string `json:"sessionId"`
 		Code            string `json:"code"`
 		CredentialsJSON string `json:"credentialsJson"`
+		WaitSeconds     int    `json:"waitSeconds"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
@@ -96,7 +97,7 @@ func opsRunnerAuthHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 		if strings.TrimSpace(p.Runner) == "" {
 			return OpsResult{OK: false, Code: "bad_payload", Error: "runner required"}
 		}
-		return wrapMCPResult(mcpRunnerBrowserAuthStart(p.DeviceID, p.Runner))
+		return wrapMCPResult(mcpRunnerBrowserAuthStart(p.DeviceID, p.Runner, p.WaitSeconds))
 	case "browser_status":
 		if strings.TrimSpace(p.SessionID) == "" {
 			return OpsResult{OK: false, Code: "bad_payload", Error: "sessionId required"}
