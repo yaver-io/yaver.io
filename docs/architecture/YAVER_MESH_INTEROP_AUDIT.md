@@ -691,13 +691,29 @@ present:
   "no path left to this device";
 - the rate-limit fix from §7 P0-3: a ban is a distinct state, not a timeout.
 
-**Yaver Relay Pro** — the paid lane. What legitimately belongs behind it is
+**Yaver Relay Pro** — one of **two** paid products, the other being **Cloud
+Workspace, which includes Relay Pro**. The free public relay stays available to
+everyone, always.
+
+That product shape constrains what may sit behind the paywall. Pro sells
 *capacity and placement*, never *connectivity*:
-- dedicated/regional egress, higher or no throughput cap, priority under load;
-- self-hostable relay with the same protocol (already supported — keep it);
-- **not** "your devices can connect at all". Connectivity is the product's
-  promise; metering it turns an outage into a sales page, and the free tier is
-  what makes direct-path failures survivable for everyone else.
+- dedicated or regional egress, higher/no throughput cap, priority under load;
+- self-hosting the same relay protocol (already supported — keep it free);
+- **never** "your devices can connect at all".
+
+The reason is not generosity, it is that the relay is the floor under every
+topology (§9.1) and 10–25% of pairs live on it permanently. Metering
+connectivity would turn an ordinary NAT failure into a sales page, and the user
+cannot tell those apart — they experience both as "Yaver is broken". A free tier
+that genuinely connects is what makes direct-path failure survivable, and it is
+also the honest demo for Cloud Workspace: the paid tier should feel *faster*,
+not *possible*.
+
+Corollary for the free relay: it must **degrade legibly**. A throttled free
+relay that times out is indistinguishable from an outage, and today's client
+turns that into `no path left to this device` (§4.1). Throttling must arrive as
+a named state — "free relay busy, retrying / Pro has dedicated capacity" — not
+as silence.
 
 Ordering note: **fix the client's self-inflicted ban (§7 P0-1..3) before adding
 relay capacity.** Today more relays make things *worse* — `mesh_derp_transport.go:79`
