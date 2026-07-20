@@ -3543,6 +3543,52 @@ export default function TasksScreen() {
     try { await quicClient.stopAllTasks(); await fetchTasks(); } catch {}
   };
 
+  // Active-chip bulk actions. Tapping the Active chip while it is already the
+  // selected filter opens a popup to act on every active (running/queued/review)
+  // task at once — the "delete all active / remove actives" the user asked for.
+  // Stop-and-clear stops the running ones first (so the agent actually tears
+  // them down) then removes them, otherwise a deleted-but-running task reappears
+  // on the next poll.
+  const activeTasks = () =>
+    tasks.filter((t) => t.status === "running" || t.status === "queued" || t.status === "review");
+  const handleActiveBulkActions = () => {
+    const active = activeTasks();
+    if (active.length === 0) {
+      Alert.alert("No active tasks", "There are no running, queued, or review tasks to act on.");
+      return;
+    }
+    Alert.alert(
+      `${active.length} active task${active.length === 1 ? "" : "s"}`,
+      "Act on every active task at once.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Stop all",
+          onPress: async () => {
+            try { await quicClient.stopAllTasks(); } catch (e) { console.warn("[Tasks] Stop all active failed:", e); }
+            await fetchTasks();
+          },
+        },
+        {
+          text: "Stop & remove all",
+          style: "destructive",
+          onPress: async () => {
+            const ids = active.map((t) => t.id);
+            // Optimistic: drop them locally so the list clears immediately.
+            setTasks((prev) => prev.filter((t) => !ids.includes(t.id)));
+            try { await quicClient.stopAllTasks(); } catch (e) { console.warn("[Tasks] Stop (for remove) failed:", e); }
+            await Promise.all(ids.map((id) => markTaskDeleted(id).catch(() => {})));
+            try {
+              await Promise.all(ids.map((id) => quicClient.deleteTask(id).catch(() => {})));
+            } finally {
+              await fetchTasks();
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleDeleteAll = async () => {
     const deletable = tasks.filter((t) => t.status !== "running" && t.status !== "queued");
     if (deletable.length === 0) return;
@@ -4138,7 +4184,17 @@ export default function TasksScreen() {
               ] as const).map(chip => (
                 <Pressable
                   key={chip.key}
-                  onPress={() => setStatusFilter(chip.key)}
+                  onPress={() => {
+                    // Tapping the Active chip while it's already selected opens
+                    // the bulk-action popup (stop / remove all active); the first
+                    // tap just selects the filter.
+                    if (chip.key === "running" && effectiveFilter === "running") {
+                      handleActiveBulkActions();
+                    } else {
+                      setStatusFilter(chip.key);
+                    }
+                  }}
+                  onLongPress={chip.key === "running" ? handleActiveBulkActions : undefined}
                   style={[s.actionButton, {
                     backgroundColor: (effectiveFilter === chip.key) ? withAlpha(chip.color, "1f") : c.bgInput,
                     borderWidth: 1,
@@ -6395,13 +6451,18 @@ const s = StyleSheet.create({
     paddingTop: 12,
     paddingHorizontal: 8,
   },
-  composerFooterRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+  // flex:1 + minWidth:0 lets the right group take the space left after the add
+  // button and shrink instead of pushing the Send pill past the composer edge —
+  // the overflow seen on narrow iPhones with the keyboard open. justifyContent
+  // keeps everything right-aligned as it shrinks.
+  composerFooterRight: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, flex: 1, minWidth: 0 },
   composerActionButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   composerIconButton: {
     width: 48,
@@ -6412,9 +6473,13 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   sendButtonLarge: {
-    minWidth: 120,
-    minHeight: 56,
-    paddingHorizontal: 24,
+    // Was minWidth:120/paddingH:24 — too wide once the mic, voice-switch and
+    // reload icons share the row. It now shrinks (flexShrink) with a sane floor
+    // so it stays tappable but never pushes past the composer edge.
+    minWidth: 88,
+    flexShrink: 1,
+    minHeight: 52,
+    paddingHorizontal: 18,
     paddingVertical: 14,
     borderRadius: 20,
     alignItems: "center",

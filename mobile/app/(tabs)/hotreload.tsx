@@ -1237,7 +1237,7 @@ export default function HotReloadScreen() {
                         <Text style={[s.reloadBtnText, { color: c.accent }]}>Reloading…</Text>
                       </View>
                     ) : (
-                      <Text style={[s.reloadBtnText, { color: c.accent }]}>
+                      <Text style={[s.reloadBtnText, { color: c.accent }]} numberOfLines={1}>
                         {bundleMounted ? "\u21BB Reload" : "Open first"}
                       </Text>
                     )}
@@ -1546,7 +1546,10 @@ const s = StyleSheet.create({
   primaryActionTextWrap: { flex: 1, minWidth: 0, alignItems: "flex-start" },
   openBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
   openBtnSubtext: { color: "rgba(255,255,255,0.84)", fontSize: 11, marginTop: 2 },
-  reloadBtn: { borderWidth: 1, flex: 1, alignItems: "center" },
+  // minWidth:0 lets these flex children shrink so their single-line labels
+  // stay centered instead of wrapping ("Open first" → "Open\nfirst") when three
+  // buttons share the row.
+  reloadBtn: { borderWidth: 1, flex: 1, minWidth: 0, alignItems: "center" },
   reloadBtnText: { color: "#6E56F6", fontSize: 13, fontWeight: "600" },
   stopBtn: { borderWidth: 1, paddingHorizontal: 16, alignItems: "center" },
   stopBtnText: { color: "#ef4444", fontSize: 13, fontWeight: "600" },
@@ -1571,7 +1574,11 @@ const s = StyleSheet.create({
   projectName: { ...typography.cardTitle, fontSize: 17 },
   projectMeta: { ...typography.caption, marginTop: 3 },
   projectPath: { ...typography.path, marginTop: 3 },
-  listContent: { paddingBottom: 40 },
+  // 40 was not enough to clear the bottom tab bar (~83px on notched iPhones plus
+  // the home indicator), so the running-app card's last action row ("Open in
+  // Yaver" / Stop) was trapped behind the bar and looked unscrollable. 128 lifts
+  // it fully into view.
+  listContent: { paddingBottom: 128 },
   targetChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   targetHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   targetStatePill: {
