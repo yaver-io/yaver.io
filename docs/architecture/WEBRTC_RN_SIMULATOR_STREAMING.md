@@ -103,6 +103,55 @@ sim streamed to an iPhone 14 viewer just renders scaled — no device match need
 - Never tie the sim to the viewer's model; let the user pick, default to a common
   device (iPhone 15/17), and clean up after the session.
 
+## Surfaces: any-to-any, mobile→mobile is the default
+
+Yaver's reach is broad — AR/VR, watch, car, tablet, tvOS, phone — as BOTH the
+streamed simulator and the client viewer. RN/Expo now offers the full sim
+fan-out (iPhone/iPad/watchOS/tvOS/visionOS + Android emulator/wear/TV/XR/auto +
+real devices), capability-probed so unavailable ones are shown disabled with a
+reason.
+
+**UX rule:** default to the common case — **mobile sim → mobile client** — shown
+prominently. Every other surface (tvOS, watch, tablet, …) lives behind an
+"other surfaces" disclosure so the picker stays clean but ANY surface is
+one tap away. A user who only wants tvOS can pick just tvOS.
+
+## Per-client-surface input mapping
+
+The **client** surface decides how feedback is triggered and how "clicking"
+works, because a phone, a TV and a watch have different input hardware. The
+control channel is the same; only the viewer-side mapping differs:
+
+| Client surface | Feedback trigger | "Click" / control mapping |
+|---|---|---|
+| **Phone / tablet** | Physical **shake** (ShakeDetector) → `shake` command | Touch → x/y tap/drag sent to the sim |
+| **Web dashboard** | A **"Shake" button** | Mouse click → x/y; keyboard passthrough |
+| **tvOS** | **No shake** — voice: **STT** ("feedback"/"shake") triggers it, **TTS** reads results back | The tvOS **focus engine**: Siri-Remote D-pad = directional focus moves, Select = activate; swipes on the remote's touch surface map to scroll/drag. NOT raw x/y — send focus-move + select control events. |
+| **watch** | Wrist raise / a tap-and-hold, or voice | Digital-crown scroll + tap → scroll + select control events |
+| **car** | Voice only (hands-free) — STT/TTS | Restricted; voice-driven, no fine pointing |
+| **AR/VR** | Voice or a controller button | Gaze/controller ray → mapped to sim coordinates |
+
+Design consequence: the `shake` command is the phone/web path; other surfaces
+send their native trigger (voice intent, focus-select) over the same session
+control channel. The viewer owns the translation; the agent injects the
+platform-appropriate event into the sim.
+
+## Mature remote-side simulator management
+
+Yaver manages the sim/emulator lifecycle on the remote box (the driver methods
+exist in `testkit/`: `Boot`, `Install`, `Launch`, `Shutdown`, `list devices`,
+`list runtimes`, plus `DeviceType` selection). The mature layer to build on top:
+
+- **List** available device types + installed runtimes (iOS: `simctl list`;
+  Android: `avdmanager list` / `adb devices`).
+- **Pick / create** the device type you're testing for (`simctl create`,
+  `avdmanager create avd`), not tied to the viewer's model.
+- **Boot on demand**, **shut down / delete when idle** — a booted sim is cheap
+  but disk/RAM-heavy, so apply the same scale-to-zero discipline as Hetzner
+  boxes: don't leave a pool running.
+- Expose it as `ops` verbs + MCP so every surface (CLI/web/mobile) can manage
+  the pool.
+
 ## What is landed (this change)
 
 - **Agent capabilities** (`remote_runtime.go`): RN/Expo is now

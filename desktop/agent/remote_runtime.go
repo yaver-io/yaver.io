@@ -238,13 +238,25 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 	if !caps.RemoteRuntimeEligible {
 		return caps
 	}
-	// RN/Expo streams into the same iOS simulators / Android emulators the native
-	// path uses; only the BUILD command differs (expo run:ios / run:android,
-	// resolved in native_build.go). Offer both platforms, capability-probed.
+	// RN/Expo streams into the same simulators/emulators the native path uses;
+	// only the BUILD command differs (expo run:ios / run:android). Offer the FULL
+	// surface fan-out — phone is the common case, but Expo/RN also targets tablet,
+	// watchOS, tvOS, visionOS and the Android wear/TV/XR/auto AVDs, so any of them
+	// can be the streamed surface. The mobile sim → mobile client path is the
+	// default; the rest are there for the AR/VR/watch/car/tablet reach.
 	if rnSim {
+		rnAppleFams := appleRuntimeFamiliesForCaps()
 		caps.Targets = []RemoteRuntimeTarget{
-			probeIOSSimulatorTarget(appleRuntimeFamiliesForCaps()),
+			probeIOSSimulatorTarget(rnAppleFams),
+			probeIPadSimulatorTarget(rnAppleFams),
+			probeWatchOSSimulatorTarget(rnAppleFams),
+			probeTVOSSimulatorTarget(rnAppleFams),
+			probeVisionOSSimulatorTarget(rnAppleFams),
 			probeAndroidEmulatorTarget(),
+			probeAndroidWearTarget(),
+			probeAndroidTVTarget(),
+			probeAndroidXRTarget(),
+			probeAndroidAutoTarget(),
 			probeAndroidDeviceTarget(),
 			probeIOSDeviceTarget(),
 		}
