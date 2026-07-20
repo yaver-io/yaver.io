@@ -730,3 +730,82 @@ reconnect flips which relay carries mesh.
 Case A gets mesh. Case B gets Tailscale. Case C gets mesh for the pair Tailscale
 cannot serve and Tailscale for the pairs it can — on the same machine, at the
 same time.
+
+---
+
+## 10. The signalling plane — what makes hybrid actually bootstrap
+
+§9.2's per-peer `/32` says *where* to route. It does not say how two peers learn
+each other's addresses in the first place. Today they cannot, and that is the
+last missing piece.
+
+### 10.1 The relay carries data and no signalling
+
+`relay/mesh.go:36` is a pure opaque frame pump: a frame from A tagged `dst=B` is
+written to B's stream, cross-user forwarding blocked (`:73`), and the relay
+"never inspects" the payload (`:6-8`). It moves WireGuard frames and nothing
+else.
+
+Tailscale's DERP carries **disco** — `ping`/`pong` with a TxID, and
+`CallMeMaybe` (peer-reported endpoints) — over the same connection as data.
+That is how two peers behind NAT exchange candidates and coordinate a
+simultaneous open. Yaver has the relay and no disco, so:
+
+> Two Yaver peers can always *talk* through the relay, and can never *tell each
+> other where they are*. There is no channel on which a direct path could ever
+> be negotiated — which is why the only direct paths that work today are ones
+> guessed from a heartbeat.
+
+### 10.2 Why this is cheap: the transport already exists
+
+The relay does not need to change at all. It is already addressed
+(`dst=deviceID`), bidirectional, authenticated, per-user isolated, and
+payload-agnostic. Adding signalling is a **frame-type byte in the agent's own
+framing** (`mesh/derpframe.go`) and a handler on each end:
+
+```
+frame := | dst deviceID | type | payload |
+           type 0x00 = wireguard   (today's behaviour, unchanged)
+           type 0x01 = disco ping   { txid }
+           type 0x02 = disco pong   { txid, observed src endpoint }
+           type 0x03 = endpoints    { candidate list }   ← "CallMeMaybe"
+```
+
+Old agents ignore unknown types and keep working — the frame is opaque to the
+relay, so a mixed-version fleet is safe. This also resolves the privacy conflict
+in §6.4: candidate endpoints are LAN IPs, forbidden in Convex, but they are
+*peer-to-peer over the relay* here and never touch our servers.
+
+### 10.3 It must cover hybrid WITHOUT breaking the other two
+
+The signalling plane is topology-blind by construction — it is the same
+rendezvous in all three cases, and that is the point.
+
+| Case | Signalling | Outcome |
+|---|---|---|
+| **Native** (no VPN either side) | over relay | candidates exchanged → STUN + LAN → direct mesh; relay carries traffic until it forms |
+| **Tailscale both sides** | over relay | each peer advertises its tailnet address as a candidate; it wins the race on RTT; **mesh installs no route at all** — deferral, decided by evidence rather than by an interface scan |
+| **Hybrid** (mini on TS, phone not) | over relay | tailnet candidate is offered and **fails to validate** from the phone; a mesh `/32` candidate validates; mesh serves this pair while Tailscale keeps the others |
+
+Three invariants keep the existing behaviour safe:
+
+1. **The incumbent wins ties.** If a Tailscale candidate validates, use it and
+   install no mesh route. Case B is unchanged and Tailscale is never fought for
+   a peer it can carry.
+2. **Never route a peer you have not validated.** A `/32` is installed only
+   after a path check succeeds on it — so a failed hybrid negotiation degrades
+   to relay, never to a blackhole. This is what makes §9.2 safe to ship.
+3. **Relay is the floor, always.** Signalling runs *on* the relay session, so
+   the fallback cannot fail independently of the thing it is falling back to.
+   Discovery failure costs latency, never connectivity.
+
+### 10.4 Why this ordering
+
+Signalling is worth building **before** STUN/port-mapping/ICE-style probing
+(§7 P2), not after: those techniques all produce *candidates*, and today there
+is no channel to send a candidate over. Fixing STUN's discarded port first would
+mean computing a better address that nothing can deliver.
+
+Sequence: signalling frames → candidate exchange → validated `/32` install →
+*then* STUN-from-the-data-socket, port mapping, and IPv6 to raise the direct-hit
+rate. Each step is useful alone, and each makes the next one measurable.
