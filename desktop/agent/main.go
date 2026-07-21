@@ -11743,6 +11743,33 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	// relay traffic as genuinely remote. Client-supplied values are overridden.
 	httpReq.Header.Set("X-Yaver-Via-Relay", "1")
 
+	// Out-of-band SSH control channel: the relay forwards a stream whose envelope
+	// path is the SSH sentinel; splice it RAW to the box's local SSH control
+	// server (no HTTP). Public-key auth + the forced-command cage happen THERE —
+	// the relay/agent only piped bytes, so a hostile tenant's stream still fails
+	// the SSH handshake (transport doc §4d). Additive: no real agent route is
+	// relaySSHControlSentinelPath, so existing traffic is untouched. Mirrors the
+	// WebSocket raw-splice below, including draining the JSON decoder's overflow.
+	if req.Path == relaySSHControlSentinelPath {
+		backendConn, err := net.Dial("tcp", localSSHControlAddr())
+		if err != nil {
+			relaySendError(stream, req.ID, 502, fmt.Sprintf("ssh control server unavailable: %v", err))
+			return
+		}
+		defer backendConn.Close()
+		done := make(chan struct{}, 2)
+		go func() {
+			if envelopeOverflow != nil {
+				io.Copy(backendConn, envelopeOverflow)
+			}
+			io.Copy(backendConn, stream)
+			done <- struct{}{}
+		}()
+		go func() { io.Copy(stream, backendConn); done <- struct{}{} }()
+		<-done
+		return
+	}
+
 	// Check if WebSocket upgrade (Metro HMR, debugger, /ws/terminal)
 	isWebSocket := strings.EqualFold(req.Headers["Upgrade"], "websocket")
 	if isWebSocket {

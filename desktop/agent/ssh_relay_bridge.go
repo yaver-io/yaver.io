@@ -25,6 +25,12 @@ import (
 // (or tag 0x01); a first byte of relayStreamTagSSH means "splice me to SSH".
 const relayStreamTagSSH byte = 0x02
 
+// relaySSHControlSentinelPath is the envelope path the relay forwards to request
+// that a tunnel stream be spliced to the box's SSH control server instead of the
+// HTTP agent. Additive: no real agent route uses this path, so normal traffic is
+// never affected. The phone reaches it as `/d/<deviceId>/_yaver_ssh_control`.
+const relaySSHControlSentinelPath = "/_yaver_ssh_control"
+
 // relayStreamTagIsSSH reports whether a stream's leading tag byte routes it to
 // the local SSH control server rather than the JSON control handler. Pure so the
 // routing decision is unit-tested.

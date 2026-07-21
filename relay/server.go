@@ -56,6 +56,13 @@ var reservedSubdomains = map[string]bool{
 // downstream URL building. M-6 + M-12.
 var deviceIDShapePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]{8,128}$`)
 
+// relaySSHControlSentinelPath: a /d/<deviceId>/_yaver_ssh_control request is a raw
+// bidirectional tunnel to the box's out-of-band SSH control server (spliced like a
+// WebSocket). The relay never authorizes SSH — it only pipes bytes; the box does
+// public-key auth + the forced-command cage. KEEP IN SYNC with
+// desktop/agent/ssh_relay_bridge.go's relaySSHControlSentinelPath.
+const relaySSHControlSentinelPath = "/_yaver_ssh_control"
+
 // RelayServer accepts QUIC tunnels from agents and proxies HTTP requests
 // from mobile clients through those tunnels.
 type RelayServer struct {
@@ -1923,6 +1930,13 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is a WebSocket upgrade (Metro HMR, debugger)
 	isWebSocket := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	// Out-of-band SSH control channel: a request to the SSH sentinel path is a
+	// raw bidirectional tunnel to the box's SSH control server — treat it exactly
+	// like a WebSocket (hijack + splice raw bytes), no buffering. The agent side
+	// splices to its local SSH port; auth happens THERE. Additive: no real route
+	// is this path. KEEP relaySSHControlSentinelPath IN SYNC with
+	// desktop/agent/ssh_relay_bridge.go.
+	isSSHControl := strings.HasSuffix(forwardPath, relaySSHControlSentinelPath)
 
 	// Send request
 	reqData, _ := json.Marshal(tunnelReq)
@@ -1933,8 +1947,8 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// WebSocket: keep stream open for bidirectional proxy
-	if isWebSocket {
+	// WebSocket OR SSH control: keep stream open for raw bidirectional proxy.
+	if isWebSocket || isSSHControl {
 		s.proxyWebSocket(w, r, stream, tunnel.deviceID)
 		return
 	}
