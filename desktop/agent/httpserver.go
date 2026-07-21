@@ -1437,6 +1437,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/guests", s.auth(s.handleGuestList))
 	mux.HandleFunc("/guests/invite", s.auth(s.handleGuestInvite))
 	mux.HandleFunc("/guests/revoke", s.auth(s.handleGuestRevoke))
+	mux.HandleFunc("/guests/delete", s.auth(s.handleGuestDelete))
 	mux.HandleFunc("/guests/config", s.auth(s.handleGuestConfig))
 	mux.HandleFunc("/guests/usage", s.auth(s.handleGuestUsage))
 	mux.HandleFunc("/guest/testable", s.auth(s.handleGuestTestableProjects))
@@ -1470,6 +1471,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// the shared-machine deploy surface, gated by allowedProjects in
 	// the handler itself.
 	mux.HandleFunc("/doctor/build", s.auth(s.handleDoctorBuild))
+	// Live transport self-diagnosis — the endpoint the out-of-band SSH channel's
+	// `doctor-transport` verb reaches so agentic self-heal can learn why the data
+	// path is down and act (see doctor_transport.go + ssh_session_cmd.go).
+	mux.HandleFunc("/doctor/transport", s.auth(s.handleDoctorTransport))
 	mux.HandleFunc("/deploy/templates", s.auth(s.handleDeployTemplates))
 	mux.HandleFunc("/deploy/capabilities", s.auth(s.handleDeployCapabilities))
 	mux.HandleFunc("/mobile/platform-matrix", s.auth(s.handleMobilePlatformMatrix))
@@ -13248,6 +13253,40 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return true
 		})
 		return mcpToolResult(fmt.Sprintf("Guest access revoked for %s", args.Email))
+
+	case "guest_delete":
+		var args struct {
+			InviteID string `json:"inviteId"`
+			Email    string `json:"email"`
+			UserID   string `json:"userId"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.InviteID) == "" && strings.TrimSpace(args.Email) == "" && strings.TrimSpace(args.UserID) == "" {
+			return mcpToolError("inviteId, email, or userId is required")
+		}
+		if err := DeleteGuest(s.convexURL, s.token, args.InviteID, args.Email, args.UserID); err != nil {
+			return mcpToolError(err.Error())
+		}
+		if ids, err := FetchGuestUserIds(s.convexURL, s.token, s.deviceID); err == nil {
+			s.guestUserIDsMu.Lock()
+			s.guestUserIDs = ids
+			s.guestUserIDsMu.Unlock()
+		}
+		s.tokenCache.Range(func(key, value interface{}) bool {
+			info := value.(*cachedTokenInfo)
+			if info.userID != s.ownerUserID && !info.isSdk {
+				s.tokenCache.Delete(key)
+			}
+			return true
+		})
+		target := strings.TrimSpace(args.InviteID)
+		if target == "" {
+			target = strings.TrimSpace(args.Email)
+		}
+		if target == "" {
+			target = strings.TrimSpace(args.UserID)
+		}
+		return mcpToolResult(fmt.Sprintf("Guest row deleted for %s. Any live access was revoked first; they can be invited again later.", target))
 
 	case "guest_leave":
 		var args struct {

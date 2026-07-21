@@ -411,6 +411,18 @@ This is why `doctor-transport` + `repair-relay` are in the forced-command
 whitelist (`sshSessionRoute`): the recovery verbs must be reachable precisely when
 everything else isn't.
 
+**Proactive auto-heal — bounded, event-driven, Convex-free.** The transport doctor
+also runs on the agent side *automatically*, fixing before the user asks — but
+**never a loop, never a Convex bill**. It is wired to the existing **relay
+watchdog** (`[relay] watchdog: no live tunnel for 2m0s → forcing redial`): the
+watchdog is **event-driven** (a detected tunnel loss), fires a **single** bounded
+redial (which the `already registered` eviction now lets succeed), and on repeated
+failure surfaces to the user rather than spinning. The diagnosis
+(`probeTransport`/`/doctor/transport`) is a **P2P HTTP probe of the relay leg** —
+it never touches Convex, so proactive self-heal adds **zero** metered function
+calls. The rule (CLAUDE.md): a datacenter box must never hammer infra, and the
+self-heal is a *bounded, one-shot-per-fault* action, not a background poll.
+
 ## 4d. Threat: a hostile relay user must NOT reach another user's box/phone
 
 This is the paramount property, and it must hold **even though the code is open
